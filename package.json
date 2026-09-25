@@ -1,0 +1,34 @@
+{
+  "name": "email-os-ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Slice 01 frontend: keyboard-first fixture inbox, plain-text reader, archive/unarchive activity. Browser preview is in-memory only.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit -p tsconfig.json && vite build",
+    "test": "vitest run",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.json",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.3.0",
+    "vue": "3.5.13"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "5.2.1",
+    "@vue/test-utils": "2.4.6",
+    "jsdom": "26.0.0",
+    "typescript": "5.7.3",
+    "vite": "6.0.11",
+    "vitest": "3.0.5",
+    "vue-tsc": "2.2.0",
+    "@tauri-apps/cli": "2.3.0"
+  },
+  "packageManager": "pnpm@10.18.0",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

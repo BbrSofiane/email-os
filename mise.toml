@@ -9,7 +9,25 @@ run = "pnpm install --frozen-lockfile"
 
 [tasks."test:core"]
 description = "Test the headless mail core"
-run = "cargo test -p mail-core"
+run = "cargo test --locked -p mail-core"
+
+[tasks."gen:ts"]
+description = "Generate src/lib/ipc/generated.ts from the Rust DTOs"
+run = "cargo run --locked -q -p mail-core --bin generate-types -- src/lib/ipc/generated.ts"
+
+[tasks."check:contract"]
+description = "Fail when src/lib/ipc/generated.ts drifts from the Rust DTOs"
+run = """
+dir=$(mktemp -d)
+tmp="$dir/generated.ts"
+trap 'rm -f "$tmp"; rmdir "$dir"' EXIT
+cargo run --locked -q -p mail-core --bin generate-types -- "$tmp"
+diff -u src/lib/ipc/generated.ts "$tmp"
+"""
+
+[tasks."lint:core"]
+description = "Workspace formatting and headless core clippy checks"
+run = "cargo fmt --all -- --check && cargo clippy --locked -p mail-core --all-targets -- -D warnings"
 
 [tasks."test:ui"]
 description = "Run frontend component and contract tests"
@@ -27,6 +45,22 @@ run = "pnpm build"
 description = "Run the fixture-only browser preview"
 run = "pnpm dev"
 
+[tasks."dev:native"]
+description = "Run the native fixture shell (dev server + Tauri; needs native prerequisites)"
+run = "pnpm tauri dev"
+
+[tasks."build:native"]
+description = "Build the native fixture shell bundle (needs native prerequisites)"
+run = "pnpm tauri build"
+
+[tasks."check:native"]
+description = "Type-check the native shell (needs GTK/WebKit dev prerequisites; see docs/development.md)"
+run = "cargo check --locked -p email-os --all-targets"
+
+[tasks."test:native"]
+description = "Test the native command/event bridge (needs native prerequisites)"
+run = "cargo test --locked -p email-os"
+
 [tasks.check]
-description = "Validate core, frontend tests and types"
-depends = ["test:core", "test:ui", "typecheck"]
+description = "Validate core, contract generation, frontend tests and types (no native prerequisites needed)"
+depends = ["test:core", "check:contract", "lint:core", "test:ui", "typecheck"]
