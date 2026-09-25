@@ -7,8 +7,10 @@ fit how you process email—manually or with an agent—on top of a reliable, op
 
 - **Brand:** Email OS
 - **Project / repository name:** `email-os`
-- **First experiment:** **a reply queue you can teach**—a bounded, read-only companion to an existing
-  inbox, not yet a replacement client or a complete platform.
+- **First build:** **a single-account, keyboard-first desktop email client**—a limited Superhuman
+  replacement for complete read/reply/archive sessions, with one configurable view.
+- **Later experiment:** **a reply queue you can teach**—a proposed customization study, not the
+  first-build scope.
 
 Email OS is the working name for the platform vision. “OS” describes a foundation for composable
 email workflows, not a new operating system or email server. Name, domain, and trademark availability
@@ -16,9 +18,11 @@ have not been checked.
 
 ## Start here
 
-- [Product requirements](PRD.md): vision, composition model, safety boundaries, and open decisions.
-- [Experiment 1: a reply queue you can teach](EXPERIMENT-01.md): the proposed first implementation and
-  validation scope, including on-phone use.
+- [ADR 0001: first desktop build](docs/adr/0001-single-account-desktop-email-client.md): accepted
+  first-build direction, scope, safety gates, and dogfooding criteria.
+- [Product requirements](PRD.md): long-term vision, composition model, safety boundaries, and open decisions.
+- [Experiment 1: a reply queue you can teach](EXPERIMENT-01.md): a proposed later customization study,
+  including on-phone use; superseded by ADR 0001 for first-build sequencing.
 - [email security review](security/email-review.md) and [Pebble security review](security/pebble-review.md):
   static findings to address before reusing candidate implementations.
 
@@ -28,8 +32,9 @@ have not been checked.
 ## Research background
 
 The sections below preserve earlier research. Their suggested MVP deferrals are historical options,
-not the current platform requirements. Use the PRD for product direction and Experiment 1 for the
-proposed initial scope. Framework, fork choice, and Android rollout remain undecided.
+not the current platform requirements. Use the PRD for product direction and ADR 0001 for the
+accepted first-build scope. Framework and fork choice remain undecided; a custom Android client is
+outside the first build, not outside the product vision.
 
 This research summarizes a conversation about building an ideal personal email-processing
 workflow. It is **not** an attempt at full Superhuman parity: the goal is a workflow that fits how the

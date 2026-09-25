@@ -1,6 +1,7 @@
 # Experiment 1: an email reply queue you can teach
 
-**Status:** proposed experiment; not authorization to build, recruit, connect mailboxes, or transmit email to models.
+**Status:** proposed later experiment; not authorization to build, recruit, connect mailboxes, or transmit email to models.
+**Sequencing:** [ADR 0001](docs/adr/0001-single-account-desktop-email-client.md) supersedes this document as the first-build plan. Build the single-account desktop client first; retain this proposal for a later customization study.
 **Date:** 2026-09-25.
 **Parent vision:** [Composable email client PRD](PRD.md).
 **Supporting evidence:** [research summary](README.md), [email security review](security/email-review.md), [Pebble security review](security/pebble-review.md).
