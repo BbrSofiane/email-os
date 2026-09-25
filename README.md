@@ -18,6 +18,9 @@ have not been checked.
 
 ## Start here
 
+- [Architecture: proposed implementation for the first build](ARCHITECTURE.md): proposed Tauri 2 +
+  Vue 3 implementation plan for ADR 0001 — module boundaries, state ownership, IPC surface, security
+  boundaries, and staged build. Proposed design, not implemented code.
 - [ADR 0001: first desktop build](docs/adr/0001-single-account-desktop-email-client.md): accepted
   first-build direction, scope, safety gates, and dogfooding criteria.
 - [Product requirements](PRD.md): long-term vision, composition model, safety boundaries, and open decisions.
@@ -26,15 +29,20 @@ have not been checked.
 - [email security review](security/email-review.md) and [Pebble security review](security/pebble-review.md):
   static findings to address before reusing candidate implementations.
 
-**Status:** product discovery and experiment planning; no framework, fork, or implementation selected.
+**Status:** the first-build direction (ADR 0001) is accepted, and a Tauri 2 + Vue 3 frontend is now
+the selected implementation direction — see [ARCHITECTURE.md](ARCHITECTURE.md) for the proposed
+implementation plan. Still open: confirming macOS-first and Gmail REST, fork-versus-greenfield
+finalization, and exact dependency choices. No implementation or connection to a mailbox exists yet.
 **Research date:** 2026-09-25.
 
 ## Research background
 
 The sections below preserve earlier research. Their suggested MVP deferrals are historical options,
 not the current platform requirements. Use the PRD for product direction and ADR 0001 for the
-accepted first-build scope. Framework and fork choice remain undecided; a custom Android client is
-outside the first build, not outside the product vision.
+accepted first-build scope. This section is historical: Tauri with a Vue 3 frontend has since been
+selected for the first build (see [ARCHITECTURE.md](ARCHITECTURE.md)), while fork-versus-greenfield,
+provider/OS confirmation, and exact dependencies remain open decisions there. A custom Android client
+is outside the first build, not outside the product vision.
 
 This research summarizes a conversation about building an ideal personal email-processing
 workflow. It is **not** an attempt at full Superhuman parity: the goal is a workflow that fits how the
