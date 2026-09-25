@@ -1,0 +1,57 @@
+{
+  "cli_version": "0.10.6",
+  "checkpoint_id": "01M3CAZ45N007SP86N8Q2A78C3",
+  "session_id": "01a0d89e-f895-7642-a3d0-2362bbf66086",
+  "strategy": "manual-commit",
+  "created_at": "2026-09-25T13:09:40.654287Z",
+  "branch": "main",
+  "checkpoints_count": 3,
+  "save_step_count": 1,
+  "files_touched": [
+    "EXPERIMENT-01.md",
+    "README.md",
+    "docs/adr/0001-single-account-desktop-email-client.md"
+  ],
+  "agent": "Pi",
+  "model": "gpt-6-astra",
+  "turn_id": "aba28b7e4250",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 4422,
+    "cache_creation_tokens": 49518,
+    "cache_read_tokens": 555636,
+    "output_tokens": 5296,
+    "api_call_count": 19
+  },
+  "session_metrics": {
+    "turn_count": 3
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-09-25T13:09:40.623789Z",
+    "agent_lines": 172,
+    "agent_removed": 8,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 172,
+    "total_lines_changed": 180,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 172,
+      "agent_lines_removed": 8
+    }
+  ]
+}

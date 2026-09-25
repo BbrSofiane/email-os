@@ -1,0 +1,5 @@
+What do you recommend as potiential options for a first vertical slice for this application? My initial goal would be to have a (limited) replacement for Superhuman when it comes to emails
+
+---
+
+Write up an ADR for youir recommended first build. One account on desktop is a good starting point
