@@ -1,5 +1,3 @@
-What do you recommend as potiential options for a first vertical slice for this application? My initial goal would be to have a (limited) replacement for Superhuman when it comes to emails
+Ok use a worker to commit and push the documentation changes.
 
----
-
-Write up an ADR for youir recommended first build. One account on desktop is a good starting point
+Now, how do you propose we structure our Tauri application to build for the first ADR
