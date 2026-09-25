@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/mail-core"]
+resolver = "2"

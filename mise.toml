@@ -1,0 +1,32 @@
+[tools]
+node = "24.4.1"
+pnpm = "10.18.0"
+rust = "1.89.0"
+
+[tasks."install:ui"]
+description = "Install locked frontend dependencies"
+run = "pnpm install --frozen-lockfile"
+
+[tasks."test:core"]
+description = "Test the headless mail core"
+run = "cargo test -p mail-core"
+
+[tasks."test:ui"]
+description = "Run frontend component and contract tests"
+run = "pnpm test"
+
+[tasks.typecheck]
+description = "Typecheck the Vue frontend"
+run = "pnpm typecheck"
+
+[tasks."build:web"]
+description = "Build the frontend assets"
+run = "pnpm build"
+
+[tasks."dev:web"]
+description = "Run the fixture-only browser preview"
+run = "pnpm dev"
+
+[tasks.check]
+description = "Validate core, frontend tests and types"
+depends = ["test:core", "test:ui", "typecheck"]
