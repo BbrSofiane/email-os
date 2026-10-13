@@ -20,7 +20,7 @@ Keep existing commands and DTOs, adding optional fields for backward compatibili
 - `RetryOperation = { operationId: string; requestId: string }`.
 - `MailError` adds `permission_required`, `provider_rejected`, `outcome_unknown` (sanitized typed errors, no raw provider text).
 
-New commands: `enable_mailbox_actions` (no args, void durable/worker acceptance, not grant success), `set_read` ({ command }, receipt), `retry_operation` ({ command }, receipt). Existing `set_archived` supports Gmail when verified mutation access is enabled. Events remain `mailbox_changed` hints; no raw FS/HTTP/open-URL/label APIs. Rust enforces capability, account, input and request-key checks regardless of frontend. Retry is an explicit new action using the original immutable targets, not a generic executor.
+New commands: `enable_mailbox_actions` (no args, void worker acceptance, not grant success), `cancel_mailbox_action_upgrade` (no args, cancellation acceptance), `set_read` ({ command }, receipt), `retry_operation` ({ command }, receipt). Upgrade cancellation is NOT disconnect: cancel only the queued/active upgrade and preserve prior account, credentials, cache, operations and permission. Do not cancel unrelated sync/mutation/auth work. A completed upgrade makes late cancellation a no-op, not remote revocation or permission downgrade; status remains authoritative until cancellation/completion resolves. Existing `set_archived` supports Gmail when verified mutation access is enabled. Events remain `mailbox_changed` hints; no raw FS/HTTP/open-URL/label APIs. Rust enforces capability, account, input and request-key checks regardless of frontend. Retry is an explicit new action using the original immutable targets, not a generic executor.
 
 ## Frozen internal provider seam
 
@@ -39,7 +39,7 @@ Setter outcomes: permission/auth failures typed; definite quota rejection is saf
 
 ## Durable operations and sync
 
-Use concrete SQLite tables and the existing serial worker/control gate; no repository/operation framework. Mutations and sync are coordinated, never competing cursor writers or overlapping setter claims. Network outside DB/control locks. Extend `GmailCore` with `enable_mutations`, `set_archived(&SetArchived)`, `set_read(&SetRead)`, `retry_operation(&RetryOperation)`; methods return void acceptance or OperationReceipt as specified. Report exact public APIs to integration.
+Use concrete SQLite tables and the existing serial worker/control gate; no repository/operation framework. Mutations and sync are coordinated, never competing cursor writers or overlapping setter claims. Network outside DB/control locks. Extend `GmailCore` with `enable_mutations`, `cancel_mutation_upgrade` (Result<(), MailError>, acceptance only), `set_archived(&SetArchived)`, `set_read(&SetRead)`, `retry_operation(&RetryOperation)`; methods return void acceptance or OperationReceipt as specified. Report exact public APIs to integration.
 
 Command transaction: validate account/input and current capability, snapshot all currently observed message IDs, persist immutable kind/value/targets + request-key mapping + acceptance ordering + minimal recovery context, commit BEFORE receipt. Same key/same payload returns original receipt (check existing lookup before re-deriving targets); conflicting payload returns request_id_conflict. Explicit retry clones the original operation targets/kind/value under a new deduped request key. New ordinary user actions can target a newer snapshot. Receipts are not provider confirmations.
 

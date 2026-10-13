@@ -63,6 +63,7 @@ const IPC_NAMES: &[(&str, &str)] = &[
     ("DISCONNECT_ACCOUNT_COMMAND", "disconnect_account"),
     ("REQUEST_SYNC_COMMAND", "request_sync"),
     ("ENABLE_MAILBOX_ACTIONS_COMMAND", "enable_mailbox_actions"),
+    ("CANCEL_MAILBOX_ACTION_UPGRADE_COMMAND", "cancel_mailbox_action_upgrade"),
     ("SET_READ_COMMAND", "set_read"),
     ("RETRY_OPERATION_COMMAND", "retry_operation"),
 ];

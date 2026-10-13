@@ -10,6 +10,7 @@ export const CONNECT_ACCOUNT_COMMAND = 'connect_account';
 export const DISCONNECT_ACCOUNT_COMMAND = 'disconnect_account';
 export const REQUEST_SYNC_COMMAND = 'request_sync';
 export const ENABLE_MAILBOX_ACTIONS_COMMAND = 'enable_mailbox_actions';
+export const CANCEL_MAILBOX_ACTION_UPGRADE_COMMAND = 'cancel_mailbox_action_upgrade';
 export const SET_READ_COMMAND = 'set_read';
 export const RETRY_OPERATION_COMMAND = 'retry_operation';
 
