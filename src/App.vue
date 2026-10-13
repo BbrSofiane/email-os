@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
- * Slice 01 + 02 shell: keyboard-first inbox, plain-text reader, durable activity,
- * and the Slice 02 account gate for native Gmail mode.
+ * Gmail mailbox shell: keyboard-first inbox, plain-text reader, operation recovery,
+ * and explicit account/action capability gates.
  *
  * Account gate: the account status read decides fixture-vs-Gmail. While the status
  * is loading or failed, the UI renders no mailbox content at all — it never falls
@@ -10,8 +10,8 @@
  * Keyboard contract (window-level, one handler):
  * - j / ArrowDown, k / ArrowUp: move selection (list focus follows).
  * - Enter: open selected conversation. Escape: close reader.
- * - e: archive the selected (or, while the reader is open, the open) conversation.
- *   Suppressed entirely in read-only Gmail mode (no mutation path exists).
+ * - e: archive the selected (or reader-open) conversation when actions are enabled.
+ * - Shift+U: explicitly mark the selected/open conversation unread.
  * - Ignored with Ctrl/Meta/Alt held, during IME composition, inside text fields, and
  *   Enter/e are ignored when a button owns the key (it activates itself).
  * No composer, drafts, sending, search, or HTML rendering in any slice.
@@ -37,6 +37,8 @@ const emptyState = ref<HTMLElement | null>(null);
 
 const readerOpen = computed(() => mailbox.openRef.value !== null);
 const gmailMode = computed(() => mailbox.isGmail.value);
+const mailboxActionsEnabled = computed(() => !gmailMode.value || mailbox.accountStatus.value?.mutationAccess === 'enabled');
+const gmailActionsEnabled = computed(() => gmailMode.value && mailboxActionsEnabled.value);
 const accountReady = computed(() => mailbox.accountState.value === 'ready');
 const accountStatus = computed(() => mailbox.accountStatus.value);
 
@@ -83,6 +85,19 @@ async function archiveFromList(): Promise<void> {
   await focusSelectedRow();
 }
 
+async function archiveRowFromList(target: { accountId: string; conversationId: string }): Promise<void> {
+  const listElement = inboxList.value?.$el;
+  const hadListFocus = listElement instanceof HTMLElement && listElement.contains(document.activeElement);
+  const receipt = await mailbox.setArchived(target, true);
+  if (!receipt || !hadListFocus) return;
+  const operation = mailbox.activity.value.find((item) => item.id === receipt.operationId);
+  if (operation?.status === 'failed') return;
+  const focused = document.activeElement;
+  const currentList = inboxList.value?.$el;
+  if (focused !== document.body && !(currentList instanceof HTMLElement && currentList.contains(focused))) return;
+  await focusSelectedRow();
+}
+
 function currentReaderTarget() {
   const target = mailbox.conversation.value?.ref ?? null;
   if (mailbox.detailState.value !== 'ready' || mailbox.inFlightCommandRef.value) return null;
@@ -111,6 +126,32 @@ async function unarchiveFromActivity(target: { accountId: string; conversationId
   await mailbox.setArchived(target, false);
 }
 
+async function setReadFromList(target: { accountId: string; conversationId: string }, read: boolean): Promise<void> {
+  if (!gmailActionsEnabled.value) return;
+  await mailbox.setRead(target, read);
+}
+
+async function setReadFromReader(read: boolean): Promise<void> {
+  if (!gmailActionsEnabled.value) return;
+  const target = currentReaderTarget();
+  if (target) await mailbox.setRead(target, read);
+}
+
+async function markUnread(): Promise<void> {
+  if (!gmailActionsEnabled.value) return;
+  if (readerOpen.value) {
+    const target = currentReaderTarget();
+    if (target) await mailbox.setRead(target, false);
+    return;
+  }
+  const summary = mailbox.selectedSummary.value;
+  if (summary) await mailbox.setRead(summary.ref, false);
+}
+
+async function retryFromActivity(operationId: string): Promise<void> {
+  await mailbox.retryOperation(operationId);
+}
+
 function onKeydown(event: KeyboardEvent): void {
   if (event.isComposing || event.keyCode === 229) return; // IME composition
   if (event.ctrlKey || event.metaKey || event.altKey) return;
@@ -126,9 +167,13 @@ function onKeydown(event: KeyboardEvent): void {
     }
     return;
   }
+  if (key === 'U' && event.shiftKey && !buttonOwns(event.target)) {
+    event.preventDefault();
+    void markUnread();
+    return;
+  }
   if (readerIsOpen) {
-    // Gmail is read-only: the e shortcut has no mutation to perform.
-    if (key === 'e' && !gmailMode.value && !buttonOwns(event.target)) {
+    if (key === 'e' && mailboxActionsEnabled.value && !buttonOwns(event.target)) {
       event.preventDefault();
       void archiveFromReader();
     }
@@ -152,8 +197,7 @@ function onKeydown(event: KeyboardEvent): void {
       void openSelected();
       return;
     case 'e':
-      // Gmail is read-only: no archive from the list either.
-      if (gmailMode.value || buttonOwns(event.target)) return;
+      if (!mailboxActionsEnabled.value || buttonOwns(event.target)) return;
       event.preventDefault();
       void archiveFromList();
       return;
@@ -171,7 +215,7 @@ onBeforeUnmount(() => {
 });
 
 const pendingCount = computed(
-  () => mailbox.activity.value.filter((op) => op.status === 'queued' || op.status === 'applying').length,
+  () => mailbox.activity.value.filter((op) => op.status === 'queued' || op.status === 'applying' || op.status === 'outcome_unknown').length,
 );
 
 function errorText(error: { kind: string; field?: string }): string {
@@ -208,6 +252,12 @@ function errorText(error: { kind: string; field?: string }): string {
       return 'unexpected provider response';
     case 'busy':
       return 'busy';
+    case 'permission_required':
+      return 'Google permission required';
+    case 'provider_rejected':
+      return 'provider rejected action';
+    case 'outcome_unknown':
+      return 'provider outcome unknown';
     default:
       return 'unknown error';
   }
@@ -217,13 +267,14 @@ function errorText(error: { kind: string; field?: string }): string {
 <template>
   <div class="app" :data-client-mode="props.mode">
     <header class="app-header">
-      <h1>Email OS — Slice 01</h1>
+      <h1>Email OS — Mailbox</h1>
       <p v-if="props.mode === 'browser-preview'" class="preview-banner" data-test="preview-banner" role="note">
         {{ BROWSER_PREVIEW_DISCLOSURE }}
       </p>
       <p class="status-line" data-test="status-line">
         <span>{{ mailbox.conversations.value.length }} in inbox</span>
         <span v-if="pendingCount > 0">{{ pendingCount }} pending operation(s)</span>
+        <span v-if="gmailActionsEnabled" data-test="read-shortcut-note">Shift+U marks the selected or open conversation unread.</span>
         <span v-if="mailbox.lastCommandError.value" role="alert" data-test="command-error">
           last command failed: {{ errorText(mailbox.lastCommandError.value) }}
         </span>
@@ -253,9 +304,12 @@ function errorText(error: { kind: string; field?: string }): string {
           v-if="gmailMode && accountStatus"
           :status="accountStatus"
           :busy="mailbox.accountBusy.value"
+          :action-error="mailbox.lastCommandError.value"
           @connect="mailbox.connectAccount()"
           @disconnect="mailbox.disconnectAccount()"
           @sync="mailbox.requestSync()"
+          @enable-actions="mailbox.enableMailboxActions()"
+          @cancel-upgrade="mailbox.cancelMailboxActionUpgrade()"
         />
         <section class="list-pane" aria-label="Inbox">
         <p v-if="mailbox.listState.value === 'loading'" data-test="inbox-loading">Loading inbox…</p>
@@ -269,15 +323,20 @@ function errorText(error: { kind: string; field?: string }): string {
           ref="emptyState"
           tabindex="-1"
         >
-          Inbox is empty. Archived conversations stay recoverable from Activity.
+          No conversations are currently in the inbox. Archived conversations stay recoverable from Activity.
         </p>
         <InboxList
           v-else
           ref="inboxList"
           :rows="mailbox.conversations.value"
           :selected-index="mailbox.selectedIndex.value"
+          :actions-enabled="mailboxActionsEnabled"
+          :show-read-state="gmailMode"
+          :show-read-controls="gmailActionsEnabled"
           @select="mailbox.selectIndex($event)"
           @open="openRow"
+          @archive="archiveRowFromList"
+          @set-read="setReadFromList"
         />
       </section>
 
@@ -287,18 +346,22 @@ function errorText(error: { kind: string; field?: string }): string {
           :state="mailbox.detailState.value"
           :error="mailbox.detailError.value"
           :command-in-flight="mailbox.inFlightCommandRef.value !== null"
-          :read-only="gmailMode"
+          :read-only="gmailMode && !mailboxActionsEnabled"
+          :show-read-controls="gmailActionsEnabled"
           @close="closeReader"
           @archive="archiveFromReader"
           @unarchive="unarchiveFromReader"
+          @set-read="setReadFromReader"
         />
       </section>
 
       <ActivityPanel
         :activity="mailbox.activity.value"
-        :read-only="gmailMode"
+        :actions-enabled="mailboxActionsEnabled"
+        :gmail-mode="gmailMode"
         @open="mailbox.openConversationByRef($event)"
         @unarchive="unarchiveFromActivity"
+        @retry="retryFromActivity"
       />
       </template>
     </main>

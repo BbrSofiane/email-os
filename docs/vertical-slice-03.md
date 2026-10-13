@@ -1,6 +1,6 @@
 # Slice 03: durable Gmail mailbox actions
 
-Status: implementation contract. The operator validated/merged Slice 02 on their Mac and approved worker implementation of archive/unarchive and explicit read/unread. macOS-first, one disposable Gmail account. No authority to connect accounts or use real credentials/mail in this VM. Work on `feat/gmail-mailbox-actions`; no child commits/pushes/publishes or agents. Parent owns acceptance and delivery.
+Status: implementation integrated in `feat/gmail-mailbox-actions`; disposable-Mac Slice 03 validation remains pending. The prior Slice 02 operator validation is a separate gate and does not validate these new mailbox actions. macOS-first, one disposable Gmail account. No authority to connect accounts or use real credentials/mail in this VM. No child commits/pushes/publishes or agents. Parent owns acceptance and delivery.
 
 ## Scope and checkpoint
 

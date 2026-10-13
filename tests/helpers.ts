@@ -39,6 +39,8 @@ export function flushMacrotasks(times = 5): Promise<void> {
 export interface CountingClient {
   client: MailClient;
   commands: SetArchived[];
+  readCommands: import('../src/lib/ipc/client').SetRead[];
+  retryCommands: import('../src/lib/ipc/client').RetryOperation[];
   listCalls(): number;
 }
 
@@ -46,6 +48,8 @@ export interface CountingClient {
 export function countingClient(inner: MailClient): CountingClient {
   let list = 0;
   const commands: SetArchived[] = [];
+  const readCommands: import('../src/lib/ipc/client').SetRead[] = [];
+  const retryCommands: import('../src/lib/ipc/client').RetryOperation[] = [];
   const client: MailClient = {
     ...accountMethods(inner),
     listConversations: () => {
@@ -57,9 +61,19 @@ export function countingClient(inner: MailClient): CountingClient {
       commands.push(command);
       return inner.setArchived(command);
     },
+    setRead: (command) => {
+      readCommands.push(command);
+      return inner.setRead(command);
+    },
+    retryOperation: (command) => {
+      retryCommands.push(command);
+      return inner.retryOperation(command);
+    },
     subscribe: (listener) => inner.subscribe(listener),
+    enableMailboxActions: () => inner.enableMailboxActions(),
+    cancelMailboxActionUpgrade: () => inner.cancelMailboxActionUpgrade(),
   };
-  return { client, commands, listCalls: () => list };
+  return { client, commands, readCommands, retryCommands, listCalls: () => list };
 }
 
 /**
@@ -68,12 +82,16 @@ export function countingClient(inner: MailClient): CountingClient {
  */
 export function accountMethods(
   inner: MailClient,
-): Pick<MailClient, 'getAccountStatus' | 'connectAccount' | 'disconnectAccount' | 'requestSync'> {
+): Pick<MailClient, 'getAccountStatus' | 'connectAccount' | 'disconnectAccount' | 'requestSync' | 'enableMailboxActions' | 'cancelMailboxActionUpgrade' | 'setRead' | 'retryOperation'> {
   return {
     getAccountStatus: () => inner.getAccountStatus(),
     connectAccount: () => inner.connectAccount(),
     disconnectAccount: () => inner.disconnectAccount(),
     requestSync: () => inner.requestSync(),
+    enableMailboxActions: () => inner.enableMailboxActions(),
+    cancelMailboxActionUpgrade: () => inner.cancelMailboxActionUpgrade(),
+    setRead: (command) => inner.setRead(command),
+    retryOperation: (command) => inner.retryOperation(command),
   };
 }
 

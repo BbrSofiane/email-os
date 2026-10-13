@@ -156,6 +156,140 @@ describe('useMailbox', () => {
     stop();
   });
 
+  it('refreshes an older accepted receipt without clearing a newer command error', async () => {
+    const inner = createBrowserFakeMailClient();
+    const receiptGate = deferred<OperationReceipt>();
+    let accepted: OperationReceipt | undefined;
+    let archiveCalls = 0;
+    let listCalls = 0;
+    const client: MailClient = {
+      ...accountMethods(inner),
+      listConversations: async () => {
+        listCalls += 1;
+        return inner.listConversations();
+      },
+      getConversation: (ref) => inner.getConversation(ref),
+      setArchived: async (command) => {
+        archiveCalls += 1;
+        if (archiveCalls === 1) {
+          accepted = await inner.setArchived(command);
+          return receiptGate.promise;
+        }
+        throw { kind: 'request_id_conflict' };
+      },
+      // Deliberately omit event delivery: a successful receipt must refetch.
+      subscribe: () => Promise.resolve(() => undefined),
+    };
+    const { result, stop } = scopeRun(() => useMailbox(client));
+    await result.ready;
+    const initialListCalls = listCalls;
+
+    const acceptedAction = result.setArchived(fixtureRef('conv-01'), true);
+    await vi.waitFor(() => {
+      if (accepted === undefined) throw new Error('first command receipt is delayed');
+    });
+    await inner.controls.flush();
+    expect(result.activity.value).toHaveLength(0);
+    expect(listCalls).toBe(initialListCalls);
+
+    expect(await result.setArchived(fixtureRef('conv-02'), true)).toBeNull();
+    expect(result.lastCommandError.value).toEqual({ kind: 'request_id_conflict' });
+    const receipt = accepted;
+    if (!receipt) throw new Error('expected accepted first receipt');
+    receiptGate.resolve(receipt);
+    await acceptedAction;
+
+    expect(listCalls).toBeGreaterThan(initialListCalls);
+    expect(result.conversations.value.some((row) => row.ref.conversationId === 'conv-01')).toBe(false);
+    expect(result.activity.value.some((op) => op.id === receipt.operationId)).toBe(true);
+    expect(result.lastCommandError.value).toEqual({ kind: 'request_id_conflict' });
+    stop();
+  });
+
+  it('clears invalidated command guards on successful disconnect and keeps late receipts from clearing newer guards', async () => {
+    const inner = createBrowserFakeMailClient();
+    inner.controls.setAccount({
+      mode: 'gmail', connection: 'connected', emailAddress: 'operator@example.test', mutationAccess: 'enabled',
+    });
+    const firstReceiptGate = deferred<OperationReceipt>();
+    const secondReceiptGate = deferred<OperationReceipt>();
+    let firstReceipt: OperationReceipt | undefined;
+    let secondReceipt: OperationReceipt | undefined;
+    let archiveCalls = 0;
+    let listCalls = 0;
+    const client: MailClient = {
+      ...accountMethods(inner),
+      listConversations: async () => {
+        listCalls += 1;
+        return inner.listConversations();
+      },
+      getConversation: (ref) => inner.getConversation(ref),
+      setArchived: async (command) => {
+        archiveCalls += 1;
+        const receipt = await inner.setArchived(command);
+        if (archiveCalls === 1) {
+          firstReceipt = receipt;
+          return firstReceiptGate.promise;
+        }
+        if (archiveCalls === 2) {
+          secondReceipt = receipt;
+          return secondReceiptGate.promise;
+        }
+        return receipt;
+      },
+      subscribe: () => Promise.resolve(() => undefined),
+    };
+    const { result, stop } = scopeRun(() => useMailbox(client));
+    await result.ready;
+    const firstAction = result.setArchived(fixtureRef('conv-01'), true);
+    await vi.waitFor(() => {
+      if (firstReceipt === undefined) throw new Error('first command receipt is delayed');
+    });
+    await inner.controls.flush();
+    expect(result.inFlightCommandRef.value).toEqual(fixtureRef('conv-01'));
+
+    // A rejected local disconnect keeps the current session's action guard.
+    inner.controls.failNextDisconnect({ kind: 'storage_unavailable' });
+    await result.disconnectAccount();
+    expect(result.inFlightCommandRef.value).toEqual(fixtureRef('conv-01'));
+    expect(result.accountStatus.value?.connection).toBe('connected');
+
+    await result.disconnectAccount();
+    expect(result.inFlightCommandRef.value).toBeNull();
+    expect(result.conversations.value).toHaveLength(0);
+    expect(result.activity.value).toHaveLength(0);
+
+    // Reconnect and explicitly restore capability, then start a new reader action.
+    await result.connectAccount();
+    await result.enableMailboxActions();
+    await vi.waitFor(() => expect(result.accountStatus.value?.mutationAccess).toBe('enabled'));
+    await result.openConversationByRef(fixtureRef('conv-02'));
+    expect(result.conversation.value?.ref.conversationId).toBe('conv-02');
+    const secondAction = result.setArchived(fixtureRef('conv-02'), true);
+    await vi.waitFor(() => {
+      if (secondReceipt === undefined) throw new Error('second command receipt is delayed');
+    });
+    expect(result.inFlightCommandRef.value).toEqual(fixtureRef('conv-02'));
+    const callsBeforeOldReceipt = listCalls;
+
+    const oldReceipt = firstReceipt;
+    if (!oldReceipt) throw new Error('expected first accepted receipt');
+    firstReceiptGate.resolve(oldReceipt);
+    await firstAction;
+    expect(listCalls).toBe(callsBeforeOldReceipt);
+    expect(result.inFlightCommandRef.value).toEqual(fixtureRef('conv-02'));
+
+    const newReceipt = secondReceipt;
+    if (!newReceipt) throw new Error('expected second accepted receipt');
+    secondReceiptGate.resolve(newReceipt);
+    await secondAction;
+    expect(result.inFlightCommandRef.value).toBeNull();
+    expect(result.conversation.value?.ref.conversationId).toBe('conv-02');
+    expect(await result.setRead(fixtureRef('conv-02'), true)).not.toBeNull();
+    expect(result.conversation.value?.ref.conversationId).toBe('conv-02');
+    stop();
+  });
+
   it('refuses archive commands until account status is known', async () => {
     const inner = createBrowserFakeMailClient();
     const status = deferred<Awaited<ReturnType<MailClient['getAccountStatus']>>>();

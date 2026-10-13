@@ -1,10 +1,11 @@
 //! Google OAuth2 + PKCE for the desktop Gmail client.
 //!
-//! Fixed HTTPS Google endpoints, `gmail.readonly` scope only, random PKCE
-//! verifier/challenge and state, a loopback callback listener bound to
-//! 127.0.0.1 with exact path/state checks and a one-shot response, short
-//! bounded timeout, and cancellation. Tokens, codes, authorization URLs,
-//! subjects, addresses, and bodies are never debug-printed or logged.
+//! Fixed HTTPS Google endpoints, read-only by default with an explicit
+//! `gmail.modify` upgrade, random PKCE verifier/challenge and state, a loopback
+//! callback listener bound to 127.0.0.1 with exact path/state checks and a
+//! one-shot response, short bounded timeout, and cancellation. Tokens, codes,
+//! authorization URLs, subjects, addresses, and bodies are never
+//! debug-printed or logged.
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -22,8 +23,10 @@ use url::Url;
 use crate::error::MailError;
 use crate::provider::CancelToken;
 
-/// Only the read-only scope is ever requested.
+/// Scope requested by the initial read-only connection.
 pub const GMAIL_READONLY_SCOPE: &str = "https://www.googleapis.com/auth/gmail.readonly";
+/// Broader scope requested only by the explicit mailbox-actions upgrade.
+pub const GMAIL_MODIFY_SCOPE: &str = "https://www.googleapis.com/auth/gmail.modify";
 
 /// Bounded window for the user to finish the browser OAuth round trip.
 pub const AUTH_TIMEOUT: Duration = Duration::from_secs(180);
@@ -129,6 +132,8 @@ pub(crate) struct TokenResponse {
     /// `None` when Google omits the refresh token; the caller preserves any
     /// previously stored refresh token in that case.
     pub refresh_token: Option<String>,
+    /// Granted scopes, omitted by some refresh responses.
+    pub scope: Option<String>,
     pub expires_at_epoch_ms: i64,
 }
 
@@ -188,6 +193,7 @@ pub(crate) fn authorize(
     config: &GoogleConfig,
     endpoints: &Endpoints,
     opener: &UrlOpener,
+    scope: &str,
     cancel: &CancelToken,
     timeout: Duration,
 ) -> Result<AuthCode, MailError> {
@@ -207,7 +213,7 @@ pub(crate) fn authorize(
         query.append_pair("client_id", &config.client_id);
         query.append_pair("redirect_uri", &redirect_uri);
         query.append_pair("response_type", "code");
-        query.append_pair("scope", GMAIL_READONLY_SCOPE);
+        query.append_pair("scope", scope);
         query.append_pair("access_type", "offline");
         query.append_pair("prompt", "consent");
         query.append_pair("code_challenge", &pkce.challenge);
@@ -460,9 +466,15 @@ fn token_request(
         .and_then(serde_json::Value::as_str)
         .filter(|s| !s.is_empty())
         .map(ToOwned::to_owned);
+    let scope = match json.get("scope") {
+        None => None,
+        Some(serde_json::Value::String(value)) => Some(value.clone()),
+        Some(_) => return Err(MailError::InvalidProviderResponse),
+    };
     Ok(TokenResponse {
         access_token,
         refresh_token,
+        scope,
         expires_at_epoch_ms: now_ms().saturating_add(expires_in.saturating_mul(1000)),
     })
 }

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /**
- * Plain-text reader (Slices 01 + 02). Opening is read-only — never marks read.
+ * Plain-text reader. Opening is read-only — never marks read.
  *
- * Slice 02: in Gmail mode the archive toggle is hidden entirely (`readOnly`), and
+ * Archive/read controls are shown only when the authoritative capability permits them, and
  * Gmail-supplied plain-text limitations are disclosed explicitly (`unsupportedReason`,
  * `contextComplete === false`) instead of silently dropping content.
  *
@@ -21,12 +21,14 @@ const props = defineProps<{
   commandInFlight: boolean;
   /** Gmail mode: archive/unarchive controls are hidden, not just disabled. */
   readOnly?: boolean;
+  showReadControls?: boolean;
 }>();
 
 const emit = defineEmits<{
   close: [];
   archive: [];
   unarchive: [];
+  setRead: [read: boolean];
 }>();
 
 const container = ref<HTMLElement | null>(null);
@@ -65,6 +67,12 @@ function describeError(error: MailError): string {
       return 'The provider returned an unexpected response.';
     case 'busy':
       return 'A sync is already in progress. Try again shortly.';
+    case 'permission_required':
+      return 'Google mailbox-action permission is not enabled.';
+    case 'provider_rejected':
+      return 'The provider rejected this action.';
+    case 'outcome_unknown':
+      return 'The remote result is uncertain. Review Activity before retrying.';
     default:
       return 'Could not load the conversation.';
   }
@@ -101,6 +109,22 @@ watch(
       >
         {{ props.conversation.isInInbox ? 'Archive (e)' : 'Unarchive' }}
       </button>
+      <span v-if="(props.readOnly || props.showReadControls) && props.conversation" data-test="reader-read-state">
+        {{ props.conversation.isRead === undefined ? 'Read state unknown' : props.conversation.isRead ? 'Read' : 'Unread' }}
+      </span>
+      <template v-if="props.showReadControls && props.conversation && props.conversation.isRead === undefined">
+        <button type="button" data-test="reader-mark-read" :disabled="props.commandInFlight" @click="emit('setRead', true)">Mark read</button>
+        <button type="button" data-test="reader-mark-unread" :disabled="props.commandInFlight" @click="emit('setRead', false)">Mark unread</button>
+      </template>
+      <button
+        v-if="props.showReadControls && props.conversation && props.conversation.isRead !== undefined"
+        type="button"
+        data-test="reader-toggle-read"
+        :disabled="props.commandInFlight"
+        @click="emit('setRead', !props.conversation.isRead)"
+      >
+        Mark {{ props.conversation.isRead ? 'unread' : 'read' }}
+      </button>
     </div>
 
     <p v-if="props.state === 'loading'" data-test="reader-loading">Loading conversation…</p>
@@ -109,8 +133,14 @@ watch(
     </p>
     <template v-else-if="props.conversation">
       <h2 class="reader-subject">{{ props.conversation.subject }}</h2>
+      <p v-if="props.conversation.retainedSnapshotAt" class="reader-recovery-snapshot" data-test="retained-snapshot-notice" role="note">
+        Local recovery snapshot saved at {{ props.conversation.retainedSnapshotAt }}; Gmail may have newer messages or mailbox changes.
+      </p>
       <p v-if="props.readOnly" class="reader-readonly" data-test="reader-readonly" role="note">
-        Read-only Gmail view: messages are never marked as read.
+        Read-only Gmail view: messages are never marked as read. Opening this conversation does not change read state.
+      </p>
+      <p v-else-if="props.showReadControls" class="reader-readonly" data-test="reader-no-auto-read" role="note">
+        Opening this conversation does not change read state; use an explicit read control.
       </p>
       <p
         v-if="props.conversation.unsupportedReason"
@@ -129,7 +159,7 @@ watch(
         This cached conversation may be incomplete; some context was unavailable in plain text.
       </p>
       <p v-if="props.conversation.pendingOperationId" data-test="reader-pending" class="reader-pending">
-        A pending archive operation is being applied to this conversation.
+        A mailbox action is pending for this conversation.
       </p>
       <ol class="messages">
         <li v-for="message in props.conversation.messages" :key="message.id" class="message">

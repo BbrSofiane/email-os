@@ -9,6 +9,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import {
+  CANCEL_MAILBOX_ACTION_UPGRADE_COMMAND,
   CONNECT_ACCOUNT_COMMAND,
   DISCONNECT_ACCOUNT_COMMAND,
   GET_ACCOUNT_STATUS_COMMAND,
@@ -17,13 +18,18 @@ import {
   MAILBOX_CHANGED_EVENT,
   REQUEST_SYNC_COMMAND,
   SET_ARCHIVED_COMMAND,
+  ENABLE_MAILBOX_ACTIONS_COMMAND,
+  SET_READ_COMMAND,
+  RETRY_OPERATION_COMMAND,
   type AccountStatus,
   type Conversation,
   type ConversationRef,
   type InboxSnapshot,
   type MailClient,
   type OperationReceipt,
+  type RetryOperation,
   type SetArchived,
+  type SetRead,
 } from './client';
 import { toMailError } from './client';
 
@@ -41,6 +47,18 @@ export function createTauriMailClient(): MailClient {
     },
     setArchived(command: SetArchived): Promise<OperationReceipt> {
       return call<OperationReceipt>(SET_ARCHIVED_COMMAND, { command });
+    },
+    enableMailboxActions(): Promise<void> {
+      return call<void>(ENABLE_MAILBOX_ACTIONS_COMMAND);
+    },
+    cancelMailboxActionUpgrade(): Promise<void> {
+      return call<void>(CANCEL_MAILBOX_ACTION_UPGRADE_COMMAND);
+    },
+    setRead(command: SetRead): Promise<OperationReceipt> {
+      return call<OperationReceipt>(SET_READ_COMMAND, { command });
+    },
+    retryOperation(command: RetryOperation): Promise<OperationReceipt> {
+      return call<OperationReceipt>(RETRY_OPERATION_COMMAND, { command });
     },
     async subscribe(listener: () => void): Promise<() => void> {
       const unlisten = await listen(MAILBOX_CHANGED_EVENT, () => listener());

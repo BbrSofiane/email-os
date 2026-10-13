@@ -1,4 +1,4 @@
-/* Slice 01 styles: layout only. No remote fonts, images, or CDN assets. */
+/* Local-only interface styles. No remote fonts, images, or CDN assets. */
 :root {
   color-scheme: light dark;
   font-family: system-ui, sans-serif;
@@ -114,6 +114,13 @@ body {
   font-style: italic;
 }
 
+.row-read-state {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+}
+
 .reader:focus {
   outline: none;
 }
@@ -185,6 +192,18 @@ body {
   font-style: italic;
 }
 
+.status-outcome_unknown,
+.activity-warning,
+.activity-error,
+.account-action-error {
+  color: #9a6700;
+}
+
+.activity-warning,
+.activity-error {
+  margin: 0;
+}
+
 .status-failed {
   color: #b02a37;
   font-weight: 600;
@@ -195,7 +214,7 @@ body {
   gap: 0.4rem;
 }
 
-/* Slice 02: account gate, Gmail account panel, reader disclosures. */
+/* Account gate, capability disclosures, and reader notices. */
 .account-gate {
   padding: 1rem;
   color: #444;
@@ -242,7 +261,9 @@ body {
 
 .account-coverage,
 .account-cached,
-.account-disposable {
+.account-disposable,
+.account-upgrade-disclosure,
+.account-disconnect-warning {
   margin: 0;
   color: #555;
 }
@@ -253,7 +274,8 @@ body {
 }
 
 .reader-notice,
-.reader-readonly {
+.reader-readonly,
+.reader-recovery-snapshot {
   margin: 0.2rem 0;
   color: #7a5b00;
   font-size: 0.85rem;

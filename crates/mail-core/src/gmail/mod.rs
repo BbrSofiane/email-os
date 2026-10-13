@@ -1,4 +1,4 @@
-//! Read-only Gmail integration, kept separate from the fixture archive core.
+//! Gmail integration and mailbox operations, kept separate from fixture storage.
 pub mod auth;
 pub mod operations;
 pub mod provider;

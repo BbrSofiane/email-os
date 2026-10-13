@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-cancel-mailbox-action-upgrade"
+description = "Enables the cancel_mailbox_action_upgrade command without any pre-configured scope."
+commands.allow = ["cancel_mailbox_action_upgrade"]
+
+[[permission]]
+identifier = "deny-cancel-mailbox-action-upgrade"
+description = "Denies the cancel_mailbox_action_upgrade command without any pre-configured scope."
+commands.deny = ["cancel_mailbox_action_upgrade"]

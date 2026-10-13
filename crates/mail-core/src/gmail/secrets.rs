@@ -1,4 +1,4 @@
-//! Secure credential custody for the read-only Gmail slice.
+//! Secure credential custody for Gmail OAuth credentials and verified grants.
 //!
 //! Production storage is the macOS Keychain via the `keyring` crate
 //! (apple-native backend), holding one serialized [`TokenBundle`] under a
@@ -24,6 +24,10 @@ pub struct TokenBundle {
     pub account_id: Option<String>,
     /// Account email, set after profile discovery.
     pub email: Option<String>,
+    /// True only after Google explicitly returned `gmail.modify` for this
+    /// bound account. Missing in legacy bundles and therefore denied.
+    #[serde(default)]
+    pub gmail_modify_granted: bool,
 }
 
 impl std::fmt::Debug for TokenBundle {
@@ -40,6 +44,7 @@ impl std::fmt::Debug for TokenBundle {
                 &self.account_id.as_ref().map(|_| "<redacted>"),
             )
             .field("email", &self.email.as_ref().map(|_| "<redacted>"))
+            .field("gmail_modify_granted", &self.gmail_modify_granted)
             .finish()
     }
 }
@@ -211,6 +216,7 @@ mod tests {
             expires_at_epoch_ms: 1,
             account_id: None,
             email: None,
+            gmail_modify_granted: false,
         }
     }
 
@@ -222,6 +228,7 @@ mod tests {
             expires_at_epoch_ms: 123,
             account_id: Some("synthetic-account-id".to_string()),
             email: Some("synthetic@example.test".to_string()),
+            gmail_modify_granted: true,
         };
         let rendered = format!("{bundle:?}");
         assert!(rendered.contains("<redacted>"), "{rendered}");

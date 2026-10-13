@@ -1,7 +1,7 @@
 [package]
 name = "email-os"
 version = "0.1.0"
-description = "Tauri 2 adapter over the fixture and read-only Gmail mail cores"
+description = "Tauri 2 adapter over the fixture and opt-in Gmail mailbox-action cores"
 edition = "2021"
 rust-version = "1.89"
 

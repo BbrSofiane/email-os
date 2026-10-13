@@ -1,5 +1,5 @@
-//! Read-only Gmail provider: the synchronous [`GmailReadProvider`] backing
-//! the Slice 02 cache/sync lane.
+//! Gmail provider: the synchronous [`GmailReadProvider`] backing the cache/sync
+//! lane, with mailbox writes denied until an explicit verified scope upgrade.
 //!
 //! Fixed HTTPS Google endpoints (tests override with loopback URLs), no
 //! redirects, bounded response sizes, typed errors only (no raw HTTP/token
@@ -49,8 +49,8 @@ const MAX_PAGE_RESULTS: usize = 100;
 /// lane (`DISCOVERY_CAP`) and is unchanged.
 const DISCOVERY_PAGE_RESULTS: usize = 25;
 
-/// Safe pacing floor between consecutive Gmail API reads (read-only per-user
-/// quota). The first request runs immediately; every later request waits a
+/// Safe pacing floor between consecutive Gmail API requests. The first
+/// request runs immediately; every later request waits a
 /// cancellation-aware interval since the previous one was issued.
 const MIN_REQUEST_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -73,6 +73,7 @@ const QUOTA_ERROR_REASONS: [&str; 5] = [
 const MAX_HISTORY_RECORDS: usize = 10_000;
 const MAX_CHANGED_THREAD_IDS: usize = 1_000;
 const MAX_DELETED_MESSAGE_IDS: usize = 5_000;
+const MAX_BATCH_MODIFY_MESSAGE_IDS: usize = 1_000;
 
 /// Refresh the access token this long before its stored expiry.
 const EXPIRY_SKEW_MS: i64 = 60_000;
@@ -85,9 +86,9 @@ pub struct GmailProvider {
     opener: UrlOpener,
     /// Serializes token refresh so concurrent calls never race the store.
     refresh_lock: Mutex<()>,
-    /// Pacing floor between consecutive API reads; tests shorten it.
+    /// Pacing floor between consecutive API requests; tests shorten it.
     min_request_interval: Duration,
-    /// Issue time of the most recent paced API read (or the reserved slot of
+    /// Issue time of the most recent paced API request (or the reserved slot of
     /// an in-flight one) so overlapping callers pace against each other.
     last_request_slot: Mutex<Option<Instant>>,
 }
@@ -137,7 +138,7 @@ impl GmailProvider {
         })
     }
 
-    /// Waits until the minimum interval since the previous API read has
+    /// Waits until the minimum interval since the previous API request has
     /// elapsed, aborting promptly with `auth_cancelled` when cancelled. The
     /// request's slot is reserved before waiting so overlapping callers
     /// cannot burst; the sync worker is serial in practice. An overdue
@@ -208,6 +209,14 @@ impl GmailProvider {
             refresh_token: tokens.refresh_token.or(Some(refresh_token)),
             account_id: latest.account_id.clone(),
             email: latest.email.clone(),
+            // Refresh can preserve or revoke a verified grant, never create
+            // one: only the explicit account-bound OAuth upgrade enables it.
+            gmail_modify_granted: latest.gmail_modify_granted
+                && tokens
+                    .scope
+                    .as_deref()
+                    .map(scope_grants_modify)
+                    .unwrap_or(true),
         };
         self.secrets.store(&updated)?;
         Ok(updated.access_token)
@@ -286,6 +295,145 @@ impl GmailProvider {
             String::from_utf8(bytes).map_err(|_| MailError::InvalidProviderResponse)?,
         ))
     }
+
+    /// Returns a token only when the locally stored, verified grant is
+    /// bound to an account. `access_token` performs any refresh first, after
+    /// which the grant is rechecked so an explicit scope downgrade blocks
+    /// the setter before dispatch.
+    fn mutation_token(&self, cancel: &CancelToken) -> Result<String, MailError> {
+        if !self.mutation_access()? {
+            return Err(MailError::PermissionRequired);
+        }
+        let token = self.access_token(cancel)?;
+        if !self.mutation_access()? {
+            return Err(MailError::PermissionRequired);
+        }
+        Ok(token)
+    }
+
+    fn apply_label_setter(
+        &self,
+        message_ids: &[String],
+        add: bool,
+        label: &'static str,
+        cancel: &CancelToken,
+    ) -> Result<(), MailError> {
+        validate_message_ids(message_ids)?;
+        let token = self.mutation_token(cancel)?;
+        if cancel.is_cancelled() {
+            return Err(MailError::AuthCancelled);
+        }
+        self.pace(cancel)?;
+        if cancel.is_cancelled() {
+            return Err(MailError::AuthCancelled);
+        }
+        let labels = [label];
+        let body = if add {
+            serde_json::json!({"ids": message_ids, "addLabelIds": labels})
+        } else {
+            serde_json::json!({"ids": message_ids, "removeLabelIds": labels})
+        };
+        let url = format!(
+            "{}/gmail/v1/users/me/messages/batchModify",
+            self.endpoints.api
+        );
+        let response = self
+            .http
+            .post(&url)
+            .bearer_auth(token)
+            .json(&body)
+            .send()
+            .map_err(|error| {
+                // A connection failure proves the request was not dispatched.
+                // Once connected, a transport error cannot establish whether
+                // Gmail applied the batch.
+                if error.is_connect() {
+                    auth::map_http_error(error)
+                } else {
+                    MailError::OutcomeUnknown
+                }
+            })?;
+        let status = response.status();
+        if status.is_success() {
+            // batchModify's successful response is empty; its status is the
+            // definitive setter result, so no response body is required.
+            return Ok(());
+        }
+        if status == StatusCode::FORBIDDEN {
+            let result = auth::read_bounded(response)
+                .map(|bytes| classify_mutation_forbidden(&String::from_utf8_lossy(&bytes)));
+            return Err(result.unwrap_or(MailError::ProviderRejected));
+        }
+        if status == StatusCode::UNAUTHORIZED {
+            return Err(MailError::AuthRequired);
+        }
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            return Err(MailError::RateLimited);
+        }
+        if status.is_server_error() {
+            return Err(MailError::OutcomeUnknown);
+        }
+        Err(MailError::ProviderRejected)
+    }
+}
+
+fn scope_grants_modify(scope: &str) -> bool {
+    scope
+        .split_ascii_whitespace()
+        .any(|granted| granted == auth::GMAIL_MODIFY_SCOPE)
+}
+
+fn validate_message_ids(message_ids: &[String]) -> Result<(), MailError> {
+    if message_ids.is_empty()
+        || message_ids.len() > MAX_BATCH_MODIFY_MESSAGE_IDS
+        || message_ids.iter().any(String::is_empty)
+    {
+        return Err(MailError::InvalidRequest {
+            field: "messageIds".to_string(),
+        });
+    }
+    let unique: HashSet<&str> = message_ids.iter().map(String::as_str).collect();
+    if unique.len() != message_ids.len() {
+        return Err(MailError::InvalidRequest {
+            field: "messageIds".to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn classify_mutation_forbidden(body: &str) -> MailError {
+    const MAX_REASONS_EXAMINED: usize = 10;
+    let Ok(json) = serde_json::from_str::<Value>(body) else {
+        return MailError::ProviderRejected;
+    };
+    let error = json.get("error");
+    let reasons: Vec<&str> = error
+        .and_then(|error| error.get("errors"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.get("reason").and_then(Value::as_str))
+        .take(MAX_REASONS_EXAMINED)
+        .collect();
+    if reasons
+        .iter()
+        .any(|reason| QUOTA_ERROR_REASONS.contains(reason))
+        || error
+            .and_then(|error| error.get("status"))
+            .and_then(Value::as_str)
+            == Some("RESOURCE_EXHAUSTED")
+    {
+        return MailError::RateLimited;
+    }
+    if reasons.contains(&"insufficientPermissions")
+        || error
+            .and_then(|error| error.get("status"))
+            .and_then(Value::as_str)
+            == Some("PERMISSION_DENIED")
+    {
+        return MailError::PermissionRequired;
+    }
+    MailError::ProviderRejected
 }
 
 /// Bounded, structured classification of an HTTP 403 body: inspects only the
@@ -318,6 +466,87 @@ fn classify_forbidden(body: &str) -> MailError {
 }
 
 impl GmailReadProvider for GmailProvider {
+    fn mutation_access(&self) -> Result<bool, MailError> {
+        let Some(bundle) = self.secrets.load()? else {
+            return Ok(false);
+        };
+        let bound = bundle
+            .account_id
+            .as_ref()
+            .or(bundle.email.as_ref())
+            .is_some_and(|account| !account.is_empty());
+        Ok(bundle.gmail_modify_granted
+            && bound
+            && (!bundle.access_token.is_empty() || bundle.refresh_token.is_some()))
+    }
+
+    fn enable_mutations(&self, cancel: &CancelToken) -> Result<GmailProfile, MailError> {
+        if !self.is_configured() {
+            return Err(MailError::NotConfigured);
+        }
+        let previous = self.secrets.load()?.ok_or(MailError::AuthRequired)?;
+        let bound_account = previous
+            .account_id
+            .as_ref()
+            .or(previous.email.as_ref())
+            .filter(|account| !account.is_empty())
+            .ok_or(MailError::AuthRequired)?
+            .clone();
+        if previous.access_token.is_empty() && previous.refresh_token.is_none() {
+            return Err(MailError::AuthRequired);
+        }
+        let grant = auth::authorize(
+            &self.config,
+            &self.endpoints,
+            &self.opener,
+            auth::GMAIL_MODIFY_SCOPE,
+            cancel,
+            auth::AUTH_TIMEOUT,
+        )?;
+        let tokens =
+            auth::exchange_code(&self.config, &self.endpoints, &self.http, &grant, cancel)?;
+        if !tokens.scope.as_deref().is_some_and(scope_grants_modify) {
+            return Err(MailError::PermissionRequired);
+        }
+        let profile = self.fetch_profile(&tokens.access_token, cancel)?;
+        if profile.account_id != bound_account {
+            return Err(MailError::AuthFailed);
+        }
+        // Cancellation remains effective through the final pre-commit point.
+        // Once this store succeeds, a late cancel is merely completion.
+        if cancel.is_cancelled() {
+            return Err(MailError::AuthCancelled);
+        }
+        let bundle = TokenBundle {
+            access_token: tokens.access_token,
+            expires_at_epoch_ms: tokens.expires_at_epoch_ms,
+            refresh_token: tokens.refresh_token.or(previous.refresh_token),
+            account_id: Some(profile.account_id.clone()),
+            email: Some(profile.email_address.clone()),
+            gmail_modify_granted: true,
+        };
+        self.secrets.store(&bundle)?;
+        Ok(profile)
+    }
+
+    fn apply_archive(
+        &self,
+        message_ids: &[String],
+        archived: bool,
+        cancel: &CancelToken,
+    ) -> Result<(), MailError> {
+        self.apply_label_setter(message_ids, !archived, "INBOX", cancel)
+    }
+
+    fn apply_read(
+        &self,
+        message_ids: &[String],
+        read: bool,
+        cancel: &CancelToken,
+    ) -> Result<(), MailError> {
+        self.apply_label_setter(message_ids, !read, "UNREAD", cancel)
+    }
+
     fn is_configured(&self) -> bool {
         !self.config.client_id.trim().is_empty()
     }
@@ -330,17 +559,26 @@ impl GmailReadProvider for GmailProvider {
         if !self.is_configured() {
             return Err(MailError::NotConfigured);
         }
+        let previous = self.secrets.load()?;
+        let prior_modify_grant = previous
+            .as_ref()
+            .is_some_and(|bundle| bundle.gmail_modify_granted);
+        let requested_scope = if prior_modify_grant {
+            auth::GMAIL_MODIFY_SCOPE
+        } else {
+            auth::GMAIL_READONLY_SCOPE
+        };
         let grant = auth::authorize(
             &self.config,
             &self.endpoints,
             &self.opener,
+            requested_scope,
             cancel,
             auth::AUTH_TIMEOUT,
         )?;
         let tokens =
             auth::exchange_code(&self.config, &self.endpoints, &self.http, &grant, cancel)?;
         // Preserve a stored refresh token when the grant response omits it.
-        let previous = self.secrets.load()?;
         let bundle = TokenBundle {
             access_token: tokens.access_token,
             expires_at_epoch_ms: tokens.expires_at_epoch_ms,
@@ -349,6 +587,15 @@ impl GmailReadProvider for GmailProvider {
                 .or_else(|| previous.as_ref().and_then(|p| p.refresh_token.clone())),
             account_id: previous.as_ref().and_then(|p| p.account_id.clone()),
             email: previous.as_ref().and_then(|p| p.email.clone()),
+            // Requested scope alone is never evidence of a grant. Existing
+            // explicit access survives an omitted scope response; a present
+            // response is authoritative and can revoke it.
+            gmail_modify_granted: prior_modify_grant
+                && tokens
+                    .scope
+                    .as_deref()
+                    .map(scope_grants_modify)
+                    .unwrap_or(true),
         };
         let profile = self.fetch_profile(&bundle.access_token, cancel)?;
         // Account binding: credentials are single-profile. Re-authenticating
@@ -545,16 +792,21 @@ fn parse_thread(account_id: &str, thread_id: &str, body: &str) -> Result<GmailTh
     }
     let mut parsed: Vec<(Message, String)> = Vec::new();
     let mut inbox_message_ids = Vec::new();
+    let mut message_ids = Vec::with_capacity(messages.len());
+    let mut unread_message_ids = Vec::new();
     let mut no_plain_text = 0usize;
     let mut attachments = false;
     let mut omitted_inline_content = false;
     for message in messages {
         let id = str_field(message, "id")?;
-        let has_inbox_label = optional_string_array(message, "labelIds")?
-            .is_some_and(|labels| labels.contains(&"INBOX"));
-        if has_inbox_label {
+        let labels = optional_string_array(message, "labelIds")?.unwrap_or_default();
+        if labels.contains(&"INBOX") {
             inbox_message_ids.push(id.clone());
         }
+        if labels.contains(&"UNREAD") {
+            unread_message_ids.push(id.clone());
+        }
+        message_ids.push(id.clone());
         let payload = message
             .get("payload")
             .ok_or(MailError::InvalidProviderResponse)?;
@@ -601,7 +853,7 @@ fn parse_thread(account_id: &str, thread_id: &str, body: &str) -> Result<GmailTh
         subject,
         messages: parsed.into_iter().map(|(message, _)| message).collect(),
         is_in_inbox: !inbox_message_ids.is_empty(),
-        is_read: None,
+        is_read: Some(unread_message_ids.is_empty()),
         context_complete: Some(no_plain_text == 0 && !attachments && !omitted_inline_content),
         unsupported_reason: (!reasons.is_empty()).then(|| reasons.join("; ")),
         retained_snapshot_at: None,
@@ -610,8 +862,8 @@ fn parse_thread(account_id: &str, thread_id: &str, body: &str) -> Result<GmailTh
     Ok(GmailThread {
         conversation,
         inbox_message_ids,
-        message_ids: None,
-        unread_message_ids: None,
+        message_ids: Some(message_ids),
+        unread_message_ids: Some(unread_message_ids),
         history_id,
     })
 }
@@ -1091,6 +1343,7 @@ pub(crate) mod tests {
             expires_at_epoch_ms: now_ms() + 3_600_000,
             account_id: Some("synthetic@example.test".to_string()),
             email: Some("synthetic@example.test".to_string()),
+            gmail_modify_granted: false,
         }
     }
 
@@ -1101,14 +1354,24 @@ pub(crate) mod tests {
         _thread: std::thread::JoinHandle<()>,
     }
 
+    type RequestHook = Arc<dyn Fn(&str) + Send + Sync>;
+
     struct FakeState {
         script: Mutex<VecDeque<(String, u16, String)>>,
         requests: Mutex<Vec<String>>,
         bodies: Mutex<Vec<String>>,
+        on_request: Option<RequestHook>,
     }
 
     impl FakeApi {
         fn start(script: Vec<(&str, u16, &str)>) -> (String, FakeApi) {
+            Self::start_with_request_hook(script, None)
+        }
+
+        fn start_with_request_hook(
+            script: Vec<(&str, u16, &str)>,
+            on_request: Option<RequestHook>,
+        ) -> (String, FakeApi) {
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
             let port = listener.local_addr().unwrap().port();
             let state = Arc::new(FakeState {
@@ -1122,6 +1385,7 @@ pub(crate) mod tests {
                 ),
                 requests: Mutex::new(Vec::new()),
                 bodies: Mutex::new(Vec::new()),
+                on_request,
             });
             let thread_state = Arc::clone(&state);
             let thread = std::thread::spawn(move || loop {
@@ -1143,12 +1407,20 @@ pub(crate) mod tests {
                     .lock()
                     .unwrap()
                     .push(text.split("\r\n\r\n").nth(1).unwrap_or("").to_string());
+                if let Some(on_request) = &thread_state.on_request {
+                    on_request(&target);
+                }
                 let scripted = thread_state.script.lock().unwrap().pop_front();
                 match scripted {
                     Some((prefix, status, body)) if target.starts_with(&prefix) => {
+                        let location = if status == 302 {
+                            format!("Location: http://127.0.0.1:{port}/redirect-target\r\n")
+                        } else {
+                            String::new()
+                        };
                         let _ = stream.write_all(
                             format!(
-                                "HTTP/1.1 {status} x\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                                "HTTP/1.1 {status} x\r\n{location}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
                                 body.len()
                             )
                             .as_bytes(),
@@ -1194,6 +1466,40 @@ pub(crate) mod tests {
         };
         provider.opener = Arc::new(|_| Ok(()));
         provider
+    }
+
+    fn completing_oauth_opener(captured_url: Arc<Mutex<Option<String>>>) -> UrlOpener {
+        Arc::new(move |url| {
+            *captured_url.lock().unwrap() = Some(url.to_string());
+            let parsed = url::Url::parse(url).unwrap();
+            let redirect_uri = parsed
+                .query_pairs()
+                .find(|(key, _)| key == "redirect_uri")
+                .map(|(_, value)| value.to_string())
+                .unwrap();
+            let state = parsed
+                .query_pairs()
+                .find(|(key, _)| key == "state")
+                .map(|(_, value)| value.to_string())
+                .unwrap();
+            let callback = format!("{redirect_uri}?code=synthetic-code&state={state}");
+            std::thread::spawn(move || {
+                let port = redirect_uri
+                    .rsplit(':')
+                    .next()
+                    .and_then(|part| part.split('/').next())
+                    .unwrap()
+                    .parse::<u16>()
+                    .unwrap();
+                let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+                let _ = stream.write_all(
+                    format!("GET {callback} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n").as_bytes(),
+                );
+                let mut response = Vec::new();
+                let _ = stream.read_to_end(&mut response);
+            });
+            Ok(())
+        })
     }
 
     fn payload_headers(headers: &[(&str, &str)]) -> Vec<Value> {
@@ -1386,6 +1692,155 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn explicit_upgrade_requests_and_verifies_modify_scope_for_bound_account() {
+        let (api_base, _api) = FakeApi::start(vec![(
+            "/gmail/v1/users/me/profile",
+            200,
+            r#"{"emailAddress":"synthetic@example.test","historyId":"1234"}"#,
+        )]);
+        let (token_base, _token) = FakeApi::start(vec![(
+            "/synthetic-token",
+            200,
+            r#"{"access_token":"at-upgraded","refresh_token":"rt-upgraded","expires_in":3600,"scope":"https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.modify"}"#,
+        )]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        let previous = future_token();
+        secrets.store(&previous).unwrap();
+        let mut provider = test_provider(&api_base, secrets.clone());
+        provider.endpoints.token = format!("{token_base}/synthetic-token");
+        let auth_url = Arc::new(Mutex::new(None));
+        provider.opener = completing_oauth_opener(auth_url.clone());
+
+        let profile = provider.enable_mutations(&CancelToken::default()).unwrap();
+        assert_eq!(profile.account_id, "synthetic@example.test");
+        assert!(provider.mutation_access().unwrap());
+        let stored = secrets.load().unwrap().unwrap();
+        assert_eq!(stored.access_token, "at-upgraded");
+        assert!(stored.gmail_modify_granted);
+        let query: Vec<(String, String)> =
+            url::Url::parse(auth_url.lock().unwrap().as_deref().unwrap())
+                .unwrap()
+                .query_pairs()
+                .map(|(key, value)| (key.into_owned(), value.into_owned()))
+                .collect();
+        assert!(query
+            .iter()
+            .any(|(key, value)| { key == "scope" && value == auth::GMAIL_MODIFY_SCOPE }));
+    }
+
+    #[test]
+    fn upgrade_without_returned_modify_scope_preserves_old_bundle() {
+        let (_api_base, api) = FakeApi::start(vec![]);
+        let (token_base, _token) = FakeApi::start(vec![(
+            "/synthetic-token",
+            200,
+            r#"{"access_token":"at-denied","expires_in":3600,"scope":"https://www.googleapis.com/auth/gmail.readonly"}"#,
+        )]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        let previous = future_token();
+        secrets.store(&previous).unwrap();
+        let mut provider = test_provider("http://127.0.0.1:9", secrets.clone());
+        provider.endpoints.token = format!("{token_base}/synthetic-token");
+        provider.opener = completing_oauth_opener(Arc::new(Mutex::new(None)));
+
+        assert!(matches!(
+            provider.enable_mutations(&CancelToken::default()),
+            Err(MailError::PermissionRequired)
+        ));
+        assert_eq!(secrets.load().unwrap(), Some(previous));
+        assert!(!provider.mutation_access().unwrap());
+        assert!(
+            api.requests().is_empty(),
+            "profile must not be fetched after denial"
+        );
+    }
+
+    #[test]
+    fn upgrade_with_omitted_scope_is_denied_without_replacing_credentials() {
+        let (token_base, _token) = FakeApi::start(vec![(
+            "/synthetic-token",
+            200,
+            r#"{"access_token":"at-unverified","expires_in":3600}"#,
+        )]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        let previous = future_token();
+        secrets.store(&previous).unwrap();
+        let mut provider = test_provider("http://127.0.0.1:9", secrets.clone());
+        provider.endpoints.token = format!("{token_base}/synthetic-token");
+        provider.opener = completing_oauth_opener(Arc::new(Mutex::new(None)));
+
+        assert!(matches!(
+            provider.enable_mutations(&CancelToken::default()),
+            Err(MailError::PermissionRequired)
+        ));
+        assert_eq!(secrets.load().unwrap(), Some(previous));
+        assert!(!provider.mutation_access().unwrap());
+    }
+
+    #[test]
+    fn upgrade_account_swap_preserves_old_credentials() {
+        let (api_base, _api) = FakeApi::start(vec![(
+            "/gmail/v1/users/me/profile",
+            200,
+            r#"{"emailAddress":"other@example.test","historyId":"5"}"#,
+        )]);
+        let (token_base, _token) = FakeApi::start(vec![(
+            "/synthetic-token",
+            200,
+            r#"{"access_token":"at-other","expires_in":3600,"scope":"https://www.googleapis.com/auth/gmail.modify"}"#,
+        )]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        let previous = future_token();
+        secrets.store(&previous).unwrap();
+        let mut provider = test_provider(&api_base, secrets.clone());
+        provider.endpoints.token = format!("{token_base}/synthetic-token");
+        provider.opener = completing_oauth_opener(Arc::new(Mutex::new(None)));
+
+        assert!(matches!(
+            provider.enable_mutations(&CancelToken::default()),
+            Err(MailError::AuthFailed)
+        ));
+        assert_eq!(secrets.load().unwrap(), Some(previous));
+        assert!(!provider.mutation_access().unwrap());
+    }
+
+    #[test]
+    fn cancelled_upgrade_after_profile_keeps_old_bundle_before_store() {
+        let cancel = CancelToken::default();
+        let cancel_on_profile = cancel.clone();
+        let (api_base, _api) = FakeApi::start_with_request_hook(
+            vec![(
+                "/gmail/v1/users/me/profile",
+                200,
+                r#"{"emailAddress":"synthetic@example.test","historyId":"6"}"#,
+            )],
+            Some(Arc::new(move |target| {
+                if target.starts_with("/gmail/v1/users/me/profile") {
+                    cancel_on_profile.cancel();
+                }
+            })),
+        );
+        let (token_base, _token) = FakeApi::start(vec![(
+            "/synthetic-token",
+            200,
+            r#"{"access_token":"at-cancelled","expires_in":3600,"scope":"https://www.googleapis.com/auth/gmail.modify"}"#,
+        )]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        let previous = future_token();
+        secrets.store(&previous).unwrap();
+        let mut provider = test_provider(&api_base, secrets.clone());
+        provider.endpoints.token = format!("{token_base}/synthetic-token");
+        provider.opener = completing_oauth_opener(Arc::new(Mutex::new(None)));
+
+        assert!(matches!(
+            provider.enable_mutations(&cancel),
+            Err(MailError::AuthCancelled)
+        ));
+        assert_eq!(secrets.load().unwrap(), Some(previous));
+        assert!(!provider.mutation_access().unwrap());
+    }
+
+    #[test]
     fn connect_rejects_when_cancelled_before_start() {
         let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
         let provider = test_provider("http://127.0.0.1:9", secrets);
@@ -1434,6 +1889,140 @@ pub(crate) mod tests {
             .requests()
             .iter()
             .any(|r| r.contains("/gmail/v1/users/me/profile")));
+    }
+
+    #[test]
+    fn refresh_failures_after_preliminary_profile_never_dispatch_setter() {
+        for (status, body, expected) in [
+            (
+                503,
+                "synthetic token outage",
+                MailError::ProviderUnavailable,
+            ),
+            (200, "not json", MailError::InvalidProviderResponse),
+        ] {
+            let (api_base, api) = FakeApi::start_with_request_hook(
+                vec![(
+                    "/gmail/v1/users/me/profile",
+                    200,
+                    r#"{"emailAddress":"synthetic@example.test","historyId":"77"}"#,
+                )],
+                Some(Arc::new(|target| {
+                    if target.starts_with("/gmail/v1/users/me/profile") {
+                        // The access token is fresh at profile dispatch, then
+                        // crosses EXPIRY_SKEW_MS before the setter asks for it.
+                        std::thread::sleep(Duration::from_millis(1_100));
+                    }
+                })),
+            );
+            let (token_base, token) = FakeApi::start(vec![("/synthetic-token", status, body)]);
+            let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+            let granted = TokenBundle {
+                gmail_modify_granted: true,
+                expires_at_epoch_ms: now_ms() + EXPIRY_SKEW_MS + 1_000,
+                ..future_token()
+            };
+            secrets.store(&granted).unwrap();
+            let mut provider = test_provider(&api_base, secrets.clone());
+            provider.endpoints.token = format!("{token_base}/synthetic-token");
+
+            let profile = provider.profile(&CancelToken::default()).unwrap();
+            assert_eq!(profile.history_id, "77", "preliminary profile succeeds");
+            assert!(
+                secrets.load().unwrap().unwrap().expires_at_epoch_ms - EXPIRY_SKEW_MS <= now_ms(),
+                "token crosses the refresh threshold after profile returns"
+            );
+            assert_eq!(
+                provider.apply_archive(&["snapshot-id".to_string()], true, &CancelToken::default()),
+                Err(expected)
+            );
+            assert_eq!(token.requests().len(), 1, "setter attempted token refresh");
+            assert_eq!(
+                api.requests(),
+                vec!["/gmail/v1/users/me/profile".to_string()],
+                "refresh failure occurs before any batchModify request"
+            );
+        }
+    }
+
+    #[test]
+    fn refresh_scope_downgrade_disables_write_before_setter_dispatch() {
+        let (api_base, api) = FakeApi::start(vec![]);
+        let (token_base, _token) = FakeApi::start(vec![(
+            "/synthetic-token",
+            200,
+            r#"{"access_token":"at-downgraded","expires_in":3600,"scope":"https://www.googleapis.com/auth/gmail.readonly"}"#,
+        )]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        let granted = TokenBundle {
+            gmail_modify_granted: true,
+            expires_at_epoch_ms: now_ms() - 1_000,
+            ..future_token()
+        };
+        secrets.store(&granted).unwrap();
+        let mut provider = test_provider(&api_base, secrets.clone());
+        provider.endpoints.token = format!("{token_base}/synthetic-token");
+
+        assert!(matches!(
+            provider.apply_archive(&["m-snapshot".to_string()], true, &CancelToken::default()),
+            Err(MailError::PermissionRequired)
+        ));
+        assert!(!secrets.load().unwrap().unwrap().gmail_modify_granted);
+        assert!(
+            api.requests().is_empty(),
+            "downgraded grant must block POST"
+        );
+    }
+
+    #[test]
+    fn refresh_scope_cannot_promote_an_unverified_bundle() {
+        let (api_base, api) = FakeApi::start(vec![]);
+        let (token_base, _token) = FakeApi::start(vec![(
+            "/synthetic-token",
+            200,
+            r#"{"access_token":"at-unverified-refresh","expires_in":3600,"scope":"https://www.googleapis.com/auth/gmail.modify"}"#,
+        )]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        let unverified = TokenBundle {
+            expires_at_epoch_ms: now_ms() - 1_000,
+            ..future_token()
+        };
+        secrets.store(&unverified).unwrap();
+        let mut provider = test_provider(&api_base, secrets.clone());
+        provider.endpoints.token = format!("{token_base}/synthetic-token");
+
+        assert!(matches!(
+            provider.apply_archive(&["snapshot-id".to_string()], true, &CancelToken::default()),
+            Err(MailError::PermissionRequired)
+        ));
+        assert!(!secrets.load().unwrap().unwrap().gmail_modify_granted);
+        assert!(api.requests().is_empty());
+    }
+
+    #[test]
+    fn refresh_without_scope_preserves_verified_write_grant() {
+        let (api_base, api) =
+            FakeApi::start(vec![("/gmail/v1/users/me/messages/batchModify", 200, "")]);
+        let (token_base, _token) = FakeApi::start(vec![(
+            "/synthetic-token",
+            200,
+            r#"{"access_token":"at-refreshed-grant","expires_in":3600}"#,
+        )]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        let granted = TokenBundle {
+            gmail_modify_granted: true,
+            expires_at_epoch_ms: now_ms() - 1_000,
+            ..future_token()
+        };
+        secrets.store(&granted).unwrap();
+        let mut provider = test_provider(&api_base, secrets.clone());
+        provider.endpoints.token = format!("{token_base}/synthetic-token");
+
+        provider
+            .apply_archive(&["m-snapshot".to_string()], true, &CancelToken::default())
+            .unwrap();
+        assert!(secrets.load().unwrap().unwrap().gmail_modify_granted);
+        assert!(api.requests()[0].ends_with("/gmail/v1/users/me/messages/batchModify"));
     }
 
     #[test]
@@ -1532,7 +2121,7 @@ pub(crate) mod tests {
         );
         let html_only = gmail_message(
             "m2",
-            &["INBOX"],
+            &["INBOX", "UNREAD"],
             text_payload(
                 "text/html",
                 &[("From", "h@example.test"), ("Subject", "html only")],
@@ -1551,6 +2140,14 @@ pub(crate) mod tests {
             .expect("thread exists");
         assert_eq!(thread.history_id, "99");
         assert_eq!(thread.inbox_message_ids, vec!["m1", "m2"]);
+        assert_eq!(
+            thread.message_ids.as_ref().unwrap(),
+            &vec!["m1".to_string(), "m2".to_string()]
+        );
+        assert_eq!(
+            thread.unread_message_ids.as_ref().unwrap(),
+            &vec!["m2".to_string()]
+        );
         let conversation = &thread.conversation;
         assert_eq!(conversation.conversation_ref.conversation_id, "t1");
         assert_eq!(
@@ -1558,6 +2155,7 @@ pub(crate) mod tests {
             "synthetic@example.test"
         );
         assert!(conversation.is_in_inbox);
+        assert_eq!(conversation.is_read, Some(false));
         assert_eq!(conversation.messages.len(), 1);
         let message = &conversation.messages[0];
         assert_eq!(message.id, "m1");
@@ -1669,6 +2267,184 @@ pub(crate) mod tests {
             provider.list_inbox(None, &CancelToken::default()),
             Err(MailError::InvalidProviderResponse)
         ));
+    }
+
+    #[test]
+    fn mailbox_setters_post_only_exact_snapshot_ids_and_closed_label_changes() {
+        let (base, api) = FakeApi::start(vec![
+            ("/gmail/v1/users/me/messages/batchModify", 200, ""),
+            ("/gmail/v1/users/me/messages/batchModify", 200, ""),
+            ("/gmail/v1/users/me/messages/batchModify", 200, ""),
+            ("/gmail/v1/users/me/messages/batchModify", 200, ""),
+        ]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        let granted = TokenBundle {
+            gmail_modify_granted: true,
+            ..future_token()
+        };
+        secrets.store(&granted).unwrap();
+        let provider = test_provider(&base, secrets);
+        let ids = vec![
+            "unsupported-message".to_string(),
+            "snapshot-message-2".to_string(),
+        ];
+
+        provider
+            .apply_archive(&ids, true, &CancelToken::default())
+            .unwrap();
+        provider
+            .apply_archive(&ids, false, &CancelToken::default())
+            .unwrap();
+        provider
+            .apply_read(&ids, true, &CancelToken::default())
+            .unwrap();
+        provider
+            .apply_read(&ids, false, &CancelToken::default())
+            .unwrap();
+
+        let bodies: Vec<Value> = api
+            .bodies()
+            .iter()
+            .map(|body| serde_json::from_str(body).unwrap())
+            .collect();
+        assert_eq!(bodies.len(), 4);
+        for body in &bodies {
+            assert_eq!(body["ids"], json!(ids));
+        }
+        assert_eq!(bodies[0], json!({"ids": ids, "removeLabelIds": ["INBOX"]}));
+        assert_eq!(bodies[1], json!({"ids": ids, "addLabelIds": ["INBOX"]}));
+        assert_eq!(bodies[2], json!({"ids": ids, "removeLabelIds": ["UNREAD"]}));
+        assert_eq!(bodies[3], json!({"ids": ids, "addLabelIds": ["UNREAD"]}));
+        assert!(api
+            .requests()
+            .iter()
+            .all(|path| { path == "/gmail/v1/users/me/messages/batchModify" }));
+    }
+
+    #[test]
+    fn setter_rejects_empty_duplicate_and_oversized_target_sets_without_dispatch() {
+        let (base, api) = FakeApi::start(vec![]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        secrets
+            .store(&TokenBundle {
+                gmail_modify_granted: true,
+                ..future_token()
+            })
+            .unwrap();
+        let provider = test_provider(&base, secrets);
+        let cancel = CancelToken::default();
+        for ids in [
+            Vec::new(),
+            vec![String::new()],
+            vec!["duplicate".to_string(), "duplicate".to_string()],
+            (0..=MAX_BATCH_MODIFY_MESSAGE_IDS)
+                .map(|index| format!("m{index}"))
+                .collect(),
+        ] {
+            assert!(matches!(
+                provider.apply_read(&ids, true, &cancel),
+                Err(MailError::InvalidRequest { .. })
+            ));
+        }
+        assert!(api.requests().is_empty());
+    }
+
+    #[test]
+    fn setter_distinguishes_quota_permission_rejection_and_unknown_outcome() {
+        let run = |status, body: &'static str| {
+            let (base, _api) = FakeApi::start(vec![(
+                "/gmail/v1/users/me/messages/batchModify",
+                status,
+                body,
+            )]);
+            let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+            secrets
+                .store(&TokenBundle {
+                    gmail_modify_granted: true,
+                    ..future_token()
+                })
+                .unwrap();
+            let provider = test_provider(&base, secrets);
+            provider.apply_archive(&["snapshot-id".to_string()], true, &CancelToken::default())
+        };
+        assert_eq!(
+            run(
+                403,
+                r#"{"error":{"errors":[{"reason":"userRateLimitExceeded"}]}}"#
+            ),
+            Err(MailError::RateLimited)
+        );
+        assert_eq!(
+            run(
+                403,
+                r#"{"error":{"errors":[{"reason":"insufficientPermissions"}],"status":"PERMISSION_DENIED"}}"#
+            ),
+            Err(MailError::PermissionRequired)
+        );
+        assert_eq!(
+            run(403, r#"{"error":{"errors":[{"reason":"domainPolicy"}]}}"#),
+            Err(MailError::ProviderRejected)
+        );
+        assert_eq!(
+            run(503, "synthetic internal text"),
+            Err(MailError::OutcomeUnknown)
+        );
+        assert_eq!(run(302, ""), Err(MailError::ProviderRejected));
+    }
+
+    #[test]
+    fn setter_does_not_follow_redirects_and_cancelled_pre_dispatch_is_definite() {
+        let (base, api) = FakeApi::start(vec![
+            ("/gmail/v1/users/me/messages/batchModify", 302, ""),
+            ("/redirect-target", 200, ""),
+        ]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        secrets
+            .store(&TokenBundle {
+                gmail_modify_granted: true,
+                ..future_token()
+            })
+            .unwrap();
+        let provider = test_provider(&base, secrets);
+        assert_eq!(
+            provider.apply_archive(&["snapshot-id".to_string()], true, &CancelToken::default()),
+            Err(MailError::ProviderRejected)
+        );
+        assert_eq!(
+            api.requests().len(),
+            1,
+            "redirect target must not be requested"
+        );
+
+        let (base, api) = FakeApi::start(vec![]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        secrets
+            .store(&TokenBundle {
+                gmail_modify_granted: true,
+                ..future_token()
+            })
+            .unwrap();
+        let provider = test_provider(&base, secrets);
+        let cancel = CancelToken::default();
+        cancel.cancel();
+        assert_eq!(
+            provider.apply_archive(&["snapshot-id".to_string()], true, &cancel),
+            Err(MailError::AuthCancelled)
+        );
+        assert!(api.requests().is_empty());
+
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        secrets
+            .store(&TokenBundle {
+                gmail_modify_granted: true,
+                ..future_token()
+            })
+            .unwrap();
+        let unavailable = test_provider("http://127.0.0.1:9", secrets);
+        assert_eq!(
+            unavailable.apply_archive(&["snapshot-id".to_string()], true, &CancelToken::default()),
+            Err(MailError::NetworkUnavailable)
+        );
     }
 
     #[test]

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 /**
- * Gmail account status and lifecycle controls (Slice 02).
+ * Gmail account status and lifecycle controls (Slices 02 + 03).
  *
- * Read-only disclosure is explicit: Gmail mode never offers archive, mark-read, or
- * sending. `connect_account`/`disconnect_account`/`request_sync` enqueue work and
+ * Gmail remains read-only until authoritative `mutationAccess: enabled`; the explicit
+ * upgrade disclosure explains Google's broader modify scope. Lifecycle commands
  * return acceptance, so button state follows the authoritative AccountStatus (plus a
  * transient busy flag), never an invented OAuth/sync success. Failures stay typed
  * and visible; the cached list/reader remain usable while sync is offline or
@@ -11,19 +11,22 @@
  *
  * Safety: plain text interpolation only — no HTML, no remote assets, no URLs.
  */
-import type { AccountStatus, ConnectionState, MailError } from '../lib/ipc/client';
+import type { AccountStatus, ConnectionState, MailError, MutationAccess } from '../lib/ipc/client';
 import type { AccountAction } from '../composables/useMailbox';
 
 const props = defineProps<{
   status: AccountStatus;
   /** Transient in-flight lifecycle action, if any. */
   busy: AccountAction | null;
+  actionError?: MailError | null;
 }>();
 
 const emit = defineEmits<{
   connect: [];
   disconnect: [];
   sync: [];
+  enableActions: [];
+  cancelUpgrade: [];
 }>();
 
 const CONNECTION_LABELS: Record<ConnectionState, string> = {
@@ -42,6 +45,14 @@ const SYNC_LABELS: Record<AccountStatus['sync']['state'], string> = {
 
 function connectionLabel(connection: ConnectionState): string {
   return CONNECTION_LABELS[connection];
+}
+
+function accessLabel(access: MutationAccess | undefined): string {
+  switch (access ?? 'read_only') {
+    case 'read_only': return 'read-only';
+    case 'upgrading': return 'Permission upgrade in progress';
+    case 'enabled': return 'Mailbox actions enabled';
+  }
 }
 
 function describeError(error: MailError): string {
@@ -66,6 +77,12 @@ function describeError(error: MailError): string {
       return 'The provider returned an unexpected response.';
     case 'busy':
       return 'A sync is already in progress.';
+    case 'permission_required':
+      return 'Google did not grant mailbox-action permission; the account remains read-only.';
+    case 'provider_rejected':
+      return 'The provider rejected the mailbox action.';
+    case 'outcome_unknown':
+      return 'The provider outcome is unknown; review Activity before retrying.';
     case 'read_only':
       return 'Gmail is read-only; this action is unavailable.';
     case 'storage_unavailable':
@@ -110,14 +127,49 @@ const showConnect = (): boolean =>
 <template>
   <section class="account-panel" aria-label="Account" data-test="account-panel">
     <div class="account-row">
-      <span class="account-mode" data-test="account-mode">Gmail — read-only</span>
+      <span class="account-mode" data-test="account-mode">Gmail — {{ accessLabel(props.status.mutationAccess) }}</span>
       <span class="account-connection" data-test="account-connection">{{ connectionLabel(props.status.connection) }}</span>
     </div>
     <p v-if="props.status.account" class="account-email" data-test="account-email">
       {{ props.status.account.emailAddress }}
     </p>
     <p class="account-disposable" data-test="disposable-account-note">
-      Disposable test account — read-only access only.
+      Disposable test account. Cached reading remains available during permission changes.
+    </p>
+    <p v-if="props.actionError" class="account-action-error" data-test="account-action-error" role="alert">
+      Mailbox-action request: {{ describeError(props.actionError) }}
+    </p>
+    <template v-if="(props.status.mutationAccess ?? 'read_only') === 'read_only' && props.status.connection === 'connected'">
+      <p class="account-upgrade-disclosure" data-test="action-upgrade-disclosure" role="note">
+        Enable mailbox actions requests Google's broad Gmail modify permission, which can also allow sending and deleting mail.
+        Email OS currently implements only archive/unarchive and explicit read/unread; it does not send or delete mail.
+      </p>
+      <button
+        type="button"
+        data-test="enable-mailbox-actions"
+        :disabled="props.busy !== null"
+        @click="emit('enableActions')"
+      >
+        {{ props.busy === 'enable-actions' ? 'Requesting permission…' : 'Enable mailbox actions' }}
+      </button>
+    </template>
+    <p v-else-if="props.status.mutationAccess === 'upgrading'" data-test="action-upgrading" role="status">
+      Google permission upgrade in progress. Mail remains readable; actions stay disabled until access is verified.
+    </p>
+    <p v-else-if="props.status.mutationAccess === 'enabled'" data-test="actions-enabled" role="status">
+      Mailbox actions are enabled for this account.
+    </p>
+    <button
+      v-if="props.status.mutationAccess === 'upgrading'"
+      type="button"
+      data-test="cancel-action-upgrade"
+      :disabled="props.busy !== null"
+      @click="emit('cancelUpgrade')"
+    >
+      {{ props.busy === 'cancel-upgrade' ? 'Canceling permission request…' : 'Cancel permission upgrade' }}
+    </button>
+    <p class="account-disconnect-warning" data-test="disconnect-warning" role="note">
+      Disconnect removes local pending actions and cached data. It does not undo confirmed Gmail changes or revoke Google's grant.
     </p>
     <p v-if="props.status.connection === 'not_configured'" class="account-notice" data-test="account-not-configured" role="note">
       Gmail is not configured on this device: no Google client credentials were found, so connecting is unavailable.
