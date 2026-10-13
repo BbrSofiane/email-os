@@ -1,0 +1,14 @@
+Pull the changes from feat/fixture-inbox-slice
+
+And setup the local dev stack
+
+```
+mise trust
+mise install
+mise run install:ui
+mise run dev:native
+```
+
+---
+
+Run the dev stack
