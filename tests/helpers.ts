@@ -1,5 +1,18 @@
-import { createBrowserFakeMailClient, type BrowserFake } from '../src/lib/ipc/browser-fake';
+import { createBrowserFakeMailClient, type BrowserFake, type FakeAccountState } from '../src/lib/ipc/browser-fake';
 import type { ConversationRef, InboxSnapshot, MailClient, SetArchived } from '../src/lib/ipc/client';
+
+/** Switches the labelled fake into a synthetic Gmail mode for UI tests. */
+export function useGmailMode(fake: BrowserFake, patch: Partial<FakeAccountState> = {}): void {
+  fake.controls.setAccount({
+    mode: 'gmail',
+    connection: 'connected',
+    emailAddress: 'operator@example.test',
+    cachedConversations: 18,
+    initialSyncComplete: true,
+    coverageLimit: 100,
+    ...patch,
+  });
+}
 
 export function deferred<T>(): {
   promise: Promise<T>;
@@ -34,6 +47,7 @@ export function countingClient(inner: MailClient): CountingClient {
   let list = 0;
   const commands: SetArchived[] = [];
   const client: MailClient = {
+    ...accountMethods(inner),
     listConversations: () => {
       list += 1;
       return inner.listConversations();
@@ -46,6 +60,21 @@ export function countingClient(inner: MailClient): CountingClient {
     subscribe: (listener) => inner.subscribe(listener),
   };
   return { client, commands, listCalls: () => list };
+}
+
+/**
+ * Supplies the Slice 02 account-lifecycle methods for hand-written partial clients
+ * in tests; spread into a literal so the full MailClient shape stays satisfied.
+ */
+export function accountMethods(
+  inner: MailClient,
+): Pick<MailClient, 'getAccountStatus' | 'connectAccount' | 'disconnectAccount' | 'requestSync'> {
+  return {
+    getAccountStatus: () => inner.getAccountStatus(),
+    connectAccount: () => inner.connectAccount(),
+    disconnectAccount: () => inner.disconnectAccount(),
+    requestSync: () => inner.requestSync(),
+  };
 }
 
 export function fixtureRef(conversationId: string): ConversationRef {

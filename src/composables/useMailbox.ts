@@ -1,10 +1,12 @@
 /** Core read models are authoritative; events only request another snapshot. */
-import { computed, onScopeDispose, ref, type Ref } from 'vue';
-import type { Conversation, ConversationRef, InboxSnapshot, MailClient, MailError, OperationReceipt, SetArchived } from '../lib/ipc/client';
+import { computed, onScopeDispose, ref, type ComputedRef, type Ref } from 'vue';
+import type { AccountStatus, Conversation, ConversationRef, InboxSnapshot, MailClient, MailError, MailMode, OperationReceipt, SetArchived } from '../lib/ipc/client';
 import { toMailError } from '../lib/ipc/client';
 
 export type ListState = 'loading' | 'ready' | 'error';
 export type DetailState = 'idle' | 'loading' | 'ready' | 'error';
+export type AccountState = 'loading' | 'ready' | 'error';
+export type AccountAction = 'connect' | 'disconnect' | 'sync';
 export type ConversationSummaryLike = InboxSnapshot['conversations'][number];
 export type OperationSummaryLike = InboxSnapshot['activity'][number];
 
@@ -25,8 +27,19 @@ export interface Mailbox {
   detailError: Ref<MailError | null>;
   lastCommandError: Ref<MailError | null>;
   inFlightCommandRef: Ref<ConversationRef | null>;
+  /** Authoritative account/mode status; `null` until the first status read lands. */
+  accountStatus: Ref<AccountStatus | null>;
+  accountState: Ref<AccountState>;
+  accountError: Ref<MailError | null>;
+  accountBusy: Ref<AccountAction | null>;
+  /** Mode from the last accepted status; `null` while unknown (UI must fail closed). */
+  mode: ComputedRef<MailMode | null>;
+  isGmail: ComputedRef<boolean>;
   ready: Promise<void>;
   refresh(): Promise<void>;
+  connectAccount(): Promise<void>;
+  disconnectAccount(): Promise<void>;
+  requestSync(): Promise<void>;
   moveSelection(delta: number): void;
   selectIndex(index: number): void;
   openConversationByRef(ref: ConversationRef): Promise<void>;
@@ -48,10 +61,15 @@ export function useMailbox(client: MailClient): Mailbox {
   const detailError = ref<MailError | null>(null);
   const lastCommandError = ref<MailError | null>(null);
   const inFlightCommandRef = ref<ConversationRef | null>(null);
+  const accountStatus = ref<AccountStatus | null>(null);
+  const accountState = ref<AccountState>('loading');
+  const accountError = ref<MailError | null>(null);
+  const accountBusy = ref<AccountAction | null>(null);
 
   let listToken = 0;
   let detailToken = 0;
   let commandToken = 0;
+  let statusToken = 0;
   let detached = false;
   let unsubscribe: (() => void) | null = null;
   let subscriptionAttempt: Promise<void> | null = null;
@@ -86,14 +104,34 @@ export function useMailbox(client: MailClient): Mailbox {
     listState.value = 'ready';
   }
 
+  /** Status failures never reject: the UI gate renders them and stays fail-closed. */
+  async function refreshStatus(token: number): Promise<void> {
+    try {
+      const status = await client.getAccountStatus();
+      if (detached || token !== statusToken) return;
+      accountStatus.value = status;
+      accountError.value = null;
+      accountState.value = 'ready';
+    } catch (raw) {
+      if (detached || token !== statusToken) return;
+      accountError.value = toMailError(raw);
+      accountState.value = 'error';
+    }
+  }
+
   async function refresh(): Promise<void> {
     if (detached) return;
     const token = ++listToken;
     try {
-      // A successful list alone must not hide a broken change subscription.
+      // Subscription-before-read: events are registered before any status/list/detail
+      // read so a change occurring mid-refresh cannot be lost. A successful list alone
+      // must not hide a broken change subscription.
       await ensureSubscribed();
       if (detached) return;
+      // Status failures are handled inside refreshStatus (the UI gate renders them
+      // fail-closed); list/detail failures reject into the catch below.
       await Promise.all([
+        refreshStatus(++statusToken),
         refreshList(token),
         openRef.value ? loadDetail(openRef.value, true) : Promise.resolve(),
       ]);
@@ -154,7 +192,86 @@ export function useMailbox(client: MailClient): Mailbox {
     detailError.value = null;
   }
 
+  async function connectAccount(): Promise<void> {
+    if (accountBusy.value) return;
+    accountBusy.value = 'connect';
+    // Mirror core: connecting flips the connection optimistically; a failure is
+    // corrected by the status refetch below.
+    if (accountStatus.value) {
+      accountStatus.value = { ...accountStatus.value, connection: 'authenticating' };
+    }
+    try {
+      await client.connectAccount();
+      if (!detached) await refresh();
+    } catch (raw) {
+      if (!detached) {
+        lastCommandError.value = toMailError(raw);
+        await refreshStatus(++statusToken);
+      }
+    } finally {
+      if (!detached) accountBusy.value = null;
+    }
+  }
+
+  async function disconnectAccount(): Promise<void> {
+    if (accountBusy.value) return;
+    accountBusy.value = 'disconnect';
+    try {
+      // Resolves only after core deleted credentials and cleared local data.
+      await client.disconnectAccount();
+    } catch (raw) {
+      if (!detached) lastCommandError.value = toMailError(raw);
+      return;
+    } finally {
+      if (!detached) accountBusy.value = null;
+    }
+    if (detached) return;
+    // Drop every cached surface immediately and invalidate in-flight reads so stale
+    // responses cannot repopulate the UI after a disconnect.
+    closeReader();
+    listToken += 1;
+    detailToken += 1;
+    commandToken += 1;
+    conversations.value = [];
+    activity.value = [];
+    selectedIndex.value = 0;
+    if (accountStatus.value) {
+      const sync = accountStatus.value.sync;
+      accountStatus.value = {
+        ...accountStatus.value,
+        connection: 'disconnected',
+        account: null,
+        sync: { ...sync, state: 'idle', error: null, lastSyncedAt: null, cachedConversations: 0, initialSyncComplete: false },
+      };
+    }
+    await refresh();
+  }
+
+  async function requestSync(): Promise<void> {
+    if (accountBusy.value) return;
+    accountBusy.value = 'sync';
+    try {
+      // Acceptance, not completion; progress arrives via status changes/events.
+      await client.requestSync();
+      if (!detached) await refresh();
+    } catch (raw) {
+      if (!detached) lastCommandError.value = toMailError(raw);
+    } finally {
+      if (!detached) accountBusy.value = null;
+    }
+  }
+
   async function setArchived(target: ConversationRef, archived: boolean): Promise<OperationReceipt | null> {
+    // Archive is fail-closed until the native mode is known, and Gmail is
+    // read-only (also enforced in Rust). No unknown/error status reaches IPC.
+    if (accountState.value !== 'ready' || !accountStatus.value) {
+      lastCommandError.value = { kind: 'invalid_request', field: 'accountStatus' };
+      return null;
+    }
+    if (accountStatus.value.mode === 'gmail') {
+      lastCommandError.value = { kind: 'read_only' };
+      return null;
+    }
     const token = ++commandToken;
     const command: SetArchived = {
       conversation: { ...target },
@@ -199,10 +316,14 @@ export function useMailbox(client: MailClient): Mailbox {
   });
 
   const selectedSummary = computed(() => conversations.value[selectedIndex.value] ?? null);
+  const mode = computed<MailMode | null>(() => accountStatus.value?.mode ?? null);
+  const isGmail = computed(() => mode.value === 'gmail');
   return {
     conversations, activity, listState, listError, selectedIndex, selectedSummary,
     openRef, conversation, detailState, detailError, lastCommandError,
     inFlightCommandRef, ready, refresh, moveSelection, selectIndex,
     openConversationByRef, openSelected, closeReader, setArchived, archiveSelected,
+    accountStatus, accountState, accountError, accountBusy, mode, isGmail,
+    connectAccount, disconnectAccount, requestSync,
   };
 }

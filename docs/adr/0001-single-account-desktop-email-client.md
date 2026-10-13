@@ -10,7 +10,7 @@ The immediate goal is a limited replacement for Superhuman. The user has confirm
 
 [Experiment 1](../../EXPERIMENT-01.md) proposes a read-only, teachable reply queue. That remains a possible later customization study, but handing users back to another client to reply would not validate the immediate replacement goal.
 
-The repository currently contains planning and static source reviews, not an implemented or runtime-validated mail client. Framework, provider integration, and build-versus-fork choices remain open.
+At the time of this ADR, the repository contained planning and static reviews. The narrower Slice 01 fixture baseline and Slice 02 read-only Gmail path are now implemented; see the slice contracts for their boundaries and `docs/development.md` for validation status. This ADR's broader provider-backed composition, sending, Gmail archive/read-state actions, search, and saved-view scope remains future work; macOS Slice 02 runtime validation is still pending.
 
 ## Decision
 
@@ -31,8 +31,8 @@ Optimize this loop for speed, predictable interaction, and trustworthy state bef
 ### Initial boundaries
 
 - One connected account, not a unified multi-account inbox.
-- One desktop operating system for the first developer build. macOS is the proposed target, to confirm before implementation.
-- Gmail is the proposed first provider, to confirm before implementation. Do not build a second provider to demonstrate abstraction.
+- One desktop operating system for the first developer build. macOS is approved for the Slice 02 pilot; the broader platform/runtime gate remains pending.
+- Gmail REST is approved for the narrow, read-only disposable-account Slice 02 pilot. This does not authorize write scopes or broader provider capabilities; do not build a second provider merely to demonstrate abstraction.
 - No custom Android surface in this build. An existing provider client remains the mobile fallback; this sequencing does not remove Android from the product vision.
 - Manual operation must work without AI or external inference.
 - Initial validation is personal dogfooding, not a recruited multi-user pilot.

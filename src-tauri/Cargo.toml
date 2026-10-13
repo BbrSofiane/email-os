@@ -1,7 +1,7 @@
 [package]
 name = "email-os"
 version = "0.1.0"
-description = "Slice 01 native shell: thin Tauri 2 adapter over mail-core (fixture inbox)"
+description = "Tauri 2 adapter over the fixture and read-only Gmail mail cores"
 edition = "2021"
 rust-version = "1.89"
 

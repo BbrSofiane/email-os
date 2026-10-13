@@ -28,21 +28,19 @@ have not been checked.
   including on-phone use; superseded by ADR 0001 for first-build sequencing.
 - [email security review](security/email-review.md) and [Pebble security review](security/pebble-review.md):
   static findings to address before reusing candidate implementations.
-- [Development guide](docs/development.md): how to run and validate the current vertical slice
-  (mise tasks, native prerequisites, fixture nature).
-- [Vertical slice 01 contract](docs/vertical-slice-01.md): the approved narrow scope and frozen wire
-  contract currently being implemented.
+- [Development guide](docs/development.md): how to run fixture and explicit Gmail modes, setup, validation, and platform gates.
+- [Vertical slice 01 contract](docs/vertical-slice-01.md): the completed fixture baseline and its frozen wire contract.
+- [Vertical slice 02 contract](docs/vertical-slice-02.md): the disposable-account, read-only Gmail scope and safety contract.
 
-**Status:** vertical slice 01 is implemented in this repository (fixture inbox: 18 synthetic
-conversations, plain-text reader, keyboard navigation, durable archive/unarchive with restart
-recovery — `crates/mail-core`, a Vue 3/TypeScript frontend under `src/`, and a thin Tauri 2 shell in
-`src-tauri`). It is fixture-only: a single synthetic account, no OAuth, Gmail, external mail,
-composer, sending, attachments, or search. See [docs/development.md](docs/development.md) for
-tasks and platform gates. The first-build direction (ADR 0001) and the Tauri 2 + Vue 3 frontend
-remain the selected direction for the wider build — see [ARCHITECTURE.md](ARCHITECTURE.md) for the
-proposed implementation plan. Still open: confirming macOS-first and Gmail REST,
-fork-versus-greenfield finalization, and exact dependency choices beyond this slice. No connection
-to a real mailbox exists. **Research date:** 2026-09-25.
+**Status:** Slice 01 is implemented as a durable synthetic fixture inbox. Slice 02 adds an explicit,
+separate, read-only Gmail profile with OAuth/PKCE, Keychain-only production credential custody,
+bounded plain-text cache/sync, and seven typed native commands. Gmail mode is opt-in with
+`EMAIL_OS_MODE=gmail`; fixture remains the native default and browser preview remains synthetic.
+No real account or Google network has been used in VM validation. The operator-validated Slice 01
+Mac gate is separate from pending Slice 02 macOS Keychain, browser/OAuth, offline/restart,
+external-change, and disposable-account smoke gates. See [docs/development.md](docs/development.md)
+for setup and exact limitations. `ARCHITECTURE.md` preserves the original broader research/proposal
+and should not be read as a current implementation inventory.
 
 ## Research background
 

@@ -9,6 +9,7 @@
 pub mod clock;
 pub mod dto;
 pub mod error;
+pub mod gmail;
 mod lock;
 pub mod provider;
 mod seed;

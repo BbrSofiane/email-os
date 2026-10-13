@@ -14,6 +14,17 @@ ts-rs = { version = "11", features = ["serde-compat", "no-serde-warnings"] }
 uuid = { version = "1", features = ["v4"] }
 thiserror = "2"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+base64 = "0.22"
+rand = "0.8"
+sha2 = "0.10"
+url = "2"
+mailparse = "0.16"
+charset = "0.1"
+webbrowser = "1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", default-features = false, features = ["apple-native"] }
 
 [[bin]]
 name = "generate-types"

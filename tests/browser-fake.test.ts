@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createBrowserFakeMailClient, fixtureRef, inboxIds } from './helpers';
+import type { ConnectionState } from '../src/lib/ipc/client';
+import { createBrowserFakeMailClient, fixtureRef, flushMacrotasks, inboxIds } from './helpers';
 
 describe('browser fake MailClient (core-like semantics, memory-only)', () => {
   it('seeds 18 conversations once, newest first', async () => {
@@ -112,5 +113,122 @@ describe('browser fake MailClient (core-like semantics, memory-only)', () => {
     expect(fake.controls.listenerCount()).toBe(1);
     unlisten();
     expect(fake.controls.listenerCount()).toBe(0);
+  });
+});
+
+describe('browser fake MailClient (Slice 02 account lifecycle)', () => {
+  it('reports a connected fixture-mode status by default', async () => {
+    const fake = createBrowserFakeMailClient();
+    const status = await fake.getAccountStatus();
+    expect(status.mode).toBe('fixture');
+    expect(status.connection).toBe('connected');
+    expect(status.account).toEqual({ accountId: 'fixture-account', emailAddress: 'fixture@example.test' });
+    expect(status.sync).toMatchObject({ state: 'idle', error: null, cachedConversations: 18, initialSyncComplete: true, coverageLimit: 0 });
+  });
+
+  it('rejects archive commands with read_only in gmail mode and records no operation', async () => {
+    const fake = createBrowserFakeMailClient();
+    fake.controls.setAccount({ mode: 'gmail', connection: 'connected', emailAddress: 'operator@example.test' });
+    await expect(fake.setArchived({ conversation: fixtureRef('conv-01'), archived: true, requestId: 'r-g' }))
+      .rejects.toEqual({ kind: 'read_only' });
+    expect(fake.controls.activity()).toHaveLength(0);
+    // Snapshot stays untouched: gmail is read-only end to end.
+    expect(inboxIds(await fake.listConversations())).toContain('conv-01');
+  });
+
+  it('transitions authenticating -> connected on connect and notifies listeners', async () => {
+    const fake = createBrowserFakeMailClient();
+    fake.controls.setAccount({ mode: 'gmail', connection: 'disconnected', emailAddress: null });
+    const events: ConnectionState[] = [];
+    const unlisten = await fake.subscribe(() => events.push(fake.controls.accountState().connection));
+    await fake.connectAccount();
+    expect(fake.controls.accountState().connection).toBe('connected');
+    expect(events).toContain('authenticating');
+    expect(events[events.length - 1]).toBe('connected');
+    expect((await fake.getAccountStatus()).account?.emailAddress).toBe('operator@example.test');
+    unlisten();
+  });
+
+  it('reverts to the prior connection when connect fails', async () => {
+    const fake = createBrowserFakeMailClient();
+    fake.controls.setAccount({ mode: 'gmail', connection: 'disconnected', emailAddress: null });
+    fake.controls.failNextConnect({ kind: 'auth_cancelled' });
+    await expect(fake.connectAccount()).rejects.toEqual({ kind: 'auth_cancelled' });
+    expect(fake.controls.accountState().connection).toBe('disconnected');
+  });
+
+  it('disconnect clears the simulated cache and the reported account', async () => {
+    const fake = createBrowserFakeMailClient();
+    fake.controls.setAccount({ mode: 'gmail', connection: 'connected', emailAddress: 'operator@example.test', lastSyncedAt: '2025-01-01T00:00:00.000Z' });
+    await fake.disconnectAccount();
+    const status = await fake.getAccountStatus();
+    expect(status).toMatchObject({ mode: 'gmail', connection: 'disconnected', account: null });
+    expect(status.sync).toMatchObject({ cachedConversations: 0, lastSyncedAt: null, initialSyncComplete: false });
+    expect(inboxIds(await fake.listConversations())).toEqual([]);
+    // In fixture mode the lifecycle commands are refused; core owns the mode.
+    const fixtureFake = createBrowserFakeMailClient();
+    await expect(fixtureFake.connectAccount()).rejects.toEqual({ kind: 'invalid_request', field: 'mode' });
+    await expect(fixtureFake.requestSync()).rejects.toEqual({ kind: 'invalid_request', field: 'mode' });
+  });
+
+  it('rejects disconnect when the injected failure fires and keeps state', async () => {
+    const fake = createBrowserFakeMailClient();
+    fake.controls.setAccount({ mode: 'gmail', connection: 'connected', emailAddress: 'operator@example.test' });
+    fake.controls.failNextDisconnect({ kind: 'storage_unavailable' });
+    await expect(fake.disconnectAccount()).rejects.toEqual({ kind: 'storage_unavailable' });
+    expect(fake.controls.accountState().connection).toBe('connected');
+    expect(inboxIds(await fake.listConversations())).toContain('conv-01');
+  });
+
+  it('requestSync resolves as acceptance and reports the outcome through status', async () => {
+    const fake = createBrowserFakeMailClient(() => '2025-01-01T00:00:00.000Z');
+    fake.controls.setAccount({ mode: 'gmail', connection: 'connected', emailAddress: 'operator@example.test' });
+    await fake.requestSync(); // acceptance, not completion
+    expect(fake.controls.accountState().syncState).toBe('syncing');
+    await flushMacrotasks(2);
+    expect(fake.controls.accountState().syncState).toBe('idle');
+    expect(fake.controls.accountState().lastSyncedAt).toBe('2025-01-01T00:00:00.000Z');
+  });
+
+  it('reports a failed sync through sync state and error', async () => {
+    const fake = createBrowserFakeMailClient();
+    fake.controls.setAccount({ mode: 'gmail', connection: 'connected', emailAddress: 'operator@example.test' });
+    fake.controls.failNextSync({ kind: 'network_unavailable' });
+    await fake.requestSync();
+    await flushMacrotasks(2);
+    const status = await fake.getAccountStatus();
+    expect(status.sync.state).toBe('error');
+    expect(status.sync.error).toEqual({ kind: 'network_unavailable' });
+    // Cached content stays readable after a sync error.
+    expect(inboxIds(await fake.listConversations())).toContain('conv-01');
+  });
+
+  it('holds and fails status reads for gate/race tests', async () => {
+    const fake = createBrowserFakeMailClient();
+    fake.controls.holdNextStatus();
+    const pending = fake.getAccountStatus();
+    let resolved = false;
+    void pending.then(() => { resolved = true; });
+    await flushMacrotasks(2);
+    expect(resolved).toBe(false);
+    fake.controls.releaseStatus();
+    await pending;
+    expect(resolved).toBe(true);
+
+    fake.controls.failNextStatus({ kind: 'storage_unavailable' });
+    await expect(fake.getAccountStatus()).rejects.toEqual({ kind: 'storage_unavailable' });
+    // The failure is consumed: the next read succeeds.
+    await expect(fake.getAccountStatus()).resolves.toMatchObject({ mode: 'fixture' });
+  });
+
+  it('discloses gmail plain-text limitations on the flagged conversation only', async () => {
+    const fake = createBrowserFakeMailClient();
+    fake.controls.markUnsupported('conv-02', 'HTML-only messages are not shown', false);
+    const flagged = await fake.getConversation(fixtureRef('conv-02'));
+    expect(flagged.unsupportedReason).toBe('HTML-only messages are not shown');
+    expect(flagged.contextComplete).toBe(false);
+    const plain = await fake.getConversation(fixtureRef('conv-01'));
+    expect(plain.unsupportedReason).toBeUndefined();
+    expect(plain.contextComplete).toBeUndefined();
   });
 });

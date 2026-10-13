@@ -1,5 +1,11 @@
 # Slice 01: fixture inbox, reader, and durable archive
 
+This contract documents the completed Slice 01 baseline only; it is not a claim
+that the current repository remains fixture-only. Slice 02 adds an explicit
+read-only Gmail profile alongside the fixture profile. Operator validation of
+Slice 01 on macOS is separate from the pending Slice 02 Keychain/OAuth/runtime
+and disposable-account gates.
+
 User-approved implementation scope: Tauri 2 + Vue 3/TypeScript, one synthetic account, 18 synthetic conversations, plain-text reader, keyboard navigation, archive/unarchive with persisted receipts and restart recovery. No composer/drafts, OAuth, Gmail/network access, search, saved-view editor, HTML rendering, attachments, or generic operation framework. ADR 0001 and ARCHITECTURE.md remain broader plans, not claims about this slice.
 
 ## Interfaces and wire contract

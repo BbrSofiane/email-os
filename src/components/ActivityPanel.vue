@@ -1,16 +1,21 @@
 <script setup lang="ts">
 /**
- * Operation activity (Slice 01).
+ * Operation activity (Slices 01 + 02).
  *
  * Shows every operation with its status and failure. Archived conversations remain
  * recoverable: rows expose Open (loads the referenced conversation even when it is
  * no longer in the inbox) and Unarchive (explicit user action with a fresh request
  * ID). Failures stay visible; they are never auto-replayed.
+ *
+ * Slice 02: in read-only Gmail mode the Unarchive action is hidden — Gmail offers
+ * no archive/unarchive at all.
  */
 import type { OperationSummaryLike } from '../composables/useMailbox';
 
 defineProps<{
   activity: OperationSummaryLike[];
+  /** Gmail mode: hide mutation controls. */
+  readOnly?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -54,7 +59,7 @@ function statusLabel(status: string, failure: { kind: string } | null): string {
             Open
           </button>
           <button
-            v-if="op.requestedArchived"
+            v-if="op.requestedArchived && !readOnly"
             type="button"
             :data-test="`activity-unarchive-${op.id}`"
             @click="emit('unarchive', op.conversation)"

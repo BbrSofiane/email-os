@@ -38,7 +38,7 @@ description = "Typecheck the Vue frontend"
 run = "pnpm typecheck"
 
 [tasks."build:web"]
-description = "Build the frontend assets"
+description = "Build the frontend assets for browser preview and native shell"
 run = "pnpm build"
 
 [tasks."dev:web"]
@@ -46,7 +46,7 @@ description = "Run the fixture-only browser preview"
 run = "pnpm dev"
 
 [tasks."dev:native"]
-description = "Run the native fixture shell (dev server + Tauri; needs native prerequisites)"
+description = "Run the native shell (fixture default; EMAIL_OS_MODE=gmail opts into read-only Gmail)"
 run = "pnpm tauri dev"
 
 [tasks."build:native"]

@@ -3,6 +3,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import App from '../src/App.vue';
 import type { MailClient } from '../src/lib/ipc/client';
 import {
+  accountMethods,
   countingClient,
   createBrowserFakeMailClient,
   flushMacrotasks,
@@ -47,6 +48,22 @@ describe('App (Slice 01 shell)', () => {
   afterEach(() => {
     wrapper?.unmount();
     wrapper = null;
+  });
+
+  it('surfaces subscription failures at the fail-closed account gate with Retry', async () => {
+    const broken: MailClient = {
+      ...fake,
+      subscribe: async () => { throw { kind: 'storage_unavailable' }; },
+    };
+    const w = mountApp(broken);
+    await flushPromises();
+    expect(w.find('[data-test="account-loading"]').exists()).toBe(false);
+    expect(w.find('[data-test="account-error"]').text()).toContain('Could not subscribe to or load the inbox');
+    expect(w.find('[data-test="account-error"]').text()).toContain('storage unavailable');
+    expect(w.find('[data-test="account-retry"]').exists()).toBe(true);
+    await w.find('[data-test="account-retry"]').trigger('click');
+    await flushPromises();
+    expect(w.find('[data-test="account-retry"]').exists()).toBe(true);
   });
 
   it('discloses memory-only preview and renders the seeded inbox', async () => {
@@ -262,6 +279,7 @@ describe('App (Slice 01 shell)', () => {
   it('shows a loading state while the initial read is in flight', async () => {
     let resolveList!: (value: Awaited<ReturnType<MailClient['listConversations']>>) => void;
     const client: MailClient = {
+      ...accountMethods(fake),
       listConversations: () =>
         new Promise((resolve) => {
           resolveList = resolve;
@@ -281,6 +299,7 @@ describe('App (Slice 01 shell)', () => {
   it('shows an error state with retry when the initial read fails', async () => {
     let fail = true;
     const client: MailClient = {
+      ...accountMethods(fake),
       listConversations: () =>
         fail ? Promise.reject({ kind: 'storage_unavailable' }) : fake.listConversations(),
       getConversation: fake.getConversation.bind(fake),

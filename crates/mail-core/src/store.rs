@@ -401,6 +401,8 @@ impl Store {
             is_in_inbox: built.is_in_inbox,
             messages: built.messages,
             pending_operation_id: built.pending_operation_id,
+            context_complete: None,
+            unsupported_reason: None,
         })
     }
 
