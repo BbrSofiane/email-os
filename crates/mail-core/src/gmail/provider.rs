@@ -604,6 +604,7 @@ fn parse_thread(account_id: &str, thread_id: &str, body: &str) -> Result<GmailTh
         is_read: None,
         context_complete: Some(no_plain_text == 0 && !attachments && !omitted_inline_content),
         unsupported_reason: (!reasons.is_empty()).then(|| reasons.join("; ")),
+        retained_snapshot_at: None,
         pending_operation_id: None,
     };
     Ok(GmailThread {

@@ -117,6 +117,10 @@ pub struct Conversation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub unsupported_reason: Option<String>,
+    /// Local recovery snapshot capture time, not a provider freshness guarantee.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub retained_snapshot_at: Option<String>,
     /// Newest queued/applying operation id, if any.
     pub pending_operation_id: Option<String>,
 }

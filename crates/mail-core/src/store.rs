@@ -405,6 +405,7 @@ impl Store {
             pending_operation_id: built.pending_operation_id,
             context_complete: None,
             unsupported_reason: None,
+            retained_snapshot_at: None,
         })
     }
 

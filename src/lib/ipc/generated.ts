@@ -72,6 +72,10 @@ contextComplete?: boolean,
  */
 unsupportedReason?: string,
 /**
+ * Local recovery snapshot capture time, not a provider freshness guarantee.
+ */
+retainedSnapshotAt?: string,
+/**
  * Newest queued/applying operation id, if any.
  */
 pendingOperationId: string | null, };

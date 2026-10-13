@@ -398,6 +398,7 @@ impl GmailStore {
             is_read: None,
             context_complete: built.context_complete,
             unsupported_reason: built.unsupported_reason,
+            retained_snapshot_at: None,
             pending_operation_id: None,
         })
     }
@@ -1118,6 +1119,7 @@ mod tests {
                 is_read: None,
                 context_complete: Some(true),
                 unsupported_reason: None,
+                retained_snapshot_at: None,
                 pending_operation_id: None,
             },
             inbox_message_ids: inbox.iter().map(|s| s.to_string()).collect(),
