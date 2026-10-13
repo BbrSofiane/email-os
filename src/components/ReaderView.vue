@@ -37,6 +37,8 @@ function describeError(error: MailError): string {
       return 'Local storage is unavailable. The operation was not confirmed.';
     case 'profile_in_use':
       return 'Another window is using this profile.';
+    default:
+      return `Could not load the conversation (${error.kind}).`;
   }
 }
 

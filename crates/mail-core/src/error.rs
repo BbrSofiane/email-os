@@ -22,6 +22,28 @@ pub enum MailError {
     StorageUnavailable,
     #[error("another writer owns this profile; refusing concurrent access")]
     ProfileInUse,
+    #[error("Gmail mode is read-only")]
+    ReadOnly,
+    #[error("Google desktop OAuth client is not configured")]
+    NotConfigured,
+    #[error("authentication is required")]
+    AuthRequired,
+    #[error("authentication or synchronization was cancelled")]
+    AuthCancelled,
+    #[error("authentication failed")]
+    AuthFailed,
+    #[error("secure credential storage is unavailable")]
+    SecretsUnavailable,
+    #[error("network is unavailable")]
+    NetworkUnavailable,
+    #[error("provider rate limit reached")]
+    RateLimited,
+    #[error("provider is unavailable")]
+    ProviderUnavailable,
+    #[error("provider returned unsupported or invalid data")]
+    InvalidProviderResponse,
+    #[error("another account operation is in progress")]
+    Busy,
 }
 
 /// Fake-provider outcome. `Cancelled` is not a failure: the operation stays

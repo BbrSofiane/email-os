@@ -81,6 +81,14 @@ pub struct Conversation {
     pub messages: Vec<Message>,
     /// Effective inbox membership (cached provider facts + pending overlay).
     pub is_in_inbox: bool,
+    /// Gmail discloses whether the cached plain-text context is complete.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub context_complete: Option<bool>,
+    /// Plain-text/format limitations. Absent for legacy fixture data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub unsupported_reason: Option<String>,
     /// Newest queued/applying operation id, if any.
     pub pending_operation_id: Option<String>,
 }
