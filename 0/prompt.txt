@@ -1,0 +1,9 @@
+Enable entire session pushing
+
+---
+
+Can we do anything for past changes?
+
+---
+
+Ok that's commit and push the changes
