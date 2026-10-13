@@ -1,13 +1,17 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
-  "description": "Main window only: the three approved app commands plus the core event listener. No plugins, no shell, no broad capability grants.",
+  "description": "Main window only: seven approved mail commands plus the core event listener. No plugins, no shell, no broad capability grants.",
   "windows": ["main"],
   "permissions": [
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "allow-list-conversations",
     "allow-get-conversation",
-    "allow-set-archived"
+    "allow-set-archived",
+    "allow-get-account-status",
+    "allow-connect-account",
+    "allow-disconnect-account",
+    "allow-request-sync"
   ]
 }

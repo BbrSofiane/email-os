@@ -20,6 +20,7 @@ rand = "0.8"
 sha2 = "0.10"
 url = "2"
 mailparse = "0.16"
+charset = "0.1"
 webbrowser = "1"
 
 [target.'cfg(target_os = "macos")'.dependencies]

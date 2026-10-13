@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Slice 01 frontend: keyboard-first fixture inbox, plain-text reader, archive/unarchive activity. Browser preview is in-memory only.",
+  "description": "Keyboard-first fixture and read-only Gmail inbox UI. Browser preview is synthetic and in-memory only.",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit -p tsconfig.json && vite build",

@@ -1,5 +1,5 @@
 /**
- * Browser-only in-memory fake MailClient (Slice 01 preview + tests).
+ * Browser-only in-memory fake MailClient (Slices 01 + 02 preview + tests).
  *
  * THIS IS NOT DURABLE. It exists so the UI can run in a plain browser and so tests
  * can drive pending/failed/success operation flows deterministically. It mimics the
@@ -12,21 +12,31 @@
  * UI note: the UI never computes the pending overlay itself; this fake computes it
  * exactly where core would, behind the same read models (snapshot summaries carry
  * membership + pendingOperationId).
+ *
+ * Slice 02: the fake also models the account lifecycle so the UI's Gmail states can
+ * be tested deterministically. `mode: 'gmail'` here is still labelled synthetic
+ * in-memory data — never a real OAuth flow, never real mail. In Gmail mode the fake
+ * enforces the read-only contract (archive commands are rejected `read_only`), and
+ * `disconnect` clears the simulated cache the way core must.
  */
 import type {
+  AccountStatus,
   Address,
+  ConnectionState,
   Conversation,
   ConversationRef,
   ConversationSummary,
   InboxSnapshot,
   MailClient,
   MailError,
+  MailMode,
   Message,
   OperationFailure,
   OperationReceipt,
   OperationStatus,
   OperationSummary,
   SetArchived,
+  SyncState,
 } from './client';
 
 export const BROWSER_PREVIEW_DISCLOSURE =
@@ -41,6 +51,21 @@ export interface FakeBehavior {
   hold: boolean;
 }
 
+/** Simulated core account/sync state; mutated only through `setAccount`. */
+export interface FakeAccountState {
+  mode: MailMode;
+  connection: ConnectionState;
+  /** Address reported in `AccountInfo`; `null` means core has no account yet. */
+  emailAddress: string | null;
+  syncState: SyncState;
+  lastSyncedAt: string | null;
+  syncError: MailError | null;
+  cachedConversations: number;
+  initialSyncComplete: boolean;
+  /** Core's discovery cap (0 = no disclosed cap, e.g. fixture mode). */
+  coverageLimit: number;
+}
+
 export interface FakeControls {
   behavior: FakeBehavior;
   /** Lets all in-flight fake-provider work finish (await until quiet). */
@@ -51,6 +76,24 @@ export interface FakeControls {
   activity(): OperationSummary[];
   /** Number of active change listeners (teardown assertions). */
   listenerCount(): number;
+  /** Current simulated account/sync state. */
+  accountState(): Readonly<FakeAccountState>;
+  /** Patches the simulated account/sync state and notifies change listeners. */
+  setAccount(patch: Partial<FakeAccountState>): void;
+  /** Holds the next N `getAccountStatus` calls until `releaseStatus()`. */
+  holdNextStatus(count?: number): void;
+  /** Releases all held `getAccountStatus` calls. */
+  releaseStatus(): void;
+  /** Next `getAccountStatus` rejects with this error (once). */
+  failNextStatus(error?: MailError): void;
+  /** Next `connectAccount` rejects after flipping back to the prior connection. */
+  failNextConnect(error?: MailError): void;
+  /** Next `disconnectAccount` rejects and keeps the current state. */
+  failNextDisconnect(error?: MailError): void;
+  /** Next `requestSync` ends in `sync: 'error'` with this error. */
+  failNextSync(error?: MailError): void;
+  /** Flags a seeded conversation with Gmail plain-text limitations. */
+  markUnsupported(conversationId: string, unsupportedReason: string, contextComplete?: boolean): void;
 }
 
 export interface BrowserFake extends MailClient {
@@ -78,6 +121,9 @@ interface FakeConversation {
   messages: SeedMessage[];
   /** Operations in acceptance order; failed ones stay listed but are excluded from the overlay. */
   ops: InternalOperation[];
+  /** Slice 02: Gmail plain-text limitation disclosure (absent for legacy fixture data). */
+  unsupportedReason?: string;
+  contextComplete?: boolean;
 }
 
 interface InternalOperation {
@@ -212,22 +258,78 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
   let holdReleased = false;
   const holdWaiters: Array<() => void> = [];
 
+  // Slice 02 account simulation. Fixture mode is the default so the Slice 01 preview
+  // and its tests keep working unchanged.
+  const account: FakeAccountState = {
+    mode: 'fixture',
+    connection: 'connected',
+    emailAddress: 'fixture@example.test',
+    syncState: 'idle',
+    lastSyncedAt: null,
+    syncError: null,
+    cachedConversations: CONVERSATION_COUNT,
+    initialSyncComplete: true,
+    coverageLimit: 0,
+  };
+  // Core clears local cache data on disconnect; the fake mirrors that with a flag.
+  let cacheCleared = false;
+  let heldStatusCalls = 0;
+  const statusHoldWaiters: Array<() => void> = [];
+  let failStatus: MailError | null = null;
+  let failConnect: MailError | null = null;
+  let failDisconnect: MailError | null = null;
+  let failSync: MailError | null = null;
+
   const notify = (): void => {
     for (const listener of listeners) listener();
   };
+
+  const settle = (): Promise<void> => Promise.resolve();
+
+  function accountStatus(): AccountStatus {
+    const cached = account.mode === 'gmail'
+      ? (cacheCleared ? 0 : account.cachedConversations)
+      : conversations.length;
+    return {
+      mode: account.mode,
+      connection: account.connection,
+      account: account.emailAddress
+        ? {
+            accountId: account.mode === 'gmail' ? 'gmail-account' : 'fixture-account',
+            emailAddress: account.emailAddress,
+          }
+        : null,
+      sync: {
+        state: account.syncState,
+        lastSyncedAt: account.lastSyncedAt,
+        error: account.syncError,
+        cachedConversations: cached,
+        initialSyncComplete: account.initialSyncComplete,
+        coverageLimit: account.coverageLimit,
+      },
+    };
+  }
 
   const byId = (conversationId: string): FakeConversation | undefined =>
     conversations.find((c) => c.ref.conversationId === conversationId);
 
   function snapshot(): InboxSnapshot {
-    const activity = conversations
-      .flatMap((c) => c.ops.map((op) => toOperationSummary(op, c.ref.accountId)))
-      .sort((a, b) => a.id.localeCompare(b.id));
-    const rows = conversations
-      .map((c) => ({ c, flags: effectiveInInbox(c) }))
-      .filter((entry) => entry.flags.some((f) => f))
-      .map((entry) => summarize(entry.c, pendingOperationId(entry.c)))
-      .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
+    // No account / cleared cache means no cached mail; core would return the same.
+    const empty =
+      cacheCleared ||
+      (account.mode === 'gmail' && (account.connection === 'not_configured' || account.connection === 'disconnected'));
+    const activity = empty
+      ? []
+      : conversations
+          .flatMap((c) => c.ops.map((op) => toOperationSummary(op, c.ref.accountId)))
+          .sort((a, b) => a.id.localeCompare(b.id));
+    const rows = empty
+      ? []
+      : conversations
+          .map((c) => ({ c, flags: effectiveInInbox(c) }))
+          .filter((entry) => entry.flags.some((f) => f))
+          .map((entry) => summarize(entry.c, pendingOperationId(entry.c)))
+          .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
     return { conversations: rows, activity };
   }
 
@@ -287,6 +389,40 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       listenerCount(): number {
         return listeners.size;
       },
+      accountState(): Readonly<FakeAccountState> {
+        return { ...account };
+      },
+      setAccount(patch: Partial<FakeAccountState>): void {
+        Object.assign(account, patch);
+        notify();
+      },
+      holdNextStatus(count = 1): void {
+        heldStatusCalls += count;
+      },
+      releaseStatus(): void {
+        while (statusHoldWaiters.length > 0) {
+          statusHoldWaiters.shift()?.();
+        }
+      },
+      failNextStatus(error: MailError = { kind: 'storage_unavailable' }): void {
+        failStatus = error;
+      },
+      failNextConnect(error: MailError = { kind: 'auth_failed' }): void {
+        failConnect = error;
+      },
+      failNextDisconnect(error: MailError = { kind: 'storage_unavailable' }): void {
+        failDisconnect = error;
+      },
+      failNextSync(error: MailError = { kind: 'network_unavailable' }): void {
+        failSync = error;
+      },
+      markUnsupported(conversationId: string, unsupportedReason: string, contextComplete = false): void {
+        const conv = byId(conversationId);
+        if (!conv) throw new Error(`markUnsupported: unknown conversation ${conversationId}`);
+        conv.unsupportedReason = unsupportedReason;
+        conv.contextComplete = contextComplete;
+        notify();
+      },
     },
 
     async listConversations(): Promise<InboxSnapshot> {
@@ -304,16 +440,22 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
         sentAt: m.sentAt,
         bodyText: m.bodyText,
       }));
-      return {
+      const result: Conversation = {
         ref: conv.ref,
         subject: conv.subject,
         messages,
         isInInbox: flags.some((f) => f),
         pendingOperationId: pendingOperationId(conv),
       };
+      if (conv.unsupportedReason !== undefined) result.unsupportedReason = conv.unsupportedReason;
+      if (conv.contextComplete !== undefined) result.contextComplete = conv.contextComplete;
+      return result;
     },
 
     async setArchived(command: SetArchived): Promise<OperationReceipt> {
+      // Gmail is read-only; the Rust side enforces this too. The fake mirrors the
+      // contract so UI guard tests can rely on a typed rejection.
+      if (account.mode === 'gmail') throw { kind: 'read_only' } satisfies MailError;
       const conv = byId(command.conversation.conversationId);
       if (!conv || conv.ref.accountId !== command.conversation.accountId) throw failNotShown();
 
@@ -357,6 +499,85 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       return () => {
         listeners.delete(listener);
       };
+    },
+
+    async getAccountStatus(): Promise<AccountStatus> {
+      if (heldStatusCalls > 0) {
+        heldStatusCalls -= 1;
+        await new Promise<void>((resolve) => statusHoldWaiters.push(resolve));
+      }
+      if (failStatus) {
+        const error = failStatus;
+        failStatus = null;
+        throw error;
+      }
+      return accountStatus();
+    },
+
+    async connectAccount(): Promise<void> {
+      if (account.mode !== 'gmail') throw { kind: 'invalid_request', field: 'mode' } satisfies MailError;
+      const previous = account.connection;
+      account.connection = 'authenticating';
+      notify();
+      await settle();
+      if (failConnect) {
+        const error = failConnect;
+        failConnect = null;
+        account.connection = previous;
+        notify();
+        throw error;
+      }
+      account.connection = 'connected';
+      account.emailAddress ||= 'operator@example.test';
+      account.syncState = 'idle';
+      account.syncError = null;
+      account.initialSyncComplete = true;
+      cacheCleared = false;
+      notify();
+    },
+
+    async disconnectAccount(): Promise<void> {
+      if (account.mode !== 'gmail') throw { kind: 'invalid_request', field: 'mode' } satisfies MailError;
+      if (failDisconnect) {
+        const error = failDisconnect;
+        failDisconnect = null;
+        throw error;
+      }
+      // Core resolves only after credential deletion and local account/cache clearing.
+      account.connection = 'disconnected';
+      account.emailAddress = null;
+      account.syncState = 'idle';
+      account.syncError = null;
+      account.lastSyncedAt = null;
+      account.initialSyncComplete = false;
+      cacheCleared = true;
+      notify();
+    },
+
+    requestSync(): Promise<void> {
+      if (account.mode !== 'gmail') {
+        return Promise.reject({ kind: 'invalid_request', field: 'mode' } satisfies MailError);
+      }
+      // Acceptance, not completion: the sync outcome surfaces later via status.
+      account.syncState = 'syncing';
+      account.syncError = null;
+      notify();
+      // Macrotask boundary so the syncing state is observable between acceptance
+      // and completion (core reports the same transitions through status).
+      setTimeout(() => {
+        if (failSync) {
+          account.syncState = 'error';
+          account.syncError = failSync;
+          failSync = null;
+        } else {
+          account.syncState = 'idle';
+          account.lastSyncedAt = now();
+          account.initialSyncComplete = true;
+          cacheCleared = false;
+        }
+        notify();
+      }, 0);
+      return Promise.resolve();
     },
   };
 

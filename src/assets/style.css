@@ -194,3 +194,67 @@ body {
   display: flex;
   gap: 0.4rem;
 }
+
+/* Slice 02: account gate, Gmail account panel, reader disclosures. */
+.account-gate {
+  padding: 1rem;
+  color: #444;
+}
+
+.account-panel {
+  border: 1px solid #8884;
+  border-radius: 6px;
+  padding: 0.6rem 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+}
+
+.account-row {
+  display: flex;
+  gap: 0.8rem;
+  align-items: baseline;
+}
+
+.account-mode {
+  font-weight: 600;
+}
+
+.account-connection {
+  font-style: italic;
+}
+
+.account-email {
+  margin: 0;
+}
+
+.account-notice {
+  margin: 0;
+  color: #7a5b00;
+}
+
+.account-sync-error {
+  margin: 0;
+  color: #b02a37;
+  font-weight: 600;
+}
+
+.account-coverage,
+.account-cached,
+.account-disposable {
+  margin: 0;
+  color: #555;
+}
+
+.account-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.reader-notice,
+.reader-readonly {
+  margin: 0.2rem 0;
+  color: #7a5b00;
+  font-size: 0.85rem;
+}

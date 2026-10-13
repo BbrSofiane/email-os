@@ -1,18 +1,23 @@
 /**
- * Narrow Tauri 2 adapter (Slice 01).
+ * Narrow Tauri 2 adapter (Slices 01 + 02).
  *
- * Only the three approved commands and one event are used. The shell (integration
- * lane) resolves success payloads and rejects with the typed MailError object;
- * rejections are normalized through `toMailError` so the UI can never mistake a
- * transport fault for success.
+ * Only the approved named commands and the `mailbox_changed` event are used. The
+ * shell (integration lane) resolves success payloads and rejects with the typed
+ * MailError object; rejections are normalized through `toMailError` so the UI can
+ * never mistake a transport fault for success.
  */
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import {
+  CONNECT_ACCOUNT_COMMAND,
+  DISCONNECT_ACCOUNT_COMMAND,
+  GET_ACCOUNT_STATUS_COMMAND,
   GET_CONVERSATION_COMMAND,
   LIST_CONVERSATIONS_COMMAND,
   MAILBOX_CHANGED_EVENT,
+  REQUEST_SYNC_COMMAND,
   SET_ARCHIVED_COMMAND,
+  type AccountStatus,
   type Conversation,
   type ConversationRef,
   type InboxSnapshot,
@@ -40,6 +45,18 @@ export function createTauriMailClient(): MailClient {
     async subscribe(listener: () => void): Promise<() => void> {
       const unlisten = await listen(MAILBOX_CHANGED_EVENT, () => listener());
       return unlisten;
+    },
+    getAccountStatus(): Promise<AccountStatus> {
+      return call<AccountStatus>(GET_ACCOUNT_STATUS_COMMAND);
+    },
+    connectAccount(): Promise<void> {
+      return call<void>(CONNECT_ACCOUNT_COMMAND);
+    },
+    disconnectAccount(): Promise<void> {
+      return call<void>(DISCONNECT_ACCOUNT_COMMAND);
+    },
+    requestSync(): Promise<void> {
+      return call<void>(REQUEST_SYNC_COMMAND);
     },
   };
 }

@@ -1,7 +1,10 @@
 # Architecture: proposed implementation for the first build
 
-**Status:** proposed implementation plan. This document describes a **designed, not yet
-implemented or tested** system. It contains no claims about working code.
+**Status:** broader proposed implementation plan, not a current implementation inventory. The
+repository has completed the narrower Slice 01 fixture baseline and integrated Slice 02's explicit,
+read-only Gmail path; see `docs/development.md` and the slice contracts for implemented behavior and
+pending platform validation. This document's fuller composition/search/view recommendations remain
+proposals and are not claims about working code.
 
 - **Governing scope:** [ADR 0001: first desktop build](docs/adr/0001-single-account-desktop-email-client.md)
   (accepted). The ADR defines *what* the first build does; this document proposes *how*.
@@ -9,8 +12,10 @@ implemented or tested** system. It contains no claims about working code.
 - **Selected by the user (this decision stands):** Tauri 2 desktop shell with a Vue 3 frontend,
   implemented greenfield-first as a modular monolith. Fork-versus-greenfield was evaluated; this
   architecture assumes greenfield reuse of *patterns*, not of reviewed fork code.
-- **Proposed, to confirm before implementation:** macOS as the first desktop target, Gmail REST as
-  the first provider, and all exact dependency choices and versions below.
+- **Approved and implemented narrowly in Slice 02:** macOS-first Gmail REST reading for a disposable
+  account, using a separate opt-in profile. Its Keychain/OAuth/runtime smoke gates remain pending.
+- **Still proposed for the broader first build:** composition, search, saved views, and exact
+  dependency choices beyond the already implemented slices.
 - **Historical research background:** [README](README.md) (candidate comparison, security reviews).
   The static reviews of [JakubSzwajka/email](security/email-review.md) and
   [Pebble](security/pebble-review.md) remain inputs to safety gates, not reusable foundations.
@@ -22,8 +27,7 @@ implemented or tested** system. It contains no claims about working code.
 | Single-account desktop client scope (read/reply/archive/search/one view) | **Selected** — ADR 0001 |
 | Tauri 2 + Vue 3 + TypeScript frontend | **Selected** by the user |
 | Greenfield build (no fork of reviewed candidates) | **Selected** direction; final call at scaffolding |
-| macOS first | Proposed, confirm before implementation |
-| Gmail REST as first provider | Proposed, confirm before implementation |
+| macOS-first Gmail read-only pilot | Approved and implemented in Slice 02; platform gates pending |
 | Exact crate/npm dependencies and versions | Not yet approved; choose at scaffolding |
 | `tauri-specta` for TS IPC generation | Evaluate at scaffolding; compatibility/version not claimed here |
 | SQLite library (e.g. `rusqlite` vs alternatives) | Not prescribed here; evaluate at scaffolding |
@@ -114,7 +118,7 @@ crates/mail-core/
     views/                  # declarative view evaluation
     storage/                # SQLite access (migrations, repositories)
     provider/
-      gmail/                # Gmail REST adapter (proposed first provider)
+      gmail/                # Slice 02 read-only Gmail REST adapter
     ports/                  # trait seams: Provider, Clock, Secrets, etc.
   migrations/
   tests/
@@ -334,10 +338,11 @@ dogfood in stage 5):
 shape. They **do not establish WKWebView correctness** (focus, IME, keyboard handling, native dialogs,
 keychain, OAuth callbacks, packaging) — those need real-macOS checks and are explicitly gated as such.
 
-## 10. Remote sandbox handoff
+## 10. Original remote sandbox handoff (historical)
 
-The repository currently contains **documentation only**: no run/test scripts and no implementation.
-A follow-up implementation session in a remote sandbox should:
+This was the staged handoff before implementation. Slice 01 and Slice 02 now have source, tests,
+run tasks, and integration code; this section is retained as historical planning context and is not
+a current status report. A future implementation session should:
 
 1. Start by reading this repository: ADR 0001, this document, the PRD, and the security reviews.
 2. Scaffold **stage 1 only** (fixture-backed frontend + core + fake provider + SQLite) before any
@@ -355,8 +360,8 @@ A follow-up implementation session in a remote sandbox should:
 
 | Decision | This document's position |
 |---|---|
-| macOS-first target | Recommended; confirm before stage 2 |
-| Gmail REST provider | Recommended; confirm before stage 2 (ADR: do not build a second provider for abstraction) |
+| macOS-first target | Approved for the Slice 02 disposable-account pilot; platform smoke remains pending |
+| Gmail REST provider | Implemented read-only in Slice 02; do not infer broader provider capabilities |
 | Fork vs greenfield | Greenfield pattern-reuse recommended; final commit at scaffolding |
 | Exact dependencies/versions | Chosen at scaffolding; none claimed here |
 | `tauri-specta` adoption | Evaluate at scaffolding against the chosen Tauri version |
