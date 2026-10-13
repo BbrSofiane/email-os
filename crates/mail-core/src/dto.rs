@@ -31,6 +31,7 @@ pub enum OperationStatus {
     Applying,
     Confirmed,
     Failed,
+    OutcomeUnknown,
 }
 
 /// Definite failure kinds. Cancelled work is not a failure; it is recovered.
@@ -59,6 +60,29 @@ pub struct SetArchived {
     pub request_id: String,
 }
 
+/// The two explicit mailbox setters; no arbitrary label execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum MailboxOperationKind {
+    Archive,
+    Read,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SetRead {
+    pub conversation: ConversationRef,
+    pub read: bool,
+    pub request_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RetryOperation {
+    pub operation_id: String,
+    pub request_id: String,
+}
+
 /// One cached plain-text message.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -81,6 +105,10 @@ pub struct Conversation {
     pub messages: Vec<Message>,
     /// Effective inbox membership (cached provider facts + pending overlay).
     pub is_in_inbox: bool,
+    /// Absent when observed message read facts are unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub is_read: Option<bool>,
     /// Gmail discloses whether the cached plain-text context is complete.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -104,6 +132,9 @@ pub struct ConversationSummary {
     /// Plain-text preview derived from the newest message body.
     pub preview: String,
     pub last_message_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub is_read: Option<bool>,
     pub pending_operation_id: Option<String>,
 }
 
@@ -117,6 +148,16 @@ pub struct OperationSummary {
     pub status: OperationStatus,
     /// `null` unless the operation failed definitely.
     pub failure: Option<OperationFailure>,
+    /// Absent kind is legacy fixture archive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub kind: Option<MailboxOperationKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub requested_read: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub last_error: Option<crate::error::MailError>,
 }
 
 /// Inbox list plus full operation history for this fixture slice.

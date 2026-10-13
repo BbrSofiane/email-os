@@ -47,6 +47,14 @@ pub struct SyncInfo {
     pub coverage_limit: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum MutationAccess {
+    ReadOnly,
+    Upgrading,
+    Enabled,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountStatus {
@@ -54,6 +62,9 @@ pub struct AccountStatus {
     pub connection: ConnectionState,
     pub account: Option<AccountInfo>,
     pub sync: SyncInfo,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub mutation_access: Option<MutationAccess>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -73,6 +84,10 @@ pub struct InboxPage {
 pub struct GmailThread {
     pub conversation: Conversation,
     pub inbox_message_ids: Vec<String>,
+    /// Full observed inventory, including unsupported bodies. None for legacy fakes.
+    pub message_ids: Option<Vec<String>>,
+    /// IDs with UNREAD. None means the read facts are unknown.
+    pub unread_message_ids: Option<Vec<String>>,
     pub history_id: String,
 }
 
@@ -98,6 +113,28 @@ impl From<MailError> for GmailHistoryError {
 
 /// Synchronous calls run exclusively on background/blocking threads, outside DB locks.
 pub trait GmailReadProvider: Send + Sync {
+    fn mutation_access(&self) -> Result<bool, MailError> {
+        Ok(false)
+    }
+    fn enable_mutations(&self, _cancel: &CancelToken) -> Result<GmailProfile, MailError> {
+        Err(MailError::PermissionRequired)
+    }
+    fn apply_archive(
+        &self,
+        _message_ids: &[String],
+        _archived: bool,
+        _cancel: &CancelToken,
+    ) -> Result<(), MailError> {
+        Err(MailError::PermissionRequired)
+    }
+    fn apply_read(
+        &self,
+        _message_ids: &[String],
+        _read: bool,
+        _cancel: &CancelToken,
+    ) -> Result<(), MailError> {
+        Err(MailError::PermissionRequired)
+    }
     fn is_configured(&self) -> bool;
     fn has_credentials(&self) -> Result<bool, MailError>;
     fn connect(&self, cancel: &CancelToken) -> Result<GmailProfile, MailError>;

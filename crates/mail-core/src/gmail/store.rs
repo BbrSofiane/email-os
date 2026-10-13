@@ -64,7 +64,7 @@ pub(crate) enum HistoryProgress {
 /// the provider reports the thread deleted/not found.
 #[derive(Clone)]
 pub(crate) enum ThreadFetch {
-    Cached(GmailThread),
+    Cached(Box<GmailThread>),
     Missing(String),
 }
 
@@ -352,6 +352,7 @@ impl GmailStore {
                 conversation_ref: built.conversation_ref,
                 subject: built.subject,
                 participants: participants_of(&built.messages),
+                is_read: None,
                 preview: preview_of(&built.messages),
                 last_message_at: built
                     .messages
@@ -394,6 +395,7 @@ impl GmailStore {
             subject: built.subject,
             messages: built.messages,
             is_in_inbox: built.is_in_inbox,
+            is_read: None,
             context_complete: built.context_complete,
             unsupported_reason: built.unsupported_reason,
             pending_operation_id: None,
@@ -1113,17 +1115,20 @@ mod tests {
                 subject: format!("subject {id}"),
                 messages: msgs,
                 is_in_inbox,
+                is_read: None,
                 context_complete: Some(true),
                 unsupported_reason: None,
                 pending_operation_id: None,
             },
             inbox_message_ids: inbox.iter().map(|s| s.to_string()).collect(),
+            message_ids: None,
+            unread_message_ids: None,
             history_id: history_id.to_string(),
         }
     }
 
     fn cached(thread: GmailThread) -> ThreadFetch {
-        ThreadFetch::Cached(thread)
+        ThreadFetch::Cached(Box::new(thread))
     }
 
     fn history_page(

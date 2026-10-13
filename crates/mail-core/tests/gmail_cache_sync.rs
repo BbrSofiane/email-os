@@ -579,11 +579,14 @@ fn thread(id: &str, history_id: &str, msgs: Vec<Message>, inbox_ids: &[&str]) ->
             subject: format!("subject {id}"),
             messages: msgs,
             is_in_inbox,
+            is_read: None,
             context_complete: Some(true),
             unsupported_reason: None,
             pending_operation_id: None,
         },
         inbox_message_ids: inbox_ids.iter().map(|s| s.to_string()).collect(),
+        message_ids: None,
+        unread_message_ids: None,
         history_id: history_id.to_string(),
     }
 }

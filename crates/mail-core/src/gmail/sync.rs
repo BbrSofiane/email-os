@@ -244,6 +244,7 @@ impl GmailCore {
         };
         Ok(AccountStatus {
             mode: MailMode::Gmail,
+            mutation_access: None,
             connection,
             account: self.inner.store.account()?,
             sync: SyncInfo {
@@ -857,7 +858,7 @@ fn run_discovery(
                     {
                         return StageOutcome::SyncError(MailError::InvalidProviderResponse);
                     }
-                    fetched.push(ThreadFetch::Cached(thread));
+                    fetched.push(ThreadFetch::Cached(Box::new(thread)));
                     discovered += 1;
                 }
                 Ok(None) => {
@@ -1006,7 +1007,7 @@ fn fetch_changed_threads(
                 if !include_retained_bytes(&mut retained_bytes, retained_thread_bytes(&thread)) {
                     return Err(MailError::InvalidProviderResponse);
                 }
-                fetched.push(ThreadFetch::Cached(thread));
+                fetched.push(ThreadFetch::Cached(Box::new(thread)));
             }
             None => {
                 let missing_bytes = std::mem::size_of::<ThreadFetch>() + id.capacity();

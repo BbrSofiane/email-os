@@ -44,6 +44,12 @@ pub enum MailError {
     InvalidProviderResponse,
     #[error("another account operation is in progress")]
     Busy,
+    #[error("verified mailbox modification permission is required")]
+    PermissionRequired,
+    #[error("the provider rejected the mailbox operation")]
+    ProviderRejected,
+    #[error("the remote outcome is uncertain and must be reconciled")]
+    OutcomeUnknown,
 }
 
 /// Fake-provider outcome. `Cancelled` is not a failure: the operation stays

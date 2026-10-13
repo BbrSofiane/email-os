@@ -601,6 +601,7 @@ fn parse_thread(account_id: &str, thread_id: &str, body: &str) -> Result<GmailTh
         subject,
         messages: parsed.into_iter().map(|(message, _)| message).collect(),
         is_in_inbox: !inbox_message_ids.is_empty(),
+        is_read: None,
         context_complete: Some(no_plain_text == 0 && !attachments && !omitted_inline_content),
         unsupported_reason: (!reasons.is_empty()).then(|| reasons.join("; ")),
         pending_operation_id: None,
@@ -608,6 +609,8 @@ fn parse_thread(account_id: &str, thread_id: &str, body: &str) -> Result<GmailTh
     Ok(GmailThread {
         conversation,
         inbox_message_ids,
+        message_ids: None,
+        unread_message_ids: None,
         history_id,
     })
 }
@@ -2250,7 +2253,10 @@ pub(crate) mod tests {
             .unwrap();
         store
             .apply_discovery_page(
-                &[ThreadFetch::Cached(only), ThreadFetch::Cached(mixed)],
+                &[
+                    ThreadFetch::Cached(Box::new(only)),
+                    ThreadFetch::Cached(Box::new(mixed)),
+                ],
                 None,
                 true,
                 false,
@@ -2344,10 +2350,16 @@ pub(crate) mod tests {
             .unwrap();
         let previous = current.clone();
         store
-            .apply_discovery_page(&[ThreadFetch::Cached(previous)], None, true, false, 0)
+            .apply_discovery_page(
+                &[ThreadFetch::Cached(Box::new(previous))],
+                None,
+                true,
+                false,
+                0,
+            )
             .unwrap();
         store
-            .apply_history_page(&history, &[ThreadFetch::Cached(current)], "11", 0)
+            .apply_history_page(&history, &[ThreadFetch::Cached(Box::new(current))], "11", 0)
             .unwrap();
         let snapshot = store.list_snapshot().unwrap();
         assert_eq!(snapshot.conversations.len(), 1);
