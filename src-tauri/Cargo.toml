@@ -1,0 +1,19 @@
+[package]
+name = "email-os"
+version = "0.1.0"
+description = "Slice 01 native shell: thin Tauri 2 adapter over mail-core (fixture inbox)"
+edition = "2021"
+rust-version = "1.89"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+mail-core = { path = "../crates/mail-core" }
+tauri = { version = "2.3", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+# `tauri build` enables this; plain `cargo run`/`cargo check` stay in dev mode.
+custom-protocol = ["tauri/custom-protocol"]

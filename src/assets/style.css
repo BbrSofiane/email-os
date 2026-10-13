@@ -1,0 +1,196 @@
+/* Slice 01 styles: layout only. No remote fonts, images, or CDN assets. */
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.app-header {
+  border-bottom: 1px solid #8884;
+  padding: 0.5rem 1rem;
+}
+
+.app-header h1 {
+  font-size: 1rem;
+  margin: 0 0 0.25rem;
+}
+
+.preview-banner {
+  background: #fff3cd;
+  color: #664d03;
+  border: 1px solid #ffe08a;
+  border-radius: 4px;
+  padding: 0.25rem 0.5rem;
+  margin: 0 0 0.25rem;
+  font-size: 0.85rem;
+}
+
+.status-line {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.status-line [role='alert'] {
+  color: #b02a37;
+  font-weight: 600;
+}
+
+.app-main {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(0, 2fr) minmax(220px, 320px);
+  gap: 1px;
+  flex: 1;
+  min-height: 0;
+}
+
+.list-pane,
+.reader-pane,
+.activity {
+  overflow-y: auto;
+  padding: 0.5rem;
+  min-height: 0;
+}
+
+.inbox-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.inbox-row {
+  border-bottom: 1px solid #8884;
+  padding: 0.4rem 0.5rem;
+  cursor: pointer;
+}
+
+.inbox-row.selected {
+  background: highlight;
+  color: highlighttext;
+}
+
+.row-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+}
+
+.row-subject {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.row-preview,
+.row-pending,
+.row-subject,
+.row-participants,
+.row-time {
+  overflow-wrap: anywhere;
+}
+
+.row-preview {
+  font-size: 0.8rem;
+  color: inherit;
+  opacity: 0.8;
+}
+
+.row-pending {
+  font-size: 0.75rem;
+  font-style: italic;
+}
+
+.reader:focus {
+  outline: none;
+}
+
+.reader-toolbar {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.reader-subject {
+  font-size: 1.1rem;
+  overflow-wrap: anywhere;
+}
+
+.reader-pending {
+  font-style: italic;
+}
+
+.messages {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.message {
+  border-top: 1px solid #8884;
+  padding-top: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.message-header {
+  display: flex;
+  gap: 0.75rem;
+  font-size: 0.8rem;
+  margin-bottom: 0.25rem;
+  flex-wrap: wrap;
+}
+
+.message-body {
+  white-space: pre-wrap;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.activity-title {
+  font-size: 0.9rem;
+  margin: 0 0 0.5rem;
+}
+
+.activity-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.activity-row {
+  border-bottom: 1px solid #8884;
+  padding: 0.4rem 0;
+  font-size: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.status-queued,
+.status-applying {
+  font-style: italic;
+}
+
+.status-failed {
+  color: #b02a37;
+  font-weight: 600;
+}
+
+.activity-buttons {
+  display: flex;
+  gap: 0.4rem;
+}

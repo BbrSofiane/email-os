@@ -28,12 +28,21 @@ have not been checked.
   including on-phone use; superseded by ADR 0001 for first-build sequencing.
 - [email security review](security/email-review.md) and [Pebble security review](security/pebble-review.md):
   static findings to address before reusing candidate implementations.
+- [Development guide](docs/development.md): how to run and validate the current vertical slice
+  (mise tasks, native prerequisites, fixture nature).
+- [Vertical slice 01 contract](docs/vertical-slice-01.md): the approved narrow scope and frozen wire
+  contract currently being implemented.
 
-**Status:** the first-build direction (ADR 0001) is accepted, and a Tauri 2 + Vue 3 frontend is now
-the selected implementation direction — see [ARCHITECTURE.md](ARCHITECTURE.md) for the proposed
-implementation plan. Still open: confirming macOS-first and Gmail REST, fork-versus-greenfield
-finalization, and exact dependency choices. No implementation or connection to a mailbox exists yet.
-**Research date:** 2026-09-25.
+**Status:** vertical slice 01 is implemented in this repository (fixture inbox: 18 synthetic
+conversations, plain-text reader, keyboard navigation, durable archive/unarchive with restart
+recovery — `crates/mail-core`, a Vue 3/TypeScript frontend under `src/`, and a thin Tauri 2 shell in
+`src-tauri`). It is fixture-only: a single synthetic account, no OAuth, Gmail, external mail,
+composer, sending, attachments, or search. See [docs/development.md](docs/development.md) for
+tasks and platform gates. The first-build direction (ADR 0001) and the Tauri 2 + Vue 3 frontend
+remain the selected direction for the wider build — see [ARCHITECTURE.md](ARCHITECTURE.md) for the
+proposed implementation plan. Still open: confirming macOS-first and Gmail REST,
+fork-versus-greenfield finalization, and exact dependency choices beyond this slice. No connection
+to a real mailbox exists. **Research date:** 2026-09-25.
 
 ## Research background
 
