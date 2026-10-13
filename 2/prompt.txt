@@ -1,1 +1,2 @@
-Do we need to do anything about the tracking diverged?
+1. commit
+2. go ahead
