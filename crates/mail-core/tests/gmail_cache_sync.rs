@@ -75,6 +75,9 @@ struct FakeState {
     history: HashMap<Option<String>, HistoryPage>,
     expired_starts: HashSet<String>,
     sticky_error: Option<MailError>,
+    /// Per-thread typed error plan (e.g. a rate limit on one thread read);
+    /// cleared by tests to simulate the limit recovering.
+    thread_errors: HashMap<String, MailError>,
     paused_method: Option<&'static str>,
     pause_thread_id: Option<String>,
     calls: Vec<String>,
@@ -125,6 +128,7 @@ impl FakeGmail {
                         history: HashMap::new(),
                         expired_starts: HashSet::new(),
                         sticky_error: None,
+                        thread_errors: HashMap::new(),
                         paused_method: None,
                         pause_thread_id: None,
                         calls: Vec::new(),
@@ -198,6 +202,18 @@ impl FakeGmail {
             .expect("fake gmail poisoned")
             .expired_starts
             .insert(start.to_string());
+    }
+
+    fn fail_thread(&self, thread_id: &str, error: Option<MailError>) {
+        let mut state = self.inner.state.lock().expect("fake gmail poisoned");
+        match error {
+            Some(error) => {
+                state.thread_errors.insert(thread_id.to_string(), error);
+            }
+            None => {
+                state.thread_errors.remove(thread_id);
+            }
+        }
     }
 
     fn set_sticky_error(&self, error: Option<MailError>) {
@@ -469,6 +485,18 @@ impl GmailReadProvider for FakeGmail {
         cancel: &CancelToken,
     ) -> Result<Option<GmailThread>, MailError> {
         self.record(format!("get_thread|{thread_id}"));
+        let planned_error = {
+            self.inner
+                .state
+                .lock()
+                .expect("fake gmail poisoned")
+                .thread_errors
+                .get(thread_id)
+                .cloned()
+        };
+        if let Some(error) = planned_error {
+            return Err(error);
+        }
         let _guard = self.enter("get_thread", Some(thread_id), cancel)?;
         let thread = {
             let state = self.inner.state.lock().expect("fake gmail poisoned");
@@ -890,6 +918,180 @@ fn discovery_caps_at_one_hundred_conversations() {
             .len(),
         100
     );
+    core.stop();
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn rate_limit_mid_discovery_preserves_and_reuses_durable_progress() {
+    let (fake, _profile) = FakeGmail::new();
+    // Two pages; the second read of page 2 is rate limited mid-page.
+    let mut inbox = HashMap::new();
+    inbox.insert(
+        None::<String>,
+        inbox_page(&["thr-1a", "thr-2b"], Some("page-2")),
+    );
+    inbox.insert(
+        Some("page-2".to_string()),
+        inbox_page(&["thr-3c", "thr-4d"], None),
+    );
+    fake.set_inbox(inbox);
+    let mut threads = HashMap::new();
+    for id in ["thr-1a", "thr-2b", "thr-3c", "thr-4d"] {
+        threads.insert(
+            id.to_string(),
+            thread(
+                id,
+                "hist-1000",
+                vec![msg(&format!("m-{id}"), "2026-01-01T10:00:00Z")],
+                &[&format!("m-{id}")],
+            ),
+        );
+    }
+    fake.set_threads(threads);
+    let mut history = HashMap::new();
+    history.insert(None::<String>, history_page(&[], &[], None, "hist-1001"));
+    fake.set_history(history);
+    fake.fail_thread("thr-4d", Some(MailError::RateLimited));
+
+    let (core, dir) = open_core("rate-limit-mid-discovery", &fake);
+    assert!(
+        until(|| status(&core).sync.error == Some(MailError::RateLimited)),
+        "rate limit visible: {:?}",
+        status(&core)
+    );
+
+    // Threads fetched before the rate limit are durably cached even though
+    // their page never completed, and discovery stays unfinished.
+    let st = status(&core);
+    assert!(!st.sync.initial_sync_complete);
+    assert_eq!(st.sync.cached_conversations, 3);
+    assert_eq!(fake.calls_matching("get_thread|thr-3c").len(), 1);
+
+    core.stop();
+    drop(core);
+    // The limit clears; the restart resumes from the durable checkpoints.
+    fake.fail_thread("thr-4d", None);
+    let core = open_at(&dir, &fake);
+    assert!(
+        until(|| {
+            let st = status(&core);
+            st.connection == ConnectionState::Connected
+                && st.sync.initial_sync_complete
+                && st.sync.cached_conversations == 4
+                && st.sync.state == SyncState::Idle
+        }),
+        "restart completes discovery: {:?}",
+        status(&core)
+    );
+
+    // Page 1 was never re-listed or re-fetched; thr-3c was reused from
+    // durable mid-page progress (never re-fetched); only the failed read
+    // (recorded once, then retried) ran again.
+    assert_eq!(
+        fake.calls_matching("list_inbox|-").len(),
+        1,
+        "{:?}",
+        fake.calls_matching("list_inbox")
+    );
+    assert_eq!(fake.calls_matching("list_inbox|page-2").len(), 2);
+    assert_eq!(fake.calls_matching("get_thread|thr-1a").len(), 1);
+    assert_eq!(fake.calls_matching("get_thread|thr-2b").len(), 1);
+    assert_eq!(
+        fake.calls_matching("get_thread|thr-3c").len(),
+        1,
+        "saved thread must not be refetched"
+    );
+    assert_eq!(fake.calls_matching("get_thread|thr-4d").len(), 2);
+    core.stop();
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn first_page_mid_page_failures_preserve_and_reuse_durable_progress() {
+    let (fake, _profile) = FakeGmail::new();
+    // The first (and only) inbox page fails on its second thread read; the
+    // running checkpoint keeps a `None` page token across reopens.
+    let mut inbox = HashMap::new();
+    inbox.insert(None::<String>, inbox_page(&["thr-1a", "thr-2b"], None));
+    fake.set_inbox(inbox);
+    let mut threads = HashMap::new();
+    for id in ["thr-1a", "thr-2b"] {
+        threads.insert(
+            id.to_string(),
+            thread(
+                id,
+                "hist-1000",
+                vec![msg(&format!("m-{id}"), "2026-01-01T10:00:00Z")],
+                &[&format!("m-{id}")],
+            ),
+        );
+    }
+    fake.set_threads(threads);
+    let mut history = HashMap::new();
+    history.insert(None::<String>, history_page(&[], &[], None, "hist-1001"));
+    fake.set_history(history);
+    fake.fail_thread("thr-2b", Some(MailError::RateLimited));
+
+    let (core, dir) = open_core("first-page-mid-page", &fake);
+    // Failure 1: thr-1a is committed mid-page; discovery stays unfinished.
+    assert!(
+        until(|| status(&core).sync.error == Some(MailError::RateLimited)),
+        "first rate limit visible: {:?}",
+        status(&core)
+    );
+    let st = status(&core);
+    assert!(!st.sync.initial_sync_complete);
+    assert_eq!(st.sync.cached_conversations, 1);
+    core.stop();
+    drop(core);
+
+    // Reopen onto a durable `running` state with no page token: discovery
+    // must resume the first page, and the limit still holds (failure 2).
+    let core = open_at(&dir, &fake);
+    assert!(
+        until(|| status(&core).sync.error == Some(MailError::RateLimited)),
+        "second rate limit visible: {:?}",
+        status(&core)
+    );
+    let st = status(&core);
+    assert!(!st.sync.initial_sync_complete);
+    assert_eq!(st.sync.cached_conversations, 1);
+    core.stop();
+    drop(core);
+
+    // The limit clears; the second reopen completes discovery and catch-up.
+    fake.fail_thread("thr-2b", None);
+    let core = open_at(&dir, &fake);
+    assert!(
+        until(|| {
+            let st = status(&core);
+            st.connection == ConnectionState::Connected
+                && st.sync.initial_sync_complete
+                && st.sync.cached_conversations == 2
+                && st.sync.state == SyncState::Idle
+        }),
+        "restart completes discovery: {:?}",
+        status(&core)
+    );
+
+    // The first page was re-listed on every resumption, but the thread
+    // saved by the mid-page commit was fetched exactly once, never
+    // refetched by the retries that re-listed its page.
+    assert_eq!(
+        fake.calls_matching("list_inbox|-").len(),
+        3,
+        "{:?}",
+        fake.calls_matching("list_inbox")
+    );
+    assert_eq!(
+        fake.calls_matching("get_thread|thr-1a").len(),
+        1,
+        "saved thread must not be refetched"
+    );
+    // The failing thread is retried once per resumption (three list/fetch
+    // passes total); the saved thread is never refetched.
+    assert_eq!(fake.calls_matching("get_thread|thr-2b").len(), 3);
     core.stop();
     let _ = std::fs::remove_dir_all(dir);
 }

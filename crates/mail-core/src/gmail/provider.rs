@@ -14,7 +14,7 @@
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 use reqwest::blocking::Client;
@@ -43,6 +43,32 @@ const MAX_PAYLOAD_DEPTH: usize = 10;
 /// Bound on pages requested per list/history call.
 const MAX_PAGE_RESULTS: usize = 100;
 
+/// Discovery (`threads.list`) page size. Smaller pages bound the thread reads
+/// that share one checkpointed page commit, so a rate limit interrupts far
+/// fewer fetched threads; the overall 100-conversation cap lives in the sync
+/// lane (`DISCOVERY_CAP`) and is unchanged.
+const DISCOVERY_PAGE_RESULTS: usize = 25;
+
+/// Safe pacing floor between consecutive Gmail API reads (read-only per-user
+/// quota). The first request runs immediately; every later request waits a
+/// cancellation-aware interval since the previous one was issued.
+const MIN_REQUEST_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Poll granularity of the cancellation-aware pacing wait: cancellation is
+/// observed promptly without busy-spinning.
+const PACING_POLL_INTERVAL: Duration = Duration::from_millis(20);
+
+/// Google API error reasons that identify a genuine read-quota rejection.
+/// Any other HTTP 403 reason (permission denial, policy, unknown) must not be
+/// mislabeled as rate limited.
+const QUOTA_ERROR_REASONS: [&str; 5] = [
+    "rateLimitExceeded",
+    "userRateLimitExceeded",
+    "dailyLimitExceeded",
+    "quotaExceeded",
+    "resourceExhausted",
+];
+
 /// Bound on work retained from one nested Gmail history response.
 const MAX_HISTORY_RECORDS: usize = 10_000;
 const MAX_CHANGED_THREAD_IDS: usize = 1_000;
@@ -59,6 +85,11 @@ pub struct GmailProvider {
     opener: UrlOpener,
     /// Serializes token refresh so concurrent calls never race the store.
     refresh_lock: Mutex<()>,
+    /// Pacing floor between consecutive API reads; tests shorten it.
+    min_request_interval: Duration,
+    /// Issue time of the most recent paced API read (or the reserved slot of
+    /// an in-flight one) so overlapping callers pace against each other.
+    last_request_slot: Mutex<Option<Instant>>,
 }
 
 impl GmailProvider {
@@ -101,7 +132,44 @@ impl GmailProvider {
             endpoints: Endpoints::google(),
             opener: auth::system_url_opener(),
             refresh_lock: Mutex::new(()),
+            min_request_interval: MIN_REQUEST_INTERVAL,
+            last_request_slot: Mutex::new(None),
         })
+    }
+
+    /// Waits until the minimum interval since the previous API read has
+    /// elapsed, aborting promptly with `auth_cancelled` when cancelled. The
+    /// request's slot is reserved before waiting so overlapping callers
+    /// cannot burst; the sync worker is serial in practice. An overdue
+    /// previous slot (idle gap, slow response) rebases to the current time
+    /// so elapsed gaps never grant burst credit.
+    fn pace(&self, cancel: &CancelToken) -> Result<(), MailError> {
+        if self.min_request_interval.is_zero() {
+            return Ok(());
+        }
+        let due = {
+            let mut slot = self
+                .last_request_slot
+                .lock()
+                .map_err(|_| MailError::StorageUnavailable)?;
+            let now = Instant::now();
+            let due = match *slot {
+                Some(previous) => (previous + self.min_request_interval).max(now),
+                None => now,
+            };
+            *slot = Some(due);
+            due
+        };
+        loop {
+            if cancel.is_cancelled() {
+                return Err(MailError::AuthCancelled);
+            }
+            let remaining = due.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Ok(());
+            }
+            std::thread::sleep(remaining.min(PACING_POLL_INTERVAL));
+        }
     }
 
     /// Loads the cached token; refreshes through the serialized path when
@@ -184,6 +252,7 @@ impl GmailProvider {
         if cancel.is_cancelled() {
             return Err(MailError::AuthCancelled);
         }
+        self.pace(cancel)?;
         let url = if query.is_empty() {
             format!("{}{path}", self.endpoints.api)
         } else {
@@ -200,6 +269,16 @@ impl GmailProvider {
             return Ok(None);
         }
         if !status.is_success() {
+            if status == StatusCode::FORBIDDEN {
+                // 403 conflates genuine quota rejections with permission
+                // denials. Classify by bounded structured reasons only; the
+                // body itself never crosses this boundary and is never
+                // logged. An unreadable body cannot be classified, so it
+                // keeps the generic provider failure.
+                let classified = auth::read_bounded(response)
+                    .map(|bytes| classify_forbidden(&String::from_utf8_lossy(&bytes)));
+                return Err(classified.unwrap_or(MailError::ProviderUnavailable));
+            }
             return Err(map_status(status));
         }
         let bytes = auth::read_bounded(response)?;
@@ -207,6 +286,35 @@ impl GmailProvider {
             String::from_utf8(bytes).map_err(|_| MailError::InvalidProviderResponse)?,
         ))
     }
+}
+
+/// Bounded, structured classification of an HTTP 403 body: inspects only the
+/// documented `error.errors[].reason` fields (capped count) and the
+/// canonical `error.status` code. Never exposes the body — callers receive a
+/// typed error only.
+fn classify_forbidden(body: &str) -> MailError {
+    const MAX_REASONS_EXAMINED: usize = 10;
+    let Ok(json) = serde_json::from_str::<Value>(body) else {
+        return MailError::ProviderUnavailable;
+    };
+    let error = json.get("error");
+    let reason_is_quota = error
+        .and_then(|error| error.get("errors"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.get("reason").and_then(Value::as_str))
+        .take(MAX_REASONS_EXAMINED)
+        .any(|reason| QUOTA_ERROR_REASONS.contains(&reason));
+    if reason_is_quota
+        || error
+            .and_then(|error| error.get("status"))
+            .and_then(Value::as_str)
+            == Some("RESOURCE_EXHAUSTED")
+    {
+        return MailError::RateLimited;
+    }
+    MailError::ProviderUnavailable
 }
 
 impl GmailReadProvider for GmailProvider {
@@ -282,7 +390,7 @@ impl GmailReadProvider for GmailProvider {
         cancel: &CancelToken,
     ) -> Result<InboxPage, MailError> {
         let token = self.access_token(cancel)?;
-        let mut query = format!("labelIds=INBOX&maxResults={MAX_PAGE_RESULTS}");
+        let mut query = format!("labelIds=INBOX&maxResults={DISCOVERY_PAGE_RESULTS}");
         if let Some(page_token) = page_token {
             query.push_str(&format!("&pageToken={}", url_encode(page_token)));
         }
@@ -404,8 +512,10 @@ fn optional_string_array<'a>(
 fn map_status(status: StatusCode) -> MailError {
     match status.as_u16() {
         401 => MailError::AuthRequired,
-        // Gmail uses 403 and 429 for quota errors.
-        403 | 429 => MailError::RateLimited,
+        // Gmail uses 429 for quota errors. HTTP 403 is classified
+        // structurally in `api_get` because genuine quota and permission
+        // denials share that status code.
+        429 => MailError::RateLimited,
         _ => MailError::ProviderUnavailable,
     }
 }
@@ -1068,8 +1178,11 @@ pub(crate) mod tests {
     }
 
     /// Provider with loopback endpoints and a no-op opener (no browser).
+    /// Request pacing is disabled here; the pacing tests below opt back in
+    /// with short intervals so no test performs a long real sleep.
     fn test_provider(api_base: &str, secrets: Arc<dyn Secrets>) -> GmailProvider {
         let mut provider = GmailProvider::new(test_config(), secrets).unwrap();
+        provider.min_request_interval = Duration::ZERO;
         provider.endpoints = Endpoints {
             authorize: format!("{api_base}/synthetic-authorize"),
             token: format!("{api_base}/synthetic-token"),
@@ -1555,6 +1668,210 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn discovery_list_requests_a_bounded_smaller_page() {
+        let (base, api) = FakeApi::start(vec![(
+            "/gmail/v1/users/me/threads",
+            200,
+            r#"{"threads":[{"id":"t1"}]}"#,
+        )]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        secrets.store(&future_token()).unwrap();
+        let provider = test_provider(&base, secrets);
+
+        provider
+            .list_inbox(None, &CancelToken::default())
+            .expect("list inbox");
+        let request = &api.requests()[0];
+        assert!(request.contains("labelIds=INBOX"));
+        // Discovery pages are smaller than the history page bound so a
+        // rate-limited page loses less checked work; the overall cap lives
+        // in the sync lane.
+        assert!(request.contains(&format!("maxResults={DISCOVERY_PAGE_RESULTS}")));
+        assert!(!request.contains("maxResults=100"));
+    }
+
+    #[test]
+    fn forbidden_quota_reasons_map_to_rate_limited_and_permissions_do_not() {
+        let script_and_assert = |body: &str, expected: MailError| {
+            let (base, _api) = FakeApi::start(vec![("/gmail/v1/users/me/threads", 403, body)]);
+            let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+            secrets.store(&future_token()).unwrap();
+            let provider = test_provider(&base, secrets);
+            match provider.list_inbox(None, &CancelToken::default()) {
+                Err(error) => assert_eq!(error, expected, "classification for body {body}"),
+                Ok(_) => panic!("expected a typed error for body {body}"),
+            }
+        };
+
+        // Genuine quota rejection: structured reason maps to rate_limited.
+        script_and_assert(
+            r#"{"error":{"code":403,"message":"synthetic quota text","errors":[{"domain":"usageLimits","reason":"rateLimitExceeded"}],"status":"PERMISSION_DENIED"}}"#,
+            MailError::RateLimited,
+        );
+        script_and_assert(
+            r#"{"error":{"code":403,"errors":[{"reason":"userRateLimitExceeded"}]}}"#,
+            MailError::RateLimited,
+        );
+        script_and_assert(
+            r#"{"error":{"code":403,"errors":[{"reason":"dailyLimitExceeded"}]}}"#,
+            MailError::RateLimited,
+        );
+        script_and_assert(
+            r#"{"error":{"code":403,"status":"RESOURCE_EXHAUSTED"}}"#,
+            MailError::RateLimited,
+        );
+
+        // Unrelated 403s are NOT mislabeled as rate limited.
+        script_and_assert(
+            r#"{"error":{"code":403,"errors":[{"reason":"insufficientPermissions"}],"status":"PERMISSION_DENIED"}}"#,
+            MailError::ProviderUnavailable,
+        );
+        script_and_assert(
+            r#"{"error":{"code":403,"errors":[{"reason":"domainPolicy"}]}}"#,
+            MailError::ProviderUnavailable,
+        );
+        // Unstructured body: cannot classify, stays generic.
+        script_and_assert("not json at all", MailError::ProviderUnavailable);
+    }
+
+    #[test]
+    fn read_requests_are_paced_without_long_real_sleeps() {
+        let (base, _api) = FakeApi::start(vec![
+            (
+                "/gmail/v1/users/me/threads",
+                200,
+                r#"{"threads":[{"id":"t1"}],"nextPageToken":"c2"}"#,
+            ),
+            (
+                "/gmail/v1/users/me/threads",
+                200,
+                r#"{"threads":[{"id":"t2"}]}"#,
+            ),
+        ]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        secrets.store(&future_token()).unwrap();
+        let mut provider = test_provider(&base, secrets);
+        provider.min_request_interval = Duration::from_millis(30);
+
+        let start = Instant::now();
+        provider
+            .list_inbox(None, &CancelToken::default())
+            .expect("first page");
+        provider
+            .list_inbox(Some("c2"), &CancelToken::default())
+            .expect("second page");
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed >= Duration::from_millis(30),
+            "consecutive reads are paced: {elapsed:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "pacing stays bounded in tests: {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn overdue_slots_rebase_to_now_instead_of_granting_burst_credit() {
+        let (base, _api) = FakeApi::start(vec![
+            (
+                "/gmail/v1/users/me/threads",
+                200,
+                r#"{"threads":[{"id":"t1"}]}"#,
+            ),
+            (
+                "/gmail/v1/users/me/threads",
+                200,
+                r#"{"threads":[{"id":"t2"}]}"#,
+            ),
+        ]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        secrets.store(&future_token()).unwrap();
+        let mut provider = test_provider(&base, secrets);
+        provider.min_request_interval = Duration::from_millis(150);
+        // Simulate an idle/backoff gap: the reserved slot is far overdue.
+        // Both reads must be paced from now (rebased), not run immediately
+        // against the stale slot.
+        let previous = Instant::now()
+            .checked_sub(Duration::from_secs(3600))
+            .expect("monotonic clock covers the simulated gap");
+        *provider.last_request_slot.lock().unwrap() = Some(previous);
+
+        let start = Instant::now();
+        provider
+            .list_inbox(None, &CancelToken::default())
+            .expect("first read after the gap");
+        provider
+            .list_inbox(None, &CancelToken::default())
+            .expect("second read after the gap");
+        let elapsed = start.elapsed();
+        // Rebased pacing reserves `now` for the first read and paces the
+        // second a full interval after it; burst credit from the overdue
+        // slot would let both through in well under one interval.
+        assert!(
+            elapsed >= Duration::from_millis(150),
+            "overdue slot must not grant burst credit: {elapsed:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "pacing stays bounded in tests: {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn pacing_waits_abort_promptly_on_cancellation() {
+        let (base, api) = FakeApi::start(vec![]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        secrets.store(&future_token()).unwrap();
+        let mut provider = test_provider(&base, secrets);
+        // A large pacing interval must not become a long real sleep.
+        provider.min_request_interval = Duration::from_secs(3600);
+        // Seed a previous slot so the request reserves a slot one hour out
+        // and genuinely waits inside `pace()` when cancelled.
+        let seeded = Instant::now();
+        *provider.last_request_slot.lock().unwrap() = Some(seeded);
+        let cancel = CancelToken::default();
+        let provider = Arc::new(provider);
+
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let spawn_cancel = cancel.clone();
+        let spawn_provider = Arc::clone(&provider);
+        std::thread::spawn(move || {
+            let _ = done_tx.send(spawn_provider.list_inbox(None, &spawn_cancel));
+        });
+        // Synchronize on the reservation: `pace()` stored a slot one hour
+        // out before entering its wait loop.
+        let reserved = until_provider_slot(&provider, seeded);
+        assert!(reserved, "paced request never reserved its slot");
+        cancel.cancel();
+
+        let start = Instant::now();
+        let result = done_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("cancelled pacing wait returns promptly even on regression");
+        assert!(matches!(result, Err(MailError::AuthCancelled)));
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "cancelled pacing wait returns promptly: {:?}",
+            start.elapsed()
+        );
+        assert!(api.requests().is_empty());
+    }
+
+    /// Bounded wait for the spawned request to reserve its pace slot (a slot
+    /// later than the seeded one); false if it never happens.
+    fn until_provider_slot(provider: &GmailProvider, seeded: Instant) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let reserved = *provider.last_request_slot.lock().unwrap() > Some(seeded);
+            if reserved || Instant::now() >= deadline {
+                return reserved;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
     fn api_does_not_follow_redirects() {
         let (base, api) = FakeApi::start(vec![(
             "/gmail/v1/users/me/threads",
@@ -1935,7 +2252,6 @@ pub(crate) mod tests {
             .apply_discovery_page(
                 &[ThreadFetch::Cached(only), ThreadFetch::Cached(mixed)],
                 None,
-                None,
                 true,
                 false,
                 0,
@@ -2028,7 +2344,7 @@ pub(crate) mod tests {
             .unwrap();
         let previous = current.clone();
         store
-            .apply_discovery_page(&[ThreadFetch::Cached(previous)], None, None, true, false, 0)
+            .apply_discovery_page(&[ThreadFetch::Cached(previous)], None, true, false, 0)
             .unwrap();
         store
             .apply_history_page(&history, &[ThreadFetch::Cached(current)], "11", 0)

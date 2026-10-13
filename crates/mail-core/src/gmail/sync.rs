@@ -44,7 +44,8 @@ const DISCONNECT_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_REDISCOVERY_RESTARTS: u32 = 3;
 /// A pass yields after this many pages; every successful page remains durable.
 const MAX_PAGES_PER_STAGE: usize = 100;
-/// Bounds the provider's inbox thread ids (the real API requests 100).
+/// Bounds the provider's inbox thread ids per discovery page (the real API
+/// is requested to return 25).
 const MAX_DISCOVERY_IDS_PER_PAGE: usize = 100;
 /// Bounds work for nested history records, which can name multiple threads.
 const MAX_HISTORY_IDS_PER_PAGE: usize = 1_000;
@@ -866,13 +867,30 @@ fn run_discovery(
                     }
                     fetched.push(ThreadFetch::Missing(id.clone()));
                 }
-                Err(error) => return StageOutcome::SyncError(error),
+                Err(error) => {
+                    // Preserve the threads already fetched from this page:
+                    // the page token is NOT advanced, so a rate-limit retry
+                    // or restart re-lists this page and skips committed
+                    // threads via the durable seen set instead of refetching
+                    // them. A generation race (disconnect) discards the
+                    // partial write like any stale result.
+                    match store.apply_discovery_page(
+                        &fetched,
+                        incoming_token.as_deref(),
+                        false,
+                        false,
+                        generation,
+                    ) {
+                        Ok(Commit::Applied) => return StageOutcome::SyncError(error),
+                        Ok(Commit::Discarded) => return StageOutcome::Cancelled,
+                        Err(commit_error) => return StageOutcome::Halt(commit_error),
+                    }
+                }
             }
         }
         let done = page.next_page_token.is_none() || capped;
         match store.apply_discovery_page(
             &fetched,
-            incoming_token.as_deref(),
             page.next_page_token.as_deref(),
             done,
             capped,

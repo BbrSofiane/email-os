@@ -8,7 +8,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 use mail_core::error::MailError;
 use mail_core::gmail::auth::GoogleConfig;
 use mail_core::gmail::provider::GmailProvider;
-use mail_core::gmail::secrets::{KeychainSecrets, MemorySecrets, Secrets, TokenBundle};
+// `KeychainSecrets` is only referenced by the fail-closed test compiled off
+// macOS; on macOS the import would be unused and fail `clippy -D warnings`.
+#[cfg(not(target_os = "macos"))]
+use mail_core::gmail::secrets::KeychainSecrets;
+use mail_core::gmail::secrets::{MemorySecrets, Secrets, TokenBundle};
 use mail_core::gmail::types::GmailReadProvider;
 use mail_core::provider::CancelToken;
 

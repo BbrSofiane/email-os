@@ -109,6 +109,23 @@ local Gmail profile/cache. It is a **local disconnect**, not a promise to revoke
 the Google grant or revoke tokens remotely; revoke authorization through the
 Google account controls separately if required.
 
+### Gmail sync pacing and rate limits
+
+The disposable-account diagnostic observed HTTP 403 `rateLimitExceeded` after
+~60 rapid thread reads, so discovery is paced for read-only Gmail quotas:
+`threads.list` discovery pages request 25 threads (the overall disclosed cap
+stays 100 conversations), consecutive Gmail API reads are separated by a
+100 ms minimum interval whose wait aborts promptly on cancellation, and a
+mid-page failure commits the threads already fetched (the page token is not
+advanced), so a rate-limit retry or restart resumes from durable progress
+instead of re-fetching saved threads. HTTP 403 is classified by bounded
+structured Google error reasons: only genuine quota rejections (e.g.
+`rateLimitExceeded`, `userRateLimitExceeded`, `dailyLimitExceeded`,
+`quotaExceeded`, `resourceExhausted`) surface as `rate_limited`; permission
+denials and unclassifiable bodies surface as the generic provider error. Raw
+response bodies, messages, mailbox data, or URLs with IDs are never logged or
+exposed over IPC.
+
 ### Disposable Mac smoke checklist (Slice 02 still pending)
 
 Run only on the operator-approved disposable-account Mac path:

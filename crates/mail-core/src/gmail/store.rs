@@ -443,12 +443,15 @@ impl GmailStore {
     }
 
     /// Atomically applies one discovery page's thread facts and its page
-    /// checkpoint. A completed capped pass replaces the cache view with its
-    /// observed set; a complete uncapped pass clears stale INBOX membership.
+    /// checkpoint (`next_token`: the page token to resume from; `None` keeps
+    /// an unset token). A completed capped pass replaces the cache view with
+    /// its observed set; a complete uncapped pass clears stale INBOX
+    /// membership. The seen set is reset only when a genuinely fresh run
+    /// starts (durable state was not `running`), so a resumed page keeps the
+    /// committed progress that lets retries skip already-saved threads.
     pub(crate) fn apply_discovery_page(
         &self,
         fetched: &[ThreadFetch],
-        incoming_token: Option<&str>,
         next_token: Option<&str>,
         done: bool,
         capped: bool,
@@ -463,8 +466,13 @@ impl GmailStore {
             return Ok(Commit::Discarded);
         }
         let account_id = account_id_of(&tx)?;
-        if incoming_token.is_none() {
-            // (Re)starting the discovery run: any earlier run's seen set is stale.
+        // (Re)starting the discovery run: any earlier run's seen set is
+        // stale. A `running` state with no page token can also be a resumed
+        // first page after a mid-page partial commit; its seen set is the
+        // current run's durable progress and must be kept so committed
+        // threads are never re-fetched.
+        let fresh_run = meta_get(&tx, "discovery_state")?.as_deref() != Some("running");
+        if fresh_run {
             tx.execute("DELETE FROM gmail_discovery_seen", [])
                 .map_err(|_| MailError::StorageUnavailable)?;
         }
@@ -1175,7 +1183,7 @@ mod tests {
             &["m-1"],
         ))];
         store
-            .apply_discovery_page(&page1, None, Some("page-2"), false, false, 0)
+            .apply_discovery_page(&page1, Some("page-2"), false, false, 0)
             .expect("page 1");
         assert!(matches!(
             store.discovery().expect("discovery"),
@@ -1189,7 +1197,7 @@ mod tests {
             &["m-2"],
         ))];
         store
-            .apply_discovery_page(&page2, Some("page-2"), None, true, false, 0)
+            .apply_discovery_page(&page2, None, true, false, 0)
             .expect("page 2");
         assert!(matches!(
             store.discovery().expect("discovery"),
@@ -1203,7 +1211,7 @@ mod tests {
         );
         // Replaying the final committed page must not duplicate anything.
         store
-            .apply_discovery_page(&page2, Some("page-2"), None, true, false, 0)
+            .apply_discovery_page(&page2, None, true, false, 0)
             .expect("replay");
         assert_eq!(store.cached_count().expect("count"), 2, "idempotent replay");
         let _ = std::fs::remove_dir_all(dir);
@@ -1286,7 +1294,6 @@ mod tests {
                     &["message-1"],
                 ))],
                 None,
-                None,
                 true,
                 false,
                 0,
@@ -1331,7 +1338,7 @@ mod tests {
         unsupported.conversation.context_complete = Some(false);
         unsupported.conversation.unsupported_reason = Some("no safe plain-text body".to_string());
         store
-            .apply_discovery_page(&[cached(unsupported)], None, None, true, false, 0)
+            .apply_discovery_page(&[cached(unsupported)], None, true, false, 0)
             .expect("persist unsupported membership");
 
         let snapshot = store.list_snapshot().expect("inbox snapshot");
@@ -1366,7 +1373,7 @@ mod tests {
             &["foreign-message"],
         );
         assert_eq!(
-            store.apply_discovery_page(&[cached(foreign)], None, None, true, false, 0),
+            store.apply_discovery_page(&[cached(foreign)], None, true, false, 0),
             Err(MailError::InvalidProviderResponse)
         );
         assert_eq!(store.cached_count().expect("cache count"), 0);
@@ -1394,7 +1401,7 @@ mod tests {
             })
             .collect();
         store
-            .apply_discovery_page(&initial, None, None, true, false, 0)
+            .apply_discovery_page(&initial, None, true, false, 0)
             .expect("seed full cache");
         let fresh: Vec<_> = (0..60)
             .map(|index| {
@@ -1411,7 +1418,7 @@ mod tests {
             })
             .collect();
         store
-            .apply_discovery_page(&fresh, None, Some("resume"), false, false, 0)
+            .apply_discovery_page(&fresh, Some("resume"), false, false, 0)
             .expect("commit partial rediscovery page");
         assert_eq!(
             store.cached_count().expect("bounded cache count"),
@@ -1446,7 +1453,7 @@ mod tests {
             })
             .collect();
         store
-            .apply_discovery_page(&tail, Some("resume"), None, true, false, 0)
+            .apply_discovery_page(&tail, None, true, false, 0)
             .expect("complete rediscovery");
         assert!(store.cached_count().expect("bounded cache count") <= DISCOVERY_CAP);
         let _ = std::fs::remove_dir_all(dir);
@@ -1466,7 +1473,7 @@ mod tests {
             &["m-1"],
         ))];
         store
-            .apply_discovery_page(&initial, None, None, true, false, 0)
+            .apply_discovery_page(&initial, None, true, false, 0)
             .expect("initial page");
         assert_eq!(
             store.list_snapshot().expect("snapshot").conversations.len(),
@@ -1475,7 +1482,7 @@ mod tests {
         // A later complete pass that does not observe thr-1 reconciles its
         // stale INBOX membership (external archive/delete), same transaction.
         store
-            .apply_discovery_page(&[], Some("resume"), None, true, false, 0)
+            .apply_discovery_page(&[], None, true, false, 0)
             .expect("reconciling pass");
         let snapshot = store.list_snapshot().expect("snapshot");
         assert!(
@@ -1543,7 +1550,7 @@ mod tests {
             &["m-3"],
         ))];
         store
-            .apply_discovery_page(&seeded, None, None, true, false, 0)
+            .apply_discovery_page(&seeded, None, true, false, 0)
             .expect("seed thr-2");
         let (page3, fetched3) = history_page(vec![], vec!["m-3"], None, "hist-3");
         store
@@ -1572,7 +1579,7 @@ mod tests {
             &["m-1"],
         ))];
         assert_eq!(
-            store.apply_discovery_page(&page, None, None, true, false, 0),
+            store.apply_discovery_page(&page, None, true, false, 0),
             Ok(Commit::Discarded),
             "in-flight write from before the generation bump is discarded"
         );
@@ -1589,7 +1596,7 @@ mod tests {
             &["m-1"],
         ))];
         assert_eq!(
-            store.apply_discovery_page(&fresh, None, None, true, false, 1),
+            store.apply_discovery_page(&fresh, None, true, false, 1),
             Ok(Commit::Applied),
             "a fresh pass after the bump applies normally"
         );
@@ -1611,7 +1618,7 @@ mod tests {
             &["m-1"],
         ))];
         store
-            .apply_discovery_page(&page, None, None, true, false, 0)
+            .apply_discovery_page(&page, None, true, false, 0)
             .expect("page");
         store.clear_account().expect("clear");
         assert!(!store.has_account().expect("has account"));
