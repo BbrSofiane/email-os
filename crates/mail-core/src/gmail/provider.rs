@@ -21,6 +21,9 @@ use reqwest::blocking::Client;
 use reqwest::StatusCode;
 use serde_json::Value;
 
+use crate::drafts::types::{
+    ReplyContext, MAX_REPLY_HEADER_BYTES, MAX_REPLY_REFERENCES, MAX_REPLY_TO_RECIPIENTS,
+};
 use crate::dto::{Address, Conversation, ConversationRef, Message};
 use crate::error::MailError;
 use crate::gmail::auth::{self, Endpoints, GoogleConfig, UrlOpener};
@@ -376,6 +379,10 @@ impl GmailProvider {
         Err(MailError::ProviderRejected)
     }
 }
+
+#[cfg(test)]
+#[path = "reply_context_tests.rs"]
+mod reply_context_tests;
 
 fn scope_grants_modify(scope: &str) -> bool {
     scope
@@ -797,8 +804,15 @@ fn parse_thread(account_id: &str, thread_id: &str, body: &str) -> Result<GmailTh
     let mut no_plain_text = 0usize;
     let mut attachments = false;
     let mut omitted_inline_content = false;
+    let mut latest_payload: Option<&Value> = None;
+    let mut latest_key: Option<(String, String)> = None;
     for message in messages {
         let id = str_field(message, "id")?;
+        let key = (message_sent_at(message), id.clone());
+        if latest_key.as_ref().is_none_or(|current| key > *current) {
+            latest_key = Some(key);
+            latest_payload = Some(message);
+        }
         let labels = optional_string_array(message, "labelIds")?.unwrap_or_default();
         if labels.contains(&"INBOX") {
             inbox_message_ids.push(id.clone());
@@ -845,6 +859,11 @@ fn parse_thread(account_id: &str, thread_id: &str, body: &str) -> Result<GmailTh
     if omitted_inline_content {
         reasons.push("additional inline MIME content is not displayed".to_string());
     }
+    let reply_context = latest_payload.and_then(|message| {
+        let source_message_id = message.get("id")?.as_str()?;
+        let payload = message.get("payload")?;
+        parse_reply_context(payload, source_message_id)
+    });
     let conversation = Conversation {
         conversation_ref: ConversationRef {
             account_id: account_id.to_string(),
@@ -857,7 +876,7 @@ fn parse_thread(account_id: &str, thread_id: &str, body: &str) -> Result<GmailTh
         context_complete: Some(no_plain_text == 0 && !attachments && !omitted_inline_content),
         unsupported_reason: (!reasons.is_empty()).then(|| reasons.join("; ")),
         retained_snapshot_at: None,
-        reply_context: None,
+        reply_context,
         pending_operation_id: None,
     };
     Ok(GmailThread {
@@ -867,6 +886,27 @@ fn parse_thread(account_id: &str, thread_id: &str, body: &str) -> Result<GmailTh
         unread_message_ids: Some(unread_message_ids),
         history_id,
     })
+}
+
+fn message_sent_at(message: &Value) -> String {
+    message
+        .get("internalDate")
+        .and_then(Value::as_str)
+        .and_then(|ms| ms.parse::<i64>().ok())
+        .and_then(chrono::DateTime::from_timestamp_millis)
+        .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+        .or_else(|| {
+            let date = message
+                .get("payload")
+                .map(|payload| json_header_value(payload, "Date"))
+                .unwrap_or_default();
+            (!date.is_empty())
+                .then(|| mailparse::dateparse(&date).ok())
+                .flatten()
+                .and_then(|timestamp| chrono::DateTime::from_timestamp(timestamp, 0))
+                .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+        })
+        .unwrap_or_default()
 }
 
 /// Newest non-empty subject wins; Gmail lists messages oldest first.
@@ -894,21 +934,7 @@ fn parse_message(id: &str, message: &Value) -> Result<(Message, String), String>
         .next()
         .ok_or_else(|| "missing From address".to_string())?;
     let to = parse_addresses(&json_header_value(payload, "To"));
-    let sent_at = message
-        .get("internalDate")
-        .and_then(Value::as_str)
-        .and_then(|ms| ms.parse::<i64>().ok())
-        .and_then(chrono::DateTime::from_timestamp_millis)
-        .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
-        .or_else(|| {
-            let date = json_header_value(payload, "Date");
-            (!date.is_empty())
-                .then(|| mailparse::dateparse(&date).ok())
-                .flatten()
-                .and_then(|timestamp| chrono::DateTime::from_timestamp(timestamp, 0))
-                .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
-        })
-        .unwrap_or_default();
+    let sent_at = message_sent_at(message);
     let part = find_plain_part(payload, 0).ok_or_else(|| "no plain-text body".to_string())?;
     let data = part
         .get("body")
@@ -948,6 +974,24 @@ fn parse_message(id: &str, message: &Value) -> Result<(Message, String), String>
     ))
 }
 
+/// Header values are left raw for strict metadata parsing; callers decide
+/// whether malformed controls invalidate metadata or are flattened for display.
+fn raw_header_values<'a>(payload: &'a Value, name: &str) -> Vec<Option<&'a str>> {
+    payload
+        .get("headers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|header| {
+            header
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|n| n.eq_ignore_ascii_case(name))
+        })
+        .map(|header| header.get("value").and_then(Value::as_str))
+        .collect()
+}
+
 /// First header value with the given name on a Gmail payload, sanitized
 /// against CR/LF (hostile header values become one line).
 fn json_header_value(payload: &Value, name: &str) -> String {
@@ -971,6 +1015,249 @@ fn json_header_value(payload: &Value, name: &str) -> String {
         })
         .unwrap_or_default()
         .replace(['\r', '\n'], " ")
+}
+
+/// Derives safe, plain mailbox and RFC threading metadata from one full Gmail
+/// payload. Any ambiguity or malformed header makes only reply preparation
+/// unavailable; ordinary reading remains independent of this result.
+fn parse_reply_context(payload: &Value, source_message_id: &str) -> Option<ReplyContext> {
+    let from = parse_single_mailbox_header(payload, "From")?;
+    let reply_to_headers = raw_header_values(payload, "Reply-To");
+    let reply_to_mailboxes = match reply_to_headers.as_slice() {
+        [] => None,
+        [Some(value)] => Some(parse_mailbox_list(value, true)?),
+        _ => return None,
+    };
+    let message_id = single_message_id(payload, "Message-ID")?;
+    let reference_headers = raw_header_values(payload, "References");
+    let mut references = match reference_headers.as_slice() {
+        [Some(value)] => parse_message_id_list(value)?,
+        [] => {
+            let in_reply_to = raw_header_values(payload, "In-Reply-To");
+            match in_reply_to.as_slice() {
+                [] => Vec::new(),
+                [Some(value)] => vec![parse_single_message_id(value)?],
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+    references.retain(|id| id != &message_id);
+    references.push(message_id.clone());
+    let total_bytes = references.iter().try_fold(0usize, |total, id| {
+        total
+            .checked_add(id.len())?
+            .checked_add(usize::from(total > 0))
+    })?;
+    if references.len() > MAX_REPLY_REFERENCES || total_bytes > MAX_REPLY_HEADER_BYTES {
+        return None;
+    }
+    Some(ReplyContext {
+        source_message_id: source_message_id.to_string(),
+        from_mailbox: from,
+        reply_to_mailboxes,
+        message_id,
+        references,
+    })
+}
+
+fn parse_single_mailbox_header(payload: &Value, name: &str) -> Option<String> {
+    let headers = raw_header_values(payload, name);
+    let [Some(value)] = headers.as_slice() else {
+        return None;
+    };
+    let mailboxes = parse_mailbox_list(value, false)?;
+    (mailboxes.len() == 1).then(|| mailboxes.into_iter().next().unwrap())
+}
+
+/// Parses the original mailbox grammar before any RFC2047 display-name decode.
+/// Groups are rejected for reply metadata even though reader display flattens them.
+fn parse_mailbox_list(value: &str, allow_multiple: bool) -> Option<Vec<String>> {
+    if value.len() > MAX_REPLY_HEADER_BYTES
+        || value.chars().any(char::is_control)
+        || value.trim_end().ends_with(',')
+        || has_unquoted_semicolon(value)
+        || has_addr_spec_in_unquoted_phrase(value)
+    {
+        return None;
+    }
+    let mut raw = String::from("From: ");
+    raw.push_str(value);
+    raw.push_str("\r\n");
+    let (header, _) = mailparse::parse_header(raw.as_bytes()).ok()?;
+    let list = mailparse::addrparse_header(&header).ok()?;
+    let mut mailboxes = Vec::new();
+    for address in list.iter() {
+        let mailparse::MailAddr::Single(info) = address else {
+            return None;
+        };
+        let mailbox = info.addr.as_str();
+        if !valid_mailbox(mailbox) {
+            return None;
+        }
+        mailboxes.push(mailbox.to_string());
+        if mailboxes.len() > MAX_REPLY_TO_RECIPIENTS {
+            return None;
+        }
+    }
+    if mailboxes.is_empty() || (!allow_multiple && mailboxes.len() != 1) {
+        return None;
+    }
+    Some(mailboxes)
+}
+
+fn has_addr_spec_in_unquoted_phrase(value: &str) -> bool {
+    let mut quoted = false;
+    let mut escaped = false;
+    let mut comment_depth = 0usize;
+    let mut in_angle_address = false;
+    let mut phrase_has_at = false;
+
+    for character in value.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' && (quoted || comment_depth > 0) {
+            escaped = true;
+            continue;
+        }
+        if comment_depth > 0 {
+            match character {
+                '(' => comment_depth += 1,
+                ')' => comment_depth -= 1,
+                _ => {}
+            }
+            continue;
+        }
+        if quoted {
+            if character == '"' {
+                quoted = false;
+            }
+            continue;
+        }
+        match character {
+            '"' => quoted = true,
+            '(' => comment_depth = 1,
+            '<' if !in_angle_address => {
+                if phrase_has_at {
+                    return true;
+                }
+                in_angle_address = true;
+            }
+            '>' if in_angle_address => in_angle_address = false,
+            ',' if !in_angle_address => phrase_has_at = false,
+            '@' if !in_angle_address => phrase_has_at = true,
+            _ => {}
+        }
+    }
+    false
+}
+
+fn has_unquoted_semicolon(value: &str) -> bool {
+    let mut quoted = false;
+    let mut escaped = false;
+    for character in value.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match character {
+            '\\' if quoted => escaped = true,
+            '"' => quoted = !quoted,
+            ';' if !quoted => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+fn valid_mailbox(mailbox: &str) -> bool {
+    if mailbox.is_empty()
+        || mailbox.len() > 254
+        || mailbox.chars().any(char::is_control)
+        || mailbox.chars().any(char::is_whitespace)
+    {
+        return false;
+    }
+    let Some((local, domain)) = mailbox.split_once('@') else {
+        return false;
+    };
+    !local.is_empty()
+        && !domain.is_empty()
+        && !domain.contains('@')
+        && local.is_ascii()
+        && domain.is_ascii()
+}
+
+fn single_message_id(payload: &Value, name: &str) -> Option<String> {
+    let headers = raw_header_values(payload, name);
+    let [Some(value)] = headers.as_slice() else {
+        return None;
+    };
+    parse_single_message_id(value)
+}
+
+fn parse_single_message_id(value: &str) -> Option<String> {
+    if value.len() > MAX_REPLY_HEADER_BYTES
+        || !value.is_ascii()
+        || value
+            .chars()
+            .any(|ch| ch.is_control() || ch.is_whitespace())
+        || !value.starts_with('<')
+        || !value.ends_with('>')
+    {
+        return None;
+    }
+    let inner = &value[1..value.len().checked_sub(1)?];
+    let (left, right) = inner.split_once('@')?;
+    if right.contains('@') || !valid_dot_atom(left, false) || !valid_dot_atom(right, true) {
+        return None;
+    }
+    Some(value.to_string())
+}
+
+fn valid_dot_atom(value: &str, domain: bool) -> bool {
+    if value.is_empty() {
+        return false;
+    }
+    value.split('.').all(|atom| {
+        !atom.is_empty()
+            && atom.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric()
+                    || (domain && byte == b'-')
+                    || (!domain && b"!#$%&'*+-/=?^_`{|}~".contains(&byte))
+            })
+            && (!domain
+                || (atom
+                    .as_bytes()
+                    .first()
+                    .is_some_and(|byte| byte.is_ascii_alphanumeric())
+                    && atom
+                        .as_bytes()
+                        .last()
+                        .is_some_and(|byte| byte.is_ascii_alphanumeric())))
+    })
+}
+
+fn parse_message_id_list(value: &str) -> Option<Vec<String>> {
+    if value.len() > MAX_REPLY_HEADER_BYTES
+        || !value.is_ascii()
+        || value.chars().any(char::is_control)
+    {
+        return None;
+    }
+    if value.trim().is_empty() {
+        return None;
+    }
+    let mut ids = Vec::new();
+    for token in value.split_ascii_whitespace() {
+        ids.push(parse_single_message_id(token)?);
+        if ids.len() > MAX_REPLY_REFERENCES {
+            return None;
+        }
+    }
+    Some(ids)
 }
 
 /// RFC2047-decodes one header value via `mailparse`; falls back to the raw

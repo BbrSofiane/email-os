@@ -10,8 +10,8 @@
  * ({{ }}). No v-html, no markdown/HTML processing, no remote assets anywhere in
  * this slice — hostile markup stays literal text.
  */
-import { nextTick, ref, watch } from 'vue';
-import type { Conversation, MailError } from '../lib/ipc/client';
+import { computed, nextTick, ref, watch } from 'vue';
+import type { Conversation, DraftSource, MailError } from '../lib/ipc/client';
 import type { DetailState } from '../composables/useMailbox';
 
 const props = defineProps<{
@@ -29,9 +29,29 @@ const emit = defineEmits<{
   archive: [];
   unarchive: [];
   setRead: [read: boolean];
+  prepareReply: [source: DraftSource];
 }>();
 
 const container = ref<HTMLElement | null>(null);
+const latestMessage = computed(() => props.conversation?.messages.at(-1) ?? null);
+const replyBlockedReason = computed(() => {
+  if (!props.conversation || !latestMessage.value) return 'No displayed latest message is available as a reply source.';
+  if (props.conversation.retainedSnapshotAt) return 'Reply preparation is blocked for a retained snapshot; current message headers cannot be verified.';
+  if (props.conversation.contextComplete === false) return 'Reply preparation is blocked because this cached conversation is incomplete.';
+  if (props.conversation.replyContext && props.conversation.replyContext.sourceMessageId !== latestMessage.value.id) return 'Reply preparation is blocked because cached reply headers do not match the displayed latest message.';
+  return null;
+});
+
+function prepareReply(): void {
+  const conversation = props.conversation;
+  const source = latestMessage.value;
+  if (!conversation || !source || replyBlockedReason.value) return;
+  emit('prepareReply', {
+    kind: 'reply',
+    conversation: { ...conversation.ref },
+    sourceMessageId: source.id,
+  });
+}
 
 function describeError(error: MailError): string {
   switch (error.kind) {
@@ -101,6 +121,13 @@ watch(
     <div class="reader-toolbar">
       <button type="button" data-test="reader-close" @click="emit('close')">Close (Esc)</button>
       <button
+        v-if="props.state === 'ready' && props.conversation"
+        type="button"
+        data-test="prepare-reply"
+        :disabled="!!replyBlockedReason"
+        @click="prepareReply"
+      >Prepare reply</button>
+      <button
         v-if="!props.readOnly && props.state === 'ready' && props.conversation"
         type="button"
         data-test="reader-archive-toggle"
@@ -133,6 +160,9 @@ watch(
     </p>
     <template v-else-if="props.conversation">
       <h2 class="reader-subject">{{ props.conversation.subject }}</h2>
+      <p v-if="replyBlockedReason" class="reader-notice" data-test="reply-blocked" role="note">
+        {{ replyBlockedReason }}
+      </p>
       <p v-if="props.conversation.retainedSnapshotAt" class="reader-recovery-snapshot" data-test="retained-snapshot-notice" role="note">
         Local recovery snapshot saved at {{ props.conversation.retainedSnapshotAt }}; Gmail may have newer messages or mailbox changes.
       </p>

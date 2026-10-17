@@ -1,5 +1,5 @@
 /**
- * Browser-only in-memory fake MailClient (Slices 01–03 preview + tests).
+ * Browser-only in-memory fake MailClient (Slices 01–04 preview + tests).
  *
  * THIS IS NOT DURABLE. It exists so the UI can run in a plain browser and so tests
  * can drive pending/failed/success operation flows deterministically. It mimics the
@@ -13,19 +13,29 @@
  * exactly where core would, behind the same read models (snapshot summaries carry
  * membership + pendingOperationId).
  *
- * The fake also models the account lifecycle and Slice 03 permission/mutation states so the UI's Gmail states can
- * be tested deterministically. `mode: 'gmail'` here is still labelled synthetic
+ * The fake also models local-only drafts, native-close receipts, account lifecycle,
+ * and Slice 03 permission/mutation states deterministically. `mode: 'gmail'` here is still labelled synthetic
  * in-memory data — never a real OAuth flow, never real mail. In Gmail mode the fake
  * starts with Gmail actions disabled and only enables them through a synthetic,
  * explicit grant flow. All data and grants remain in-memory only.
  */
 import type {
   AccountStatus,
+  AppCloseRequest,
   Address,
   ConnectionState,
   Conversation,
   ConversationRef,
   ConversationSummary,
+  CreateDraft,
+  DeleteDraft,
+  Draft,
+  DraftContent,
+  DraftDeleteReceipt,
+  DraftReceipt,
+  DraftRef,
+  DraftReplyLink,
+  DraftSummary,
   InboxSnapshot,
   MailClient,
   MailError,
@@ -38,10 +48,12 @@ import type {
   OperationStatus,
   OperationSummary,
   RetryOperation,
+  SaveDraft,
   SetArchived,
   SetRead,
   SyncState,
 } from './client';
+import { FIXTURE_MAILBOX } from './generated';
 
 export const BROWSER_PREVIEW_DISCLOSURE =
   'Browser preview: in-memory fake client. Nothing is durable and the native core is not connected.';
@@ -83,6 +95,12 @@ export interface FakeControls {
   activity(): OperationSummary[];
   /** Number of active change listeners (teardown assertions). */
   listenerCount(): number;
+  draftListenerCount(): number;
+  closeListenerCount(): number;
+  /** Emits one synthetic, non-durable close request without closing a browser window. */
+  requestAppClose(): AppCloseRequest;
+  pendingAppClose(): AppCloseRequest | null;
+  completedCloseCount(): number;
   /** Current simulated account/sync state. */
   accountState(): Readonly<FakeAccountState>;
   /** Patches the simulated account/sync state and notifies change listeners. */
@@ -184,7 +202,7 @@ function msg(
 
 const SAFE_SENDER = addr('Ada Fixture', 'ada@example.test');
 const HOSTILE_SENDER = addr('<script>alert("sender")</script>', 'hostile@example.test');
-const ME = addr('You', 'you@example.test');
+const ME = addr('You', FIXTURE_MAILBOX);
 
 function seedConversations(): FakeConversation[] {
   const conversations: FakeConversation[] = [];
@@ -295,6 +313,14 @@ function toOperationSummary(op: InternalOperation, accountId: string): Operation
 export function createBrowserFakeMailClient(now: () => string = () => new Date().toISOString()): BrowserFake {
   const conversations = seedConversations();
   const listeners = new Set<() => void>();
+  const draftListeners = new Set<() => void>();
+  const closeListeners = new Set<(request: AppCloseRequest) => void>();
+  const drafts = new Map<string, Draft>();
+  const draftReceipts = new Map<string, { fingerprint: string; receipt: DraftReceipt | DraftDeleteReceipt }>();
+  let draftCounter = 0;
+  let closeCounter = 0;
+  let pendingClose: AppCloseRequest | null = null;
+  let completedCloses = 0;
   const receiptsByRequest = new Map<string, { fingerprint: string; receipt: OperationReceipt }>();
   const behavior: FakeBehavior = { failNext: 0, failureKind: 'provider_rejected', hold: false, holdUpgrade: false };
 
@@ -308,7 +334,7 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
   const account: FakeAccountState = {
     mode: 'fixture',
     connection: 'connected',
-    emailAddress: 'fixture@example.test',
+    emailAddress: FIXTURE_MAILBOX,
     syncState: 'idle',
     lastSyncedAt: null,
     syncError: null,
@@ -334,6 +360,52 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
   const notify = (): void => {
     for (const listener of listeners) listener();
   };
+
+  const notifyDrafts = (): void => {
+    for (const listener of draftListeners) listener();
+  };
+
+  const activeDraftAccountId = (): string | null => accountStatus().account?.accountId ?? null;
+
+  const draftSummary = (draft: Draft): DraftSummary => ({
+    ref: { ...draft.ref }, revision: draft.revision, updatedAt: draft.updatedAt,
+    subject: draft.content.subject, to: draft.content.to, source: snapshotCopy(draft.source),
+  });
+
+  function validateDraftContent(content: DraftContent): void {
+    const limits: Array<[keyof DraftContent, number]> = [['to', 16 * 1024], ['cc', 16 * 1024], ['subject', 4 * 1024], ['bodyText', 1024 * 1024]];
+    for (const [field, max] of limits) {
+      if (new TextEncoder().encode(content[field]).length > max) {
+        throw { kind: 'invalid_request', field } satisfies MailError;
+      }
+    }
+  }
+
+  function draftCommandFingerprint(kind: string, command: unknown): string {
+    const serialized = JSON.stringify([kind, command]);
+    let first = 2166136261;
+    let second = 0x9e3779b9;
+    for (let i = 0; i < serialized.length; i += 1) {
+      const code = serialized.charCodeAt(i);
+      first = Math.imul(first ^ code, 16777619);
+      second = Math.imul(second ^ (code + i), 2246822519);
+    }
+    return `${serialized.length}:${first >>> 0}:${second >>> 0}`;
+  }
+
+  function validateDraftRequestId(requestId: string): void {
+    if (!requestId || new TextEncoder().encode(requestId).length > 128) {
+      throw { kind: 'invalid_request', field: 'requestId' } satisfies MailError;
+    }
+  }
+
+  function existingDraftReceipt<T extends DraftReceipt | DraftDeleteReceipt>(accountId: string, requestId: string, fingerprint: string): T | null {
+    validateDraftRequestId(requestId);
+    const existing = draftReceipts.get(`${accountId}:${requestId}`);
+    if (!existing) return null;
+    if (existing.fingerprint !== fingerprint) throw { kind: 'request_id_conflict' } satisfies MailError;
+    return snapshotCopy(existing.receipt) as T;
+  }
 
   const settle = (): Promise<void> => Promise.resolve();
 
@@ -494,6 +566,26 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       listenerCount(): number {
         return listeners.size;
       },
+      draftListenerCount(): number {
+        return draftListeners.size;
+      },
+      closeListenerCount(): number {
+        return closeListeners.size;
+      },
+      requestAppClose(): AppCloseRequest {
+        if (!pendingClose) {
+          closeCounter += 1;
+          pendingClose = { requestId: `close-${closeCounter}` };
+          for (const listener of closeListeners) listener(snapshotCopy(pendingClose));
+        }
+        return snapshotCopy(pendingClose);
+      },
+      pendingAppClose(): AppCloseRequest | null {
+        return pendingClose ? snapshotCopy(pendingClose) : null;
+      },
+      completedCloseCount(): number {
+        return completedCloses;
+      },
       accountState(): Readonly<FakeAccountState> {
         return snapshotCopy(account);
       },
@@ -588,6 +680,16 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       if (conv.unsupportedReason !== undefined) result.unsupportedReason = conv.unsupportedReason;
       if (conv.contextComplete !== undefined) result.contextComplete = conv.contextComplete;
       if (conv.retainedSnapshotAt !== undefined) result.retainedSnapshotAt = conv.retainedSnapshotAt;
+      const latest = conv.messages[conv.messages.length - 1];
+      if (latest && conv.contextComplete !== false && !conv.retainedSnapshotAt) {
+        result.replyContext = {
+          sourceMessageId: latest.id,
+          fromMailbox: latest.from.mailbox,
+          replyToMailboxes: null,
+          messageId: `<${latest.id}@fixture.emailos>`,
+          references: conv.messages.slice(0, -1).map((message) => `<${message.id}@fixture.emailos>`),
+        };
+      }
       return snapshotCopy(result);
     },
 
@@ -667,6 +769,137 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       return () => {
         listeners.delete(listener);
       };
+    },
+
+    async listDrafts(): Promise<DraftSummary[]> {
+      const accountId = activeDraftAccountId();
+      if (!accountId) return [];
+      return [...drafts.values()]
+        .filter((draft) => draft.ref.accountId === accountId)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+        .map(draftSummary);
+    },
+
+    async getDraft(ref: DraftRef): Promise<Draft> {
+      if (!activeDraftAccountId() || ref.accountId !== activeDraftAccountId()) throw failNotShown();
+      const draft = drafts.get(`${ref.accountId}:${ref.draftId}`);
+      if (!draft) throw failNotShown();
+      return snapshotCopy(draft);
+    },
+
+    async createDraft(command: CreateDraft): Promise<DraftReceipt> {
+      const accountId = activeDraftAccountId();
+      if (!accountId) throw { kind: 'auth_required' } satisfies MailError;
+      const fingerprint = draftCommandFingerprint('create_draft', command);
+      const existing = existingDraftReceipt<DraftReceipt>(accountId, command.requestId, fingerprint);
+      if (existing) return existing;
+      let content: DraftContent = command.initialContent
+        ? snapshotCopy(command.initialContent)
+        : { to: '', cc: '', subject: '', bodyText: '' };
+      if (command.source.kind === 'reply') {
+        if (command.initialContent !== null) throw { kind: 'invalid_request', field: 'initialContent' } satisfies MailError;
+        const conv = byId(command.source.conversation.conversationId);
+        if (!conv) throw failNotShown();
+        const latest = conv.messages[conv.messages.length - 1];
+        if (conv.ref.accountId !== command.source.conversation.accountId || !latest || latest.id !== command.source.sourceMessageId || conv.contextComplete === false || conv.retainedSnapshotAt) {
+          throw { kind: 'reply_unavailable' } satisfies MailError;
+        }
+        const sender = latest.from.mailbox;
+        if (!sender || sender.toLowerCase() === (account.emailAddress ?? '').toLowerCase()) throw { kind: 'reply_unavailable' } satisfies MailError;
+        content = {
+          to: sender,
+          cc: '',
+          subject: /^re:/i.test(conv.subject) ? conv.subject : `Re: ${conv.subject}`,
+          bodyText: '',
+        };
+      }
+      validateDraftContent(content);
+      draftCounter += 1;
+      const ref: DraftRef = { accountId, draftId: `draft-${String(draftCounter).padStart(4, '0')}` };
+      let replyLink: DraftReplyLink | null = null;
+      if (command.source.kind === 'reply') {
+        const conv = byId(command.source.conversation.conversationId)!;
+        const latest = conv.messages[conv.messages.length - 1]!;
+        replyLink = {
+          conversation: snapshotCopy(command.source.conversation),
+          sourceMessageId: command.source.sourceMessageId,
+          messageId: `<${latest.id}@fixture.emailos>`,
+          references: [...conv.messages.slice(0, -1).map((message) => `<${message.id}@fixture.emailos>`), `<${latest.id}@fixture.emailos>`],
+        };
+      }
+      const timestamp = now();
+      const draft: Draft = {
+        ref, revision: 1, createdAt: timestamp, updatedAt: timestamp,
+        content, source: snapshotCopy(command.source), replyLink,
+      };
+      drafts.set(`${ref.accountId}:${ref.draftId}`, draft);
+      const receipt: DraftReceipt = { ref: snapshotCopy(ref), revision: 1, savedAt: timestamp };
+      draftReceipts.set(`${accountId}:${command.requestId}`, { fingerprint, receipt });
+      notifyDrafts();
+      return snapshotCopy(receipt);
+    },
+
+    async saveDraft(command: SaveDraft): Promise<DraftReceipt> {
+      const fingerprint = draftCommandFingerprint('save_draft', command);
+      const activeAccountId = activeDraftAccountId();
+      const existing = existingDraftReceipt<DraftReceipt>(activeAccountId ?? command.ref.accountId, command.requestId, fingerprint);
+      if (existing) return existing;
+      validateDraftContent(command.content);
+      if (!activeAccountId || command.ref.accountId !== activeAccountId) throw failNotShown();
+      const draft = drafts.get(`${command.ref.accountId}:${command.ref.draftId}`);
+      if (!draft) throw failNotShown();
+      if (command.expectedRevision !== draft.revision) throw { kind: 'draft_conflict', currentRevision: draft.revision } satisfies MailError;
+      if (draft.revision >= 0xffffffff) throw { kind: 'storage_unavailable' } satisfies MailError;
+      draft.content = snapshotCopy(command.content);
+      draft.revision += 1;
+      draft.updatedAt = now();
+      const receipt: DraftReceipt = { ref: snapshotCopy(draft.ref), revision: draft.revision, savedAt: draft.updatedAt };
+      draftReceipts.set(`${command.ref.accountId}:${command.requestId}`, { fingerprint, receipt });
+      notifyDrafts();
+      return snapshotCopy(receipt);
+    },
+
+    async deleteDraft(command: DeleteDraft): Promise<DraftDeleteReceipt> {
+      const fingerprint = draftCommandFingerprint('delete_draft', command);
+      const activeAccountId = activeDraftAccountId();
+      const existing = existingDraftReceipt<DraftDeleteReceipt>(activeAccountId ?? command.ref.accountId, command.requestId, fingerprint);
+      if (existing) return existing;
+      if (!activeAccountId || command.ref.accountId !== activeAccountId) throw failNotShown();
+      const key = `${command.ref.accountId}:${command.ref.draftId}`;
+      const draft = drafts.get(key);
+      if (!draft) throw failNotShown();
+      if (command.expectedRevision !== draft.revision) throw { kind: 'draft_conflict', currentRevision: draft.revision } satisfies MailError;
+      drafts.delete(key);
+      const receipt: DraftDeleteReceipt = { ref: snapshotCopy(command.ref), deletedAt: now() };
+      draftReceipts.set(`${command.ref.accountId}:${command.requestId}`, { fingerprint, receipt });
+      notifyDrafts();
+      return snapshotCopy(receipt);
+    },
+
+    async subscribeDrafts(listener: () => void): Promise<() => void> {
+      draftListeners.add(listener);
+      return () => { draftListeners.delete(listener); };
+    },
+
+    async subscribeAppClose(listener: (request: AppCloseRequest) => void): Promise<() => void> {
+      closeListeners.add(listener);
+      const seen = new Set<string>();
+      if (pendingClose && !seen.has(pendingClose.requestId)) {
+        seen.add(pendingClose.requestId);
+        listener(snapshotCopy(pendingClose));
+      }
+      return () => { closeListeners.delete(listener); };
+    },
+
+    async completeAppClose(requestId: string): Promise<void> {
+      if (!pendingClose || pendingClose.requestId !== requestId) throw { kind: 'invalid_request', field: 'requestId' } satisfies MailError;
+      pendingClose = null;
+      completedCloses += 1;
+    },
+
+    async cancelAppClose(requestId: string): Promise<void> {
+      if (!pendingClose || pendingClose.requestId !== requestId) throw { kind: 'invalid_request', field: 'requestId' } satisfies MailError;
+      pendingClose = null;
     },
 
     async getAccountStatus(): Promise<AccountStatus> {

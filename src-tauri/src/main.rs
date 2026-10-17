@@ -6,6 +6,14 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod close_gate;
+
+use close_gate::CloseGate;
+use mail_core::drafts::types::{
+    AppCloseRequest, CreateDraft, DeleteDraft, Draft, DraftDeleteReceipt, DraftReceipt, DraftRef,
+    DraftSource, DraftSummary, SaveDraft,
+};
+use mail_core::drafts::DraftCore;
 use mail_core::dto::{
     Conversation, ConversationRef, InboxSnapshot, OperationReceipt, RetryOperation, SetArchived,
     SetRead,
@@ -16,8 +24,10 @@ use mail_core::gmail::secrets::KeychainSecrets;
 use mail_core::gmail::sync::GmailCore;
 use mail_core::gmail::types::{AccountInfo, AccountStatus, MailMode, SyncInfo, SyncState};
 use mail_core::{FakeArchiveProvider, MailCore, ACCOUNT_ID};
-use std::sync::Arc;
-use tauri::{Emitter, Manager, RunEvent, State};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 
 #[derive(Clone)]
 enum Backend {
@@ -38,6 +48,26 @@ impl Backend {
             Self::Fixture(core) => core.get_conversation(r#ref),
             Self::Gmail(core) => core.get_conversation(r#ref),
         }
+    }
+
+    fn load_reply_context(
+        &self,
+        r#ref: &ConversationRef,
+        source_message_id: &str,
+    ) -> Result<Conversation, MailError> {
+        let conversation = match self {
+            Self::Fixture(core) => core.get_conversation(r#ref)?,
+            Self::Gmail(core) => core.load_reply_context(r#ref, source_message_id)?,
+        };
+        validate_reply_conversation(&conversation, r#ref, source_message_id)?;
+        if conversation
+            .reply_context
+            .as_ref()
+            .is_none_or(|context| context.source_message_id != source_message_id)
+        {
+            return Err(MailError::ReplyUnavailable);
+        }
+        Ok(conversation)
     }
 
     fn account_status(&self) -> Result<AccountStatus, MailError> {
@@ -157,17 +187,76 @@ enum Subscription {
 /// Managed app state retains its change-listener guard for the full app life.
 struct AppState {
     backend: Backend,
+    drafts: DraftCore,
+    draft_lifecycle: Arc<Mutex<DraftLifecycle>>,
+    close_gate: Arc<Mutex<CloseGate>>,
     _subscription: Subscription,
 }
 
+#[derive(Default)]
+struct DraftLifecycle {
+    session_epoch: u64,
+}
+
+impl DraftLifecycle {
+    fn advance(&mut self) {
+        self.session_epoch = self.session_epoch.wrapping_add(1);
+    }
+
+    fn is_current(&self, epoch: u64) -> bool {
+        self.session_epoch == epoch
+    }
+}
+
 impl AppState {
-    fn new(backend: Backend, on_change: impl Fn() + Send + Sync + 'static) -> Self {
+    fn new(
+        backend: Backend,
+        drafts: DraftCore,
+        on_change: impl Fn() + Send + Sync + 'static,
+    ) -> Self {
         let subscription = backend.subscribe(on_change);
         Self {
             backend,
+            drafts,
+            draft_lifecycle: Arc::new(Mutex::new(DraftLifecycle::default())),
+            close_gate: Arc::new(Mutex::new(CloseGate::default())),
             _subscription: subscription,
         }
     }
+}
+
+fn active_account(backend: &Backend) -> Result<AccountInfo, MailError> {
+    backend
+        .account_status()?
+        .account
+        .ok_or(MailError::AuthRequired)
+}
+
+fn require_draft_account(account: &AccountInfo, draft_ref: &DraftRef) -> Result<(), MailError> {
+    if draft_ref.account_id == account.account_id {
+        Ok(())
+    } else {
+        Err(MailError::NotFound)
+    }
+}
+
+fn validate_reply_conversation(
+    conversation: &Conversation,
+    expected_ref: &ConversationRef,
+    source_message_id: &str,
+) -> Result<(), MailError> {
+    if &conversation.conversation_ref != expected_ref
+        || conversation.context_complete != Some(true)
+        || conversation.retained_snapshot_at.is_some()
+        || conversation
+            .messages
+            .last()
+            .map(|message| message.id.as_str())
+            != Some(source_message_id)
+    {
+        return Err(MailError::ReplyUnavailable);
+    }
+    Ok(())
 }
 
 /// Run all synchronous core/storage operations outside Tauri's async/UI threads.
@@ -244,19 +333,236 @@ async fn get_account_status(state: State<'_, AppState>) -> Result<AccountStatus,
 #[tauri::command]
 async fn connect_account(state: State<'_, AppState>) -> Result<(), MailError> {
     let backend = state.backend.clone();
-    run_blocking(backend, Backend::connect_account).await
+    let lifecycle = Arc::clone(&state.draft_lifecycle);
+    run_blocking(backend, move |backend| {
+        let mut lifecycle = lifecycle
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        backend.connect_account()?;
+        lifecycle.advance();
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
 async fn disconnect_account(state: State<'_, AppState>) -> Result<(), MailError> {
     let backend = state.backend.clone();
-    run_blocking(backend, Backend::disconnect_account).await
+    let lifecycle = Arc::clone(&state.draft_lifecycle);
+    run_blocking(backend, move |backend| {
+        let mut lifecycle = lifecycle
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        lifecycle.advance();
+        backend.disconnect_account()
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_drafts(state: State<'_, AppState>) -> Result<Vec<DraftSummary>, MailError> {
+    let backend = state.backend.clone();
+    let drafts = state.drafts.clone();
+    let lifecycle = Arc::clone(&state.draft_lifecycle);
+    run_blocking(backend, move |backend| {
+        let _lifecycle = lifecycle
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let account = active_account(backend)?;
+        drafts.list_drafts(&account)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_draft(state: State<'_, AppState>, r#ref: DraftRef) -> Result<Draft, MailError> {
+    let backend = state.backend.clone();
+    let drafts = state.drafts.clone();
+    let lifecycle = Arc::clone(&state.draft_lifecycle);
+    run_blocking(backend, move |backend| {
+        let _lifecycle = lifecycle
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let account = active_account(backend)?;
+        require_draft_account(&account, &r#ref)?;
+        drafts.get_draft(&account, &r#ref)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn create_draft(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    command: CreateDraft,
+) -> Result<DraftReceipt, MailError> {
+    let backend = state.backend.clone();
+    let drafts = state.drafts.clone();
+    let lifecycle = Arc::clone(&state.draft_lifecycle);
+    let receipt = run_blocking(backend, move |backend| {
+        let lifecycle_guard = lifecycle
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let account = active_account(backend)?;
+        if let Some(receipt) = drafts.lookup_create_receipt(&account, &command)? {
+            return Ok(receipt);
+        }
+        match &command.source {
+            DraftSource::NewMessage => drafts.create_draft(&account, &command, None),
+            DraftSource::Reply {
+                conversation,
+                source_message_id,
+            } => {
+                if conversation.account_id != account.account_id {
+                    return Err(MailError::ReplyUnavailable);
+                }
+                let displayed = backend.get_conversation(conversation)?;
+                validate_reply_conversation(&displayed, conversation, source_message_id)?;
+                let session_epoch = lifecycle_guard.session_epoch;
+                drop(lifecycle_guard);
+
+                // This helper is a cache hit when metadata is ready. A legacy
+                // metadata fetch is readonly and deliberately happens unlocked.
+                let reply_conversation =
+                    backend.load_reply_context(conversation, source_message_id)?;
+
+                let lifecycle_guard = lifecycle
+                    .lock()
+                    .map_err(|_| MailError::StorageUnavailable)?;
+                if !lifecycle_guard.is_current(session_epoch)
+                    || active_account(backend)?.account_id != account.account_id
+                {
+                    return Err(MailError::AuthRequired);
+                }
+                let current = backend.get_conversation(conversation)?;
+                validate_reply_conversation(&current, conversation, source_message_id)?;
+                if current.reply_context != reply_conversation.reply_context {
+                    return Err(MailError::ReplyUnavailable);
+                }
+                drafts.create_draft(&account, &command, Some(&reply_conversation))
+            }
+        }
+    })
+    .await?;
+    let _ = app.emit("drafts_changed", ());
+    Ok(receipt)
+}
+
+#[tauri::command]
+async fn save_draft(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    command: SaveDraft,
+) -> Result<DraftReceipt, MailError> {
+    let backend = state.backend.clone();
+    let drafts = state.drafts.clone();
+    let lifecycle = Arc::clone(&state.draft_lifecycle);
+    let receipt = run_blocking(backend, move |backend| {
+        let _lifecycle = lifecycle
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let account = active_account(backend)?;
+        require_draft_account(&account, &command.draft_ref)?;
+        drafts.save_draft(&account, &command)
+    })
+    .await?;
+    let _ = app.emit("drafts_changed", ());
+    Ok(receipt)
+}
+
+#[tauri::command]
+async fn delete_draft(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    command: DeleteDraft,
+) -> Result<DraftDeleteReceipt, MailError> {
+    let backend = state.backend.clone();
+    let drafts = state.drafts.clone();
+    let lifecycle = Arc::clone(&state.draft_lifecycle);
+    let receipt = run_blocking(backend, move |backend| {
+        let _lifecycle = lifecycle
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let account = active_account(backend)?;
+        require_draft_account(&account, &command.draft_ref)?;
+        drafts.delete_draft(&account, &command)
+    })
+    .await?;
+    let _ = app.emit("drafts_changed", ());
+    Ok(receipt)
+}
+
+#[tauri::command]
+fn get_app_close_request(state: State<'_, AppState>) -> Result<Option<AppCloseRequest>, MailError> {
+    state
+        .close_gate
+        .lock()
+        .map(|gate| gate.pending())
+        .map_err(|_| MailError::StorageUnavailable)
+}
+
+#[tauri::command]
+fn complete_app_close(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request_id: String,
+) -> Result<(), MailError> {
+    let mut gate = state
+        .close_gate
+        .lock()
+        .map_err(|_| MailError::StorageUnavailable)?;
+    if !gate.complete(&request_id) {
+        return Err(MailError::InvalidRequest {
+            field: "requestId".to_owned(),
+        });
+    }
+    drop(gate);
+    app.exit(0);
+    Ok(())
+}
+
+#[tauri::command]
+fn cancel_app_close(state: State<'_, AppState>, request_id: String) -> Result<(), MailError> {
+    let mut gate = state
+        .close_gate
+        .lock()
+        .map_err(|_| MailError::StorageUnavailable)?;
+    if !gate.cancel(&request_id) {
+        return Err(MailError::InvalidRequest {
+            field: "requestId".to_owned(),
+        });
+    }
+    Ok(())
 }
 
 #[tauri::command]
 async fn request_sync(state: State<'_, AppState>) -> Result<(), MailError> {
     let backend = state.backend.clone();
     run_blocking(backend, Backend::request_sync).await
+}
+
+fn fresh_close_request_id() -> String {
+    static NEXT_CLOSE_ID: AtomicU64 = AtomicU64::new(1);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!(
+        "{:x}-{:x}-{:x}",
+        std::process::id(),
+        timestamp,
+        NEXT_CLOSE_ID.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
+fn begin_native_close(app: &AppHandle) {
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    if let Ok(mut gate) = state.close_gate.lock() {
+        let request = gate.request(fresh_close_request_id);
+        let _ = app.emit("app_close_requested", request);
+    };
 }
 
 fn main() {
@@ -272,8 +578,22 @@ fn main() {
             get_account_status,
             connect_account,
             disconnect_account,
-            request_sync
+            request_sync,
+            list_drafts,
+            get_draft,
+            create_draft,
+            save_draft,
+            delete_draft,
+            get_app_close_request,
+            complete_app_close,
+            cancel_app_close
         ])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                begin_native_close(window.app_handle());
+            }
+        })
         .setup(|app| {
             let mode = match std::env::var_os("EMAIL_OS_MODE") {
                 Some(value) => value
@@ -282,28 +602,31 @@ fn main() {
                 None => "fixture".to_owned(),
             };
             let app_data_dir = app.path().app_data_dir()?;
-            let backend = match mode.as_str() {
+            let (backend, profile_dir) = match mode.as_str() {
                 "fixture" => {
-                    let core = MailCore::open(app_data_dir.join("fixture-profile"))?;
+                    let profile_dir = app_data_dir.join("fixture-profile");
+                    let core = MailCore::open(&profile_dir)?;
                     let provider: Arc<dyn mail_core::ArchiveProvider> =
                         Arc::new(FakeArchiveProvider::from_env());
                     core.start_worker(provider)?;
-                    Backend::Fixture(core)
+                    (Backend::Fixture(core), profile_dir)
                 }
                 "gmail" => {
+                    let profile_dir = app_data_dir.join("gmail-profile");
                     let provider = GmailProvider::from_env(Arc::new(KeychainSecrets::new()))?;
                     let provider: Arc<dyn mail_core::gmail::types::GmailReadProvider> =
                         Arc::new(provider);
-                    Backend::Gmail(GmailCore::open(
-                        app_data_dir.join("gmail-profile"),
-                        provider,
-                    )?)
+                    (
+                        Backend::Gmail(GmailCore::open(&profile_dir, provider)?),
+                        profile_dir,
+                    )
                 }
                 _ => return Err("EMAIL_OS_MODE must be fixture or gmail".into()),
             };
+            let drafts = DraftCore::open(profile_dir.join("local-drafts"))?;
 
             let handle = app.handle().clone();
-            app.manage(AppState::new(backend, move || {
+            app.manage(AppState::new(backend, drafts, move || {
                 // Notifications are best-effort hints; the frontend refetches persisted state.
                 let _ = handle.emit("mailbox_changed", ());
             }));
@@ -312,12 +635,29 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("failed to build the email-os shell");
 
-    app.run(|app_handle, event| {
-        if let RunEvent::Exit = event {
+    app.run(|app_handle, event| match event {
+        RunEvent::ExitRequested { api, .. } => {
+            let authorized = app_handle
+                .try_state::<AppState>()
+                .and_then(|state| {
+                    state
+                        .close_gate
+                        .lock()
+                        .ok()
+                        .map(|mut gate| gate.take_exit_authorization())
+                })
+                .unwrap_or(false);
+            if !authorized {
+                api.prevent_exit();
+                begin_native_close(app_handle);
+            }
+        }
+        RunEvent::Exit => {
             if let Some(state) = app_handle.try_state::<AppState>() {
                 state.backend.stop();
             }
         }
+        _ => {}
     });
 }
 
@@ -485,11 +825,51 @@ mod tests {
     }
 
     #[test]
+    fn draft_scope_uses_backend_account_and_session_epoch_invalidates_reply_reads() {
+        let dir = temp_dir("draft-scope");
+        let core = MailCore::open(&dir).unwrap();
+        let backend = Backend::Fixture(core.clone());
+        let account = active_account(&backend).unwrap();
+        assert_eq!(account.account_id, ACCOUNT_ID);
+        assert_eq!(account.email_address, mail_core::FIXTURE_MAILBOX);
+        assert_eq!(
+            require_draft_account(
+                &account,
+                &DraftRef {
+                    account_id: "untrusted-other-account".into(),
+                    draft_id: "draft-id".into(),
+                }
+            ),
+            Err(MailError::NotFound)
+        );
+        assert_eq!(
+            require_draft_account(
+                &account,
+                &DraftRef {
+                    account_id: account.account_id.clone(),
+                    draft_id: "draft-id".into(),
+                }
+            ),
+            Ok(())
+        );
+
+        let mut lifecycle = DraftLifecycle::default();
+        let before_disconnect = lifecycle.session_epoch;
+        assert!(lifecycle.is_current(before_disconnect));
+        lifecycle.advance();
+        assert!(!lifecycle.is_current(before_disconnect));
+        assert!(lifecycle.is_current(lifecycle.session_epoch));
+        core.stop_worker();
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn fixture_state_keeps_forwarding_after_command_acceptance() {
         let dir = temp_dir("events");
         let core = MailCore::open(&dir).unwrap();
         let (tx, rx) = mpsc::channel();
-        let state = AppState::new(Backend::Fixture(core), move || {
+        let drafts = DraftCore::open(dir.join("local-drafts")).unwrap();
+        let state = AppState::new(Backend::Fixture(core), drafts, move || {
             let _ = tx.send(());
         });
         let provider = Arc::new(FakeArchiveProvider::new());

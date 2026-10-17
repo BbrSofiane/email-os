@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::clock::Clock;
+use crate::drafts::types::ReplyContext;
 use crate::dto::{
     Address, Conversation, ConversationRef, ConversationSummary, InboxSnapshot,
     MailboxOperationKind, Message, OperationFailure, OperationReceipt, OperationStatus,
@@ -156,6 +157,7 @@ impl GmailStore {
                 subject            TEXT NOT NULL,
                 context_complete   INTEGER NOT NULL CHECK (context_complete IN (0, 1)),
                 unsupported_reason TEXT,
+                reply_context_json  TEXT,
                 PRIMARY KEY (account_id, conversation_id)
             );
             CREATE TABLE IF NOT EXISTS gmail_messages (
@@ -224,6 +226,25 @@ impl GmailStore {
             );",
         )
         .map_err(|_| MailError::StorageUnavailable)?;
+
+        let has_reply_context_column = {
+            let mut stmt = tx
+                .prepare("PRAGMA table_info(gmail_conversations)")
+                .map_err(|_| MailError::StorageUnavailable)?;
+            let columns = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|_| MailError::StorageUnavailable)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| MailError::StorageUnavailable)?;
+            columns.iter().any(|column| column == "reply_context_json")
+        };
+        if !has_reply_context_column {
+            tx.execute(
+                "ALTER TABLE gmail_conversations ADD COLUMN reply_context_json TEXT",
+                [],
+            )
+            .map_err(|_| MailError::StorageUnavailable)?;
+        }
 
         let version: Option<String> = meta_get(&tx, "schema_version")?;
         match version {
@@ -529,9 +550,65 @@ impl GmailStore {
             context_complete: recovered.context_complete,
             unsupported_reason: recovered.unsupported_reason,
             retained_snapshot_at: None,
-            reply_context: None,
+            reply_context: recovered.reply_context,
             pending_operation_id,
         })
+    }
+
+    /// Saves only reply metadata when the cached account, generation, and
+    /// latest source message still match the read that fetched it.
+    pub(crate) fn save_reply_context(
+        &self,
+        r#ref: &ConversationRef,
+        source_message_id: &str,
+        reply_context: &ReplyContext,
+        expected_generation: u64,
+    ) -> Result<bool, MailError> {
+        self.persistence_gate()?;
+        if reply_context.source_message_id != source_message_id {
+            return Ok(false);
+        }
+        let mut conn = self.lock_conn()?;
+        let tx = conn
+            .transaction()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        if meta_get(&tx, "account_id")?.as_deref() != Some(r#ref.account_id.as_str())
+            || !generation_matches(&tx, expected_generation)?
+        {
+            return Ok(false);
+        }
+        let cache_state: Option<(i64, String)> = tx
+            .query_row(
+                "SELECT c.context_complete, m.message_id FROM gmail_conversations c
+                 JOIN gmail_messages m
+                   ON m.account_id = c.account_id AND m.conversation_id = c.conversation_id
+                 WHERE c.account_id = ?1 AND c.conversation_id = ?2
+                 ORDER BY m.sent_at DESC, m.message_id DESC LIMIT 1",
+                params![r#ref.account_id, r#ref.conversation_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        if !cache_state
+            .is_some_and(|(complete, latest_id)| complete == 1 && latest_id == source_message_id)
+        {
+            return Ok(false);
+        }
+        let reply_context_json =
+            serde_json::to_string(reply_context).map_err(|_| MailError::StorageUnavailable)?;
+        let updated = tx
+            .execute(
+                "UPDATE gmail_conversations SET reply_context_json = ?1
+                 WHERE account_id = ?2 AND conversation_id = ?3
+                   AND context_complete = 1 AND reply_context_json IS NULL",
+                params![reply_context_json, r#ref.account_id, r#ref.conversation_id],
+            )
+            .map_err(|_| MailError::StorageUnavailable)?;
+        if updated != 1 {
+            return Ok(false);
+        }
+        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        Ok(true)
     }
 
     // --------------------------------------------------------------- writes
@@ -1747,18 +1824,27 @@ fn upsert_thread(
     }
     conn.execute(
         "INSERT INTO gmail_conversations
-            (account_id, conversation_id, subject, context_complete, unsupported_reason)
-         VALUES (?1, ?2, ?3, ?4, ?5)
+            (account_id, conversation_id, subject, context_complete, unsupported_reason,
+             reply_context_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
          ON CONFLICT(account_id, conversation_id) DO UPDATE SET
             subject = excluded.subject,
             context_complete = excluded.context_complete,
-            unsupported_reason = excluded.unsupported_reason",
+            unsupported_reason = excluded.unsupported_reason,
+            reply_context_json = excluded.reply_context_json",
         params![
             account_id,
             conversation_id,
             thread.conversation.subject,
             thread.conversation.context_complete.unwrap_or(false) as i64,
             thread.conversation.unsupported_reason,
+            thread
+                .conversation
+                .reply_context
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()
+                .map_err(|_| MailError::StorageUnavailable)?,
         ],
     )
     .map_err(|_| MailError::StorageUnavailable)?;
@@ -1959,6 +2045,7 @@ struct BuiltConversation {
     messages: Vec<Message>,
     context_complete: Option<bool>,
     unsupported_reason: Option<String>,
+    reply_context: Option<ReplyContext>,
 }
 
 fn build_conversation(
@@ -1968,20 +2055,21 @@ fn build_conversation(
 ) -> Result<Option<BuiltConversation>, MailError> {
     let row = conn
         .query_row(
-            "SELECT subject, context_complete, unsupported_reason FROM gmail_conversations
-             WHERE account_id = ?1 AND conversation_id = ?2",
+            "SELECT subject, context_complete, unsupported_reason, reply_context_json
+             FROM gmail_conversations WHERE account_id = ?1 AND conversation_id = ?2",
             params![account_id, conversation_id],
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, i64>(1)?,
                     row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
                 ))
             },
         )
         .optional()
         .map_err(|_| MailError::StorageUnavailable)?;
-    let Some((subject, context_flag, unsupported_reason)) = row else {
+    let Some((subject, context_flag, unsupported_reason, reply_context_json)) = row else {
         return Ok(None);
     };
     let mut stmt = conn
@@ -2028,6 +2116,10 @@ fn build_conversation(
         messages: messages.into_iter().map(|(message, _)| message).collect(),
         context_complete: Some(context_flag != 0),
         unsupported_reason,
+        reply_context: reply_context_json
+            .map(|json| serde_json::from_str::<ReplyContext>(&json))
+            .transpose()
+            .map_err(|_| MailError::StorageUnavailable)?,
     }))
 }
 
@@ -2148,6 +2240,193 @@ mod tests {
 
     fn cached(thread: GmailThread) -> ThreadFetch {
         ThreadFetch::Cached(Box::new(thread))
+    }
+
+    #[test]
+    fn reply_context_cache_is_additive_persistent_and_metadata_only() {
+        let (store, dir) = open_store("reply-context-cache");
+        store
+            .begin_account(&profile("acct-alpha", "alpha@example.test", "hist-1"), 0)
+            .expect("account");
+        let source = thread(
+            "acct-alpha",
+            "thr-reply",
+            "hist-2",
+            vec![
+                message("m-old", "2026-01-01T00:00:00Z"),
+                message("m-latest", "2026-01-02T00:00:00Z"),
+            ],
+            &["m-latest"],
+        );
+        store
+            .apply_discovery_page(&[cached(source.clone())], None, true, false, 0)
+            .expect("cache source");
+        let target = ConversationRef {
+            account_id: "acct-alpha".to_string(),
+            conversation_id: "thr-reply".to_string(),
+        };
+        let before = store.get_conversation(&target).expect("cached reader");
+        let cursor_before = store.cursor().expect("cursor");
+        let context = ReplyContext {
+            source_message_id: "m-latest".to_string(),
+            from_mailbox: "sender@example.test".to_string(),
+            reply_to_mailboxes: None,
+            message_id: "<m-latest@example.test>".to_string(),
+            references: vec![
+                "<m-old@example.test>".to_string(),
+                "<m-latest@example.test>".to_string(),
+            ],
+        };
+
+        assert!(!store
+            .save_reply_context(&target, "m-old", &context, 0)
+            .expect("stale source rejected"));
+        assert!(!store
+            .save_reply_context(
+                &ConversationRef {
+                    account_id: "acct-beta".to_string(),
+                    ..target.clone()
+                },
+                "m-latest",
+                &context,
+                0,
+            )
+            .expect("foreign account rejected"));
+        assert!(store
+            .save_reply_context(&target, "m-latest", &context, 0)
+            .expect("metadata saved"));
+        let after = store
+            .get_conversation(&target)
+            .expect("reader after metadata");
+        assert_eq!(after.reply_context, Some(context.clone()));
+        assert_eq!(after.messages, before.messages);
+        assert_eq!(after.subject, before.subject);
+        assert_eq!(after.is_in_inbox, before.is_in_inbox);
+        assert_eq!(store.cursor().expect("cursor unchanged"), cursor_before);
+
+        // Restart preserves metadata; a legacy database without the new column
+        // migrates it additively and leaves old rows NULL.
+        drop(store);
+        let reopened = GmailStore::open(&dir, Arc::new(SystemClock)).expect("reopen");
+        assert_eq!(
+            reopened
+                .get_conversation(&target)
+                .expect("persisted reader")
+                .reply_context,
+            Some(context)
+        );
+        drop(reopened);
+        let legacy = Connection::open(dir.join("gmail.db")).expect("legacy db");
+        legacy
+            .execute(
+                "ALTER TABLE gmail_conversations DROP COLUMN reply_context_json",
+                [],
+            )
+            .expect("simulate legacy schema");
+        drop(legacy);
+        let migrated = GmailStore::open(&dir, Arc::new(SystemClock)).expect("additive migration");
+        assert_eq!(
+            migrated
+                .get_conversation(&target)
+                .expect("legacy reader")
+                .reply_context,
+            None
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn malformed_cached_reply_context_is_a_storage_error() {
+        let (store, dir) = open_store("reply-context-invalid-json");
+        store
+            .begin_account(&profile("acct-alpha", "alpha@example.test", "hist-1"), 0)
+            .expect("account");
+        let source = thread(
+            "acct-alpha",
+            "thr-invalid-json",
+            "hist-2",
+            vec![message("m-latest", "2026-01-02T00:00:00Z")],
+            &["m-latest"],
+        );
+        store
+            .apply_discovery_page(&[cached(source)], None, true, false, 0)
+            .expect("cache source");
+        {
+            let conn = store.lock_conn().expect("cache lock");
+            conn.execute(
+                "UPDATE gmail_conversations SET reply_context_json = '{not-json}'
+                 WHERE account_id = 'acct-alpha' AND conversation_id = 'thr-invalid-json'",
+                [],
+            )
+            .expect("corrupt cached JSON");
+        }
+        assert_eq!(
+            store.get_conversation(&ConversationRef {
+                account_id: "acct-alpha".to_string(),
+                conversation_id: "thr-invalid-json".to_string(),
+            }),
+            Err(MailError::StorageUnavailable)
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn reply_context_save_rejects_generation_and_latest_source_races() {
+        let (store, dir) = open_store("reply-context-races");
+        store
+            .begin_account(&profile("acct-alpha", "alpha@example.test", "hist-1"), 0)
+            .expect("account");
+        let source = thread(
+            "acct-alpha",
+            "thr-race",
+            "hist-2",
+            vec![
+                message("m1", "2026-01-01T00:00:00Z"),
+                message("m2", "2026-01-02T00:00:00Z"),
+            ],
+            &["m2"],
+        );
+        store
+            .apply_discovery_page(&[cached(source)], None, true, false, 0)
+            .expect("cache source");
+        let target = ConversationRef {
+            account_id: "acct-alpha".to_string(),
+            conversation_id: "thr-race".to_string(),
+        };
+        let context = ReplyContext {
+            source_message_id: "m2".to_string(),
+            from_mailbox: "sender@example.test".to_string(),
+            reply_to_mailboxes: None,
+            message_id: "<m2@example.test>".to_string(),
+            references: vec!["<m2@example.test>".to_string()],
+        };
+        {
+            let conn = store.lock_conn().expect("test cache lock");
+            conn.execute(
+                "INSERT INTO gmail_messages
+                 (account_id, conversation_id, message_id, from_display, from_mailbox,
+                  to_json, sent_at, body_text, in_inbox)
+                 VALUES ('acct-alpha', 'thr-race', 'm3', NULL, 'new@example.test', '[]',
+                         '2026-01-03T00:00:00Z', 'new body', 1)",
+                [],
+            )
+            .expect("simulate newer cached source");
+        }
+        assert!(!store
+            .save_reply_context(&target, "m2", &context, 0)
+            .expect("changed latest source rejected"));
+        store.advance_generation().expect("disconnect generation");
+        assert!(!store
+            .save_reply_context(&target, "m2", &context, 0)
+            .expect("old generation rejected"));
+        assert_eq!(
+            store
+                .get_conversation(&target)
+                .expect("reader")
+                .reply_context,
+            None
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     fn history_page(
