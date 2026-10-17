@@ -1070,6 +1070,12 @@ fn later_eligible_uncertain_operation_is_not_starved_by_oldest() {
         .any(
             |op| op.id == newer.operation_id && op.status == OperationStatus::OutcomeUnknown
         )));
+    // The durable operation status can become visible just before the worker
+    // releases its pass barrier. Wait for that barrier before explicitly asking
+    // for the next reconciliation pass, or request_sync may correctly return Busy.
+    assert!(until(|| core.account_status().is_ok_and(|status| {
+        status.sync.state != mail_core::gmail::types::SyncState::Syncing
+    })));
 
     provider.set_thread_fetch_error(None);
     provider.set_external_read(true);

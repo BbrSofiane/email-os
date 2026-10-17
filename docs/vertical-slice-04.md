@@ -1,6 +1,6 @@
 # Slice 04: plain-text composer and durable local-only drafts
 
-Status: approved implementation contract. The operator chose this slice while testing Slice 03. Branch `feat/local-drafts` is STACKED on `a6e2acf` (`feat/gmail-mailbox-actions`) for profile/credential compatibility; the tested branch and its remote commit must remain unchanged. Do not change OAuth, mutation dispatch/ordering, or sending. No accounts, actual credentials/mail, OS packages, or cloud provisioning in this VM. Parent owns commits/publication; children do not spawn agents or commit/push/publish.
+Status: approved implementation contract. The operator chose this slice while testing Slice 03. Development initially stacked on `a6e2acf` for profile/credential compatibility without changing the tested branch. After Slice 03 was merged upstream, the unpublished `feat/local-drafts` branch was rebased onto main `b45c7a6`; that upstream tree differs from the reviewed base only by a Cargo.toml trailing newline. No Slice 03 branch or commit was modified by this work. Do not change OAuth, mutation dispatch/ordering, or sending. No accounts, actual credentials/mail, OS packages, or cloud provisioning in this VM. Parent owns commits/publication; children do not spawn agents or commit/push/publish.
 
 ## Scope
 

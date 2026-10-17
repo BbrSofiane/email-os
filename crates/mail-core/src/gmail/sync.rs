@@ -257,6 +257,85 @@ impl GmailCore {
         self.inner.store.get_conversation(r#ref)
     }
 
+    /// Loads reply headers for the explicitly displayed latest cached message.
+    /// Ready cache results are network-free; a legacy cache miss performs one
+    /// readonly thread read outside control and SQLite locks.
+    pub fn load_reply_context(
+        &self,
+        r#ref: &ConversationRef,
+        source_message_id: &str,
+    ) -> Result<Conversation, MailError> {
+        let generation = self.inner.store.generation()?;
+        let cached = self.inner.store.get_conversation(r#ref)?;
+        if cached.retained_snapshot_at.is_some()
+            || cached.context_complete != Some(true)
+            || cached.messages.last().map(|message| message.id.as_str()) != Some(source_message_id)
+        {
+            return Err(MailError::ReplyUnavailable);
+        }
+        if let Some(reply_context) = cached.reply_context.as_ref() {
+            return if reply_context.source_message_id == source_message_id {
+                Ok(cached)
+            } else {
+                Err(MailError::ReplyUnavailable)
+            };
+        }
+
+        let cancel = {
+            let state = self
+                .inner
+                .ctrl
+                .state
+                .lock()
+                .map_err(|_| MailError::StorageUnavailable)?;
+            if state.stop || state.halted {
+                return Err(MailError::StorageUnavailable);
+            }
+            if state.disconnecting {
+                return Err(MailError::Busy);
+            }
+            state.pass_cancel.clone()
+        };
+        let thread = self
+            .inner
+            .provider
+            .get_thread(&r#ref.conversation_id, &cancel)?
+            .ok_or(MailError::ReplyUnavailable)?;
+        let fetched = &thread.conversation;
+        if fetched.conversation_ref != *r#ref
+            || fetched.retained_snapshot_at.is_some()
+            || fetched.context_complete != Some(true)
+            || fetched.messages.last().map(|message| message.id.as_str()) != Some(source_message_id)
+        {
+            return Err(MailError::ReplyUnavailable);
+        }
+        let reply_context = fetched
+            .reply_context
+            .as_ref()
+            .filter(|context| context.source_message_id == source_message_id)
+            .ok_or(MailError::ReplyUnavailable)?;
+        self.inner
+            .store
+            .save_reply_context(r#ref, source_message_id, reply_context, generation)?;
+        let enriched = match self.inner.store.get_conversation(r#ref) {
+            Ok(conversation) => conversation,
+            Err(MailError::NotFound) => return Err(MailError::ReplyUnavailable),
+            Err(error) => return Err(error),
+        };
+        if enriched.retained_snapshot_at.is_some()
+            || enriched.context_complete != Some(true)
+            || enriched.messages.last().map(|message| message.id.as_str())
+                != Some(source_message_id)
+            || enriched
+                .reply_context
+                .as_ref()
+                .is_none_or(|context| context.source_message_id != source_message_id)
+        {
+            return Err(MailError::ReplyUnavailable);
+        }
+        Ok(enriched)
+    }
+
     /// Wire-facing mode/connection/sync status. Typed errors surface storage
     /// failures; connection and sync error hints come from worker outcomes.
     pub fn account_status(&self) -> Result<AccountStatus, MailError> {
@@ -1371,6 +1450,42 @@ fn retained_thread_bytes(thread: &GmailThread) -> usize {
                 .saturating_mul(std::mem::size_of::<String>()),
         )
         .saturating_add(thread.history_id.capacity());
+    if let Some(reply_context) = &conversation.reply_context {
+        bytes = bytes
+            .saturating_add(std::mem::size_of::<crate::drafts::types::ReplyContext>())
+            .saturating_add(reply_context.source_message_id.capacity())
+            .saturating_add(reply_context.from_mailbox.capacity())
+            .saturating_add(reply_context.message_id.capacity())
+            .saturating_add(
+                reply_context
+                    .reply_to_mailboxes
+                    .as_ref()
+                    .map_or(0, |mailboxes| {
+                        mailboxes
+                            .capacity()
+                            .saturating_mul(std::mem::size_of::<String>())
+                            .saturating_add(
+                                mailboxes
+                                    .iter()
+                                    .map(String::capacity)
+                                    .fold(0usize, usize::saturating_add),
+                            )
+                    }),
+            )
+            .saturating_add(
+                reply_context
+                    .references
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<String>()),
+            )
+            .saturating_add(
+                reply_context
+                    .references
+                    .iter()
+                    .map(String::capacity)
+                    .fold(0usize, usize::saturating_add),
+            );
+    }
     for message in &conversation.messages {
         bytes = bytes
             .saturating_add(message.id.capacity())
@@ -1705,3 +1820,7 @@ mod worker_halt_tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 }
+
+#[cfg(test)]
+#[path = "reply_context_sync_tests.rs"]
+mod reply_context_sync_tests;

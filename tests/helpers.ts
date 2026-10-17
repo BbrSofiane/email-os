@@ -82,8 +82,17 @@ export function countingClient(inner: MailClient): CountingClient {
  */
 export function accountMethods(
   inner: MailClient,
-): Pick<MailClient, 'getAccountStatus' | 'connectAccount' | 'disconnectAccount' | 'requestSync' | 'enableMailboxActions' | 'cancelMailboxActionUpgrade' | 'setRead' | 'retryOperation'> {
+): Pick<MailClient, 'getAccountStatus' | 'connectAccount' | 'disconnectAccount' | 'requestSync' | 'enableMailboxActions' | 'cancelMailboxActionUpgrade' | 'setRead' | 'retryOperation' | 'listDrafts' | 'getDraft' | 'createDraft' | 'saveDraft' | 'deleteDraft' | 'subscribeDrafts' | 'subscribeAppClose' | 'completeAppClose' | 'cancelAppClose'> {
   return {
+    listDrafts: () => inner.listDrafts(),
+    getDraft: (ref) => inner.getDraft(ref),
+    createDraft: (command) => inner.createDraft(command),
+    saveDraft: (command) => inner.saveDraft(command),
+    deleteDraft: (command) => inner.deleteDraft(command),
+    subscribeDrafts: (listener) => inner.subscribeDrafts(listener),
+    subscribeAppClose: (listener) => inner.subscribeAppClose(listener),
+    completeAppClose: (requestId) => inner.completeAppClose(requestId),
+    cancelAppClose: (requestId) => inner.cancelAppClose(requestId),
     getAccountStatus: () => inner.getAccountStatus(),
     connectAccount: () => inner.connectAccount(),
     disconnectAccount: () => inner.disconnectAccount(),
