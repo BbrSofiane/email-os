@@ -1,12 +1,21 @@
 /** Core read models are authoritative; events only request another snapshot. */
 import { computed, onScopeDispose, ref, type ComputedRef, type Ref } from 'vue';
-import type { AccountStatus, Conversation, ConversationRef, InboxSnapshot, MailClient, MailError, MailMode, OperationReceipt, SetArchived } from '../lib/ipc/client';
+import type {
+  AccountStatus,
+  Conversation,
+  ConversationRef,
+  InboxSnapshot,
+  MailClient,
+  MailError,
+  MailMode,
+  OperationReceipt,
+} from '../lib/ipc/client';
 import { toMailError } from '../lib/ipc/client';
 
 export type ListState = 'loading' | 'ready' | 'error';
 export type DetailState = 'idle' | 'loading' | 'ready' | 'error';
 export type AccountState = 'loading' | 'ready' | 'error';
-export type AccountAction = 'connect' | 'disconnect' | 'sync';
+export type AccountAction = 'connect' | 'disconnect' | 'sync' | 'enable-actions' | 'cancel-upgrade';
 export type ConversationSummaryLike = InboxSnapshot['conversations'][number];
 export type OperationSummaryLike = InboxSnapshot['activity'][number];
 
@@ -46,6 +55,10 @@ export interface Mailbox {
   openSelected(): Promise<void>;
   closeReader(): void;
   setArchived(target: ConversationRef, archived: boolean): Promise<OperationReceipt | null>;
+  setRead(target: ConversationRef, read: boolean): Promise<OperationReceipt | null>;
+  retryOperation(operationId: string): Promise<OperationReceipt | null>;
+  enableMailboxActions(): Promise<void>;
+  cancelMailboxActionUpgrade(): Promise<void>;
   archiveSelected(): Promise<void>;
 }
 
@@ -69,6 +82,7 @@ export function useMailbox(client: MailClient): Mailbox {
   let listToken = 0;
   let detailToken = 0;
   let commandToken = 0;
+  let mailboxSessionToken = 0;
   let statusToken = 0;
   let detached = false;
   let unsubscribe: (() => void) | null = null;
@@ -232,6 +246,8 @@ export function useMailbox(client: MailClient): Mailbox {
     listToken += 1;
     detailToken += 1;
     commandToken += 1;
+    mailboxSessionToken += 1;
+    inFlightCommandRef.value = null;
     conversations.value = [];
     activity.value = [];
     selectedIndex.value = 0;
@@ -261,36 +277,109 @@ export function useMailbox(client: MailClient): Mailbox {
     }
   }
 
-  async function setArchived(target: ConversationRef, archived: boolean): Promise<OperationReceipt | null> {
-    // Archive is fail-closed until the native mode is known, and Gmail is
-    // read-only (also enforced in Rust). No unknown/error status reaches IPC.
+  function mutationsAllowed(): boolean {
     if (accountState.value !== 'ready' || !accountStatus.value) {
       lastCommandError.value = { kind: 'invalid_request', field: 'accountStatus' };
-      return null;
+      return false;
     }
-    if (accountStatus.value.mode === 'gmail') {
+    if (accountStatus.value.mode === 'gmail' && accountStatus.value.mutationAccess !== 'enabled') {
       lastCommandError.value = { kind: 'read_only' };
-      return null;
+      return false;
     }
+    return true;
+  }
+
+  async function submitMutation(
+    send: (requestId: string) => Promise<OperationReceipt>,
+    target: ConversationRef | null,
+  ): Promise<OperationReceipt | null> {
+    if (!mutationsAllowed()) return null;
     const token = ++commandToken;
-    const command: SetArchived = {
-      conversation: { ...target },
-      archived,
-      requestId: crypto.randomUUID(),
-    };
-    inFlightCommandRef.value = command.conversation;
+    const sessionToken = mailboxSessionToken;
+    inFlightCommandRef.value = target ? { ...target } : null;
     try {
-      const receipt = await client.setArchived(command);
-      if (detached) return receipt;
+      const receipt = await send(crypto.randomUUID());
+      if (detached || sessionToken !== mailboxSessionToken) return receipt;
       if (token === commandToken) lastCommandError.value = null;
-      // Refetch both surfaces even if an event was delayed or missed.
+      // A successful receipt is authoritative acceptance even if a newer
+      // command owns the error slot. Events are best-effort, so refresh this
+      // account session rather than dropping the older accepted operation.
       await refresh();
       return receipt;
     } catch (raw) {
-      if (!detached && token === commandToken) lastCommandError.value = toMailError(raw);
+      if (!detached && sessionToken === mailboxSessionToken && token === commandToken) {
+        lastCommandError.value = toMailError(raw);
+      }
       return null;
     } finally {
-      if (!detached && token === commandToken) inFlightCommandRef.value = null;
+      if (!detached && sessionToken === mailboxSessionToken && token === commandToken) {
+        inFlightCommandRef.value = null;
+      }
+    }
+  }
+
+  async function setArchived(target: ConversationRef, archived: boolean): Promise<OperationReceipt | null> {
+    return submitMutation(
+      (requestId) => client.setArchived({ conversation: { ...target }, archived, requestId }),
+      target,
+    );
+  }
+
+  async function setRead(target: ConversationRef, read: boolean): Promise<OperationReceipt | null> {
+    if (accountStatus.value?.mode !== 'gmail') {
+      lastCommandError.value = { kind: 'read_only' };
+      return null;
+    }
+    return submitMutation(
+      (requestId) => client.setRead({ conversation: { ...target }, read, requestId }),
+      target,
+    );
+  }
+
+  async function retryOperation(operationId: string): Promise<OperationReceipt | null> {
+    if (mode.value !== 'gmail') {
+      lastCommandError.value = { kind: 'invalid_request', field: 'mode' };
+      return null;
+    }
+    return submitMutation(
+      (requestId) => client.retryOperation({ operationId, requestId }),
+      null,
+    );
+  }
+
+  async function enableMailboxActions(): Promise<void> {
+    if (accountBusy.value || accountState.value !== 'ready' || accountStatus.value?.mode !== 'gmail' || accountStatus.value.mutationAccess === 'enabled') return;
+    accountBusy.value = 'enable-actions';
+    lastCommandError.value = null;
+    try {
+      // This command only accepts/enqueues an explicit OAuth upgrade. Enabled state
+      // comes exclusively from a later authoritative account-status read.
+      await client.enableMailboxActions();
+      if (!detached) await refreshStatus(++statusToken);
+    } catch (raw) {
+      if (!detached) {
+        lastCommandError.value = toMailError(raw);
+        await refreshStatus(++statusToken);
+      }
+    } finally {
+      if (!detached) accountBusy.value = null;
+    }
+  }
+
+  async function cancelMailboxActionUpgrade(): Promise<void> {
+    if (accountBusy.value || accountState.value !== 'ready' || accountStatus.value?.mutationAccess !== 'upgrading') return;
+    accountBusy.value = 'cancel-upgrade';
+    lastCommandError.value = null;
+    try {
+      await client.cancelMailboxActionUpgrade();
+      if (!detached) await refreshStatus(++statusToken);
+    } catch (raw) {
+      if (!detached) {
+        lastCommandError.value = toMailError(raw);
+        await refreshStatus(++statusToken);
+      }
+    } finally {
+      if (!detached) accountBusy.value = null;
     }
   }
 
@@ -322,7 +411,8 @@ export function useMailbox(client: MailClient): Mailbox {
     conversations, activity, listState, listError, selectedIndex, selectedSummary,
     openRef, conversation, detailState, detailError, lastCommandError,
     inFlightCommandRef, ready, refresh, moveSelection, selectIndex,
-    openConversationByRef, openSelected, closeReader, setArchived, archiveSelected,
+    openConversationByRef, openSelected, closeReader, setArchived, setRead, retryOperation,
+    enableMailboxActions, cancelMailboxActionUpgrade, archiveSelected,
     accountStatus, accountState, accountError, accountBusy, mode, isGmail,
     connectAccount, disconnectAccount, requestSync,
   };

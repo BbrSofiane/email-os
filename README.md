@@ -31,16 +31,20 @@ have not been checked.
 - [Development guide](docs/development.md): how to run fixture and explicit Gmail modes, setup, validation, and platform gates.
 - [Vertical slice 01 contract](docs/vertical-slice-01.md): the completed fixture baseline and its frozen wire contract.
 - [Vertical slice 02 contract](docs/vertical-slice-02.md): the disposable-account, read-only Gmail scope and safety contract.
+- [Vertical slice 03 contract](docs/vertical-slice-03.md): opt-in Gmail archive/recovery and explicit read/unread actions.
 
-**Status:** Slice 01 is implemented as a durable synthetic fixture inbox. Slice 02 adds an explicit,
-separate, read-only Gmail profile with OAuth/PKCE, Keychain-only production credential custody,
-bounded plain-text cache/sync, and seven typed native commands. Gmail mode is opt-in with
-`EMAIL_OS_MODE=gmail`; fixture remains the native default and browser preview remains synthetic.
+**Status:** Slice 01 is implemented as a durable synthetic fixture inbox. Slice 02 provides an explicit,
+separate Gmail profile with OAuth/PKCE, Keychain-only production credential custody, bounded plain-text
+cache/sync, and background sync. Slice 03 adds durable, explicit Gmail archive/unarchive and
+read/unread actions behind an opt-in `gmail.modify` permission upgrade; the app does not compose, send,
+delete, or expose arbitrary labels, and opening a message never marks it read. Gmail mode is opt-in
+with `EMAIL_OS_MODE=gmail`; fixture remains the native default and browser preview remains synthetic.
 No real account or Google network has been used in VM validation. The operator-validated Slice 01
-Mac gate is separate from pending Slice 02 macOS Keychain, browser/OAuth, offline/restart,
-external-change, and disposable-account smoke gates. See [docs/development.md](docs/development.md)
-for setup and exact limitations. `ARCHITECTURE.md` preserves the original broader research/proposal
-and should not be read as a current implementation inventory.
+and prior Slice 02 Mac gates are separate from pending Slice 03 consent, deny/cancel,
+offline/restart/reconciliation, external-change and recovery validation. See
+[docs/development.md](docs/development.md) for setup and exact limitations. `ARCHITECTURE.md`
+preserves the original broader research/proposal and should not be read as a current implementation
+inventory.
 
 ## Research background
 

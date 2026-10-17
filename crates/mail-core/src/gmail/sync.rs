@@ -1,5 +1,5 @@
-//! Read-only Gmail cache/sync facade (`GmailCore`) plus its single serial
-//! background worker (docs/vertical-slice-02.md, "Sync component"). Sync
+//! Gmail cache, sync, and mailbox-action facade (`GmailCore`) plus its single
+//! serial background worker (docs/vertical-slice-03.md). Sync
 //! starts independently of any UI lifecycle; provider calls run on the
 //! worker thread strictly outside SQLite locks; all checkpointed writes are
 //! transactional and drop any result that raced a disconnect. No mail
@@ -13,13 +13,17 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::clock::SystemClock;
-use crate::dto::{Address, Conversation, ConversationRef, InboxSnapshot, Message};
+use crate::dto::{
+    Address, Conversation, ConversationRef, InboxSnapshot, Message, OperationReceipt,
+    RetryOperation, SetArchived, SetRead,
+};
 use crate::error::MailError;
 use crate::gmail::store::{
     Commit, DiscoveryProgress, GmailStore, HistoryProgress, ThreadFetch, DISCOVERY_CAP,
 };
 use crate::gmail::types::{
-    AccountStatus, ConnectionState, GmailReadProvider, GmailThread, MailMode, SyncInfo, SyncState,
+    AccountStatus, ConnectionState, GmailReadProvider, GmailThread, MailMode, MutationAccess,
+    SyncInfo, SyncState,
 };
 use crate::lock::ProfileGuard;
 use crate::CancelToken;
@@ -96,6 +100,8 @@ enum AuthKind {
 enum PassAction {
     Auth(AuthKind),
     Sync,
+    MutationUpgrade,
+    Mutations,
 }
 
 impl PassAction {
@@ -113,12 +119,29 @@ struct CtrlState {
     auth_kind: AuthKind,
     auth_auto_retry: bool,
     sync_requested: bool,
+    operations_requested: bool,
+    upgrade_requested: bool,
+    upgrade_in_flight: bool,
+    active_action: Option<PassAction>,
     pass_in_flight: bool,
     disconnecting: bool,
     pass_cancel: CancelToken,
     connection: ConnectionState,
     error: Option<MailError>,
     backoff: u32,
+}
+
+/// Latches persistence failures found before a mutation reaches its durable
+/// acceptance transaction, so already-queued work cannot run after recovery.
+fn latch_admission_storage_error(st: &mut CtrlState, ctrl: &Ctrl, error: &MailError) -> bool {
+    if *error != MailError::StorageUnavailable {
+        return false;
+    }
+    st.halted = true;
+    st.error = Some(error.clone());
+    st.pass_cancel.cancel();
+    ctrl.wake.notify_all();
+    true
 }
 
 /// Outcome of one worker pass.
@@ -186,6 +209,10 @@ impl GmailCore {
                 auth_kind: AuthKind::Restore,
                 auth_auto_retry: false,
                 sync_requested: false,
+                operations_requested: true,
+                upgrade_requested: false,
+                upgrade_in_flight: false,
+                active_action: None,
                 pass_in_flight: false,
                 disconnecting: false,
                 pass_cancel: CancelToken::default(),
@@ -233,17 +260,37 @@ impl GmailCore {
     /// Wire-facing mode/connection/sync status. Typed errors surface storage
     /// failures; connection and sync error hints come from worker outcomes.
     pub fn account_status(&self) -> Result<AccountStatus, MailError> {
-        let (connection, error, pass_in_flight) = {
+        let (connection, mut error, pass_in_flight, upgrading) = {
             let st = self
                 .inner
                 .ctrl
                 .state
                 .lock()
                 .map_err(|_| MailError::StorageUnavailable)?;
-            (st.connection, st.error.clone(), st.pass_in_flight)
+            (
+                st.connection,
+                st.error.clone(),
+                st.pass_in_flight,
+                st.upgrade_requested || st.upgrade_in_flight,
+            )
+        };
+        let mutation_access = if upgrading {
+            MutationAccess::Upgrading
+        } else {
+            match self.inner.provider.mutation_access() {
+                Ok(true) => MutationAccess::Enabled,
+                Ok(false) => MutationAccess::ReadOnly,
+                Err(capability_error) => {
+                    if error.is_none() {
+                        error = Some(capability_error);
+                    }
+                    MutationAccess::ReadOnly
+                }
+            }
         };
         Ok(AccountStatus {
             mode: MailMode::Gmail,
+            mutation_access: Some(mutation_access),
             connection,
             account: self.inner.store.account()?,
             sync: SyncInfo {
@@ -261,6 +308,152 @@ impl GmailCore {
                 coverage_limit: COVERAGE_LIMIT,
             },
         })
+    }
+
+    /// Queues the explicit Gmail permission upgrade. The grant itself runs on
+    /// the serial worker and is reflected through `account_status`.
+    pub fn enable_mutations(&self) -> Result<(), MailError> {
+        let inner = &*self.inner;
+        if !inner.provider.is_configured() {
+            return Err(MailError::NotConfigured);
+        }
+        let mut st = inner
+            .ctrl
+            .state
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        if st.halted || st.stop {
+            return Err(MailError::StorageUnavailable);
+        }
+        if st.disconnecting {
+            return Err(MailError::Busy);
+        }
+        if st.connection != ConnectionState::Connected {
+            return Err(MailError::AuthRequired);
+        }
+        match inner.store.account() {
+            Ok(Some(_)) => {}
+            Ok(None) => return Err(MailError::AuthRequired),
+            Err(error) => {
+                if latch_admission_storage_error(&mut st, &inner.ctrl, &error) {
+                    drop(st);
+                    inner.hub.dispatch();
+                }
+                return Err(error);
+            }
+        }
+        let mutation_access = match inner.provider.mutation_access() {
+            Ok(access) => access,
+            Err(error) => {
+                if latch_admission_storage_error(&mut st, &inner.ctrl, &error) {
+                    drop(st);
+                    inner.hub.dispatch();
+                }
+                return Err(error);
+            }
+        };
+        if mutation_access || st.upgrade_requested || st.upgrade_in_flight {
+            return Ok(());
+        }
+        st.upgrade_requested = true;
+        inner.ctrl.wake.notify_all();
+        drop(st);
+        inner.hub.dispatch();
+        Ok(())
+    }
+
+    /// Cancels only a queued or active permission-upgrade pass. It does not
+    /// revoke a completed grant or cancel sync, restore, or mutation work.
+    pub fn cancel_mutation_upgrade(&self) -> Result<(), MailError> {
+        let inner = &*self.inner;
+        let mut st = inner
+            .ctrl
+            .state
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        if st.upgrade_requested {
+            st.upgrade_requested = false;
+            inner.ctrl.wake.notify_all();
+            drop(st);
+            inner.hub.dispatch();
+            return Ok(());
+        }
+        if st.upgrade_in_flight && st.active_action == Some(PassAction::MutationUpgrade) {
+            st.pass_cancel.cancel();
+            inner.ctrl.wake.notify_all();
+        }
+        Ok(())
+    }
+
+    pub fn set_archived(&self, command: &SetArchived) -> Result<OperationReceipt, MailError> {
+        self.accept_operation(|store| store.accept_archived(command))
+    }
+
+    pub fn set_read(&self, command: &SetRead) -> Result<OperationReceipt, MailError> {
+        self.accept_operation(|store| store.accept_read(command))
+    }
+
+    pub fn retry_operation(&self, command: &RetryOperation) -> Result<OperationReceipt, MailError> {
+        self.accept_operation(|store| store.accept_retry(command))
+    }
+
+    fn accept_operation(
+        &self,
+        accept: impl FnOnce(&GmailStore) -> Result<OperationReceipt, MailError>,
+    ) -> Result<OperationReceipt, MailError> {
+        let inner = &*self.inner;
+        let mut st = inner
+            .ctrl
+            .state
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        if st.halted || st.stop {
+            return Err(MailError::StorageUnavailable);
+        }
+        if st.disconnecting {
+            return Err(MailError::Busy);
+        }
+        let mutation_access = match inner.provider.mutation_access() {
+            Ok(access) => access,
+            Err(error) => {
+                if latch_admission_storage_error(&mut st, &inner.ctrl, &error) {
+                    drop(st);
+                    inner.hub.dispatch();
+                }
+                return Err(error);
+            }
+        };
+        if !mutation_access {
+            return Err(MailError::PermissionRequired);
+        }
+        match inner.store.account() {
+            Ok(Some(_)) => {}
+            Ok(None) => return Err(MailError::AuthRequired),
+            Err(error) => {
+                if latch_admission_storage_error(&mut st, &inner.ctrl, &error) {
+                    drop(st);
+                    inner.hub.dispatch();
+                }
+                return Err(error);
+            }
+        }
+        let receipt = match accept(&inner.store) {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                if error == MailError::StorageUnavailable {
+                    st.halted = true;
+                    st.error = Some(error.clone());
+                    st.pass_cancel.cancel();
+                    inner.ctrl.wake.notify_all();
+                }
+                return Err(error);
+            }
+        };
+        st.operations_requested = true;
+        inner.ctrl.wake.notify_all();
+        drop(st);
+        inner.hub.dispatch();
+        Ok(receipt)
     }
 
     /// Enqueues a connect attempt and returns void acceptance immediately;
@@ -319,6 +512,8 @@ impl GmailCore {
             st.auth_requested = false;
             st.auth_auto_retry = false;
             st.sync_requested = false;
+            st.operations_requested = false;
+            st.upgrade_requested = false;
             st.pass_cancel.cancel();
             inner.ctrl.wake.notify_all();
         }
@@ -331,6 +526,14 @@ impl GmailCore {
             inner.provider.disconnect()?;
             inner.store.clear_account()
         })();
+        // If cleanup failed, the account/operation rows remain. Any setter
+        // whose completion raced the generation advance must be reconciled,
+        // never left permanently applying or replayed as a POST.
+        let interrupted = if cleanup.is_err() {
+            inner.store.recover_interrupted_operations()
+        } else {
+            Ok(false)
+        };
         {
             let mut st = inner
                 .ctrl
@@ -338,13 +541,26 @@ impl GmailCore {
                 .lock()
                 .map_err(|_| MailError::StorageUnavailable)?;
             st.disconnecting = false;
+            st.upgrade_in_flight = false;
+            st.active_action = None;
             match &cleanup {
                 Ok(()) => {
                     st.connection = ConnectionState::Disconnected;
                     st.error = None;
                     st.backoff = 0;
                 }
-                Err(error) => st.error = Some(error.clone()),
+                Err(error) => {
+                    st.error = Some(error.clone());
+                    match interrupted {
+                        Ok(true) => st.operations_requested = true,
+                        Ok(false) => {}
+                        Err(storage_error) => {
+                            st.halted = true;
+                            st.error = Some(storage_error.clone());
+                            st.pass_cancel.cancel();
+                        }
+                    }
+                }
             }
             inner.ctrl.wake.notify_all();
         }
@@ -603,16 +819,23 @@ fn run(
             while st.disconnecting && !st.stop {
                 st = ctrl.wake.wait(st).expect("gmail ctrl poisoned");
             }
-            if st.stop {
+            if st.stop || st.halted {
                 return;
             }
-            if !(st.auth_requested || st.sync_requested || first_tick) {
-                // No request pending: wait for one or for the periodic
-                // tick/backoff deadline.
+            let mut tick_due = first_tick;
+            let runnable_request = |st: &CtrlState| {
+                st.auth_requested
+                    || (st.connection == ConnectionState::Connected
+                        && (st.upgrade_requested || st.sync_requested || st.operations_requested))
+            };
+            if !runnable_request(&st) && !first_tick {
+                // No runnable request pending: wait for one or the periodic
+                // catch-up/backoff deadline.
                 let deadline = Instant::now() + backoff_delay(st.backoff);
                 loop {
                     let remaining = deadline.saturating_duration_since(Instant::now());
                     if remaining.is_zero() {
+                        tick_due = true;
                         break;
                     }
                     let (guard, _) = ctrl
@@ -620,13 +843,16 @@ fn run(
                         .wait_timeout(st, remaining)
                         .expect("gmail ctrl poisoned");
                     st = guard;
-                    if st.stop {
+                    if st.stop || st.halted {
                         return;
                     }
-                    if st.disconnecting || st.auth_requested || st.sync_requested {
+                    if st.disconnecting || runnable_request(&st) {
                         break;
                     }
                 }
+            }
+            if st.halted {
+                return;
             }
             if st.disconnecting {
                 drop(st);
@@ -638,8 +864,17 @@ fn run(
                 PassAction::Auth(st.auth_kind)
             } else if st.connection == ConnectionState::Authenticating && st.auth_auto_retry {
                 PassAction::Auth(AuthKind::Restore)
-            } else if st.connection == ConnectionState::Connected {
+            } else if st.connection == ConnectionState::Connected && st.upgrade_requested {
+                st.upgrade_requested = false;
+                st.upgrade_in_flight = true;
+                PassAction::MutationUpgrade
+            } else if st.connection == ConnectionState::Connected && st.sync_requested {
                 st.sync_requested = false;
+                PassAction::Sync
+            } else if st.connection == ConnectionState::Connected && st.operations_requested {
+                st.operations_requested = false;
+                PassAction::Mutations
+            } else if st.connection == ConnectionState::Connected && tick_due {
                 PassAction::Sync
             } else {
                 // Nothing runnable (not configured / disconnected / auth
@@ -652,6 +887,7 @@ fn run(
             let pass_cancel = CancelToken::default();
             st.pass_cancel = pass_cancel.clone();
             st.pass_in_flight = true;
+            st.active_action = Some(action);
             (action, pass_cancel)
         };
 
@@ -660,60 +896,89 @@ fn run(
         hub.dispatch();
         // The pass runs network calls strictly outside the ctrl lock and
         // outside any SQLite lock.
-        let outcome = run_pass(&store, provider.as_ref(), &pass_cancel, action, &hub);
+        let mut outcome = run_pass(&store, provider.as_ref(), &pass_cancel, action, &hub);
+        let mut more_claimable_mutations = false;
+        if action == PassAction::Mutations && matches!(&outcome, PassOutcome::Complete) {
+            match store.claimable_operation_count() {
+                Ok(count) => more_claimable_mutations = count > 0,
+                Err(error) => outcome = PassOutcome::Halt(error),
+            }
+        }
 
         let mut halted = false;
         {
             let mut st = ctrl.state.lock().expect("gmail ctrl poisoned");
             st.pass_in_flight = false;
-            match outcome {
-                PassOutcome::Complete => {
-                    st.error = None;
-                    st.backoff = 0;
-                    if action.is_auth() || st.connection == ConnectionState::Authenticating {
-                        st.connection = ConnectionState::Connected;
-                    }
-                }
-                PassOutcome::Idle => {}
-                PassOutcome::AuthError { error } => {
-                    st.error = Some(error.clone());
-                    st.backoff = st.backoff.saturating_add(1);
-                    match action {
-                        PassAction::Auth(AuthKind::Connect) => {
-                            st.auth_auto_retry = false;
-                            st.connection = auth_failure_connection(&error);
+            st.active_action = None;
+            if action == PassAction::MutationUpgrade {
+                st.upgrade_in_flight = false;
+            }
+            if st.halted {
+                halted = true;
+            } else {
+                match outcome {
+                    PassOutcome::Complete => {
+                        st.error = None;
+                        st.backoff = 0;
+                        if action.is_auth() || st.connection == ConnectionState::Authenticating {
+                            st.connection = ConnectionState::Connected;
                         }
-                        PassAction::Auth(AuthKind::Restore) => {
-                            if is_retryable_network(&error) {
-                                // Stay `authenticating`; retry on the next
-                                // backoff tick until the account is known.
-                                st.auth_auto_retry = true;
-                            } else {
+                        if action.is_auth()
+                            || action == PassAction::Sync
+                            || action == PassAction::MutationUpgrade
+                        {
+                            st.operations_requested = true;
+                        } else if action == PassAction::Mutations {
+                            st.operations_requested = more_claimable_mutations;
+                        }
+                    }
+                    PassOutcome::Idle => {}
+                    PassOutcome::AuthError { error } => {
+                        st.error = Some(error.clone());
+                        st.backoff = st.backoff.saturating_add(1);
+                        match action {
+                            PassAction::Auth(AuthKind::Connect) => {
                                 st.auth_auto_retry = false;
                                 st.connection = auth_failure_connection(&error);
                             }
+                            PassAction::Auth(AuthKind::Restore) => {
+                                if is_retryable_network(&error) {
+                                    // Stay `authenticating`; retry on the next
+                                    // backoff tick until the account is known.
+                                    st.auth_auto_retry = true;
+                                } else {
+                                    st.auth_auto_retry = false;
+                                    st.connection = auth_failure_connection(&error);
+                                }
+                            }
+                            PassAction::Sync
+                            | PassAction::MutationUpgrade
+                            | PassAction::Mutations => {}
                         }
-                        PassAction::Sync => {}
                     }
-                }
-                PassOutcome::SyncError(error) => {
-                    st.error = Some(error.clone());
-                    st.backoff = st.backoff.saturating_add(1);
-                    if is_auth_failure(&error) {
-                        st.connection = ConnectionState::AuthRequired;
-                    } else if action.is_auth() {
-                        // Auth succeeded earlier in this pass; the failure is
-                        // a sync problem, not a connection problem.
-                        st.connection = ConnectionState::Connected;
+                    PassOutcome::SyncError(error) => {
+                        st.error = Some(error.clone());
+                        st.backoff = st.backoff.saturating_add(1);
+                        if is_auth_failure(&error) && action != PassAction::MutationUpgrade {
+                            st.connection = ConnectionState::AuthRequired;
+                        } else if action.is_auth() {
+                            // Auth succeeded earlier in this pass; the failure is
+                            // a sync problem, not a connection problem.
+                            st.connection = ConnectionState::Connected;
+                        }
                     }
-                }
-                PassOutcome::Halt(error) => {
-                    st.error = Some(error);
-                    st.halted = true;
-                    halted = true;
-                }
-                PassOutcome::Cancelled => {
-                    // Disconnect owns the state; record nothing.
+                    PassOutcome::Halt(error) => {
+                        st.error = Some(error);
+                        st.halted = true;
+                        halted = true;
+                    }
+                    PassOutcome::Cancelled => {
+                        // Disconnect owns the state; ordinary upgrade cancellation
+                        // resolves only that grant attempt without touching sync.
+                        if action == PassAction::MutationUpgrade && !st.disconnecting {
+                            st.error = None;
+                        }
+                    }
                 }
             }
             ctrl.wake.notify_all();
@@ -736,6 +1001,36 @@ fn run_pass(
         Ok(generation) => generation,
         Err(error) => return PassOutcome::Halt(error),
     };
+    if action == PassAction::MutationUpgrade {
+        let account = match store.account() {
+            Ok(Some(account)) => account,
+            Ok(None) => return PassOutcome::SyncError(MailError::AuthRequired),
+            Err(error) => return PassOutcome::Halt(error),
+        };
+        return match provider.enable_mutations(cancel) {
+            Ok(profile) if profile.account_id != account.account_id => {
+                PassOutcome::SyncError(MailError::InvalidRequest {
+                    field: "accountId".to_string(),
+                })
+            }
+            Ok(_) => match provider.mutation_access() {
+                Ok(true) => PassOutcome::Complete,
+                Ok(false) => PassOutcome::SyncError(MailError::PermissionRequired),
+                Err(error) => PassOutcome::SyncError(error),
+            },
+            Err(MailError::AuthCancelled) if cancel.is_cancelled() => PassOutcome::Cancelled,
+            Err(error) => PassOutcome::SyncError(error),
+        };
+    }
+    if action == PassAction::Mutations {
+        return match crate::gmail::operations::run_one(store, provider, cancel) {
+            Ok(true) => PassOutcome::Complete,
+            Ok(false) => PassOutcome::Idle,
+            Err(MailError::StorageUnavailable) => PassOutcome::Halt(MailError::StorageUnavailable),
+            Err(_error) if cancel.is_cancelled() => PassOutcome::Cancelled,
+            Err(error) => PassOutcome::SyncError(error),
+        };
+    }
     if let PassAction::Auth(kind) = action {
         let attempted = match kind {
             AuthKind::Connect => provider.connect(cancel),
@@ -769,13 +1064,23 @@ fn run_pass(
     loop {
         match run_discovery(store, provider, cancel, generation, hub) {
             StageOutcome::Complete => {}
-            StageOutcome::ExpiredRestart => return PassOutcome::Complete,
+            StageOutcome::ExpiredRestart => {
+                return match store.schedule_unknown_reconciliation() {
+                    Ok(()) => PassOutcome::Complete,
+                    Err(error) => PassOutcome::Halt(error),
+                };
+            }
             StageOutcome::SyncError(error) => return PassOutcome::SyncError(error),
             StageOutcome::Halt(error) => return PassOutcome::Halt(error),
             StageOutcome::Cancelled => return PassOutcome::Cancelled,
         }
         match run_history(store, provider, cancel, generation, hub) {
-            StageOutcome::Complete => return PassOutcome::Complete,
+            StageOutcome::Complete => {
+                return match store.schedule_unknown_reconciliation() {
+                    Ok(()) => PassOutcome::Complete,
+                    Err(error) => PassOutcome::Halt(error),
+                };
+            }
             StageOutcome::ExpiredRestart => {
                 rediscovery_restarts += 1;
                 if rediscovery_restarts > MAX_REDISCOVERY_RESTARTS {
@@ -857,7 +1162,7 @@ fn run_discovery(
                     {
                         return StageOutcome::SyncError(MailError::InvalidProviderResponse);
                     }
-                    fetched.push(ThreadFetch::Cached(thread));
+                    fetched.push(ThreadFetch::Cached(Box::new(thread)));
                     discovered += 1;
                 }
                 Ok(None) => {
@@ -1006,7 +1311,7 @@ fn fetch_changed_threads(
                 if !include_retained_bytes(&mut retained_bytes, retained_thread_bytes(&thread)) {
                     return Err(MailError::InvalidProviderResponse);
                 }
-                fetched.push(ThreadFetch::Cached(thread));
+                fetched.push(ThreadFetch::Cached(Box::new(thread)));
             }
             None => {
                 let missing_bytes = std::mem::size_of::<ThreadFetch>() + id.capacity();
@@ -1095,5 +1400,307 @@ fn retained_thread_bytes(thread: &GmailThread) -> usize {
     for message_id in &thread.inbox_message_ids {
         bytes = bytes.saturating_add(message_id.capacity());
     }
+    for inventory in [&thread.message_ids, &thread.unread_message_ids]
+        .into_iter()
+        .flatten()
+    {
+        bytes = bytes.saturating_add(
+            inventory
+                .capacity()
+                .saturating_mul(std::mem::size_of::<String>()),
+        );
+        for message_id in inventory {
+            bytes = bytes.saturating_add(message_id.capacity());
+        }
+    }
     bytes
+}
+
+#[cfg(test)]
+mod worker_halt_tests {
+    use super::*;
+    use crate::dto::{Address, Message};
+    use crate::gmail::types::{GmailHistoryError, GmailProfile, HistoryPage, InboxPage};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    const TEST_ACCOUNT: &str = "halt-test-account";
+    const TEST_THREAD: &str = "halt-test-thread";
+
+    struct ProviderState {
+        block_history: bool,
+        history_started: bool,
+        writes: usize,
+    }
+
+    struct HaltTestProvider {
+        state: Mutex<ProviderState>,
+        wake: Condvar,
+    }
+
+    impl HaltTestProvider {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                state: Mutex::new(ProviderState {
+                    block_history: false,
+                    history_started: false,
+                    writes: 0,
+                }),
+                wake: Condvar::new(),
+            })
+        }
+
+        fn block_history(&self) {
+            let mut state = self.state.lock().unwrap();
+            state.block_history = true;
+            state.history_started = false;
+        }
+
+        fn wait_for_history(&self) -> bool {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut state = self.state.lock().unwrap();
+            while !state.history_started {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return false;
+                }
+                let (next, _) = self.wake.wait_timeout(state, remaining).unwrap();
+                state = next;
+            }
+            true
+        }
+
+        fn release_history(&self) {
+            let mut state = self.state.lock().unwrap();
+            state.block_history = false;
+            drop(state);
+            self.wake.notify_all();
+        }
+
+        fn writes(&self) -> usize {
+            self.state.lock().unwrap().writes
+        }
+    }
+
+    fn until(mut predicate: impl FnMut() -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if predicate() {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return predicate();
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn test_profile() -> GmailProfile {
+        GmailProfile {
+            account_id: TEST_ACCOUNT.to_string(),
+            email_address: "halt@example.test".to_string(),
+            history_id: "history-1".to_string(),
+        }
+    }
+
+    fn test_thread() -> GmailThread {
+        GmailThread {
+            conversation: Conversation {
+                conversation_ref: ConversationRef {
+                    account_id: TEST_ACCOUNT.to_string(),
+                    conversation_id: TEST_THREAD.to_string(),
+                },
+                subject: "synthetic halt test".to_string(),
+                messages: vec![Message {
+                    id: "message-1".to_string(),
+                    from: Address {
+                        display_name: None,
+                        mailbox: "sender@example.test".to_string(),
+                    },
+                    to: vec![],
+                    sent_at: "2026-01-01T00:00:00Z".to_string(),
+                    body_text: "synthetic body".to_string(),
+                }],
+                is_in_inbox: true,
+                is_read: Some(true),
+                context_complete: Some(true),
+                unsupported_reason: None,
+                retained_snapshot_at: None,
+                pending_operation_id: None,
+            },
+            inbox_message_ids: vec!["message-1".to_string()],
+            message_ids: Some(vec!["message-1".to_string()]),
+            unread_message_ids: Some(vec![]),
+            history_id: "history-1".to_string(),
+        }
+    }
+
+    impl GmailReadProvider for HaltTestProvider {
+        fn mutation_access(&self) -> Result<bool, MailError> {
+            Ok(true)
+        }
+
+        fn apply_archive(
+            &self,
+            _message_ids: &[String],
+            _archived: bool,
+            _cancel: &CancelToken,
+        ) -> Result<(), MailError> {
+            self.state.lock().unwrap().writes += 1;
+            Ok(())
+        }
+
+        fn is_configured(&self) -> bool {
+            true
+        }
+
+        fn has_credentials(&self) -> Result<bool, MailError> {
+            Ok(true)
+        }
+
+        fn connect(&self, _cancel: &CancelToken) -> Result<GmailProfile, MailError> {
+            Ok(test_profile())
+        }
+
+        fn disconnect(&self) -> Result<(), MailError> {
+            Ok(())
+        }
+
+        fn profile(&self, _cancel: &CancelToken) -> Result<GmailProfile, MailError> {
+            Ok(test_profile())
+        }
+
+        fn list_inbox(
+            &self,
+            _page_token: Option<&str>,
+            _cancel: &CancelToken,
+        ) -> Result<InboxPage, MailError> {
+            Ok(InboxPage {
+                thread_ids: vec![TEST_THREAD.to_string()],
+                next_page_token: None,
+            })
+        }
+
+        fn get_thread(
+            &self,
+            _thread_id: &str,
+            _cancel: &CancelToken,
+        ) -> Result<Option<GmailThread>, MailError> {
+            Ok(Some(test_thread()))
+        }
+
+        fn history(
+            &self,
+            start_history_id: &str,
+            _page_token: Option<&str>,
+            cancel: &CancelToken,
+        ) -> Result<HistoryPage, GmailHistoryError> {
+            let mut state = self.state.lock().unwrap();
+            if state.block_history {
+                state.history_started = true;
+                self.wake.notify_all();
+                while state.block_history && !cancel.is_cancelled() {
+                    let (next, _) = self
+                        .wake
+                        .wait_timeout(state, Duration::from_millis(10))
+                        .unwrap();
+                    state = next;
+                }
+            }
+            if cancel.is_cancelled() {
+                return Err(GmailHistoryError::Mail(MailError::AuthCancelled));
+            }
+            Ok(HistoryPage {
+                changed_thread_ids: vec![],
+                deleted_message_ids: vec![],
+                next_page_token: None,
+                history_id: start_history_id.to_string(),
+            })
+        }
+    }
+
+    #[test]
+    fn mutation_admission_precheck_storage_halt_stops_queued_setters_until_restart() {
+        let dir = std::env::temp_dir().join(format!(
+            "mail-core-gmail-worker-halt-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let provider = HaltTestProvider::new();
+        let core = GmailCore::open(&dir, Arc::clone(&provider) as Arc<dyn GmailReadProvider>)
+            .expect("open synthetic Gmail core");
+        assert!(until(|| {
+            core.account_status().is_ok_and(|status| {
+                status.connection == ConnectionState::Connected
+                    && status.sync.initial_sync_complete
+                    && status.sync.state == SyncState::Idle
+            }) && core
+                .list_conversations()
+                .is_ok_and(|snapshot| !snapshot.conversations.is_empty())
+        }));
+
+        provider.block_history();
+        core.request_sync().expect("request synthetic sync");
+        assert!(
+            provider.wait_for_history(),
+            "sync is held before queued setter dispatch"
+        );
+        let ref_ = ConversationRef {
+            account_id: TEST_ACCOUNT.to_string(),
+            conversation_id: TEST_THREAD.to_string(),
+        };
+        core.set_archived(&SetArchived {
+            conversation: ref_.clone(),
+            archived: true,
+            request_id: "queued-before-halt".to_string(),
+        })
+        .expect("first action is durably queued behind sync");
+        assert_eq!(
+            core.list_conversations().unwrap().activity[0].status,
+            crate::dto::OperationStatus::Queued
+        );
+
+        // This failure happens in the admission precheck, before the setter's
+        // acceptance transaction gets a chance to latch the worker halt.
+        core.inner.store.set_test_persistence_failure(true);
+        assert_eq!(
+            core.set_archived(&SetArchived {
+                conversation: ref_.clone(),
+                archived: true,
+                request_id: "account-precheck-storage-failure".to_string(),
+            }),
+            Err(MailError::StorageUnavailable)
+        );
+        core.inner.store.set_test_persistence_failure(false);
+        provider.release_history();
+        assert!(until(|| {
+            let state = core.inner.ctrl.state.lock().unwrap();
+            state.halted
+                && !state.pass_in_flight
+                && state.error == Some(MailError::StorageUnavailable)
+        }));
+
+        assert_eq!(
+            provider.writes(),
+            0,
+            "halted worker never dispatches queued action after storage recovery"
+        );
+        assert_eq!(
+            core.list_conversations().unwrap().activity[0].status,
+            crate::dto::OperationStatus::Queued
+        );
+        assert_eq!(
+            core.set_archived(&SetArchived {
+                conversation: ref_,
+                archived: true,
+                request_id: "after-storage-recovery".to_string(),
+            }),
+            Err(MailError::StorageUnavailable)
+        );
+        core.stop();
+        drop(core);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

@@ -80,6 +80,8 @@ describe('browser fake MailClient (core-like semantics, memory-only)', () => {
     const ops = fake.controls.activity();
     expect(ops[0]?.status).toBe('failed');
     expect(ops[0]?.failure).toEqual({ kind: 'provider_rejected' });
+    await expect(fake.retryOperation({ operationId: ops[0]!.id, requestId: 'fixture-retry' }))
+      .rejects.toEqual({ kind: 'invalid_request', field: 'mode' });
     const snap = await fake.listConversations();
     // overlay reverted: the conversation is back in the inbox
     expect(inboxIds(snap)).toContain('conv-01');
@@ -230,5 +232,106 @@ describe('browser fake MailClient (Slice 02 account lifecycle)', () => {
     const plain = await fake.getConversation(fixtureRef('conv-01'));
     expect(plain.unsupportedReason).toBeUndefined();
     expect(plain.contextComplete).toBeUndefined();
+  });
+
+  it('keeps unknown read state absent and returns detached immutable read snapshots', async () => {
+    const fake = createBrowserFakeMailClient();
+    fake.controls.markReadUnknown('conv-01');
+    const first = await fake.listConversations();
+    expect(first.conversations.find((row) => row.ref.conversationId === 'conv-01')?.isRead).toBeUndefined();
+    first.conversations[0]!.subject = 'mutated by caller';
+    expect((await fake.listConversations()).conversations[0]?.subject).not.toBe('mutated by caller');
+    const detail = await fake.getConversation(fixtureRef('conv-01'));
+    detail.messages[0]!.bodyText = 'caller mutation';
+    expect((await fake.getConversation(fixtureRef('conv-01'))).messages[0]?.bodyText).not.toBe('caller mutation');
+  });
+
+  it('snapshots archive targets so a later incoming message remains in the inbox', async () => {
+    const fake = createBrowserFakeMailClient();
+    fake.controls.behavior.hold = true;
+    await fake.setArchived({ conversation: fixtureRef('conv-01'), archived: true, requestId: 'snapshot-archive' });
+    fake.controls.addMessage('conv-01', false);
+    fake.controls.release();
+    await fake.controls.flush();
+    const snap = await fake.listConversations();
+    expect(inboxIds(snap)).toContain('conv-01');
+    expect(await fake.getConversation(fixtureRef('conv-01'))).toMatchObject({ isInInbox: true, isRead: false });
+  });
+
+  it('models synthetic explicit action grants, denial, and cancellation without disconnecting', async () => {
+    const fake = createBrowserFakeMailClient();
+    fake.controls.setAccount({ mode: 'gmail', connection: 'connected', emailAddress: 'operator@example.test' });
+    expect((await fake.getAccountStatus()).mutationAccess).toBe('read_only');
+    await expect(fake.setArchived({ conversation: fixtureRef('conv-01'), archived: true, requestId: 'readonly' }))
+      .rejects.toEqual({ kind: 'read_only' });
+    fake.controls.failNextEnable({ kind: 'permission_required' });
+    await expect(fake.enableMailboxActions()).rejects.toEqual({ kind: 'permission_required' });
+    expect((await fake.getAccountStatus()).mutationAccess).toBe('read_only');
+
+    fake.controls.behavior.holdUpgrade = true;
+    await fake.enableMailboxActions();
+    expect((await fake.getAccountStatus()).mutationAccess).toBe('upgrading');
+    await fake.cancelMailboxActionUpgrade();
+    expect((await fake.getAccountStatus()).mutationAccess).toBe('read_only');
+    expect((await fake.getAccountStatus()).account?.emailAddress).toBe('operator@example.test');
+    expect(inboxIds(await fake.listConversations())).toContain('conv-01');
+    fake.controls.releaseUpgrade();
+    expect((await fake.getAccountStatus()).mutationAccess).toBe('read_only');
+  });
+
+  it('requires enabled grant for synthetic read setters and applies read/unread explicitly', async () => {
+    const fake = createBrowserFakeMailClient();
+    fake.controls.setAccount({ mode: 'gmail', connection: 'connected', emailAddress: 'operator@example.test' });
+    await expect(fake.setRead({ conversation: fixtureRef('conv-01'), read: true, requestId: 'read-denied' }))
+      .rejects.toEqual({ kind: 'read_only' });
+    await fake.enableMailboxActions();
+    await fake.controls.flush();
+    await fake.setRead({ conversation: fixtureRef('conv-01'), read: true, requestId: 'read-1' });
+    await fake.controls.flush();
+    expect(await fake.getConversation(fixtureRef('conv-01'))).toMatchObject({ isRead: true });
+    await fake.setRead({ conversation: fixtureRef('conv-01'), read: false, requestId: 'unread-1' });
+    await fake.controls.flush();
+    expect(await fake.getConversation(fixtureRef('conv-01'))).toMatchObject({ isRead: false });
+    expect(fake.controls.activity().map((op) => [op.kind, op.requestedRead, op.status])).toEqual([
+      ['read', true, 'confirmed'], ['read', false, 'confirmed'],
+    ]);
+  });
+
+  it('disconnect removes pending fake actions but preserves confirmed provider changes', async () => {
+    const fake = createBrowserFakeMailClient();
+    fake.controls.setAccount({ mode: 'gmail', connection: 'connected', emailAddress: 'operator@example.test', mutationAccess: 'enabled' });
+    await fake.setArchived({ conversation: fixtureRef('conv-02'), archived: true, requestId: 'confirmed-before-disconnect' });
+    await fake.controls.flush();
+    fake.controls.behavior.hold = true;
+    await fake.setRead({ conversation: fixtureRef('conv-01'), read: true, requestId: 'pending-before-disconnect' });
+    await fake.disconnectAccount();
+    expect(fake.controls.activity()).toHaveLength(0);
+    expect(inboxIds(await fake.listConversations())).toEqual([]);
+    fake.controls.release();
+    await fake.controls.flush();
+    await fake.connectAccount();
+    const afterReconnect = await fake.listConversations();
+    expect(inboxIds(afterReconnect)).not.toContain('conv-02');
+    expect(inboxIds(afterReconnect)).toContain('conv-01');
+    expect(afterReconnect.activity).toHaveLength(0);
+  });
+
+  it('keeps unknown outcomes visible and retries as a fresh operation over the original state', async () => {
+    const fake = createBrowserFakeMailClient();
+    fake.controls.setAccount({ mode: 'gmail', connection: 'connected', emailAddress: 'operator@example.test', mutationAccess: 'enabled' });
+    fake.controls.behavior.failNext = 1;
+    fake.controls.behavior.failureKind = 'outcome_unknown';
+    const receipt = await fake.setArchived({ conversation: fixtureRef('conv-01'), archived: true, requestId: 'unknown-1' });
+    await fake.controls.flush();
+    expect(fake.controls.activity()[0]).toMatchObject({ id: receipt.operationId, status: 'outcome_unknown', lastError: { kind: 'outcome_unknown' } });
+    fake.controls.addMessage('conv-01', false);
+    fake.controls.behavior.failureKind = 'provider_rejected';
+    const retry = await fake.retryOperation({ operationId: receipt.operationId, requestId: 'retry-new-key' });
+    await fake.controls.flush();
+    expect(retry.operationId).not.toBe(receipt.operationId);
+    expect(fake.controls.activity()).toHaveLength(2);
+    expect(fake.controls.activity().find((op) => op.id === retry.operationId)).toMatchObject({ status: 'confirmed', requestedArchived: true, kind: 'archive' });
+    expect(fake.controls.activity().find((op) => op.id === receipt.operationId)).toMatchObject({ status: 'outcome_unknown', lastError: { kind: 'outcome_unknown' } });
+    expect(inboxIds(await fake.listConversations())).toContain('conv-01');
   });
 });

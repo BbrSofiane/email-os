@@ -1,21 +1,23 @@
 # Development guide
 
 This repository contains two deliberately separate native profiles: the durable
-synthetic fixture slice (Slice 01) and an explicit, read-only Gmail profile
-(Slice 02). Slice 02 adds system-browser OAuth/PKCE, a macOS Keychain credential
-store, bounded inbox caching, and background sync; it does not add composing,
-sending, archive, mark-read, attachments, HTML rendering, or search. The browser
-preview remains synthetic and in-memory. See the two slice contracts for their
-individual acceptance scope.
+synthetic fixture slice (Slice 01) and an explicit Gmail profile built in stages.
+Slice 02 adds system-browser OAuth/PKCE, a macOS Keychain credential store,
+bounded inbox caching, and background sync. Slice 03 adds opt-in, durable Gmail
+archive/unarchive and explicit read/unread actions; Gmail remains read-only until
+the user explicitly requests the broader Google `gmail.modify` permission. The
+app still does not compose/send/delete or expose arbitrary labels. Opening a
+message never marks it read. The browser preview remains synthetic and
+in-memory. See the slice contracts for individual acceptance scope.
 
 ## Layout
 
 | Path | Owner |
 |---|---|
-| `crates/mail-core/` | Rust DTOs, fixture core, read-only Gmail provider/auth/cache/sync, SQLite, profile locks |
+| `crates/mail-core/` | Rust DTOs, fixture core, Gmail provider/auth/cache/sync/actions, SQLite, profile locks |
 | `src/`, `tests/`, `package.json`, configs | Vue 3/TypeScript frontend, IPC adapter and tests |
 | `src/lib/ipc/generated.ts` | **Generated** — do not edit by hand; regenerate with `mise run gen:ts` |
-| `src-tauri/` | Thin Tauri 2 shell: seven typed commands, `mailbox_changed`, fixture/Gmail profile selection and lifecycle |
+| `src-tauri/` | Thin Tauri 2 shell: eleven typed commands, `mailbox_changed`, fixture/Gmail profile selection and lifecycle |
 | `mise.toml` | Project tasks (see below) |
 
 ## Tooling
@@ -75,9 +77,17 @@ mise run dev:native
 
 The client secret is optional. It belongs only in the local launch environment,
 not source control, frontend state, logs, or a shell history copied into a report.
-The provider requests only `https://www.googleapis.com/auth/gmail.readonly`.
+Initial connection requests only `https://www.googleapis.com/auth/gmail.readonly`.
 Missing/blank client ID shows `Not configured` in Gmail mode; it does not fail app
 startup or fall back to the fixture. Unsupported Keychain platforms fail closed.
+Mailbox controls stay disabled until the user selects **Enable mailbox actions**
+and Google returns a verified modify grant for the same authenticated account.
+That upgrade requests `https://www.googleapis.com/auth/gmail.modify`; Google's
+scope is broader than this app's implemented archive/unarchive and read/unread
+commands and can authorize other mailbox changes (including sending or deleting
+mail). The app does not provide those broader actions, arbitrary labels, or a
+composer. Denial or cancellation leaves the read-only account and cached reading
+available.
 
 ### Google Desktop OAuth setup (disposable account only)
 
@@ -90,8 +100,9 @@ and disposable Gmail account, not a primary/personal mailbox:
 3. Create an OAuth client of type **Desktop app**. Put its client ID in
    `EMAIL_OS_GOOGLE_CLIENT_ID`; the optional client secret goes only in
    `EMAIL_OS_GOOGLE_CLIENT_SECRET` in the launch environment.
-4. Confirm the only requested Gmail scope is `gmail.readonly`. Do not broaden the
-   scope or add send/modify permissions.
+4. Confirm initial connection requests only `gmail.readonly`. The separate
+   **Enable mailbox actions** flow requests Google's broader `gmail.modify` scope
+   only after explicit user opt-in; do not add any other Gmail scopes.
 5. On first use, review the macOS Keychain access prompt and allow the app to use
    its Gmail credential item. Credential-storage failures are visible and fail
    closed; there is no plaintext fallback.
@@ -126,7 +137,7 @@ denials and unclassifiable bodies surface as the generic provider error. Raw
 response bodies, messages, mailbox data, or URLs with IDs are never logged or
 exposed over IPC.
 
-### Disposable Mac smoke checklist (Slice 02 still pending)
+### Disposable Mac smoke checklist (Slice 02 prior operator validation)
 
 Run only on the operator-approved disposable-account Mac path:
 
@@ -136,7 +147,8 @@ Run only on the operator-approved disposable-account Mac path:
   verify cancellation is recoverable; confirm Keychain credentials survive an
   app restart without exposing them.
 - Complete bounded initial discovery, inspect plain-text content and unsupported
-  content disclosures, and verify archive controls/shortcuts are absent.
+  content disclosures, and verify archive controls/shortcuts remain absent until
+  the separate explicit Slice 03 permission upgrade is enabled.
 - Quit, disable network, relaunch, and read cached conversations offline; restore
   network and sync. Change/archive/delete a thread using the external disposable
   Gmail client and confirm catch-up updates the local inbox without skipping the
@@ -145,9 +157,49 @@ Run only on the operator-approved disposable-account Mac path:
   that Google authorization itself is not remotely revoked.
 
 No real-account OAuth, Gmail network, or macOS Keychain behavior was tested in the
-Linux integration VM. The operator's earlier Slice 01 Mac validation is a separate
-completed gate; Slice 02 macOS Keychain, browser, OAuth, offline/restart, external
-change, and disposable-account smoke gates remain pending.
+Linux integration VM. The operator's earlier Slice 01 validation and prior Slice 02
+Mac validation are separate gates; neither substitutes for the new Slice 03
+consent, mutation, recovery, and external-change checks.
+
+### Mailbox-action validation (Slice 03 still pending on Mac)
+
+Run this only after the separate Slice 02 disposable-account checks, on the
+operator-approved disposable Mac account. Keep Gmail read-only until the explicit
+upgrade button is chosen. Verify both grant and deny/cancel paths:
+
+- On the read-only account, verify cached reading still works and opening a
+  conversation does not mark it read. Request **Enable mailbox actions** only
+  after reviewing the broader `gmail.modify` scope disclosure. Confirm the UI
+  remains read-only/upgrading until authoritative account status reports a
+  verified same-account grant. Deny OAuth and cancel an in-progress upgrade in
+  separate runs; each must retain the old read credential, cache and reading
+  access without reporting actions enabled. Upgrade cancellation is not
+  disconnect and must not revoke a completed Google grant.
+- With actions enabled, explicitly archive a conversation, then explicitly
+  mark it read and unread. Confirm Activity distinguishes queued, applying,
+  confirmed, failed and outcome-unknown; verify ordinary opening does not alter
+  read state. Disconnect warning must explain that local pending operations are
+  removed but confirmed remote Gmail changes are not undone and Google's grant
+  is not revoked.
+- Queue an archive while offline, restart, restore network, and verify durable
+  Activity/recovery. Interrupted setter dispatch must be reconciled with a GET
+  over its exact original message IDs before confirmation; it must not
+  automatically POST again. A newer incoming message must not be added to an
+  older operation's target snapshot. Use explicit Retry only for a failed or
+  outcome-unknown operation and verify it creates a new request ID while
+  retaining the old immutable targets; a retry can override the current state.
+- Archive enough conversations to exercise the 100-conversation view cap,
+  restart, and recover an archived conversation from Activity. The reader must
+  identify a retained local recovery snapshot and warn Gmail may have newer
+  messages or mailbox changes. Make an external archive/read change in the
+  disposable Gmail client, sync, and verify provider facts update without
+  erasing a newer pending local intent.
+
+The Slice 03 provider, persistence, bridge and browser behavior is covered with
+synthetic HTTP/fake-provider tests only in this VM. This new Mac checkpoint is
+not satisfied by the operator's earlier Slice 02 validation; OAuth consent,
+Keychain upgrades, native command registration and all Slice 03 scenarios remain
+pending operator validation.
 
 ## Native prerequisites and platform limits
 

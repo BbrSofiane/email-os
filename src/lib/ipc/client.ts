@@ -1,5 +1,5 @@
 /**
- * Frontend transport seam (Slices 01 + 02).
+ * Frontend transport seam (Slices 01–03).
  *
  * The UI depends only on this interface. Two implementations exist:
  * - `tauri-client.ts`: narrow Tauri adapter over the approved named commands and the
@@ -9,15 +9,26 @@
  *   It models core-like pending/failure behavior for demonstration only and discloses
  *   that nothing is durable. Core read models remain authoritative in the native path.
  *
- * Slice 02 adds the account lifecycle: `getAccountStatus` is the authoritative read
- * for fixture-vs-Gmail mode; connect/disconnect/sync enqueue work and return void
- * acceptance, never OAuth or sync success.
+ * Account lifecycle and mailbox-action methods cross only this typed client seam;
+ * command resolution is acceptance, not OAuth, sync, provider-setter, or grant success.
  */
-import type { AccountStatus, Conversation, ConversationRef, InboxSnapshot, MailError, OperationReceipt, SetArchived } from './generated';
+import type {
+  AccountStatus,
+  Conversation,
+  ConversationRef,
+  InboxSnapshot,
+  MailError,
+  OperationReceipt,
+  RetryOperation,
+  SetArchived,
+  SetRead,
+} from './generated';
 
 export type {
   AccountInfo,
   AccountStatus,
+  MailboxOperationKind,
+  MutationAccess,
   Address,
   ConnectionState,
   Conversation,
@@ -30,13 +41,16 @@ export type {
   OperationFailure,
   OperationReceipt,
   OperationStatus,
+  RetryOperation,
   OperationSummary,
   SetArchived,
+  SetRead,
   SyncInfo,
   SyncState,
 } from './generated';
 
 export {
+  CANCEL_MAILBOX_ACTION_UPGRADE_COMMAND,
   CONNECT_ACCOUNT_COMMAND,
   DISCONNECT_ACCOUNT_COMMAND,
   GET_ACCOUNT_STATUS_COMMAND,
@@ -45,12 +59,19 @@ export {
   MAILBOX_CHANGED_EVENT,
   REQUEST_SYNC_COMMAND,
   SET_ARCHIVED_COMMAND,
+  ENABLE_MAILBOX_ACTIONS_COMMAND,
+  SET_READ_COMMAND,
+  RETRY_OPERATION_COMMAND,
 } from './generated';
 
 export interface MailClient {
   listConversations(): Promise<InboxSnapshot>;
   getConversation(ref: ConversationRef): Promise<Conversation>;
   setArchived(command: SetArchived): Promise<OperationReceipt>;
+  enableMailboxActions(): Promise<void>;
+  cancelMailboxActionUpgrade(): Promise<void>;
+  setRead(command: SetRead): Promise<OperationReceipt>;
+  retryOperation(command: RetryOperation): Promise<OperationReceipt>;
   /** Registers a change listener; resolves with an unsubscribe function. */
   subscribe(listener: () => void): Promise<() => void>;
   /** Authoritative fixture-vs-Gmail mode and connection/sync state. */
@@ -83,6 +104,9 @@ export function isMailErrorShape(value: unknown): value is MailError {
     case 'provider_unavailable':
     case 'invalid_provider_response':
     case 'busy':
+    case 'permission_required':
+    case 'provider_rejected':
+    case 'outcome_unknown':
       return true;
     case 'invalid_request':
       return typeof (value as unknown as { field: unknown }).field === 'string';

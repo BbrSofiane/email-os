@@ -69,7 +69,15 @@ fn synthetic_bundle() -> TokenBundle {
         expires_at_epoch_ms: i64::MAX,
         account_id: Some("synthetic@example.test".to_string()),
         email: Some("synthetic@example.test".to_string()),
+        gmail_modify_granted: false,
     }
+}
+
+#[test]
+fn legacy_token_bundle_migrates_with_mutations_denied() {
+    let legacy = r#"{"accessToken":"synthetic-access","refreshToken":"synthetic-refresh","expiresAtEpochMs":123,"accountId":"synthetic@example.test","email":"synthetic@example.test"}"#;
+    let bundle: TokenBundle = serde_json::from_str(legacy).unwrap();
+    assert!(!bundle.gmail_modify_granted);
 }
 
 #[test]
@@ -146,6 +154,23 @@ fn has_credentials_and_disconnect_reflect_the_secret_store() {
     assert!(matches!(provider.has_credentials(), Ok(false)));
     secrets.store(&synthetic_bundle()).unwrap();
     assert!(matches!(provider.has_credentials(), Ok(true)));
+    assert_eq!(provider.mutation_access(), Ok(false));
+    assert_eq!(
+        provider.apply_archive(
+            &["synthetic-message-id".to_string()],
+            true,
+            &CancelToken::default()
+        ),
+        Err(MailError::PermissionRequired)
+    );
+    assert_eq!(
+        provider.apply_read(
+            &["synthetic-message-id".to_string()],
+            true,
+            &CancelToken::default()
+        ),
+        Err(MailError::PermissionRequired)
+    );
     // Disconnect deletes credentials locally; repeated disconnects stay ok.
     provider.disconnect().unwrap();
     assert!(matches!(provider.has_credentials(), Ok(false)));
@@ -178,6 +203,11 @@ fn auth_required_without_credentials_on_the_trait_surface() {
     ));
     assert!(matches!(
         provider.profile(&cancel),
+        Err(MailError::AuthRequired)
+    ));
+    assert_eq!(provider.mutation_access(), Ok(false));
+    assert!(matches!(
+        provider.enable_mutations(&cancel),
         Err(MailError::AuthRequired)
     ));
 }

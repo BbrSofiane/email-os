@@ -1,7 +1,7 @@
-//! Concrete SQLite cache for the read-only Gmail slice (docs/vertical-slice-02.md,
-//! "Persistence and synchronization"): a dedicated schema and database file
-//! (`gmail.db`) separate from the fixture store, account-scoped conversation
-//! and message rows, per-message INBOX membership, and resumable
+//! Concrete SQLite store for the Gmail profile (docs/vertical-slice-03.md): a
+//! dedicated schema and database file (`gmail.db`) separate from the fixture
+//! store, account-scoped conversation/message facts and mailbox operations,
+//! per-message label membership, and resumable
 //! discovery/history checkpoints. Cached facts and their page/cursor
 //! checkpoints commit in one short serialized transaction; the network never
 //! runs inside a lock. Every persistence error maps to
@@ -9,6 +9,7 @@
 //! logged-and-ignored, and no mail content, addresses, or credentials are
 //! ever logged.
 
+use std::collections::HashMap;
 use std::path::Path;
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -18,7 +19,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::clock::Clock;
 use crate::dto::{
-    Address, Conversation, ConversationRef, ConversationSummary, InboxSnapshot, Message,
+    Address, Conversation, ConversationRef, ConversationSummary, InboxSnapshot,
+    MailboxOperationKind, Message, OperationFailure, OperationReceipt, OperationStatus,
+    OperationSummary, RetryOperation, SetArchived, SetRead,
 };
 use crate::error::MailError;
 use crate::gmail::types::{AccountInfo, GmailProfile, GmailThread, HistoryPage};
@@ -36,6 +39,28 @@ const SCHEMA_VERSION: &str = "gmail-1";
 pub(crate) enum Commit {
     Applied,
     Discarded,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct OperationRecord {
+    pub account_id: String,
+    pub operation_id: String,
+    pub generation: u64,
+    pub conversation_id: String,
+    pub kind: MailboxOperationKind,
+    pub value: bool,
+    pub status: OperationStatus,
+    pub message_ids: Vec<String>,
+}
+
+struct OperationAcceptance<'a> {
+    conversation: &'a ConversationRef,
+    kind: MailboxOperationKind,
+    value: bool,
+    request_id: &'a str,
+    payload: &'a str,
+    clone_targets_from: Option<&'a str>,
+    accepted_at: &'a str,
 }
 
 /// Resumable initial-discovery progress. `Pending` means the baseline cursor
@@ -64,7 +89,7 @@ pub(crate) enum HistoryProgress {
 /// the provider reports the thread deleted/not found.
 #[derive(Clone)]
 pub(crate) enum ThreadFetch {
-    Cached(GmailThread),
+    Cached(Box<GmailThread>),
     Missing(String),
 }
 
@@ -153,6 +178,49 @@ impl GmailStore {
                 conversation_id TEXT NOT NULL,
                 message_id      TEXT NOT NULL,
                 PRIMARY KEY (account_id, conversation_id, message_id)
+            );
+            CREATE TABLE IF NOT EXISTS gmail_message_facts (
+                account_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                message_id TEXT NOT NULL,
+                in_inbox INTEGER,
+                is_unread INTEGER,
+                PRIMARY KEY (account_id, conversation_id, message_id)
+            );
+            CREATE TABLE IF NOT EXISTS gmail_operations (
+                account_id TEXT NOT NULL,
+                operation_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                requested_value INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                failure TEXT,
+                last_error TEXT,
+                accepted_seq INTEGER NOT NULL,
+                accepted_at TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                PRIMARY KEY (account_id, operation_id)
+            );
+            CREATE TABLE IF NOT EXISTS gmail_operation_targets (
+                account_id TEXT NOT NULL,
+                operation_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                message_id TEXT NOT NULL,
+                PRIMARY KEY (account_id, operation_id, message_id)
+            );
+            CREATE TABLE IF NOT EXISTS gmail_operation_requests (
+                account_id TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                operation_id TEXT NOT NULL,
+                PRIMARY KEY (account_id, request_id)
+            );
+            CREATE TABLE IF NOT EXISTS gmail_operation_snapshots (
+                account_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                snapshot_json TEXT NOT NULL,
+                snapshot_saved_at TEXT NOT NULL,
+                PRIMARY KEY (account_id, conversation_id)
             );",
         )
         .map_err(|_| MailError::StorageUnavailable)?;
@@ -176,6 +244,28 @@ impl GmailStore {
             "INSERT OR IGNORE INTO gmail_inbox_membership
              (account_id, conversation_id, message_id)
              SELECT account_id, conversation_id, message_id FROM gmail_messages WHERE in_inbox = 1",
+            [],
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+        tx.execute(
+            "INSERT OR IGNORE INTO gmail_message_facts
+             (account_id, conversation_id, message_id, in_inbox, is_unread)
+             SELECT account_id, conversation_id, message_id, in_inbox, NULL FROM gmail_messages",
+            [],
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+        tx.execute(
+            "INSERT OR IGNORE INTO gmail_message_facts
+             (account_id, conversation_id, message_id, in_inbox, is_unread)
+             SELECT account_id, conversation_id, message_id, 1, NULL FROM gmail_inbox_membership",
+            [],
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+        // A process crash after claiming a setter is uncertain, never a safe
+        // reason to replay it. Reconciliation precedes any explicit retry.
+        tx.execute(
+            "UPDATE gmail_operations SET status = 'outcome_unknown', last_error = NULL
+             WHERE status = 'applying'",
             [],
         )
         .map_err(|_| MailError::StorageUnavailable)?;
@@ -316,7 +406,7 @@ impl GmailStore {
         Ok(meta_get(&conn, "discovery_state")?.as_deref() == Some("done"))
     }
 
-    /// Effective inbox plus (empty) activity for this read-only slice.
+    /// Effective inbox and durable mailbox-operation activity.
     pub(crate) fn list_snapshot(&self) -> Result<InboxSnapshot, MailError> {
         self.persistence_gate()?;
         let conn = self.lock_conn()?;
@@ -332,10 +422,20 @@ impl GmailStore {
         let mut stmt = conn
             .prepare(
                 "SELECT c.conversation_id FROM gmail_conversations c
-                 WHERE c.account_id = ?1 AND EXISTS (
-                     SELECT 1 FROM gmail_inbox_membership i
-                     WHERE i.account_id = c.account_id
-                       AND i.conversation_id = c.conversation_id)",
+                 WHERE c.account_id = ?1 AND (EXISTS (
+                     SELECT 1 FROM gmail_message_facts f
+                     WHERE f.account_id = c.account_id
+                       AND f.conversation_id = c.conversation_id
+                       AND COALESCE(f.in_inbox, 0) = 1)
+                    OR EXISTS (
+                     SELECT 1 FROM gmail_operations o
+                     JOIN gmail_operation_targets t
+                       ON t.account_id = o.account_id AND t.operation_id = o.operation_id
+                     WHERE o.account_id = c.account_id
+                       AND o.conversation_id = c.conversation_id
+                       AND o.kind = 'archive' AND o.requested_value = 0
+                       AND o.status IN ('queued', 'applying', 'outcome_unknown')
+                       AND t.conversation_id = c.conversation_id))",
             )
             .map_err(|_| MailError::StorageUnavailable)?;
         let ids = stmt
@@ -348,17 +448,23 @@ impl GmailStore {
             let Some(built) = build_conversation(&conn, &account_id, &conversation_id)? else {
                 continue;
             };
+            let (is_in_inbox, is_read, pending_operation_id) =
+                effective_conversation_state(&conn, &account_id, &conversation_id)?;
+            if !is_in_inbox {
+                continue;
+            }
             summaries.push(ConversationSummary {
                 conversation_ref: built.conversation_ref,
                 subject: built.subject,
                 participants: participants_of(&built.messages),
+                is_read,
                 preview: preview_of(&built.messages),
                 last_message_at: built
                     .messages
                     .last()
                     .map(|m| m.sent_at.clone())
                     .unwrap_or_default(),
-                pending_operation_id: None,
+                pending_operation_id,
             });
         }
         summaries.sort_by(|a, b| {
@@ -368,9 +474,10 @@ impl GmailStore {
                     .cmp(&b.conversation_ref.conversation_id)
             })
         });
+        let activity = load_activity(&conn, &account_id)?;
         Ok(InboxSnapshot {
             conversations: summaries,
-            activity: Vec::new(),
+            activity,
         })
     }
 
@@ -388,19 +495,401 @@ impl GmailStore {
             return Err(MailError::NotFound);
         }
         let built = build_conversation(&conn, &account_id, &r#ref.conversation_id)?;
-        let built = built.ok_or(MailError::NotFound)?;
+        let recovered = if let Some(built) = built {
+            built
+        } else {
+            let recovered: Option<(String, String)> = conn
+                .query_row(
+                    "SELECT snapshot_json, snapshot_saved_at FROM gmail_operation_snapshots
+                     WHERE account_id = ?1 AND conversation_id = ?2",
+                    params![account_id, r#ref.conversation_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+                .map_err(|_| MailError::StorageUnavailable)?;
+            let (json, saved_at) = recovered.ok_or(MailError::NotFound)?;
+            let mut snapshot: Conversation =
+                serde_json::from_str(&json).map_err(|_| MailError::StorageUnavailable)?;
+            snapshot.retained_snapshot_at = Some(saved_at);
+            let (is_in_inbox, is_read, pending_operation_id) =
+                effective_conversation_state(&conn, &account_id, &r#ref.conversation_id)?;
+            snapshot.is_in_inbox = is_in_inbox;
+            snapshot.is_read = is_read;
+            snapshot.pending_operation_id = pending_operation_id;
+            return Ok(snapshot);
+        };
+        let (is_in_inbox, is_read, pending_operation_id) =
+            effective_conversation_state(&conn, &account_id, &r#ref.conversation_id)?;
         Ok(Conversation {
-            conversation_ref: built.conversation_ref,
-            subject: built.subject,
-            messages: built.messages,
-            is_in_inbox: built.is_in_inbox,
-            context_complete: built.context_complete,
-            unsupported_reason: built.unsupported_reason,
-            pending_operation_id: None,
+            conversation_ref: recovered.conversation_ref,
+            subject: recovered.subject,
+            messages: recovered.messages,
+            is_in_inbox,
+            is_read,
+            context_complete: recovered.context_complete,
+            unsupported_reason: recovered.unsupported_reason,
+            retained_snapshot_at: None,
+            pending_operation_id,
         })
     }
 
     // --------------------------------------------------------------- writes
+
+    pub(crate) fn accept_archived(
+        &self,
+        command: &SetArchived,
+    ) -> Result<OperationReceipt, MailError> {
+        self.accept_new_operation(
+            &command.conversation,
+            MailboxOperationKind::Archive,
+            command.archived,
+            &command.request_id,
+            serde_json::json!({
+                "accountId": command.conversation.account_id,
+                "conversationId": command.conversation.conversation_id,
+                "kind": "archive",
+                "value": command.archived,
+            })
+            .to_string(),
+        )
+    }
+
+    pub(crate) fn accept_read(&self, command: &SetRead) -> Result<OperationReceipt, MailError> {
+        self.accept_new_operation(
+            &command.conversation,
+            MailboxOperationKind::Read,
+            command.read,
+            &command.request_id,
+            serde_json::json!({
+                "accountId": command.conversation.account_id,
+                "conversationId": command.conversation.conversation_id,
+                "kind": "read",
+                "value": command.read,
+            })
+            .to_string(),
+        )
+    }
+
+    fn accept_new_operation(
+        &self,
+        conversation: &ConversationRef,
+        kind: MailboxOperationKind,
+        value: bool,
+        request_id: &str,
+        payload: String,
+    ) -> Result<OperationReceipt, MailError> {
+        validate_request_id(request_id)?;
+        self.persistence_gate()?;
+        let mut conn = self.lock_conn()?;
+        let tx = conn
+            .transaction()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let account_id = account_id_of(&tx)?;
+        if account_id != conversation.account_id {
+            return Err(MailError::NotFound);
+        }
+        if let Some(receipt) = existing_receipt(&tx, &account_id, request_id, &payload)? {
+            tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+            return Ok(receipt);
+        }
+        let accepted_at = self.clock.now_iso();
+        let receipt = accept_operation_tx(
+            &tx,
+            &account_id,
+            OperationAcceptance {
+                conversation,
+                kind,
+                value,
+                request_id,
+                payload: &payload,
+                clone_targets_from: None,
+                accepted_at: &accepted_at,
+            },
+        )?;
+        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        Ok(receipt)
+    }
+
+    pub(crate) fn accept_retry(
+        &self,
+        command: &RetryOperation,
+    ) -> Result<OperationReceipt, MailError> {
+        validate_request_id(&command.request_id)?;
+        self.persistence_gate()?;
+        let mut conn = self.lock_conn()?;
+        let tx = conn
+            .transaction()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let account_id = account_id_of(&tx)?;
+        let payload = serde_json::json!({ "retryOperationId": command.operation_id }).to_string();
+        if let Some(receipt) = existing_receipt(&tx, &account_id, &command.request_id, &payload)? {
+            tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+            return Ok(receipt);
+        }
+        let original =
+            load_operation(&tx, &account_id, &command.operation_id)?.ok_or(MailError::NotFound)?;
+        if !matches!(
+            original.status,
+            OperationStatus::Failed | OperationStatus::OutcomeUnknown
+        ) {
+            return Err(MailError::InvalidRequest {
+                field: "operationId".to_string(),
+            });
+        }
+        let conversation = ConversationRef {
+            account_id: account_id.clone(),
+            conversation_id: original.conversation_id.clone(),
+        };
+        let accepted_at = self.clock.now_iso();
+        let receipt = accept_operation_tx(
+            &tx,
+            &account_id,
+            OperationAcceptance {
+                conversation: &conversation,
+                kind: original.kind,
+                value: original.value,
+                request_id: &command.request_id,
+                payload: &payload,
+                clone_targets_from: Some(&original.operation_id),
+                accepted_at: &accepted_at,
+            },
+        )?;
+        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        Ok(receipt)
+    }
+
+    pub(crate) fn claim_next_operation(&self) -> Result<Option<OperationRecord>, MailError> {
+        self.persistence_gate()?;
+        let mut conn = self.lock_conn()?;
+        let tx = conn
+            .transaction()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let account_id = match meta_get(&tx, "account_id")? {
+            Some(id) => id,
+            None => return Ok(None),
+        };
+        let operation = tx
+            .query_row(
+                "SELECT operation_id FROM gmail_operations
+                 WHERE account_id = ?1 AND (status = 'queued' OR (status = 'outcome_unknown' AND last_error IS NULL))
+                 ORDER BY CASE status WHEN 'outcome_unknown' THEN 0 ELSE 1 END, accepted_seq LIMIT 1",
+                params![account_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let Some(operation_id) = operation else {
+            tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+            return Ok(None);
+        };
+        let record = load_operation(&tx, &account_id, &operation_id)?
+            .ok_or(MailError::StorageUnavailable)?;
+        if record.status == OperationStatus::Queued {
+            tx.execute(
+                "UPDATE gmail_operations SET status = 'applying', last_error = NULL WHERE account_id = ?1 AND operation_id = ?2 AND status = 'queued'",
+                params![account_id, operation_id],
+            )
+            .map_err(|_| MailError::StorageUnavailable)?;
+        }
+        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        Ok(Some(record))
+    }
+
+    /// A successful fresh sync makes exact-ID facts available for another
+    /// safe reconciliation attempt; this never changes an unknown operation
+    /// into a setter replay.
+    pub(crate) fn schedule_unknown_reconciliation(&self) -> Result<(), MailError> {
+        self.persistence_gate()?;
+        let conn = self.lock_conn()?;
+        let Some(account_id) = meta_get(&conn, "account_id")? else {
+            return Ok(());
+        };
+        conn.execute(
+            "UPDATE gmail_operations SET last_error = NULL
+             WHERE account_id = ?1 AND status = 'outcome_unknown'",
+            params![account_id],
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+        Ok(())
+    }
+
+    pub(crate) fn claimable_operation_count(&self) -> Result<usize, MailError> {
+        self.persistence_gate()?;
+        let conn = self.lock_conn()?;
+        let Some(account_id) = meta_get(&conn, "account_id")? else {
+            return Ok(0);
+        };
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM gmail_operations
+                 WHERE account_id = ?1 AND
+                       (status = 'queued' OR (status = 'outcome_unknown' AND last_error IS NULL))",
+                params![account_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| MailError::StorageUnavailable)?;
+        Ok(count as usize)
+    }
+
+    pub(crate) fn confirm_operation(&self, record: &OperationRecord) -> Result<(), MailError> {
+        self.finish_operation(record, OperationStatus::Confirmed, None, None, true, None)
+    }
+
+    pub(crate) fn reconcile_operation(
+        &self,
+        record: &OperationRecord,
+        fetched: &GmailThread,
+        confirmed: bool,
+    ) -> Result<(), MailError> {
+        self.finish_operation(
+            record,
+            if confirmed {
+                OperationStatus::Confirmed
+            } else {
+                OperationStatus::OutcomeUnknown
+            },
+            None,
+            (!confirmed).then_some(MailError::OutcomeUnknown),
+            confirmed,
+            Some(fetched),
+        )
+    }
+
+    pub(crate) fn unknown_operation(&self, record: &OperationRecord) -> Result<(), MailError> {
+        self.finish_operation(
+            record,
+            OperationStatus::OutcomeUnknown,
+            None,
+            None,
+            false,
+            None,
+        )
+    }
+
+    pub(crate) fn reconciled_unknown_operation(
+        &self,
+        record: &OperationRecord,
+    ) -> Result<(), MailError> {
+        self.finish_operation(
+            record,
+            OperationStatus::OutcomeUnknown,
+            None,
+            Some(MailError::OutcomeUnknown),
+            false,
+            None,
+        )
+    }
+
+    pub(crate) fn defer_unknown_operation(
+        &self,
+        record: &OperationRecord,
+        error: &MailError,
+    ) -> Result<(), MailError> {
+        self.finish_operation(
+            record,
+            OperationStatus::OutcomeUnknown,
+            None,
+            Some(error.clone()),
+            false,
+            None,
+        )
+    }
+
+    pub(crate) fn requeue_operation(
+        &self,
+        record: &OperationRecord,
+        error: &MailError,
+    ) -> Result<(), MailError> {
+        self.finish_operation(
+            record,
+            OperationStatus::Queued,
+            None,
+            Some(error.clone()),
+            false,
+            None,
+        )
+    }
+
+    pub(crate) fn fail_operation(
+        &self,
+        record: &OperationRecord,
+        error: MailError,
+    ) -> Result<(), MailError> {
+        self.finish_operation(
+            record,
+            OperationStatus::Failed,
+            Some(OperationFailure::ProviderRejected),
+            Some(error),
+            false,
+            None,
+        )
+    }
+
+    fn finish_operation(
+        &self,
+        record: &OperationRecord,
+        status: OperationStatus,
+        failure: Option<OperationFailure>,
+        error: Option<MailError>,
+        apply_facts: bool,
+        fetched: Option<&GmailThread>,
+    ) -> Result<(), MailError> {
+        self.persistence_gate()?;
+        let mut conn = self.lock_conn()?;
+        let tx = conn
+            .transaction()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let account_id = account_id_of(&tx)?;
+        if account_id != record.account_id || !generation_matches(&tx, record.generation)? {
+            return Ok(());
+        }
+        if let Some(thread) = fetched {
+            if thread.conversation.conversation_ref.conversation_id != record.conversation_id {
+                return Err(MailError::InvalidProviderResponse);
+            }
+            upsert_thread(&tx, &account_id, thread)?;
+            trim_cache(&tx, &account_id)?;
+        }
+        if apply_facts {
+            for message_id in &record.message_ids {
+                match record.kind {
+                    MailboxOperationKind::Archive => {
+                        let inbox = (!record.value) as i64;
+                        tx.execute(
+                            "INSERT INTO gmail_message_facts (account_id, conversation_id, message_id, in_inbox, is_unread)
+                             VALUES (?1, ?2, ?3, ?4, NULL)
+                             ON CONFLICT(account_id, conversation_id, message_id) DO UPDATE SET in_inbox = excluded.in_inbox",
+                            params![account_id, record.conversation_id, message_id, inbox],
+                        ).map_err(|_| MailError::StorageUnavailable)?;
+                    }
+                    MailboxOperationKind::Read => {
+                        let unread = (!record.value) as i64;
+                        tx.execute(
+                            "INSERT INTO gmail_message_facts (account_id, conversation_id, message_id, in_inbox, is_unread)
+                             VALUES (?1, ?2, ?3, NULL, ?4)
+                             ON CONFLICT(account_id, conversation_id, message_id) DO UPDATE SET is_unread = excluded.is_unread",
+                            params![account_id, record.conversation_id, message_id, unread],
+                        ).map_err(|_| MailError::StorageUnavailable)?;
+                    }
+                }
+            }
+        }
+        tx.execute(
+            "UPDATE gmail_operations SET status = ?3, failure = ?4, last_error = ?5
+             WHERE account_id = ?1 AND operation_id = ?2",
+            params![
+                account_id,
+                record.operation_id,
+                status_name(status),
+                failure
+                    .map(|f| format!("{f:?}"))
+                    .map(|s| s.to_ascii_lowercase()),
+                error.map(|e| serde_json::to_string(&e).unwrap_or_default())
+            ],
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+        tx.commit().map_err(|_| MailError::StorageUnavailable)
+    }
 
     /// Records the account identity and pins the baseline history cursor
     /// BEFORE discovery runs. Restoring the same account after a restart
@@ -512,6 +1001,18 @@ impl GmailStore {
                 )
                 .map_err(|_| MailError::StorageUnavailable)?;
                 tx.execute(
+                    "DELETE FROM gmail_message_facts
+                     WHERE account_id = ?1 AND conversation_id NOT IN
+                         (SELECT conversation_id FROM gmail_discovery_seen)
+                       AND NOT EXISTS (
+                         SELECT 1 FROM gmail_operation_targets t
+                         WHERE t.account_id = gmail_message_facts.account_id
+                           AND t.conversation_id = gmail_message_facts.conversation_id
+                           AND t.message_id = gmail_message_facts.message_id)",
+                    params![account_id],
+                )
+                .map_err(|_| MailError::StorageUnavailable)?;
+                tx.execute(
                     "DELETE FROM gmail_conversations
                      WHERE account_id = ?1 AND conversation_id NOT IN
                          (SELECT conversation_id FROM gmail_discovery_seen)",
@@ -527,6 +1028,13 @@ impl GmailStore {
                      WHERE account_id = ?1 AND in_inbox = 1
                        AND conversation_id NOT IN
                            (SELECT conversation_id FROM gmail_discovery_seen)",
+                    params![account_id],
+                )
+                .map_err(|_| MailError::StorageUnavailable)?;
+                tx.execute(
+                    "UPDATE gmail_message_facts SET in_inbox = 0
+                     WHERE account_id = ?1 AND conversation_id NOT IN
+                         (SELECT conversation_id FROM gmail_discovery_seen)",
                     params![account_id],
                 )
                 .map_err(|_| MailError::StorageUnavailable)?;
@@ -589,6 +1097,11 @@ impl GmailStore {
             .map_err(|_| MailError::StorageUnavailable)?;
             tx.execute(
                 "DELETE FROM gmail_inbox_membership WHERE account_id = ?1 AND message_id = ?2",
+                params![account_id, message_id],
+            )
+            .map_err(|_| MailError::StorageUnavailable)?;
+            tx.execute(
+                "DELETE FROM gmail_message_facts WHERE account_id = ?1 AND message_id = ?2",
                 params![account_id, message_id],
             )
             .map_err(|_| MailError::StorageUnavailable)?;
@@ -666,6 +1179,30 @@ impl GmailStore {
         Ok(())
     }
 
+    /// Converts interrupted operations that survived unsuccessful disconnect
+    /// cleanup into GET-reconciled unknown outcomes under the current account.
+    pub(crate) fn recover_interrupted_operations(&self) -> Result<bool, MailError> {
+        self.persistence_gate()?;
+        let mut conn = self.lock_conn()?;
+        let tx = conn
+            .transaction()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let Some(account_id) = meta_get(&tx, "account_id")? else {
+            tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+            return Ok(false);
+        };
+        let changed = tx
+            .execute(
+                "UPDATE gmail_operations
+                 SET status = 'outcome_unknown', failure = NULL, last_error = NULL
+                 WHERE account_id = ?1 AND status = 'applying'",
+                params![account_id],
+            )
+            .map_err(|_| MailError::StorageUnavailable)?;
+        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        Ok(changed > 0)
+    }
+
     /// Disconnect cleanup: bumps the generation (stale results can no longer
     /// repopulate) and wipes the account identity, cache and checkpoints in
     /// one transaction.
@@ -683,6 +1220,16 @@ impl GmailStore {
             .map_err(|_| MailError::StorageUnavailable)?;
         tx.execute("DELETE FROM gmail_inbox_membership", [])
             .map_err(|_| MailError::StorageUnavailable)?;
+        tx.execute("DELETE FROM gmail_message_facts", [])
+            .map_err(|_| MailError::StorageUnavailable)?;
+        tx.execute("DELETE FROM gmail_operations", [])
+            .map_err(|_| MailError::StorageUnavailable)?;
+        tx.execute("DELETE FROM gmail_operation_targets", [])
+            .map_err(|_| MailError::StorageUnavailable)?;
+        tx.execute("DELETE FROM gmail_operation_requests", [])
+            .map_err(|_| MailError::StorageUnavailable)?;
+        tx.execute("DELETE FROM gmail_operation_snapshots", [])
+            .map_err(|_| MailError::StorageUnavailable)?;
         tx.execute("DELETE FROM gmail_discovery_seen", [])
             .map_err(|_| MailError::StorageUnavailable)?;
         tx.execute(
@@ -699,6 +1246,416 @@ impl GmailStore {
 }
 
 // ------------------------------------------------------------------ helpers
+
+fn validate_request_id(request_id: &str) -> Result<(), MailError> {
+    if request_id.trim().is_empty() || request_id.len() > 200 {
+        return Err(MailError::InvalidRequest {
+            field: "requestId".to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn existing_receipt(
+    tx: &rusqlite::Transaction<'_>,
+    account_id: &str,
+    request_id: &str,
+    payload: &str,
+) -> Result<Option<OperationReceipt>, MailError> {
+    let existing = tx
+        .query_row(
+            "SELECT payload, operation_id FROM gmail_operation_requests
+         WHERE account_id = ?1 AND request_id = ?2",
+            params![account_id, request_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(|_| MailError::StorageUnavailable)?;
+    let Some((saved_payload, operation_id)) = existing else {
+        return Ok(None);
+    };
+    if saved_payload != payload {
+        return Err(MailError::RequestIdConflict);
+    }
+    let accepted_at = tx
+        .query_row(
+            "SELECT accepted_at FROM gmail_operations WHERE account_id = ?1 AND operation_id = ?2",
+            params![account_id, operation_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+    Ok(Some(OperationReceipt {
+        operation_id,
+        accepted_at,
+    }))
+}
+
+fn accept_operation_tx(
+    tx: &rusqlite::Transaction<'_>,
+    account_id: &str,
+    acceptance: OperationAcceptance<'_>,
+) -> Result<OperationReceipt, MailError> {
+    let OperationAcceptance {
+        conversation,
+        kind,
+        value,
+        request_id,
+        payload,
+        clone_targets_from,
+        accepted_at,
+    } = acceptance;
+    let mut targets: Vec<String>;
+    if let Some(original_id) = clone_targets_from {
+        let mut stmt = tx
+            .prepare(
+                "SELECT message_id FROM gmail_operation_targets
+             WHERE account_id = ?1 AND operation_id = ?2 ORDER BY message_id",
+            )
+            .map_err(|_| MailError::StorageUnavailable)?;
+        targets = stmt
+            .query_map(params![account_id, original_id], |row| row.get(0))
+            .map_err(|_| MailError::StorageUnavailable)?
+            .collect::<Result<Vec<String>, _>>()
+            .map_err(|_| MailError::StorageUnavailable)?;
+    } else {
+        let mut stmt = tx
+            .prepare(
+                "SELECT message_id FROM gmail_message_facts
+             WHERE account_id = ?1 AND conversation_id = ?2 ORDER BY message_id",
+            )
+            .map_err(|_| MailError::StorageUnavailable)?;
+        targets = stmt
+            .query_map(params![account_id, conversation.conversation_id], |row| {
+                row.get(0)
+            })
+            .map_err(|_| MailError::StorageUnavailable)?
+            .collect::<Result<Vec<String>, _>>()
+            .map_err(|_| MailError::StorageUnavailable)?;
+    }
+    targets.sort();
+    targets.dedup();
+    if targets.is_empty() {
+        return Err(MailError::NotFound);
+    }
+    if targets.len() > 1000 {
+        return Err(MailError::InvalidRequest {
+            field: "targets".to_string(),
+        });
+    }
+    let existing_snapshot: Option<(String, String)> = tx
+        .query_row(
+            "SELECT snapshot_json, snapshot_saved_at FROM gmail_operation_snapshots
+         WHERE account_id = ?1 AND conversation_id = ?2",
+            params![account_id, conversation.conversation_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|_| MailError::StorageUnavailable)?;
+    let (snapshot_json, snapshot_saved_at) = if clone_targets_from.is_some() {
+        existing_snapshot.ok_or(MailError::NotFound)?
+    } else if let Some(built) = build_conversation(tx, account_id, &conversation.conversation_id)? {
+        let (is_in_inbox, is_read, pending_operation_id) =
+            effective_conversation_state(tx, account_id, &conversation.conversation_id)?;
+        let current = Conversation {
+            conversation_ref: built.conversation_ref,
+            subject: built.subject,
+            messages: built.messages,
+            is_in_inbox,
+            is_read,
+            context_complete: built.context_complete,
+            unsupported_reason: built.unsupported_reason,
+            retained_snapshot_at: None,
+            pending_operation_id,
+        };
+        (
+            serde_json::to_string(&current).map_err(|_| MailError::StorageUnavailable)?,
+            accepted_at.to_string(),
+        )
+    } else {
+        existing_snapshot.ok_or(MailError::NotFound)?
+    };
+    let operation_id = uuid::Uuid::new_v4().to_string();
+    let accepted_seq: i64 = tx
+        .query_row(
+            "SELECT COALESCE(MAX(accepted_seq), 0) + 1 FROM gmail_operations WHERE account_id = ?1",
+            params![account_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+    tx.execute(
+        "INSERT INTO gmail_operations
+         (account_id, operation_id, conversation_id, kind, requested_value, status,
+          accepted_seq, accepted_at, request_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'queued', ?6, ?7, ?8)",
+        params![
+            account_id,
+            operation_id,
+            conversation.conversation_id,
+            kind_name(kind),
+            value as i64,
+            accepted_seq,
+            accepted_at,
+            request_id
+        ],
+    )
+    .map_err(|_| MailError::StorageUnavailable)?;
+    for message_id in targets {
+        tx.execute(
+            "INSERT INTO gmail_operation_targets (account_id, operation_id, conversation_id, message_id)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![account_id, operation_id, conversation.conversation_id, message_id],
+        ).map_err(|_| MailError::StorageUnavailable)?;
+    }
+    tx.execute(
+        "INSERT INTO gmail_operation_requests (account_id, request_id, payload, operation_id)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![account_id, request_id, payload, operation_id],
+    )
+    .map_err(|_| MailError::StorageUnavailable)?;
+    tx.execute(
+        "INSERT INTO gmail_operation_snapshots
+         (account_id, conversation_id, snapshot_json, snapshot_saved_at)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(account_id, conversation_id) DO UPDATE SET
+             snapshot_json = excluded.snapshot_json,
+             snapshot_saved_at = excluded.snapshot_saved_at",
+        params![
+            account_id,
+            conversation.conversation_id,
+            snapshot_json,
+            snapshot_saved_at
+        ],
+    )
+    .map_err(|_| MailError::StorageUnavailable)?;
+    Ok(OperationReceipt {
+        operation_id,
+        accepted_at: accepted_at.to_string(),
+    })
+}
+
+fn kind_name(kind: MailboxOperationKind) -> &'static str {
+    match kind {
+        MailboxOperationKind::Archive => "archive",
+        MailboxOperationKind::Read => "read",
+    }
+}
+
+fn parse_kind(kind: &str) -> Result<MailboxOperationKind, MailError> {
+    match kind {
+        "archive" => Ok(MailboxOperationKind::Archive),
+        "read" => Ok(MailboxOperationKind::Read),
+        _ => Err(MailError::StorageUnavailable),
+    }
+}
+
+fn status_name(status: OperationStatus) -> &'static str {
+    match status {
+        OperationStatus::Queued => "queued",
+        OperationStatus::Applying => "applying",
+        OperationStatus::Confirmed => "confirmed",
+        OperationStatus::Failed => "failed",
+        OperationStatus::OutcomeUnknown => "outcome_unknown",
+    }
+}
+
+fn parse_status(status: &str) -> Result<OperationStatus, MailError> {
+    match status {
+        "queued" => Ok(OperationStatus::Queued),
+        "applying" => Ok(OperationStatus::Applying),
+        "confirmed" => Ok(OperationStatus::Confirmed),
+        "failed" => Ok(OperationStatus::Failed),
+        "outcome_unknown" => Ok(OperationStatus::OutcomeUnknown),
+        _ => Err(MailError::StorageUnavailable),
+    }
+}
+
+fn load_operation(
+    conn: &Connection,
+    account_id: &str,
+    operation_id: &str,
+) -> Result<Option<OperationRecord>, MailError> {
+    let raw = conn
+        .query_row(
+            "SELECT conversation_id, kind, requested_value, status FROM gmail_operations
+         WHERE account_id = ?1 AND operation_id = ?2",
+            params![account_id, operation_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| MailError::StorageUnavailable)?;
+    let Some((conversation_id, kind, value, status)) = raw else {
+        return Ok(None);
+    };
+    let mut stmt = conn
+        .prepare(
+            "SELECT message_id FROM gmail_operation_targets
+         WHERE account_id = ?1 AND operation_id = ?2 ORDER BY message_id",
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+    let message_ids = stmt
+        .query_map(params![account_id, operation_id], |row| row.get(0))
+        .map_err(|_| MailError::StorageUnavailable)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| MailError::StorageUnavailable)?;
+    Ok(Some(OperationRecord {
+        account_id: account_id.to_string(),
+        operation_id: operation_id.to_string(),
+        generation: generation_of(conn)?,
+        conversation_id,
+        kind: parse_kind(&kind)?,
+        value: value != 0,
+        status: parse_status(&status)?,
+        message_ids,
+    }))
+}
+
+fn effective_conversation_state(
+    conn: &Connection,
+    account_id: &str,
+    conversation_id: &str,
+) -> Result<(bool, Option<bool>, Option<String>), MailError> {
+    let mut facts = HashMap::<String, (Option<bool>, Option<bool>)>::new();
+    let mut stmt = conn
+        .prepare(
+            "SELECT message_id, in_inbox, is_unread FROM gmail_message_facts
+         WHERE account_id = ?1 AND conversation_id = ?2",
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+    for row in stmt
+        .query_map(params![account_id, conversation_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<i64>>(1)?,
+                row.get::<_, Option<i64>>(2)?,
+            ))
+        })
+        .map_err(|_| MailError::StorageUnavailable)?
+    {
+        let (id, inbox, unread) = row.map_err(|_| MailError::StorageUnavailable)?;
+        facts.insert(id, (inbox.map(|v| v != 0), unread.map(|v| v != 0)));
+    }
+    let mut operations: Vec<(i64, OperationRecord)> = Vec::new();
+    let mut stmt = conn
+        .prepare(
+            "SELECT operation_id, accepted_seq FROM gmail_operations
+         WHERE account_id = ?1 AND conversation_id = ?2 ORDER BY accepted_seq",
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+    let ids = stmt
+        .query_map(params![account_id, conversation_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(|_| MailError::StorageUnavailable)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| MailError::StorageUnavailable)?;
+    for (id, seq) in ids {
+        if let Some(op) = load_operation(conn, account_id, &id)? {
+            operations.push((seq, op));
+        }
+    }
+    let mut barriers = HashMap::<(String, String), i64>::new();
+    for (seq, op) in &operations {
+        if op.status == OperationStatus::Confirmed {
+            for id in &op.message_ids {
+                barriers.insert((kind_name(op.kind).to_string(), id.clone()), *seq);
+            }
+        }
+    }
+    let mut active = None::<(i64, String)>;
+    for (seq, op) in &operations {
+        if !matches!(
+            op.status,
+            OperationStatus::Queued | OperationStatus::Applying | OperationStatus::OutcomeUnknown
+        ) {
+            continue;
+        }
+        if active.as_ref().is_none_or(|(current, _)| seq >= current) {
+            active = Some((*seq, op.operation_id.clone()));
+        }
+        for id in &op.message_ids {
+            if barriers
+                .get(&(kind_name(op.kind).to_string(), id.clone()))
+                .is_some_and(|barrier_seq| barrier_seq > seq)
+            {
+                continue;
+            }
+            let entry = facts.entry(id.clone()).or_insert((None, None));
+            match op.kind {
+                MailboxOperationKind::Archive => entry.0 = Some(!op.value),
+                MailboxOperationKind::Read => entry.1 = Some(!op.value),
+            }
+        }
+    }
+    let inbox = facts.values().any(|(inbox, _)| *inbox == Some(true));
+    let is_read = if facts.is_empty() || facts.values().any(|(_, unread)| unread.is_none()) {
+        None
+    } else {
+        Some(!facts.values().any(|(_, unread)| *unread == Some(true)))
+    };
+    Ok((inbox, is_read, active.map(|(_, id)| id)))
+}
+
+fn load_activity(conn: &Connection, account_id: &str) -> Result<Vec<OperationSummary>, MailError> {
+    let mut stmt = conn.prepare(
+        "SELECT operation_id, conversation_id, kind, requested_value, status, failure, last_error
+         FROM gmail_operations WHERE account_id = ?1 ORDER BY accepted_seq DESC",
+    ).map_err(|_| MailError::StorageUnavailable)?;
+    let mut activity = Vec::new();
+    for row in stmt
+        .query_map(params![account_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, Option<String>>(6)?,
+            ))
+        })
+        .map_err(|_| MailError::StorageUnavailable)?
+    {
+        let (id, conversation_id, kind, value, status, failure, last_error) =
+            row.map_err(|_| MailError::StorageUnavailable)?;
+        let kind = parse_kind(&kind)?;
+        let status = parse_status(&status)?;
+        let failure = failure.map(|f| {
+            if f == "providerunavailable" {
+                OperationFailure::ProviderUnavailable
+            } else {
+                OperationFailure::ProviderRejected
+            }
+        });
+        let last_error = last_error
+            .map(|json| serde_json::from_str(&json).map_err(|_| MailError::StorageUnavailable))
+            .transpose()?;
+        activity.push(OperationSummary {
+            id,
+            conversation: ConversationRef {
+                account_id: account_id.to_string(),
+                conversation_id,
+            },
+            requested_archived: if kind == MailboxOperationKind::Archive {
+                value != 0
+            } else {
+                false
+            },
+            status,
+            failure,
+            kind: Some(kind),
+            requested_read: (kind == MailboxOperationKind::Read).then_some(value != 0),
+            last_error,
+        });
+    }
+    Ok(activity)
+}
 
 fn meta_get(conn: &Connection, key: &str) -> Result<Option<String>, MailError> {
     conn.query_row(
@@ -769,8 +1726,20 @@ fn upsert_thread(
             )
             .map_err(|_| MailError::StorageUnavailable)?;
         if !exists {
-            // History can mention arbitrarily old archived threads. Do not
-            // import their bodies into the bounded inbox cache.
+            // History can mention arbitrarily old archived threads. Keep their
+            // bodies out of the bounded cache, but refresh facts needed by a
+            // durable operation's recovery view and future target snapshots.
+            let retained_by_operation: bool = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM gmail_operation_targets
+                     WHERE account_id = ?1 AND conversation_id = ?2)",
+                    params![account_id, conversation_id],
+                    |row| row.get(0),
+                )
+                .map_err(|_| MailError::StorageUnavailable)?;
+            if retained_by_operation {
+                upsert_message_facts(conn, account_id, thread)?;
+            }
             return Ok(());
         }
     }
@@ -809,6 +1778,7 @@ fn upsert_thread(
         )
         .map_err(|_| MailError::StorageUnavailable)?;
     }
+    upsert_message_facts(conn, account_id, thread)?;
     for message in &thread.conversation.messages {
         let in_inbox = thread.inbox_message_ids.iter().any(|id| id == &message.id);
         let to_json =
@@ -829,6 +1799,47 @@ fn upsert_thread(
                 message.body_text,
                 in_inbox as i64,
             ],
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+    }
+    Ok(())
+}
+
+/// Replaces provider facts without requiring body-cache admission. Operation-
+/// retained archived conversations still need current inventory and labels for
+/// recovery reads and future immutable target snapshots.
+fn upsert_message_facts(
+    conn: &Connection,
+    account_id: &str,
+    thread: &GmailThread,
+) -> Result<(), MailError> {
+    let conversation_id = &thread.conversation.conversation_ref.conversation_id;
+    conn.execute(
+        "DELETE FROM gmail_message_facts WHERE account_id = ?1 AND conversation_id = ?2",
+        params![account_id, conversation_id],
+    )
+    .map_err(|_| MailError::StorageUnavailable)?;
+    let mut inventory = thread.message_ids.clone().unwrap_or_else(|| {
+        let mut ids = thread.inbox_message_ids.clone();
+        for message in &thread.conversation.messages {
+            if !ids.contains(&message.id) {
+                ids.push(message.id.clone());
+            }
+        }
+        ids
+    });
+    inventory.sort();
+    inventory.dedup();
+    for message_id in &inventory {
+        let inbox = thread.inbox_message_ids.iter().any(|id| id == message_id) as i64;
+        let unread = thread
+            .unread_message_ids
+            .as_ref()
+            .map(|ids| ids.iter().any(|id| id == message_id) as i64);
+        conn.execute(
+            "INSERT INTO gmail_message_facts (account_id, conversation_id, message_id, in_inbox, is_unread)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![account_id, conversation_id, message_id, inbox, unread],
         )
         .map_err(|_| MailError::StorageUnavailable)?;
     }
@@ -888,6 +1899,17 @@ fn evict_over_cap(
         )
         .map_err(|_| MailError::StorageUnavailable)?;
         conn.execute(
+            "DELETE FROM gmail_message_facts
+             WHERE account_id = ?1 AND conversation_id = ?2
+               AND NOT EXISTS (
+                 SELECT 1 FROM gmail_operation_targets t
+                 WHERE t.account_id = gmail_message_facts.account_id
+                   AND t.conversation_id = gmail_message_facts.conversation_id
+                   AND t.message_id = gmail_message_facts.message_id)",
+            params![account_id, conversation_id],
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+        conn.execute(
             "DELETE FROM gmail_inbox_membership WHERE account_id = ?1 AND conversation_id = ?2",
             params![account_id, conversation_id],
         )
@@ -917,6 +1939,11 @@ fn delete_conversation(
     )
     .map_err(|_| MailError::StorageUnavailable)?;
     conn.execute(
+        "DELETE FROM gmail_message_facts WHERE account_id = ?1 AND conversation_id = ?2",
+        params![account_id, conversation_id],
+    )
+    .map_err(|_| MailError::StorageUnavailable)?;
+    conn.execute(
         "DELETE FROM gmail_conversations WHERE account_id = ?1 AND conversation_id = ?2",
         params![account_id, conversation_id],
     )
@@ -928,7 +1955,6 @@ struct BuiltConversation {
     conversation_ref: ConversationRef,
     subject: String,
     messages: Vec<Message>,
-    is_in_inbox: bool,
     context_complete: Option<bool>,
     unsupported_reason: Option<String>,
 }
@@ -991,14 +2017,6 @@ fn build_conversation(
         .map_err(|_| MailError::StorageUnavailable)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| MailError::StorageUnavailable)?;
-    let is_in_inbox: bool = conn
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM gmail_inbox_membership
-             WHERE account_id = ?1 AND conversation_id = ?2)",
-            params![account_id, conversation_id],
-            |row| row.get(0),
-        )
-        .map_err(|_| MailError::StorageUnavailable)?;
     Ok(Some(BuiltConversation {
         conversation_ref: ConversationRef {
             account_id: account_id.to_string(),
@@ -1006,7 +2024,6 @@ fn build_conversation(
         },
         subject,
         messages: messages.into_iter().map(|(message, _)| message).collect(),
-        is_in_inbox,
         context_complete: Some(context_flag != 0),
         unsupported_reason,
     }))
@@ -1113,17 +2130,21 @@ mod tests {
                 subject: format!("subject {id}"),
                 messages: msgs,
                 is_in_inbox,
+                is_read: None,
                 context_complete: Some(true),
                 unsupported_reason: None,
+                retained_snapshot_at: None,
                 pending_operation_id: None,
             },
             inbox_message_ids: inbox.iter().map(|s| s.to_string()).collect(),
+            message_ids: None,
+            unread_message_ids: None,
             history_id: history_id.to_string(),
         }
     }
 
     fn cached(thread: GmailThread) -> ThreadFetch {
-        ThreadFetch::Cached(thread)
+        ThreadFetch::Cached(Box::new(thread))
     }
 
     fn history_page(
@@ -1638,6 +2659,126 @@ mod tests {
     }
 
     /// Storage failures surface typed instead of being logged-and-ignored.
+    #[test]
+    fn operation_recovery_snapshot_survives_cache_eviction_and_can_be_restored() {
+        let (store, dir) = open_store("operation-retention");
+        store
+            .begin_account(&profile("acct-alpha", "alpha@example.test", "hist-1"), 0)
+            .expect("begin account");
+        store
+            .apply_discovery_page(
+                &[cached(thread(
+                    "acct-alpha",
+                    "old-target",
+                    "hist-1",
+                    vec![message("old-message", "2026-01-01T00:00:00Z")],
+                    &["old-message"],
+                ))],
+                None,
+                true,
+                false,
+                0,
+            )
+            .expect("seed target");
+        let target = ConversationRef {
+            account_id: "acct-alpha".to_string(),
+            conversation_id: "old-target".to_string(),
+        };
+        store
+            .accept_read(&SetRead {
+                conversation: target.clone(),
+                read: true,
+                request_id: "retained-read".to_string(),
+            })
+            .expect("durable acceptance");
+
+        let mut additions = Vec::new();
+        for index in 0..100 {
+            let id = format!("new-{index:03}");
+            additions.push(cached(thread(
+                "acct-alpha",
+                &id,
+                "hist-2",
+                vec![message(
+                    &format!("message-{index:03}"),
+                    "2026-03-01T00:00:00Z",
+                )],
+                &[&format!("message-{index:03}")],
+            )));
+        }
+        let page = HistoryPage {
+            changed_thread_ids: Vec::new(),
+            deleted_message_ids: Vec::new(),
+            next_page_token: None,
+            history_id: "hist-2".to_string(),
+        };
+        store
+            .apply_history_page(&page, &additions, "hist-1", 0)
+            .expect("evict old target");
+        assert_eq!(store.cached_count().expect("cache count"), DISCOVERY_CAP);
+        // A later history fetch sees the evicted operation context archived,
+        // with a new message and changed UNREAD facts. Persist those facts
+        // without admitting its bodies back into the bounded cache.
+        let mut fetched = thread(
+            "acct-alpha",
+            "old-target",
+            "hist-3",
+            vec![
+                message("old-message", "2026-01-01T00:00:00Z"),
+                message("new-message", "2026-04-01T00:00:00Z"),
+            ],
+            &[],
+        );
+        fetched.message_ids = Some(vec!["old-message".to_string(), "new-message".to_string()]);
+        fetched.unread_message_ids = Some(vec!["new-message".to_string()]);
+        let refresh_page = HistoryPage {
+            changed_thread_ids: vec!["old-target".to_string()],
+            deleted_message_ids: Vec::new(),
+            next_page_token: None,
+            history_id: "hist-3".to_string(),
+        };
+        store
+            .apply_history_page(&refresh_page, &[cached(fetched)], "hist-2", 0)
+            .expect("refresh retained operation facts");
+        assert_eq!(store.cached_count().expect("bounded cache"), DISCOVERY_CAP);
+
+        let retained = store
+            .get_conversation(&target)
+            .expect("retained recovery reader");
+        assert!(retained
+            .retained_snapshot_at
+            .as_deref()
+            .is_some_and(|saved_at| saved_at.contains('T')));
+        assert_eq!(retained.messages[0].id, "old-message");
+        assert!(!retained.is_in_inbox, "refreshed INBOX fact is persisted");
+        assert_eq!(
+            retained.is_read,
+            Some(false),
+            "refreshed UNREAD fact is persisted"
+        );
+        let restore = SetArchived {
+            conversation: target.clone(),
+            archived: false,
+            request_id: "retained-unarchive".to_string(),
+        };
+        let receipt = store
+            .accept_archived(&restore)
+            .expect("restore after eviction");
+        let conn = store.lock_conn().expect("store connection");
+        let operation = load_operation(&conn, "acct-alpha", &receipt.operation_id)
+            .expect("load restored targets")
+            .expect("restored operation");
+        assert_eq!(operation.message_ids, vec!["new-message", "old-message"]);
+        drop(conn);
+        let restored = store
+            .get_conversation(&restore.conversation)
+            .expect("reader remains available");
+        assert!(restored.is_in_inbox);
+        assert!(restored.retained_snapshot_at.is_some());
+        drop(store);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn persistence_failure_is_surfaced_not_ignored() {
         let (store, dir) = open_store("failure");

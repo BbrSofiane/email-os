@@ -1,12 +1,15 @@
-//! Thin Tauri adapter over the fixture and read-only Gmail mail cores.
+//! Thin Tauri adapter over the fixture and Gmail mail cores.
 //!
 //! `EMAIL_OS_MODE` selects the profile at launch (`fixture` by default, or
 //! `gmail`). The two modes use separate app-data directories; Gmail credentials
-//! stay in the OS Keychain and Gmail archive requests are rejected in Rust.
+//! stay in the OS Keychain and mailbox actions require verified user opt-in.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use mail_core::dto::{Conversation, ConversationRef, InboxSnapshot, OperationReceipt, SetArchived};
+use mail_core::dto::{
+    Conversation, ConversationRef, InboxSnapshot, OperationReceipt, RetryOperation, SetArchived,
+    SetRead,
+};
 use mail_core::error::MailError;
 use mail_core::gmail::provider::GmailProvider;
 use mail_core::gmail::secrets::KeychainSecrets;
@@ -41,6 +44,7 @@ impl Backend {
         match self {
             Self::Fixture(_) => Ok(AccountStatus {
                 mode: MailMode::Fixture,
+                mutation_access: None,
                 connection: mail_core::gmail::types::ConnectionState::Connected,
                 account: Some(AccountInfo {
                     account_id: ACCOUNT_ID.to_owned(),
@@ -86,10 +90,46 @@ impl Backend {
         }
     }
 
+    fn enable_mailbox_actions(&self) -> Result<(), MailError> {
+        match self {
+            Self::Fixture(_) => Err(MailError::InvalidRequest {
+                field: "mode".to_owned(),
+            }),
+            Self::Gmail(core) => core.enable_mutations(),
+        }
+    }
+
+    fn cancel_mailbox_action_upgrade(&self) -> Result<(), MailError> {
+        match self {
+            Self::Fixture(_) => Err(MailError::InvalidRequest {
+                field: "mode".to_owned(),
+            }),
+            Self::Gmail(core) => core.cancel_mutation_upgrade(),
+        }
+    }
+
     fn set_archived(&self, command: &SetArchived) -> Result<OperationReceipt, MailError> {
         match self {
             Self::Fixture(core) => core.set_archived(command),
-            Self::Gmail(_) => Err(MailError::ReadOnly),
+            Self::Gmail(core) => core.set_archived(command),
+        }
+    }
+
+    fn set_read(&self, command: &SetRead) -> Result<OperationReceipt, MailError> {
+        match self {
+            Self::Fixture(_) => Err(MailError::InvalidRequest {
+                field: "mode".to_owned(),
+            }),
+            Self::Gmail(core) => core.set_read(command),
+        }
+    }
+
+    fn retry_operation(&self, command: &RetryOperation) -> Result<OperationReceipt, MailError> {
+        match self {
+            Self::Fixture(_) => Err(MailError::InvalidRequest {
+                field: "mode".to_owned(),
+            }),
+            Self::Gmail(core) => core.retry_operation(command),
         }
     }
 
@@ -166,6 +206,36 @@ async fn set_archived(
 }
 
 #[tauri::command]
+async fn enable_mailbox_actions(state: State<'_, AppState>) -> Result<(), MailError> {
+    let backend = state.backend.clone();
+    run_blocking(backend, Backend::enable_mailbox_actions).await
+}
+
+#[tauri::command]
+async fn cancel_mailbox_action_upgrade(state: State<'_, AppState>) -> Result<(), MailError> {
+    let backend = state.backend.clone();
+    run_blocking(backend, Backend::cancel_mailbox_action_upgrade).await
+}
+
+#[tauri::command]
+async fn set_read(
+    state: State<'_, AppState>,
+    command: SetRead,
+) -> Result<OperationReceipt, MailError> {
+    let backend = state.backend.clone();
+    run_blocking(backend, move |backend| backend.set_read(&command)).await
+}
+
+#[tauri::command]
+async fn retry_operation(
+    state: State<'_, AppState>,
+    command: RetryOperation,
+) -> Result<OperationReceipt, MailError> {
+    let backend = state.backend.clone();
+    run_blocking(backend, move |backend| backend.retry_operation(&command)).await
+}
+
+#[tauri::command]
 async fn get_account_status(state: State<'_, AppState>) -> Result<AccountStatus, MailError> {
     let backend = state.backend.clone();
     run_blocking(backend, Backend::account_status).await
@@ -195,6 +265,10 @@ fn main() {
             list_conversations,
             get_conversation,
             set_archived,
+            enable_mailbox_actions,
+            cancel_mailbox_action_upgrade,
+            set_read,
+            retry_operation,
             get_account_status,
             connect_account,
             disconnect_account,
@@ -267,7 +341,7 @@ mod tests {
     }
 
     #[test]
-    fn fixture_status_is_explicit_and_gmail_archiving_fails_closed() {
+    fn fixture_status_is_explicit_and_gmail_mutations_require_verified_access() {
         let dir = temp_dir("status");
         let fixture = MailCore::open(&dir).unwrap();
         let backend = Backend::Fixture(fixture);
@@ -333,7 +407,12 @@ mod tests {
         let gmail =
             GmailCore::open(temp_dir("gmail-readonly"), Arc::new(ReadOnlyProvider)).unwrap();
         let gmail = Backend::Gmail(gmail);
-        assert_eq!(gmail.account_status().unwrap().mode, MailMode::Gmail);
+        let status = gmail.account_status().unwrap();
+        assert_eq!(status.mode, MailMode::Gmail);
+        assert_eq!(
+            status.mutation_access,
+            Some(mail_core::gmail::types::MutationAccess::ReadOnly)
+        );
         let result = gmail.set_archived(&SetArchived {
             conversation: ConversationRef {
                 account_id: "a".into(),
@@ -342,8 +421,66 @@ mod tests {
             archived: true,
             request_id: "bridge-readonly".into(),
         });
-        assert_eq!(result, Err(MailError::ReadOnly));
+        assert_eq!(result, Err(MailError::PermissionRequired));
+        assert_eq!(
+            gmail.enable_mailbox_actions(),
+            Err(MailError::NotConfigured)
+        );
+        assert_eq!(gmail.cancel_mailbox_action_upgrade(), Ok(()));
+        assert_eq!(
+            gmail.set_read(&SetRead {
+                conversation: ConversationRef {
+                    account_id: "a".into(),
+                    conversation_id: "c".into(),
+                },
+                read: true,
+                request_id: "bridge-readonly-read".into(),
+            }),
+            Err(MailError::PermissionRequired)
+        );
+        assert_eq!(
+            gmail.retry_operation(&RetryOperation {
+                operation_id: "bridge-operation".into(),
+                request_id: "bridge-retry".into(),
+            }),
+            Err(MailError::PermissionRequired)
+        );
         gmail.stop();
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn fixture_rejects_gmail_only_mailbox_commands() {
+        let dir = temp_dir("fixture-gmail-actions");
+        let core = MailCore::open(&dir).unwrap();
+        let backend = Backend::Fixture(core);
+        let mode_error = MailError::InvalidRequest {
+            field: "mode".to_owned(),
+        };
+        assert_eq!(backend.enable_mailbox_actions(), Err(mode_error.clone()));
+        assert_eq!(
+            backend.cancel_mailbox_action_upgrade(),
+            Err(mode_error.clone())
+        );
+        assert_eq!(
+            backend.set_read(&SetRead {
+                conversation: ConversationRef {
+                    account_id: ACCOUNT_ID.into(),
+                    conversation_id: "conv-01".into(),
+                },
+                read: true,
+                request_id: "fixture-read".into(),
+            }),
+            Err(mode_error.clone())
+        );
+        assert_eq!(
+            backend.retry_operation(&RetryOperation {
+                operation_id: "fixture-operation".into(),
+                request_id: "fixture-retry".into(),
+            }),
+            Err(mode_error)
+        );
+        backend.stop();
         let _ = std::fs::remove_dir_all(dir);
     }
 

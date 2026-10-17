@@ -356,6 +356,7 @@ impl Store {
                     conversation_ref: built.conversation_ref,
                     subject: built.subject,
                     participants: participants_of(&built.messages),
+                    is_read: None,
                     preview: preview_of(&built.messages),
                     last_message_at: built
                         .messages
@@ -399,10 +400,12 @@ impl Store {
             conversation_ref: built.conversation_ref,
             subject: built.subject,
             is_in_inbox: built.is_in_inbox,
+            is_read: None,
             messages: built.messages,
             pending_operation_id: built.pending_operation_id,
             context_complete: None,
             unsupported_reason: None,
+            retained_snapshot_at: None,
         })
     }
 
@@ -439,6 +442,9 @@ impl Store {
                 requested_archived: row.requested_archived,
                 status: row.status,
                 failure: row.failure,
+                kind: None,
+                requested_read: None,
+                last_error: None,
             })
             .collect())
     }

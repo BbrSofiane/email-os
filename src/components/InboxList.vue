@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * Inbox list with roving selection (Slice 01).
+ * Inbox list with roving selection and explicit mailbox controls.
  *
  * - Selection follows DOM focus (focusin -> select) so j/k, arrows, mouse, and
  *   screen-reader navigation stay consistent.
@@ -14,11 +14,16 @@ import type { ConversationSummaryLike } from '../composables/useMailbox';
 const props = defineProps<{
   rows: ConversationSummaryLike[];
   selectedIndex: number;
+  actionsEnabled?: boolean;
+  showReadState?: boolean;
+  showReadControls?: boolean;
 }>();
 
 const emit = defineEmits<{
   select: [index: number];
   open: [index: number];
+  archive: [ref: ConversationSummaryLike['ref']];
+  setRead: [ref: ConversationSummaryLike['ref'], read: boolean];
 }>();
 
 const listEl = ref<HTMLElement | null>(null);
@@ -104,8 +109,30 @@ defineExpose({ focusRow });
       <div class="row-subject">{{ row.subject }}</div>
       <div class="row-preview">{{ row.preview }}</div>
       <div v-if="row.pendingOperationId" class="row-pending" data-test="row-pending">
-        pending archive operation…
+        Mailbox action pending…
       </div>
+      <div v-if="props.showReadState || props.showReadControls" class="row-read-state" :data-test="row.isRead === undefined ? 'row-read-unknown' : row.isRead ? 'row-read' : 'row-unread'">
+        <span>{{ row.isRead === undefined ? 'Read state unknown' : row.isRead ? 'Read' : 'Unread' }}</span>
+        <template v-if="props.showReadControls && row.isRead === undefined">
+          <button type="button" :data-test="`row-mark-read-${row.ref.conversationId}`" @click.stop="emit('setRead', row.ref, true)">Mark read</button>
+          <button type="button" :data-test="`row-mark-unread-${row.ref.conversationId}`" @click.stop="emit('setRead', row.ref, false)">Mark unread</button>
+        </template>
+        <button
+          v-else-if="props.showReadControls"
+          type="button"
+          :data-test="`row-toggle-read-${row.ref.conversationId}`"
+          @click.stop="emit('setRead', row.ref, !row.isRead)"
+        >
+          Mark {{ row.isRead ? 'unread' : 'read' }}
+        </button>
+      </div>
+      <button
+        v-if="props.actionsEnabled"
+        type="button"
+        class="row-archive-action"
+        :data-test="`row-archive-${row.ref.conversationId}`"
+        @click.stop="emit('archive', row.ref)"
+      >Archive</button>
     </li>
   </ul>
 </template>
