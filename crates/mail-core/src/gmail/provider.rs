@@ -403,19 +403,73 @@ impl GmailProvider {
         ))
     }
 
-    /// Returns a token only when the locally stored, verified grant is
-    /// bound to an account. `access_token` performs any refresh first, after
-    /// which the grant is rechecked so an explicit scope downgrade blocks
-    /// the setter before dispatch.
-    fn mutation_token(&self, cancel: &CancelToken) -> Result<String, MailError> {
-        if !self.mutation_access()? {
-            return Err(MailError::PermissionRequired);
+    /// Returns one coherent, current credential snapshot only when its
+    /// account-bound grant is verified. Refresh and credential publication
+    /// remain outside the publication lock; the snapshot after refresh is the
+    /// credential that a caller may admit for dispatch.
+    fn mutation_bundle(&self, cancel: &CancelToken) -> Result<TokenBundle, MailError> {
+        loop {
+            if cancel.is_cancelled() {
+                return Err(MailError::AuthCancelled);
+            }
+            let (bundle, _, _) = self.credential_snapshot()?;
+            let bundle = bundle.ok_or(MailError::PermissionRequired)?;
+            if !bundle.gmail_modify_granted
+                || bundle_account_id(&bundle).is_none()
+                || (bundle.access_token.is_empty() && bundle.refresh_token.is_none())
+            {
+                return Err(MailError::PermissionRequired);
+            }
+
+            let returned_token = self.access_token(cancel)?;
+            let (current, _, _) = self.credential_snapshot()?;
+            let current = current.ok_or(MailError::PermissionRequired)?;
+            if !current.gmail_modify_granted
+                || bundle_account_id(&current).is_none()
+                || (current.access_token.is_empty() && current.refresh_token.is_none())
+            {
+                return Err(MailError::PermissionRequired);
+            }
+            if current.access_token.is_empty()
+                || current.expires_at_epoch_ms - EXPIRY_SKEW_MS <= now_ms()
+            {
+                // A concurrent credential publication can replace the token
+                // after access_token returns; retry against that current
+                // bundle. If refresh itself returned an unusable token, fail
+                // closed rather than repeatedly refreshing it.
+                if current.access_token == returned_token {
+                    return Err(MailError::AuthRequired);
+                }
+                continue;
+            }
+            return Ok(current);
         }
-        let token = self.access_token(cancel)?;
-        if !self.mutation_access()? {
-            return Err(MailError::PermissionRequired);
+    }
+
+    /// Returns the account identity from the same credential publication
+    /// snapshot. It fences a setter from silently switching mailboxes while it
+    /// waits for request pacing.
+    fn mutation_account_id(&self, cancel: &CancelToken) -> Result<String, MailError> {
+        let bundle = self.mutation_bundle(cancel)?;
+        bundle_account_id(&bundle)
+            .map(str::to_string)
+            .ok_or(MailError::PermissionRequired)
+    }
+
+    /// Final logical setter admission. This runs after pacing and takes a new
+    /// coherent snapshot, so a refresh/re-auth published during the wait
+    /// cannot leave dispatch using an obsolete token or grant. No credential
+    /// lock is held across the subsequent network request.
+    fn setter_admission_token(
+        &self,
+        cancel: &CancelToken,
+        expected_account_id: &str,
+    ) -> Result<String, MailError> {
+        let bundle = self.mutation_bundle(cancel)?;
+        if bundle_account_id(&bundle) != Some(expected_account_id) {
+            return Err(MailError::AuthFailed);
         }
-        Ok(token)
+        Ok(bundle.access_token)
     }
 
     fn apply_label_setter(
@@ -426,7 +480,7 @@ impl GmailProvider {
         cancel: &CancelToken,
     ) -> Result<(), MailError> {
         validate_message_ids(message_ids)?;
-        let token = self.mutation_token(cancel)?;
+        let account_id = self.mutation_account_id(cancel)?;
         if cancel.is_cancelled() {
             return Err(MailError::AuthCancelled);
         }
@@ -444,6 +498,10 @@ impl GmailProvider {
             "{}/gmail/v1/users/me/messages/batchModify",
             self.endpoints.api
         );
+        let token = self.setter_admission_token(cancel, &account_id)?;
+        if cancel.is_cancelled() {
+            return Err(MailError::AuthCancelled);
+        }
         let response = self
             .http
             .post(&url)
@@ -1873,6 +1931,7 @@ pub(crate) mod tests {
         script: Mutex<VecDeque<(String, u16, String)>>,
         requests: Mutex<Vec<String>>,
         bodies: Mutex<Vec<String>>,
+        authorization_headers: Mutex<Vec<Option<String>>>,
         on_request: Option<RequestHook>,
     }
 
@@ -1898,6 +1957,7 @@ pub(crate) mod tests {
                 ),
                 requests: Mutex::new(Vec::new()),
                 bodies: Mutex::new(Vec::new()),
+                authorization_headers: Mutex::new(Vec::new()),
                 on_request,
             });
             let thread_state = Arc::clone(&state);
@@ -1920,6 +1980,15 @@ pub(crate) mod tests {
                     .lock()
                     .unwrap()
                     .push(text.split("\r\n\r\n").nth(1).unwrap_or("").to_string());
+                thread_state
+                    .authorization_headers
+                    .lock()
+                    .unwrap()
+                    .push(text.lines().find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("authorization")
+                            .then(|| value.trim().to_string())
+                    }));
                 if let Some(on_request) = &thread_state.on_request {
                     on_request(&target);
                 }
@@ -1963,6 +2032,10 @@ pub(crate) mod tests {
 
         fn bodies(&self) -> Vec<String> {
             self.state.bodies.lock().unwrap().clone()
+        }
+
+        fn authorization_headers(&self) -> Vec<Option<String>> {
+            self.state.authorization_headers.lock().unwrap().clone()
         }
     }
 
@@ -2459,6 +2532,188 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn paced_setter_rechecks_grant_after_concurrent_refresh_downgrade() {
+        let (api_base, api) = FakeApi::start(vec![]);
+        let (token_base, token) = FakeApi::start(vec![(
+            "/synthetic-token",
+            200,
+            r#"{"access_token":"at-downgraded-during-pacing","expires_in":3600,"scope":"https://www.googleapis.com/auth/gmail.readonly"}"#,
+        )]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        let expiry = now_ms() + EXPIRY_SKEW_MS + 150;
+        let granted = TokenBundle {
+            gmail_modify_granted: true,
+            expires_at_epoch_ms: expiry,
+            ..future_token()
+        };
+        secrets.store(&granted).unwrap();
+        let mut provider = test_provider(&api_base, secrets.clone());
+        provider.endpoints.token = format!("{token_base}/synthetic-token");
+        provider.min_request_interval = Duration::from_millis(800);
+        let seeded = Instant::now();
+        *provider.last_request_slot.lock().unwrap() = Some(seeded);
+        let provider = Arc::new(provider);
+
+        let (setter_tx, setter_rx) = std::sync::mpsc::channel();
+        let setter_provider = Arc::clone(&provider);
+        std::thread::spawn(move || {
+            let result = setter_provider.apply_archive(
+                &["paced-message".to_string()],
+                true,
+                &CancelToken::default(),
+            );
+            let _ = setter_tx.send(result);
+        });
+        assert!(
+            until_provider_slot(&provider, seeded),
+            "setter did not reserve its pace slot"
+        );
+
+        // Wait until the original token crosses the production refresh skew,
+        // then exercise the real readonly get_thread refresh while the setter
+        // remains in its production pacing wait.
+        let until_refresh = expiry - EXPIRY_SKEW_MS - now_ms() + 5;
+        if until_refresh > 0 {
+            std::thread::sleep(Duration::from_millis(until_refresh as u64));
+        }
+        let read_cancel = CancelToken::default();
+        let (read_tx, read_rx) = std::sync::mpsc::channel();
+        let read_provider = Arc::clone(&provider);
+        let read_cancel_thread = read_cancel.clone();
+        std::thread::spawn(move || {
+            let result = read_provider.get_thread("synthetic-thread", &read_cancel_thread);
+            let _ = read_tx.send(result);
+        });
+        let refresh_deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if secrets
+                .load()
+                .unwrap()
+                .is_some_and(|bundle| bundle.access_token == "at-downgraded-during-pacing")
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < refresh_deadline,
+                "readonly refresh did not publish"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(!secrets.load().unwrap().unwrap().gmail_modify_granted);
+        read_cancel.cancel();
+        assert!(matches!(
+            read_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            Err(MailError::AuthCancelled)
+        ));
+        assert_eq!(
+            setter_rx.recv_timeout(Duration::from_secs(3)).unwrap(),
+            Err(MailError::PermissionRequired)
+        );
+        assert_eq!(
+            token.requests().len(),
+            1,
+            "the real refresh endpoint was used"
+        );
+        assert!(
+            api.requests().is_empty(),
+            "revoked grant must prevent batchModify"
+        );
+    }
+
+    #[test]
+    fn paced_setter_uses_current_same_account_credential_after_replacement() {
+        let (api_base, api) =
+            FakeApi::start(vec![("/gmail/v1/users/me/messages/batchModify", 200, "")]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        let original = TokenBundle {
+            gmail_modify_granted: true,
+            ..future_token()
+        };
+        secrets.store(&original).unwrap();
+        let mut provider = test_provider(&api_base, secrets);
+        provider.min_request_interval = Duration::from_millis(150);
+        let seeded = Instant::now();
+        *provider.last_request_slot.lock().unwrap() = Some(seeded);
+        let provider = Arc::new(provider);
+
+        let (setter_tx, setter_rx) = std::sync::mpsc::channel();
+        let setter_provider = Arc::clone(&provider);
+        std::thread::spawn(move || {
+            let result = setter_provider.apply_archive(
+                &["paced-message".to_string()],
+                true,
+                &CancelToken::default(),
+            );
+            let _ = setter_tx.send(result);
+        });
+        assert!(
+            until_provider_slot(&provider, seeded),
+            "setter did not reserve its pace slot"
+        );
+
+        let replacement = TokenBundle {
+            access_token: "synthetic-replacement-access".to_string(),
+            ..original
+        };
+        let mut publication = provider.credential_publication.lock().unwrap();
+        provider
+            .publish_bundle_locked(
+                &mut publication,
+                &replacement,
+                CredentialPublicationKind::AccountChange,
+            )
+            .unwrap();
+        drop(publication);
+
+        setter_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("paced setter completes")
+            .unwrap();
+        assert_eq!(
+            api.authorization_headers(),
+            vec![Some("Bearer synthetic-replacement-access".to_string())],
+            "the POST uses the current token, not its pre-pacing credential"
+        );
+        assert_eq!(api.requests().len(), 1);
+    }
+
+    #[test]
+    fn paced_setter_cancellation_prevents_dispatch() {
+        let (api_base, api) = FakeApi::start(vec![]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        secrets
+            .store(&TokenBundle {
+                gmail_modify_granted: true,
+                ..future_token()
+            })
+            .unwrap();
+        let mut provider = test_provider(&api_base, secrets);
+        provider.min_request_interval = Duration::from_secs(3600);
+        let seeded = Instant::now();
+        *provider.last_request_slot.lock().unwrap() = Some(seeded);
+        let provider = Arc::new(provider);
+        let cancel = CancelToken::default();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let setter_provider = Arc::clone(&provider);
+        let setter_cancel = cancel.clone();
+        std::thread::spawn(move || {
+            let result =
+                setter_provider.apply_read(&["paced-message".to_string()], true, &setter_cancel);
+            let _ = done_tx.send(result);
+        });
+        assert!(
+            until_provider_slot(&provider, seeded),
+            "setter did not reserve its pace slot"
+        );
+        cancel.cancel();
+        assert_eq!(
+            done_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            Err(MailError::AuthCancelled)
+        );
+        assert!(api.requests().is_empty());
+    }
+
+    #[test]
     fn refresh_scope_downgrade_disables_write_before_setter_dispatch() {
         let (api_base, api) = FakeApi::start(vec![]);
         let (token_base, _token) = FakeApi::start(vec![(
@@ -2783,6 +3038,61 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn paced_setter_rejects_a_replacement_for_a_different_account() {
+        let (api_base, api) = FakeApi::start(vec![]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        let original = TokenBundle {
+            gmail_modify_granted: true,
+            ..future_token()
+        };
+        secrets.store(&original).unwrap();
+        let mut provider = test_provider(&api_base, secrets);
+        provider.min_request_interval = Duration::from_millis(100);
+        let seeded = Instant::now();
+        *provider.last_request_slot.lock().unwrap() = Some(seeded);
+        let provider = Arc::new(provider);
+
+        let (setter_tx, setter_rx) = std::sync::mpsc::channel();
+        let setter_provider = Arc::clone(&provider);
+        std::thread::spawn(move || {
+            let result = setter_provider.apply_archive(
+                &["paced-message".to_string()],
+                true,
+                &CancelToken::default(),
+            );
+            let _ = setter_tx.send(result);
+        });
+        assert!(
+            until_provider_slot(&provider, seeded),
+            "setter did not reserve its pace slot"
+        );
+
+        let replacement = TokenBundle {
+            account_id: Some("other@example.test".to_string()),
+            email: Some("other@example.test".to_string()),
+            ..original
+        };
+        let mut publication = provider.credential_publication.lock().unwrap();
+        provider
+            .publish_bundle_locked(
+                &mut publication,
+                &replacement,
+                CredentialPublicationKind::AccountChange,
+            )
+            .unwrap();
+        drop(publication);
+
+        assert_eq!(
+            setter_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            Err(MailError::AuthFailed)
+        );
+        assert!(
+            api.requests().is_empty(),
+            "account change must not dispatch"
+        );
+    }
+
+    #[test]
     fn mailbox_setters_post_only_exact_snapshot_ids_and_closed_label_changes() {
         let (base, api) = FakeApi::start(vec![
             ("/gmail/v1/users/me/messages/batchModify", 200, ""),
@@ -2796,11 +3106,13 @@ pub(crate) mod tests {
             ..future_token()
         };
         secrets.store(&granted).unwrap();
-        let provider = test_provider(&base, secrets);
+        let mut provider = test_provider(&base, secrets);
+        provider.min_request_interval = Duration::from_millis(30);
         let ids = vec![
             "unsupported-message".to_string(),
             "snapshot-message-2".to_string(),
         ];
+        let started = Instant::now();
 
         provider
             .apply_archive(&ids, true, &CancelToken::default())
@@ -2832,6 +3144,11 @@ pub(crate) mod tests {
             .requests()
             .iter()
             .all(|path| { path == "/gmail/v1/users/me/messages/batchModify" }));
+        assert!(
+            started.elapsed() >= Duration::from_millis(75),
+            "authorized archive/read setters honor production pacing: {:?}",
+            started.elapsed()
+        );
     }
 
     #[test]
