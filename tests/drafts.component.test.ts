@@ -532,6 +532,232 @@ describe('local plain-text drafts UI', () => {
     expect((await fake.getDraft(remaining[0]!.ref)).content.bodyText).toBe('buffer survives deleted create ref');
   });
 
+  it('keeps the editor open after a deleted recovery-copy receipt and requires a fresh explicit copy', async () => {
+    const fake = createBrowserFakeMailClient();
+    const source = await fake.createDraft({
+      requestId: 'copy-tombstone-source',
+      source: { kind: 'new_message' },
+      initialContent: { to: '', cc: '', subject: 'source', bodyText: '' },
+    });
+    const creates: Array<Parameters<MailClient['createDraft']>[0]> = [];
+    let committedCopy: DraftReceipt | null = null;
+    const client: MailClient = {
+      ...fake,
+      createDraft: async (command) => {
+        creates.push(JSON.parse(JSON.stringify(command)) as Parameters<MailClient['createDraft']>[0]);
+        if (creates.length === 1) {
+          committedCopy = await fake.createDraft(command);
+          throw { kind: 'storage_unavailable' }; // committed, but the first ACK is lost
+        }
+        if (creates.length === 2) {
+          const historicalReceipt = await fake.createDraft(command);
+          await fake.deleteDraft({ ref: historicalReceipt.ref, expectedRevision: historicalReceipt.revision, requestId: 'delete-committed-copy-before-retry' });
+          return historicalReceipt;
+        }
+        return fake.createDraft(command);
+      },
+    };
+    const w = await mountApp(fake, client);
+    await w.find(`[data-test="open-draft-${source.ref.draftId}"]`).trigger('click');
+    await flushPromises();
+    await fake.deleteDraft({ ref: source.ref, expectedRevision: source.revision, requestId: 'delete-tombstone-source' });
+    await w.find('[data-test="draft-body"]').setValue('sole surviving exact text');
+    await w.find('[data-test="close-composer"]').trigger('click');
+    await flushPromises();
+    await w.find('[data-test="save-as-new"]').trigger('click');
+    await flushPromises();
+    expect(w.find('[data-test="draft-error"]').exists()).toBe(true);
+    expect(committedCopy).not.toBeNull();
+
+    await w.find('[data-test="close-composer"]').trigger('click');
+    await flushPromises();
+    expect(creates).toHaveLength(2);
+    expect(creates[1]).toEqual(creates[0]);
+    expect(w.find('[data-test="composer"]').exists()).toBe(true);
+    expect((w.find('[data-test="draft-body"]').element as HTMLTextAreaElement).value).toBe('sole surviving exact text');
+    expect(w.find('[data-test="deleted-draft-recovery"]').exists()).toBe(true);
+    expect(await fake.listDrafts()).toEqual([]);
+    fake.controls.requestAppClose();
+    await waitFor(() => fake.controls.pendingAppClose() === null);
+    expect(fake.controls.completedCloseCount()).toBe(0);
+    expect(w.find('[data-test="composer"]').exists()).toBe(true);
+    const unload = new Event('beforeunload', { cancelable: true }) as BeforeUnloadEvent;
+    window.dispatchEvent(unload);
+    expect(unload.defaultPrevented).toBe(true);
+
+    await w.find('[data-test="close-composer"]').trigger('click');
+    await flushPromises();
+    expect(w.find('[data-test="composer"]').exists()).toBe(true);
+    expect(await fake.listDrafts()).toEqual([]);
+    await w.find('[data-test="save-as-new"]').trigger('click');
+    await flushPromises();
+    expect(creates).toHaveLength(3);
+    expect(creates[2]?.requestId).not.toBe(creates[0]?.requestId);
+    const remaining = await fake.listDrafts();
+    expect(remaining).toHaveLength(1);
+    expect((await fake.getDraft(remaining[0]!.ref)).content.bodyText).toBe('sole surviving exact text');
+    expect((w.find('[data-test="draft-body"]').element as HTMLTextAreaElement).value).toBe('sole surviving exact text');
+  });
+
+  it.each(['acknowledgement', 'rejection'] as const)(
+    'keeps explicit copy recovery available after a late original-save %s', async (lateOutcome) => {
+      const fake = createBrowserFakeMailClient();
+      const oldRetry = deferred<DraftReceipt>();
+      const verification = deferred<Awaited<ReturnType<MailClient['getDraft']>>>();
+      const saves: Array<Parameters<MailClient['saveDraft']>[0]> = [];
+      const creates: Array<Parameters<MailClient['createDraft']>[0]> = [];
+      let recovered: DraftReceipt | null = null;
+      let verificationDraftId: string | null = null;
+      const client: MailClient = {
+        ...fake,
+        saveDraft: (command) => {
+          saves.push(JSON.parse(JSON.stringify(command)) as Parameters<MailClient['saveDraft']>[0]);
+          return saves.length === 1 ? Promise.reject({ kind: 'not_found' }) : oldRetry.promise;
+        },
+        createDraft: async (command) => {
+          creates.push(JSON.parse(JSON.stringify(command)) as Parameters<MailClient['createDraft']>[0]);
+          const receipt = await fake.createDraft(command);
+          if (creates.length === 2) {
+            recovered = receipt;
+            verificationDraftId = receipt.ref.draftId;
+          }
+          return receipt;
+        },
+        getDraft: (ref) => ref.draftId === verificationDraftId ? verification.promise : fake.getDraft(ref),
+      };
+      const w = await mountApp(fake, client);
+      await startNew(w);
+      const original = (await fake.listDrafts())[0]!;
+      await fake.deleteDraft({ ref: original.ref, expectedRevision: original.revision, requestId: `late-save-${lateOutcome}-delete-original` });
+      await w.find('[data-test="draft-body"]').setValue('latest exact recovery buffer');
+      await w.find('[data-test="close-composer"]').trigger('click');
+      await flushPromises();
+      expect(w.find('[data-test="save-as-new"]').exists()).toBe(true);
+
+      const copyButton = w.find('[data-test="save-as-new"]');
+      await w.find('[data-test="retry-draft-save"]').trigger('click');
+      copyButton.element.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await flushPromises();
+      expect(saves).toHaveLength(2);
+      await waitFor(() => recovered !== null);
+      await fake.deleteDraft({ ref: recovered!.ref, expectedRevision: recovered!.revision, requestId: `late-save-${lateOutcome}-delete-copy` });
+      verification.reject({ kind: 'not_found' });
+      await flushPromises();
+      expect(w.find('[data-test="save-as-new"]').exists()).toBe(true);
+      expect(w.find('[data-test="retry-draft-save"]').exists()).toBe(false);
+
+      if (lateOutcome === 'acknowledgement') {
+        oldRetry.resolve({ ref: original.ref, revision: original.revision + 1, savedAt: '2025-01-01T00:00:00Z' });
+      } else {
+        oldRetry.reject({ kind: 'storage_unavailable' });
+      }
+      await flushPromises();
+      expect(w.find('[data-test="save-as-new"]').exists()).toBe(true);
+      expect(w.find('[data-test="retry-draft-save"]').exists()).toBe(false);
+      expect(w.find('[data-test="draft-error"]').text()).toContain('no longer available');
+      expect((w.find('[data-test="draft-body"]').element as HTMLTextAreaElement).value).toBe('latest exact recovery buffer');
+
+      await w.find('[data-test="close-composer"]').trigger('click');
+      await flushPromises();
+      expect(w.find('[data-test="composer"]').exists()).toBe(true);
+      fake.controls.requestAppClose();
+      await waitFor(() => fake.controls.pendingAppClose() === null);
+      expect(fake.controls.completedCloseCount()).toBe(0);
+      expect(await fake.listDrafts()).toEqual([]);
+
+      await w.find('[data-test="save-as-new"]').trigger('click');
+      await flushPromises();
+      expect(creates).toHaveLength(3);
+      expect(creates[2]?.requestId).not.toBe(creates[1]?.requestId);
+      const remaining = await fake.listDrafts();
+      expect(remaining).toHaveLength(1);
+      expect((await fake.getDraft(remaining[0]!.ref)).content.bodyText).toBe('latest exact recovery buffer');
+      expect(w.find('[data-test="draft-status"]').text()).toBe('Saved in preview memory (non-durable)');
+      const unload = new Event('beforeunload', { cancelable: true }) as BeforeUnloadEvent;
+      window.dispatchEvent(unload);
+      expect(unload.defaultPrevented).toBe(false);
+    },
+  );
+
+  it('surfaces a recovery copy revision race without replacing the local buffer', async () => {
+    const fake = createBrowserFakeMailClient();
+    const source = await fake.createDraft({
+      requestId: 'copy-verification-race-source',
+      source: { kind: 'new_message' },
+      initialContent: { to: '', cc: '', subject: 'source', bodyText: '' },
+    });
+    const read = deferred<Awaited<ReturnType<MailClient['getDraft']>>>();
+    let recoveredRef: DraftReceipt['ref'] | null = null;
+    const client: MailClient = {
+      ...fake,
+      createDraft: async (command) => {
+        const receipt = await fake.createDraft(command);
+        if (command.source.kind === 'new_message' && command.initialContent?.bodyText === 'local recovery text') recoveredRef = receipt.ref;
+        return receipt;
+      },
+      getDraft: (ref) => recoveredRef?.draftId === ref.draftId ? read.promise : fake.getDraft(ref),
+    };
+    const w = await mountApp(fake, client);
+    await w.find(`[data-test="open-draft-${source.ref.draftId}"]`).trigger('click');
+    await flushPromises();
+    await fake.deleteDraft({ ref: source.ref, expectedRevision: source.revision, requestId: 'delete-verification-race-source' });
+    await w.find('[data-test="draft-body"]').setValue('local recovery text');
+    await w.find('[data-test="close-composer"]').trigger('click');
+    await flushPromises();
+    await w.find('[data-test="save-as-new"]').trigger('click');
+    await waitFor(() => recoveredRef !== null);
+    const recovered = await fake.getDraft(recoveredRef!);
+    await fake.saveDraft({
+      ref: recovered.ref,
+      expectedRevision: recovered.revision,
+      requestId: 'external-recovery-copy-save',
+      content: { ...recovered.content, bodyText: 'newer external text' },
+    });
+    read.resolve(await fake.getDraft(recovered.ref));
+    await flushPromises();
+    expect(w.find('[data-test="draft-conflict-actions"]').exists()).toBe(true);
+    expect(w.find('[data-test="draft-error"]').text()).toContain('another save created revision 2');
+    expect((w.find('[data-test="draft-body"]').element as HTMLTextAreaElement).value).toBe('local recovery text');
+    expect((await fake.getDraft(recovered.ref)).content.bodyText).toBe('newer external text');
+  });
+
+  it('keeps edits made during recovery-copy verification and flushes them to the verified ref', async () => {
+    const fake = createBrowserFakeMailClient();
+    const source = await fake.createDraft({
+      requestId: 'copy-buffer-verification-source',
+      source: { kind: 'new_message' },
+      initialContent: { to: '', cc: '', subject: 'source', bodyText: '' },
+    });
+    const read = deferred<Awaited<ReturnType<MailClient['getDraft']>>>();
+    let recoveredRef: DraftReceipt['ref'] | null = null;
+    const client: MailClient = {
+      ...fake,
+      createDraft: async (command) => {
+        const receipt = await fake.createDraft(command);
+        if (command.source.kind === 'new_message' && command.initialContent?.bodyText === 'copy snapshot') recoveredRef = receipt.ref;
+        return receipt;
+      },
+      getDraft: (ref) => recoveredRef?.draftId === ref.draftId ? read.promise : fake.getDraft(ref),
+    };
+    const w = await mountApp(fake, client);
+    await w.find(`[data-test="open-draft-${source.ref.draftId}"]`).trigger('click');
+    await flushPromises();
+    await fake.deleteDraft({ ref: source.ref, expectedRevision: source.revision, requestId: 'delete-buffer-verification-source' });
+    await w.find('[data-test="draft-body"]').setValue('copy snapshot');
+    await w.find('[data-test="close-composer"]').trigger('click');
+    await flushPromises();
+    await w.find('[data-test="save-as-new"]').trigger('click');
+    await waitFor(() => recoveredRef !== null);
+    await w.find('[data-test="draft-body"]').setValue('latest edit during verification');
+    read.resolve(await fake.getDraft(recoveredRef!));
+    await flushPromises();
+    expect((w.find('[data-test="draft-body"]').element as HTMLTextAreaElement).value).toBe('latest edit during verification');
+    await w.find('[data-test="close-composer"]').trigger('click');
+    await flushPromises();
+    expect(w.find('[data-test="composer"]').exists()).toBe(false);
+    expect((await fake.getDraft(recoveredRef!)).content.bodyText).toBe('latest edit during verification');
+  });
+
   it.each(['rejection', 'acknowledgement'] as const)('ignores an old-ref save %s after installing a Save-as-new recovery copy', async (oldOutcome) => {
     const fake = createBrowserFakeMailClient();
     const oldRetry = deferred<DraftReceipt>();
@@ -869,6 +1095,8 @@ describe('local plain-text drafts UI', () => {
     await w.find('[data-test="confirm-discard"]').trigger('click');
     await flushPromises();
     expect(w.find('[data-test="retry-draft-save"]').text()).toContain('Retry discard');
+    expect(w.find('[data-test="confirm-discard"]').exists()).toBe(false);
+    expect(w.find('[data-test="cancel-discard"]').exists()).toBe(false);
     expect((w.find('[data-test="draft-body"]').element as HTMLTextAreaElement).disabled).toBe(true);
     await w.find('[data-test="retry-draft-save"]').trigger('click');
     await flushPromises();
@@ -1033,12 +1261,13 @@ describe('local plain-text drafts UI', () => {
     const delayedRead = deferred<Awaited<ReturnType<MailClient['getDraft']>>>();
     const copyAck = deferred<DraftReceipt>();
     let delayRead = false;
+    let originalDraftId: string | null = null;
     let createCalls = 0;
     const copyCommand: { value: Parameters<MailClient['createDraft']>[0] | null } = { value: null };
     const client: MailClient = {
       ...fake,
       getDraft: (ref) => {
-        if (delayRead) { delayRead = false; return delayedRead.promise; }
+        if (delayRead && ref.draftId === originalDraftId) { delayRead = false; return delayedRead.promise; }
         return fake.getDraft(ref);
       },
       createDraft: (command) => {
@@ -1052,6 +1281,7 @@ describe('local plain-text drafts UI', () => {
     const w = await mountApp(fake, client);
     await startNew(w);
     const original = (await fake.listDrafts())[0]!;
+    originalDraftId = original.ref.draftId;
     const stored = await fake.getDraft(original.ref);
     await fake.saveDraft({ ref: original.ref, expectedRevision: stored.revision, requestId: `delayed-reload-copy-${reloadBeforeCopyAck}`, content: { ...stored.content, bodyText: 'remote saved text' } });
     await flushPromises();
@@ -1085,16 +1315,92 @@ describe('local plain-text drafts UI', () => {
     expect(w.find('[data-test="draft-conflict-actions"]').exists()).toBe(false);
   });
 
-  it('requires explicit discard confirmation and does not leave a draft after receipt', async () => {
+  it('Keep draft cancels a discard intent while its dirty-save flush is deferred', async () => {
     const fake = createBrowserFakeMailClient();
-    const w = await mountApp(fake);
+    const pendingSave = deferred<DraftReceipt>();
+    let saveCommand: Parameters<MailClient['saveDraft']>[0] | null = null;
+    const deletions: Array<Parameters<MailClient['deleteDraft']>[0]> = [];
+    const client: MailClient = {
+      ...fake,
+      saveDraft: (command) => { saveCommand = command; return pendingSave.promise; },
+      deleteDraft: (command) => { deletions.push(command); return fake.deleteDraft(command); },
+    };
+    const w = await mountApp(fake, client);
+    await startNew(w);
+    const original = (await fake.listDrafts())[0]!;
+    await w.find('[data-test="draft-body"]').setValue('valuable text I decide to keep');
+    await w.find('[data-test="discard-draft"]').trigger('click');
+    await w.find('[data-test="confirm-discard"]').trigger('click');
+    await flushPromises();
+    expect(saveCommand).not.toBeNull();
+    expect(w.find('[data-test="cancel-discard"]').exists()).toBe(true);
+    expect(w.find('[data-test="confirm-discard"]').attributes('disabled')).toBeDefined();
+
+    await w.find('[data-test="cancel-discard"]').trigger('click');
+    expect(w.find('[data-test="confirm-discard"]').exists()).toBe(false);
+    pendingSave.resolve(await fake.saveDraft(saveCommand!));
+    await flushPromises();
+    expect(deletions).toEqual([]);
+    expect(w.find('[data-test="composer"]').exists()).toBe(true);
+    expect((await fake.getDraft(original.ref)).content.bodyText).toBe('valuable text I decide to keep');
+  });
+
+  it('invalidates a pending discard when switching to another draft ref', async () => {
+    const fake = createBrowserFakeMailClient();
+    const original = await fake.createDraft({ requestId: 'discard-switch-original', source: { kind: 'new_message' }, initialContent: { to: '', cc: '', subject: 'first', bodyText: '' } });
+    const next = await fake.createDraft({ requestId: 'discard-switch-next', source: { kind: 'new_message' }, initialContent: { to: '', cc: '', subject: 'second', bodyText: 'second draft' } });
+    const pendingSave = deferred<DraftReceipt>();
+    let saveCommand: Parameters<MailClient['saveDraft']>[0] | null = null;
+    const deletions: Array<Parameters<MailClient['deleteDraft']>[0]> = [];
+    const client: MailClient = {
+      ...fake,
+      saveDraft: (command) => { saveCommand = command; return pendingSave.promise; },
+      deleteDraft: (command) => { deletions.push(command); return fake.deleteDraft(command); },
+    };
+    const w = await mountApp(fake, client);
+    await w.find(`[data-test="open-draft-${original.ref.draftId}"]`).trigger('click');
+    await flushPromises();
+    await w.find('[data-test="draft-body"]').setValue('first draft text to keep');
+    await w.find('[data-test="discard-draft"]').trigger('click');
+    await w.find('[data-test="confirm-discard"]').trigger('click');
+    await flushPromises();
+    expect(saveCommand).not.toBeNull();
+
+    await w.find(`[data-test="open-draft-${next.ref.draftId}"]`).trigger('click');
+    expect(w.find('[data-test="confirm-discard"]').exists()).toBe(false);
+    pendingSave.resolve(await fake.saveDraft(saveCommand!));
+    await flushPromises();
+    expect(deletions).toEqual([]);
+    expect(w.find('[data-test="draft-subject"]').element).toHaveProperty('value', 'second');
+    expect((await fake.getDraft(original.ref)).content.bodyText).toBe('first draft text to keep');
+    expect((await fake.getDraft(next.ref)).content.bodyText).toBe('second draft');
+  });
+
+  it('removes Keep/second-confirm affordances after revision-checked delete dispatch', async () => {
+    const fake = createBrowserFakeMailClient();
+    const deleteAck = deferred<void>();
+    const deletions: Array<Parameters<MailClient['deleteDraft']>[0]> = [];
+    const client: MailClient = {
+      ...fake,
+      deleteDraft: async (command) => {
+        deletions.push(command);
+        const receipt = await fake.deleteDraft(command);
+        await deleteAck.promise;
+        return receipt;
+      },
+    };
+    const w = await mountApp(fake, client);
     await startNew(w);
     await w.find('[data-test="discard-draft"]').trigger('click');
     expect(w.find('[data-test="confirm-discard"]').exists()).toBe(true);
-    await w.find('[data-test="cancel-discard"]').trigger('click');
-    expect(w.find('[data-test="composer"]').exists()).toBe(true);
-    await w.find('[data-test="discard-draft"]').trigger('click');
     await w.find('[data-test="confirm-discard"]').trigger('click');
+    await flushPromises();
+    expect(deletions).toHaveLength(1);
+    expect(w.find('[data-test="confirm-discard"]').exists()).toBe(false);
+    expect(w.find('[data-test="cancel-discard"]').exists()).toBe(false);
+    expect(w.find('[data-test="discard-draft"]').attributes('disabled')).toBeDefined();
+
+    deleteAck.resolve();
     await flushPromises();
     expect(w.find('[data-test="composer"]').exists()).toBe(false);
     expect(await fake.listDrafts()).toEqual([]);

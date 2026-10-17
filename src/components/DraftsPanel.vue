@@ -19,8 +19,10 @@ const props = defineProps<{
   transitioning: boolean;
   deletePending: boolean;
   confirmDiscard: boolean;
+  discardBusy: boolean;
   confirmReload: boolean;
   copyPending: boolean;
+  recoveryRequired: boolean;
   canCancelReplyPreparation: boolean;
   listError: MailError | null;
   subscriptionError: MailError | null;
@@ -116,7 +118,7 @@ function describe(error: MailError): string {
         <div class="composer-actions">
           <button type="button" data-test="close-composer" :disabled="props.closing || props.transitioning || props.deleting || props.deletePending" @click="emit('closeEditor')">Close editor</button>
           <button v-if="props.canCancelReplyPreparation" type="button" data-test="cancel-reply-preparation" :disabled="props.closing || props.transitioning" @click="emit('cancelReplyPreparation')">Cancel reply preparation</button>
-          <button type="button" data-test="discard-draft" :disabled="props.closing || props.transitioning || props.deleting || props.deletePending || props.creating || props.conflict || !props.activeRef?.draftId" @click="emit('askDiscard')">Discard…</button>
+          <button type="button" data-test="discard-draft" :disabled="props.closing || props.transitioning || props.discardBusy || props.deleting || props.deletePending || props.creating || props.conflict || !props.activeRef?.draftId" @click="emit('askDiscard')">Discard…</button>
         </div>
       </header>
       <p class="draft-local-note" role="note">
@@ -144,14 +146,14 @@ function describe(error: MailError): string {
           <textarea data-test="draft-body" :value="props.content.bodyText" :disabled="fieldsDisabled()" @input="emit('setField', 'bodyText', ($event.target as HTMLTextAreaElement).value)"></textarea>
         </label>
       </div>
-      <div class="composer-actions" v-if="props.error || props.createError">
+      <div class="composer-actions" v-if="(props.error || props.createError) && !props.recoveryRequired">
         <button type="button" data-test="retry-draft-save" :disabled="props.closing || props.copyPending || props.transitioning" @click="emit('retry')">
           {{ props.deletePending ? 'Retry discard' : 'Retry save' }}
         </button>
       </div>
-      <div v-if="props.conflict || (props.error?.kind === 'not_found' && !!props.activeRef?.draftId)" class="conflict-actions" data-test="draft-conflict-actions">
-        <div v-if="props.error?.kind === 'not_found' && !props.conflict" role="alert" data-test="deleted-draft-recovery">
-          The saved draft was deleted elsewhere. Your edited buffer is preserved; save it as an independent new message or keep it here.
+      <div v-if="props.conflict || props.recoveryRequired || (props.error?.kind === 'not_found' && !!props.activeRef?.draftId)" class="conflict-actions" data-test="draft-conflict-actions">
+        <div v-if="props.recoveryRequired || (props.error?.kind === 'not_found' && !props.conflict)" role="alert" data-test="deleted-draft-recovery">
+          The saved draft or recovery copy was deleted elsewhere. Your exact buffer is preserved; save it as an independent new message or keep it here.
         </div>
         <div v-if="props.confirmReload && props.conflict" role="alertdialog" aria-label="Confirm reload">
           <p>Reload replaces this exact editor text with the saved version. Continue?</p>
@@ -163,8 +165,8 @@ function describe(error: MailError): string {
       </div>
       <div v-if="props.confirmDiscard" class="discard-confirm" role="alertdialog" aria-label="Confirm discard">
         <p>Discard this local draft? This cannot be undone.</p>
-        <button type="button" data-test="confirm-discard" @click="emit('confirmDiscard')">Confirm discard</button>
-        <button type="button" data-test="cancel-discard" @click="emit('cancelDiscard')">Keep draft</button>
+        <button type="button" data-test="confirm-discard" :disabled="props.discardBusy || props.deleting || props.deletePending" @click="emit('confirmDiscard')">Confirm discard</button>
+        <button type="button" data-test="cancel-discard" :disabled="props.deleting || props.deletePending" @click="emit('cancelDiscard')">Keep draft</button>
       </div>
     </section>
   </section>
