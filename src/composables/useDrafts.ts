@@ -298,24 +298,49 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
 
   async function sendSave(command: SaveDraft, token: number): Promise<boolean> {
     const laneToken = saveLaneGeneration;
+    const ownsSave = () => token === generation && laneToken === saveLaneGeneration && !!activeRef.value
+      && activeRef.value.accountId === command.ref.accountId && activeRef.value.draftId === command.ref.draftId
+      && accountId.value === command.ref.accountId;
     saving.value = true;
     error.value = null;
+    // Keep the exact request recoverable until both its receipt and live ref are verified.
+    retryEnvelope = command;
     const operation = (async () => {
+      let receiptReceived = false;
       try {
         const receipt = await client.saveDraft(command);
-        if (token !== generation || laneToken !== saveLaneGeneration || !activeRef.value
-          || activeRef.value.accountId !== command.ref.accountId || activeRef.value.draftId !== command.ref.draftId) return false;
-        revision.value = receipt.revision;
+        receiptReceived = true;
+        if (!ownsSave()) return false;
+        if (receipt.ref.accountId !== command.ref.accountId || receipt.ref.draftId !== command.ref.draftId) {
+          conflict.value = true;
+          error.value = { kind: 'draft_conflict', currentRevision: receipt.revision };
+          retryEnvelope = null;
+          return false;
+        }
+
+        // A deduplicated request may return its original receipt after a later save
+        // or deletion. Only the matching live revision/content acknowledges this buffer.
+        const liveDraft = await client.getDraft(command.ref);
+        if (!ownsSave()) return false;
+        if (liveDraft.ref.accountId !== command.ref.accountId || liveDraft.ref.draftId !== command.ref.draftId
+          || liveDraft.revision !== receipt.revision || !sameContent(liveDraft.content, command.content)) {
+          conflict.value = true;
+          error.value = { kind: 'draft_conflict', currentRevision: liveDraft.revision };
+          retryEnvelope = null;
+          void refresh();
+          return false;
+        }
+
+        revision.value = liveDraft.revision;
         acknowledged.value = copyContent(command.content);
         hasReceipt.value = true;
         retryEnvelope = null;
+        recoveryRequired.value = false;
         error.value = null;
         void refresh();
         return true;
       } catch (raw) {
-        if (token !== generation || laneToken !== saveLaneGeneration || !activeRef.value
-          || activeRef.value.accountId !== command.ref.accountId
-          || activeRef.value.draftId !== command.ref.draftId) return false;
+        if (!ownsSave()) return false;
         const mailError = normalizeError(raw);
         error.value = mailError;
         if (mailError.kind === 'draft_conflict') {
@@ -324,8 +349,13 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
         } else if (mailError.kind === 'invalid_request') {
           // A validation failure is definite; a corrected buffer gets a new request ID/payload.
           retryEnvelope = null;
-        } else {
-          retryEnvelope = command;
+        } else if (mailError.kind === 'not_found' && receiptReceived) {
+          // A historical receipt cannot recreate a deleted ref. Keep the exact buffer
+          // available for an explicit independent copy instead.
+          retryEnvelope = null;
+          recoveryRequired.value = true;
+          conflict.value = false;
+          void refresh();
         }
         return false;
       } finally {
