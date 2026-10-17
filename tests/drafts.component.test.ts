@@ -532,10 +532,11 @@ describe('local plain-text drafts UI', () => {
     expect((await fake.getDraft(remaining[0]!.ref)).content.bodyText).toBe('buffer survives deleted create ref');
   });
 
-  it('ignores an old-ref save rejection after installing a Save-as-new recovery copy', async () => {
+  it.each(['rejection', 'acknowledgement'] as const)('ignores an old-ref save %s after installing a Save-as-new recovery copy', async (oldOutcome) => {
     const fake = createBrowserFakeMailClient();
     const oldRetry = deferred<DraftReceipt>();
     const copyReceipt = deferred<DraftReceipt>();
+    const newSave = deferred<DraftReceipt>();
     const creates: Array<Parameters<MailClient['createDraft']>[0]> = [];
     const saves: Array<Parameters<MailClient['saveDraft']>[0]> = [];
     const client: MailClient = {
@@ -548,6 +549,7 @@ describe('local plain-text drafts UI', () => {
         saves.push(JSON.parse(JSON.stringify(command)) as Parameters<MailClient['saveDraft']>[0]);
         if (saves.length === 1) return Promise.reject({ kind: 'not_found' });
         if (saves.length === 2) return oldRetry.promise;
+        if (saves.length === 3) return newSave.promise;
         return fake.saveDraft(command);
       },
     };
@@ -560,28 +562,208 @@ describe('local plain-text drafts UI', () => {
     await flushPromises();
     expect(w.find('[data-test="deleted-draft-recovery"]').exists()).toBe(true);
 
-    await w.find('[data-test="save-as-new"]').trigger('click');
+    const copyButton = w.find('[data-test="save-as-new"]');
+    w.find('[data-test="retry-draft-save"]').element.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    copyButton.element.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await flushPromises();
+    expect(saves).toHaveLength(2);
     expect(creates).toHaveLength(2);
     await w.find('[data-test="draft-body"]').setValue('newer text for recovery copy');
     await new Promise((resolve) => setTimeout(resolve, 360));
     await flushPromises();
+    // New-ref autosave waits for the in-flight copy instead of retrying the old ref.
     expect(saves).toHaveLength(2);
     const recovered = await fake.createDraft(creates[1]!);
     copyReceipt.resolve(recovered);
+    await waitFor(() => saves.length === 3);
+    const copiedSave = saves[2]!;
+    expect(copiedSave.ref.draftId).toBe(recovered.ref.draftId);
+    const copiedReceipt = await fake.saveDraft(copiedSave);
+    newSave.resolve(copiedReceipt);
     await flushPromises();
-    expect(w.find('[data-test="draft-error"]').exists()).toBe(false);
+    expect(await fake.getDraft(recovered.ref)).toMatchObject({ revision: copiedReceipt.revision, content: { bodyText: 'newer text for recovery copy' } });
 
-    oldRetry.reject({ kind: 'not_found' });
-    await new Promise((resolve) => setTimeout(resolve, 360));
+    if (oldOutcome === 'rejection') oldRetry.reject({ kind: 'not_found' });
+    else oldRetry.resolve({ ref: original.ref, revision: original.revision + 1, savedAt: '2025-01-01T00:00:00Z' });
     await flushPromises();
     expect(w.find('[data-test="draft-error"]').exists()).toBe(false);
+    expect(w.find('[data-test="draft-status"]').text()).toBe('Saved in preview memory (non-durable)');
+    const unload = new Event('beforeunload', { cancelable: true }) as BeforeUnloadEvent;
+    window.dispatchEvent(unload);
+    expect(unload.defaultPrevented).toBe(false);
     await w.find('[data-test="close-composer"]').trigger('click');
     await flushPromises();
     expect(w.find('[data-test="composer"]').exists()).toBe(false);
     const remaining = await fake.listDrafts();
     expect(remaining).toHaveLength(1);
     expect((await fake.getDraft(remaining[0]!.ref)).content.bodyText).toBe('newer text for recovery copy');
+  });
+
+  it.each(['native close', 'editor close', 'editor switch', 'account transition'] as const)(
+    'waits for a recovery-copy receipt before %s clears or changes the editor', async (action) => {
+      const fake = createBrowserFakeMailClient();
+      if (action === 'account transition') {
+        fake.controls.setAccount({ mode: 'gmail', connection: 'connected', emailAddress: 'operator@example.test', mutationAccess: 'read_only' });
+      }
+      const source = await fake.createDraft({
+        requestId: `copy-close-${action}`,
+        source: { kind: 'new_message' },
+        initialContent: { to: '', cc: '', subject: 'valuable original', bodyText: 'only remaining exact text' },
+      });
+      const copyAck = deferred<DraftReceipt>();
+      const creates: Array<Parameters<MailClient['createDraft']>[0]> = [];
+      let disconnects = 0;
+      const client: MailClient = {
+        ...fake,
+        createDraft: (command) => {
+          creates.push(JSON.parse(JSON.stringify(command)) as Parameters<MailClient['createDraft']>[0]);
+          return creates.length === 1 ? copyAck.promise : fake.createDraft(command);
+        },
+        disconnectAccount: async () => { disconnects += 1; await fake.disconnectAccount(); },
+      };
+      const w = await mountApp(fake, client);
+      await w.find(`[data-test="open-draft-${source.ref.draftId}"]`).trigger('click');
+      await flushPromises();
+      await fake.deleteDraft({ ref: source.ref, expectedRevision: source.revision, requestId: `copy-delete-${action}` });
+      await w.find('[data-test="discard-draft"]').trigger('click');
+      await w.find('[data-test="confirm-discard"]').trigger('click');
+      await flushPromises();
+      expect(w.find('[data-test="deleted-draft-recovery"]').exists()).toBe(true);
+      await w.find('[data-test="save-as-new"]').trigger('click');
+      await flushPromises();
+      expect(creates).toHaveLength(1);
+
+      if (action === 'native close') {
+        fake.controls.requestAppClose();
+      } else if (action === 'editor close') {
+        await w.find('[data-test="close-composer"]').trigger('click');
+      } else if (action === 'editor switch') {
+        await w.find('[data-test="new-draft"]').trigger('click');
+      } else {
+        await w.find('[data-test="account-disconnect"]').trigger('click');
+      }
+      await flushPromises();
+      expect(w.find('[data-test="composer"]').exists()).toBe(true);
+      expect((w.find('[data-test="draft-body"]').element as HTMLTextAreaElement).value).toBe('only remaining exact text');
+      const unloadWhileCopyPending = new Event('beforeunload', { cancelable: true }) as BeforeUnloadEvent;
+      window.dispatchEvent(unloadWhileCopyPending);
+      expect(unloadWhileCopyPending.defaultPrevented).toBe(true);
+      expect(fake.controls.completedCloseCount()).toBe(0);
+      expect(disconnects).toBe(0);
+      expect(creates).toHaveLength(1);
+
+      const copied = await fake.createDraft(creates[0]!);
+      copyAck.resolve(copied);
+      if (action === 'native close') await waitFor(() => fake.controls.completedCloseCount() === 1);
+      else if (action === 'account transition') await waitFor(() => w.find('[data-test="account-connect"]').exists());
+      else if (action === 'editor switch') await waitFor(() => creates.length === 2 && w.find('[data-test="composer"]').exists());
+      else await waitFor(() => !w.find('[data-test="composer"]').exists());
+
+      if (action === 'account transition') {
+        expect(disconnects).toBe(1);
+        await w.find('[data-test="account-connect"]').trigger('click');
+        await flushPromises();
+        await waitFor(() => w.find(`[data-test="open-draft-${copied.ref.draftId}"]`).exists());
+      }
+      expect(await fake.getDraft(copied.ref)).toMatchObject({ content: { subject: 'valuable original', bodyText: 'only remaining exact text' } });
+      if (action === 'editor switch') expect(creates[1]?.initialContent).toEqual({ to: '', cc: '', subject: '', bodyText: '' });
+    },
+  );
+
+  it('does not complete native close until the newest edits are saved to the accepted recovery copy', async () => {
+    const fake = createBrowserFakeMailClient();
+    const source = await fake.createDraft({
+      requestId: 'copy-close-latest-seed',
+      source: { kind: 'new_message' },
+      initialContent: { to: '', cc: '', subject: 'copy snapshot', bodyText: 'before latest edit' },
+    });
+    const copyAck = deferred<DraftReceipt>();
+    const saveAck = deferred<DraftReceipt>();
+    const creates: Array<Parameters<MailClient['createDraft']>[0]> = [];
+    const saves: Array<Parameters<MailClient['saveDraft']>[0]> = [];
+    const client: MailClient = {
+      ...fake,
+      createDraft: (command) => { creates.push(command); return copyAck.promise; },
+      saveDraft: (command) => {
+        saves.push(command);
+        return saves.length === 1 ? Promise.reject({ kind: 'not_found' }) : saveAck.promise;
+      },
+    };
+    const w = await mountApp(fake, client);
+    await w.find(`[data-test="open-draft-${source.ref.draftId}"]`).trigger('click');
+    await flushPromises();
+    await fake.deleteDraft({ ref: source.ref, expectedRevision: source.revision, requestId: 'copy-close-latest-delete' });
+    await w.find('[data-test="draft-body"]').setValue('newest exact buffer');
+    await w.find('[data-test="close-composer"]').trigger('click');
+    await flushPromises();
+    await w.find('[data-test="save-as-new"]').trigger('click');
+    await flushPromises();
+    await w.find('[data-test="draft-body"]').setValue('latest accepted buffer');
+
+    fake.controls.requestAppClose();
+    await flushPromises();
+    const recovered = await fake.createDraft(creates[0]!);
+    copyAck.resolve(recovered);
+    await waitFor(() => saves.length === 2);
+    expect(saves[1]?.ref).toEqual(recovered.ref);
+    expect(saves[1]?.content.bodyText).toBe('latest accepted buffer');
+    expect(fake.controls.completedCloseCount()).toBe(0);
+
+    const saveReceipt = await fake.saveDraft(saves[1]!);
+    saveAck.resolve(saveReceipt);
+    await waitFor(() => fake.controls.completedCloseCount() === 1);
+    expect(await fake.getDraft(recovered.ref)).toMatchObject({ revision: saveReceipt.revision, content: { bodyText: 'latest accepted buffer' } });
+  });
+
+  it('cancels native close on a failed recovery copy and retries the identical request before completing', async () => {
+    const fake = createBrowserFakeMailClient();
+    const source = await fake.createDraft({
+      requestId: 'copy-close-retry-seed',
+      source: { kind: 'new_message' },
+      initialContent: { to: '', cc: '', subject: 'keep me', bodyText: 'exact text survives' },
+    });
+    const firstCopy = deferred<DraftReceipt>();
+    const secondCopy = deferred<DraftReceipt>();
+    const commands: Array<Parameters<MailClient['createDraft']>[0]> = [];
+    const client: MailClient = {
+      ...fake,
+      createDraft: (command) => {
+        commands.push(JSON.parse(JSON.stringify(command)) as Parameters<MailClient['createDraft']>[0]);
+        return commands.length === 1 ? firstCopy.promise : secondCopy.promise;
+      },
+    };
+    const w = await mountApp(fake, client);
+    await w.find(`[data-test="open-draft-${source.ref.draftId}"]`).trigger('click');
+    await flushPromises();
+    await fake.deleteDraft({ ref: source.ref, expectedRevision: source.revision, requestId: 'copy-close-retry-delete' });
+    await w.find('[data-test="discard-draft"]').trigger('click');
+    await w.find('[data-test="confirm-discard"]').trigger('click');
+    await flushPromises();
+    await w.find('[data-test="save-as-new"]').trigger('click');
+    await flushPromises();
+
+    fake.controls.requestAppClose();
+    await flushPromises();
+    expect(fake.controls.completedCloseCount()).toBe(0);
+    firstCopy.reject({ kind: 'storage_unavailable' });
+    await waitFor(() => fake.controls.pendingAppClose() === null);
+    expect(fake.controls.completedCloseCount()).toBe(0);
+    const unloadWhileCopyRetryRetained = new Event('beforeunload', { cancelable: true }) as BeforeUnloadEvent;
+    window.dispatchEvent(unloadWhileCopyRetryRetained);
+    expect(unloadWhileCopyRetryRetained.defaultPrevented).toBe(true);
+    expect(w.find('[data-test="composer"]').exists()).toBe(true);
+    expect((w.find('[data-test="draft-body"]').element as HTMLTextAreaElement).value).toBe('exact text survives');
+
+    fake.controls.requestAppClose();
+    await flushPromises();
+    expect(commands).toHaveLength(2);
+    expect(commands[1]).toEqual(commands[0]);
+    const recovered = await fake.createDraft(commands[1]!);
+    secondCopy.resolve(recovered);
+    await waitFor(() => fake.controls.completedCloseCount() === 1);
+    expect(await fake.getDraft(recovered.ref)).toMatchObject({ content: { subject: 'keep me', bodyText: 'exact text survives' } });
+    // Browser preview acknowledges the close protocol but does not actually close its window.
+    expect(w.find('[data-test="composer"]').exists()).toBe(true);
   });
 
   it('keeps Save-as-new validation correction enabled for sequential input edits', async () => {
