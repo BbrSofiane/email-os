@@ -7,6 +7,7 @@
 //! beyond the synthetic fixture account. See `docs/vertical-slice-01.md`.
 
 pub mod clock;
+pub mod drafts;
 pub mod dto;
 pub mod error;
 pub mod gmail;
@@ -31,6 +32,8 @@ use worker::{Notify, WorkerSignal};
 
 /// The single synthetic fixture account.
 pub const ACCOUNT_ID: &str = "fixture-account";
+/// The fixture's primary mailbox, shared by reader/reply/account metadata.
+pub const FIXTURE_MAILBOX: &str = "you@fixture.emailos";
 
 /// Generous shutdown budget; a paused fake provider is cancelled long before
 /// this expires. If the join still times out the thread detaches, and the

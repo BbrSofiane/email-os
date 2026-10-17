@@ -124,7 +124,7 @@ describe('browser fake MailClient (Slice 02 account lifecycle)', () => {
     const status = await fake.getAccountStatus();
     expect(status.mode).toBe('fixture');
     expect(status.connection).toBe('connected');
-    expect(status.account).toEqual({ accountId: 'fixture-account', emailAddress: 'fixture@example.test' });
+    expect(status.account).toEqual({ accountId: 'fixture-account', emailAddress: 'you@fixture.emailos' });
     expect(status.sync).toMatchObject({ state: 'idle', error: null, cachedConversations: 18, initialSyncComplete: true, coverageLimit: 0 });
   });
 

@@ -18,6 +18,7 @@ const props = defineProps<{
   status: AccountStatus;
   /** Transient in-flight lifecycle action, if any. */
   busy: AccountAction | null;
+  transitioning?: boolean;
   actionError?: MailError | null;
 }>();
 
@@ -169,7 +170,7 @@ const showConnect = (): boolean =>
       {{ props.busy === 'cancel-upgrade' ? 'Canceling permission request…' : 'Cancel permission upgrade' }}
     </button>
     <p class="account-disconnect-warning" data-test="disconnect-warning" role="note">
-      Disconnect removes local pending actions and cached data. It does not undo confirmed Gmail changes or revoke Google's grant.
+      Disconnect removes local pending actions and mail cache, but local drafts remain on this device and are accessible after reconnecting the same account. It does not undo confirmed Gmail changes or revoke Google's grant.
     </p>
     <p v-if="props.status.connection === 'not_configured'" class="account-notice" data-test="account-not-configured" role="note">
       Gmail is not configured on this device: no Google client credentials were found, so connecting is unavailable.
@@ -200,7 +201,7 @@ const showConnect = (): boolean =>
         v-if="showConnect()"
         type="button"
         data-test="account-connect"
-        :disabled="props.busy !== null"
+        :disabled="props.busy !== null || props.transitioning"
         @click="emit('connect')"
       >
         {{ props.status.connection === 'auth_required' ? 'Sign in again' : 'Connect' }}
@@ -209,7 +210,7 @@ const showConnect = (): boolean =>
         v-if="props.status.account !== null || props.status.connection === 'auth_required' || props.status.connection === 'authenticating'"
         type="button"
         data-test="account-disconnect"
-        :disabled="props.busy !== null"
+        :disabled="props.busy !== null || props.transitioning"
         @click="emit('disconnect')"
       >
         {{ props.status.connection === 'authenticating' ? 'Cancel sign-in' : 'Disconnect' }}
