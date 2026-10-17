@@ -3,11 +3,19 @@ use crate::drafts::types::ReplyContext;
 use crate::gmail::types::{GmailHistoryError, GmailProfile, HistoryPage, InboxPage};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+type ReplyReadHook = Arc<dyn Fn(&CancelToken) + Send + Sync>;
+
 struct ReplyReadProvider {
     thread: Mutex<GmailThread>,
     error: Mutex<Option<MailError>>,
     get_thread_calls: AtomicUsize,
+    active_provider_reads: AtomicUsize,
+    configured: std::sync::atomic::AtomicBool,
+    credentials: std::sync::atomic::AtomicBool,
+    disconnect_calls: AtomicUsize,
+    premature_disconnect: std::sync::atomic::AtomicBool,
     on_get_thread: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    on_get_thread_cancel: Mutex<Option<ReplyReadHook>>,
 }
 
 impl ReplyReadProvider {
@@ -16,18 +24,24 @@ impl ReplyReadProvider {
             thread: Mutex::new(thread),
             error: Mutex::new(None),
             get_thread_calls: AtomicUsize::new(0),
+            active_provider_reads: AtomicUsize::new(0),
+            configured: std::sync::atomic::AtomicBool::new(false),
+            credentials: std::sync::atomic::AtomicBool::new(false),
+            disconnect_calls: AtomicUsize::new(0),
+            premature_disconnect: std::sync::atomic::AtomicBool::new(false),
             on_get_thread: Mutex::new(None),
+            on_get_thread_cancel: Mutex::new(None),
         }
     }
 }
 
 impl GmailReadProvider for ReplyReadProvider {
     fn is_configured(&self) -> bool {
-        false
+        self.configured.load(Ordering::SeqCst)
     }
 
     fn has_credentials(&self) -> Result<bool, MailError> {
-        Ok(false)
+        Ok(self.credentials.load(Ordering::SeqCst))
     }
 
     fn connect(&self, _cancel: &CancelToken) -> Result<GmailProfile, MailError> {
@@ -35,6 +49,11 @@ impl GmailReadProvider for ReplyReadProvider {
     }
 
     fn disconnect(&self) -> Result<(), MailError> {
+        self.disconnect_calls.fetch_add(1, Ordering::SeqCst);
+        if self.active_provider_reads.load(Ordering::SeqCst) != 0 {
+            self.premature_disconnect.store(true, Ordering::SeqCst);
+        }
+        self.credentials.store(false, Ordering::SeqCst);
         Ok(())
     }
 
@@ -56,17 +75,26 @@ impl GmailReadProvider for ReplyReadProvider {
     fn get_thread(
         &self,
         _thread_id: &str,
-        _cancel: &CancelToken,
+        cancel: &CancelToken,
     ) -> Result<Option<GmailThread>, MailError> {
         self.get_thread_calls.fetch_add(1, Ordering::SeqCst);
-        let hook = self.on_get_thread.lock().unwrap().clone();
-        if let Some(hook) = hook {
-            hook();
-        }
-        if let Some(error) = self.error.lock().unwrap().clone() {
-            return Err(error);
-        }
-        Ok(Some(self.thread.lock().unwrap().clone()))
+        self.active_provider_reads.fetch_add(1, Ordering::SeqCst);
+        let result = (|| {
+            let cancel_hook = self.on_get_thread_cancel.lock().unwrap().clone();
+            if let Some(hook) = cancel_hook {
+                hook(cancel);
+            }
+            let hook = self.on_get_thread.lock().unwrap().clone();
+            if let Some(hook) = hook {
+                hook();
+            }
+            if let Some(error) = self.error.lock().unwrap().clone() {
+                return Err(error);
+            }
+            Ok(Some(self.thread.lock().unwrap().clone()))
+        })();
+        self.active_provider_reads.fetch_sub(1, Ordering::SeqCst);
+        result
     }
 
     fn history(
@@ -342,6 +370,16 @@ fn provider_error_and_generation_source_account_races_leave_no_metadata_write() 
         core.inner.store.cursor().expect("cursor after error"),
         cursor_before
     );
+    assert!(core
+        .inner
+        .ctrl
+        .state
+        .lock()
+        .unwrap()
+        .reply_enrichments
+        .is_empty());
+    core.disconnect_account()
+        .expect("provider error releases enrichment admission");
     close(core, dir);
 
     for (tag, race) in [
@@ -395,6 +433,238 @@ fn provider_error_and_generation_source_account_races_leave_no_metadata_write() 
         } else {
             assert_eq!(core.inner.store.account().unwrap(), None);
         }
+        close(core, dir);
+    }
+}
+
+mod enrichment_lifecycle_tests {
+    use super::*;
+    use std::sync::Barrier;
+    use std::time::Duration;
+
+    struct ReadBarriers {
+        entered: Arc<Barrier>,
+        cancelled: Arc<Barrier>,
+        release: Arc<Barrier>,
+        cancel_observed: std::sync::mpsc::Receiver<bool>,
+    }
+
+    fn block_refresh_after_cancel(
+        provider: &Arc<ReplyReadProvider>,
+        concurrent_reads: usize,
+    ) -> ReadBarriers {
+        let entered = Arc::new(Barrier::new(concurrent_reads + 1));
+        let cancelled = Arc::new(Barrier::new(concurrent_reads + 1));
+        let release = Arc::new(Barrier::new(concurrent_reads + 1));
+        let (cancel_tx, cancel_observed) = std::sync::mpsc::channel();
+        let entered_hook = Arc::clone(&entered);
+        let cancelled_hook = Arc::clone(&cancelled);
+        let release_hook = Arc::clone(&release);
+        let publishes_credentials = Arc::clone(provider);
+        *provider.on_get_thread_cancel.lock().unwrap() = Some(Arc::new(move |cancel| {
+            entered_hook.wait();
+            let observed = cancel.wait_until_cancelled(Duration::from_secs(10));
+            cancel_tx
+                .send(observed)
+                .expect("test receiver remains open");
+            cancelled_hook.wait();
+            release_hook.wait();
+            // Model a refresh response that commits credentials after the
+            // caller was cancelled; cancellation cannot be trusted as a join.
+            publishes_credentials
+                .credentials
+                .store(true, Ordering::SeqCst);
+        }));
+        ReadBarriers {
+            entered,
+            cancelled,
+            release,
+            cancel_observed,
+        }
+    }
+
+    #[test]
+    fn disconnect_cancels_and_drains_every_independent_reply_enrichment() {
+        let (core, provider, dir, target) = setup(
+            "disconnect-drains",
+            None,
+            Some(reply_context("m-latest")),
+            true,
+            true,
+        );
+        provider.configured.store(true, Ordering::SeqCst);
+        let read_count = 2;
+        let barriers = block_refresh_after_cancel(&provider, read_count);
+        let mut reads = Vec::new();
+        for _ in 0..read_count {
+            let reader = core.clone();
+            let target = target.clone();
+            reads.push(std::thread::spawn(move || {
+                reader.load_reply_context(&target, "m-latest")
+            }));
+        }
+        barriers.entered.wait();
+
+        let disconnector = core.clone();
+        let (disconnect_tx, disconnect_rx) = std::sync::mpsc::channel();
+        let disconnect = std::thread::spawn(move || {
+            disconnect_tx
+                .send(disconnector.disconnect_account())
+                .expect("disconnect receiver remains open");
+        });
+        for _ in 0..read_count {
+            assert!(barriers
+                .cancel_observed
+                .recv_timeout(Duration::from_secs(2))
+                .expect("disconnect cancels each registered read"));
+        }
+        barriers.cancelled.wait();
+        assert_eq!(
+            core.load_reply_context(&target, "m-latest"),
+            Err(MailError::Busy),
+            "disconnect's admission barrier rejects another enrichment"
+        );
+        assert_eq!(provider.disconnect_calls.load(Ordering::SeqCst), 0);
+        assert!(!provider.credentials.load(Ordering::SeqCst));
+
+        barriers.release.wait();
+        for read in reads {
+            assert_eq!(
+                read.join().expect("reply read thread completes"),
+                Err(MailError::ReplyUnavailable)
+            );
+        }
+        disconnect_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("disconnect drains the reads")
+            .expect("disconnect succeeds after drain");
+        disconnect.join().expect("disconnect thread completes");
+        assert!(!provider.premature_disconnect.load(Ordering::SeqCst));
+        assert!(!provider.credentials.load(Ordering::SeqCst));
+        assert_eq!(provider.disconnect_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(core.inner.store.account().unwrap(), None);
+        assert!(core
+            .inner
+            .ctrl
+            .state
+            .lock()
+            .unwrap()
+            .reply_enrichments
+            .is_empty());
+
+        core.stop();
+        drop(core);
+        let reopened = GmailCore::open(&dir, Arc::clone(&provider) as Arc<dyn GmailReadProvider>)
+            .expect("profile reopens after disconnect");
+        assert_eq!(reopened.account_status().unwrap().account, None);
+        assert_eq!(
+            reopened.account_status().unwrap().connection,
+            ConnectionState::Disconnected
+        );
+        reopened.stop();
+        drop(reopened);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn disconnect_timeout_fails_closed_until_enrichment_finishes() {
+        let (core, provider, dir, target) = setup(
+            "disconnect-timeout",
+            None,
+            Some(reply_context("m-latest")),
+            true,
+            true,
+        );
+        provider.configured.store(true, Ordering::SeqCst);
+        let barriers = block_refresh_after_cancel(&provider, 1);
+        let reader = core.clone();
+        let target_for_read = target.clone();
+        let read =
+            std::thread::spawn(move || reader.load_reply_context(&target_for_read, "m-latest"));
+        barriers.entered.wait();
+
+        let disconnector = core.clone();
+        let (disconnect_tx, disconnect_rx) = std::sync::mpsc::channel();
+        let disconnect = std::thread::spawn(move || {
+            disconnect_tx
+                .send(disconnector.disconnect_account())
+                .expect("disconnect receiver remains open");
+        });
+        assert!(barriers
+            .cancel_observed
+            .recv_timeout(Duration::from_secs(2))
+            .expect("disconnect cancellation is observed"));
+        barriers.cancelled.wait();
+        let timed_out = disconnect_rx
+            .recv_timeout(Duration::from_secs(7))
+            .expect("disconnect returns on its bounded timeout");
+        assert_eq!(timed_out, Err(MailError::Busy));
+        disconnect.join().expect("disconnect thread completes");
+        assert_eq!(provider.disconnect_calls.load(Ordering::SeqCst), 0);
+        assert!(!provider.premature_disconnect.load(Ordering::SeqCst));
+        assert_eq!(
+            core.inner
+                .store
+                .account()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .account_id,
+            "acct-reply"
+        );
+
+        barriers.release.wait();
+        assert_eq!(
+            read.join().expect("reply read finishes after release"),
+            Err(MailError::ReplyUnavailable)
+        );
+        assert!(provider.credentials.load(Ordering::SeqCst));
+        core.disconnect_account()
+            .expect("retry succeeds after the timed-out read drained");
+        assert!(!provider.credentials.load(Ordering::SeqCst));
+        assert_eq!(core.inner.store.account().unwrap(), None);
+        core.stop();
+        drop(core);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn stop_cancels_and_drains_active_enrichment_and_rejects_new_admissions() {
+        let (core, provider, dir, target) = setup(
+            "stop-admission",
+            None,
+            Some(reply_context("m-latest")),
+            true,
+            true,
+        );
+        let barriers = block_refresh_after_cancel(&provider, 1);
+        let reader = core.clone();
+        let target_for_read = target.clone();
+        let read =
+            std::thread::spawn(move || reader.load_reply_context(&target_for_read, "m-latest"));
+        barriers.entered.wait();
+
+        let stopper = core.clone();
+        let (stop_tx, stop_rx) = std::sync::mpsc::channel();
+        let stop = std::thread::spawn(move || {
+            stopper.stop();
+            stop_tx.send(()).expect("stop receiver remains open");
+        });
+        assert!(barriers
+            .cancel_observed
+            .recv_timeout(Duration::from_secs(2))
+            .expect("stop cancellation is observed"));
+        barriers.cancelled.wait();
+        assert_eq!(
+            core.load_reply_context(&target, "m-latest"),
+            Err(MailError::StorageUnavailable)
+        );
+        barriers.release.wait();
+        assert!(read.join().expect("reply read finishes").is_ok());
+        stop_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("stop drains its active read");
+        stop.join().expect("stop thread completes");
         close(core, dir);
     }
 }

@@ -75,7 +75,7 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
   const canCancelReplyPreparation = computed(() => !!activeRef.value && !activeRef.value.draftId
     && activeSource.value?.kind === 'reply' && !hasReceipt.value && !dirty.value
     && !saving.value && !deleting.value && !copyPending.value);
-  const hasUnsavedWork = computed(() => creating.value || saving.value || deleting.value || deletePending.value || copyPending.value || dirty.value || !!retryEnvelope || !!createEnvelope);
+  const hasUnsavedWork = computed(() => creating.value || saving.value || deleting.value || deletePending.value || copyPending.value || !!copyRetryEnvelope.value || dirty.value || !!retryEnvelope || !!createEnvelope);
   const statusLabel = computed(() => {
     if (conflict.value) return 'Conflict — edits preserved';
     if (error.value || createError.value) return 'Save not confirmed';
@@ -88,6 +88,7 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
 
   let listToken = 0;
   let generation = 0;
+  let saveLaneGeneration = 0;
   let reloadAttempt = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let unsubscribeDrafts: (() => void) | null = null;
@@ -96,9 +97,12 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
   let listSubscriptionAttempt: Promise<void> | null = null;
   let closeSubscriptionAttempt: Promise<void> | null = null;
   let inFlight: Promise<boolean> | null = null;
+  let flushPromise: Promise<boolean> | null = null;
+  let flushOwner: { generation: number; lane: number } | null = null;
   let retryEnvelope: SaveDraft | null = null;
   let createEnvelope: CreateDraft | null = null;
   let copyRetryOwner: { generation: number; accountId: string; draftId: string } | null = null;
+  let copyPromise: Promise<boolean> | null = null;
   let deleteRetryEnvelope: DeleteDraft | null = null;
   let deletePromise: Promise<boolean> | null = null;
   let createPromise: Promise<boolean> | null = null;
@@ -113,6 +117,7 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
 
   function clearEditor(): void {
     generation += 1;
+    saveLaneGeneration += 1;
     reloadAttempt += 1;
     clearTimer();
     activeRef.value = null;
@@ -134,6 +139,9 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
     copyRetryEnvelope.value = null;
     copyRetryOwner = null;
     copyPending.value = false;
+    copyPromise = null;
+    flushPromise = null;
+    flushOwner = null;
     deleteRetryEnvelope = null;
     deletePending.value = false;
     deletePromise = null;
@@ -272,12 +280,14 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
   }
 
   async function sendSave(command: SaveDraft, token: number): Promise<boolean> {
+    const laneToken = saveLaneGeneration;
     saving.value = true;
     error.value = null;
     const operation = (async () => {
       try {
         const receipt = await client.saveDraft(command);
-        if (token !== generation || !activeRef.value || activeRef.value.accountId !== command.ref.accountId || activeRef.value.draftId !== command.ref.draftId) return false;
+        if (token !== generation || laneToken !== saveLaneGeneration || !activeRef.value
+          || activeRef.value.accountId !== command.ref.accountId || activeRef.value.draftId !== command.ref.draftId) return false;
         revision.value = receipt.revision;
         acknowledged.value = copyContent(command.content);
         hasReceipt.value = true;
@@ -286,7 +296,7 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
         void refresh();
         return true;
       } catch (raw) {
-        if (token !== generation || !activeRef.value
+        if (token !== generation || laneToken !== saveLaneGeneration || !activeRef.value
           || activeRef.value.accountId !== command.ref.accountId
           || activeRef.value.draftId !== command.ref.draftId) return false;
         const mailError = normalizeError(raw);
@@ -302,7 +312,8 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
         }
         return false;
       } finally {
-        if (token === generation && activeRef.value?.accountId === command.ref.accountId
+        if (token === generation && laneToken === saveLaneGeneration
+          && activeRef.value?.accountId === command.ref.accountId
           && activeRef.value.draftId === command.ref.draftId) saving.value = false;
       }
     })();
@@ -313,12 +324,40 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
   }
 
   async function flush(): Promise<boolean> {
+    const owner = { generation, lane: saveLaneGeneration };
+    if (flushPromise && flushOwner?.generation === owner.generation && flushOwner.lane === owner.lane) return flushPromise;
+    const operation = flushWork();
+    flushPromise = operation;
+    flushOwner = owner;
+    try {
+      return await operation;
+    } finally {
+      if (flushPromise === operation) {
+        flushPromise = null;
+        flushOwner = null;
+      }
+    }
+  }
+
+  async function flushWork(): Promise<boolean> {
     clearTimer();
-    const token = generation;
+    let token = generation;
     if (deletePromise) return deletePromise;
     if (deleteRetryEnvelope) return sendDelete(deleteRetryEnvelope);
     if (!activeRef.value) return true;
-    if (activeRef.value.accountId !== accountId.value && (dirty.value || creating.value || saving.value || !!retryEnvelope || !!createEnvelope)) return false;
+    if (activeRef.value.accountId !== accountId.value && (dirty.value || creating.value || saving.value || copyPending.value
+      || !!copyRetryEnvelope.value || !!retryEnvelope || !!createEnvelope)) return false;
+
+    // A recovery copy is an accepted save intent even while its create ACK is
+    // pending or ambiguous. Reconcile that exact request before changing editors
+    // or treating an unchanged original buffer as clean.
+    if (copyPending.value || copyRetryEnvelope.value || copyPromise) {
+      if (!(await ensureRecoveryCopy(true))) return false;
+      if (!activeRef.value || activeRef.value.accountId !== accountId.value) return false;
+      // Installing the acknowledged copy starts a new save lane for its ref.
+      token = generation;
+    }
+
     if (conflict.value || deleting.value) return false;
     if (!activeRef.value.draftId && activeSource.value?.kind === 'reply' && !createEnvelope
       && ['reply_unavailable', 'not_found'].includes(createError.value?.kind ?? '')) return true;
@@ -336,7 +375,11 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
     for (;;) {
       if (token !== generation || !activeRef.value) return false;
       if (inFlight) {
-        if (!(await inFlight)) return false;
+        const waitingLane = saveLaneGeneration;
+        const result = await inFlight;
+        if (token !== generation || !activeRef.value) return false;
+        if (waitingLane !== saveLaneGeneration) continue;
+        if (!result) return false;
         continue;
       }
       if (!activeRef.value) return false;
@@ -475,13 +518,79 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
     }
   }
 
+  async function ensureRecoveryCopy(allowTransition: boolean): Promise<boolean> {
+    if (copyPromise) return copyPromise;
+    const command = copyRetryEnvelope.value;
+    const owner = copyRetryOwner;
+    if (!command || !owner || !activeRef.value || activeRef.value.accountId !== accountId.value
+      || owner.generation !== generation || owner.accountId !== activeRef.value.accountId
+      || owner.draftId !== activeRef.value.draftId || (transitioning.value && !allowTransition)) return false;
+
+    const originalToken = generation;
+    const originalAccountId = activeRef.value.accountId;
+    copyPending.value = true;
+    const operation = (async () => {
+      try {
+        const receipt = await client.createDraft(command);
+        if (originalToken !== generation) return false;
+        if (accountId.value !== originalAccountId || receipt.ref.accountId !== originalAccountId) {
+          error.value = { kind: 'auth_required' };
+          return false;
+        }
+        const latestBuffer = copyContent(content.value);
+        // Retire the old ref's save generation as the accepted copy becomes active:
+        // delayed ACKs/rejections from that lane must not govern this new ref.
+        saveLaneGeneration += 1;
+        clearTimer();
+        inFlight = null;
+        saving.value = false;
+        retryEnvelope = null;
+        activeRef.value = { ...receipt.ref };
+        activeSource.value = { kind: 'new_message' };
+        revision.value = receipt.revision;
+        acknowledged.value = copyContent(command.initialContent ?? EMPTY_CONTENT);
+        hasReceipt.value = true;
+        conflict.value = false;
+        error.value = null;
+        createError.value = null;
+        copyRetryEnvelope.value = null;
+        copyRetryOwner = null;
+        copyPending.value = false;
+        void refresh();
+        if (!sameContent(latestBuffer, acknowledged.value)) scheduleSave();
+        return true;
+      } catch (raw) {
+        if (originalToken === generation) {
+          const mailError = normalizeError(raw);
+          error.value = mailError;
+          if (['invalid_request', 'request_id_conflict'].includes(mailError.kind)) {
+            copyRetryEnvelope.value = null;
+            copyRetryOwner = null;
+          }
+        }
+        return false;
+      } finally {
+        if (originalToken === generation) copyPending.value = false;
+      }
+    })();
+    copyPromise = operation;
+    try {
+      return await operation;
+    } finally {
+      if (copyPromise === operation) copyPromise = null;
+    }
+  }
+
   async function saveAsNew(): Promise<boolean> {
     const recoverableMissingDraft = error.value?.kind === 'not_found' && !!activeRef.value?.draftId;
-    if (!activeRef.value || activeRef.value.accountId !== accountId.value || transitioning.value || !(conflict.value || recoverableMissingDraft || copyRetryEnvelope.value)) return false;
+    const outstandingRecoverySave = !!activeRef.value?.draftId && (!!retryEnvelope || !!inFlight);
+    if (!activeRef.value || activeRef.value.accountId !== accountId.value || transitioning.value
+      || !(conflict.value || recoverableMissingDraft || copyRetryEnvelope.value || copyPromise || outstandingRecoverySave)) return false;
     // The user's copy choice wins over an outstanding reload read; that response
     // must not replace the payload being copied or overwrite the installed copy.
     reloadAttempt += 1;
     confirmReload.value = false;
+    if (copyPromise) return copyPromise;
     if (copyRetryEnvelope.value && (!copyRetryOwner
       || copyRetryOwner.generation !== generation
       || copyRetryOwner.accountId !== activeRef.value.accountId
@@ -501,44 +610,7 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
         draftId: activeRef.value.draftId,
       };
     }
-    const command = copyRetryEnvelope.value;
-    const originalToken = generation;
-    const originalAccountId = activeRef.value.accountId;
-    copyPending.value = true;
-    try {
-      const receipt = await client.createDraft(command);
-      if (originalToken !== generation) return false;
-      if (accountId.value !== originalAccountId || receipt.ref.accountId !== originalAccountId) {
-        error.value = { kind: 'auth_required' };
-        return false;
-      }
-      const latestBuffer = copyContent(content.value);
-      activeRef.value = { ...receipt.ref };
-      activeSource.value = { kind: 'new_message' };
-      revision.value = receipt.revision;
-      acknowledged.value = copyContent(command.initialContent ?? EMPTY_CONTENT);
-      hasReceipt.value = true;
-      retryEnvelope = null;
-      conflict.value = false;
-      error.value = null;
-      createError.value = null;
-      copyRetryEnvelope.value = null;
-      copyRetryOwner = null;
-      void refresh();
-      if (!sameContent(latestBuffer, acknowledged.value)) scheduleSave();
-      return true;
-    } catch (raw) {
-      if (originalToken === generation) {
-        error.value = normalizeError(raw);
-        if (['invalid_request', 'request_id_conflict'].includes(normalizeError(raw).kind)) {
-          copyRetryEnvelope.value = null;
-          copyRetryOwner = null;
-        }
-      }
-      return false;
-    } finally {
-      if (originalToken === generation) copyPending.value = false;
-    }
+    return ensureRecoveryCopy(false);
   }
 
   async function sendDelete(command: DeleteDraft): Promise<boolean> {
