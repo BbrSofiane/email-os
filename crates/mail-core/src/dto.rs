@@ -121,6 +121,10 @@ pub struct Conversation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub retained_snapshot_at: Option<String>,
+    /// Cached reply headers; absence never permits inferred recipients/threading.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reply_context: Option<crate::drafts::types::ReplyContext>,
     /// Newest queued/applying operation id, if any.
     pub pending_operation_id: Option<String>,
 }

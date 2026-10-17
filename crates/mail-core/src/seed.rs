@@ -21,7 +21,7 @@ pub(crate) struct SeedConversation {
     pub messages: &'static [SeedMessage],
 }
 
-const ME: Participant = ("You", "you@fixture.emailos");
+const ME: Participant = ("You", crate::FIXTURE_MAILBOX);
 
 const INBOX_ANA: Participant = ("Ana Ridpath", "ana@ridpath.example");
 const INBOX_BORIS: Participant = ("Boris Chen", "boris@plumbing.example");

@@ -60,6 +60,7 @@ fn sample_thread() -> GmailThread {
             context_complete: Some(false),
             unsupported_reason: Some("unsupported second body".to_string()),
             retained_snapshot_at: None,
+            reply_context: None,
             pending_operation_id: None,
         },
         inbox_message_ids: vec!["m-1".to_string(), "m-2".to_string()],
