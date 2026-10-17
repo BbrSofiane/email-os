@@ -50,6 +50,13 @@ pub enum MailError {
     ProviderRejected,
     #[error("the remote outcome is uncertain and must be reconciled")]
     OutcomeUnknown,
+    #[error("draft revision conflict; current revision is {current_revision}")]
+    DraftConflict {
+        #[serde(rename = "currentRevision")]
+        current_revision: u32,
+    },
+    #[error("complete and safe reply context is unavailable")]
+    ReplyUnavailable,
 }
 
 /// Fake-provider outcome. `Cancelled` is not a failure: the operation stays

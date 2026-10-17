@@ -48,7 +48,7 @@ impl Backend {
                 connection: mail_core::gmail::types::ConnectionState::Connected,
                 account: Some(AccountInfo {
                     account_id: ACCOUNT_ID.to_owned(),
-                    email_address: "fixture@example.test".to_owned(),
+                    email_address: mail_core::FIXTURE_MAILBOX.to_owned(),
                 }),
                 sync: SyncInfo {
                     state: SyncState::Idle,

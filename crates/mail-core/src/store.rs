@@ -406,6 +406,7 @@ impl Store {
             context_complete: None,
             unsupported_reason: None,
             retained_snapshot_at: None,
+            reply_context: None,
         })
     }
 

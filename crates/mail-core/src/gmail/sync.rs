@@ -1525,6 +1525,7 @@ mod worker_halt_tests {
                 context_complete: Some(true),
                 unsupported_reason: None,
                 retained_snapshot_at: None,
+                reply_context: None,
                 pending_operation_id: None,
             },
             inbox_message_ids: vec!["message-1".to_string()],

@@ -529,6 +529,7 @@ impl GmailStore {
             context_complete: recovered.context_complete,
             unsupported_reason: recovered.unsupported_reason,
             retained_snapshot_at: None,
+            reply_context: None,
             pending_operation_id,
         })
     }
@@ -1365,6 +1366,7 @@ fn accept_operation_tx(
             context_complete: built.context_complete,
             unsupported_reason: built.unsupported_reason,
             retained_snapshot_at: None,
+            reply_context: None,
             pending_operation_id,
         };
         (
@@ -2134,6 +2136,7 @@ mod tests {
                 context_complete: Some(true),
                 unsupported_reason: None,
                 retained_snapshot_at: None,
+                reply_context: None,
                 pending_operation_id: None,
             },
             inbox_message_ids: inbox.iter().map(|s| s.to_string()).collect(),
