@@ -493,6 +493,11 @@ mod enrichment_lifecycle_tests {
             true,
         );
         provider.configured.store(true, Ordering::SeqCst);
+        let generation_before_disconnect = core
+            .inner
+            .store
+            .generation()
+            .expect("read pre-disconnect generation");
         let read_count = 2;
         let barriers = block_refresh_after_cancel(&provider, read_count);
         let mut reads = Vec::new();
@@ -526,6 +531,26 @@ mod enrichment_lifecycle_tests {
         );
         assert_eq!(provider.disconnect_calls.load(Ordering::SeqCst), 0);
         assert!(!provider.credentials.load(Ordering::SeqCst));
+
+        let generation_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while core
+            .inner
+            .store
+            .generation()
+            .expect("read disconnect generation")
+            == generation_before_disconnect
+            && std::time::Instant::now() < generation_deadline
+        {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_ne!(
+            core.inner
+                .store
+                .generation()
+                .expect("read generation after disconnect fence"),
+            generation_before_disconnect,
+            "disconnect advances the generation fence before provider reads are released"
+        );
 
         barriers.release.wait();
         for read in reads {

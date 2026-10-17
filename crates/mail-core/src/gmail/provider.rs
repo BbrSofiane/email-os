@@ -81,6 +81,18 @@ const MAX_BATCH_MODIFY_MESSAGE_IDS: usize = 1_000;
 /// Refresh the access token this long before its stored expiry.
 const EXPIRY_SKEW_MS: i64 = 60_000;
 
+#[derive(Default)]
+struct CredentialPublicationState {
+    revision: u64,
+    last_non_refresh_revision: u64,
+}
+
+#[derive(Clone, Copy)]
+enum CredentialPublicationKind {
+    Refresh,
+    AccountChange,
+}
+
 pub struct GmailProvider {
     config: GoogleConfig,
     secrets: Arc<dyn Secrets>,
@@ -89,6 +101,9 @@ pub struct GmailProvider {
     opener: UrlOpener,
     /// Serializes token refresh so concurrent calls never race the store.
     refresh_lock: Mutex<()>,
+    /// Fences every credential publisher and invalidates work started against
+    /// an older bundle, including a disconnect while OAuth is in progress.
+    credential_publication: Mutex<CredentialPublicationState>,
     /// Pacing floor between consecutive API requests; tests shorten it.
     min_request_interval: Duration,
     /// Issue time of the most recent paced API request (or the reserved slot of
@@ -136,6 +151,7 @@ impl GmailProvider {
             endpoints: Endpoints::google(),
             opener: auth::system_url_opener(),
             refresh_lock: Mutex::new(()),
+            credential_publication: Mutex::new(CredentialPublicationState::default()),
             min_request_interval: MIN_REQUEST_INTERVAL,
             last_request_slot: Mutex::new(None),
         })
@@ -176,53 +192,141 @@ impl GmailProvider {
         }
     }
 
+    /// Takes a consistent in-process snapshot for credential publication.
+    /// The lock is never held during provider I/O or interactive OAuth.
+    fn credential_snapshot(&self) -> Result<(Option<TokenBundle>, u64, u64), MailError> {
+        let publication = self
+            .credential_publication
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let bundle = self.secrets.load()?;
+        Ok((
+            bundle,
+            publication.revision,
+            publication.last_non_refresh_revision,
+        ))
+    }
+
+    /// Stores a refresh/reauth result only while the bundle it was derived
+    /// from is still current. Every publisher uses the same short fence.
+    fn publish_bundle_if_current(
+        &self,
+        expected: &Option<TokenBundle>,
+        expected_revision: u64,
+        bundle: &TokenBundle,
+        kind: CredentialPublicationKind,
+    ) -> Result<bool, MailError> {
+        let mut publication = self
+            .credential_publication
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        if publication.revision != expected_revision || self.secrets.load()? != *expected {
+            return Ok(false);
+        }
+        self.publish_bundle_locked(&mut publication, bundle, kind)?;
+        Ok(true)
+    }
+
+    fn publish_bundle_locked(
+        &self,
+        publication: &mut CredentialPublicationState,
+        bundle: &TokenBundle,
+        kind: CredentialPublicationKind,
+    ) -> Result<(), MailError> {
+        let next_revision = publication
+            .revision
+            .checked_add(1)
+            .ok_or(MailError::StorageUnavailable)?;
+        self.secrets.store(bundle)?;
+        publication.revision = next_revision;
+        if matches!(kind, CredentialPublicationKind::AccountChange) {
+            publication.last_non_refresh_revision = next_revision;
+        }
+        Ok(())
+    }
+
     /// Loads the cached token; refreshes through the serialized path when
     /// expired. No credentials means `auth_required`, not a silent retry.
     fn access_token(&self, cancel: &CancelToken) -> Result<String, MailError> {
-        let bundle = self.secrets.load()?.ok_or(MailError::AuthRequired)?;
+        let (bundle, _, _) = self.credential_snapshot()?;
+        let bundle = bundle.ok_or(MailError::AuthRequired)?;
         if bundle.expires_at_epoch_ms - EXPIRY_SKEW_MS > now_ms() && !bundle.access_token.is_empty()
         {
             return Ok(bundle.access_token);
         }
-        let refresh_token = bundle
-            .refresh_token
-            .clone()
-            .ok_or(MailError::AuthRequired)?;
-        let _guard = self
+        let _refresh_guard = self
             .refresh_lock
             .lock()
             .map_err(|_| MailError::StorageUnavailable)?;
-        // Double-check after acquiring the lock: another caller may have
-        // refreshed while this one waited.
-        let latest = self.secrets.load()?.unwrap_or(bundle);
-        if latest.expires_at_epoch_ms - EXPIRY_SKEW_MS > now_ms() && !latest.access_token.is_empty()
-        {
-            return Ok(latest.access_token);
+
+        loop {
+            if cancel.is_cancelled() {
+                return Err(MailError::AuthCancelled);
+            }
+            // Always derive the refresh request and fallback credentials from
+            // the current snapshot; a cleared bundle is never resurrected.
+            let (latest, revision, _) = self.credential_snapshot()?;
+            let latest = latest.ok_or(MailError::AuthRequired)?;
+            if latest.expires_at_epoch_ms - EXPIRY_SKEW_MS > now_ms()
+                && !latest.access_token.is_empty()
+            {
+                return Ok(latest.access_token);
+            }
+            let refresh_token = latest
+                .refresh_token
+                .clone()
+                .ok_or(MailError::AuthRequired)?;
+            let tokens = match auth::refresh(
+                &self.config,
+                &self.endpoints,
+                &self.http,
+                &refresh_token,
+                cancel,
+            ) {
+                Ok(tokens) => tokens,
+                Err(error) => {
+                    if matches!(&error, MailError::AuthCancelled) {
+                        return Err(error);
+                    }
+                    let (current, current_revision, _) = self.credential_snapshot()?;
+                    if current_revision == revision {
+                        return Err(error);
+                    }
+                    let current = current.ok_or(MailError::AuthRequired)?;
+                    if current.expires_at_epoch_ms - EXPIRY_SKEW_MS > now_ms()
+                        && !current.access_token.is_empty()
+                    {
+                        return Ok(current.access_token);
+                    }
+                    continue;
+                }
+            };
+            let updated = TokenBundle {
+                access_token: tokens.access_token,
+                expires_at_epoch_ms: tokens.expires_at_epoch_ms,
+                refresh_token: tokens.refresh_token.or(latest.refresh_token.clone()),
+                account_id: latest.account_id.clone(),
+                email: latest.email.clone(),
+                // Refresh can preserve or revoke a verified grant, never create
+                // one: only the explicit account-bound OAuth upgrade enables it.
+                gmail_modify_granted: latest.gmail_modify_granted
+                    && tokens
+                        .scope
+                        .as_deref()
+                        .map(scope_grants_modify)
+                        .unwrap_or(true),
+            };
+            if self.publish_bundle_if_current(
+                &Some(latest),
+                revision,
+                &updated,
+                CredentialPublicationKind::Refresh,
+            )? {
+                return Ok(updated.access_token);
+            }
+            // A connect, upgrade, or disconnect won while the readonly refresh
+            // was in flight. Re-read and use its authorized token or refresh it.
         }
-        let tokens = auth::refresh(
-            &self.config,
-            &self.endpoints,
-            &self.http,
-            &refresh_token,
-            cancel,
-        )?;
-        let updated = TokenBundle {
-            access_token: tokens.access_token,
-            expires_at_epoch_ms: tokens.expires_at_epoch_ms,
-            refresh_token: tokens.refresh_token.or(Some(refresh_token)),
-            account_id: latest.account_id.clone(),
-            email: latest.email.clone(),
-            // Refresh can preserve or revoke a verified grant, never create
-            // one: only the explicit account-bound OAuth upgrade enables it.
-            gmail_modify_granted: latest.gmail_modify_granted
-                && tokens
-                    .scope
-                    .as_deref()
-                    .map(scope_grants_modify)
-                    .unwrap_or(true),
-        };
-        self.secrets.store(&updated)?;
-        Ok(updated.access_token)
     }
 
     /// The cached account id (stable, scoped: the email for this single
@@ -390,6 +494,19 @@ fn scope_grants_modify(scope: &str) -> bool {
         .any(|granted| granted == auth::GMAIL_MODIFY_SCOPE)
 }
 
+fn bundle_account_id(bundle: &TokenBundle) -> Option<&str> {
+    bundle
+        .account_id
+        .as_deref()
+        .filter(|account| !account.is_empty())
+        .or_else(|| {
+            bundle
+                .email
+                .as_deref()
+                .filter(|account| !account.is_empty())
+        })
+}
+
 fn validate_message_ids(message_ids: &[String]) -> Result<(), MailError> {
     if message_ids.is_empty()
         || message_ids.len() > MAX_BATCH_MODIFY_MESSAGE_IDS
@@ -491,7 +608,9 @@ impl GmailReadProvider for GmailProvider {
         if !self.is_configured() {
             return Err(MailError::NotConfigured);
         }
-        let previous = self.secrets.load()?.ok_or(MailError::AuthRequired)?;
+        let (previous, publication_revision, previous_non_refresh_revision) =
+            self.credential_snapshot()?;
+        let previous = previous.ok_or(MailError::AuthRequired)?;
         let bound_account = previous
             .account_id
             .as_ref()
@@ -524,15 +643,66 @@ impl GmailReadProvider for GmailProvider {
         if cancel.is_cancelled() {
             return Err(MailError::AuthCancelled);
         }
+        let mut publication = self
+            .credential_publication
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        if cancel.is_cancelled() {
+            return Err(MailError::AuthCancelled);
+        }
+        let current = self.secrets.load()?;
+        if publication.revision == publication_revision && current.as_ref() == Some(&previous) {
+            let bundle = TokenBundle {
+                access_token: tokens.access_token,
+                expires_at_epoch_ms: tokens.expires_at_epoch_ms,
+                refresh_token: tokens.refresh_token.or(previous.refresh_token),
+                account_id: Some(profile.account_id.clone()),
+                email: Some(profile.email_address.clone()),
+                gmail_modify_granted: true,
+            };
+            self.publish_bundle_locked(
+                &mut publication,
+                &bundle,
+                CredentialPublicationKind::AccountChange,
+            )?;
+            return Ok(profile);
+        }
+
+        // Rebase across refreshes only. A concurrent connect, upgrade, or
+        // disconnect invalidates the interactive result rather than allowing
+        // an older OAuth exchange to replace that newer publication.
+        let current = current.ok_or(MailError::AuthRequired)?;
+        if bundle_account_id(&current) != Some(profile.account_id.as_str()) {
+            return Err(MailError::AuthFailed);
+        }
+        if publication.last_non_refresh_revision != previous_non_refresh_revision {
+            if current.gmail_modify_granted {
+                return Ok(profile);
+            }
+            if previous.gmail_modify_granted {
+                return Err(MailError::PermissionRequired);
+            }
+            return Err(MailError::Busy);
+        }
+        if current.gmail_modify_granted {
+            return Ok(profile);
+        }
+        if previous.gmail_modify_granted {
+            return Err(MailError::PermissionRequired);
+        }
         let bundle = TokenBundle {
             access_token: tokens.access_token,
             expires_at_epoch_ms: tokens.expires_at_epoch_ms,
-            refresh_token: tokens.refresh_token.or(previous.refresh_token),
+            refresh_token: tokens.refresh_token.or(current.refresh_token),
             account_id: Some(profile.account_id.clone()),
             email: Some(profile.email_address.clone()),
             gmail_modify_granted: true,
         };
-        self.secrets.store(&bundle)?;
+        self.publish_bundle_locked(
+            &mut publication,
+            &bundle,
+            CredentialPublicationKind::AccountChange,
+        )?;
         Ok(profile)
     }
 
@@ -566,7 +736,8 @@ impl GmailReadProvider for GmailProvider {
         if !self.is_configured() {
             return Err(MailError::NotConfigured);
         }
-        let previous = self.secrets.load()?;
+        let (previous, publication_revision, previous_non_refresh_revision) =
+            self.credential_snapshot()?;
         let prior_modify_grant = previous
             .as_ref()
             .is_some_and(|bundle| bundle.gmail_modify_granted);
@@ -585,6 +756,8 @@ impl GmailReadProvider for GmailProvider {
         )?;
         let tokens =
             auth::exchange_code(&self.config, &self.endpoints, &self.http, &grant, cancel)?;
+        let returned_scope = tokens.scope.clone();
+        let returned_refresh_token = tokens.refresh_token.clone();
         // Preserve a stored refresh token when the grant response omits it.
         let bundle = TokenBundle {
             access_token: tokens.access_token,
@@ -598,8 +771,7 @@ impl GmailReadProvider for GmailProvider {
             // explicit access survives an omitted scope response; a present
             // response is authoritative and can revoke it.
             gmail_modify_granted: prior_modify_grant
-                && tokens
-                    .scope
+                && returned_scope
                     .as_deref()
                     .map(scope_grants_modify)
                     .unwrap_or(true),
@@ -625,12 +797,65 @@ impl GmailReadProvider for GmailProvider {
             email: Some(profile.email_address.clone()),
             ..bundle
         };
-        self.secrets.store(&bundle)?;
+        let mut publication = self
+            .credential_publication
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let current = self.secrets.load()?;
+        if publication.revision == publication_revision && current == previous {
+            self.publish_bundle_locked(
+                &mut publication,
+                &bundle,
+                CredentialPublicationKind::AccountChange,
+            )?;
+            return Ok(profile);
+        }
+
+        // A refreshed token may replace the original snapshot while interactive
+        // OAuth is open. Rebase only over refresh-only publications, preserving
+        // the current fallback credential and the authoritative returned scope.
+        let current = current.ok_or(MailError::AuthRequired)?;
+        if bundle_account_id(&current) != Some(profile.account_id.as_str()) {
+            return Err(MailError::AuthFailed);
+        }
+        if publication.last_non_refresh_revision != previous_non_refresh_revision {
+            return Err(MailError::Busy);
+        }
+        let rebased = TokenBundle {
+            access_token: bundle.access_token,
+            expires_at_epoch_ms: bundle.expires_at_epoch_ms,
+            refresh_token: returned_refresh_token.or(current.refresh_token),
+            account_id: Some(profile.account_id.clone()),
+            email: Some(profile.email_address.clone()),
+            // An omitted scope cannot restore a grant revoked by an
+            // intervening refresh; a present scope remains authoritative.
+            gmail_modify_granted: prior_modify_grant
+                && returned_scope
+                    .as_deref()
+                    .map(scope_grants_modify)
+                    .unwrap_or(current.gmail_modify_granted),
+        };
+        self.publish_bundle_locked(
+            &mut publication,
+            &rebased,
+            CredentialPublicationKind::AccountChange,
+        )?;
         Ok(profile)
     }
 
     fn disconnect(&self) -> Result<(), MailError> {
-        self.secrets.clear()
+        let mut publication = self
+            .credential_publication
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let next_revision = publication
+            .revision
+            .checked_add(1)
+            .ok_or(MailError::StorageUnavailable)?;
+        self.secrets.clear()?;
+        publication.revision = next_revision;
+        publication.last_non_refresh_revision = next_revision;
+        Ok(())
     }
 
     fn profile(&self, cancel: &CancelToken) -> Result<GmailProfile, MailError> {
@@ -3560,5 +3785,375 @@ pub(crate) mod tests {
             thread.conversation.unsupported_reason.as_deref(),
             Some("3 of 4 messages had no safe plain-text body")
         );
+    }
+
+    /// Loopback OAuth token endpoint that pauses refresh responses while still
+    /// accepting a concurrent interactive OAuth exchange.
+    struct PausedRefreshEndpoint {
+        base: String,
+        refresh_received: Arc<std::sync::Barrier>,
+        release_refresh: Arc<std::sync::Barrier>,
+        server: std::thread::JoinHandle<()>,
+    }
+
+    impl PausedRefreshEndpoint {
+        fn start(requests: usize) -> Self {
+            Self::start_with_oauth_response(
+                requests,
+                r#"{"access_token":"upgrade-access","refresh_token":"upgrade-refresh","expires_in":3600,"scope":"https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.modify"}"#,
+            )
+        }
+
+        fn start_with_oauth_response(requests: usize, oauth_response: &'static str) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            let refresh_received = Arc::new(std::sync::Barrier::new(2));
+            let release_refresh = Arc::new(std::sync::Barrier::new(2));
+            let server_received = Arc::clone(&refresh_received);
+            let server_release = Arc::clone(&release_refresh);
+            let server = std::thread::spawn(move || {
+                let mut workers = Vec::with_capacity(requests);
+                for _ in 0..requests {
+                    let (stream, _) = listener.accept().unwrap();
+                    let received = Arc::clone(&server_received);
+                    let release = Arc::clone(&server_release);
+                    workers.push(std::thread::spawn(move || {
+                        let mut stream = stream;
+                        let request = read_loopback_request(&mut stream);
+                        let body = request
+                            .split_once("\r\n\r\n")
+                            .map(|(_, body)| body)
+                            .unwrap_or("");
+                        let (status, response) = if body.contains("grant_type=refresh_token") {
+                            received.wait();
+                            release.wait();
+                            (
+                                200,
+                                r#"{"access_token":"readonly-refresh-access","refresh_token":"readonly-refresh-replacement","expires_in":3600}"#,
+                            )
+                        } else {
+                            (200, oauth_response)
+                        };
+                        let wire = format!(
+                            "HTTP/1.1 {status} OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",
+                            response.len()
+                        );
+                        stream.write_all(wire.as_bytes()).unwrap();
+                        stream.flush().unwrap();
+                    }));
+                }
+                for worker in workers {
+                    worker.join().unwrap();
+                }
+            });
+            Self {
+                base,
+                refresh_received,
+                release_refresh,
+                server,
+            }
+        }
+
+        fn wait_until_refresh_paused(&self) {
+            self.refresh_received.wait();
+        }
+
+        fn release_refresh(&self) {
+            self.release_refresh.wait();
+        }
+
+        fn join(self) {
+            self.server.join().unwrap();
+        }
+    }
+
+    fn read_loopback_request(stream: &mut std::net::TcpStream) -> String {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut bytes = Vec::new();
+        loop {
+            let header_end = bytes.windows(4).position(|window| window == b"\r\n\r\n");
+            if let Some(header_end) = header_end {
+                let headers = String::from_utf8_lossy(&bytes[..header_end]);
+                let content_length = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())
+                            .flatten()
+                    })
+                    .unwrap_or(0);
+                if bytes.len() >= header_end + 4 + content_length {
+                    break;
+                }
+            }
+            let mut chunk = [0u8; 2048];
+            let read = stream.read(&mut chunk).unwrap();
+            if read == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&chunk[..read]);
+        }
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    fn expired_bundle() -> TokenBundle {
+        TokenBundle {
+            expires_at_epoch_ms: now_ms() - 1_000,
+            ..future_token()
+        }
+    }
+
+    #[test]
+    fn credential_publication_old_refresh_cannot_overwrite_verified_upgrade() {
+        let endpoint = PausedRefreshEndpoint::start(2);
+        let (api_base, _api) = FakeApi::start(vec![
+            (
+                "/gmail/v1/users/me/profile",
+                200,
+                r#"{"emailAddress":"synthetic@example.test","historyId":"1"}"#,
+            ),
+            (
+                "/gmail/v1/users/me/profile",
+                200,
+                r#"{"emailAddress":"synthetic@example.test","historyId":"2"}"#,
+            ),
+        ]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        secrets.store(&expired_bundle()).unwrap();
+        let mut provider = test_provider(&api_base, secrets.clone());
+        provider.endpoints.token = format!("{}/synthetic-token", endpoint.base);
+        provider.opener = completing_oauth_opener(Arc::new(Mutex::new(None)));
+        let provider = Arc::new(provider);
+
+        let refresh_provider = Arc::clone(&provider);
+        let old_refresh =
+            std::thread::spawn(move || refresh_provider.profile(&CancelToken::default()));
+        endpoint.wait_until_refresh_paused();
+
+        provider.enable_mutations(&CancelToken::default()).unwrap();
+        endpoint.release_refresh();
+        assert!(old_refresh.join().unwrap().is_ok());
+        endpoint.join();
+
+        let stored = secrets.load().unwrap().unwrap();
+        assert!(
+            stored.access_token == "upgrade-access",
+            "upgrade access survives stale refresh"
+        );
+        assert!(
+            stored.refresh_token.as_deref() == Some("upgrade-refresh"),
+            "upgrade refresh credential survives stale refresh"
+        );
+        assert!(
+            stored.gmail_modify_granted,
+            "verified modify grant survives stale refresh"
+        );
+        assert!(provider.mutation_access().unwrap());
+    }
+
+    #[test]
+    fn credential_publication_connect_rebases_after_refresh_and_applies_readonly_scope() {
+        let endpoint = PausedRefreshEndpoint::start_with_oauth_response(
+            2,
+            r#"{"access_token":"reauth-access","refresh_token":"reauth-refresh","expires_in":3600,"scope":"https://www.googleapis.com/auth/gmail.readonly"}"#,
+        );
+        let (api_base, _api) = FakeApi::start(vec![
+            (
+                "/gmail/v1/users/me/profile",
+                200,
+                r#"{"emailAddress":"synthetic@example.test","historyId":"1"}"#,
+            ),
+            (
+                "/gmail/v1/users/me/profile",
+                200,
+                r#"{"emailAddress":"synthetic@example.test","historyId":"2"}"#,
+            ),
+        ]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        let mut previous = expired_bundle();
+        previous.gmail_modify_granted = true;
+        secrets.store(&previous).unwrap();
+        let mut provider = test_provider(&api_base, secrets.clone());
+        provider.endpoints.token = format!("{}/synthetic-token", endpoint.base);
+        let oauth_entered = Arc::new(std::sync::Barrier::new(2));
+        let release_oauth = Arc::new(std::sync::Barrier::new(2));
+        let entered_opener = Arc::clone(&oauth_entered);
+        let release_opener = Arc::clone(&release_oauth);
+        let finish_oauth = completing_oauth_opener(Arc::new(Mutex::new(None)));
+        provider.opener = Arc::new(move |url| {
+            entered_opener.wait();
+            release_opener.wait();
+            finish_oauth(url)
+        });
+        let provider = Arc::new(provider);
+
+        let reauth_provider = Arc::clone(&provider);
+        let reauth = std::thread::spawn(move || reauth_provider.connect(&CancelToken::default()));
+        oauth_entered.wait();
+
+        let refresh_provider = Arc::clone(&provider);
+        let refresh = std::thread::spawn(move || refresh_provider.profile(&CancelToken::default()));
+        endpoint.wait_until_refresh_paused();
+        endpoint.release_refresh();
+        assert!(refresh.join().unwrap().is_ok());
+        let refreshed = secrets.load().unwrap().unwrap();
+        assert!(
+            refreshed.access_token == "readonly-refresh-access",
+            "ordinary refresh published while reauth was awaiting OAuth"
+        );
+
+        release_oauth.wait();
+        assert!(reauth.join().unwrap().is_ok());
+        endpoint.join();
+
+        let stored = secrets.load().unwrap().unwrap();
+        assert!(
+            stored.access_token == "reauth-access",
+            "reauth access token is published"
+        );
+        assert!(
+            stored.refresh_token.as_deref() == Some("reauth-refresh"),
+            "reauth refresh token replaces the refresh-only snapshot"
+        );
+        assert!(
+            !stored.gmail_modify_granted,
+            "present readonly reauth scope revokes modify grant"
+        );
+        assert!(!provider.mutation_access().unwrap());
+    }
+
+    #[test]
+    fn credential_publication_connect_rejects_superseded_same_account_oauth() {
+        let (api_base, _api) = FakeApi::start(vec![
+            (
+                "/gmail/v1/users/me/profile",
+                200,
+                r#"{"emailAddress":"synthetic@example.test","historyId":"1"}"#,
+            ),
+            (
+                "/gmail/v1/users/me/profile",
+                200,
+                r#"{"emailAddress":"synthetic@example.test","historyId":"2"}"#,
+            ),
+        ]);
+        let (token_base, _token) = FakeApi::start(vec![
+            (
+                "/synthetic-token",
+                200,
+                r#"{"access_token":"newer-access","refresh_token":"newer-refresh","expires_in":3600}"#,
+            ),
+            (
+                "/synthetic-token",
+                200,
+                r#"{"access_token":"stale-access","refresh_token":"stale-refresh","expires_in":3600}"#,
+            ),
+        ]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        secrets.store(&future_token()).unwrap();
+        let mut provider = test_provider(&api_base, secrets.clone());
+        provider.endpoints.token = format!("{token_base}/synthetic-token");
+        let oauth_entered = Arc::new(std::sync::Barrier::new(2));
+        let release_oauth = Arc::new(std::sync::Barrier::new(2));
+        let opener_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let entered_opener = Arc::clone(&oauth_entered);
+        let release_opener = Arc::clone(&release_oauth);
+        let opener_calls_for_callback = Arc::clone(&opener_calls);
+        let finish_oauth = completing_oauth_opener(Arc::new(Mutex::new(None)));
+        provider.opener = Arc::new(move |url| {
+            if opener_calls_for_callback.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                entered_opener.wait();
+                release_opener.wait();
+            }
+            finish_oauth(url)
+        });
+        let provider = Arc::new(provider);
+
+        let stale_provider = Arc::clone(&provider);
+        let stale_reauth =
+            std::thread::spawn(move || stale_provider.connect(&CancelToken::default()));
+        oauth_entered.wait();
+
+        assert!(provider.connect(&CancelToken::default()).is_ok());
+        release_oauth.wait();
+        assert!(matches!(stale_reauth.join().unwrap(), Err(MailError::Busy)));
+
+        let stored = secrets.load().unwrap().unwrap();
+        assert!(
+            stored.access_token == "newer-access",
+            "newer same-account reauth remains published"
+        );
+        assert!(
+            stored.refresh_token.as_deref() == Some("newer-refresh"),
+            "stale OAuth cannot replace the newer refresh credential"
+        );
+    }
+
+    #[test]
+    fn credential_publication_connect_cannot_resurrect_after_disconnect() {
+        let (api_base, _api) = FakeApi::start(vec![(
+            "/gmail/v1/users/me/profile",
+            200,
+            r#"{"emailAddress":"synthetic@example.test","historyId":"1"}"#,
+        )]);
+        let (token_base, _token) = FakeApi::start(vec![(
+            "/synthetic-token",
+            200,
+            r#"{"access_token":"reauth-access","refresh_token":"reauth-refresh","expires_in":3600}"#,
+        )]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        secrets.store(&future_token()).unwrap();
+        let mut provider = test_provider(&api_base, secrets.clone());
+        provider.endpoints.token = format!("{token_base}/synthetic-token");
+        let oauth_entered = Arc::new(std::sync::Barrier::new(2));
+        let release_oauth = Arc::new(std::sync::Barrier::new(2));
+        let entered_opener = Arc::clone(&oauth_entered);
+        let release_opener = Arc::clone(&release_oauth);
+        let finish_oauth = completing_oauth_opener(Arc::new(Mutex::new(None)));
+        provider.opener = Arc::new(move |url| {
+            entered_opener.wait();
+            release_opener.wait();
+            finish_oauth(url)
+        });
+        let provider = Arc::new(provider);
+
+        let reauth_provider = Arc::clone(&provider);
+        let reauth = std::thread::spawn(move || reauth_provider.connect(&CancelToken::default()));
+        oauth_entered.wait();
+        provider.disconnect().unwrap();
+        release_oauth.wait();
+
+        assert!(matches!(
+            reauth.join().unwrap(),
+            Err(MailError::AuthRequired)
+        ));
+        assert!(secrets.load().unwrap().is_none());
+    }
+
+    #[test]
+    fn credential_publication_stale_refresh_does_not_resurrect_disconnected_credentials() {
+        let endpoint = PausedRefreshEndpoint::start(1);
+        let (api_base, _api) = FakeApi::start(vec![]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        secrets.store(&expired_bundle()).unwrap();
+        let mut provider = test_provider(&api_base, secrets.clone());
+        provider.endpoints.token = format!("{}/synthetic-token", endpoint.base);
+        let provider = Arc::new(provider);
+
+        let refresh_provider = Arc::clone(&provider);
+        let old_refresh =
+            std::thread::spawn(move || refresh_provider.profile(&CancelToken::default()));
+        endpoint.wait_until_refresh_paused();
+
+        provider.disconnect().unwrap();
+        endpoint.release_refresh();
+        assert!(matches!(
+            old_refresh.join().unwrap(),
+            Err(MailError::AuthRequired)
+        ));
+        endpoint.join();
+        assert!(secrets.load().unwrap().is_none());
     }
 }
