@@ -78,6 +78,7 @@ struct GmailInner {
     /// Serializes concurrent `disconnect_account` calls.
     disconnect_lock: Mutex<()>,
     worker: Mutex<Option<JoinHandle<()>>>,
+    next_enrichment_id: AtomicU64,
 }
 
 /// Worker/control state. The worker thread is the only writer of `connection`
@@ -126,9 +127,32 @@ struct CtrlState {
     pass_in_flight: bool,
     disconnecting: bool,
     pass_cancel: CancelToken,
+    reply_enrichments: HashMap<u64, CancelToken>,
     connection: ConnectionState,
     error: Option<MailError>,
     backoff: u32,
+}
+
+fn cancel_reply_enrichments(st: &mut CtrlState) {
+    for cancel in st.reply_enrichments.values() {
+        cancel.cancel();
+    }
+}
+
+/// Registration for one independent readonly reply-metadata provider call.
+/// Its token is not tied to the reusable background-worker pass token.
+struct ReplyEnrichment {
+    ctrl: Arc<Ctrl>,
+    id: u64,
+    cancel: CancelToken,
+}
+
+impl Drop for ReplyEnrichment {
+    fn drop(&mut self) {
+        let mut st = self.ctrl.state.lock().expect("gmail ctrl poisoned");
+        st.reply_enrichments.remove(&self.id);
+        self.ctrl.wake.notify_all();
+    }
 }
 
 /// Latches persistence failures found before a mutation reaches its durable
@@ -140,6 +164,7 @@ fn latch_admission_storage_error(st: &mut CtrlState, ctrl: &Ctrl, error: &MailEr
     st.halted = true;
     st.error = Some(error.clone());
     st.pass_cancel.cancel();
+    cancel_reply_enrichments(st);
     ctrl.wake.notify_all();
     true
 }
@@ -216,6 +241,7 @@ impl GmailCore {
                 pass_in_flight: false,
                 disconnecting: false,
                 pass_cancel: CancelToken::default(),
+                reply_enrichments: HashMap::new(),
                 connection,
                 error,
                 backoff: 0,
@@ -242,6 +268,7 @@ impl GmailCore {
                 next_listener_id: AtomicU64::new(1),
                 disconnect_lock: Mutex::new(()),
                 worker: Mutex::new(Some(handle)),
+                next_enrichment_id: AtomicU64::new(1),
             }),
         })
     }
@@ -255,6 +282,104 @@ impl GmailCore {
     /// Cached reader view of one conversation, scoped by the connected account.
     pub fn get_conversation(&self, r#ref: &ConversationRef) -> Result<Conversation, MailError> {
         self.inner.store.get_conversation(r#ref)
+    }
+
+    fn begin_reply_enrichment(&self) -> Result<ReplyEnrichment, MailError> {
+        let mut st = self
+            .inner
+            .ctrl
+            .state
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        if st.stop || st.halted {
+            return Err(MailError::StorageUnavailable);
+        }
+        if st.disconnecting {
+            return Err(MailError::Busy);
+        }
+        let mut id = self.inner.next_enrichment_id.fetch_add(1, Ordering::SeqCst);
+        while st.reply_enrichments.contains_key(&id) {
+            id = self.inner.next_enrichment_id.fetch_add(1, Ordering::SeqCst);
+        }
+        let cancel = CancelToken::default();
+        st.reply_enrichments.insert(id, cancel.clone());
+        Ok(ReplyEnrichment {
+            ctrl: Arc::clone(&self.inner.ctrl),
+            id,
+            cancel,
+        })
+    }
+
+    /// Loads reply headers for the explicitly displayed latest cached message.
+    /// Ready cache results are network-free; a legacy cache miss performs one
+    /// readonly thread read outside control and SQLite locks.
+    pub fn load_reply_context(
+        &self,
+        r#ref: &ConversationRef,
+        source_message_id: &str,
+    ) -> Result<Conversation, MailError> {
+        let generation = self.inner.store.generation()?;
+        let cached = self.inner.store.get_conversation(r#ref)?;
+        if cached.retained_snapshot_at.is_some()
+            || cached.context_complete != Some(true)
+            || cached.messages.last().map(|message| message.id.as_str()) != Some(source_message_id)
+        {
+            return Err(MailError::ReplyUnavailable);
+        }
+        if let Some(reply_context) = cached.reply_context.as_ref() {
+            return if reply_context.source_message_id == source_message_id {
+                Ok(cached)
+            } else {
+                Err(MailError::ReplyUnavailable)
+            };
+        }
+
+        let _enrichment = self.begin_reply_enrichment()?;
+        // The initial cache inspection intentionally precedes admission so
+        // ordinary cache hits remain available during lifecycle barriers. If
+        // a disconnect completed in that gap, its generation change prevents
+        // this stale request from starting a credential-refreshing provider call.
+        if self.inner.store.generation()? != generation {
+            return Err(MailError::ReplyUnavailable);
+        }
+        let thread = self
+            .inner
+            .provider
+            .get_thread(&r#ref.conversation_id, &_enrichment.cancel)?
+            .ok_or(MailError::ReplyUnavailable)?;
+        let fetched = &thread.conversation;
+        if fetched.conversation_ref != *r#ref
+            || fetched.retained_snapshot_at.is_some()
+            || fetched.context_complete != Some(true)
+            || fetched.messages.last().map(|message| message.id.as_str()) != Some(source_message_id)
+        {
+            return Err(MailError::ReplyUnavailable);
+        }
+        let reply_context = fetched
+            .reply_context
+            .as_ref()
+            .filter(|context| context.source_message_id == source_message_id)
+            .ok_or(MailError::ReplyUnavailable)?;
+        self.inner
+            .store
+            .save_reply_context(r#ref, source_message_id, reply_context, generation)?;
+        let enriched = match self.inner.store.get_conversation(r#ref) {
+            Ok(conversation) => conversation,
+            Err(MailError::NotFound) => return Err(MailError::ReplyUnavailable),
+            Err(error) => return Err(error),
+        };
+        if enriched.retained_snapshot_at.is_some()
+            || enriched.context_complete != Some(true)
+            || enriched.messages.last().map(|message| message.id.as_str())
+                != Some(source_message_id)
+            || enriched
+                .reply_context
+                .as_ref()
+                .is_none_or(|context| context.source_message_id != source_message_id)
+        {
+            return Err(MailError::ReplyUnavailable);
+        }
+        Ok(enriched)
     }
 
     /// Wire-facing mode/connection/sync status. Typed errors surface storage
@@ -444,6 +569,7 @@ impl GmailCore {
                     st.halted = true;
                     st.error = Some(error.clone());
                     st.pass_cancel.cancel();
+                    cancel_reply_enrichments(&mut st);
                     inner.ctrl.wake.notify_all();
                 }
                 return Err(error);
@@ -515,6 +641,7 @@ impl GmailCore {
             st.operations_requested = false;
             st.upgrade_requested = false;
             st.pass_cancel.cancel();
+            cancel_reply_enrichments(&mut st);
             inner.ctrl.wake.notify_all();
         }
         let cleanup = (|| {
@@ -558,6 +685,7 @@ impl GmailCore {
                             st.halted = true;
                             st.error = Some(storage_error.clone());
                             st.pass_cancel.cancel();
+                            cancel_reply_enrichments(&mut st);
                         }
                     }
                 }
@@ -680,6 +808,7 @@ impl Ctrl {
         let mut st = self.state.lock().expect("gmail ctrl poisoned");
         st.stop = true;
         st.pass_cancel.cancel();
+        cancel_reply_enrichments(&mut st);
         self.wake.notify_all();
     }
 
@@ -696,7 +825,7 @@ impl Ctrl {
     fn wait_until_idle(&self, timeout: Duration) -> Result<(), MailError> {
         let deadline = Instant::now() + timeout;
         let mut st = self.state.lock().expect("gmail ctrl poisoned");
-        while st.pass_in_flight {
+        while st.pass_in_flight || !st.reply_enrichments.is_empty() {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return Err(MailError::Busy);
@@ -718,9 +847,12 @@ impl GmailInner {
     fn shutdown(&self) {
         self.ctrl.cancel_current_pass();
         self.ctrl.request_stop();
+        let deadline = Instant::now() + STOP_JOIN_TIMEOUT;
         let handle = self.worker.lock().ok().and_then(|mut slot| slot.take());
+        let _ = self
+            .ctrl
+            .wait_until_idle(deadline.saturating_duration_since(Instant::now()));
         if let Some(handle) = handle {
-            let deadline = Instant::now() + STOP_JOIN_TIMEOUT;
             while !handle.is_finished() {
                 if Instant::now() >= deadline {
                     // Detach; the cancelled operation stays durable and the
@@ -970,6 +1102,7 @@ fn run(
                     PassOutcome::Halt(error) => {
                         st.error = Some(error);
                         st.halted = true;
+                        cancel_reply_enrichments(&mut st);
                         halted = true;
                     }
                     PassOutcome::Cancelled => {
@@ -1371,6 +1504,42 @@ fn retained_thread_bytes(thread: &GmailThread) -> usize {
                 .saturating_mul(std::mem::size_of::<String>()),
         )
         .saturating_add(thread.history_id.capacity());
+    if let Some(reply_context) = &conversation.reply_context {
+        bytes = bytes
+            .saturating_add(std::mem::size_of::<crate::drafts::types::ReplyContext>())
+            .saturating_add(reply_context.source_message_id.capacity())
+            .saturating_add(reply_context.from_mailbox.capacity())
+            .saturating_add(reply_context.message_id.capacity())
+            .saturating_add(
+                reply_context
+                    .reply_to_mailboxes
+                    .as_ref()
+                    .map_or(0, |mailboxes| {
+                        mailboxes
+                            .capacity()
+                            .saturating_mul(std::mem::size_of::<String>())
+                            .saturating_add(
+                                mailboxes
+                                    .iter()
+                                    .map(String::capacity)
+                                    .fold(0usize, usize::saturating_add),
+                            )
+                    }),
+            )
+            .saturating_add(
+                reply_context
+                    .references
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<String>()),
+            )
+            .saturating_add(
+                reply_context
+                    .references
+                    .iter()
+                    .map(String::capacity)
+                    .fold(0usize, usize::saturating_add),
+            );
+    }
     for message in &conversation.messages {
         bytes = bytes
             .saturating_add(message.id.capacity())
@@ -1525,6 +1694,7 @@ mod worker_halt_tests {
                 context_complete: Some(true),
                 unsupported_reason: None,
                 retained_snapshot_at: None,
+                reply_context: None,
                 pending_operation_id: None,
             },
             inbox_message_ids: vec!["message-1".to_string()],
@@ -1704,3 +1874,7 @@ mod worker_halt_tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 }
+
+#[cfg(test)]
+#[path = "reply_context_sync_tests.rs"]
+mod reply_context_sync_tests;

@@ -1,5 +1,5 @@
 /**
- * Frontend transport seam (Slices 01–03).
+ * Frontend transport seam (Slices 01–04).
  *
  * The UI depends only on this interface. Two implementations exist:
  * - `tauri-client.ts`: narrow Tauri adapter over the approved named commands and the
@@ -9,17 +9,26 @@
  *   It models core-like pending/failure behavior for demonstration only and discloses
  *   that nothing is durable. Core read models remain authoritative in the native path.
  *
- * Account lifecycle and mailbox-action methods cross only this typed client seam;
- * command resolution is acceptance, not OAuth, sync, provider-setter, or grant success.
+ * Account lifecycle, mailbox actions, local drafts, and close requests cross only this
+ * typed client seam; results never stand in for OAuth, sync, or provider-send success.
  */
 import type {
   AccountStatus,
+  AppCloseRequest,
   Conversation,
   ConversationRef,
+  CreateDraft,
+  DeleteDraft,
+  Draft,
+  DraftDeleteReceipt,
+  DraftReceipt,
+  DraftRef,
+  DraftSummary,
   InboxSnapshot,
   MailError,
   OperationReceipt,
   RetryOperation,
+  SaveDraft,
   SetArchived,
   SetRead,
 } from './generated';
@@ -27,6 +36,7 @@ import type {
 export type {
   AccountInfo,
   AccountStatus,
+  AppCloseRequest,
   MailboxOperationKind,
   MutationAccess,
   Address,
@@ -34,6 +44,16 @@ export type {
   Conversation,
   ConversationRef,
   ConversationSummary,
+  CreateDraft,
+  DeleteDraft,
+  Draft,
+  DraftContent,
+  DraftDeleteReceipt,
+  DraftReceipt,
+  DraftRef,
+  DraftSource,
+  DraftReplyLink,
+  DraftSummary,
   InboxSnapshot,
   MailError,
   MailMode,
@@ -45,6 +65,8 @@ export type {
   OperationSummary,
   SetArchived,
   SetRead,
+  SaveDraft,
+  ReplyContext,
   SyncInfo,
   SyncState,
 } from './generated';
@@ -62,6 +84,16 @@ export {
   ENABLE_MAILBOX_ACTIONS_COMMAND,
   SET_READ_COMMAND,
   RETRY_OPERATION_COMMAND,
+  LIST_DRAFTS_COMMAND,
+  GET_DRAFT_COMMAND,
+  CREATE_DRAFT_COMMAND,
+  SAVE_DRAFT_COMMAND,
+  DELETE_DRAFT_COMMAND,
+  DRAFTS_CHANGED_EVENT,
+  APP_CLOSE_REQUESTED_EVENT,
+  GET_APP_CLOSE_REQUEST_COMMAND,
+  COMPLETE_APP_CLOSE_COMMAND,
+  CANCEL_APP_CLOSE_COMMAND,
 } from './generated';
 
 export interface MailClient {
@@ -82,6 +114,15 @@ export interface MailClient {
   disconnectAccount(): Promise<void>;
   /** Enqueues an incremental sync; resolves on acceptance, not on completion. */
   requestSync(): Promise<void>;
+  listDrafts(): Promise<DraftSummary[]>;
+  getDraft(ref: DraftRef): Promise<Draft>;
+  createDraft(command: CreateDraft): Promise<DraftReceipt>;
+  saveDraft(command: SaveDraft): Promise<DraftReceipt>;
+  deleteDraft(command: DeleteDraft): Promise<DraftDeleteReceipt>;
+  subscribeDrafts(listener: () => void): Promise<() => void>;
+  subscribeAppClose(listener: (request: AppCloseRequest) => void): Promise<() => void>;
+  completeAppClose(requestId: string): Promise<void>;
+  cancelAppClose(requestId: string): Promise<void>;
 }
 
 export function isMailErrorShape(value: unknown): value is MailError {
@@ -107,7 +148,10 @@ export function isMailErrorShape(value: unknown): value is MailError {
     case 'permission_required':
     case 'provider_rejected':
     case 'outcome_unknown':
+    case 'reply_unavailable':
       return true;
+    case 'draft_conflict':
+      return typeof (value as unknown as { currentRevision: unknown }).currentRevision === 'number';
     case 'invalid_request':
       return typeof (value as unknown as { field: unknown }).field === 'string';
     default:

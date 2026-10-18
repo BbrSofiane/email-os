@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
 use crate::clock::Clock;
+use crate::drafts::types::ReplyContext;
 use crate::dto::{
     Address, Conversation, ConversationRef, ConversationSummary, InboxSnapshot, Message,
     OperationFailure, OperationReceipt, OperationStatus, OperationSummary, SetArchived,
@@ -396,6 +397,7 @@ impl Store {
         if built.messages.is_empty() {
             return Err(MailError::NotFound);
         }
+        let reply_context = fixture_reply_context(&built.conversation_ref, &built.messages);
         Ok(Conversation {
             conversation_ref: built.conversation_ref,
             subject: built.subject,
@@ -403,9 +405,10 @@ impl Store {
             is_read: None,
             messages: built.messages,
             pending_operation_id: built.pending_operation_id,
-            context_complete: None,
+            context_complete: Some(true),
             unsupported_reason: None,
             retained_snapshot_at: None,
+            reply_context,
         })
     }
 
@@ -751,6 +754,43 @@ fn build_conversation_view(
     })
 }
 
+fn fixture_reply_context(
+    conversation: &ConversationRef,
+    messages: &[Message],
+) -> Option<ReplyContext> {
+    let latest = messages.last()?;
+    let message_id = fixture_rfc_message_id(&conversation.conversation_id, &latest.id);
+    let references = messages[..messages.len().saturating_sub(1)]
+        .iter()
+        .map(|message| fixture_rfc_message_id(&conversation.conversation_id, &message.id))
+        .collect();
+    Some(ReplyContext {
+        source_message_id: latest.id.clone(),
+        from_mailbox: latest.from.mailbox.clone(),
+        reply_to_mailboxes: None,
+        message_id,
+        references,
+    })
+}
+
+/// Produces deterministic RFC Message-IDs for the synthetic fixture's explicit
+/// From, absent Reply-To, Message-ID, and References header facts.
+fn fixture_rfc_message_id(conversation_id: &str, message_id: &str) -> String {
+    let local = conversation_id
+        .chars()
+        .chain(std::iter::once('.'))
+        .chain(message_id.chars())
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '.' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    format!("<{local}@fixture.emailos>")
+}
+
 fn participants_of(messages: &[Message]) -> Vec<Address> {
     let mut seen_mailboxes: Vec<String> = Vec::new();
     let mut participants: Vec<Address> = Vec::new();
@@ -814,6 +854,39 @@ mod tests {
             archived: true,
             request_id: "req-test".to_string(),
         }
+    }
+
+    #[test]
+    fn fixture_reader_has_safe_synthetic_reply_context_without_reseeding() {
+        let dir = temp_dir("fixture-reply-context");
+        let store = Store::open(&dir, Arc::new(SystemClock)).expect("store opens");
+        let conversation = store
+            .get_conversation(&ConversationRef {
+                account_id: ACCOUNT_ID.to_string(),
+                conversation_id: "conv-01".to_string(),
+            })
+            .expect("fixture conversation");
+        let context = conversation.reply_context.expect("synthetic reply context");
+        assert_eq!(context.source_message_id, "m-01-3");
+        assert_eq!(context.from_mailbox, "ana@ridpath.example");
+        assert_eq!(context.reply_to_mailboxes, None);
+        assert_eq!(context.message_id, "<conv-01.m-01-3@fixture.emailos>");
+        assert_eq!(
+            context.references,
+            vec![
+                "<conv-01.m-01-1@fixture.emailos>",
+                "<conv-01.m-01-2@fixture.emailos>"
+            ]
+        );
+        assert_eq!(conversation.context_complete, Some(true));
+        assert!(conversation.messages.iter().any(|message| {
+            message
+                .to
+                .iter()
+                .any(|recipient| recipient.mailbox == crate::FIXTURE_MAILBOX)
+        }));
+        drop(store);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Storage errors surface instead of being ignored (fail closed): an

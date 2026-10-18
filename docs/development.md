@@ -5,10 +5,11 @@ synthetic fixture slice (Slice 01) and an explicit Gmail profile built in stages
 Slice 02 adds system-browser OAuth/PKCE, a macOS Keychain credential store,
 bounded inbox caching, and background sync. Slice 03 adds opt-in, durable Gmail
 archive/unarchive and explicit read/unread actions; Gmail remains read-only until
-the user explicitly requests the broader Google `gmail.modify` permission. The
-app still does not compose/send/delete or expose arbitrary labels. Opening a
-message never marks it read. The browser preview remains synthetic and
-in-memory. See the slice contracts for individual acceptance scope.
+the user explicitly requests the broader Google `gmail.modify` permission.
+Slice 04 adds a local-only plain-text composer and durable draft recovery, but
+still does not send/delete mail or expose arbitrary labels. Opening a message
+never marks it read. The browser preview remains synthetic and in-memory. See
+the slice contracts for individual acceptance scope.
 
 ## Layout
 
@@ -17,7 +18,7 @@ in-memory. See the slice contracts for individual acceptance scope.
 | `crates/mail-core/` | Rust DTOs, fixture core, Gmail provider/auth/cache/sync/actions, SQLite, profile locks |
 | `src/`, `tests/`, `package.json`, configs | Vue 3/TypeScript frontend, IPC adapter and tests |
 | `src/lib/ipc/generated.ts` | **Generated** — do not edit by hand; regenerate with `mise run gen:ts` |
-| `src-tauri/` | Thin Tauri 2 shell: eleven typed commands, `mailbox_changed`, fixture/Gmail profile selection and lifecycle |
+| `src-tauri/` | Thin Tauri 2 shell: typed mail/draft/close commands, `mailbox_changed` and `drafts_changed` hints, fixture/Gmail profile selection and lifecycle |
 | `mise.toml` | Project tasks (see below) |
 
 ## Tooling
@@ -60,13 +61,17 @@ printed localhost URL. The disclosure banner identifies the labelled fake client
 there is no real OAuth or mailbox access in browser preview.
 
 **Native fixture mode (default):** `mise run dev:native`. This opens the synthetic
-fixture profile under `<app_data_dir>/fixture-profile`. The fixture provider's
-optional demo behavior is selected with `EMAIL_OS_FAKE_PROVIDER=paused|reject|success`
-(default: success). A profile lock rejects a second writer to the same profile.
+fixture profile under `<app_data_dir>/fixture-profile`; local drafts are stored
+separately beneath `<app_data_dir>/fixture-profile/local-drafts`. The fixture
+provider's optional demo behavior is selected with
+`EMAIL_OS_FAKE_PROVIDER=paused|reject|success` (default: success). Profile locks
+reject a second writer to the same mail or draft profile.
 
 **Explicit native Gmail mode:** launch with `EMAIL_OS_MODE=gmail`; it uses the
-separate `<app_data_dir>/gmail-profile`, never the fixture database. Set the Google
-client environment before launching:
+separate `<app_data_dir>/gmail-profile`, never the fixture database. Local drafts
+are in the separate `<app_data_dir>/gmail-profile/local-drafts` profile; disconnect
+retains those drafts on this device for the same account after reconnect. Set the
+Google client environment before launching:
 
 ```sh
 EMAIL_OS_MODE=gmail \
@@ -200,6 +205,75 @@ synthetic HTTP/fake-provider tests only in this VM. This new Mac checkpoint is
 not satisfied by the operator's earlier Slice 02 validation; OAuth consent,
 Keychain upgrades, native command registration and all Slice 03 scenarios remain
 pending operator validation.
+
+### Local drafts and normal close (Slice 04)
+
+Native `list_drafts`, `get_draft`, `create_draft`, `save_draft`, and
+`delete_draft` commands use a dedicated `local-drafts/drafts.db` with its own
+profile lock and FULL/WAL transactions. The bridge derives account scope from
+backend status rather than an account ID supplied by the UI; local drafts do not
+require Gmail's `gmail.modify` permission. Disconnect retains local drafts,
+but disconnect clears cached account identity, so native list/edit access resumes
+after reconnecting the same account. Drafts from another account are never
+returned by the selected account's commands.
+
+Draft To/Cc/subject/body text is stored exactly as entered, including incomplete
+recipients, whitespace and Unicode. Limits are 16 KiB each for To and Cc, 4 KiB
+for subject, and 1 MiB for body; oversized values fail instead of truncating or
+normalizing. This is local editor storage, not recipient validation or send
+readiness. Revisions start at 1; save/discard use expected-revision checks.
+Exact request retries return durable receipts; conflicting reuse of a key is
+rejected. Receipts/tombstones do not store body content, and deletes do not let
+late saves resurrect a draft. Only a committed receipt is a durable saved label.
+
+Reply is only available for the explicitly selected latest message with complete
+current non-retained plaintext and trustworthy metadata. A single From mailbox
+is required. Absent Reply-To falls back to From; malformed, empty, group, or
+ambiguous Reply-To fails closed. Display names do not expand, aliases and
+plus/dot equivalence are not inferred, duplicate mailboxes are removed, and the
+account's primary mailbox is excluded. Reply to the account's own latest sent
+message is unsupported. A reply starts with empty Cc/body and one `Re:` prefix;
+there is no reply-all, Bcc, signature, or automatic quoted text. Legacy cache
+rows can use a readonly metadata-only Gmail fetch when online; cached metadata
+hits are network-free. If that metadata is unavailable offline, reply preparation
+is unavailable, while new-message and existing-draft editing remain local.
+
+Native window Close and normal OS quit pause behind an in-memory
+`app_close_requested` request. The UI flushes the current buffer, then completes
+only that request after a durable receipt; failure/conflict cancels the request
+and leaves the window and buffer open. Requests coalesce, stale IDs are rejected,
+and completion without a pending native request cannot close the app. Browser
+preview only models this protocol in memory and is never durable. Force quit,
+crash, or power loss before a save ACK is not guaranteed to preserve the latest
+keystrokes.
+
+### Disposable Mac smoke checklist (Slice 04 pending)
+
+Run only after the existing Slice 02 and Slice 03 operator checkpoints, using a
+disposable Mac/profile and no production account:
+
+- Edit recipient, subject, and body immediately before normal window Close and
+  Cmd+Q in separate runs; restart and verify exact committed recovery.
+- Inject a save failure and a stale-revision conflict during close; verify the
+  app stays open, the buffer remains exact, the request is cancelled, and no
+  saved label appears without a committed receipt.
+- Verify cached/offline, readonly, and auth-expired editing needs no Gmail modify
+  grant. Verify a legacy first Reply uses only the readonly metadata enrichment
+  path when available.
+- Disconnect/reconnect the same account and verify drafts remain on this device;
+  switch account and verify no cross-account draft visibility or mutation.
+- After reply creation evict/retain the source conversation and verify the
+  immutable reply link survives while stale, retained, incomplete, or unsupported
+  source preparation fails closed.
+- Exercise idempotent retry, duplicate create before metadata reads, delete versus
+  late save, and verify no send/outbox/provider-draft side effect.
+- Verify fixture native restart recovery and that browser preview continues to
+  label its memory-only drafts as non-durable.
+
+Slice 04 synthetic core/UI checks pass in this VM. Native Tauri compile-check
+currently stops at the missing `pkg-config`/GTK prerequisites described below;
+no OS packages were installed. Native close handling and this Mac checkpoint
+remain pending operator validation.
 
 ## Native prerequisites and platform limits
 

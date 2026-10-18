@@ -21,6 +21,9 @@ use reqwest::blocking::Client;
 use reqwest::StatusCode;
 use serde_json::Value;
 
+use crate::drafts::types::{
+    ReplyContext, MAX_REPLY_HEADER_BYTES, MAX_REPLY_REFERENCES, MAX_REPLY_TO_RECIPIENTS,
+};
 use crate::dto::{Address, Conversation, ConversationRef, Message};
 use crate::error::MailError;
 use crate::gmail::auth::{self, Endpoints, GoogleConfig, UrlOpener};
@@ -78,6 +81,18 @@ const MAX_BATCH_MODIFY_MESSAGE_IDS: usize = 1_000;
 /// Refresh the access token this long before its stored expiry.
 const EXPIRY_SKEW_MS: i64 = 60_000;
 
+#[derive(Default)]
+struct CredentialPublicationState {
+    revision: u64,
+    last_non_refresh_revision: u64,
+}
+
+#[derive(Clone, Copy)]
+enum CredentialPublicationKind {
+    Refresh,
+    AccountChange,
+}
+
 pub struct GmailProvider {
     config: GoogleConfig,
     secrets: Arc<dyn Secrets>,
@@ -86,6 +101,9 @@ pub struct GmailProvider {
     opener: UrlOpener,
     /// Serializes token refresh so concurrent calls never race the store.
     refresh_lock: Mutex<()>,
+    /// Fences every credential publisher and invalidates work started against
+    /// an older bundle, including a disconnect while OAuth is in progress.
+    credential_publication: Mutex<CredentialPublicationState>,
     /// Pacing floor between consecutive API requests; tests shorten it.
     min_request_interval: Duration,
     /// Issue time of the most recent paced API request (or the reserved slot of
@@ -133,6 +151,7 @@ impl GmailProvider {
             endpoints: Endpoints::google(),
             opener: auth::system_url_opener(),
             refresh_lock: Mutex::new(()),
+            credential_publication: Mutex::new(CredentialPublicationState::default()),
             min_request_interval: MIN_REQUEST_INTERVAL,
             last_request_slot: Mutex::new(None),
         })
@@ -173,53 +192,141 @@ impl GmailProvider {
         }
     }
 
+    /// Takes a consistent in-process snapshot for credential publication.
+    /// The lock is never held during provider I/O or interactive OAuth.
+    fn credential_snapshot(&self) -> Result<(Option<TokenBundle>, u64, u64), MailError> {
+        let publication = self
+            .credential_publication
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let bundle = self.secrets.load()?;
+        Ok((
+            bundle,
+            publication.revision,
+            publication.last_non_refresh_revision,
+        ))
+    }
+
+    /// Stores a refresh/reauth result only while the bundle it was derived
+    /// from is still current. Every publisher uses the same short fence.
+    fn publish_bundle_if_current(
+        &self,
+        expected: &Option<TokenBundle>,
+        expected_revision: u64,
+        bundle: &TokenBundle,
+        kind: CredentialPublicationKind,
+    ) -> Result<bool, MailError> {
+        let mut publication = self
+            .credential_publication
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        if publication.revision != expected_revision || self.secrets.load()? != *expected {
+            return Ok(false);
+        }
+        self.publish_bundle_locked(&mut publication, bundle, kind)?;
+        Ok(true)
+    }
+
+    fn publish_bundle_locked(
+        &self,
+        publication: &mut CredentialPublicationState,
+        bundle: &TokenBundle,
+        kind: CredentialPublicationKind,
+    ) -> Result<(), MailError> {
+        let next_revision = publication
+            .revision
+            .checked_add(1)
+            .ok_or(MailError::StorageUnavailable)?;
+        self.secrets.store(bundle)?;
+        publication.revision = next_revision;
+        if matches!(kind, CredentialPublicationKind::AccountChange) {
+            publication.last_non_refresh_revision = next_revision;
+        }
+        Ok(())
+    }
+
     /// Loads the cached token; refreshes through the serialized path when
     /// expired. No credentials means `auth_required`, not a silent retry.
     fn access_token(&self, cancel: &CancelToken) -> Result<String, MailError> {
-        let bundle = self.secrets.load()?.ok_or(MailError::AuthRequired)?;
+        let (bundle, _, _) = self.credential_snapshot()?;
+        let bundle = bundle.ok_or(MailError::AuthRequired)?;
         if bundle.expires_at_epoch_ms - EXPIRY_SKEW_MS > now_ms() && !bundle.access_token.is_empty()
         {
             return Ok(bundle.access_token);
         }
-        let refresh_token = bundle
-            .refresh_token
-            .clone()
-            .ok_or(MailError::AuthRequired)?;
-        let _guard = self
+        let _refresh_guard = self
             .refresh_lock
             .lock()
             .map_err(|_| MailError::StorageUnavailable)?;
-        // Double-check after acquiring the lock: another caller may have
-        // refreshed while this one waited.
-        let latest = self.secrets.load()?.unwrap_or(bundle);
-        if latest.expires_at_epoch_ms - EXPIRY_SKEW_MS > now_ms() && !latest.access_token.is_empty()
-        {
-            return Ok(latest.access_token);
+
+        loop {
+            if cancel.is_cancelled() {
+                return Err(MailError::AuthCancelled);
+            }
+            // Always derive the refresh request and fallback credentials from
+            // the current snapshot; a cleared bundle is never resurrected.
+            let (latest, revision, _) = self.credential_snapshot()?;
+            let latest = latest.ok_or(MailError::AuthRequired)?;
+            if latest.expires_at_epoch_ms - EXPIRY_SKEW_MS > now_ms()
+                && !latest.access_token.is_empty()
+            {
+                return Ok(latest.access_token);
+            }
+            let refresh_token = latest
+                .refresh_token
+                .clone()
+                .ok_or(MailError::AuthRequired)?;
+            let tokens = match auth::refresh(
+                &self.config,
+                &self.endpoints,
+                &self.http,
+                &refresh_token,
+                cancel,
+            ) {
+                Ok(tokens) => tokens,
+                Err(error) => {
+                    if matches!(&error, MailError::AuthCancelled) {
+                        return Err(error);
+                    }
+                    let (current, current_revision, _) = self.credential_snapshot()?;
+                    if current_revision == revision {
+                        return Err(error);
+                    }
+                    let current = current.ok_or(MailError::AuthRequired)?;
+                    if current.expires_at_epoch_ms - EXPIRY_SKEW_MS > now_ms()
+                        && !current.access_token.is_empty()
+                    {
+                        return Ok(current.access_token);
+                    }
+                    continue;
+                }
+            };
+            let updated = TokenBundle {
+                access_token: tokens.access_token,
+                expires_at_epoch_ms: tokens.expires_at_epoch_ms,
+                refresh_token: tokens.refresh_token.or(latest.refresh_token.clone()),
+                account_id: latest.account_id.clone(),
+                email: latest.email.clone(),
+                // Refresh can preserve or revoke a verified grant, never create
+                // one: only the explicit account-bound OAuth upgrade enables it.
+                gmail_modify_granted: latest.gmail_modify_granted
+                    && tokens
+                        .scope
+                        .as_deref()
+                        .map(scope_grants_modify)
+                        .unwrap_or(true),
+            };
+            if self.publish_bundle_if_current(
+                &Some(latest),
+                revision,
+                &updated,
+                CredentialPublicationKind::Refresh,
+            )? {
+                return Ok(updated.access_token);
+            }
+            // A connect, upgrade, or disconnect won while the readonly refresh
+            // was in flight. Re-read and use its authorized token or refresh it.
         }
-        let tokens = auth::refresh(
-            &self.config,
-            &self.endpoints,
-            &self.http,
-            &refresh_token,
-            cancel,
-        )?;
-        let updated = TokenBundle {
-            access_token: tokens.access_token,
-            expires_at_epoch_ms: tokens.expires_at_epoch_ms,
-            refresh_token: tokens.refresh_token.or(Some(refresh_token)),
-            account_id: latest.account_id.clone(),
-            email: latest.email.clone(),
-            // Refresh can preserve or revoke a verified grant, never create
-            // one: only the explicit account-bound OAuth upgrade enables it.
-            gmail_modify_granted: latest.gmail_modify_granted
-                && tokens
-                    .scope
-                    .as_deref()
-                    .map(scope_grants_modify)
-                    .unwrap_or(true),
-        };
-        self.secrets.store(&updated)?;
-        Ok(updated.access_token)
     }
 
     /// The cached account id (stable, scoped: the email for this single
@@ -296,19 +403,73 @@ impl GmailProvider {
         ))
     }
 
-    /// Returns a token only when the locally stored, verified grant is
-    /// bound to an account. `access_token` performs any refresh first, after
-    /// which the grant is rechecked so an explicit scope downgrade blocks
-    /// the setter before dispatch.
-    fn mutation_token(&self, cancel: &CancelToken) -> Result<String, MailError> {
-        if !self.mutation_access()? {
-            return Err(MailError::PermissionRequired);
+    /// Returns one coherent, current credential snapshot only when its
+    /// account-bound grant is verified. Refresh and credential publication
+    /// remain outside the publication lock; the snapshot after refresh is the
+    /// credential that a caller may admit for dispatch.
+    fn mutation_bundle(&self, cancel: &CancelToken) -> Result<TokenBundle, MailError> {
+        loop {
+            if cancel.is_cancelled() {
+                return Err(MailError::AuthCancelled);
+            }
+            let (bundle, _, _) = self.credential_snapshot()?;
+            let bundle = bundle.ok_or(MailError::PermissionRequired)?;
+            if !bundle.gmail_modify_granted
+                || bundle_account_id(&bundle).is_none()
+                || (bundle.access_token.is_empty() && bundle.refresh_token.is_none())
+            {
+                return Err(MailError::PermissionRequired);
+            }
+
+            let returned_token = self.access_token(cancel)?;
+            let (current, _, _) = self.credential_snapshot()?;
+            let current = current.ok_or(MailError::PermissionRequired)?;
+            if !current.gmail_modify_granted
+                || bundle_account_id(&current).is_none()
+                || (current.access_token.is_empty() && current.refresh_token.is_none())
+            {
+                return Err(MailError::PermissionRequired);
+            }
+            if current.access_token.is_empty()
+                || current.expires_at_epoch_ms - EXPIRY_SKEW_MS <= now_ms()
+            {
+                // A concurrent credential publication can replace the token
+                // after access_token returns; retry against that current
+                // bundle. If refresh itself returned an unusable token, fail
+                // closed rather than repeatedly refreshing it.
+                if current.access_token == returned_token {
+                    return Err(MailError::AuthRequired);
+                }
+                continue;
+            }
+            return Ok(current);
         }
-        let token = self.access_token(cancel)?;
-        if !self.mutation_access()? {
-            return Err(MailError::PermissionRequired);
+    }
+
+    /// Returns the account identity from the same credential publication
+    /// snapshot. It fences a setter from silently switching mailboxes while it
+    /// waits for request pacing.
+    fn mutation_account_id(&self, cancel: &CancelToken) -> Result<String, MailError> {
+        let bundle = self.mutation_bundle(cancel)?;
+        bundle_account_id(&bundle)
+            .map(str::to_string)
+            .ok_or(MailError::PermissionRequired)
+    }
+
+    /// Final logical setter admission. This runs after pacing and takes a new
+    /// coherent snapshot, so a refresh/re-auth published during the wait
+    /// cannot leave dispatch using an obsolete token or grant. No credential
+    /// lock is held across the subsequent network request.
+    fn setter_admission_token(
+        &self,
+        cancel: &CancelToken,
+        expected_account_id: &str,
+    ) -> Result<String, MailError> {
+        let bundle = self.mutation_bundle(cancel)?;
+        if bundle_account_id(&bundle) != Some(expected_account_id) {
+            return Err(MailError::AuthFailed);
         }
-        Ok(token)
+        Ok(bundle.access_token)
     }
 
     fn apply_label_setter(
@@ -319,7 +480,7 @@ impl GmailProvider {
         cancel: &CancelToken,
     ) -> Result<(), MailError> {
         validate_message_ids(message_ids)?;
-        let token = self.mutation_token(cancel)?;
+        let account_id = self.mutation_account_id(cancel)?;
         if cancel.is_cancelled() {
             return Err(MailError::AuthCancelled);
         }
@@ -337,6 +498,10 @@ impl GmailProvider {
             "{}/gmail/v1/users/me/messages/batchModify",
             self.endpoints.api
         );
+        let token = self.setter_admission_token(cancel, &account_id)?;
+        if cancel.is_cancelled() {
+            return Err(MailError::AuthCancelled);
+        }
         let response = self
             .http
             .post(&url)
@@ -377,10 +542,27 @@ impl GmailProvider {
     }
 }
 
+#[cfg(test)]
+#[path = "reply_context_tests.rs"]
+mod reply_context_tests;
+
 fn scope_grants_modify(scope: &str) -> bool {
     scope
         .split_ascii_whitespace()
         .any(|granted| granted == auth::GMAIL_MODIFY_SCOPE)
+}
+
+fn bundle_account_id(bundle: &TokenBundle) -> Option<&str> {
+    bundle
+        .account_id
+        .as_deref()
+        .filter(|account| !account.is_empty())
+        .or_else(|| {
+            bundle
+                .email
+                .as_deref()
+                .filter(|account| !account.is_empty())
+        })
 }
 
 fn validate_message_ids(message_ids: &[String]) -> Result<(), MailError> {
@@ -484,7 +666,9 @@ impl GmailReadProvider for GmailProvider {
         if !self.is_configured() {
             return Err(MailError::NotConfigured);
         }
-        let previous = self.secrets.load()?.ok_or(MailError::AuthRequired)?;
+        let (previous, publication_revision, previous_non_refresh_revision) =
+            self.credential_snapshot()?;
+        let previous = previous.ok_or(MailError::AuthRequired)?;
         let bound_account = previous
             .account_id
             .as_ref()
@@ -517,15 +701,66 @@ impl GmailReadProvider for GmailProvider {
         if cancel.is_cancelled() {
             return Err(MailError::AuthCancelled);
         }
+        let mut publication = self
+            .credential_publication
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        if cancel.is_cancelled() {
+            return Err(MailError::AuthCancelled);
+        }
+        let current = self.secrets.load()?;
+        if publication.revision == publication_revision && current.as_ref() == Some(&previous) {
+            let bundle = TokenBundle {
+                access_token: tokens.access_token,
+                expires_at_epoch_ms: tokens.expires_at_epoch_ms,
+                refresh_token: tokens.refresh_token.or(previous.refresh_token),
+                account_id: Some(profile.account_id.clone()),
+                email: Some(profile.email_address.clone()),
+                gmail_modify_granted: true,
+            };
+            self.publish_bundle_locked(
+                &mut publication,
+                &bundle,
+                CredentialPublicationKind::AccountChange,
+            )?;
+            return Ok(profile);
+        }
+
+        // Rebase across refreshes only. A concurrent connect, upgrade, or
+        // disconnect invalidates the interactive result rather than allowing
+        // an older OAuth exchange to replace that newer publication.
+        let current = current.ok_or(MailError::AuthRequired)?;
+        if bundle_account_id(&current) != Some(profile.account_id.as_str()) {
+            return Err(MailError::AuthFailed);
+        }
+        if publication.last_non_refresh_revision != previous_non_refresh_revision {
+            if current.gmail_modify_granted {
+                return Ok(profile);
+            }
+            if previous.gmail_modify_granted {
+                return Err(MailError::PermissionRequired);
+            }
+            return Err(MailError::Busy);
+        }
+        if current.gmail_modify_granted {
+            return Ok(profile);
+        }
+        if previous.gmail_modify_granted {
+            return Err(MailError::PermissionRequired);
+        }
         let bundle = TokenBundle {
             access_token: tokens.access_token,
             expires_at_epoch_ms: tokens.expires_at_epoch_ms,
-            refresh_token: tokens.refresh_token.or(previous.refresh_token),
+            refresh_token: tokens.refresh_token.or(current.refresh_token),
             account_id: Some(profile.account_id.clone()),
             email: Some(profile.email_address.clone()),
             gmail_modify_granted: true,
         };
-        self.secrets.store(&bundle)?;
+        self.publish_bundle_locked(
+            &mut publication,
+            &bundle,
+            CredentialPublicationKind::AccountChange,
+        )?;
         Ok(profile)
     }
 
@@ -559,7 +794,8 @@ impl GmailReadProvider for GmailProvider {
         if !self.is_configured() {
             return Err(MailError::NotConfigured);
         }
-        let previous = self.secrets.load()?;
+        let (previous, publication_revision, previous_non_refresh_revision) =
+            self.credential_snapshot()?;
         let prior_modify_grant = previous
             .as_ref()
             .is_some_and(|bundle| bundle.gmail_modify_granted);
@@ -578,6 +814,8 @@ impl GmailReadProvider for GmailProvider {
         )?;
         let tokens =
             auth::exchange_code(&self.config, &self.endpoints, &self.http, &grant, cancel)?;
+        let returned_scope = tokens.scope.clone();
+        let returned_refresh_token = tokens.refresh_token.clone();
         // Preserve a stored refresh token when the grant response omits it.
         let bundle = TokenBundle {
             access_token: tokens.access_token,
@@ -591,8 +829,7 @@ impl GmailReadProvider for GmailProvider {
             // explicit access survives an omitted scope response; a present
             // response is authoritative and can revoke it.
             gmail_modify_granted: prior_modify_grant
-                && tokens
-                    .scope
+                && returned_scope
                     .as_deref()
                     .map(scope_grants_modify)
                     .unwrap_or(true),
@@ -618,12 +855,65 @@ impl GmailReadProvider for GmailProvider {
             email: Some(profile.email_address.clone()),
             ..bundle
         };
-        self.secrets.store(&bundle)?;
+        let mut publication = self
+            .credential_publication
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let current = self.secrets.load()?;
+        if publication.revision == publication_revision && current == previous {
+            self.publish_bundle_locked(
+                &mut publication,
+                &bundle,
+                CredentialPublicationKind::AccountChange,
+            )?;
+            return Ok(profile);
+        }
+
+        // A refreshed token may replace the original snapshot while interactive
+        // OAuth is open. Rebase only over refresh-only publications, preserving
+        // the current fallback credential and the authoritative returned scope.
+        let current = current.ok_or(MailError::AuthRequired)?;
+        if bundle_account_id(&current) != Some(profile.account_id.as_str()) {
+            return Err(MailError::AuthFailed);
+        }
+        if publication.last_non_refresh_revision != previous_non_refresh_revision {
+            return Err(MailError::Busy);
+        }
+        let rebased = TokenBundle {
+            access_token: bundle.access_token,
+            expires_at_epoch_ms: bundle.expires_at_epoch_ms,
+            refresh_token: returned_refresh_token.or(current.refresh_token),
+            account_id: Some(profile.account_id.clone()),
+            email: Some(profile.email_address.clone()),
+            // An omitted scope cannot restore a grant revoked by an
+            // intervening refresh; a present scope remains authoritative.
+            gmail_modify_granted: prior_modify_grant
+                && returned_scope
+                    .as_deref()
+                    .map(scope_grants_modify)
+                    .unwrap_or(current.gmail_modify_granted),
+        };
+        self.publish_bundle_locked(
+            &mut publication,
+            &rebased,
+            CredentialPublicationKind::AccountChange,
+        )?;
         Ok(profile)
     }
 
     fn disconnect(&self) -> Result<(), MailError> {
-        self.secrets.clear()
+        let mut publication = self
+            .credential_publication
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let next_revision = publication
+            .revision
+            .checked_add(1)
+            .ok_or(MailError::StorageUnavailable)?;
+        self.secrets.clear()?;
+        publication.revision = next_revision;
+        publication.last_non_refresh_revision = next_revision;
+        Ok(())
     }
 
     fn profile(&self, cancel: &CancelToken) -> Result<GmailProfile, MailError> {
@@ -797,8 +1087,15 @@ fn parse_thread(account_id: &str, thread_id: &str, body: &str) -> Result<GmailTh
     let mut no_plain_text = 0usize;
     let mut attachments = false;
     let mut omitted_inline_content = false;
+    let mut latest_payload: Option<&Value> = None;
+    let mut latest_key: Option<(String, String)> = None;
     for message in messages {
         let id = str_field(message, "id")?;
+        let key = (message_sent_at(message), id.clone());
+        if latest_key.as_ref().is_none_or(|current| key > *current) {
+            latest_key = Some(key);
+            latest_payload = Some(message);
+        }
         let labels = optional_string_array(message, "labelIds")?.unwrap_or_default();
         if labels.contains(&"INBOX") {
             inbox_message_ids.push(id.clone());
@@ -845,6 +1142,11 @@ fn parse_thread(account_id: &str, thread_id: &str, body: &str) -> Result<GmailTh
     if omitted_inline_content {
         reasons.push("additional inline MIME content is not displayed".to_string());
     }
+    let reply_context = latest_payload.and_then(|message| {
+        let source_message_id = message.get("id")?.as_str()?;
+        let payload = message.get("payload")?;
+        parse_reply_context(payload, source_message_id)
+    });
     let conversation = Conversation {
         conversation_ref: ConversationRef {
             account_id: account_id.to_string(),
@@ -857,6 +1159,7 @@ fn parse_thread(account_id: &str, thread_id: &str, body: &str) -> Result<GmailTh
         context_complete: Some(no_plain_text == 0 && !attachments && !omitted_inline_content),
         unsupported_reason: (!reasons.is_empty()).then(|| reasons.join("; ")),
         retained_snapshot_at: None,
+        reply_context,
         pending_operation_id: None,
     };
     Ok(GmailThread {
@@ -866,6 +1169,27 @@ fn parse_thread(account_id: &str, thread_id: &str, body: &str) -> Result<GmailTh
         unread_message_ids: Some(unread_message_ids),
         history_id,
     })
+}
+
+fn message_sent_at(message: &Value) -> String {
+    message
+        .get("internalDate")
+        .and_then(Value::as_str)
+        .and_then(|ms| ms.parse::<i64>().ok())
+        .and_then(chrono::DateTime::from_timestamp_millis)
+        .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+        .or_else(|| {
+            let date = message
+                .get("payload")
+                .map(|payload| json_header_value(payload, "Date"))
+                .unwrap_or_default();
+            (!date.is_empty())
+                .then(|| mailparse::dateparse(&date).ok())
+                .flatten()
+                .and_then(|timestamp| chrono::DateTime::from_timestamp(timestamp, 0))
+                .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+        })
+        .unwrap_or_default()
 }
 
 /// Newest non-empty subject wins; Gmail lists messages oldest first.
@@ -893,21 +1217,7 @@ fn parse_message(id: &str, message: &Value) -> Result<(Message, String), String>
         .next()
         .ok_or_else(|| "missing From address".to_string())?;
     let to = parse_addresses(&json_header_value(payload, "To"));
-    let sent_at = message
-        .get("internalDate")
-        .and_then(Value::as_str)
-        .and_then(|ms| ms.parse::<i64>().ok())
-        .and_then(chrono::DateTime::from_timestamp_millis)
-        .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
-        .or_else(|| {
-            let date = json_header_value(payload, "Date");
-            (!date.is_empty())
-                .then(|| mailparse::dateparse(&date).ok())
-                .flatten()
-                .and_then(|timestamp| chrono::DateTime::from_timestamp(timestamp, 0))
-                .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
-        })
-        .unwrap_or_default();
+    let sent_at = message_sent_at(message);
     let part = find_plain_part(payload, 0).ok_or_else(|| "no plain-text body".to_string())?;
     let data = part
         .get("body")
@@ -947,6 +1257,24 @@ fn parse_message(id: &str, message: &Value) -> Result<(Message, String), String>
     ))
 }
 
+/// Header values are left raw for strict metadata parsing; callers decide
+/// whether malformed controls invalidate metadata or are flattened for display.
+fn raw_header_values<'a>(payload: &'a Value, name: &str) -> Vec<Option<&'a str>> {
+    payload
+        .get("headers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|header| {
+            header
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|n| n.eq_ignore_ascii_case(name))
+        })
+        .map(|header| header.get("value").and_then(Value::as_str))
+        .collect()
+}
+
 /// First header value with the given name on a Gmail payload, sanitized
 /// against CR/LF (hostile header values become one line).
 fn json_header_value(payload: &Value, name: &str) -> String {
@@ -970,6 +1298,249 @@ fn json_header_value(payload: &Value, name: &str) -> String {
         })
         .unwrap_or_default()
         .replace(['\r', '\n'], " ")
+}
+
+/// Derives safe, plain mailbox and RFC threading metadata from one full Gmail
+/// payload. Any ambiguity or malformed header makes only reply preparation
+/// unavailable; ordinary reading remains independent of this result.
+fn parse_reply_context(payload: &Value, source_message_id: &str) -> Option<ReplyContext> {
+    let from = parse_single_mailbox_header(payload, "From")?;
+    let reply_to_headers = raw_header_values(payload, "Reply-To");
+    let reply_to_mailboxes = match reply_to_headers.as_slice() {
+        [] => None,
+        [Some(value)] => Some(parse_mailbox_list(value, true)?),
+        _ => return None,
+    };
+    let message_id = single_message_id(payload, "Message-ID")?;
+    let reference_headers = raw_header_values(payload, "References");
+    let mut references = match reference_headers.as_slice() {
+        [Some(value)] => parse_message_id_list(value)?,
+        [] => {
+            let in_reply_to = raw_header_values(payload, "In-Reply-To");
+            match in_reply_to.as_slice() {
+                [] => Vec::new(),
+                [Some(value)] => vec![parse_single_message_id(value)?],
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+    references.retain(|id| id != &message_id);
+    references.push(message_id.clone());
+    let total_bytes = references.iter().try_fold(0usize, |total, id| {
+        total
+            .checked_add(id.len())?
+            .checked_add(usize::from(total > 0))
+    })?;
+    if references.len() > MAX_REPLY_REFERENCES || total_bytes > MAX_REPLY_HEADER_BYTES {
+        return None;
+    }
+    Some(ReplyContext {
+        source_message_id: source_message_id.to_string(),
+        from_mailbox: from,
+        reply_to_mailboxes,
+        message_id,
+        references,
+    })
+}
+
+fn parse_single_mailbox_header(payload: &Value, name: &str) -> Option<String> {
+    let headers = raw_header_values(payload, name);
+    let [Some(value)] = headers.as_slice() else {
+        return None;
+    };
+    let mailboxes = parse_mailbox_list(value, false)?;
+    (mailboxes.len() == 1).then(|| mailboxes.into_iter().next().unwrap())
+}
+
+/// Parses the original mailbox grammar before any RFC2047 display-name decode.
+/// Groups are rejected for reply metadata even though reader display flattens them.
+fn parse_mailbox_list(value: &str, allow_multiple: bool) -> Option<Vec<String>> {
+    if value.len() > MAX_REPLY_HEADER_BYTES
+        || value.chars().any(char::is_control)
+        || value.trim_end().ends_with(',')
+        || has_unquoted_semicolon(value)
+        || has_addr_spec_in_unquoted_phrase(value)
+    {
+        return None;
+    }
+    let mut raw = String::from("From: ");
+    raw.push_str(value);
+    raw.push_str("\r\n");
+    let (header, _) = mailparse::parse_header(raw.as_bytes()).ok()?;
+    let list = mailparse::addrparse_header(&header).ok()?;
+    let mut mailboxes = Vec::new();
+    for address in list.iter() {
+        let mailparse::MailAddr::Single(info) = address else {
+            return None;
+        };
+        let mailbox = info.addr.as_str();
+        if !valid_mailbox(mailbox) {
+            return None;
+        }
+        mailboxes.push(mailbox.to_string());
+        if mailboxes.len() > MAX_REPLY_TO_RECIPIENTS {
+            return None;
+        }
+    }
+    if mailboxes.is_empty() || (!allow_multiple && mailboxes.len() != 1) {
+        return None;
+    }
+    Some(mailboxes)
+}
+
+fn has_addr_spec_in_unquoted_phrase(value: &str) -> bool {
+    let mut quoted = false;
+    let mut escaped = false;
+    let mut comment_depth = 0usize;
+    let mut in_angle_address = false;
+    let mut phrase_has_at = false;
+
+    for character in value.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' && (quoted || comment_depth > 0) {
+            escaped = true;
+            continue;
+        }
+        if comment_depth > 0 {
+            match character {
+                '(' => comment_depth += 1,
+                ')' => comment_depth -= 1,
+                _ => {}
+            }
+            continue;
+        }
+        if quoted {
+            if character == '"' {
+                quoted = false;
+            }
+            continue;
+        }
+        match character {
+            '"' => quoted = true,
+            '(' => comment_depth = 1,
+            '<' if !in_angle_address => {
+                if phrase_has_at {
+                    return true;
+                }
+                in_angle_address = true;
+            }
+            '>' if in_angle_address => in_angle_address = false,
+            ',' if !in_angle_address => phrase_has_at = false,
+            '@' if !in_angle_address => phrase_has_at = true,
+            _ => {}
+        }
+    }
+    false
+}
+
+fn has_unquoted_semicolon(value: &str) -> bool {
+    let mut quoted = false;
+    let mut escaped = false;
+    for character in value.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match character {
+            '\\' if quoted => escaped = true,
+            '"' => quoted = !quoted,
+            ';' if !quoted => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+fn valid_mailbox(mailbox: &str) -> bool {
+    if mailbox.is_empty()
+        || mailbox.len() > 254
+        || mailbox.chars().any(char::is_control)
+        || mailbox.chars().any(char::is_whitespace)
+    {
+        return false;
+    }
+    let Some((local, domain)) = mailbox.split_once('@') else {
+        return false;
+    };
+    !local.is_empty()
+        && !domain.is_empty()
+        && !domain.contains('@')
+        && local.is_ascii()
+        && domain.is_ascii()
+}
+
+fn single_message_id(payload: &Value, name: &str) -> Option<String> {
+    let headers = raw_header_values(payload, name);
+    let [Some(value)] = headers.as_slice() else {
+        return None;
+    };
+    parse_single_message_id(value)
+}
+
+fn parse_single_message_id(value: &str) -> Option<String> {
+    if value.len() > MAX_REPLY_HEADER_BYTES
+        || !value.is_ascii()
+        || value
+            .chars()
+            .any(|ch| ch.is_control() || ch.is_whitespace())
+        || !value.starts_with('<')
+        || !value.ends_with('>')
+    {
+        return None;
+    }
+    let inner = &value[1..value.len().checked_sub(1)?];
+    let (left, right) = inner.split_once('@')?;
+    if right.contains('@') || !valid_dot_atom(left, false) || !valid_dot_atom(right, true) {
+        return None;
+    }
+    Some(value.to_string())
+}
+
+fn valid_dot_atom(value: &str, domain: bool) -> bool {
+    if value.is_empty() {
+        return false;
+    }
+    value.split('.').all(|atom| {
+        !atom.is_empty()
+            && atom.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric()
+                    || (domain && byte == b'-')
+                    || (!domain && b"!#$%&'*+-/=?^_`{|}~".contains(&byte))
+            })
+            && (!domain
+                || (atom
+                    .as_bytes()
+                    .first()
+                    .is_some_and(|byte| byte.is_ascii_alphanumeric())
+                    && atom
+                        .as_bytes()
+                        .last()
+                        .is_some_and(|byte| byte.is_ascii_alphanumeric())))
+    })
+}
+
+fn parse_message_id_list(value: &str) -> Option<Vec<String>> {
+    if value.len() > MAX_REPLY_HEADER_BYTES
+        || !value.is_ascii()
+        || value.chars().any(char::is_control)
+    {
+        return None;
+    }
+    if value.trim().is_empty() {
+        return None;
+    }
+    let mut ids = Vec::new();
+    for token in value.split_ascii_whitespace() {
+        ids.push(parse_single_message_id(token)?);
+        if ids.len() > MAX_REPLY_REFERENCES {
+            return None;
+        }
+    }
+    Some(ids)
 }
 
 /// RFC2047-decodes one header value via `mailparse`; falls back to the raw
@@ -1360,6 +1931,7 @@ pub(crate) mod tests {
         script: Mutex<VecDeque<(String, u16, String)>>,
         requests: Mutex<Vec<String>>,
         bodies: Mutex<Vec<String>>,
+        authorization_headers: Mutex<Vec<Option<String>>>,
         on_request: Option<RequestHook>,
     }
 
@@ -1385,6 +1957,7 @@ pub(crate) mod tests {
                 ),
                 requests: Mutex::new(Vec::new()),
                 bodies: Mutex::new(Vec::new()),
+                authorization_headers: Mutex::new(Vec::new()),
                 on_request,
             });
             let thread_state = Arc::clone(&state);
@@ -1407,6 +1980,15 @@ pub(crate) mod tests {
                     .lock()
                     .unwrap()
                     .push(text.split("\r\n\r\n").nth(1).unwrap_or("").to_string());
+                thread_state
+                    .authorization_headers
+                    .lock()
+                    .unwrap()
+                    .push(text.lines().find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("authorization")
+                            .then(|| value.trim().to_string())
+                    }));
                 if let Some(on_request) = &thread_state.on_request {
                     on_request(&target);
                 }
@@ -1450,6 +2032,10 @@ pub(crate) mod tests {
 
         fn bodies(&self) -> Vec<String> {
             self.state.bodies.lock().unwrap().clone()
+        }
+
+        fn authorization_headers(&self) -> Vec<Option<String>> {
+            self.state.authorization_headers.lock().unwrap().clone()
         }
     }
 
@@ -1946,6 +2532,188 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn paced_setter_rechecks_grant_after_concurrent_refresh_downgrade() {
+        let (api_base, api) = FakeApi::start(vec![]);
+        let (token_base, token) = FakeApi::start(vec![(
+            "/synthetic-token",
+            200,
+            r#"{"access_token":"at-downgraded-during-pacing","expires_in":3600,"scope":"https://www.googleapis.com/auth/gmail.readonly"}"#,
+        )]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        let expiry = now_ms() + EXPIRY_SKEW_MS + 150;
+        let granted = TokenBundle {
+            gmail_modify_granted: true,
+            expires_at_epoch_ms: expiry,
+            ..future_token()
+        };
+        secrets.store(&granted).unwrap();
+        let mut provider = test_provider(&api_base, secrets.clone());
+        provider.endpoints.token = format!("{token_base}/synthetic-token");
+        provider.min_request_interval = Duration::from_millis(800);
+        let seeded = Instant::now();
+        *provider.last_request_slot.lock().unwrap() = Some(seeded);
+        let provider = Arc::new(provider);
+
+        let (setter_tx, setter_rx) = std::sync::mpsc::channel();
+        let setter_provider = Arc::clone(&provider);
+        std::thread::spawn(move || {
+            let result = setter_provider.apply_archive(
+                &["paced-message".to_string()],
+                true,
+                &CancelToken::default(),
+            );
+            let _ = setter_tx.send(result);
+        });
+        assert!(
+            until_provider_slot(&provider, seeded),
+            "setter did not reserve its pace slot"
+        );
+
+        // Wait until the original token crosses the production refresh skew,
+        // then exercise the real readonly get_thread refresh while the setter
+        // remains in its production pacing wait.
+        let until_refresh = expiry - EXPIRY_SKEW_MS - now_ms() + 5;
+        if until_refresh > 0 {
+            std::thread::sleep(Duration::from_millis(until_refresh as u64));
+        }
+        let read_cancel = CancelToken::default();
+        let (read_tx, read_rx) = std::sync::mpsc::channel();
+        let read_provider = Arc::clone(&provider);
+        let read_cancel_thread = read_cancel.clone();
+        std::thread::spawn(move || {
+            let result = read_provider.get_thread("synthetic-thread", &read_cancel_thread);
+            let _ = read_tx.send(result);
+        });
+        let refresh_deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if secrets
+                .load()
+                .unwrap()
+                .is_some_and(|bundle| bundle.access_token == "at-downgraded-during-pacing")
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < refresh_deadline,
+                "readonly refresh did not publish"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(!secrets.load().unwrap().unwrap().gmail_modify_granted);
+        read_cancel.cancel();
+        assert!(matches!(
+            read_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            Err(MailError::AuthCancelled)
+        ));
+        assert_eq!(
+            setter_rx.recv_timeout(Duration::from_secs(3)).unwrap(),
+            Err(MailError::PermissionRequired)
+        );
+        assert_eq!(
+            token.requests().len(),
+            1,
+            "the real refresh endpoint was used"
+        );
+        assert!(
+            api.requests().is_empty(),
+            "revoked grant must prevent batchModify"
+        );
+    }
+
+    #[test]
+    fn paced_setter_uses_current_same_account_credential_after_replacement() {
+        let (api_base, api) =
+            FakeApi::start(vec![("/gmail/v1/users/me/messages/batchModify", 200, "")]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        let original = TokenBundle {
+            gmail_modify_granted: true,
+            ..future_token()
+        };
+        secrets.store(&original).unwrap();
+        let mut provider = test_provider(&api_base, secrets);
+        provider.min_request_interval = Duration::from_millis(150);
+        let seeded = Instant::now();
+        *provider.last_request_slot.lock().unwrap() = Some(seeded);
+        let provider = Arc::new(provider);
+
+        let (setter_tx, setter_rx) = std::sync::mpsc::channel();
+        let setter_provider = Arc::clone(&provider);
+        std::thread::spawn(move || {
+            let result = setter_provider.apply_archive(
+                &["paced-message".to_string()],
+                true,
+                &CancelToken::default(),
+            );
+            let _ = setter_tx.send(result);
+        });
+        assert!(
+            until_provider_slot(&provider, seeded),
+            "setter did not reserve its pace slot"
+        );
+
+        let replacement = TokenBundle {
+            access_token: "synthetic-replacement-access".to_string(),
+            ..original
+        };
+        let mut publication = provider.credential_publication.lock().unwrap();
+        provider
+            .publish_bundle_locked(
+                &mut publication,
+                &replacement,
+                CredentialPublicationKind::AccountChange,
+            )
+            .unwrap();
+        drop(publication);
+
+        setter_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("paced setter completes")
+            .unwrap();
+        assert_eq!(
+            api.authorization_headers(),
+            vec![Some("Bearer synthetic-replacement-access".to_string())],
+            "the POST uses the current token, not its pre-pacing credential"
+        );
+        assert_eq!(api.requests().len(), 1);
+    }
+
+    #[test]
+    fn paced_setter_cancellation_prevents_dispatch() {
+        let (api_base, api) = FakeApi::start(vec![]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        secrets
+            .store(&TokenBundle {
+                gmail_modify_granted: true,
+                ..future_token()
+            })
+            .unwrap();
+        let mut provider = test_provider(&api_base, secrets);
+        provider.min_request_interval = Duration::from_secs(3600);
+        let seeded = Instant::now();
+        *provider.last_request_slot.lock().unwrap() = Some(seeded);
+        let provider = Arc::new(provider);
+        let cancel = CancelToken::default();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let setter_provider = Arc::clone(&provider);
+        let setter_cancel = cancel.clone();
+        std::thread::spawn(move || {
+            let result =
+                setter_provider.apply_read(&["paced-message".to_string()], true, &setter_cancel);
+            let _ = done_tx.send(result);
+        });
+        assert!(
+            until_provider_slot(&provider, seeded),
+            "setter did not reserve its pace slot"
+        );
+        cancel.cancel();
+        assert_eq!(
+            done_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            Err(MailError::AuthCancelled)
+        );
+        assert!(api.requests().is_empty());
+    }
+
+    #[test]
     fn refresh_scope_downgrade_disables_write_before_setter_dispatch() {
         let (api_base, api) = FakeApi::start(vec![]);
         let (token_base, _token) = FakeApi::start(vec![(
@@ -2270,6 +3038,61 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn paced_setter_rejects_a_replacement_for_a_different_account() {
+        let (api_base, api) = FakeApi::start(vec![]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        let original = TokenBundle {
+            gmail_modify_granted: true,
+            ..future_token()
+        };
+        secrets.store(&original).unwrap();
+        let mut provider = test_provider(&api_base, secrets);
+        provider.min_request_interval = Duration::from_millis(100);
+        let seeded = Instant::now();
+        *provider.last_request_slot.lock().unwrap() = Some(seeded);
+        let provider = Arc::new(provider);
+
+        let (setter_tx, setter_rx) = std::sync::mpsc::channel();
+        let setter_provider = Arc::clone(&provider);
+        std::thread::spawn(move || {
+            let result = setter_provider.apply_archive(
+                &["paced-message".to_string()],
+                true,
+                &CancelToken::default(),
+            );
+            let _ = setter_tx.send(result);
+        });
+        assert!(
+            until_provider_slot(&provider, seeded),
+            "setter did not reserve its pace slot"
+        );
+
+        let replacement = TokenBundle {
+            account_id: Some("other@example.test".to_string()),
+            email: Some("other@example.test".to_string()),
+            ..original
+        };
+        let mut publication = provider.credential_publication.lock().unwrap();
+        provider
+            .publish_bundle_locked(
+                &mut publication,
+                &replacement,
+                CredentialPublicationKind::AccountChange,
+            )
+            .unwrap();
+        drop(publication);
+
+        assert_eq!(
+            setter_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            Err(MailError::AuthFailed)
+        );
+        assert!(
+            api.requests().is_empty(),
+            "account change must not dispatch"
+        );
+    }
+
+    #[test]
     fn mailbox_setters_post_only_exact_snapshot_ids_and_closed_label_changes() {
         let (base, api) = FakeApi::start(vec![
             ("/gmail/v1/users/me/messages/batchModify", 200, ""),
@@ -2283,11 +3106,13 @@ pub(crate) mod tests {
             ..future_token()
         };
         secrets.store(&granted).unwrap();
-        let provider = test_provider(&base, secrets);
+        let mut provider = test_provider(&base, secrets);
+        provider.min_request_interval = Duration::from_millis(30);
         let ids = vec![
             "unsupported-message".to_string(),
             "snapshot-message-2".to_string(),
         ];
+        let started = Instant::now();
 
         provider
             .apply_archive(&ids, true, &CancelToken::default())
@@ -2319,6 +3144,11 @@ pub(crate) mod tests {
             .requests()
             .iter()
             .all(|path| { path == "/gmail/v1/users/me/messages/batchModify" }));
+        assert!(
+            started.elapsed() >= Duration::from_millis(75),
+            "authorized archive/read setters honor production pacing: {:?}",
+            started.elapsed()
+        );
     }
 
     #[test]
@@ -3272,5 +4102,375 @@ pub(crate) mod tests {
             thread.conversation.unsupported_reason.as_deref(),
             Some("3 of 4 messages had no safe plain-text body")
         );
+    }
+
+    /// Loopback OAuth token endpoint that pauses refresh responses while still
+    /// accepting a concurrent interactive OAuth exchange.
+    struct PausedRefreshEndpoint {
+        base: String,
+        refresh_received: Arc<std::sync::Barrier>,
+        release_refresh: Arc<std::sync::Barrier>,
+        server: std::thread::JoinHandle<()>,
+    }
+
+    impl PausedRefreshEndpoint {
+        fn start(requests: usize) -> Self {
+            Self::start_with_oauth_response(
+                requests,
+                r#"{"access_token":"upgrade-access","refresh_token":"upgrade-refresh","expires_in":3600,"scope":"https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.modify"}"#,
+            )
+        }
+
+        fn start_with_oauth_response(requests: usize, oauth_response: &'static str) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            let refresh_received = Arc::new(std::sync::Barrier::new(2));
+            let release_refresh = Arc::new(std::sync::Barrier::new(2));
+            let server_received = Arc::clone(&refresh_received);
+            let server_release = Arc::clone(&release_refresh);
+            let server = std::thread::spawn(move || {
+                let mut workers = Vec::with_capacity(requests);
+                for _ in 0..requests {
+                    let (stream, _) = listener.accept().unwrap();
+                    let received = Arc::clone(&server_received);
+                    let release = Arc::clone(&server_release);
+                    workers.push(std::thread::spawn(move || {
+                        let mut stream = stream;
+                        let request = read_loopback_request(&mut stream);
+                        let body = request
+                            .split_once("\r\n\r\n")
+                            .map(|(_, body)| body)
+                            .unwrap_or("");
+                        let (status, response) = if body.contains("grant_type=refresh_token") {
+                            received.wait();
+                            release.wait();
+                            (
+                                200,
+                                r#"{"access_token":"readonly-refresh-access","refresh_token":"readonly-refresh-replacement","expires_in":3600}"#,
+                            )
+                        } else {
+                            (200, oauth_response)
+                        };
+                        let wire = format!(
+                            "HTTP/1.1 {status} OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",
+                            response.len()
+                        );
+                        stream.write_all(wire.as_bytes()).unwrap();
+                        stream.flush().unwrap();
+                    }));
+                }
+                for worker in workers {
+                    worker.join().unwrap();
+                }
+            });
+            Self {
+                base,
+                refresh_received,
+                release_refresh,
+                server,
+            }
+        }
+
+        fn wait_until_refresh_paused(&self) {
+            self.refresh_received.wait();
+        }
+
+        fn release_refresh(&self) {
+            self.release_refresh.wait();
+        }
+
+        fn join(self) {
+            self.server.join().unwrap();
+        }
+    }
+
+    fn read_loopback_request(stream: &mut std::net::TcpStream) -> String {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut bytes = Vec::new();
+        loop {
+            let header_end = bytes.windows(4).position(|window| window == b"\r\n\r\n");
+            if let Some(header_end) = header_end {
+                let headers = String::from_utf8_lossy(&bytes[..header_end]);
+                let content_length = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())
+                            .flatten()
+                    })
+                    .unwrap_or(0);
+                if bytes.len() >= header_end + 4 + content_length {
+                    break;
+                }
+            }
+            let mut chunk = [0u8; 2048];
+            let read = stream.read(&mut chunk).unwrap();
+            if read == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&chunk[..read]);
+        }
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    fn expired_bundle() -> TokenBundle {
+        TokenBundle {
+            expires_at_epoch_ms: now_ms() - 1_000,
+            ..future_token()
+        }
+    }
+
+    #[test]
+    fn credential_publication_old_refresh_cannot_overwrite_verified_upgrade() {
+        let endpoint = PausedRefreshEndpoint::start(2);
+        let (api_base, _api) = FakeApi::start(vec![
+            (
+                "/gmail/v1/users/me/profile",
+                200,
+                r#"{"emailAddress":"synthetic@example.test","historyId":"1"}"#,
+            ),
+            (
+                "/gmail/v1/users/me/profile",
+                200,
+                r#"{"emailAddress":"synthetic@example.test","historyId":"2"}"#,
+            ),
+        ]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        secrets.store(&expired_bundle()).unwrap();
+        let mut provider = test_provider(&api_base, secrets.clone());
+        provider.endpoints.token = format!("{}/synthetic-token", endpoint.base);
+        provider.opener = completing_oauth_opener(Arc::new(Mutex::new(None)));
+        let provider = Arc::new(provider);
+
+        let refresh_provider = Arc::clone(&provider);
+        let old_refresh =
+            std::thread::spawn(move || refresh_provider.profile(&CancelToken::default()));
+        endpoint.wait_until_refresh_paused();
+
+        provider.enable_mutations(&CancelToken::default()).unwrap();
+        endpoint.release_refresh();
+        assert!(old_refresh.join().unwrap().is_ok());
+        endpoint.join();
+
+        let stored = secrets.load().unwrap().unwrap();
+        assert!(
+            stored.access_token == "upgrade-access",
+            "upgrade access survives stale refresh"
+        );
+        assert!(
+            stored.refresh_token.as_deref() == Some("upgrade-refresh"),
+            "upgrade refresh credential survives stale refresh"
+        );
+        assert!(
+            stored.gmail_modify_granted,
+            "verified modify grant survives stale refresh"
+        );
+        assert!(provider.mutation_access().unwrap());
+    }
+
+    #[test]
+    fn credential_publication_connect_rebases_after_refresh_and_applies_readonly_scope() {
+        let endpoint = PausedRefreshEndpoint::start_with_oauth_response(
+            2,
+            r#"{"access_token":"reauth-access","refresh_token":"reauth-refresh","expires_in":3600,"scope":"https://www.googleapis.com/auth/gmail.readonly"}"#,
+        );
+        let (api_base, _api) = FakeApi::start(vec![
+            (
+                "/gmail/v1/users/me/profile",
+                200,
+                r#"{"emailAddress":"synthetic@example.test","historyId":"1"}"#,
+            ),
+            (
+                "/gmail/v1/users/me/profile",
+                200,
+                r#"{"emailAddress":"synthetic@example.test","historyId":"2"}"#,
+            ),
+        ]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        let mut previous = expired_bundle();
+        previous.gmail_modify_granted = true;
+        secrets.store(&previous).unwrap();
+        let mut provider = test_provider(&api_base, secrets.clone());
+        provider.endpoints.token = format!("{}/synthetic-token", endpoint.base);
+        let oauth_entered = Arc::new(std::sync::Barrier::new(2));
+        let release_oauth = Arc::new(std::sync::Barrier::new(2));
+        let entered_opener = Arc::clone(&oauth_entered);
+        let release_opener = Arc::clone(&release_oauth);
+        let finish_oauth = completing_oauth_opener(Arc::new(Mutex::new(None)));
+        provider.opener = Arc::new(move |url| {
+            entered_opener.wait();
+            release_opener.wait();
+            finish_oauth(url)
+        });
+        let provider = Arc::new(provider);
+
+        let reauth_provider = Arc::clone(&provider);
+        let reauth = std::thread::spawn(move || reauth_provider.connect(&CancelToken::default()));
+        oauth_entered.wait();
+
+        let refresh_provider = Arc::clone(&provider);
+        let refresh = std::thread::spawn(move || refresh_provider.profile(&CancelToken::default()));
+        endpoint.wait_until_refresh_paused();
+        endpoint.release_refresh();
+        assert!(refresh.join().unwrap().is_ok());
+        let refreshed = secrets.load().unwrap().unwrap();
+        assert!(
+            refreshed.access_token == "readonly-refresh-access",
+            "ordinary refresh published while reauth was awaiting OAuth"
+        );
+
+        release_oauth.wait();
+        assert!(reauth.join().unwrap().is_ok());
+        endpoint.join();
+
+        let stored = secrets.load().unwrap().unwrap();
+        assert!(
+            stored.access_token == "reauth-access",
+            "reauth access token is published"
+        );
+        assert!(
+            stored.refresh_token.as_deref() == Some("reauth-refresh"),
+            "reauth refresh token replaces the refresh-only snapshot"
+        );
+        assert!(
+            !stored.gmail_modify_granted,
+            "present readonly reauth scope revokes modify grant"
+        );
+        assert!(!provider.mutation_access().unwrap());
+    }
+
+    #[test]
+    fn credential_publication_connect_rejects_superseded_same_account_oauth() {
+        let (api_base, _api) = FakeApi::start(vec![
+            (
+                "/gmail/v1/users/me/profile",
+                200,
+                r#"{"emailAddress":"synthetic@example.test","historyId":"1"}"#,
+            ),
+            (
+                "/gmail/v1/users/me/profile",
+                200,
+                r#"{"emailAddress":"synthetic@example.test","historyId":"2"}"#,
+            ),
+        ]);
+        let (token_base, _token) = FakeApi::start(vec![
+            (
+                "/synthetic-token",
+                200,
+                r#"{"access_token":"newer-access","refresh_token":"newer-refresh","expires_in":3600}"#,
+            ),
+            (
+                "/synthetic-token",
+                200,
+                r#"{"access_token":"stale-access","refresh_token":"stale-refresh","expires_in":3600}"#,
+            ),
+        ]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        secrets.store(&future_token()).unwrap();
+        let mut provider = test_provider(&api_base, secrets.clone());
+        provider.endpoints.token = format!("{token_base}/synthetic-token");
+        let oauth_entered = Arc::new(std::sync::Barrier::new(2));
+        let release_oauth = Arc::new(std::sync::Barrier::new(2));
+        let opener_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let entered_opener = Arc::clone(&oauth_entered);
+        let release_opener = Arc::clone(&release_oauth);
+        let opener_calls_for_callback = Arc::clone(&opener_calls);
+        let finish_oauth = completing_oauth_opener(Arc::new(Mutex::new(None)));
+        provider.opener = Arc::new(move |url| {
+            if opener_calls_for_callback.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                entered_opener.wait();
+                release_opener.wait();
+            }
+            finish_oauth(url)
+        });
+        let provider = Arc::new(provider);
+
+        let stale_provider = Arc::clone(&provider);
+        let stale_reauth =
+            std::thread::spawn(move || stale_provider.connect(&CancelToken::default()));
+        oauth_entered.wait();
+
+        assert!(provider.connect(&CancelToken::default()).is_ok());
+        release_oauth.wait();
+        assert!(matches!(stale_reauth.join().unwrap(), Err(MailError::Busy)));
+
+        let stored = secrets.load().unwrap().unwrap();
+        assert!(
+            stored.access_token == "newer-access",
+            "newer same-account reauth remains published"
+        );
+        assert!(
+            stored.refresh_token.as_deref() == Some("newer-refresh"),
+            "stale OAuth cannot replace the newer refresh credential"
+        );
+    }
+
+    #[test]
+    fn credential_publication_connect_cannot_resurrect_after_disconnect() {
+        let (api_base, _api) = FakeApi::start(vec![(
+            "/gmail/v1/users/me/profile",
+            200,
+            r#"{"emailAddress":"synthetic@example.test","historyId":"1"}"#,
+        )]);
+        let (token_base, _token) = FakeApi::start(vec![(
+            "/synthetic-token",
+            200,
+            r#"{"access_token":"reauth-access","refresh_token":"reauth-refresh","expires_in":3600}"#,
+        )]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        secrets.store(&future_token()).unwrap();
+        let mut provider = test_provider(&api_base, secrets.clone());
+        provider.endpoints.token = format!("{token_base}/synthetic-token");
+        let oauth_entered = Arc::new(std::sync::Barrier::new(2));
+        let release_oauth = Arc::new(std::sync::Barrier::new(2));
+        let entered_opener = Arc::clone(&oauth_entered);
+        let release_opener = Arc::clone(&release_oauth);
+        let finish_oauth = completing_oauth_opener(Arc::new(Mutex::new(None)));
+        provider.opener = Arc::new(move |url| {
+            entered_opener.wait();
+            release_opener.wait();
+            finish_oauth(url)
+        });
+        let provider = Arc::new(provider);
+
+        let reauth_provider = Arc::clone(&provider);
+        let reauth = std::thread::spawn(move || reauth_provider.connect(&CancelToken::default()));
+        oauth_entered.wait();
+        provider.disconnect().unwrap();
+        release_oauth.wait();
+
+        assert!(matches!(
+            reauth.join().unwrap(),
+            Err(MailError::AuthRequired)
+        ));
+        assert!(secrets.load().unwrap().is_none());
+    }
+
+    #[test]
+    fn credential_publication_stale_refresh_does_not_resurrect_disconnected_credentials() {
+        let endpoint = PausedRefreshEndpoint::start(1);
+        let (api_base, _api) = FakeApi::start(vec![]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        secrets.store(&expired_bundle()).unwrap();
+        let mut provider = test_provider(&api_base, secrets.clone());
+        provider.endpoints.token = format!("{}/synthetic-token", endpoint.base);
+        let provider = Arc::new(provider);
+
+        let refresh_provider = Arc::clone(&provider);
+        let old_refresh =
+            std::thread::spawn(move || refresh_provider.profile(&CancelToken::default()));
+        endpoint.wait_until_refresh_paused();
+
+        provider.disconnect().unwrap();
+        endpoint.release_refresh();
+        assert!(matches!(
+            old_refresh.join().unwrap(),
+            Err(MailError::AuthRequired)
+        ));
+        endpoint.join();
+        assert!(secrets.load().unwrap().is_none());
     }
 }

@@ -11,6 +11,14 @@ fn main() {
         "connect_account",
         "disconnect_account",
         "request_sync",
+        "list_drafts",
+        "get_draft",
+        "create_draft",
+        "save_draft",
+        "delete_draft",
+        "get_app_close_request",
+        "complete_app_close",
+        "cancel_app_close",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("failed to generate the approved app command permissions");

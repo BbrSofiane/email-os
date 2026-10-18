@@ -14,17 +14,20 @@
  * - Shift+U: explicitly mark the selected/open conversation unread.
  * - Ignored with Ctrl/Meta/Alt held, during IME composition, inside text fields, and
  *   Enter/e are ignored when a button owns the key (it activates itself).
- * No composer, drafts, sending, search, or HTML rendering in any slice.
+ * While a draft editor exists, every mailbox shortcut is suppressed. Draft text has
+ * no submit/send path and is rendered only as ordinary text.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import InboxList from './components/InboxList.vue';
 import ReaderView from './components/ReaderView.vue';
 import ActivityPanel from './components/ActivityPanel.vue';
 import AccountPanel from './components/AccountPanel.vue';
+import DraftsPanel from './components/DraftsPanel.vue';
 import { BROWSER_PREVIEW_DISCLOSURE } from './lib/ipc/browser-fake';
 import type { ClientMode } from './lib/ipc';
-import type { MailClient } from './lib/ipc/client';
+import type { DraftRef, DraftSource, MailClient } from './lib/ipc/client';
 import { sameConversation, useMailbox } from './composables/useMailbox';
+import { useDrafts } from './composables/useDrafts';
 
 const props = defineProps<{
   client: MailClient;
@@ -41,6 +44,8 @@ const mailboxActionsEnabled = computed(() => !gmailMode.value || mailbox.account
 const gmailActionsEnabled = computed(() => gmailMode.value && mailboxActionsEnabled.value);
 const accountReady = computed(() => mailbox.accountState.value === 'ready');
 const accountStatus = computed(() => mailbox.accountStatus.value);
+const accountId = computed(() => accountStatus.value?.account?.accountId ?? null);
+const drafts = useDrafts(props.client, accountId, props.mode);
 
 function isEditableTarget(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;
@@ -152,7 +157,36 @@ async function retryFromActivity(operationId: string): Promise<void> {
   await mailbox.retryOperation(operationId);
 }
 
+async function disconnectAccount(): Promise<void> {
+  if (drafts.transitioning.value) return;
+  drafts.setTransitioning(true);
+  try {
+    if (await drafts.flushAndClose()) await mailbox.disconnectAccount();
+  } finally {
+    drafts.setTransitioning(false);
+  }
+}
+
+async function connectAccount(): Promise<void> {
+  if (drafts.transitioning.value) return;
+  drafts.setTransitioning(true);
+  try {
+    if (await drafts.flushAndClose()) await mailbox.connectAccount();
+  } finally {
+    drafts.setTransitioning(false);
+  }
+}
+
+async function prepareReply(source: DraftSource): Promise<void> {
+  if (await drafts.openNew(source)) closeReader();
+}
+
+function openDraft(ref: DraftRef): void {
+  void drafts.openDraft(ref);
+}
+
 function onKeydown(event: KeyboardEvent): void {
+  if (drafts.activeRef.value) return; // composer owns all keys, regardless of focused element
   if (event.isComposing || event.keyCode === 229) return; // IME composition
   if (event.ctrlKey || event.metaKey || event.altKey) return;
   if (isEditableTarget(event.target)) return;
@@ -281,6 +315,13 @@ function errorText(error: { kind: string; field?: string }): string {
       </p>
     </header>
 
+    <div v-if="!accountId && (drafts.closeSetupError.value || drafts.closeRetryAvailable.value)" role="alert" class="draft-close-recovery">
+      <p v-if="drafts.closeSetupError.value">Close protection could not be initialized: {{ drafts.closeSetupError.value }}</p>
+      <p v-else>{{ drafts.closeError.value }}</p>
+      <button v-if="drafts.closeSetupError.value" type="button" data-test="retry-close-setup" @click="drafts.retryCloseSetup()">Retry close protection</button>
+      <button v-if="drafts.closeRetryAvailable.value" type="button" data-test="retry-close" @click="drafts.retryClose()">Retry close request</button>
+    </div>
+
     <main class="app-main">
       <section v-if="!accountReady" class="account-gate" aria-label="Account">
         <p
@@ -304,12 +345,59 @@ function errorText(error: { kind: string; field?: string }): string {
           v-if="gmailMode && accountStatus"
           :status="accountStatus"
           :busy="mailbox.accountBusy.value"
+          :transitioning="drafts.transitioning.value"
           :action-error="mailbox.lastCommandError.value"
-          @connect="mailbox.connectAccount()"
-          @disconnect="mailbox.disconnectAccount()"
+          @connect="connectAccount()"
+          @disconnect="disconnectAccount()"
           @sync="mailbox.requestSync()"
           @enable-actions="mailbox.enableMailboxActions()"
           @cancel-upgrade="mailbox.cancelMailboxActionUpgrade()"
+        />
+        <DraftsPanel
+          v-if="accountId"
+          :summaries="drafts.summaries.value"
+          :active-ref="drafts.activeRef.value"
+          :source="drafts.activeSource.value"
+          :content="drafts.content.value"
+          :status="drafts.statusLabel.value"
+          :visible="drafts.isVisible.value"
+          :suspended-editor="!!drafts.activeRef.value && !drafts.isVisible.value"
+          :creating="drafts.creating.value"
+          :saving="drafts.saving.value"
+          :conflict="drafts.conflict.value"
+          :error="drafts.error.value"
+          :create-error="drafts.createError.value"
+          :deleting="drafts.deleting.value"
+          :closing="drafts.closingForWindow.value"
+          :transitioning="drafts.transitioning.value"
+          :delete-pending="drafts.deletePending.value"
+          :confirm-discard="drafts.confirmDiscard.value"
+          :discard-busy="drafts.discardBusy.value"
+          :confirm-reload="drafts.confirmReload.value"
+          :copy-pending="drafts.copyPending.value"
+          :recovery-required="drafts.recoveryRequired.value"
+          :can-cancel-reply-preparation="drafts.canCancelReplyPreparation.value"
+          :list-error="drafts.listError.value"
+          :subscription-error="drafts.draftSubscriptionError.value"
+          :close-error="drafts.closeError.value"
+          :close-retry-available="drafts.closeRetryAvailable.value"
+          :close-setup-error="drafts.closeSetupError.value"
+          @retry-draft-subscription="drafts.retryDraftSubscription()"
+          @retry-close="drafts.retryClose()"
+          @retry-close-setup="drafts.retryCloseSetup()"
+          @new-draft="drafts.openNew()"
+          @cancel-reply-preparation="drafts.cancelReplyPreparation()"
+          @open-draft="openDraft"
+          @close-editor="drafts.flushAndClose()"
+          @set-field="drafts.setContent"
+          @retry="drafts.retrySave()"
+          @ask-discard="drafts.askDiscard()"
+          @confirm-discard="drafts.discard()"
+          @cancel-discard="drafts.cancelDiscard()"
+          @ask-reload="drafts.confirmReload.value = true"
+          @confirm-reload="drafts.reloadSaved()"
+          @cancel-reload="drafts.cancelReload()"
+          @save-as-new="drafts.saveAsNew()"
         />
         <section class="list-pane" aria-label="Inbox">
         <p v-if="mailbox.listState.value === 'loading'" data-test="inbox-loading">Loading inbox…</p>
@@ -352,6 +440,7 @@ function errorText(error: { kind: string; field?: string }): string {
           @archive="archiveFromReader"
           @unarchive="unarchiveFromReader"
           @set-read="setReadFromReader"
+          @prepare-reply="prepareReply"
         />
       </section>
 
