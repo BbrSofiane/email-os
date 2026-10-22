@@ -1,31 +1,42 @@
 <script setup lang="ts">
 /**
- * Gmail mailbox shell: keyboard-first inbox, plain-text reader, operation recovery,
- * and explicit account/action capability gates.
+ * Gmail mailbox shell: compact browsing shell (UX-01), plain-text reader,
+ * operation recovery, and explicit account/action capability gates.
  *
  * Account gate: the account status read decides fixture-vs-Gmail. While the status
  * is loading or failed, the UI renders no mailbox content at all — it never falls
  * back silently to fixture mode.
  *
+ * Layout contract: a persistent narrow email rail, a compact Inbox
+ * navigation/status header, one central surface that is either the list or the
+ * reader (never both), and contact context. Account/Activity/Drafts live in
+ * explicit labelled utility disclosures instead of permanent competing columns;
+ * the contact pane shows only exact known fields.
+ *
  * Keyboard contract (window-level, one handler):
- * - j / ArrowDown, k / ArrowUp: move selection (list focus follows).
- * - Enter: open selected conversation. Escape: close reader.
- * - e: archive the selected (or reader-open) conversation when actions are enabled.
- * - Shift+U: explicitly mark the selected/open conversation unread.
+ * - j / ArrowDown, k / ArrowUp: move conversation focus (row focus follows).
+ * - Enter: open the focused conversation. Escape: close the active utility or
+ *   contact disclosure first, then the reader.
+ * - e: archive the focused (or reader-open) conversation when actions are enabled.
+ * - Shift+U: explicitly mark the focused/open conversation unread.
  * - Ignored with Ctrl/Meta/Alt held, during IME composition, inside text fields, and
  *   Enter/e are ignored when a button owns the key (it activates itself).
- * While a draft editor exists, every mailbox shortcut is suppressed. Draft text has
- * no submit/send path and is rendered only as ordinary text.
+ * - While a visible draft editor exists, every mailbox shortcut is suppressed;
+ *   a suspended editor behind another disclosure must not own keys. While a
+ *   utility/contact disclosure is open, Escape closes it and mailbox shortcuts
+ *   underneath are suppressed. Draft text has no submit/send path and is
+ *   rendered only as ordinary text.
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import InboxList from './components/InboxList.vue';
 import ReaderView from './components/ReaderView.vue';
 import ActivityPanel from './components/ActivityPanel.vue';
 import AccountPanel from './components/AccountPanel.vue';
 import DraftsPanel from './components/DraftsPanel.vue';
+import ContactPane from './components/ContactPane.vue';
 import { BROWSER_PREVIEW_DISCLOSURE } from './lib/ipc/browser-fake';
 import type { ClientMode } from './lib/ipc';
-import type { DraftRef, DraftSource, MailClient } from './lib/ipc/client';
+import type { ConversationRef, DraftRef, DraftSource, MailClient } from './lib/ipc/client';
 import { sameConversation, useMailbox } from './composables/useMailbox';
 import { useDrafts } from './composables/useDrafts';
 
@@ -33,6 +44,15 @@ const props = defineProps<{
   client: MailClient;
   mode: ClientMode;
 }>();
+
+/** Contact context breakpoint (supervisor-approved strict value). */
+const CONTACT_BREAKPOINT_PX = 1000;
+
+type UtilityDrawer = 'account' | 'activity' | 'drafts';
+type ContactContext = 'focused' | 'open';
+interface ContactInfo { displayName: string | null; mailbox: string }
+/** Visible-row anchor for the reader round trip. */
+interface ListAnchor { ref: ConversationRef; offsetTop: number; scrollTop: number }
 
 const mailbox = useMailbox(props.client);
 const inboxList = ref<InstanceType<typeof InboxList> | null>(null);
@@ -47,50 +67,296 @@ const accountStatus = computed(() => mailbox.accountStatus.value);
 const accountId = computed(() => accountStatus.value?.account?.accountId ?? null);
 const drafts = useDrafts(props.client, accountId, props.mode);
 
-function isEditableTarget(target: EventTarget | null): boolean {
-  const el = target as HTMLElement | null;
-  if (!el) return false;
-  if (el.isContentEditable) return true;
-  const tag = el.tagName;
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+// ---------------------------------------------------------------------------
+// Utility disclosures (Account / Activity / Drafts)
+// ---------------------------------------------------------------------------
+
+const drawer = ref<UtilityDrawer | null>(null);
+const drawerEl = ref<HTMLElement | null>(null);
+const drawerToggles = new Map<UtilityDrawer, HTMLElement>();
+
+function setToggleRef(name: UtilityDrawer): (el: Element | import('vue').ComponentPublicInstance | null) => void {
+  return (el) => {
+    if (el instanceof HTMLElement) drawerToggles.set(name, el);
+    else drawerToggles.delete(name);
+  };
 }
 
-function buttonOwns(target: EventTarget | null): boolean {
-  const el = target as HTMLElement | null;
-  return !!el && typeof el.closest === 'function' && el.closest('button, a') !== null;
+const drawerTitles: Record<UtilityDrawer, string> = {
+  account: 'Account',
+  activity: 'Operation activity',
+  drafts: 'Local drafts',
+};
+
+/**
+ * Leave the active drafts editor through its protected lifecycle before the
+ * drawer unmounts. Returns false when closure failed and the drawer must stay
+ * visible with its recovery/error controls rather than hiding an editor that
+ * would otherwise silently own all mailbox shortcuts.
+ */
+async function releaseDraftsDrawer(): Promise<boolean> {
+  if (drawer.value !== 'drafts' || !drafts.activeRef.value) return true;
+  return drafts.flushAndClose();
 }
 
-async function focusSelectedRow(): Promise<void> {
+async function openDrawer(name: UtilityDrawer, entry: 'drawer' | 'toggle' = 'drawer'): Promise<void> {
+  // Switching away from the drafts surface must release the editor first:
+  // without this guard, a user can move to another utility while the editor
+  // silently owns shortcuts, and recovery controls stay hidden behind it.
+  if (drawer.value === 'drafts' && name !== 'drafts') {
+    if (!(await releaseDraftsDrawer())) return;
+  }
+  // Disclosures are mutually exclusive: opening a utility surface dismisses
+  // the contact disclosure so both fixed regions never coexist.
+  contactDisclosure.value = false;
+  drawer.value = name;
   await nextTick();
-  if (mailbox.conversations.value.length) inboxList.value?.focusRow(mailbox.selectedIndex.value);
-  else emptyState.value?.focus();
+  if (entry === 'drawer') drawerEl.value?.focus();
+  else drawerToggles.get(name)?.focus();
 }
 
-function moveSelection(delta: number): void {
-  mailbox.moveSelection(delta);
-  void focusSelectedRow();
+async function closeDrawer(): Promise<void> {
+  const closing = drawer.value;
+  if (closing === 'drafts' && !(await releaseDraftsDrawer())) return; // closure failed; keep drawer visible
+  drawer.value = null;
+  await nextTick();
+  if (closing) drawerToggles.get(closing)?.focus();
 }
 
-async function openSelected(): Promise<void> {
-  await mailbox.openSelected();
+// A suspended (hidden) draft editor must never survive into the visible inbox:
+// whenever no drawer is open and an editor is still active, bring its surface
+// back so keyboard ownership and the visible panel agree.
+watch(drawer, (value) => {
+  if (value === null && drafts.isVisible.value && !readerOpen.value) void openDrawer('drafts');
+});
+
+function toggleDrawer(name: UtilityDrawer): void {
+  if (drawer.value === name) void closeDrawer();
+  else void openDrawer(name);
 }
 
-async function openRow(index: number): Promise<void> {
-  mailbox.selectIndex(index);
-  await mailbox.openSelected();
+// A newly active editor routes to the drafts surface instead of a hidden pane.
+watch(drafts.isVisible, (visible) => {
+  if (visible && drawer.value !== 'drafts') void openDrawer('drafts');
+});
+
+// Local drafts are account-scoped: with no account there is no drafts surface.
+watch(accountId, (id) => {
+  if (id === null && drawer.value === 'drafts') drawer.value = null;
+});
+
+// ---------------------------------------------------------------------------
+// Contact context: pane at >=1000 CSS px, disclosure strictly below
+// ---------------------------------------------------------------------------
+
+const contactDisclosure = ref(false);
+const contactPanelEl = ref<HTMLElement | null>(null);
+const contactDisclosureButton = ref<HTMLElement | null>(null);
+/** Wide contact surface: focus target when the narrow disclosure is removed. */
+const contactColumnEl = ref<HTMLElement | null>(null);
+
+const wideQuery = typeof window.matchMedia === 'function'
+  ? window.matchMedia(`(min-width: ${CONTACT_BREAKPOINT_PX}px)`)
+  : null;
+const wideViewport = ref(wideQuery ? wideQuery.matches : true);
+
+/**
+ * True while a fixed utility drawer or a narrow Contact disclosure overlays the
+ * central surface. The covered central surface is made `inert` so covered row
+ * and reader actions can neither be focused (native Shift+Tab/Tab traversal)
+ * nor user-activated (native Enter/click) while hidden behind the overlay; the
+ * global shortcut guard cannot stop native button activation. The rail and the
+ * active disclosure itself stay interactive. Reactivity restores normal central
+ * interaction as soon as the disclosure is dismissed.
+ */
+const centralCovered = computed(() => !!drawer.value || (!wideViewport.value && contactDisclosure.value));
+
+function onViewportChange(event: MediaQueryListEvent): void {
+  const wasWide = wideViewport.value;
+  // Capture focus ownership BEFORE the template branches change: the wide
+  // contact column and the narrow disclosure panel/trigger are all removed by
+  // v-if as the reactive state updates, so ownership must be recorded first.
+  const active = document.activeElement;
+  const activeIsInWideContact = wasWide
+    && active instanceof Node
+    && (contactColumnEl.value?.contains(active) ?? false);
+  const focusInNarrowContact = !wasWide && (
+    (contactPanelEl.value instanceof HTMLElement && contactPanelEl.value.contains(active))
+    || active === contactDisclosureButton.value
+  );
+  wideViewport.value = event.matches;
+  if (wasWide && !event.matches) {
+    // The pane becomes hidden content; keep keyboard focus out of it.
+    contactDisclosure.value = false;
+    void nextTick().then(() => {
+      // Hand focus to the surviving narrow disclosure control only when the
+      // wide contact surface owned focus; no focus theft when focus was
+      // elsewhere (e.g. the list or a row).
+      if (activeIsInWideContact) contactDisclosureButton.value?.focus();
+    });
+  } else if (!wasWide && event.matches) {
+    contactDisclosure.value = false;
+    void nextTick().then(() => {
+      if (focusInNarrowContact) {
+        // The disclosure and trigger no longer exist; hand focus to the
+        // surviving wide contact surface instead of dropping it to the body.
+        contactColumnEl.value?.focus();
+      }
+    });
+  }
+}
+
+async function toggleContactDisclosure(): Promise<void> {
+  if (wideViewport.value) return;
+  // Leaving an active drafts editor must go through its protected lifecycle
+  // rather than unmounting the panel silently; on failure it stays visible.
+  if (drawer.value === 'drafts' && !contactDisclosure.value) {
+    if (!(await releaseDraftsDrawer())) return;
+  }
+  // Disclosures are mutually exclusive: the contact disclosure replaces any
+  // open utility drawer so the visible panel and keyboard owner agree.
+  drawer.value = null;
+  contactDisclosure.value = !contactDisclosure.value;
+  void nextTick().then(() => {
+    if (contactDisclosure.value) contactPanelEl.value?.focus();
+    else contactDisclosureButton.value?.focus();
+  });
+}
+
+async function closeContactDisclosure(): Promise<void> {
+  contactDisclosure.value = false;
+  await nextTick();
+  contactDisclosureButton.value?.focus();
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown);
+  wideQuery?.addEventListener('change', onViewportChange);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown);
+  wideQuery?.removeEventListener('change', onViewportChange);
+});
+
+// ---------------------------------------------------------------------------
+// Contact context data: only exact known fields, only the matching surface
+// ---------------------------------------------------------------------------
+
+const listContact = computed<ContactInfo | null>(() => {
+  // A non-ready list never supplies stale contact targets.
+  if (mailbox.listState.value !== 'ready') return null;
+  const primary = mailbox.focusedSummary.value?.primaryCorrespondent;
+  return primary ? { displayName: primary.displayName, mailbox: primary.mailbox } : null;
+});
+
+const readerContact = computed<ContactInfo | null>(() => {
+  const conversation = mailbox.conversation.value;
+  if (!conversation || mailbox.detailState.value !== 'ready') return null;
+  if (!sameConversation(conversation.ref, mailbox.openRef.value)) return null;
+  const latest = conversation.messages[conversation.messages.length - 1];
+  return latest ? { displayName: latest.from.displayName, mailbox: latest.from.mailbox } : null;
+});
+
+const contact = computed<ContactInfo | null>(() => (readerOpen.value ? readerContact.value : listContact.value));
+const contactContext = computed<ContactContext>(() => (readerOpen.value ? 'open' : 'focused'));
+
+// ---------------------------------------------------------------------------
+// Reader origin, focus, and scroll restoration
+// ---------------------------------------------------------------------------
+
+const originAnchor = ref<ListAnchor | null>(null);
+const originSurface = ref<'inbox' | 'activity'>('inbox');
+
+function captureListOrigin(): void {
+  originAnchor.value = inboxList.value?.captureAnchor() ?? null;
+}
+
+async function focusFocusedRow(preventScroll = false): Promise<void> {
+  await nextTick();
+  const focused = mailbox.focusedRef.value;
+  if (focused && inboxList.value) inboxList.value.focusRef(focused, { preventScroll });
+  else if (mailbox.conversations.value.length === 0) emptyState.value?.focus();
+}
+
+function moveFocus(delta: number): void {
+  mailbox.moveFocus(delta);
+  void focusFocusedRow();
 }
 
 function closeReader(): void {
+  const anchor = originAnchor.value;
+  const surface = originSurface.value;
   mailbox.closeReader();
-  void focusSelectedRow();
+  void (async () => {
+    // An active draft editor owns attention: keep it visible rather than
+    // leaving it hidden behind another disclosure or off-screen entirely.
+    if (drafts.isVisible.value) {
+      if (drawer.value !== 'drafts') await openDrawer('drafts');
+      return;
+    }
+    await nextTick();
+    if (anchor && inboxList.value) await inboxList.value.restoreAnchor(anchor);
+    await focusFocusedRow(true);
+    if (surface === 'activity') await openDrawer('activity');
+  })();
 }
 
-async function archiveFromList(): Promise<void> {
-  await mailbox.archiveSelected();
-  await focusSelectedRow();
+/**
+ * Inbox rail navigation: an explicit Inbox destination dismisses the contact
+ * disclosure and any utility drawer, awaits the protected draft closure, and
+ * restores the list from the Inbox origin when a reader is open. Escape/Back
+ * from an Activity-origin reader must still return to Activity, so the origin
+ * is overridden only for this explicit destination.
+ */
+async function navigateToInbox(): Promise<void> {
+  // Leaving an active drafts editor must go through its protected lifecycle;
+  // on failed flush the editor and recovery controls stay visible and the
+  // navigation aborts instead of hiding the buffer.
+  if (drawer.value === 'drafts' && !(await releaseDraftsDrawer())) return;
+  // Clear both disclosure surfaces so no overlay survives the destination.
+  drawer.value = null;
+  contactDisclosure.value = false;
+  if (readerOpen.value) {
+    // Use the Inbox origin before reader restoration: the reader must not
+    // reopen the Activity drawer when the user explicitly chose Inbox.
+    originSurface.value = 'inbox';
+    closeReader();
+  } else {
+    await focusFocusedRow();
+  }
 }
 
-async function archiveRowFromList(target: { accountId: string; conversationId: string }): Promise<void> {
+async function openFocusedFromList(): Promise<void> {
+  captureListOrigin();
+  originSurface.value = 'inbox';
+  await mailbox.openFocused();
+}
+
+async function openRowFromList(target: ConversationRef): Promise<void> {
+  if (!sameConversation(target, mailbox.focusedRef.value)) mailbox.focusConversation(target);
+  await openFocusedFromList();
+}
+
+async function openFromActivity(target: ConversationRef): Promise<void> {
+  // The central list is mounted while the drawer overlays it; capture first so
+  // the reader keeps a safe Activity return target plus the saved Inbox anchor.
+  captureListOrigin();
+  originSurface.value = 'activity';
+  drawer.value = null;
+  await mailbox.openConversationByRef(target);
+}
+
+// ---------------------------------------------------------------------------
+// Actions
+// ---------------------------------------------------------------------------
+
+async function archiveFocusedRow(): Promise<void> {
+  await mailbox.archiveFocused();
+  await focusFocusedRow();
+}
+
+async function archiveRowFromList(target: ConversationRef): Promise<void> {
   const listElement = inboxList.value?.$el;
   const hadListFocus = listElement instanceof HTMLElement && listElement.contains(document.activeElement);
   const receipt = await mailbox.setArchived(target, true);
@@ -100,7 +366,7 @@ async function archiveRowFromList(target: { accountId: string; conversationId: s
   const focused = document.activeElement;
   const currentList = inboxList.value?.$el;
   if (focused !== document.body && !(currentList instanceof HTMLElement && currentList.contains(focused))) return;
-  await focusSelectedRow();
+  await focusFocusedRow();
 }
 
 function currentReaderTarget() {
@@ -118,7 +384,7 @@ async function archiveFromReader(): Promise<void> {
   if (!receipt || mailbox.openRef.value !== opened || mailbox.listState.value !== 'ready') return;
   const op = mailbox.activity.value.find((item) => item.id === receipt.operationId);
   if (op?.status === 'failed') return;
-  if (mailbox.selectedSummary.value) await mailbox.openSelected();
+  if (mailbox.focusedSummary.value) await mailbox.openFocused();
   else closeReader();
 }
 
@@ -127,11 +393,11 @@ async function unarchiveFromReader(): Promise<void> {
   if (target) await mailbox.setArchived(target, false);
 }
 
-async function unarchiveFromActivity(target: { accountId: string; conversationId: string }): Promise<void> {
+async function unarchiveFromActivity(target: ConversationRef): Promise<void> {
   await mailbox.setArchived(target, false);
 }
 
-async function setReadFromList(target: { accountId: string; conversationId: string }, read: boolean): Promise<void> {
+async function setReadFromList(target: ConversationRef, read: boolean): Promise<void> {
   if (!gmailActionsEnabled.value) return;
   await mailbox.setRead(target, read);
 }
@@ -149,7 +415,7 @@ async function markUnread(): Promise<void> {
     if (target) await mailbox.setRead(target, false);
     return;
   }
-  const summary = mailbox.selectedSummary.value;
+  const summary = mailbox.focusedSummary.value;
   if (summary) await mailbox.setRead(summary.ref, false);
 }
 
@@ -162,6 +428,8 @@ async function disconnectAccount(): Promise<void> {
   drafts.setTransitioning(true);
   try {
     if (await drafts.flushAndClose()) await mailbox.disconnectAccount();
+    // A failed flush keeps the editor; the global recovery banner (shown below
+    // whenever the drafts drawer is closed) routes attention back to it.
   } finally {
     drafts.setTransitioning(false);
   }
@@ -185,8 +453,23 @@ function openDraft(ref: DraftRef): void {
   void drafts.openDraft(ref);
 }
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el) return false;
+  if (el.isContentEditable) return true;
+  const tag = el.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+}
+
+function buttonOwns(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  return !!el && typeof el.closest === 'function' && el.closest('button, a') !== null;
+}
+
 function onKeydown(event: KeyboardEvent): void {
-  if (drafts.activeRef.value) return; // composer owns all keys, regardless of focused element
+  // Only a visible composer owns all keys; a suspended editor behind another
+  // disclosure must not silently keep keyboard ownership from the inbox.
+  if (drafts.activeRef.value && drawer.value === 'drafts') return;
   if (event.isComposing || event.keyCode === 229) return; // IME composition
   if (event.ctrlKey || event.metaKey || event.altKey) return;
   if (isEditableTarget(event.target)) return;
@@ -195,12 +478,26 @@ function onKeydown(event: KeyboardEvent): void {
   const readerIsOpen = readerOpen.value;
 
   if (key === 'Escape') {
+    // The active disclosure gets Escape precedence; mailbox actions underneath
+    // are suppressed while it is open.
+    if (drawer.value) {
+      event.preventDefault();
+      void closeDrawer();
+      return;
+    }
+    if (!wideViewport.value && contactDisclosure.value) {
+      event.preventDefault();
+      void closeContactDisclosure();
+      return;
+    }
     if (readerIsOpen) {
       event.preventDefault();
       closeReader();
     }
     return;
   }
+  if (drawer.value || (!wideViewport.value && contactDisclosure.value)) return;
+
   if (key === 'U' && event.shiftKey && !buttonOwns(event.target)) {
     event.preventDefault();
     void markUnread();
@@ -218,35 +515,27 @@ function onKeydown(event: KeyboardEvent): void {
     case 'j':
     case 'ArrowDown':
       event.preventDefault();
-      moveSelection(1);
+      moveFocus(1);
       return;
     case 'k':
     case 'ArrowUp':
       event.preventDefault();
-      moveSelection(-1);
+      moveFocus(-1);
       return;
     case 'Enter':
       if (buttonOwns(event.target)) return;
       event.preventDefault();
-      void openSelected();
+      void openFocusedFromList();
       return;
     case 'e':
       if (!mailboxActionsEnabled.value || buttonOwns(event.target)) return;
       event.preventDefault();
-      void archiveFromList();
+      void archiveFocusedRow();
       return;
     default:
       return;
   }
 }
-
-onMounted(() => {
-  window.addEventListener('keydown', onKeydown);
-});
-
-onBeforeUnmount(() => {
-  window.removeEventListener('keydown', onKeydown);
-});
 
 const pendingCount = computed(
   () => mailbox.activity.value.filter((op) => op.status === 'queued' || op.status === 'applying' || op.status === 'outcome_unknown').length,
@@ -301,25 +590,34 @@ function errorText(error: { kind: string; field?: string }): string {
 <template>
   <div class="app" :data-client-mode="props.mode">
     <header class="app-header">
-      <h1>Email OS — Mailbox</h1>
+      <div class="app-title-row">
+        <span class="rail-brand">Email</span>
+        <h1 class="app-title" data-test="inbox-title">Inbox</h1>
+      </div>
       <p v-if="props.mode === 'browser-preview'" class="preview-banner" data-test="preview-banner" role="note">
         {{ BROWSER_PREVIEW_DISCLOSURE }}
       </p>
       <p class="status-line" data-test="status-line">
-        <span>{{ mailbox.conversations.value.length }} in inbox</span>
-        <span v-if="pendingCount > 0">{{ pendingCount }} pending operation(s)</span>
-        <span v-if="gmailActionsEnabled" data-test="read-shortcut-note">Shift+U marks the selected or open conversation unread.</span>
+        <span data-test="inbox-count">{{ mailbox.conversations.value.length }} in inbox</span>
+        <span v-if="pendingCount > 0" data-test="pending-count">{{ pendingCount }} pending operation(s)</span>
+        <span v-if="gmailActionsEnabled" data-test="read-shortcut-note">Shift+U marks the focused or open conversation unread.</span>
         <span v-if="mailbox.lastCommandError.value" role="alert" data-test="command-error">
           last command failed: {{ errorText(mailbox.lastCommandError.value) }}
         </span>
       </p>
     </header>
 
-    <div v-if="!accountId && (drafts.closeSetupError.value || drafts.closeRetryAvailable.value)" role="alert" class="draft-close-recovery">
+    <div
+      v-if="drawer !== 'drafts' && (drafts.closeSetupError.value || drafts.closeRetryAvailable.value || (drafts.isVisible.value && drafts.error.value))"
+      role="alert"
+      class="draft-close-recovery"
+    >
       <p v-if="drafts.closeSetupError.value">Close protection could not be initialized: {{ drafts.closeSetupError.value }}</p>
-      <p v-else>{{ drafts.closeError.value }}</p>
+      <p v-else-if="drafts.closeRetryAvailable.value">{{ drafts.closeError.value }}</p>
+      <p v-else>The local draft editor needs attention.</p>
       <button v-if="drafts.closeSetupError.value" type="button" data-test="retry-close-setup" @click="drafts.retryCloseSetup()">Retry close protection</button>
       <button v-if="drafts.closeRetryAvailable.value" type="button" data-test="retry-close" @click="drafts.retryClose()">Retry close request</button>
+      <button v-if="drafts.isVisible.value && drafts.error.value" type="button" data-test="draft-attention-open" @click="openDrawer('drafts')">Open drafts</button>
     </div>
 
     <main class="app-main">
@@ -341,117 +639,199 @@ function errorText(error: { kind: string; field?: string }): string {
         </div>
       </section>
       <template v-else>
-        <AccountPanel
-          v-if="gmailMode && accountStatus"
-          :status="accountStatus"
-          :busy="mailbox.accountBusy.value"
-          :transitioning="drafts.transitioning.value"
-          :action-error="mailbox.lastCommandError.value"
-          @connect="connectAccount()"
-          @disconnect="disconnectAccount()"
-          @sync="mailbox.requestSync()"
-          @enable-actions="mailbox.enableMailboxActions()"
-          @cancel-upgrade="mailbox.cancelMailboxActionUpgrade()"
-        />
-        <DraftsPanel
-          v-if="accountId"
-          :summaries="drafts.summaries.value"
-          :active-ref="drafts.activeRef.value"
-          :source="drafts.activeSource.value"
-          :content="drafts.content.value"
-          :status="drafts.statusLabel.value"
-          :visible="drafts.isVisible.value"
-          :suspended-editor="!!drafts.activeRef.value && !drafts.isVisible.value"
-          :creating="drafts.creating.value"
-          :saving="drafts.saving.value"
-          :conflict="drafts.conflict.value"
-          :error="drafts.error.value"
-          :create-error="drafts.createError.value"
-          :deleting="drafts.deleting.value"
-          :closing="drafts.closingForWindow.value"
-          :transitioning="drafts.transitioning.value"
-          :delete-pending="drafts.deletePending.value"
-          :confirm-discard="drafts.confirmDiscard.value"
-          :discard-busy="drafts.discardBusy.value"
-          :confirm-reload="drafts.confirmReload.value"
-          :copy-pending="drafts.copyPending.value"
-          :recovery-required="drafts.recoveryRequired.value"
-          :can-cancel-reply-preparation="drafts.canCancelReplyPreparation.value"
-          :list-error="drafts.listError.value"
-          :subscription-error="drafts.draftSubscriptionError.value"
-          :close-error="drafts.closeError.value"
-          :close-retry-available="drafts.closeRetryAvailable.value"
-          :close-setup-error="drafts.closeSetupError.value"
-          @retry-draft-subscription="drafts.retryDraftSubscription()"
-          @retry-close="drafts.retryClose()"
-          @retry-close-setup="drafts.retryCloseSetup()"
-          @new-draft="drafts.openNew()"
-          @cancel-reply-preparation="drafts.cancelReplyPreparation()"
-          @open-draft="openDraft"
-          @close-editor="drafts.flushAndClose()"
-          @set-field="drafts.setContent"
-          @retry="drafts.retrySave()"
-          @ask-discard="drafts.askDiscard()"
-          @confirm-discard="drafts.discard()"
-          @cancel-discard="drafts.cancelDiscard()"
-          @ask-reload="drafts.confirmReload.value = true"
-          @confirm-reload="drafts.reloadSaved()"
-          @cancel-reload="drafts.cancelReload()"
-          @save-as-new="drafts.saveAsNew()"
-        />
-        <section class="list-pane" aria-label="Inbox">
-        <p v-if="mailbox.listState.value === 'loading'" data-test="inbox-loading">Loading inbox…</p>
-        <div v-else-if="mailbox.listState.value === 'error'" data-test="inbox-error">
-          <p role="alert">Could not load the inbox: {{ mailbox.listError.value ? errorText(mailbox.listError.value) : 'unknown error' }}.</p>
-          <button type="button" data-test="inbox-retry" @click="mailbox.refresh()">Retry</button>
-        </div>
-        <p
-          v-else-if="mailbox.conversations.value.length === 0"
-          data-test="inbox-empty"
-          ref="emptyState"
+        <nav class="rail" aria-label="Mail navigation">
+          <button
+            type="button"
+            class="rail-item rail-inbox"
+            data-test="rail-inbox"
+            :aria-current="!readerOpen && drawer === null ? 'page' : undefined"
+            @click="navigateToInbox()"
+          >Inbox</button>
+          <span class="rail-spacer" aria-hidden="true"></span>
+          <button
+            v-if="gmailMode && accountStatus"
+            type="button"
+            class="rail-item"
+            data-test="rail-account"
+            :ref="setToggleRef('account')"
+            :aria-expanded="drawer === 'account'"
+            @click="toggleDrawer('account')"
+          >Account</button>
+          <button
+            type="button"
+            class="rail-item"
+            data-test="rail-activity"
+            :ref="setToggleRef('activity')"
+            :aria-expanded="drawer === 'activity'"
+            @click="toggleDrawer('activity')"
+          >Activity</button>
+          <button
+            v-if="accountId"
+            type="button"
+            class="rail-item"
+            data-test="rail-drafts"
+            :ref="setToggleRef('drafts')"
+            :aria-expanded="drawer === 'drafts'"
+            @click="toggleDrawer('drafts')"
+          >Drafts</button>
+          <button
+            v-if="!wideViewport"
+            type="button"
+            class="rail-item"
+            data-test="contact-disclosure"
+            ref="contactDisclosureButton"
+            :aria-expanded="contactDisclosure"
+            @click="toggleContactDisclosure()"
+          >Contact</button>
+        </nav>
+
+        <section class="central" :aria-label="readerOpen ? 'Reader' : 'Conversation list'" :inert="centralCovered || undefined" data-test="central-surface">
+          <template v-if="!readerOpen">
+            <p v-if="mailbox.listState.value === 'loading'" data-test="inbox-loading">Loading inbox…</p>
+            <div v-else-if="mailbox.listState.value === 'error'" data-test="inbox-error">
+              <p role="alert">Could not load the inbox: {{ mailbox.listError.value ? errorText(mailbox.listError.value) : 'unknown error' }}.</p>
+              <button type="button" data-test="inbox-retry" @click="mailbox.refresh()">Retry</button>
+            </div>
+            <p
+              v-else-if="mailbox.conversations.value.length === 0"
+              data-test="inbox-empty"
+              ref="emptyState"
+              tabindex="-1"
+            >
+              No conversations are currently in the inbox. Archived conversations stay recoverable from Activity.
+            </p>
+            <InboxList
+              v-else
+              ref="inboxList"
+              :rows="mailbox.conversations.value"
+              :focused-ref="mailbox.focusedRef.value"
+              :actions-enabled="mailboxActionsEnabled"
+              :show-read-state="gmailMode"
+              :show-read-controls="gmailActionsEnabled"
+              @focus="mailbox.focusConversation($event)"
+              @open="openRowFromList"
+              @archive="archiveRowFromList"
+              @set-read="setReadFromList"
+            />
+          </template>
+          <section v-else class="reader-pane" aria-label="Reader">
+            <ReaderView
+              :conversation="mailbox.conversation.value"
+              :state="mailbox.detailState.value"
+              :error="mailbox.detailError.value"
+              :command-in-flight="mailbox.inFlightCommandRef.value !== null"
+              :read-only="gmailMode && !mailboxActionsEnabled"
+              :show-read-controls="gmailActionsEnabled"
+              @close="closeReader"
+              @archive="archiveFromReader"
+              @unarchive="unarchiveFromReader"
+              @set-read="setReadFromReader"
+              @prepare-reply="prepareReply"
+            />
+          </section>
+        </section>
+
+        <aside v-if="wideViewport" class="contact-column" data-test="contact-column" tabindex="-1" ref="contactColumnEl">
+          <ContactPane :contact="contact" :context="contactContext" />
+        </aside>
+
+        <div
+          v-if="drawer"
+          class="utility-drawer"
+          role="region"
           tabindex="-1"
+          ref="drawerEl"
+          :aria-label="drawerTitles[drawer]"
+          data-test="utility-drawer"
         >
-          No conversations are currently in the inbox. Archived conversations stay recoverable from Activity.
-        </p>
-        <InboxList
-          v-else
-          ref="inboxList"
-          :rows="mailbox.conversations.value"
-          :selected-index="mailbox.selectedIndex.value"
-          :actions-enabled="mailboxActionsEnabled"
-          :show-read-state="gmailMode"
-          :show-read-controls="gmailActionsEnabled"
-          @select="mailbox.selectIndex($event)"
-          @open="openRow"
-          @archive="archiveRowFromList"
-          @set-read="setReadFromList"
-        />
-      </section>
+          <header class="drawer-header">
+            <h2>{{ drawerTitles[drawer] }}</h2>
+            <button type="button" data-test="drawer-close" @click="closeDrawer()">Close</button>
+          </header>
+          <AccountPanel
+            v-if="drawer === 'account' && accountStatus"
+            :status="accountStatus"
+            :busy="mailbox.accountBusy.value"
+            :transitioning="drafts.transitioning.value"
+            :action-error="mailbox.lastCommandError.value"
+            @connect="connectAccount()"
+            @disconnect="disconnectAccount()"
+            @sync="mailbox.requestSync()"
+            @enable-actions="mailbox.enableMailboxActions()"
+            @cancel-upgrade="mailbox.cancelMailboxActionUpgrade()"
+          />
+          <ActivityPanel
+            v-if="drawer === 'activity'"
+            :activity="mailbox.activity.value"
+            :actions-enabled="mailboxActionsEnabled"
+            :gmail-mode="gmailMode"
+            @open="openFromActivity($event)"
+            @unarchive="unarchiveFromActivity"
+            @retry="retryFromActivity"
+          />
+          <DraftsPanel
+            v-if="drawer === 'drafts'"
+            :summaries="drafts.summaries.value"
+            :active-ref="drafts.activeRef.value"
+            :source="drafts.activeSource.value"
+            :content="drafts.content.value"
+            :status="drafts.statusLabel.value"
+            :visible="drafts.isVisible.value"
+            :suspended-editor="!!drafts.activeRef.value && !drafts.isVisible.value"
+            :creating="drafts.creating.value"
+            :saving="drafts.saving.value"
+            :conflict="drafts.conflict.value"
+            :error="drafts.error.value"
+            :create-error="drafts.createError.value"
+            :deleting="drafts.deleting.value"
+            :closing="drafts.closingForWindow.value"
+            :transitioning="drafts.transitioning.value"
+            :delete-pending="drafts.deletePending.value"
+            :confirm-discard="drafts.confirmDiscard.value"
+            :discard-busy="drafts.discardBusy.value"
+            :confirm-reload="drafts.confirmReload.value"
+            :copy-pending="drafts.copyPending.value"
+            :recovery-required="drafts.recoveryRequired.value"
+            :can-cancel-reply-preparation="drafts.canCancelReplyPreparation.value"
+            :list-error="drafts.listError.value"
+            :subscription-error="drafts.draftSubscriptionError.value"
+            :close-error="drafts.closeError.value"
+            :close-retry-available="drafts.closeRetryAvailable.value"
+            :close-setup-error="drafts.closeSetupError.value"
+            @retry-draft-subscription="drafts.retryDraftSubscription()"
+            @retry-close="drafts.retryClose()"
+            @retry-close-setup="drafts.retryCloseSetup()"
+            @new-draft="drafts.openNew()"
+            @cancel-reply-preparation="drafts.cancelReplyPreparation()"
+            @open-draft="openDraft"
+            @close-editor="drafts.flushAndClose()"
+            @set-field="drafts.setContent"
+            @retry="drafts.retrySave()"
+            @ask-discard="drafts.askDiscard()"
+            @confirm-discard="drafts.discard()"
+            @cancel-discard="drafts.cancelDiscard()"
+            @ask-reload="drafts.confirmReload.value = true"
+            @confirm-reload="drafts.reloadSaved()"
+            @cancel-reload="drafts.cancelReload()"
+            @save-as-new="drafts.saveAsNew()"
+          />
+        </div>
 
-      <section v-if="readerOpen" class="reader-pane" aria-label="Reader">
-        <ReaderView
-          :conversation="mailbox.conversation.value"
-          :state="mailbox.detailState.value"
-          :error="mailbox.detailError.value"
-          :command-in-flight="mailbox.inFlightCommandRef.value !== null"
-          :read-only="gmailMode && !mailboxActionsEnabled"
-          :show-read-controls="gmailActionsEnabled"
-          @close="closeReader"
-          @archive="archiveFromReader"
-          @unarchive="unarchiveFromReader"
-          @set-read="setReadFromReader"
-          @prepare-reply="prepareReply"
-        />
-      </section>
-
-      <ActivityPanel
-        :activity="mailbox.activity.value"
-        :actions-enabled="mailboxActionsEnabled"
-        :gmail-mode="gmailMode"
-        @open="mailbox.openConversationByRef($event)"
-        @unarchive="unarchiveFromActivity"
-        @retry="retryFromActivity"
-      />
+        <div
+          v-if="!wideViewport && contactDisclosure"
+          class="utility-drawer contact-disclosure-panel"
+          role="region"
+          tabindex="-1"
+          ref="contactPanelEl"
+          aria-label="Contact context"
+          data-test="contact-disclosure-panel"
+        >
+          <header class="drawer-header">
+            <h2>Contact</h2>
+            <button type="button" data-test="contact-disclosure-close" @click="closeContactDisclosure()">Close</button>
+          </header>
+          <ContactPane :contact="contact" :context="contactContext" />
+        </div>
       </template>
     </main>
   </div>

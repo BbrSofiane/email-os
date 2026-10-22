@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "validationCommands": [
+    { "name": "core-tests", "command": "mise run test:core" },
+    { "name": "ipc-contract", "command": "mise run check:contract" },
+    { "name": "core-lint", "command": "mise run lint:core" },
+    { "name": "ui-tests", "command": "mise run test:ui" },
+    { "name": "ui-typecheck", "command": "mise run typecheck" },
+    { "name": "web-build", "command": "mise run build:web" }
+  ],
+  "timeoutMs": 1800000,
+  "commandTimeoutMs": 600000,
+  "maxConcurrency": 4,
+  "allowDirtyBaseline": false
+}

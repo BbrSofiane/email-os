@@ -13,6 +13,23 @@ describe('browser fake MailClient (core-like semantics, memory-only)', () => {
     expect([...times].sort().reverse()).toEqual(times);
   });
 
+  it('derives primaryCorrespondent from the newest message, matching the ordered detail stack', async () => {
+    const fake = createBrowserFakeMailClient(() => '2025-01-01T00:00:00.000Z');
+    // A self-authored newest message and a nullable display name exercise the
+    // backend-derived contract end to end.
+    fake.controls.addMessage('conv-01', true, { displayName: 'You', mailbox: 'you@fixture.emailos' });
+    fake.controls.addMessage('conv-02', false, { displayName: null, mailbox: 'anon@example.test' });
+    const snap = await fake.listConversations();
+    for (const row of snap.conversations) {
+      const detail = await fake.getConversation(row.ref);
+      expect(row.primaryCorrespondent).toEqual(detail.messages[detail.messages.length - 1]!.from);
+    }
+    const conv01 = snap.conversations.find((c) => c.ref.conversationId === 'conv-01');
+    expect(conv01?.primaryCorrespondent).toEqual({ displayName: 'You', mailbox: 'you@fixture.emailos' });
+    const conv02 = snap.conversations.find((c) => c.ref.conversationId === 'conv-02');
+    expect(conv02?.primaryCorrespondent).toEqual({ displayName: null, mailbox: 'anon@example.test' });
+  });
+
   it('returns the full conversation, including hostile markup as literal text', async () => {
     const fake = createBrowserFakeMailClient();
     const conv = await fake.getConversation(fixtureRef('conv-06'));

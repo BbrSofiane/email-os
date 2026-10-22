@@ -124,7 +124,7 @@ export interface FakeControls {
   /** Makes the next synthetic cancellation fail. */
   failNextCancelUpgrade(error?: MailError): void;
   /** Adds an incoming message to test immutable operation target snapshots. */
-  addMessage(conversationId: string, read?: boolean): void;
+  addMessage(conversationId: string, read?: boolean, from?: Address): void;
   /** Makes read facts unknown for a synthetic conversation. */
   markReadUnknown(conversationId: string): void;
   /** Marks an Activity-openable local recovery copy with a synthetic save time. */
@@ -253,6 +253,8 @@ function summarize(conv: FakeConversation, pendingOperationId: string | null): C
     ref: { ...conv.ref },
     subject: conv.subject,
     participants: unique.map((participant) => ({ ...participant })),
+    // Backend-derived like core: newest message's sender, never a participant guess.
+    primaryCorrespondent: { ...last.from },
     preview: last.bodyText.replace(/\s+/g, ' ').slice(0, 120),
     lastMessageAt: last.sentAt,
     ...(readStates.every((read) => read !== null) ? { isRead: readStates.every(Boolean) } : {}),
@@ -623,13 +625,13 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       failNextCancelUpgrade(error: MailError = { kind: 'storage_unavailable' }): void {
         failCancelUpgrade = error;
       },
-      addMessage(conversationId: string, read = false): void {
+      addMessage(conversationId: string, read = false, from: Address = SAFE_SENDER): void {
         const conv = byId(conversationId);
         if (!conv) throw new Error(`addMessage: unknown conversation ${conversationId}`);
         const last = conv.messages[conv.messages.length - 1];
         const sentAt = last ? new Date(Date.parse(last.sentAt) + 60_000).toISOString() : now();
         const id = `${conversationId}-incoming-${conv.messages.length + 1}`;
-        conv.messages.push({ id, from: SAFE_SENDER, to: [ME], sentAt, bodyText: 'Synthetic incoming message.', seededInInbox: true, seededRead: read });
+        conv.messages.push({ id, from: { ...from }, to: [ME], sentAt, bodyText: 'Synthetic incoming message.', seededInInbox: true, seededRead: read });
         notify();
       },
       markReadUnknown(conversationId: string): void {

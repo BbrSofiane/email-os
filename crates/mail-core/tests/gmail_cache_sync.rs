@@ -789,6 +789,88 @@ fn startup_restore_completes_bounded_discovery_and_catchup() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// BROWSE-01 contact context: Gmail summaries derive the primary correspondent
+/// from the newest cached message in the ordered stack — never participants[0].
+#[test]
+fn gmail_summaries_derive_primary_correspondent_from_the_newest_message() {
+    let (fake, _profile) = FakeGmail::new();
+    let mut inbox = HashMap::new();
+    inbox.insert(None::<String>, inbox_page(&["thr-self"], None));
+    fake.set_inbox(inbox);
+
+    let mut first = msg("m-self-1", "2026-01-05T10:00:00Z");
+    first.from = mail_core::dto::Address {
+        display_name: Some("Boris Thread".to_string()),
+        mailbox: "boris@example.test".to_string(),
+    };
+    let mut self_authored = msg("m-self-2", "2026-01-06T10:00:00Z");
+    self_authored.from = mail_core::dto::Address {
+        display_name: Some("You".to_string()),
+        mailbox: "me@example.test".to_string(),
+    };
+    let mut nameless = msg("m-nameless", "2026-01-07T10:00:00Z");
+    nameless.from = mail_core::dto::Address {
+        display_name: None,
+        mailbox: "anon@example.test".to_string(),
+    };
+
+    let mut threads = HashMap::new();
+    threads.insert(
+        "thr-self".to_string(),
+        thread(
+            "thr-self",
+            "hist-1000",
+            vec![first, self_authored, nameless],
+            &["m-self-1", "m-self-2", "m-nameless"],
+        ),
+    );
+    fake.set_threads(threads);
+    let mut history = HashMap::new();
+    history.insert(None::<String>, history_page(&[], &[], None, "hist-1001"));
+    fake.set_history(history);
+
+    let (core, dir) = open_core("gmail-primary-correspondent", &fake);
+    assert!(
+        until(|| {
+            let st = status(&core);
+            st.connection == ConnectionState::Connected
+                && st.sync.initial_sync_complete
+                && st.sync.cached_conversations == 1
+                && st.sync.state == SyncState::Idle
+        }),
+        "initial sync should complete: {:?}",
+        status(&core)
+    );
+    let snapshot = core.list_conversations().expect("snapshot");
+    let summary = snapshot
+        .conversations
+        .iter()
+        .find(|c| c.conversation_ref.conversation_id == "thr-self")
+        .expect("summary");
+    assert_eq!(
+        summary
+            .primary_correspondent
+            .as_ref()
+            .map(|a| a.mailbox.as_str()),
+        Some("anon@example.test"),
+        "newest message's sender wins"
+    );
+    assert_eq!(
+        summary
+            .primary_correspondent
+            .as_ref()
+            .and_then(|a| a.display_name.clone()),
+        None,
+        "nullable display name is passed through, not fabricated"
+    );
+    assert_ne!(
+        summary.participants[0].mailbox, "anon@example.test",
+        "participants order must not be used as the primary correspondent"
+    );
+    core.stop();
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[test]
 fn restored_credentials_for_another_account_never_sync_into_cached_profile() {
     let (fake, _profile) = FakeGmail::new();

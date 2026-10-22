@@ -137,6 +137,12 @@ pub struct ConversationSummary {
     pub conversation_ref: ConversationRef,
     pub subject: String,
     pub participants: Vec<Address>,
+    /// Sender of the newest message in the ordered detail stack. Derived only
+    /// from `messages.last().from`, never guessed from the participant list.
+    /// Absent for legacy summaries whose stack has no messages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub primary_correspondent: Option<Address>,
     /// Plain-text preview derived from the newest message body.
     pub preview: String,
     pub last_message_at: String,
