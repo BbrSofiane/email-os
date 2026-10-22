@@ -3,11 +3,14 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import App from '../src/App.vue';
 import type { Conversation, InboxSnapshot, MailClient } from '../src/lib/ipc/client';
 import {
+  closeUtilityDrawer,
+  conversationRows,
   countingClient,
   createBrowserFakeMailClient,
   deferred,
   fixtureRef,
   flushMacrotasks,
+  openUtilityDrawer,
   useGmailMode,
   type BrowserFake,
   type CountingClient,
@@ -64,6 +67,7 @@ describe('App (Slice 02 Gmail account states)', () => {
     await settle();
     await w.find('[data-test="row-archive-conv-01"]').trigger('click');
     await settle();
+    await openUtilityDrawer(w, 'activity');
     const failed = w.find('[data-test="activity-failed"]');
     expect(failed.exists()).toBe(true);
     expect(failed.find('[data-test^="activity-retry-"]').exists()).toBe(false);
@@ -80,7 +84,7 @@ describe('App (Slice 02 Gmail account states)', () => {
     await fake.controls.flush();
     const w = mountApp();
     await settle();
-    expect(w.findAll('[role="option"]')).toHaveLength(1);
+    expect(conversationRows(w)).toHaveLength(1);
     const archiveButton = w.find('[data-test="row-archive-conv-01"]');
     (archiveButton.element as HTMLButtonElement).focus();
     await archiveButton.trigger('click');
@@ -94,25 +98,28 @@ describe('App (Slice 02 Gmail account states)', () => {
     gmail();
     const w = mountApp();
     await settle();
+    await openUtilityDrawer(w, 'account');
     expect(w.find('[data-test="account-panel"]').exists()).toBe(true);
     expect(w.find('[data-test="account-email"]').text()).toBe('operator@example.test');
     expect(w.find('[data-test="disposable-account-note"]').text()).toContain('Disposable test account');
     expect(w.find('[data-test="account-connection"]').text()).toContain('Connected');
     expect(w.find('[data-test="account-mode"]').text()).toContain('read-only');
-    expect(w.findAll('[role="option"]')).toHaveLength(18);
+    expect(conversationRows(w)).toHaveLength(18);
 
     // Opening a conversation: no archive toggle, an explicit read-only note.
-    await w.findAll('[role="option"]')[0]!.trigger('click');
+    await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await settle();
     expect(w.find('[data-test="reader-archive-toggle"]').exists()).toBe(false);
     expect(w.find('[data-test="reader-readonly"]').exists()).toBe(true);
 
+    await closeUtilityDrawer(w);
     // Keyboard e must not mutate from the list or the reader.
     window.dispatchEvent(keydown({ key: 'e' }));
     await settle();
     expect(counted.commands).toHaveLength(0);
 
     // Activity never offers unarchive in gmail mode.
+    await openUtilityDrawer(w, 'activity');
     expect(w.find('[data-test^="activity-unarchive-"]').exists()).toBe(false);
     expect(w.find('[data-test="activity-empty"]').exists()).toBe(true);
   });
@@ -122,21 +129,25 @@ describe('App (Slice 02 Gmail account states)', () => {
     fake.controls.markReadUnknown('conv-01');
     const w = mountApp();
     await settle();
+    await openUtilityDrawer(w, 'account');
     expect(w.find('[data-test="account-mode"]').text()).toContain('read-only');
-    expect(w.find('[data-test="row-read-unknown"]').exists()).toBe(true);
     expect(w.find('[data-test="action-upgrade-disclosure"]').text()).toContain('sending and deleting');
+    await closeUtilityDrawer(w);
+    expect(w.find('[data-test="row-read-unknown"]').exists()).toBe(true);
     expect(w.find('[data-test="row-archive-conv-01"]').exists()).toBe(false);
     expect(w.find('[data-test="row-toggle-read-conv-01"]').exists()).toBe(false);
 
     fake.controls.failNextEnable({ kind: 'permission_required' });
+    await openUtilityDrawer(w, 'account');
     await w.find('[data-test="enable-mailbox-actions"]').trigger('click');
     await settle();
     expect(w.find('[data-test="account-action-error"]').text()).toContain('remains read-only');
     expect(w.find('[data-test="account-mode"]').text()).toContain('read-only');
+    await closeUtilityDrawer(w);
     expect(w.find('[data-test="row-archive-conv-01"]').exists()).toBe(false);
 
     // Cached reading stays available after denial; opening never sends a mutation.
-    await w.findAll('[role="option"]')[0]!.trigger('click');
+    await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await settle();
     expect(w.find('[data-test="reader-read-state"]').text()).toBe('Read state unknown');
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
@@ -148,6 +159,7 @@ describe('App (Slice 02 Gmail account states)', () => {
     fake.controls.behavior.holdUpgrade = true;
     const w = mountApp();
     await settle();
+    await openUtilityDrawer(w, 'account');
     await w.find('[data-test="enable-mailbox-actions"]').trigger('click');
     await flushPromises();
     expect(w.find('[data-test="account-mode"]').text()).toContain('Permission upgrade');
@@ -159,7 +171,7 @@ describe('App (Slice 02 Gmail account states)', () => {
     await settle();
     expect(w.find('[data-test="account-mode"]').text()).toContain('read-only');
     expect(w.find('[data-test="account-email"]').text()).toBe('operator@example.test');
-    expect(w.findAll('[role="option"]')).toHaveLength(18);
+    expect(conversationRows(w)).toHaveLength(18);
     fake.controls.releaseUpgrade();
     await settle();
     expect((await fake.getAccountStatus()).mutationAccess).toBe('read_only');
@@ -169,13 +181,15 @@ describe('App (Slice 02 Gmail account states)', () => {
     gmail();
     const w = mountApp();
     await settle();
+    await openUtilityDrawer(w, 'account');
     await w.find('[data-test="enable-mailbox-actions"]').trigger('click');
     await settle();
     expect(w.find('[data-test="actions-enabled"]').exists()).toBe(true);
+    await closeUtilityDrawer(w);
     expect(w.find('[data-test="row-archive-conv-01"]').exists()).toBe(true);
     expect(w.find('[data-test="row-toggle-read-conv-01"]').exists()).toBe(true);
     const before = fake.controls.activity().length;
-    await w.findAll('[role="option"]')[0]!.trigger('click');
+    await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await settle();
     expect(w.find('[data-test="reader-no-auto-read"]').exists()).toBe(true);
     expect(w.find('[data-test="reader-toggle-read"]').exists()).toBe(true);
@@ -194,7 +208,7 @@ describe('App (Slice 02 Gmail account states)', () => {
     await w.find('[data-test="row-mark-read-conv-01"]').trigger('click');
     await settle();
     expect(w.find('[data-test="row-read"]').exists()).toBe(true);
-    await w.findAll('[role="option"]')[0]!.trigger('click');
+    await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await settle();
     expect(w.find('[data-test="reader-read-state"]').text()).toBe('Read');
     await w.find('[data-test="reader-toggle-read"]').trigger('click');
@@ -210,14 +224,17 @@ describe('App (Slice 02 Gmail account states)', () => {
     window.dispatchEvent(keydown({ key: 'e' }));
     await settle();
     expect(fake.controls.activity()).toHaveLength(0);
+    await openUtilityDrawer(w, 'account');
     await w.find('[data-test="enable-mailbox-actions"]').trigger('click');
     await settle();
+    await closeUtilityDrawer(w);
     await w.find('[data-test="row-archive-conv-01"]').trigger('click');
     await settle();
-    expect(w.findAll('[role="option"]')).toHaveLength(17);
+    expect(conversationRows(w)).toHaveLength(17);
     const archive = fake.controls.activity().find((op) => op.requestedArchived);
     expect(archive?.status).toBe('confirmed');
     fake.controls.markRetainedSnapshot('conv-01', '2025-02-03T04:05:06Z');
+    await openUtilityDrawer(w, 'activity');
     await w.find(`[data-test="activity-open-${archive!.id}"]`).trigger('click');
     await settle();
     expect(w.find('[data-test="retained-snapshot-notice"]').text()).toBe(
@@ -226,7 +243,10 @@ describe('App (Slice 02 Gmail account states)', () => {
     expect(w.find('[data-test="reader-archive-toggle"]').text()).toContain('Unarchive');
     await w.find('[data-test="reader-archive-toggle"]').trigger('click');
     await settle();
-    expect(w.findAll('[role="option"]')).toHaveLength(18);
+    // Back to the list (the reader replaces it) to see the restored row.
+    window.dispatchEvent(keydown({ key: 'Escape' }));
+    await settle();
+    expect(conversationRows(w)).toHaveLength(18);
   });
 
   it('documents Shift+U as explicit mark-unread and guards modifiers/IME/text fields', async () => {
@@ -237,8 +257,10 @@ describe('App (Slice 02 Gmail account states)', () => {
     await settle();
     expect(fake.controls.activity()).toHaveLength(0); // readonly before explicit grant
 
+    await openUtilityDrawer(w, 'account');
     await w.find('[data-test="enable-mailbox-actions"]').trigger('click');
     await settle();
+    await closeUtilityDrawer(w);
     window.dispatchEvent(keydown({ key: 'U', shiftKey: true, ctrlKey: true }));
     window.dispatchEvent(keydown({ key: 'U', shiftKey: true, metaKey: true }));
     window.dispatchEvent(keydown({ key: 'U', shiftKey: true, altKey: true }));
@@ -261,6 +283,7 @@ describe('App (Slice 02 Gmail account states)', () => {
     gmail({ mutationAccess: 'enabled' });
     const w = mountApp();
     await settle();
+    await openUtilityDrawer(w, 'activity');
     fake.controls.behavior.hold = true;
     const original = await fake.setArchived({ conversation: fixtureRef('conv-01'), archived: true, requestId: 'retry-original' });
     await flushPromises();
@@ -293,29 +316,31 @@ describe('App (Slice 02 Gmail account states)', () => {
     gmail({ connection: 'not_configured', emailAddress: null, cachedConversations: 0, initialSyncComplete: false });
     const w = mountApp();
     await settle();
+    await openUtilityDrawer(w, 'account');
     expect(w.find('[data-test="account-not-configured"]').exists()).toBe(true);
-    expect(w.findAll('[role="option"]')).toHaveLength(0);
+    expect(conversationRows(w)).toHaveLength(0);
     const connect = w.find('[data-test="account-connect"]');
     expect(connect.exists()).toBe(true);
 
     await connect.trigger('click');
     await settle();
     expect(w.find('[data-test="account-connection"]').text()).toContain('Connected');
-    expect(w.findAll('[role="option"]')).toHaveLength(18);
+    expect(conversationRows(w)).toHaveLength(18);
   });
 
   it('moves from disconnected to connected through the connect control', async () => {
     gmail({ connection: 'disconnected', emailAddress: null, cachedConversations: 0, initialSyncComplete: false });
     const w = mountApp();
     await settle();
+    await openUtilityDrawer(w, 'account');
     expect(w.find('[data-test="account-connection"]').text()).toContain('Disconnected');
-    expect(w.findAll('[role="option"]')).toHaveLength(0);
+    expect(conversationRows(w)).toHaveLength(0);
 
     await w.find('[data-test="account-connect"]').trigger('click');
     await settle();
     expect(w.find('[data-test="account-connection"]').text()).toContain('Connected');
     expect(w.find('[data-test="account-email"]').text()).toBe('operator@example.test');
-    expect(w.findAll('[role="option"]')).toHaveLength(18);
+    expect(conversationRows(w)).toHaveLength(18);
   });
 
   it.each(['disconnected', 'not_configured'] as const)(
@@ -324,6 +349,7 @@ describe('App (Slice 02 Gmail account states)', () => {
       gmail({ connection, emailAddress: 'retained@example.test' });
       const w = mountApp();
       await settle();
+      await openUtilityDrawer(w, 'account');
       expect(w.find('[data-test="account-email"]').text()).toBe('retained@example.test');
       expect(w.find('[data-test="account-disconnect"]').exists()).toBe(true);
       expect(w.find('[data-test="account-disconnect"]').text()).toBe('Disconnect');
@@ -340,12 +366,14 @@ describe('App (Slice 02 Gmail account states)', () => {
     gmail({ connection: 'auth_required', lastSyncedAt: '2025-01-01T00:00:00.000Z' });
     const w = mountApp();
     await settle();
+    await openUtilityDrawer(w, 'account');
     expect(w.find('[data-test="account-connection"]').text()).toContain('Sign-in required');
     expect(w.find('[data-test="account-auth-required"]').exists()).toBe(true);
     expect(w.find('[data-test="account-connect"]').text()).toContain('Sign in again');
+    await closeUtilityDrawer(w);
     // Cached content stays readable.
-    expect(w.findAll('[role="option"]')).toHaveLength(18);
-    await w.findAll('[role="option"]')[0]!.trigger('click');
+    expect(conversationRows(w)).toHaveLength(18);
+    await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await settle();
     expect(w.find('[data-test="reader"]').text()).toContain('Fixture thread 1');
     expect(w.find('[data-test="reader-archive-toggle"]').exists()).toBe(false);
@@ -355,6 +383,7 @@ describe('App (Slice 02 Gmail account states)', () => {
     gmail({ connection: 'authenticating' });
     const w = mountApp();
     await settle();
+    await openUtilityDrawer(w, 'account');
     expect(w.find('[data-test="account-connection"]').text()).toContain('Signing in');
     expect(w.find('[data-test="account-connect"]').exists()).toBe(false);
     expect(w.find('[data-test="account-disconnect"]').text()).toContain('Cancel sign-in');
@@ -367,6 +396,7 @@ describe('App (Slice 02 Gmail account states)', () => {
     gmail();
     const w = mountApp();
     await settle();
+    await openUtilityDrawer(w, 'account');
     await w.find('[data-test="account-sync"]').trigger('click');
     expect(w.find('[data-test="account-sync-state"]').text()).toContain('Syncing');
     await settle();
@@ -378,8 +408,9 @@ describe('App (Slice 02 Gmail account states)', () => {
     await settle();
     expect(w.find('[data-test="account-sync-error"]').exists()).toBe(true);
     expect(w.find('[data-test="account-sync-error"]').text()).toContain('network is unavailable');
+    await closeUtilityDrawer(w);
     // The cached reader is still fully usable after the sync error.
-    await w.findAll('[role="option"]')[0]!.trigger('click');
+    await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await settle();
     expect(w.find('[data-test="reader"]').text()).toContain('Fixture thread 1');
   });
@@ -388,6 +419,7 @@ describe('App (Slice 02 Gmail account states)', () => {
     gmail({ cachedConversations: 7, initialSyncComplete: false, lastSyncedAt: null, coverageLimit: 100 });
     const w = mountApp();
     await settle();
+    await openUtilityDrawer(w, 'account');
     const coverage = w.find('[data-test="account-coverage"]').text();
     expect(coverage).toContain('7');
     expect(coverage).toContain('100');
@@ -401,14 +433,14 @@ describe('App (Slice 02 Gmail account states)', () => {
     fake.controls.markUnsupported('conv-01', 'HTML-only messages are not shown', false);
     const w = mountApp();
     await settle();
-    await w.findAll('[role="option"]')[0]!.trigger('click');
+    await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await settle();
     expect(w.find('[data-test="unsupported-notice"]').text()).toContain('HTML-only messages are not shown');
 
     // A conversation without limitations shows no notice.
     await w.find('[data-test="reader-close"]').trigger('click');
     await flushPromises();
-    await w.findAll('[role="option"]')[1]!.trigger('click');
+    await w.find('[data-test="conversation-row-conv-02"]').trigger('click');
     await settle();
     expect(w.find('[data-test="unsupported-notice"]').exists()).toBe(false);
     expect(w.find('[data-test="context-incomplete"]').exists()).toBe(false);
@@ -421,12 +453,12 @@ describe('App (Slice 02 Gmail account states)', () => {
     await settle();
     expect(w.find('[data-test="account-error"]').exists()).toBe(true);
     expect(w.find('[data-test="account-error"]').text()).toContain('storage unavailable');
-    expect(w.findAll('[role="option"]')).toHaveLength(0); // no mailbox content, no fallback
+    expect(conversationRows(w)).toHaveLength(0); // no mailbox content, no fallback
 
     await w.find('[data-test="account-retry"]').trigger('click');
     await settle();
     expect(w.find('[data-test="account-error"]').exists()).toBe(false);
-    expect(w.findAll('[role="option"]')).toHaveLength(18);
+    expect(conversationRows(w)).toHaveLength(18);
   });
 
   it('restores usable reader actions after a delayed receipt is invalidated by disconnect', async () => {
@@ -448,7 +480,7 @@ describe('App (Slice 02 Gmail account states)', () => {
     };
     const w = mountApp(client);
     await settle();
-    await w.findAll('[role="option"]')[0]!.trigger('click');
+    await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await settle();
     const initialArchive = w.find('[data-test="reader-archive-toggle"]');
     expect((initialArchive.element as HTMLButtonElement).disabled).toBe(false);
@@ -456,10 +488,11 @@ describe('App (Slice 02 Gmail account states)', () => {
     expect(setArchivedCalls).toBe(1);
     await fake.controls.flush();
 
+    await openUtilityDrawer(w, 'account');
     await w.find('[data-test="account-disconnect"]').trigger('click');
     await settle();
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
-    expect(w.findAll('[role="option"]')).toHaveLength(0);
+    expect(conversationRows(w)).toHaveLength(0);
     const accepted = staleReceipt;
     if (!accepted) throw new Error('expected delayed mutation receipt');
     receiptGate.resolve(accepted);
@@ -470,8 +503,9 @@ describe('App (Slice 02 Gmail account states)', () => {
     await w.find('[data-test="enable-mailbox-actions"]').trigger('click');
     await settle();
     expect(w.find('[data-test="account-mode"]').text()).toContain('enabled');
-    expect(w.findAll('[role="option"]').length).toBeGreaterThan(0);
-    await w.findAll('[role="option"]')[0]!.trigger('click');
+    expect(conversationRows(w).length).toBeGreaterThan(0);
+    // conv-01 stays archived after reconnect; open the first surviving row.
+    await w.find('[data-test="conversation-row-conv-02"]').trigger('click');
     await settle();
 
     const restoredArchive = w.find('[data-test="reader-archive-toggle"]');
@@ -507,7 +541,7 @@ describe('App (Slice 02 Gmail account states)', () => {
     };
     const w = mountApp(client);
     await settle();
-    await w.findAll('[role="option"]')[0]!.trigger('click');
+    await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await settle();
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
 
@@ -518,10 +552,11 @@ describe('App (Slice 02 Gmail account states)', () => {
     await flushPromises();
     expect(w.find('[data-test="reader"]').exists()).toBe(true); // deferred detail still loading
 
+    await openUtilityDrawer(w, 'account');
     await w.find('[data-test="account-disconnect"]').trigger('click');
     await settle();
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
-    expect(w.findAll('[role="option"]')).toHaveLength(0);
+    expect(conversationRows(w)).toHaveLength(0);
     expect(w.find('[data-test="account-connection"]').text()).toContain('Disconnected');
     expect(w.find('[data-test="account-connect"]').exists()).toBe(true);
 
@@ -530,6 +565,6 @@ describe('App (Slice 02 Gmail account states)', () => {
     staleSnapshot.resolve(await fake.listConversations());
     await settle();
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
-    expect(w.findAll('[role="option"]')).toHaveLength(0);
+    expect(conversationRows(w)).toHaveLength(0);
   });
 });

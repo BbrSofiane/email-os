@@ -478,6 +478,7 @@ impl GmailStore {
                 conversation_ref: built.conversation_ref,
                 subject: built.subject,
                 participants: participants_of(&built.messages),
+                primary_correspondent: built.messages.last().map(|m| m.from.clone()),
                 is_read,
                 preview: preview_of(&built.messages),
                 last_message_at: built

@@ -569,6 +569,69 @@ fn hostile_markup_is_literal_data() {
     core.stop_worker();
 }
 
+/// BROWSE-01 contact context: the primary correspondent is the newest message's
+/// sender from the ordered detail stack — never participants[0].
+#[test]
+fn summaries_derive_primary_correspondent_from_the_newest_message() {
+    let (core, _dir) = open_core("primary-correspondent");
+    let snapshot = core.list_conversations().expect("snapshot");
+    let summary_of = |conversation_id: &str| {
+        snapshot
+            .conversations
+            .iter()
+            .find(|c| c.conversation_ref.conversation_id == conversation_id)
+            .expect("summary")
+            .clone()
+    };
+
+    // conv-16: participants start with Boris, but the newest message is self-authored.
+    let conv16 = summary_of("conv-16");
+    let detail = core
+        .get_conversation(&conv_ref("fixture-account", "conv-16"))
+        .expect("detail stack");
+    assert_eq!(
+        conv16.primary_correspondent,
+        Some(detail.messages.last().expect("latest message").from.clone())
+    );
+    assert_eq!(
+        conv16
+            .primary_correspondent
+            .as_ref()
+            .map(|a| a.mailbox.as_str()),
+        Some(mail_core::FIXTURE_MAILBOX),
+        "self-authored latest message is still the primary correspondent"
+    );
+    assert_ne!(
+        conv16.participants[0].mailbox,
+        mail_core::FIXTURE_MAILBOX,
+        "participants order must not be used as the primary correspondent"
+    );
+
+    // conv-09: a nullable display name is passed through, not fabricated.
+    let conv09 = summary_of("conv-09");
+    assert_eq!(
+        conv09
+            .primary_correspondent
+            .as_ref()
+            .map(|a| a.mailbox.as_str()),
+        Some("anon@example.org")
+    );
+    assert_eq!(
+        conv09.primary_correspondent.and_then(|a| a.display_name),
+        None
+    );
+
+    // Legacy summaries without the field stay compatible, and absent values are
+    // omitted rather than serialized as null.
+    let legacy = r#"{"ref":{"accountId":"fixture-account","conversationId":"conv-01"},"subject":"s","participants":[],"preview":"","lastMessageAt":"2026-01-12T08:19:00Z","pendingOperationId":null}"#;
+    let parsed: mail_core::dto::ConversationSummary =
+        serde_json::from_str(legacy).expect("legacy summary deserializes");
+    assert!(parsed.primary_correspondent.is_none());
+    let json = serde_json::to_string(&parsed).expect("serialize");
+    assert!(!json.contains("primaryCorrespondent"));
+    core.stop_worker();
+}
+
 #[test]
 fn subscription_fires_on_accept_and_confirm_and_can_unsubscribe() {
     let (core, _dir) = open_core("subscription");

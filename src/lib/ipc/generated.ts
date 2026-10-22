@@ -55,6 +55,12 @@ export type MailboxOperationKind = "archive" | "read";
 
 export type ConversationSummary = { ref: ConversationRef, subject: string, participants: Array<Address>,
 /**
+ * Sender of the newest message in the ordered detail stack. Derived only
+ * from `messages.last().from`, never guessed from the participant list.
+ * Absent for legacy summaries whose stack has no messages.
+ */
+primaryCorrespondent?: Address,
+/**
  * Plain-text preview derived from the newest message body.
  */
 preview: string, lastMessageAt: string, isRead?: boolean, pendingOperationId: string | null, };

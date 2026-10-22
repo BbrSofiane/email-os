@@ -8,6 +8,7 @@ import {
   DRAFTS_CHANGED_EVENT,
   GET_APP_CLOSE_REQUEST_COMMAND,
   GET_DRAFT_COMMAND,
+  LIST_CONVERSATIONS_COMMAND,
   LIST_DRAFTS_COMMAND,
   SAVE_DRAFT_COMMAND,
 } from '../src/lib/ipc/client';
@@ -37,6 +38,25 @@ describe('Tauri draft and close protocol adapter', () => {
       mocks.handlers.set(eventName, handler);
       return mocks.unlisten;
     });
+  });
+
+  it('transports listConversations summaries unchanged, including primaryCorrespondent', async () => {
+    const client = createTauriMailClient();
+    const snapshot = {
+      conversations: [{
+        ref: { accountId: 'fixture-account', conversationId: 'conv-01' },
+        subject: 's',
+        participants: [{ displayName: null, mailbox: 'anon@example.test' }],
+        primaryCorrespondent: { displayName: null, mailbox: 'anon@example.test' },
+        preview: 'p',
+        lastMessageAt: '2026-01-12T08:19:00Z',
+        pendingOperationId: null,
+      }],
+      activity: [],
+    };
+    mocks.invoke.mockResolvedValue(snapshot);
+    await expect(client.listConversations()).resolves.toEqual(snapshot);
+    expect(mocks.invoke).toHaveBeenLastCalledWith(LIST_CONVERSATIONS_COMMAND, undefined);
   });
 
   it('maps the five draft commands to exact generated command names and argument objects', async () => {
