@@ -1,0 +1,337 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M5H9SC897M2M2SQB817NNQHJ",
+  "session_id": "01a14e69-31d6-753c-b985-765299125c18",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-22T07:56:39.695964282Z",
+  "branch": "feat/ux-01-browsing-shell",
+  "checkpoints_count": 18,
+  "save_step_count": 18,
+  "files_touched": [
+    "crates/mail-core/src/dto.rs",
+    "crates/mail-core/src/gmail/store.rs",
+    "crates/mail-core/src/store.rs",
+    "crates/mail-core/tests/gmail_cache_sync.rs",
+    "crates/mail-core/tests/integration.rs",
+    "docs/ux-01-compact-browsing-shell.md",
+    "src/App.vue",
+    "src/assets/style.css",
+    "src/components/InboxList.vue",
+    "src/composables/useMailbox.ts",
+    "src/lib/ipc/browser-fake.ts",
+    "src/lib/ipc/generated.ts",
+    "tests/account.component.test.ts",
+    "tests/app.component.test.ts",
+    "tests/browser-fake.test.ts",
+    "tests/drafts.component.test.ts",
+    "tests/helpers.ts",
+    "tests/tauri-client.test.ts",
+    "tests/useMailbox.test.ts"
+  ],
+  "agent": "Pi",
+  "model": "openai/gpt-6.1-sol",
+  "turn_id": "c104c2919a7c",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 630,
+    "cache_creation_tokens": 2797257,
+    "cache_read_tokens": 70336969,
+    "output_tokens": 197327,
+    "api_call_count": 212
+  },
+  "session_metrics": {
+    "turn_count": 18
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-22T07:56:39.550036454Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 4546,
+    "human_modified": 533,
+    "human_removed": 0,
+    "total_committed": 4546,
+    "total_lines_changed": 5079,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 2626,
+      "user_lines_removed": 415,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "crates/mail-core/src/dto.rs": 6,
+        "crates/mail-core/src/gmail/store.rs": 1,
+        "crates/mail-core/src/store.rs": 1,
+        "crates/mail-core/tests/gmail_cache_sync.rs": 82,
+        "crates/mail-core/tests/integration.rs": 63,
+        "docs/ux-01-compact-browsing-shell.md": 149,
+        "src/App.vue": 433,
+        "src/assets/style.css": 305,
+        "src/components/ContactPane.vue": 36,
+        "src/components/InboxList.vue": 233,
+        "src/composables/useMailbox.ts": 70,
+        "src/lib/browsing-dates.ts": 144,
+        "src/lib/ipc/browser-fake.ts": 5,
+        "src/lib/ipc/generated.ts": 6,
+        "tests/account.component.test.ts": 63,
+        "tests/app.component.test.ts": 339,
+        "tests/browser-fake.test.ts": 17,
+        "tests/browsing-dates.test.ts": 71,
+        "tests/drafts.component.test.ts": 46,
+        "tests/helpers.ts": 250,
+        "tests/inbox-list.component.test.ts": 178,
+        "tests/tauri-client.test.ts": 20,
+        "tests/useMailbox.test.ts": 108
+      },
+      "user_removed_per_file": {
+        "src/App.vue": 164,
+        "src/assets/style.css": 63,
+        "src/components/InboxList.vue": 82,
+        "src/composables/useMailbox.ts": 28,
+        "src/lib/ipc/browser-fake.ts": 3,
+        "tests/account.component.test.ts": 28,
+        "tests/app.component.test.ts": 31,
+        "tests/drafts.component.test.ts": 10,
+        "tests/useMailbox.test.ts": 6
+      }
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 2626,
+      "agent_lines_removed": 415
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 2626,
+      "agent_lines_removed": 415
+    },
+    {
+      "checkpoint_number": 4,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 2626,
+      "agent_lines_removed": 415
+    },
+    {
+      "checkpoint_number": 5,
+      "user_lines_added": 294,
+      "user_lines_removed": 13,
+      "agent_lines_added": 2626,
+      "agent_lines_removed": 415,
+      "user_added_per_file": {
+        "src/App.vue": 88,
+        "src/components/InboxList.vue": 13,
+        "tests/app.component.test.ts": 193
+      },
+      "user_removed_per_file": {
+        "src/App.vue": 10,
+        "src/components/InboxList.vue": 3
+      }
+    },
+    {
+      "checkpoint_number": 6,
+      "user_lines_added": 49,
+      "user_lines_removed": 24,
+      "agent_lines_added": 2910,
+      "agent_lines_removed": 418,
+      "user_added_per_file": {
+        "docs/ux-01-compact-browsing-shell.md": 15,
+        "src/App.vue": 6,
+        "tests/app.component.test.ts": 16,
+        "tests/drafts.component.test.ts": 12
+      },
+      "user_removed_per_file": {
+        "docs/ux-01-compact-browsing-shell.md": 6,
+        "tests/app.component.test.ts": 11,
+        "tests/drafts.component.test.ts": 7
+      }
+    },
+    {
+      "checkpoint_number": 7,
+      "user_lines_added": 15,
+      "user_lines_removed": 6,
+      "agent_lines_added": 2928,
+      "agent_lines_removed": 420,
+      "user_added_per_file": {
+        "docs/ux-01-compact-browsing-shell.md": 15
+      },
+      "user_removed_per_file": {
+        "docs/ux-01-compact-browsing-shell.md": 6
+      }
+    },
+    {
+      "checkpoint_number": 8,
+      "user_lines_added": 228,
+      "user_lines_removed": 19,
+      "agent_lines_added": 2928,
+      "agent_lines_removed": 420,
+      "user_added_per_file": {
+        "docs/ux-01-compact-browsing-shell.md": 20,
+        "src/App.vue": 28,
+        "tests/app.component.test.ts": 180
+      },
+      "user_removed_per_file": {
+        "docs/ux-01-compact-browsing-shell.md": 7,
+        "src/App.vue": 12
+      }
+    },
+    {
+      "checkpoint_number": 9,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 3159,
+      "agent_lines_removed": 420
+    },
+    {
+      "checkpoint_number": 10,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 3159,
+      "agent_lines_removed": 420
+    },
+    {
+      "checkpoint_number": 11,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 3159,
+      "agent_lines_removed": 420
+    },
+    {
+      "checkpoint_number": 12,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 3159,
+      "agent_lines_removed": 420
+    },
+    {
+      "checkpoint_number": 13,
+      "user_lines_added": 462,
+      "user_lines_removed": 10,
+      "agent_lines_added": 3159,
+      "agent_lines_removed": 420,
+      "user_added_per_file": {
+        "docs/ux-01-compact-browsing-shell.md": 52,
+        "src/assets/style.css": 21,
+        "src/components/InboxList.vue": 10,
+        "tests/inbox-list.component.test.ts": 5,
+        "tests/inbox-list.rendered-layout.test.ts": 345,
+        "tests/node-env.d.ts": 29
+      },
+      "user_removed_per_file": {
+        "docs/ux-01-compact-browsing-shell.md": 1,
+        "src/assets/style.css": 5,
+        "src/components/InboxList.vue": 3,
+        "tests/inbox-list.component.test.ts": 1
+      }
+    },
+    {
+      "checkpoint_number": 14,
+      "user_lines_added": 379,
+      "user_lines_removed": 1,
+      "agent_lines_added": 3238,
+      "agent_lines_removed": 420,
+      "user_added_per_file": {
+        "tests/inbox-list.component.test.ts": 5,
+        "tests/inbox-list.rendered-layout.test.ts": 345,
+        "tests/node-env.d.ts": 29
+      },
+      "user_removed_per_file": {
+        "tests/inbox-list.component.test.ts": 1
+      }
+    },
+    {
+      "checkpoint_number": 15,
+      "user_lines_added": 379,
+      "user_lines_removed": 1,
+      "agent_lines_added": 3238,
+      "agent_lines_removed": 420,
+      "user_added_per_file": {
+        "tests/inbox-list.component.test.ts": 5,
+        "tests/inbox-list.rendered-layout.test.ts": 345,
+        "tests/node-env.d.ts": 29
+      },
+      "user_removed_per_file": {
+        "tests/inbox-list.component.test.ts": 1
+      }
+    },
+    {
+      "checkpoint_number": 16,
+      "user_lines_added": 379,
+      "user_lines_removed": 1,
+      "agent_lines_added": 3238,
+      "agent_lines_removed": 420,
+      "user_added_per_file": {
+        "tests/inbox-list.component.test.ts": 5,
+        "tests/inbox-list.rendered-layout.test.ts": 345,
+        "tests/node-env.d.ts": 29
+      },
+      "user_removed_per_file": {
+        "tests/inbox-list.component.test.ts": 1
+      }
+    },
+    {
+      "checkpoint_number": 17,
+      "user_lines_added": 379,
+      "user_lines_removed": 1,
+      "agent_lines_added": 3238,
+      "agent_lines_removed": 420,
+      "user_added_per_file": {
+        "tests/inbox-list.component.test.ts": 5,
+        "tests/inbox-list.rendered-layout.test.ts": 345,
+        "tests/node-env.d.ts": 29
+      },
+      "user_removed_per_file": {
+        "tests/inbox-list.component.test.ts": 1
+      }
+    },
+    {
+      "checkpoint_number": 18,
+      "user_lines_added": 1420,
+      "user_lines_removed": 28,
+      "agent_lines_added": 3238,
+      "agent_lines_removed": 420,
+      "user_added_per_file": {
+        "docs/ux-01-compact-browsing-shell.md": 44,
+        "src/App.vue": 12,
+        "src/assets/style.css": 55,
+        "src/components/InboxList.vue": 201,
+        "tests/app.component.test.ts": 101,
+        "tests/disclosure-focus.rendered.test.ts": 379,
+        "tests/inbox-list.component.test.ts": 64,
+        "tests/inbox-list.rendered-layout.test.ts": 535,
+        "tests/node-env.d.ts": 29
+      },
+      "user_removed_per_file": {
+        "docs/ux-01-compact-browsing-shell.md": 6,
+        "src/App.vue": 1,
+        "src/components/InboxList.vue": 19,
+        "tests/inbox-list.component.test.ts": 2
+      }
+    },
+    {
+      "checkpoint_number": 19,
+      "user_lines_added": 1051,
+      "user_lines_removed": 8,
+      "agent_lines_added": 3588,
+      "agent_lines_removed": 421,
+      "user_added_per_file": {
+        "docs/ux-01-compact-browsing-shell.md": 44,
+        "tests/disclosure-focus.rendered.test.ts": 379,
+        "tests/inbox-list.component.test.ts": 64,
+        "tests/inbox-list.rendered-layout.test.ts": 535,
+        "tests/node-env.d.ts": 29
+      },
+      "user_removed_per_file": {
+        "docs/ux-01-compact-browsing-shell.md": 6,
+        "tests/inbox-list.component.test.ts": 2
+      }
+    }
+  ]
+}
