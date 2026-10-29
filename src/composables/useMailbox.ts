@@ -28,8 +28,10 @@ export interface Mailbox {
   activity: Ref<OperationSummaryLike[]>;
   listState: Ref<ListState>;
   listError: Ref<MailError | null>;
-  selectedIndex: Ref<number>;
-  selectedSummary: Ref<ConversationSummaryLike | null>;
+  /** Explicit account-scoped conversation focus; never an array position. */
+  focusedRef: Ref<ConversationRef | null>;
+  /** The focused row in the current snapshot; `null` when the ref is absent. */
+  focusedSummary: ComputedRef<ConversationSummaryLike | null>;
   openRef: Ref<ConversationRef | null>;
   conversation: Ref<Conversation | null>;
   detailState: Ref<DetailState>;
@@ -49,17 +51,17 @@ export interface Mailbox {
   connectAccount(): Promise<void>;
   disconnectAccount(): Promise<void>;
   requestSync(): Promise<void>;
-  moveSelection(delta: number): void;
-  selectIndex(index: number): void;
+  focusConversation(target: ConversationRef | null): void;
+  moveFocus(delta: number): void;
   openConversationByRef(ref: ConversationRef): Promise<void>;
-  openSelected(): Promise<void>;
+  openFocused(): Promise<void>;
   closeReader(): void;
   setArchived(target: ConversationRef, archived: boolean): Promise<OperationReceipt | null>;
   setRead(target: ConversationRef, read: boolean): Promise<OperationReceipt | null>;
   retryOperation(operationId: string): Promise<OperationReceipt | null>;
   enableMailboxActions(): Promise<void>;
   cancelMailboxActionUpgrade(): Promise<void>;
-  archiveSelected(): Promise<void>;
+  archiveFocused(): Promise<void>;
 }
 
 export function useMailbox(client: MailClient): Mailbox {
@@ -67,7 +69,7 @@ export function useMailbox(client: MailClient): Mailbox {
   const activity = ref<OperationSummaryLike[]>([]);
   const listState = ref<ListState>('loading');
   const listError = ref<MailError | null>(null);
-  const selectedIndex = ref(0);
+  const focusedRef = ref<ConversationRef | null>(null);
   const openRef = ref<ConversationRef | null>(null);
   const conversation = ref<Conversation | null>(null);
   const detailState = ref<DetailState>('idle');
@@ -106,16 +108,43 @@ export function useMailbox(client: MailClient): Mailbox {
   async function refreshList(token: number): Promise<void> {
     const snap = await client.listConversations();
     if (detached || token !== listToken) return;
-    // Preserve identity, not position, when a failed archive restores an earlier row.
-    const selected = conversations.value[selectedIndex.value]?.ref ?? null;
-    const retainedIndex = snap.conversations.findIndex((row) => sameConversation(row.ref, selected));
+    // Preserve identity, not position: a surviving focused reference survives
+    // inserts/reordering; a removed one resolves to a surviving neighbor.
+    const previous = conversations.value;
     conversations.value = snap.conversations;
     activity.value = snap.activity;
-    selectedIndex.value = retainedIndex >= 0
-      ? retainedIndex
-      : Math.min(selectedIndex.value, Math.max(0, snap.conversations.length - 1));
+    focusedRef.value = resolveFocus(previous, focusedRef.value, snap.conversations);
     listError.value = null;
     listState.value = 'ready';
+  }
+
+  /**
+   * Focus resolution across snapshots. A surviving reference wins; otherwise the
+   * next surviving row from the old ordering, then the previous survivor, then
+   * the first available new row. An empty result clears focus, and an initial
+   * nonempty load focuses the first row.
+   */
+  function resolveFocus(
+    previous: ConversationSummaryLike[],
+    focused: ConversationRef | null,
+    next: ConversationSummaryLike[],
+  ): ConversationRef | null {
+    if (next.length === 0) return null;
+    const survives = (target: ConversationRef | null): boolean =>
+      target !== null && next.some((row) => sameConversation(row.ref, target));
+    if (survives(focused)) return focused;
+    const oldIndex = focused === null ? -1 : previous.findIndex((row) => sameConversation(row.ref, focused));
+    if (oldIndex >= 0) {
+      for (let i = oldIndex + 1; i < previous.length; i += 1) {
+        const candidate = previous[i]!.ref;
+        if (survives(candidate)) return candidate;
+      }
+      for (let i = oldIndex - 1; i >= 0; i -= 1) {
+        const candidate = previous[i]!.ref;
+        if (survives(candidate)) return candidate;
+      }
+    }
+    return next[0]!.ref;
   }
 
   /** Status failures never reject: the UI gate renders them and stays fail-closed. */
@@ -180,21 +209,27 @@ export function useMailbox(client: MailClient): Mailbox {
     }
   }
 
-  function moveSelection(delta: number): void {
-    if (conversations.value.length === 0) return;
-    selectedIndex.value = Math.min(conversations.value.length - 1, Math.max(0, selectedIndex.value + delta));
+  function focusConversation(target: ConversationRef | null): void {
+    focusedRef.value = target === null ? null : { accountId: target.accountId, conversationId: target.conversationId };
   }
 
-  function selectIndex(index: number): void {
-    if (index >= 0 && index < conversations.value.length) selectedIndex.value = index;
+  function moveFocus(delta: number): void {
+    if (conversations.value.length === 0) return;
+    const currentIndex = conversations.value.findIndex((row) => sameConversation(row.ref, focusedRef.value));
+    const targetIndex = currentIndex < 0
+      ? 0
+      : Math.min(conversations.value.length - 1, Math.max(0, currentIndex + delta));
+    focusConversation(conversations.value[targetIndex]!.ref);
   }
 
   async function openConversationByRef(target: ConversationRef): Promise<void> {
     await loadDetail(target);
   }
 
-  async function openSelected(): Promise<void> {
-    const summary = conversations.value[selectedIndex.value];
+  async function openFocused(): Promise<void> {
+    // A non-ready or stale list must never supply an open target.
+    if (listState.value !== 'ready') return;
+    const summary = focusedSummary.value;
     if (summary) await loadDetail(summary.ref);
   }
 
@@ -250,7 +285,8 @@ export function useMailbox(client: MailClient): Mailbox {
     inFlightCommandRef.value = null;
     conversations.value = [];
     activity.value = [];
-    selectedIndex.value = 0;
+    // Focus is account-scoped: a new account starts with no conversation focus.
+    focusedRef.value = null;
     if (accountStatus.value) {
       const sync = accountStatus.value.sync;
       accountStatus.value = {
@@ -383,8 +419,10 @@ export function useMailbox(client: MailClient): Mailbox {
     }
   }
 
-  async function archiveSelected(): Promise<void> {
-    const summary = conversations.value[selectedIndex.value];
+  async function archiveFocused(): Promise<void> {
+    // A non-ready or stale list must never supply an action target.
+    if (listState.value !== 'ready') return;
+    const summary = focusedSummary.value;
     if (summary) await setArchived(summary.ref, true);
   }
 
@@ -404,15 +442,19 @@ export function useMailbox(client: MailClient): Mailbox {
     window.removeEventListener('online', onReconnect);
   });
 
-  const selectedSummary = computed(() => conversations.value[selectedIndex.value] ?? null);
+  const focusedSummary = computed(() => {
+    const focused = focusedRef.value;
+    if (!focused) return null;
+    return conversations.value.find((row) => sameConversation(row.ref, focused)) ?? null;
+  });
   const mode = computed<MailMode | null>(() => accountStatus.value?.mode ?? null);
   const isGmail = computed(() => mode.value === 'gmail');
   return {
-    conversations, activity, listState, listError, selectedIndex, selectedSummary,
+    conversations, activity, listState, listError, focusedRef, focusedSummary,
     openRef, conversation, detailState, detailError, lastCommandError,
-    inFlightCommandRef, ready, refresh, moveSelection, selectIndex,
-    openConversationByRef, openSelected, closeReader, setArchived, setRead, retryOperation,
-    enableMailboxActions, cancelMailboxActionUpgrade, archiveSelected,
+    inFlightCommandRef, ready, refresh, focusConversation, moveFocus,
+    openConversationByRef, openFocused, closeReader, setArchived, setRead, retryOperation,
+    enableMailboxActions, cancelMailboxActionUpgrade, archiveFocused,
     accountStatus, accountState, accountError, accountBusy, mode, isGmail,
     connectAccount, disconnectAccount, requestSync,
   };

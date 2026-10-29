@@ -1,7 +1,23 @@
 /* Local-only interface styles. No remote fonts, images, or CDN assets. */
+
+/*
+ * Warm-dark tokens reconstructed from the reference screenshot as starting
+ * values (UX-01). They are approximate calibration targets, not exact
+ * Superhuman values; geometry is calibrated on real displays later.
+ */
 :root {
-  color-scheme: light dark;
+  color-scheme: dark;
   font-family: system-ui, sans-serif;
+  --surface: #292826;
+  --surface-contact: #1f1e1c;
+  --surface-raised: #33312e;
+  --focus-fill: #474644;
+  --focus-accent: #bba5ed;
+  --text-primary: #ece9e2;
+  --text-secondary: #a8a29a;
+  --divider: #3b3936;
+  --warning: #e4c465;
+  --danger: #f1a9a5;
 }
 
 * {
@@ -12,113 +28,413 @@ body {
   margin: 0;
 }
 
+button {
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  padding: 0.15rem 0.5rem;
+  font: inherit;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--focus-accent);
+  outline-offset: 1px;
+}
+
+input,
+textarea {
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+}
+
 .app {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  background: var(--surface);
+  color: var(--text-primary);
 }
 
+/* Compact Inbox navigation/status header. */
 .app-header {
-  border-bottom: 1px solid #8884;
-  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--divider);
+  padding: 0.35rem 0.75rem;
 }
 
-.app-header h1 {
-  font-size: 1rem;
-  margin: 0 0 0.25rem;
+.app-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.rail-brand {
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.app-title {
+  font-size: 0.95rem;
+  margin: 0;
 }
 
 .preview-banner {
-  background: #fff3cd;
-  color: #664d03;
-  border: 1px solid #ffe08a;
+  background: #3a3116;
+  color: #ead48a;
+  border: 1px solid #6b5a1e;
   border-radius: 4px;
   padding: 0.25rem 0.5rem;
-  margin: 0 0 0.25rem;
+  margin: 0.25rem 0 0;
   font-size: 0.85rem;
 }
 
 .status-line {
   display: flex;
   gap: 1rem;
-  font-size: 0.85rem;
-  margin: 0;
+  font-size: 0.8rem;
+  margin: 0.25rem 0 0;
+  color: var(--text-secondary);
+  flex-wrap: wrap;
 }
 
 .status-line [role='alert'] {
-  color: #b02a37;
+  color: var(--danger);
   font-weight: 600;
 }
 
+.draft-close-recovery {
+  border-bottom: 1px solid var(--divider);
+  padding: 0.4rem 0.75rem;
+  color: var(--warning);
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.draft-close-recovery p {
+  margin: 0;
+}
+
+/*
+ * Rail + one central list-or-reader surface + contact context. The contact
+ * column exists only at >=1000 CSS px; strictly below it, the rail exposes a
+ * keyboard-operable Contact disclosure instead.
+ */
 .app-main {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) minmax(0, 2fr) minmax(220px, 320px);
-  gap: 1px;
+  grid-template-columns: auto minmax(0, 1fr);
   flex: 1;
   min-height: 0;
 }
 
-.list-pane,
-.reader-pane,
-.activity {
+@media (min-width: 1000px) {
+  .app-main {
+    grid-template-columns: auto minmax(0, 1fr) minmax(230px, 280px);
+  }
+}
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.5rem 0.4rem;
+  border-right: 1px solid var(--divider);
+  min-width: 5rem;
+}
+
+.rail-item {
+  text-align: left;
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-secondary);
+  padding: 0.2rem 0.5rem;
+}
+
+.rail-item:hover {
+  color: var(--text-primary);
+}
+
+.rail-item[aria-current='page'],
+.rail-item[aria-expanded='true'] {
+  color: var(--text-primary);
+  background: var(--surface-raised);
+  border-color: var(--divider);
+}
+
+.rail-spacer {
+  flex: 1;
+}
+
+.central {
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Contact context column. */
+.contact-column {
+  border-left: 1px solid var(--divider);
+  background: var(--surface-contact);
   overflow-y: auto;
-  padding: 0.5rem;
+  padding: 0.6rem;
   min-height: 0;
 }
 
-.inbox-list {
+.contact-title {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  margin: 0 0 0.4rem;
+}
+
+.contact-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.contact-name {
+  font-weight: 600;
+}
+
+.contact-mailbox {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.contact-unknown {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  margin: 0;
+}
+
+/* Utility disclosures overlay the central surface; they are never columns. */
+.utility-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(460px, 92vw);
+  background: var(--surface-contact);
+  border-left: 1px solid var(--divider);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
+  overflow-y: auto;
+  padding: 0.5rem 0.75rem;
+  z-index: 30;
+}
+
+.utility-drawer:focus {
+  outline: none;
+}
+
+.drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+
+.drawer-header h2 {
+  font-size: 0.95rem;
+  margin: 0;
+}
+
+/* Compact conversation list: ~36px scanning rhythm, single-line rows. */
+.inbox-scroll {
   list-style: none;
   margin: 0;
   padding: 0;
+  overflow-y: auto;
+  height: 100%;
+  min-height: 0;
 }
 
+/*
+ * Flex (not grid) so the bounded trailing region cannot starve the subject:
+ * when the metadata is widest (unknown read state + pending + all actions),
+ * the deficit comes out of the sender column first; the subject/snippet
+ * column keeps its readable floor and the metadata keeps its full content.
+ */
 .inbox-row {
-  border-bottom: 1px solid #8884;
-  padding: 0.4rem 0.5rem;
-  cursor: pointer;
-}
-
-.inbox-row.selected {
-  background: highlight;
-  color: highlighttext;
-}
-
-.row-top {
   display: flex;
-  justify-content: space-between;
+  align-items: baseline;
   gap: 0.5rem;
-  font-size: 0.8rem;
+  padding: 0.3rem 0.6rem;
+  min-height: 36px;
+  border-bottom: 1px solid var(--divider);
+  cursor: pointer;
+  /* Anchors the row action disclosure panel (meta-compact) to the row. */
+  position: relative;
+}
+
+.inbox-row:focus {
+  outline: none;
+}
+
+.inbox-row.focused {
+  background: var(--focus-fill);
+  box-shadow: inset 3px 0 0 var(--focus-accent);
+}
+
+/* Hover never changes focus or read state; it is decoration only. */
+.inbox-row:not(.focused):hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.row-sender {
+  flex: 0 1 160px;
+  min-width: 90px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row-sender.unread {
+  color: var(--text-primary);
+}
+
+.row-subject-snippet {
+  flex: 1 1 136px;
+  min-width: 136px; /* readable-subject floor: never collapses to zero */
+  display: flex;
+  gap: 0.5rem;
+  white-space: nowrap;
 }
 
 .row-subject {
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-
-.row-preview,
-.row-pending,
-.row-subject,
-.row-participants,
-.row-time {
-  overflow-wrap: anywhere;
+  flex: 0 1 auto;
+  min-width: 6.5rem; /* subject keeps a readable prefix even in the widest metadata case */
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .row-preview {
+  flex: 1 1 40%; /* preview yields to the subject; it claims at most 40% first */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
   font-size: 0.8rem;
-  color: inherit;
-  opacity: 0.8;
+}
+
+.row-meta {
+  flex: 0 0 auto; /* content-sized and never squeezed: no clipped actions */
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  white-space: nowrap;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+/* Compact row action chips: tighter inline padding keeps the metadata region
+   small enough that the subject column survives the 1000px contact layout. */
+.row-meta button {
+  padding-inline: 0.25rem;
+}
+
+/*
+ * Adaptive compact action disclosure (larger-text P1): when the full inline
+ * metadata does not fit the laid-out row, InboxList moves the row into the
+ * `meta-compact` state. The action buttons leave the flow — kept measurable
+ * (absolute, hidden, max-content) so the component can restore them exactly
+ * when space returns — and the visible disclosure control keeps every action
+ * named and operable. Read state, pending, and date never leave the row.
+ */
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.row-actions-toggle {
+  display: none;
+}
+
+.inbox-row.meta-compact .row-actions-toggle {
+  display: inline-flex;
+}
+
+.inbox-row.meta-compact .row-actions {
+  /* Right-anchored so the hidden panel adds no rightward scrollable overflow. */
+  position: absolute;
+  top: calc(100% - 1px);
+  right: 0.6rem;
+  z-index: 6;
+  visibility: hidden;
+  width: max-content;
+  pointer-events: none;
+}
+
+.inbox-row.meta-compact.actions-open .row-actions {
+  visibility: visible;
+  pointer-events: auto;
+  width: auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.25rem;
+  padding: 0.3rem;
+  background: var(--surface-raised);
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+}
+
+/* Near the list bottom the panel opens upward to stay inside the scroller. */
+.inbox-row.meta-compact.actions-open.actions-up .row-actions {
+  top: auto;
+  bottom: calc(100% - 1px);
+}
+
+.row-time {
+  min-width: 3.5rem;
+  text-align: right;
 }
 
 .row-pending {
-  font-size: 0.75rem;
   font-style: italic;
+  color: var(--warning);
 }
 
 .row-read-state {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.75rem;
+  font-size: 0.7rem;
+}
+
+.row-read-state[data-test='row-unread'] {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.row-group {
+  padding: 0.5rem 0.6rem 0.15rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--divider);
+  background: var(--surface);
+}
+
+/* Reader. */
+.reader-pane,
+.reader {
+  min-height: 0;
+  min-width: 0;
+}
+
+.reader-pane {
+  overflow-y: auto;
+  padding: 0.5rem 0.75rem;
 }
 
 .reader:focus {
@@ -129,6 +445,7 @@ body {
   display: flex;
   gap: 0.5rem;
   margin-bottom: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .reader-subject {
@@ -147,7 +464,7 @@ body {
 }
 
 .message {
-  border-top: 1px solid #8884;
+  border-top: 1px solid var(--divider);
   padding-top: 0.5rem;
   margin-bottom: 1rem;
 }
@@ -158,6 +475,7 @@ body {
   font-size: 0.8rem;
   margin-bottom: 0.25rem;
   flex-wrap: wrap;
+  color: var(--text-secondary);
 }
 
 .message-body {
@@ -167,6 +485,7 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* Activity (inside its utility disclosure). */
 .activity-title {
   font-size: 0.9rem;
   margin: 0 0 0.5rem;
@@ -179,7 +498,7 @@ body {
 }
 
 .activity-row {
-  border-bottom: 1px solid #8884;
+  border-bottom: 1px solid var(--divider);
   padding: 0.4rem 0;
   font-size: 0.8rem;
   display: flex;
@@ -196,7 +515,7 @@ body {
 .activity-warning,
 .activity-error,
 .account-action-error {
-  color: #9a6700;
+  color: var(--warning);
 }
 
 .activity-warning,
@@ -205,7 +524,7 @@ body {
 }
 
 .status-failed {
-  color: #b02a37;
+  color: var(--danger);
   font-weight: 600;
 }
 
@@ -216,15 +535,10 @@ body {
 
 /* Local-only plain-text drafts; fields remain ordinary text controls. */
 .drafts-pane {
-  grid-column: 1 / -1;
   display: grid;
   grid-template-columns: minmax(190px, 0.7fr) minmax(0, 2fr);
   gap: 0.8rem;
-  max-height: 44vh;
   min-height: 0;
-  overflow-y: auto;
-  padding: 0.6rem;
-  border-bottom: 1px solid #8884;
 }
 
 .draft-list,
@@ -254,7 +568,7 @@ body {
 .draft-status {
   margin: 0.3rem 0;
   font-size: 0.8rem;
-  color: #7a5b00;
+  color: var(--warning);
 }
 
 .draft-list ul {
@@ -270,7 +584,7 @@ body {
   width: 100%;
   padding: 0.4rem;
   border: 0;
-  border-bottom: 1px solid #8884;
+  border-bottom: 1px solid var(--divider);
   background: transparent;
   color: inherit;
   text-align: left;
@@ -312,18 +626,17 @@ body {
 @media (max-width: 760px) {
   .drafts-pane {
     grid-template-columns: 1fr;
-    max-height: 55vh;
   }
 }
 
 /* Account gate, capability disclosures, and reader notices. */
 .account-gate {
   padding: 1rem;
-  color: #444;
+  color: var(--text-secondary);
 }
 
 .account-panel {
-  border: 1px solid #8884;
+  border: 1px solid var(--divider);
   border-radius: 6px;
   padding: 0.6rem 0.8rem;
   display: flex;
@@ -352,12 +665,12 @@ body {
 
 .account-notice {
   margin: 0;
-  color: #7a5b00;
+  color: var(--warning);
 }
 
 .account-sync-error {
   margin: 0;
-  color: #b02a37;
+  color: var(--danger);
   font-weight: 600;
 }
 
@@ -367,7 +680,7 @@ body {
 .account-upgrade-disclosure,
 .account-disconnect-warning {
   margin: 0;
-  color: #555;
+  color: var(--text-secondary);
 }
 
 .account-actions {
@@ -379,6 +692,6 @@ body {
 .reader-readonly,
 .reader-recovery-snapshot {
   margin: 0.2rem 0;
-  color: #7a5b00;
+  color: var(--warning);
   font-size: 0.85rem;
 }

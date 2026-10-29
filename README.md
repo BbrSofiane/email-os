@@ -18,6 +18,9 @@ have not been checked.
 
 ## Start here
 
+- [Superhuman-inspired browsing implementation plan](docs/superhuman-browsing-implementation-plan.md):
+  proposed end-to-end UX slices, mapped to the [browsing specification](superhuman-email-browsing-ux-spec.md),
+  with scope decisions, acceptance scenarios, and separate browser/native validation gates.
 - [Architecture: proposed implementation for the first build](ARCHITECTURE.md): proposed Tauri 2 +
   Vue 3 implementation plan for ADR 0001 — module boundaries, state ownership, IPC surface, security
   boundaries, and staged build. Proposed design, not implemented code.

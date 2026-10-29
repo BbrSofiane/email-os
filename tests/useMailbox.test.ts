@@ -3,6 +3,7 @@ import { effectScope } from 'vue';
 import { useMailbox } from '../src/composables/useMailbox';
 import type { ConversationRef, InboxSnapshot, MailClient, OperationReceipt } from '../src/lib/ipc/client';
 import { accountMethods, countingClient, createBrowserFakeMailClient, deferred, fixtureRef, flushMacrotasks } from './helpers';
+import { sameConversation } from '../src/composables/useMailbox';
 
 function scopeRun<T>(fn: () => T): { result: T; stop: () => void } {
   const scope = effectScope();
@@ -370,18 +371,119 @@ describe('useMailbox', () => {
     stop();
   });
 
-  it('preserves the selected identity when a rejected archive restores an earlier row', async () => {
+  it('preserves the focused identity when a rejected archive restores an earlier row', async () => {
     const inner = createBrowserFakeMailClient();
     inner.controls.behavior.hold = true;
     inner.controls.behavior.failNext = 1;
     const { result, stop } = scopeRun(() => useMailbox(inner));
     await result.ready;
-    await result.archiveSelected();
-    expect(result.selectedSummary.value?.ref.conversationId).toBe('conv-02');
+    await result.archiveFocused();
+    expect(result.focusedSummary.value?.ref.conversationId).toBe('conv-02');
     inner.controls.release();
     await vi.waitFor(() => expect(result.conversations.value).toHaveLength(18));
-    expect(result.selectedSummary.value?.ref.conversationId).toBe('conv-02');
-    expect(result.selectedIndex.value).toBe(1);
+    expect(result.focusedSummary.value?.ref.conversationId).toBe('conv-02');
+    expect(result.focusedRef.value).toEqual(fixtureRef('conv-02'));
+    stop();
+  });
+
+  it('keeps the focused reference when a newer row is inserted above it (BROWSE-17)', async () => {
+    const inner = createBrowserFakeMailClient();
+    const { result, stop } = scopeRun(() => useMailbox(inner));
+    await result.ready;
+    result.focusConversation(fixtureRef('conv-03'));
+    expect(result.focusedSummary.value?.ref.conversationId).toBe('conv-03');
+    // A brand-new conversation arrives and becomes the newest row.
+    inner.controls.addMessage('conv-01');
+    await vi.waitFor(() => expect(result.conversations.value[0]?.ref.conversationId).not.toBe('conv-03'));
+    expect(result.focusedRef.value).toEqual(fixtureRef('conv-03'));
+    expect(result.focusedSummary.value?.ref.conversationId).toBe('conv-03');
+    stop();
+  });
+
+  it('resolves focus to the next surviving old row after multiple removals, and clears on the only row', async () => {
+    const inner = createBrowserFakeMailClient();
+    const { result, stop } = scopeRun(() => useMailbox(inner));
+    await result.ready;
+    // Remove the first two rows behind the fake's back, then refresh.
+    await inner.setArchived({ conversation: fixtureRef('conv-01'), archived: true, requestId: 'rm-1' });
+    await inner.setArchived({ conversation: fixtureRef('conv-02'), archived: true, requestId: 'rm-2' });
+    await inner.controls.flush();
+    result.focusConversation(fixtureRef('conv-01'));
+    await result.refresh();
+    expect(result.focusedRef.value).toEqual(fixtureRef('conv-03'));
+
+    // Last row removal falls back to the previous survivor.
+    const last = result.conversations.value[result.conversations.value.length - 1]!.ref;
+    result.focusConversation(last);
+    await inner.setArchived({ conversation: last, archived: true, requestId: 'rm-last' });
+    await inner.controls.flush();
+    await result.refresh();
+    expect(result.conversations.value.some((row) => sameConversation(row.ref, last))).toBe(false);
+    expect(result.focusedRef.value).not.toBeNull();
+    stop();
+  });
+
+  it('clears focus when the list becomes empty and re-focuses the first row on reload', async () => {
+    const inner = createBrowserFakeMailClient();
+    const { result, stop } = scopeRun(() => useMailbox(inner));
+    await result.ready;
+    for (const row of result.conversations.value) {
+      await inner.setArchived({ conversation: row.ref, archived: true, requestId: `empty-${row.ref.conversationId}` });
+    }
+    await inner.controls.flush();
+    await result.refresh();
+    expect(result.conversations.value).toHaveLength(0);
+    expect(result.focusedRef.value).toBeNull();
+
+    // A fresh account session reloads a nonempty list and focuses its first row.
+    await inner.setArchived({ conversation: fixtureRef('conv-01'), archived: false, requestId: 'restore-1' });
+    await inner.controls.flush();
+    await result.refresh();
+    expect(result.focusedRef.value).toEqual(fixtureRef('conv-01'));
+    stop();
+  });
+
+  it('keeps focus account-scoped: foreign refs never resolve and disconnect clears it', async () => {
+    const inner = createBrowserFakeMailClient();
+    inner.controls.setAccount({ mode: 'gmail', connection: 'connected', emailAddress: 'operator@example.test' });
+    const { result, stop } = scopeRun(() => useMailbox(inner));
+    await result.ready;
+    result.focusConversation({ accountId: 'other-account', conversationId: 'conv-01' });
+    expect(result.focusedSummary.value).toBeNull();
+
+    result.focusConversation(fixtureRef('conv-01'));
+    expect(result.focusedSummary.value?.ref.conversationId).toBe('conv-01');
+    await result.disconnectAccount();
+    expect(result.focusedRef.value).toBeNull();
+    expect(result.focusedSummary.value).toBeNull();
+    stop();
+  });
+
+  it('never fetches details or writes read state while focus moves', async () => {
+    const inner = createBrowserFakeMailClient();
+    let detailCalls = 0;
+    let readCalls = 0;
+    const client: MailClient = {
+      ...inner,
+      getConversation: (ref) => {
+        detailCalls += 1;
+        return inner.getConversation(ref);
+      },
+      setRead: (command) => {
+        readCalls += 1;
+        return inner.setRead(command);
+      },
+    };
+    const { result, stop } = scopeRun(() => useMailbox(client));
+    await result.ready;
+    const before = detailCalls;
+    result.focusConversation(fixtureRef('conv-02'));
+    result.moveFocus(1);
+    result.moveFocus(-1);
+    result.moveFocus(1);
+    expect(result.focusedRef.value).toEqual(fixtureRef('conv-03'));
+    expect(detailCalls).toBe(before);
+    expect(readCalls).toBe(0);
     stop();
   });
 
@@ -528,7 +630,7 @@ describe('useMailbox (Slice 02 account status and lifecycle)', () => {
     expect(result.isGmail.value).toBe(true);
 
     const receipt = await result.setArchived(fixtureRef('conv-01'), true);
-    await result.archiveSelected();
+    await result.archiveFocused();
     expect(receipt).toBeNull();
     expect(counted.commands).toHaveLength(0); // no mutation ever reached the transport
     expect(result.lastCommandError.value).toEqual({ kind: 'read_only' });
