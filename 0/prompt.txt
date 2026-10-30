@@ -1,5 +1,1 @@
-Continue with workers to implement the changes
-
----
-
-Ok what's left to do before you can open a PR?
+Open the PR
