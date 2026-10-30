@@ -14,7 +14,9 @@
  * the contact pane shows only exact known fields.
  *
  * Keyboard contract (window-level, one handler):
- * - j / ArrowDown, k / ArrowUp: move conversation focus (row focus follows).
+ * - j / ArrowDown, k / ArrowUp: move conversation focus in the list (row focus
+ *   follows). Inside the reader only j/k switch conversations; ArrowUp/Down
+ *   keep native scrolling there.
  * - Enter: open the focused conversation. Escape: close the active utility or
  *   contact disclosure first, then the reader.
  * - e: archive the focused (or reader-open) conversation when actions are enabled.
@@ -53,6 +55,19 @@ type ContactContext = 'focused' | 'open';
 interface ContactInfo { displayName: string | null; mailbox: string }
 /** Visible-row anchor for the reader round trip. */
 interface ListAnchor { ref: ConversationRef; offsetTop: number; scrollTop: number }
+/**
+ * Reader origin, captured ONLY at the initial list-to-reader entry. J/K inside
+ * the reader and Activity opens while the reader is already open never
+ * recapture from an unmounted list.
+ */
+interface ReaderOrigin {
+  surface: 'inbox' | 'activity';
+  /** Original entry focus reference; Back restores it (with fallbacks). */
+  focusedRef: ConversationRef | null;
+  /** Entry-time Inbox ordering, used to resolve a removed cursor. */
+  ordering: ConversationRef[];
+  anchor: ListAnchor | null;
+}
 
 const mailbox = useMailbox(props.client);
 const inboxList = ref<InstanceType<typeof InboxList> | null>(null);
@@ -254,22 +269,56 @@ const readerContact = computed<ContactInfo | null>(() => {
   const conversation = mailbox.conversation.value;
   if (!conversation || mailbox.detailState.value !== 'ready') return null;
   if (!sameConversation(conversation.ref, mailbox.openRef.value)) return null;
-  const latest = conversation.messages[conversation.messages.length - 1];
-  return latest ? { displayName: latest.from.displayName, mailbox: latest.from.mailbox } : null;
+  // Baseline: the sender of the focused (active) message; without one, the
+  // latest displayed message. Hover/focus overrides are applied in `contact`.
+  const activeId = readerActiveMessageId.value;
+  const active = activeId ? conversation.messages.find((message) => message.id === activeId) ?? null : null;
+  const message = active ?? conversation.messages[conversation.messages.length - 1] ?? null;
+  return message ? { displayName: message.from.displayName, mailbox: message.from.mailbox } : null;
 });
 
-const contact = computed<ContactInfo | null>(() => (readerOpen.value ? readerContact.value : listContact.value));
+const contact = computed<ContactInfo | null>(() => {
+  if (!readerOpen.value) return listContact.value;
+  // A participant override applies only while the referenced message still
+  // exists on the open conversation: late blur/leave events, background
+  // removals, and account changes cannot leak a stale contact.
+  const override = contactOverride.value;
+  if (override
+    && sameConversation(override.ref, mailbox.openRef.value)
+    && mailbox.conversation.value?.messages.some((message) => message.id === override.messageId)
+  ) {
+    return { displayName: override.displayName, mailbox: override.mailbox };
+  }
+  return readerContact.value;
+});
 const contactContext = computed<ContactContext>(() => (readerOpen.value ? 'open' : 'focused'));
 
 // ---------------------------------------------------------------------------
 // Reader origin, focus, and scroll restoration
 // ---------------------------------------------------------------------------
 
-const originAnchor = ref<ListAnchor | null>(null);
-const originSurface = ref<'inbox' | 'activity'>('inbox');
+const origin = ref<ReaderOrigin | null>(null);
+const readerView = ref<InstanceType<typeof ReaderView> | null>(null);
+/** Message identity that currently owns reader focus (for the contact baseline). */
+const readerActiveMessageId = ref<string | null>(null);
+/** Temporary participant hover/focus context from the reader. */
+const contactOverride = ref<
+  { ref: ConversationRef; messageId: string; displayName: string | null; mailbox: string } | null
+>(null);
 
-function captureListOrigin(): void {
-  originAnchor.value = inboxList.value?.captureAnchor() ?? null;
+function captureListOrigin(surface: 'inbox' | 'activity'): void {
+  // Only the mounted list supplies an anchor; J/K and Activity opens inside the
+  // reader never recapture (they would erase the entry context with nulls).
+  origin.value = {
+    surface,
+    focusedRef: mailbox.focusedRef.value
+      ? { accountId: mailbox.focusedRef.value.accountId, conversationId: mailbox.focusedRef.value.conversationId }
+      : null,
+    ordering: mailbox.listState.value === 'ready'
+      ? mailbox.conversations.value.map((row) => ({ accountId: row.ref.accountId, conversationId: row.ref.conversationId }))
+      : [],
+    anchor: inboxList.value?.captureAnchor() ?? null,
+  };
 }
 
 async function focusFocusedRow(preventScroll = false): Promise<void> {
@@ -284,9 +333,42 @@ function moveFocus(delta: number): void {
   void focusFocusedRow();
 }
 
-function closeReader(): void {
-  const anchor = originAnchor.value;
-  const surface = originSurface.value;
+/**
+ * Resolve the ORIGINAL entry reference against the current snapshot for Back:
+ * the surviving entry reference wins; otherwise the next surviving neighbor
+ * from the entry ordering, then the previous one, then the first valid row; an
+ * empty result restores no row (the empty state receives focus).
+ */
+function resolveOriginFocus(originState: ReaderOrigin): ConversationRef | null {
+  const snapshot = mailbox.conversations.value;
+  if (snapshot.length === 0) return null;
+  const survives = (target: ConversationRef | null): boolean =>
+    target !== null && snapshot.some((row) => sameConversation(row.ref, target));
+  const entry = originState.focusedRef;
+  if (entry && survives(entry)) return entry;
+  const order = originState.ordering;
+  const index = entry ? order.findIndex((ref) => sameConversation(ref, entry)) : -1;
+  if (index >= 0) {
+    for (let i = index + 1; i < order.length; i += 1) {
+      const candidate = order[i]!;
+      if (survives(candidate)) return candidate;
+    }
+    for (let i = index - 1; i >= 0; i -= 1) {
+      const candidate = order[i]!;
+      if (survives(candidate)) return candidate;
+    }
+  }
+  return snapshot[0]!.ref;
+}
+
+/**
+ * Close the reader and restore the originating context. Back (Escape/Close
+ * button) restores the ORIGINAL entry reference and captured list anchor;
+ * explicit Inbox navigation (rail) keeps the list's own current focus instead.
+ * An Activity-origin Back reopens Activity with the saved Inbox anchor.
+ */
+function closeReader(explicitInbox = false): void {
+  const originState = origin.value;
   mailbox.closeReader();
   void (async () => {
     // An active draft editor owns attention: keep it visible rather than
@@ -296,9 +378,14 @@ function closeReader(): void {
       return;
     }
     await nextTick();
+    const anchor = originState?.anchor ?? null;
     if (anchor && inboxList.value) await inboxList.value.restoreAnchor(anchor);
+    if (originState && originState.surface === 'inbox' && !explicitInbox) {
+      const resolved = resolveOriginFocus(originState);
+      if (resolved) mailbox.focusConversation(resolved);
+    }
     await focusFocusedRow(true);
-    if (surface === 'activity') await openDrawer('activity');
+    if (!explicitInbox && originState?.surface === 'activity') await openDrawer('activity');
   })();
 }
 
@@ -318,18 +405,16 @@ async function navigateToInbox(): Promise<void> {
   drawer.value = null;
   contactDisclosure.value = false;
   if (readerOpen.value) {
-    // Use the Inbox origin before reader restoration: the reader must not
-    // reopen the Activity drawer when the user explicitly chose Inbox.
-    originSurface.value = 'inbox';
-    closeReader();
+    // Explicit Inbox navigation keeps the list's own current focus rather than
+    // restoring the saved entry reference, and never reopens Activity.
+    closeReader(true);
   } else {
     await focusFocusedRow();
   }
 }
 
 async function openFocusedFromList(): Promise<void> {
-  captureListOrigin();
-  originSurface.value = 'inbox';
+  captureListOrigin('inbox');
   await mailbox.openFocused();
 }
 
@@ -339,12 +424,78 @@ async function openRowFromList(target: ConversationRef): Promise<void> {
 }
 
 async function openFromActivity(target: ConversationRef): Promise<void> {
-  // The central list is mounted while the drawer overlays it; capture first so
-  // the reader keeps a safe Activity return target plus the saved Inbox anchor.
-  captureListOrigin();
-  originSurface.value = 'activity';
+  // The saved Inbox anchor/entry context is captured only at the initial
+  // list-to-reader entry. An Activity open while the reader is already open
+  // never recaptures from the (unmounted) list — it only re-points the return
+  // surface at Activity.
+  if (readerOpen.value) {
+    if (origin.value) origin.value = { ...origin.value, surface: 'activity' };
+  } else {
+    captureListOrigin('activity');
+  }
   drawer.value = null;
   await mailbox.openConversationByRef(target);
+}
+
+/**
+ * Resolve a surviving neighbor of the CURRENT open conversation from the
+ * originating Inbox snapshot (delta steps, no wrap). A cursor removed from the
+ * current snapshot resolves through the entry-time ordering. Returns null when
+ * no surviving neighbor exists.
+ */
+function resolveReaderNeighbor(delta: number): ConversationRef | null {
+  const opened = mailbox.openRef.value;
+  if (!opened) return null;
+  const snapshot = mailbox.conversations.value;
+  const survives = (target: ConversationRef): boolean => snapshot.some((row) => sameConversation(row.ref, target));
+  const snapIndex = snapshot.findIndex((row) => sameConversation(row.ref, opened));
+  const order: ConversationRef[] = snapIndex >= 0
+    ? snapshot.map((row) => row.ref)
+    : (origin.value?.ordering ?? []);
+  const index = snapIndex >= 0
+    ? snapIndex
+    : order.findIndex((ref) => sameConversation(ref, opened));
+  if (index < 0) return null;
+  for (let i = index + delta; i >= 0 && i < order.length; i += delta) {
+    const candidate = order[i]!;
+    if (survives(candidate)) return candidate;
+  }
+  return null;
+}
+
+/** J/K inside the reader: conversation movement in the originating Inbox only. */
+async function moveReaderConversation(delta: number): Promise<void> {
+  // Activity-origin readers never navigate and never issue getConversation
+  // calls — including when Activity history duplicates the reference.
+  if (!readerOpen.value || origin.value?.surface !== 'inbox') return;
+  if (mailbox.listState.value !== 'ready') return;
+  const target = resolveReaderNeighbor(delta);
+  if (!target) return;
+  // Hidden list focus must not move; the open reference is the reader cursor.
+  await mailbox.openConversationByRef(target);
+}
+
+function onReaderActiveMessage(messageId: string | null): void {
+  readerActiveMessageId.value = messageId;
+  // A new focused message restarts participant context from the baseline,
+  // EXCEPT when focus landed directly on a participant of that message: the
+  // reader emits the participant override BEFORE the active-message event in
+  // that case, so an override matching the newly focused message and the
+  // currently open conversation survives. Every other override (older message,
+  // other conversation/account, cleared focus) is discarded.
+  const override = contactOverride.value;
+  if (messageId === null
+    || !override
+    || override.messageId !== messageId
+    || !sameConversation(override.ref, mailbox.openRef.value)) {
+    contactOverride.value = null;
+  }
+}
+
+function onReaderContactOverride(
+  override: { ref: ConversationRef; messageId: string; displayName: string | null; mailbox: string } | null,
+): void {
+  contactOverride.value = override;
 }
 
 // ---------------------------------------------------------------------------
@@ -379,12 +530,47 @@ async function archiveFromReader(): Promise<void> {
   const target = currentReaderTarget();
   const opened = mailbox.openRef.value;
   if (!target) return;
+  // ACTION-TIME ordering: capture the account-scoped snapshot ordering BEFORE
+  // the archive mutates the inbox, and resolve the surviving next/previous
+  // neighbors from THIS ordering after the refresh. A concurrent reorder
+  // between the action and the refresh therefore cannot advance to the wrong
+  // conversation. Back/Escape still resolves through the immutable ENTRY
+  // ordering (origin), and J/K keeps its own snapshot/entry resolution; the
+  // three orderings stay separate.
+  const actionOrdering: ConversationRef[] = mailbox.conversations.value
+    .filter((row) => row.ref.accountId === target.accountId)
+    .map((row) => ({ accountId: row.ref.accountId, conversationId: row.ref.conversationId }));
   const receipt = await mailbox.setArchived(target, true);
   // A late receipt must not drag the user back after they navigate or close.
   if (!receipt || mailbox.openRef.value !== opened || mailbox.listState.value !== 'ready') return;
   const op = mailbox.activity.value.find((item) => item.id === receipt.operationId);
   if (op?.status === 'failed') return;
-  if (mailbox.focusedSummary.value) await mailbox.openFocused();
+  // An Activity-origin reader must not advance into unrelated Inbox mail.
+  if (origin.value?.surface === 'activity') {
+    closeReader();
+    return;
+  }
+  // Inbox archive auto-advance selects a surviving neighbor of the CURRENT
+  // actioned conversation from the ACTION-TIME ordering (next, then previous;
+  // no wrap; mailbox.focusedRef deliberately stays the original entry focus);
+  // without a neighbor the reader simply closes.
+  const actionIndex = actionOrdering.findIndex((ref) => sameConversation(ref, target));
+  let next: ConversationRef | null = null;
+  if (actionIndex >= 0) {
+    const survives = (candidate: ConversationRef): boolean =>
+      mailbox.conversations.value.some((row) => sameConversation(row.ref, candidate));
+    for (let i = actionIndex + 1; i < actionOrdering.length && next === null; i += 1) {
+      if (survives(actionOrdering[i]!)) next = actionOrdering[i]!;
+    }
+    for (let i = actionIndex - 1; i >= 0 && next === null; i -= 1) {
+      if (survives(actionOrdering[i]!)) next = actionOrdering[i]!;
+    }
+  } else {
+    // Defensive fallback when the actioned reference is missing from the
+    // action-time ordering: resolve from the current snapshot like J/K does.
+    next = resolveReaderNeighbor(1) ?? resolveReaderNeighbor(-1);
+  }
+  if (next) await mailbox.openConversationByRef(next);
   else closeReader();
 }
 
@@ -466,6 +652,22 @@ function buttonOwns(target: EventTarget | null): boolean {
   return !!el && typeof el.closest === 'function' && el.closest('button, a') !== null;
 }
 
+/**
+ * A reader message toggle is the reader's navigation focus, not a toolbar
+ * action button: the conversation-level shortcuts (E, Shift+U) must stay
+ * usable from it. All other buttons/links keep the generic exclusion, and
+ * native Enter/Space on a toggle still expands/collapses its message.
+ */
+function readerMessageToggleOwns(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  return !!el && typeof el.closest === 'function' && el.closest('.message-toggle') !== null;
+}
+
+/** Generic button exclusion, except reader-owned message-navigation focus. */
+function actionShortcutBlocked(target: EventTarget | null): boolean {
+  return buttonOwns(target) && !readerMessageToggleOwns(target);
+}
+
 function onKeydown(event: KeyboardEvent): void {
   // Only a visible composer owns all keys; a suspended editor behind another
   // disclosure must not silently keep keyboard ownership from the inbox.
@@ -491,6 +693,12 @@ function onKeydown(event: KeyboardEvent): void {
       return;
     }
     if (readerIsOpen) {
+      // An open message-details disclosure is dismissed before the reader.
+      if (readerView.value?.hasOpenDetails()) {
+        event.preventDefault();
+        readerView.value.dismissMessageDetails();
+        return;
+      }
       event.preventDefault();
       closeReader();
     }
@@ -498,13 +706,44 @@ function onKeydown(event: KeyboardEvent): void {
   }
   if (drawer.value || (!wideViewport.value && contactDisclosure.value)) return;
 
-  if (key === 'U' && event.shiftKey && !buttonOwns(event.target)) {
+  if (key === 'U' && event.shiftKey && !actionShortcutBlocked(event.target)) {
     event.preventDefault();
     void markUnread();
     return;
   }
   if (readerIsOpen) {
-    if (key === 'e' && mailboxActionsEnabled.value && !buttonOwns(event.target)) {
+    const reader = readerView.value;
+    if (key === 'n' || key === 'N') {
+      event.preventDefault();
+      reader?.moveMessage(1);
+      return;
+    }
+    if (key === 'p' || key === 'P') {
+      event.preventDefault();
+      reader?.moveMessage(-1);
+      return;
+    }
+    if (key === 'o' || key === 'O') {
+      event.preventDefault();
+      if (event.shiftKey) reader?.expandAllMessages(); // idempotent expand-all
+      else reader?.toggleActiveMessage();
+      return;
+    }
+    // Reader J/K moves the reader cursor within the originating Inbox; it is a
+    // no-op for Activity-origin readers and never moves hidden list focus.
+    // ArrowUp/ArrowDown keep native behavior while reading (the reader article
+    // scrolls); the arrow aliases belong to the LIST navigation only.
+    if (key === 'j') {
+      event.preventDefault();
+      void moveReaderConversation(1);
+      return;
+    }
+    if (key === 'k') {
+      event.preventDefault();
+      void moveReaderConversation(-1);
+      return;
+    }
+    if (key === 'e' && mailboxActionsEnabled.value && !actionShortcutBlocked(event.target)) {
       event.preventDefault();
       void archiveFromReader();
     }
@@ -716,22 +955,35 @@ function errorText(error: { kind: string; field?: string }): string {
           </template>
           <section v-else class="reader-pane" aria-label="Reader">
             <ReaderView
+              ref="readerView"
               :conversation="mailbox.conversation.value"
               :state="mailbox.detailState.value"
               :error="mailbox.detailError.value"
               :command-in-flight="mailbox.inFlightCommandRef.value !== null"
+              :open-ref="mailbox.openRef.value"
               :read-only="gmailMode && !mailboxActionsEnabled"
               :show-read-controls="gmailActionsEnabled"
-              @close="closeReader"
+              @close="closeReader()"
               @archive="archiveFromReader"
               @unarchive="unarchiveFromReader"
               @set-read="setReadFromReader"
               @prepare-reply="prepareReply"
+              @active-message="onReaderActiveMessage"
+              @contact-override="onReaderContactOverride"
             />
           </section>
         </section>
 
-        <aside v-if="wideViewport" class="contact-column" data-test="contact-column" tabindex="-1" ref="contactColumnEl">
+        <!-- The fixed drawer overlays this column too; its copy controls must
+             not stay focusable while covered (same inert contract as central). -->
+        <aside
+          v-if="wideViewport"
+          class="contact-column"
+          data-test="contact-column"
+          tabindex="-1"
+          ref="contactColumnEl"
+          :inert="centralCovered || undefined"
+        >
           <ContactPane :contact="contact" :context="contactContext" />
         </aside>
 

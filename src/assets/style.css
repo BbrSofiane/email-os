@@ -425,7 +425,8 @@ textarea {
   background: var(--surface);
 }
 
-/* Reader. */
+/* Reader: a bounded flex surface with its own content scroller; the toolbar
+   (and its Back affordance) stays persistent while the message stack scrolls. */
 .reader-pane,
 .reader {
   min-height: 0;
@@ -433,8 +434,15 @@ textarea {
 }
 
 .reader-pane {
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
   padding: 0.5rem 0.75rem;
+}
+
+.reader {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 .reader:focus {
@@ -442,10 +450,25 @@ textarea {
 }
 
 .reader-toolbar {
+  flex: 0 0 auto;
   display: flex;
   gap: 0.5rem;
-  margin-bottom: 0.5rem;
+  align-items: baseline;
   flex-wrap: wrap;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--divider);
+  margin-bottom: 0.5rem;
+}
+
+.reply-source-label {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.reader-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .reader-subject {
@@ -465,17 +488,42 @@ textarea {
 
 .message {
   border-top: 1px solid var(--divider);
-  padding-top: 0.5rem;
-  margin-bottom: 1rem;
+  padding: 0.4rem 0.4rem 0.6rem;
+  margin-bottom: 0.5rem;
 }
 
-.message-header {
+/*
+ * Current-message treatment: an accent-purple bar (color) plus a non-color
+ * indication (soft warm fill and a primary-color sender) so the focused
+ * message never relies on color alone.
+ */
+.message.message-active {
+  background: var(--focus-fill);
+  box-shadow: inset 3px 0 0 var(--focus-accent);
+}
+
+.message.message-active .message-from {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* Collapsed headers stay compact: the recipient line appears only when expanded. */
+.message-toggle {
   display: flex;
+  align-items: baseline;
   gap: 0.75rem;
+  width: 100%;
+  text-align: left;
   font-size: 0.8rem;
-  margin-bottom: 0.25rem;
-  flex-wrap: wrap;
   color: var(--text-secondary);
+  background: transparent;
+  border: 0;
+  padding: 0.1rem 0.2rem;
+  flex-wrap: wrap;
+}
+
+.message-toggle[aria-expanded='false'] .message-to {
+  display: none;
 }
 
 .message-body {
@@ -483,6 +531,73 @@ textarea {
   font-family: ui-monospace, monospace;
   font-size: 0.85rem;
   overflow-wrap: anywhere;
+  margin: 0.4rem 0;
+}
+
+/* Per-message participant details disclosure (native details/summary). */
+.message-details {
+  font-size: 0.8rem;
+  margin-top: 0.4rem;
+}
+
+.message-details summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  width: max-content;
+}
+
+.message-fields {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.3rem 0;
+}
+
+.message-field {
+  display: flex;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.message-field-label {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+
+.message-field-recipients {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Participant context controls: hover/focus context, never navigation. */
+.participant {
+  overflow-wrap: anywhere;
+  text-decoration: underline dotted;
+  cursor: default;
+}
+
+.participant:hover,
+.participant:focus-visible {
+  color: var(--text-primary);
+}
+
+/* Contact copy controls: revealed on hover/focus yet always keyboard reachable. */
+.contact-copy {
+  opacity: 0;
+  padding: 0 0.3rem;
+  font-size: 0.75rem;
+}
+
+.contact-identity:hover .contact-copy,
+.contact-identity:focus-within .contact-copy,
+.contact-copy:focus-visible {
+  opacity: 1;
+}
+
+.contact-copy-status {
+  margin: 0.3rem 0 0;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
 }
 
 /* Activity (inside its utility disclosure). */
