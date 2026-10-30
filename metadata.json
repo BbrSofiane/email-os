@@ -1,0 +1,33 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M67B47SRZ5ZKW987CQP89H3P",
+  "strategy": "manual-commit",
+  "branch": "feat/ux-02-conversation-reader",
+  "checkpoints_count": 7,
+  "files_touched": [
+    "docs/ux-02-conversation-reader.md",
+    "src/App.vue",
+    "src/assets/style.css",
+    "src/components/ContactPane.vue",
+    "src/components/ReaderView.vue",
+    "tests/app.component.test.ts",
+    "tests/contact-pane.component.test.ts",
+    "tests/reader.fixture.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 1092,
+    "cache_creation_tokens": 6448711,
+    "cache_read_tokens": 140565728,
+    "output_tokens": 444251,
+    "api_call_count": 368
+  }
+}

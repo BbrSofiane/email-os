@@ -1,0 +1,172 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M67B47SRZ5ZKW987CQP89H3P",
+  "session_id": "01a189bf-c0ac-75da-ba34-30342165d430",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-30T21:23:22.436849293Z",
+  "branch": "feat/ux-02-conversation-reader",
+  "checkpoints_count": 7,
+  "save_step_count": 7,
+  "files_touched": [
+    "docs/ux-02-conversation-reader.md",
+    "src/App.vue",
+    "src/assets/style.css",
+    "src/components/ContactPane.vue",
+    "src/components/ReaderView.vue",
+    "tests/app.component.test.ts",
+    "tests/contact-pane.component.test.ts",
+    "tests/reader.fixture.test.ts"
+  ],
+  "agent": "Pi",
+  "model": "openai/gpt-6.1-sol",
+  "turn_id": "6f80d8511008",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 1092,
+    "cache_creation_tokens": 6448711,
+    "cache_read_tokens": 140565728,
+    "output_tokens": 444251,
+    "api_call_count": 368
+  },
+  "session_metrics": {
+    "turn_count": 7
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-30T21:23:22.18013522Z",
+    "agent_lines": 502,
+    "agent_removed": 2,
+    "human_added": 2571,
+    "human_modified": 249,
+    "human_removed": 0,
+    "total_committed": 3322,
+    "total_lines_changed": 3324,
+    "agent_percentage": 15.162454873646208,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 3162,
+      "user_lines_removed": 94,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "docs/ux-02-conversation-reader.md": 246,
+        "src/App.vue": 237,
+        "src/assets/style.css": 123,
+        "src/components/ContactPane.vue": 52,
+        "src/components/ReaderView.vue": 517,
+        "tests/app.component.test.ts": 630,
+        "tests/reader.component.test.ts": 389,
+        "tests/reader.fixture.ts": 392,
+        "tests/reader.rendered.test.ts": 576
+      },
+      "user_removed_per_file": {
+        "src/App.vue": 26,
+        "src/assets/style.css": 8,
+        "src/components/ContactPane.vue": 1,
+        "src/components/ReaderView.vue": 57,
+        "tests/app.component.test.ts": 2
+      }
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 3162,
+      "agent_lines_removed": 94
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 3162,
+      "agent_lines_removed": 94
+    },
+    {
+      "checkpoint_number": 4,
+      "user_lines_added": 528,
+      "user_lines_removed": 31,
+      "agent_lines_added": 3881,
+      "agent_lines_removed": 96,
+      "user_added_per_file": {
+        "tests/reader.component.test.ts": 211,
+        "tests/reader.fixture.ts": 117,
+        "tests/reader.rendered.test.ts": 200
+      },
+      "user_removed_per_file": {
+        "tests/reader.component.test.ts": 2,
+        "tests/reader.fixture.ts": 11,
+        "tests/reader.rendered.test.ts": 18
+      }
+    },
+    {
+      "checkpoint_number": 5,
+      "user_lines_added": 528,
+      "user_lines_removed": 31,
+      "agent_lines_added": 3881,
+      "agent_lines_removed": 96,
+      "user_added_per_file": {
+        "tests/reader.component.test.ts": 211,
+        "tests/reader.fixture.ts": 117,
+        "tests/reader.rendered.test.ts": 200
+      },
+      "user_removed_per_file": {
+        "tests/reader.component.test.ts": 2,
+        "tests/reader.fixture.ts": 11,
+        "tests/reader.rendered.test.ts": 18
+      }
+    },
+    {
+      "checkpoint_number": 6,
+      "user_lines_added": 588,
+      "user_lines_removed": 31,
+      "agent_lines_added": 3905,
+      "agent_lines_removed": 96,
+      "user_added_per_file": {
+        "tests/reader.component.test.ts": 260,
+        "tests/reader.fixture.ts": 117,
+        "tests/reader.rendered.test.ts": 211
+      },
+      "user_removed_per_file": {
+        "tests/reader.component.test.ts": 2,
+        "tests/reader.fixture.ts": 11,
+        "tests/reader.rendered.test.ts": 18
+      }
+    },
+    {
+      "checkpoint_number": 7,
+      "user_lines_added": 588,
+      "user_lines_removed": 31,
+      "agent_lines_added": 3913,
+      "agent_lines_removed": 96,
+      "user_added_per_file": {
+        "tests/reader.component.test.ts": 260,
+        "tests/reader.fixture.ts": 117,
+        "tests/reader.rendered.test.ts": 211
+      },
+      "user_removed_per_file": {
+        "tests/reader.component.test.ts": 2,
+        "tests/reader.fixture.ts": 11,
+        "tests/reader.rendered.test.ts": 18
+      }
+    },
+    {
+      "checkpoint_number": 8,
+      "user_lines_added": 588,
+      "user_lines_removed": 31,
+      "agent_lines_added": 3913,
+      "agent_lines_removed": 96,
+      "user_added_per_file": {
+        "tests/reader.component.test.ts": 260,
+        "tests/reader.fixture.ts": 117,
+        "tests/reader.rendered.test.ts": 211
+      },
+      "user_removed_per_file": {
+        "tests/reader.component.test.ts": 2,
+        "tests/reader.fixture.ts": 11,
+        "tests/reader.rendered.test.ts": 18
+      }
+    }
+  ]
+}
