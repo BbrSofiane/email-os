@@ -1,0 +1,62 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M68TSM87MRCQ412NZQCRMHAJ",
+  "session_id": "01a1919e-fc9d-7641-8c67-6e824570a0d3",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-31T11:16:24.908817452Z",
+  "branch": "feat/ux-04-trustworthy-undo",
+  "checkpoints_count": 2,
+  "save_step_count": 2,
+  "files_touched": [
+    "docs/ux-04-trustworthy-undo.md"
+  ],
+  "agent": "Pi",
+  "model": "claude-fable-5-1",
+  "turn_id": "2eb2a35dd6e4",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 70,
+    "cache_creation_tokens": 145291,
+    "cache_read_tokens": 2953942,
+    "output_tokens": 29894,
+    "api_call_count": 32
+  },
+  "session_metrics": {
+    "turn_count": 2
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-31T11:16:24.875790188Z",
+    "agent_lines": 295,
+    "agent_removed": 0,
+    "human_added": 40,
+    "human_modified": 3,
+    "human_removed": 0,
+    "total_committed": 338,
+    "total_lines_changed": 338,
+    "agent_percentage": 87.27810650887574,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 270,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 298,
+      "agent_lines_removed": 0
+    }
+  ]
+}
