@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M692E2JVF9398KY23EMEHT0V",
+  "strategy": "manual-commit",
+  "branch": "feat/ux-04-trustworthy-undo",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "docs/ux-04-trustworthy-undo.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 40,
+    "cache_creation_tokens": 505476,
+    "cache_read_tokens": 3732049,
+    "output_tokens": 6553,
+    "api_call_count": 18
+  }
+}

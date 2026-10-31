@@ -1,0 +1,53 @@
+Check out the email-os branch on my MacBook so I can validate it locally.
+
+## Branch
+
+Use  if given. Otherwise use the current branch of the sandbox repo at `/home/exedev/email-os` (`git branch --show-current`).
+
+## Steps
+
+1. **Sandbox (local shell):** In `/home/exedev/email-os`, make sure the working tree is clean and the branch is on origin. If the branch has unpushed commits, run `git push -u origin <branch>` first — the MacBook checks out from origin, so unpushed work won't arrive.
+
+2. **MacBook (via rex):** The MacBook runs its own Rex server, registered as the host `macbook2`. Every command there needs `-S macbook2`.
+
+   ```sh
+   rex -S macbook2 session ls --json
+   ```
+
+   Find the session (usually labeled `sparkling-orchard`), then inspect it and locate the pane whose shell has its working directory at `/Users/sofianebebert/workspace/email-os` — use `rex -S macbook2 block call -s SESSION -b BLOCK process` to read each pane's `foreground.cwd`.
+
+   The session has an "Email OS" tab that usually contains a plain zsh pane and a lazygit pane. Only send input to the zsh pane. Never send keystrokes to the lazygit pane or to any pane running a full-screen program (check `modes` — `screen: alternate` means a full-screen program is running).
+
+3. **Verify the pane is at a prompt** before typing into it:
+
+   ```sh
+   rex -S macbook2 capture -s SESSION -b BLOCK --trim
+   ```
+
+   Then send the command and press Return:
+
+   ```sh
+   rex -S macbook2 send -s SESSION -b BLOCK 'git fetch origin && git checkout <branch>'
+   rex -S macbook2 send-key -s SESSION -b BLOCK enter
+   ```
+
+   Wait a few seconds, capture the pane again, and confirm it shows `Switched to branch '<branch>'` (or `Already on '<branch>'`) and that the prompt's branch indicator updated.
+
+4. **Report:** State which branch the MacBook is now on, its sync status vs origin, and anything that failed (e.g. the Mac host unreachable, dirty working tree on the Mac, or checkout blocked by local changes).
+
+## Notes
+
+- If `rex -S macbook2 ...` fails to connect, report the error — do not restart servers or kill clients.
+- If the MacBook's working tree has uncommitted changes that would conflict, stop and ask before stashing or discarding anything.
+
+---
+
+Ok what do I need to test?
+
+---
+
+Ok all looks good, you can merge the changes
+
+---
+
+Ok all looks good, you can merge the changes and delete the local and remote branch
