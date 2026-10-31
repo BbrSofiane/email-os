@@ -1,6 +1,6 @@
 # UX-04 — Process one conversation with trustworthy Undo
 
-Status: **implemented on `feat/ux-04-trustworthy-undo`, parent-validated with the limitations in §8; native gate pending.** Derived from the
+Status: **implemented and merged; parent-validated with operator-reported native fixture validation (see §8).** Derived from the
 [UX spec](../superhuman-email-browsing-ux-spec.md) (§Triage while browsing,
 §Undo and optimistic updates, BROWSE-07/08) and the
 [implementation plan](superhuman-browsing-implementation-plan.md) §UX-04, scoped
@@ -433,18 +433,24 @@ during the undo's refresh; post-undo palette/key gate ignores a stale activity
 row. Applied and verified; UI: 362 passed / 20 opt-in skipped, typecheck and
 build exit 0; core 201, contract and lint exit 0 (logs `/tmp/ux04-fixpass2/`).
 
+### Native validation
+
+The operator checked out `674c5f3` on the MacBook (`/Users/sofianebebert/workspace/email-os`)
+and ran the fixture-mode checklist (shell compile, happy path, reader and
+precedence, last/only row, paused-provider cancel-in-place, rejecting-provider
+rollback, VoiceOver) and reported it as passing. This is an operator report,
+not a parent-captured evidence log; no step-by-step artefacts were retained.
+
 ### Still pending (not inferred from these checks)
 
-Native fixture/WKWebView gate (§5 Mac list), Tauri shell compile
-(`mise run check:native`) and the two new shell unit assertions, OS-reserved
-key handling, IME, VoiceOver announcement of the always-rendered live region,
-real-Chrome rendered suites, and Gmail remote convergence on the approved
-disposable account. `pkg-config`/GTK remain unavailable in this VM; no
+Real-Chrome rendered suites, Gmail remote convergence on the approved
+disposable account, and read/unread Undo (Gmail-only; the fixture has no read
+setter). `pkg-config`/GTK remain unavailable in this VM; no
 prerequisites were installed. Known unchanged baseline limitation: the
 default-locale `30 Sept 2001` layout assertion.
 
-No push, PR, merge, or publication has occurred; commits exist only on the
-local branch `feat/ux-04-trustworthy-undo`.
+Merged to `main` via pull request at the operator's request after native
+validation; the feature branch was deleted locally and on origin.
 
 ## 9. Known risks
 
