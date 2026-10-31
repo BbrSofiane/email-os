@@ -20,6 +20,8 @@
  * explicit grant flow. All data and grants remain in-memory only.
  */
 import type {
+  CachedDoneRequest,
+  CachedDoneSnapshot,
   AccountStatus,
   AppCloseRequest,
   Address,
@@ -437,7 +439,8 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
   }
 
   const byId = (conversationId: string): FakeConversation | undefined =>
-    conversations.find((c) => c.ref.conversationId === conversationId);
+    cacheCleared || !accountStatus().account ? undefined :
+      conversations.find((c) => c.ref.conversationId === conversationId && c.ref.accountId === accountStatus().account?.accountId);
 
   function snapshot(): InboxSnapshot {
     // No account / cleared cache means no cached mail; core would return the same.
@@ -592,7 +595,18 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
         return snapshotCopy(account);
       },
       setAccount(patch: Partial<FakeAccountState>): void {
+        const identityChanged = (patch.mode !== undefined && patch.mode !== account.mode) ||
+          (patch.emailAddress != null && account.emailAddress != null && patch.emailAddress !== account.emailAddress);
         Object.assign(account, patch);
+        if (identityChanged) {
+          // Mode/account controls represent a fresh synthetic cache, not migration
+          // of another account's operations or mail into the new identity.
+          conversations.splice(0, conversations.length, ...seedConversations());
+          receiptsByRequest.clear();
+          cacheCleared = false;
+        }
+        const accountId = account.mode === 'gmail' ? 'gmail-account' : ACCOUNT_ID;
+        for (const conv of conversations) conv.ref.accountId = accountId;
         notify();
       },
       holdNextStatus(count = 1): void {
@@ -657,6 +671,41 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
 
     async listConversations(): Promise<InboxSnapshot> {
       return snapshot();
+    },
+
+    async listCachedDone(request: CachedDoneRequest): Promise<CachedDoneSnapshot> {
+      const active = accountStatus().account;
+      if (!active || request.accountId !== active.accountId || cacheCleared) throw failNotShown();
+      if (!Number.isInteger(request.limit) || request.limit < 1 || request.limit > 100) {
+        throw { kind: 'invalid_request', field: 'limit' } satisfies MailError;
+      }
+      let position: [string, string] | null = null;
+      if (request.cursor !== null) {
+        try {
+          if (request.cursor.length > 8192 || !request.cursor.startsWith('cached-done-v1:')) throw new Error();
+          const value: unknown = JSON.parse(request.cursor.slice('cached-done-v1:'.length));
+          if (!Array.isArray(value) || value.length !== 3 || value[0] !== request.accountId ||
+              typeof value[1] !== 'string' || value[1].length > 128 ||
+              typeof value[2] !== 'string' || !value[2] || value[2].length > 1024) throw new Error();
+          position = [value[1], value[2]];
+        } catch { throw { kind: 'invalid_request', field: 'cursor' } satisfies MailError; }
+      }
+      const compare = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
+      const candidates = conversations.filter((conv) => conv.ops.some((op) =>
+        op.kind === 'archive' && op.requestedArchived && op.status !== 'failed'))
+        .map((conv) => ({ conv, row: summarize(conv, pendingOperationId(conv)) }))
+        .sort((a, b) => compare(b.row.lastMessageAt, a.row.lastMessageAt) || compare(a.row.ref.conversationId, b.row.ref.conversationId))
+        .filter(({ row }) => !position || row.lastMessageAt < position[0] ||
+          (row.lastMessageAt === position[0] && row.ref.conversationId > position[1]))
+        .slice(0, request.limit + 1);
+      const page = candidates.slice(0, request.limit);
+      const last = page[page.length - 1];
+      return snapshotCopy({
+        conversations: page.filter(({ conv }) => !effectiveInInbox(conv).some(Boolean)).map(({ row }) => row),
+        nextCursor: candidates.length > request.limit && last
+          ? `cached-done-v1:${JSON.stringify([request.accountId, last.row.lastMessageAt, last.row.ref.conversationId])}` : null,
+        coverage: 'local_cache', exactTotal: null, lastSyncedAt: account.lastSyncedAt,
+      });
     },
 
     async getConversation(ref: ConversationRef): Promise<Conversation> {

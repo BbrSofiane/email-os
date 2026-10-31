@@ -1,6 +1,7 @@
 fn main() {
     let manifest = tauri_build::AppManifest::new().commands(&[
         "list_conversations",
+        "list_cached_done",
         "get_conversation",
         "set_archived",
         "enable_mailbox_actions",

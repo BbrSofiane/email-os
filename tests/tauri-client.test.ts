@@ -9,6 +9,7 @@ import {
   GET_APP_CLOSE_REQUEST_COMMAND,
   GET_DRAFT_COMMAND,
   LIST_CONVERSATIONS_COMMAND,
+  LIST_CACHED_DONE_COMMAND,
   LIST_DRAFTS_COMMAND,
   SAVE_DRAFT_COMMAND,
 } from '../src/lib/ipc/client';
@@ -38,6 +39,30 @@ describe('Tauri draft and close protocol adapter', () => {
       mocks.handlers.set(eventName, handler);
       return mocks.unlisten;
     });
+  });
+
+  it('transports cached Done using only the named read query and exact request envelope', async () => {
+    const client = createTauriMailClient();
+    const request = { accountId: 'account', limit: 25, cursor: 'opaque-cursor' };
+    const snapshot = {
+      conversations: [{ ref: { accountId: 'account', conversationId: 'archived' },
+        subject: 'Archived', participants: [], preview: 'local recovery', lastMessageAt: '', pendingOperationId: 'pending' }],
+      nextCursor: 'next', coverage: 'local_cache', exactTotal: null, lastSyncedAt: null,
+    };
+    mocks.invoke.mockResolvedValue(snapshot);
+    const result = await client.listCachedDone(request);
+    expect(result).toBe(snapshot);
+    expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith(LIST_CACHED_DONE_COMMAND, { request });
+    expect(mocks.listen).not.toHaveBeenCalled();
+  });
+
+  it('does not turn cached Done validation/storage failures into an empty result', async () => {
+    const client = createTauriMailClient();
+    const request = { accountId: 'account', limit: 0, cursor: null };
+    mocks.invoke.mockRejectedValue({ kind: 'invalid_request', field: 'limit' });
+    await expect(client.listCachedDone(request)).rejects.toEqual({ kind: 'invalid_request', field: 'limit' });
+    mocks.invoke.mockRejectedValue(new Error('native bridge fault'));
+    await expect(client.listCachedDone(request)).rejects.toEqual({ kind: 'storage_unavailable' });
   });
 
   it('transports listConversations summaries unchanged, including primaryCorrespondent', async () => {

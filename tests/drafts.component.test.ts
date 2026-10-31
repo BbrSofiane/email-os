@@ -71,6 +71,7 @@ describe('local plain-text drafts UI', () => {
   it('prepares a reply to the displayed latest message with immutable source and blank body', async () => {
     const fake = createBrowserFakeMailClient();
     const w = await mountApp(fake);
+    if (w.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
     const reader = w.find('[data-test="reader"]');
@@ -102,6 +103,7 @@ describe('local plain-text drafts UI', () => {
       },
     };
     const w = await mountApp(fake, client);
+    if (w.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
     await w.find('[data-test="prepare-reply"]').trigger('click');
@@ -134,6 +136,7 @@ describe('local plain-text drafts UI', () => {
       },
     };
     const w = await mountApp(fake, client);
+    if (w.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
     await w.find('[data-test="prepare-reply"]').trigger('click');
@@ -161,6 +164,7 @@ describe('local plain-text drafts UI', () => {
       },
     };
     const w = await mountApp(fake, client);
+    if (w.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
     expect(w.find('[data-test="reply-blocked"]').exists()).toBe(false);
@@ -172,6 +176,7 @@ describe('local plain-text drafts UI', () => {
     wrapper = null;
     const staleFake = createBrowserFakeMailClient();
     const stale = await mountApp(staleFake);
+    if (stale.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(stale);
     await stale.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
     staleFake.controls.addMessage('conv-01');
@@ -185,6 +190,7 @@ describe('local plain-text drafts UI', () => {
     const fake = createBrowserFakeMailClient();
     fake.controls.markRetainedSnapshot('conv-01', '2025-01-01T00:00:00.000Z');
     const w = await mountApp(fake);
+    if (w.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
     expect(w.find('[data-test="prepare-reply"]').attributes('disabled')).toBeDefined();
@@ -196,6 +202,7 @@ describe('local plain-text drafts UI', () => {
     const second = createBrowserFakeMailClient();
     second.controls.markUnsupported('conv-01', 'plain text incomplete', false);
     const w2 = await mountApp(second);
+    if (w2.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w2);
     await w2.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
     expect(w2.find('[data-test="reply-blocked"]').text()).toContain('incomplete');

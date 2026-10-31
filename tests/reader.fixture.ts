@@ -339,6 +339,7 @@ export function createReaderFixtureClient(): ReaderFixture {
   };
 
   const client: MailClient = {
+    listCachedDone: async () => ({ conversations: [...conversations.values()].filter((c) => !inboxIds.includes(c.ref.conversationId) && archiveCommands.some((command) => command.archived && command.conversation.conversationId === c.ref.conversationId)).map((c) => toSummary(c, inboxIds)), nextCursor: null, coverage: 'local_cache', exactTotal: null, lastSyncedAt: READ_NOW }),
     listConversations: () => {
       const rows = inboxIds
         .map((id) => conversations.get(id))

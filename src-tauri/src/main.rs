@@ -15,8 +15,8 @@ use mail_core::drafts::types::{
 };
 use mail_core::drafts::DraftCore;
 use mail_core::dto::{
-    Conversation, ConversationRef, InboxSnapshot, OperationReceipt, RetryOperation, SetArchived,
-    SetRead,
+    CachedDoneRequest, CachedDoneSnapshot, Conversation, ConversationRef, InboxSnapshot,
+    OperationReceipt, RetryOperation, SetArchived, SetRead,
 };
 use mail_core::error::MailError;
 use mail_core::gmail::provider::GmailProvider;
@@ -40,6 +40,16 @@ impl Backend {
         match self {
             Self::Fixture(core) => core.list_conversations(),
             Self::Gmail(core) => core.list_conversations(),
+        }
+    }
+
+    fn list_cached_done(
+        &self,
+        request: &CachedDoneRequest,
+    ) -> Result<CachedDoneSnapshot, MailError> {
+        match self {
+            Self::Fixture(core) => core.list_cached_done(request),
+            Self::Gmail(core) => core.list_cached_done(request),
         }
     }
 
@@ -268,6 +278,15 @@ where
     tauri::async_runtime::spawn_blocking(move || f(&backend))
         .await
         .map_err(|_| MailError::StorageUnavailable)?
+}
+
+#[tauri::command]
+async fn list_cached_done(
+    state: State<'_, AppState>,
+    request: CachedDoneRequest,
+) -> Result<CachedDoneSnapshot, MailError> {
+    let backend = state.backend.clone();
+    run_blocking(backend, move |backend| backend.list_cached_done(&request)).await
 }
 
 #[tauri::command]
@@ -569,6 +588,7 @@ fn main() {
     let app = tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             list_conversations,
+            list_cached_done,
             get_conversation,
             set_archived,
             enable_mailbox_actions,
@@ -898,6 +918,28 @@ mod tests {
         assert!(snapshot.activity.iter().any(|op| {
             op.id == receipt.operation_id && op.status == mail_core::dto::OperationStatus::Confirmed
         }));
+        let request = CachedDoneRequest {
+            account_id: ACCOUNT_ID.into(),
+            limit: 10,
+            cursor: None,
+        };
+        let done = state.backend.list_cached_done(&request).unwrap();
+        assert!(done
+            .conversations
+            .iter()
+            .any(|row| row.conversation_ref.conversation_id == "conv-01"));
+        assert_eq!(done.exact_total, None);
+        assert_eq!(
+            done.coverage,
+            mail_core::dto::CachedDoneCoverage::LocalCache
+        );
+        assert_eq!(
+            state.backend.list_cached_done(&CachedDoneRequest {
+                account_id: "foreign".into(),
+                ..request
+            }),
+            Err(MailError::NotFound)
+        );
         state.backend.stop();
         drop(state);
         let _ = std::fs::remove_dir_all(dir);

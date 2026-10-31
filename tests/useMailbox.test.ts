@@ -242,17 +242,17 @@ describe('useMailbox', () => {
     };
     const { result, stop } = scopeRun(() => useMailbox(client));
     await result.ready;
-    const firstAction = result.setArchived(fixtureRef('conv-01'), true);
+    const firstAction = result.setArchived({ accountId: 'gmail-account', conversationId: 'conv-01' }, true);
     await vi.waitFor(() => {
       if (firstReceipt === undefined) throw new Error('first command receipt is delayed');
     });
     await inner.controls.flush();
-    expect(result.inFlightCommandRef.value).toEqual(fixtureRef('conv-01'));
+    expect(result.inFlightCommandRef.value).toEqual({ accountId: 'gmail-account', conversationId: 'conv-01' });
 
     // A rejected local disconnect keeps the current session's action guard.
     inner.controls.failNextDisconnect({ kind: 'storage_unavailable' });
     await result.disconnectAccount();
-    expect(result.inFlightCommandRef.value).toEqual(fixtureRef('conv-01'));
+    expect(result.inFlightCommandRef.value).toEqual({ accountId: 'gmail-account', conversationId: 'conv-01' });
     expect(result.accountStatus.value?.connection).toBe('connected');
 
     await result.disconnectAccount();
@@ -264,13 +264,13 @@ describe('useMailbox', () => {
     await result.connectAccount();
     await result.enableMailboxActions();
     await vi.waitFor(() => expect(result.accountStatus.value?.mutationAccess).toBe('enabled'));
-    await result.openConversationByRef(fixtureRef('conv-02'));
+    await result.openConversationByRef({ accountId: 'gmail-account', conversationId: 'conv-02' });
     expect(result.conversation.value?.ref.conversationId).toBe('conv-02');
-    const secondAction = result.setArchived(fixtureRef('conv-02'), true);
+    const secondAction = result.setArchived({ accountId: 'gmail-account', conversationId: 'conv-02' }, true);
     await vi.waitFor(() => {
       if (secondReceipt === undefined) throw new Error('second command receipt is delayed');
     });
-    expect(result.inFlightCommandRef.value).toEqual(fixtureRef('conv-02'));
+    expect(result.inFlightCommandRef.value).toEqual({ accountId: 'gmail-account', conversationId: 'conv-02' });
     const callsBeforeOldReceipt = listCalls;
 
     const oldReceipt = firstReceipt;
@@ -278,7 +278,7 @@ describe('useMailbox', () => {
     firstReceiptGate.resolve(oldReceipt);
     await firstAction;
     expect(listCalls).toBe(callsBeforeOldReceipt);
-    expect(result.inFlightCommandRef.value).toEqual(fixtureRef('conv-02'));
+    expect(result.inFlightCommandRef.value).toEqual({ accountId: 'gmail-account', conversationId: 'conv-02' });
 
     const newReceipt = secondReceipt;
     if (!newReceipt) throw new Error('expected second accepted receipt');
@@ -286,7 +286,7 @@ describe('useMailbox', () => {
     await secondAction;
     expect(result.inFlightCommandRef.value).toBeNull();
     expect(result.conversation.value?.ref.conversationId).toBe('conv-02');
-    expect(await result.setRead(fixtureRef('conv-02'), true)).not.toBeNull();
+    expect(await result.setRead({ accountId: 'gmail-account', conversationId: 'conv-02' }, true)).not.toBeNull();
     expect(result.conversation.value?.ref.conversationId).toBe('conv-02');
     stop();
   });
@@ -451,7 +451,7 @@ describe('useMailbox', () => {
     result.focusConversation({ accountId: 'other-account', conversationId: 'conv-01' });
     expect(result.focusedSummary.value).toBeNull();
 
-    result.focusConversation(fixtureRef('conv-01'));
+    result.focusConversation({ accountId: 'gmail-account', conversationId: 'conv-01' });
     expect(result.focusedSummary.value?.ref.conversationId).toBe('conv-01');
     await result.disconnectAccount();
     expect(result.focusedRef.value).toBeNull();
@@ -682,9 +682,10 @@ describe('useMailbox (Slice 02 account status and lifecycle)', () => {
     };
     const { result, stop } = scopeRun(() => useMailbox(client));
     await result.ready;
-    await result.openConversationByRef(fixtureRef('conv-01'));
+    await result.openConversationByRef({ accountId: 'gmail-account', conversationId: 'conv-01' });
     expect(result.conversation.value).not.toBeNull();
 
+    const originalDetail = await inner.getConversation({ accountId: 'gmail-account', conversationId: 'conv-01' });
     // One deferred list + one deferred detail response are left in flight when the
     // disconnect lands; both are stale afterwards and must never repopulate the UI.
     deferNextList = true;
@@ -701,7 +702,7 @@ describe('useMailbox (Slice 02 account status and lifecycle)', () => {
 
     // The stale responses arrive after the disconnect; they must not repopulate.
     staleList.resolve(await inner.listConversations());
-    staleDetail.resolve(await inner.getConversation(fixtureRef('conv-01')));
+    staleDetail.resolve(originalDetail);
     await background;
     await flushMacrotasks(2);
     expect(result.conversations.value).toEqual([]);

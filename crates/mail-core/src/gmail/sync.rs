@@ -279,6 +279,13 @@ impl GmailCore {
         self.inner.store.list_snapshot()
     }
 
+    pub fn list_cached_done(
+        &self,
+        request: &crate::dto::CachedDoneRequest,
+    ) -> Result<crate::dto::CachedDoneSnapshot, MailError> {
+        self.inner.store.list_cached_done(request)
+    }
+
     /// Cached reader view of one conversation, scoped by the connected account.
     pub fn get_conversation(&self, r#ref: &ConversationRef) -> Result<Conversation, MailError> {
         self.inner.store.get_conversation(r#ref)

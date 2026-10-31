@@ -23,6 +23,9 @@ import {
   GET_DRAFT_COMMAND,
   GET_CONVERSATION_COMMAND,
   LIST_CONVERSATIONS_COMMAND,
+  LIST_CACHED_DONE_COMMAND,
+  type CachedDoneRequest,
+  type CachedDoneSnapshot,
   LIST_DRAFTS_COMMAND,
   MAILBOX_CHANGED_EVENT,
   REQUEST_SYNC_COMMAND,
@@ -60,6 +63,9 @@ export function createTauriMailClient(): MailClient {
   return {
     listConversations(): Promise<InboxSnapshot> {
       return call<InboxSnapshot>(LIST_CONVERSATIONS_COMMAND);
+    },
+    listCachedDone(request: CachedDoneRequest): Promise<CachedDoneSnapshot> {
+      return call<CachedDoneSnapshot>(LIST_CACHED_DONE_COMMAND, { request });
     },
     getConversation(ref: ConversationRef): Promise<Conversation> {
       return call<Conversation>(GET_CONVERSATION_COMMAND, { ref });

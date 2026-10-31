@@ -23,6 +23,7 @@
  * methods for App's single keyboard dispatcher — this component never adds its
  * own window listener.
  */
+import { actionLabel } from '../lib/browsing-actions';
 import { computed, nextTick, reactive, ref, watch } from 'vue';
 import type { Address, Conversation, ConversationRef, DraftSource, MailError, Message } from '../lib/ipc/client';
 import type { DetailState } from '../composables/useMailbox';
@@ -36,6 +37,7 @@ const props = defineProps<{
   openRef: ConversationRef | null;
   /** Gmail mode: archive/unarchive controls are hidden, not just disabled. */
   readOnly?: boolean;
+  navigationUnavailable?: boolean;
   showReadControls?: boolean;
 }>();
 
@@ -586,7 +588,7 @@ defineExpose({
     ref="container"
   >
     <div class="reader-toolbar" data-test="reader-toolbar">
-      <button type="button" data-test="reader-close" @click="emit('close')">Close (Esc)</button>
+      <button type="button" :title="actionLabel('back')" data-test="reader-close" @click="emit('close')">Close (Esc)</button>
       <button
         v-if="props.state === 'ready' && props.conversation"
         type="button"
@@ -603,7 +605,8 @@ defineExpose({
         v-if="!props.readOnly && props.state === 'ready' && props.conversation"
         type="button"
         data-test="reader-archive-toggle"
-        :disabled="props.commandInFlight"
+        :title="actionLabel(props.conversation?.isInInbox ? 'archive' : 'unarchive')"
+        :disabled="props.commandInFlight || props.navigationUnavailable"
         @click="props.conversation.isInInbox ? emit('archive') : emit('unarchive')"
       >
         {{ props.conversation.isInInbox ? 'Archive (e)' : 'Unarchive' }}
@@ -612,14 +615,14 @@ defineExpose({
         {{ props.conversation.isRead === undefined ? 'Read state unknown' : props.conversation.isRead ? 'Read' : 'Unread' }}
       </span>
       <template v-if="props.showReadControls && props.conversation && props.conversation.isRead === undefined">
-        <button type="button" data-test="reader-mark-read" :disabled="props.commandInFlight" @click="emit('setRead', true)">Mark read</button>
-        <button type="button" data-test="reader-mark-unread" :disabled="props.commandInFlight" @click="emit('setRead', false)">Mark unread</button>
+        <button type="button" :title="actionLabel('read')" data-test="reader-mark-read" :disabled="props.commandInFlight || props.navigationUnavailable" @click="emit('setRead', true)">Mark read</button>
+        <button type="button" :title="actionLabel('unread')" data-test="reader-mark-unread" :disabled="props.commandInFlight || props.navigationUnavailable" @click="emit('setRead', false)">Mark unread</button>
       </template>
       <button
         v-if="props.showReadControls && props.conversation && props.conversation.isRead !== undefined"
         type="button"
         data-test="reader-toggle-read"
-        :disabled="props.commandInFlight"
+        :disabled="props.commandInFlight || props.navigationUnavailable"
         @click="emit('setRead', !props.conversation.isRead)"
       >
         Mark {{ props.conversation.isRead ? 'unread' : 'read' }}

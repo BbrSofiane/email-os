@@ -6,6 +6,7 @@
 //! lock, and change subscription. No Tauri, no OAuth, no network, no mail
 //! beyond the synthetic fixture account. See `docs/vertical-slice-01.md`.
 
+mod cached_done;
 pub mod clock;
 pub mod drafts;
 pub mod dto;
@@ -117,6 +118,14 @@ impl MailCore {
     pub fn list_conversations(&self) -> Result<InboxSnapshot, MailError> {
         self.ensure_worker_healthy()?;
         self.inner.store.list_snapshot()
+    }
+
+    pub fn list_cached_done(
+        &self,
+        request: &dto::CachedDoneRequest,
+    ) -> Result<dto::CachedDoneSnapshot, MailError> {
+        self.ensure_worker_healthy()?;
+        self.inner.store.list_cached_done(request)
     }
 
     /// Reader view of one conversation, scoped by account.
