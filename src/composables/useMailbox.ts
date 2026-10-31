@@ -136,6 +136,8 @@ export interface Mailbox {
   detailError: Ref<MailError | null>;
   lastCommandError: Ref<MailError | null>;
   inFlightCommandRef: Ref<ConversationRef | null>;
+  /** Includes targetless retries; mutation ownership is not a conversation. */
+  commandInFlight: Ref<boolean>;
   /** Authoritative account/mode status; `null` until the first status read lands. */
   accountStatus: Ref<AccountStatus | null>;
   accountState: Ref<AccountState>;
@@ -198,6 +200,7 @@ export interface Mailbox {
   groupsError: Ref<MailError | null>;
   /** True when the backend returned a continuation cursor for more groups. */
   groupsHasMore: Ref<boolean>;
+  groupsLoadingMore: Ref<boolean>;
   /** Bounded Activity continuation: appends the next recent-groups page. */
   loadMoreGroups(): Promise<void>;
   /** Retry a failed recent-groups history read. */
@@ -234,6 +237,7 @@ export function useMailbox(client: MailClient): Mailbox {
   const detailError = ref<MailError | null>(null);
   const lastCommandError = ref<MailError | null>(null);
   const inFlightCommandRef = ref<ConversationRef | null>(null);
+  const commandInFlight = ref(false);
   const accountStatus = ref<AccountStatus | null>(null);
   const accountState = ref<AccountState>('loading');
   const accountError = ref<MailError | null>(null);
@@ -247,6 +251,7 @@ export function useMailbox(client: MailClient): Mailbox {
   const recentGroups = ref<OperationGroupSummary[]>([]);
   const groupsError = ref<MailError | null>(null);
   const groupsHasMore = ref(false);
+  const groupsLoadingMore = ref(false);
   const groupDetail = ref<OperationGroupStatus | null>(null);
   const groupDetailError = ref<MailError | null>(null);
 
@@ -415,6 +420,7 @@ export function useMailbox(client: MailClient): Mailbox {
         ++mailboxSessionToken;
         ++commandToken;
         inFlightCommandRef.value = null;
+        commandInFlight.value = false;
         lastAction.value = null;
         lastGroup.value = null;
         groupInFlight.value = false;
@@ -490,20 +496,23 @@ export function useMailbox(client: MailClient): Mailbox {
   async function rehydrateNotice(): Promise<void> {
     if (detached) return;
     const account = accountStatus.value?.account?.accountId;
+    const sessionToken = mailboxSessionToken;
     if (!account) return;
     let groupCandidate: OperationGroupStatus | null = null;
     try {
       const page = await client.listOperationGroups({ accountId: account, limit: 5, cursor: null });
+      if (detached || sessionToken !== mailboxSessionToken) return;
       for (const summary of page.groups) {
         if (summary.undone) continue;
         const status = await client.getOperationGroup({ accountId: account, requestId: summary.requestId }).catch(() => null);
+        if (detached || sessionToken !== mailboxSessionToken) return;
         if (status?.undo.available) {
           groupCandidate = status;
           break;
         }
       }
     } catch { /* group discovery is best-effort; singles still rehydrate */ }
-    if (detached || lastGroup.value !== null || lastAction.value !== null) return;
+    if (detached || sessionToken !== mailboxSessionToken || lastGroup.value !== null || lastAction.value !== null) return;
     let newestSingle: OperationSummaryLike | null = null;
     for (const item of activity.value) {
       if (item.undoableUntil === undefined) continue;
@@ -785,6 +794,7 @@ export function useMailbox(client: MailClient): Mailbox {
     commandToken += 1;
     mailboxSessionToken += 1;
     inFlightCommandRef.value = null;
+    commandInFlight.value = false;
     lastAction.value = null;
     lastGroup.value = null;
     groupInFlight.value = false;
@@ -831,7 +841,7 @@ export function useMailbox(client: MailClient): Mailbox {
     }
     // Duplicate-mutation fence: while a group acceptance or its receipt recovery
     // is unresolved, no further mutation dispatch (single or group) may start.
-    if (bulkUnresolved.value) {
+    if (bulkUnresolved.value || commandInFlight.value || inFlightCommandRef.value !== null) {
       lastCommandError.value = { kind: 'busy' };
       return false;
     }
@@ -845,6 +855,7 @@ export function useMailbox(client: MailClient): Mailbox {
     if (!mutationsAllowed()) return null;
     const token = ++commandToken;
     const sessionToken = mailboxSessionToken;
+    commandInFlight.value = true;
     inFlightCommandRef.value = target ? { ...target } : null;
     try {
       const receipt = await send(crypto.randomUUID());
@@ -865,6 +876,7 @@ export function useMailbox(client: MailClient): Mailbox {
     } finally {
       if (!detached && sessionToken === mailboxSessionToken && token === commandToken) {
         inFlightCommandRef.value = null;
+        commandInFlight.value = false;
       }
     }
   }
@@ -961,6 +973,7 @@ export function useMailbox(client: MailClient): Mailbox {
     if (!mutationsAllowed()) return null;
     const token = ++commandToken;
     const sessionToken = mailboxSessionToken;
+    commandInFlight.value = true;
     inFlightCommandRef.value = { ...slot.target };
     try {
       const receipt = await client.undoOperation({ operationId: slot.receipt.operationId, requestId: crypto.randomUUID() });
@@ -998,6 +1011,7 @@ export function useMailbox(client: MailClient): Mailbox {
     } finally {
       if (!detached && sessionToken === mailboxSessionToken && token === commandToken) {
         inFlightCommandRef.value = null;
+        commandInFlight.value = false;
       }
     }
   }
@@ -1040,6 +1054,8 @@ export function useMailbox(client: MailClient): Mailbox {
     ++groupDetailToken;
     groupsLoadedPages = 0;
     groupsCursor = null;
+    groupsLoadingMore.value = false;
+    noticeRehydrated = false;
     recentGroups.value = [];
     groupsError.value = null;
     groupsHasMore.value = false;
@@ -1083,6 +1099,7 @@ export function useMailbox(client: MailClient): Mailbox {
     const sessionToken = mailboxSessionToken;
     if (!account) return;
     const token = ++groupsToken;
+    groupsLoadingMore.value = false; // older continuation responses are invalidated
     const pagesToLoad = Math.max(1, groupsLoadedPages);
     const collected: OperationGroupSummary[] = [];
     let cursor: string | null = null;
@@ -1102,8 +1119,8 @@ export function useMailbox(client: MailClient): Mailbox {
     } catch (raw) {
       if (detached || sessionToken !== mailboxSessionToken || token !== groupsToken) return;
       // A failed history read is a recovery boundary, not an empty result.
-      if (collected.length === 0) groupsError.value = toMailError(raw);
-      else recentGroups.value = collected;
+      groupsError.value = toMailError(raw);
+      // Keep the last complete manifest and cursor, not a silent partial page.
       return;
     }
     groupsError.value = null;
@@ -1124,7 +1141,8 @@ export function useMailbox(client: MailClient): Mailbox {
     const account = accountStatus.value?.account?.accountId;
     const sessionToken = mailboxSessionToken;
     const token = groupsToken;
-    if (!account || !groupsHasMore.value || groupsCursor === null) return;
+    if (!account || !groupsHasMore.value || groupsCursor === null || groupsLoadingMore.value) return;
+    groupsLoadingMore.value = true;
     try {
       const result = await client.listOperationGroups({ accountId: account, limit: 10, cursor: groupsCursor });
       if (detached || sessionToken !== mailboxSessionToken || token !== groupsToken) return;
@@ -1132,10 +1150,13 @@ export function useMailbox(client: MailClient): Mailbox {
       groupsHasMore.value = result.nextCursor !== null;
       groupsError.value = null;
       groupsLoadedPages += 1;
-      recentGroups.value = [...recentGroups.value, ...result.groups];
+      const existing = new Set(recentGroups.value.map((group) => group.groupId));
+      recentGroups.value = [...recentGroups.value, ...result.groups.filter((group) => !existing.has(group.groupId))];
     } catch (raw) {
       if (detached || sessionToken !== mailboxSessionToken || token !== groupsToken) return;
       groupsError.value = toMailError(raw);
+    } finally {
+      if (!detached && sessionToken === mailboxSessionToken && token === groupsToken) groupsLoadingMore.value = false;
     }
   }
 
@@ -1165,9 +1186,10 @@ export function useMailbox(client: MailClient): Mailbox {
    * Typed admission rejections that PROVE nothing committed (the command was
    * refused before any write). Only transport-level ambiguity — where the
    * request may or may not have committed — enters `acceptance-unknown`.
-   * Storage failures roll back the entire local acceptance (§4.1), so they are
-   * definitive too; without this, a read-only or invalid group would lock all
-   * mutations forever behind an unresolvable "not yet known" slot.
+   * `storage_unavailable` is deliberately excluded: the adapter also uses it
+   * for untyped transport/serialization failures, which may follow a commit.
+   * This classifier applies ONLY to the first attempt, never to a replay of
+   * historically unresolved intent.
    */
   const DEFINITIVE_ACCEPTANCE_ERRORS: ReadonlySet<MailError['kind']> = new Set([
     'invalid_request',
@@ -1176,7 +1198,6 @@ export function useMailbox(client: MailClient): Mailbox {
     'permission_required',
     'not_found',
     'busy',
-    'storage_unavailable',
     'not_configured',
     'auth_required',
     'auth_failed',
@@ -1197,10 +1218,20 @@ export function useMailbox(client: MailClient): Mailbox {
    */
   async function recoverGroupAcceptance(): Promise<void> {
     const slot = lastGroup.value;
-    if (!slot || slot.state !== 'acceptance-unknown' || groupInFlight.value) return;
+    if (!slot || slot.state !== 'acceptance-unknown' || groupInFlight.value || commandInFlight.value) return;
     const sessionToken = mailboxSessionToken;
     groupInFlight.value = true;
     try {
+      // Resolve historical acceptance before attempting a replay. A failed
+      // lookup is not absence and must retain the original command and fence.
+      const status = await client.getOperationGroup({ accountId: slot.accountId, requestId: slot.requestId });
+      if (detached || sessionToken !== mailboxSessionToken || !sameSlot(slot.requestId)) return;
+      if (status) {
+        lastGroup.value = { ...lastGroup.value!, state: 'accepted', receipt: { ...status.group }, status };
+        lastCommandError.value = null;
+        await refresh();
+        return;
+      }
       const command = slot.originalCommand;
       const receipt = 'archived' in command
         ? await client.setArchivedGroup(command)
@@ -1214,14 +1245,9 @@ export function useMailbox(client: MailClient): Mailbox {
     } catch (raw) {
       if (detached || sessionToken !== mailboxSessionToken) return;
       lastCommandError.value = toMailError(raw);
-      if (acceptanceDefinitivelyRejected(raw)) {
-        // The exact original request was definitively refused (nothing
-        // committed): release the fence instead of locking mutations forever.
-        if (sameSlot(slot.requestId)) lastGroup.value = null;
-        return;
-      }
-      // Transport ambiguity: re-query by request id; the slot stays honest
-      // while unresolved.
+      // A replay can be refused by today's capability/lifecycle checks even
+      // when the ORIGINAL attempt committed. No replay error proves historical
+      // non-acceptance: retain its identity/fence and query again if possible.
       await resolveUnknownAcceptance();
     } finally {
       if (!detached && sessionToken === mailboxSessionToken) groupInFlight.value = false;
@@ -1374,14 +1400,12 @@ export function useMailbox(client: MailClient): Mailbox {
       if (detached || sessionToken !== mailboxSessionToken || token !== commandToken) return null;
       const error = toMailError(raw);
       lastCommandError.value = error;
-      if (error.kind === 'undo_unavailable') {
-        // The backend's decision is authoritative: refresh, then close the
-        // slot window (expired/superseded/already undone) without dropping it.
-        await refresh();
-        await refreshGroupStatus();
-        if (!detached && lastGroup.value?.receipt?.groupId === groupId) {
-          lastGroup.value = { ...lastGroup.value!, hadWindow: true };
-        }
+      // Even a lost Undo response can follow a committed decision. Recover
+      // the durable record instead of showing original state as expired Undo.
+      await refresh();
+      await refreshGroupStatus();
+      if (!detached && sessionToken === mailboxSessionToken && lastGroup.value?.receipt?.groupId === groupId) {
+        lastGroup.value = { ...lastGroup.value!, hadWindow: true };
       }
       return null;
     } finally {
@@ -1419,7 +1443,7 @@ export function useMailbox(client: MailClient): Mailbox {
     const account = accountStatus.value?.account?.accountId;
     if (!current || !account || current.group.accountId !== account) return;
     const sessionToken = mailboxSessionToken;
-    const token = groupDetailToken;
+    const token = ++groupDetailToken;
     const outcome = await client.getOperationGroup({ accountId: account, requestId: current.group.requestId })
       .then(
         (status) => ({ status, error: null as MailError | null }),
@@ -1501,13 +1525,13 @@ export function useMailbox(client: MailClient): Mailbox {
     context, nextCursor, loadingMore, loadedDonePages, loadedDoneBoundary, exactTotal, lastSyncedAt, activityError, setContext, loadMore,
     conversations, activity, listState, listError, focusedRef, focusedSummary,
     openRef, conversation, detailState, detailError, lastCommandError,
-    inFlightCommandRef, ready, refresh, focusConversation, moveFocus,
+    inFlightCommandRef, commandInFlight, ready, refresh, focusConversation, moveFocus,
     openConversationByRef, openFocused, closeReader, setArchived, setRead, retryOperation,
     lastAction, undoLastAction,
     selectedRefs, rangeAnchorRef, selectionNotice, isSelected, toggleSelected, extendSelectionTo,
     selectAllLoaded, clearSelection, selectionInLoadedOrder,
     lastGroup, bulkUnresolved, groupInFlight, setArchivedGroup, setReadGroup, recoverGroupAcceptance,
-    dismissGroupNotice, undoGroupAction, recentGroups, groupsError, groupsHasMore, loadMoreGroups,
+    dismissGroupNotice, undoGroupAction, recentGroups, groupsError, groupsHasMore, groupsLoadingMore, loadMoreGroups,
     groupDetail, groupDetailError, openGroupDetail, undoGroupById,
     enableMailboxActions, cancelMailboxActionUpgrade, archiveFocused,
     refreshGroups,

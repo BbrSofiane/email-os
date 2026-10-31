@@ -7,6 +7,11 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { effectScope } from 'vue';
+
+const native = vi.hoisted(() => ({ invoke: vi.fn() }));
+vi.mock('@tauri-apps/api/core', () => ({ invoke: native.invoke }));
+vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }));
+import { createTauriMailClient } from '../src/lib/ipc/tauri-client';
 import { useMailbox } from '../src/composables/useMailbox';
 import { createBrowserFakeMailClient } from '../src/lib/ipc/browser-fake';
 import { deferred, fixtureRef, flushMacrotasks } from './helpers';
@@ -33,6 +38,74 @@ function gmailEnabled(inner: MailClient): void {
 }
 
 describe('useMailbox group recovery fences', () => {
+  it('retains committed intent after an untyped Tauri receipt failure and resolves by lookup before replay', async () => {
+    const inner = createBrowserFakeMailClient();
+    let lookupFails = true;
+    native.invoke.mockReset();
+    native.invoke.mockImplementation(async (_name, args) => {
+      await inner.setArchivedGroup(args.command);
+      throw new Error('receipt delivery failed after commit');
+    });
+    const adapter = createTauriMailClient();
+    const client: MailClient = {
+      ...inner,
+      setArchivedGroup: adapter.setArchivedGroup,
+      getOperationGroup: (request) => lookupFails
+        ? Promise.reject(new Error('lookup temporarily unavailable'))
+        : inner.getOperationGroup(request),
+      subscribe: () => Promise.resolve(() => undefined),
+    };
+    const { result, stop } = scopeRun(() => useMailbox(client));
+    try {
+      await result.ready;
+      await result.setArchivedGroup([fixtureRef('conv-01')], true);
+      const original = result.lastGroup.value?.requestId;
+      expect(original).toBeTruthy();
+      expect(result.lastGroup.value?.state).toBe('acceptance-unknown');
+      expect(result.bulkUnresolved.value).toBe(true);
+      // Read failures retain intent and never trigger another mutation.
+      await result.recoverGroupAcceptance();
+      expect(native.invoke).toHaveBeenCalledTimes(1);
+      expect(result.lastGroup.value?.requestId).toBe(original);
+      expect(result.bulkUnresolved.value).toBe(true);
+      // The committed receipt is readable even if mutation admission is now
+      // denied. Lookup must win without calling the setter again.
+      lookupFails = false;
+      native.invoke.mockRejectedValue({ kind: 'permission_required' });
+      await result.recoverGroupAcceptance();
+      expect(result.lastGroup.value?.state).toBe('accepted');
+      expect(result.lastGroup.value?.receipt?.requestId).toBe(original);
+      expect(result.bulkUnresolved.value).toBe(false);
+      expect(native.invoke).toHaveBeenCalledTimes(1);
+    } finally { stop(); }
+  });
+
+  it('a later replay admission refusal cannot erase historically unresolved intent', async () => {
+    const inner = createBrowserFakeMailClient();
+    const send = vi.fn()
+      .mockRejectedValueOnce({ kind: 'network_unavailable' })
+      .mockRejectedValue({ kind: 'permission_required' });
+    const client: MailClient = {
+      ...inner,
+      setArchivedGroup: send,
+      getOperationGroup: () => Promise.resolve(null),
+      subscribe: () => Promise.resolve(() => undefined),
+    };
+    const { result, stop } = scopeRun(() => useMailbox(client));
+    try {
+      await result.ready;
+      await result.setArchivedGroup([fixtureRef('conv-01')], true);
+      const original = result.lastGroup.value?.originalCommand;
+      await result.recoverGroupAcceptance();
+      expect(send).toHaveBeenCalledTimes(2);
+      expect(send.mock.calls[1]?.[0]).toEqual(original);
+      expect(result.lastGroup.value?.originalCommand).toEqual(original);
+      expect(result.lastGroup.value?.state).toBe('acceptance-unknown');
+      expect(result.bulkUnresolved.value).toBe(true);
+      expect(result.lastCommandError.value?.kind).toBe('permission_required');
+    } finally { stop(); }
+  });
+
   it('keeps unresolved intent and the mutation fence against dismissal', async () => {
     const inner = createBrowserFakeMailClient();
     let rejectOnce = true;
@@ -87,6 +160,108 @@ describe('useMailbox group recovery fences', () => {
     stop();
   });
 
+  it('fences targetless retries and group Undo with the same command owner', async () => {
+    const inner = createBrowserFakeMailClient();
+    gmailEnabled(inner);
+    const retry = deferred<OperationReceipt>();
+    const undo = vi.fn(inner.undoOperationGroup);
+    const client: MailClient = { ...inner, retryOperation: () => retry.promise,
+      undoOperationGroup: undo, subscribe: () => Promise.resolve(() => undefined) };
+    const { result, stop } = scopeRun(() => useMailbox(client));
+    try {
+      await result.ready;
+      void result.retryOperation('prior-operation');
+      expect(result.commandInFlight.value).toBe(true);
+      expect(result.inFlightCommandRef.value).toBeNull();
+      expect(await result.undoGroupById('older-group')).toBeNull();
+      expect(undo).not.toHaveBeenCalled();
+      expect(await result.setArchivedGroup([{ accountId: 'gmail-account', conversationId: 'conv-01' }], true)).toBe(false);
+      retry.reject({ kind: 'provider_rejected' });
+      await flushMacrotasks(2);
+      expect(result.commandInFlight.value).toBe(false);
+    } finally { stop(); }
+  });
+
+  it('serializes continuation clicks and retains complete history on a later-page refresh failure', async () => {
+    const inner = createBrowserFakeMailClient();
+    for (let i = 0; i < 12; i += 1) {
+      await inner.setArchivedGroup({ accountId: 'fixture-account',
+        members: [fixtureRef(`missing-${i}`)], archived: true, requestId: `history-${i}` });
+    }
+    let held = false;
+    let failPage = false;
+    const gate = deferred<OperationGroupPage>();
+    let cursorCalls = 0;
+    const client: MailClient = { ...inner, subscribe: () => Promise.resolve(() => undefined),
+      listOperationGroups: async (request) => {
+        if (request.cursor) {
+          cursorCalls += 1;
+          if (failPage) throw new Error('later page unavailable');
+          const page = await inner.listOperationGroups(request);
+          return held ? gate.promise.then(() => page) : page;
+        }
+        return inner.listOperationGroups(request);
+      },
+    };
+    const { result, stop } = scopeRun(() => useMailbox(client));
+    try {
+      await result.ready;
+      await flushMacrotasks(3);
+      held = true;
+      const first = result.loadMoreGroups();
+      const second = result.loadMoreGroups();
+      expect(result.groupsLoadingMore.value).toBe(true);
+      expect(cursorCalls).toBe(1);
+      gate.resolve({ groups: [], nextCursor: null });
+      await Promise.all([first, second]);
+      const ids = result.recentGroups.value.map((group) => group.groupId);
+      expect(ids).toHaveLength(12);
+      expect(new Set(ids).size).toBe(12);
+      expect(result.groupsLoadingMore.value).toBe(false);
+      failPage = true;
+      await result.refreshGroups();
+      expect(result.recentGroups.value.map((group) => group.groupId)).toEqual(ids);
+      expect(result.groupsError.value).not.toBeNull();
+    } finally { stop(); }
+  });
+
+  it('orders background detail reads so an older queued view cannot replace a newer failure', async () => {
+    const inner = createBrowserFakeMailClient();
+    inner.controls.behavior.holdQueued = true;
+    const receipt = await inner.setArchivedGroup({ accountId: 'fixture-account',
+      members: [fixtureRef('conv-01')], archived: true, requestId: 'detail-order' });
+    const initial = await inner.getOperationGroup({ accountId: 'fixture-account', requestId: receipt.requestId });
+    const gates: Array<ReturnType<typeof deferred<OperationGroupStatus | null>>> = [];
+    let hold = false;
+    const client: MailClient = { ...inner, subscribe: () => Promise.resolve(() => undefined),
+      getOperationGroup: (request) => {
+        if (hold && request.requestId === receipt.requestId) {
+          const gate = deferred<OperationGroupStatus | null>(); gates.push(gate); return gate.promise;
+        }
+        return inner.getOperationGroup(request);
+      },
+    };
+    const { result, stop } = scopeRun(() => useMailbox(client));
+    try {
+      await result.ready;
+      await flushMacrotasks(3);
+      await result.openGroupDetail(receipt.requestId);
+      // Suppress notice-status reads to isolate the expanded-detail race.
+      result.lastGroup.value = null;
+      hold = true;
+      await result.refresh();
+      await result.refresh();
+      expect(gates).toHaveLength(2);
+      const newer = structuredClone(initial!);
+      newer.members[0]!.status = 'failed';
+      gates[1]!.resolve(newer);
+      await flushMacrotasks(2);
+      gates[0]!.resolve(initial);
+      await flushMacrotasks(2);
+      expect(result.groupDetail.value?.members[0]?.status).toBe('failed');
+    } finally { stop(); }
+  });
+
   it('fences group dispatch while a single mutation is awaiting acceptance', async () => {
     const inner = createBrowserFakeMailClient();
     const client: MailClient = {
@@ -107,6 +282,36 @@ describe('useMailbox group recovery fences', () => {
     expect(result.lastCommandError.value?.kind).toBe('busy');
     expect(result.lastGroup.value).toBeNull();
     stop();
+  });
+
+  it('rejects old restart-notice discovery across a same-account reconnect', async () => {
+    const inner = createBrowserFakeMailClient();
+    gmailEnabled(inner);
+    inner.controls.behavior.holdQueued = true;
+    const receipt = await inner.setArchivedGroup({ accountId: 'gmail-account',
+      members: [{ accountId: 'gmail-account', conversationId: 'conv-01' }], archived: true, requestId: 'old-discovery' });
+    const oldStatus = await inner.getOperationGroup({ accountId: 'gmail-account', requestId: receipt.requestId });
+    const gate = deferred<OperationGroupStatus | null>();
+    let reset = false;
+    let discoveryStarted = false;
+    const client: MailClient = { ...inner, subscribe: () => Promise.resolve(() => undefined),
+      listOperationGroups: (request) => reset ? Promise.resolve({ groups: [], nextCursor: null }) : inner.listOperationGroups(request),
+      getOperationGroup: () => { discoveryStarted = true; return gate.promise; },
+      disconnectAccount: async () => { reset = true; await inner.disconnectAccount(); },
+    };
+    const { result, stop } = scopeRun(() => useMailbox(client));
+    try {
+      await result.ready;
+      await flushMacrotasks(3);
+      expect(discoveryStarted).toBe(true);
+      await result.disconnectAccount();
+      gmailEnabled(inner); // same account identity, different mailbox session
+      await result.refresh();
+      gate.resolve(oldStatus);
+      await flushMacrotasks(3);
+      expect(result.lastGroup.value).toBeNull();
+      expect(result.recentGroups.value).toEqual([]);
+    } finally { stop(); }
   });
 
   it('clears group surfaces on disconnect and rejects late old-session responses', async () => {

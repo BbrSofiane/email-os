@@ -206,6 +206,19 @@ describe('ActionNotice group undo wording (review fixes)', () => {
     expect(wrapper.get('[data-test="action-notice-status"]').text()).not.toContain('restoring');
   });
 
+  it('reports every mixed compensation category without hiding pending or uncertain siblings', () => {
+    const wrapper = mount(ActionNotice, {
+      props: { notice: { ...groupBase, group: { ...groupBase.group!, undone: {
+        ...groupBase.group!.undone!, compensationOutcomes: { confirmed: 1, failed: 1, unknown: 1, pending: 1 },
+      } } }, now: NOW },
+    });
+    const text = wrapper.get('[data-test="action-notice-status"]').text();
+    expect(text).toContain('restore failed for 1');
+    expect(text).toContain('restore outcome unknown for 1');
+    expect(text).toContain('restoring… (1 pending)');
+    expect(text).toContain('restored (1)');
+  });
+
   it('shows restored wording when every compensation confirmed', () => {
     const wrapper = mount(ActionNotice, {
       props: { notice: { ...groupBase, group: { ...groupBase.group!, undone: { ...groupBase.group!.undone!, compensationOutcomes: { confirmed: 1, failed: 0, unknown: 0, pending: 0 } } } }, now: NOW },

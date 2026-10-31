@@ -412,8 +412,9 @@ Backend (all four P2s fixed, plus the parent's test-coverage requirements):
 - **Persisted Undo receipt through the recovery query**: both stores rebuild
   the committed group-Undo record (request id, per-member decisions, current
   compensation statuses/failures) inside `get_operation_group`; restart,
-  reopen, failed-compensation and lost-response cases are tested in both
-  stores.
+  reopen and failed-compensation cases have store coverage. Lost acceptance
+  and Undo responses additionally have frontend/adapter regression coverage;
+  Gmail unknown-compensation reopen coverage remains a test gap.
 - **`OperationSummary.groupId` populated** for group children in both stores
   (compensations stay ungrouped); asserted across restarts.
 - **`OperationSummary.retryOf` exposed** and populated by the Gmail activity
@@ -437,7 +438,7 @@ Frontend (P1 1–3 and P2 4–16 fixed; regressions added per finding):
 - P1-1: Dismissal no longer exists (or works) for an unresolved acceptance —
   the original request id/command and the mutation fence are held until
   authoritative resolution; typed definitive admission rejections
-  (`invalid_request`, `read_only`, `permission_required`, `storage_unavailable`,
+  on the initial attempt (`invalid_request`, `read_only`, `permission_required`,
   `request_id_conflict`, …) release the fence immediately instead of locking
   mutations behind an unresolvable "not yet known" slot; transport-ambiguous
   failures (`network_unavailable`, `provider_unavailable`, unknown shapes)
@@ -518,14 +519,49 @@ No scheduler/timeout change is made in this slice.
   build cover the available paths.
 - Gmail read-group remote convergence (BROWSE-18) requires the approved
   disposable account and opt-in modify grant; no provider test was run.
-- The retry→member inspection link (`retry_of`) is persisted and used by Undo
-  ordering but is not exposed on the wire `OperationSummary`; exposing it would
-  be an additive seam change needing separate approval.
-- Group Undo skip reasons after a restart are not re-derivable through the
-  frozen seam (no undo-receipt lookup command); Activity shows resulting member
-  statuses instead.
+- Gmail unknown-compensation reopen and deterministic forcing of both
+  claim-first/Undo-first schedules are remaining coverage gaps. Current tests
+  cover failed Gmail compensation after reopen and concurrent fixture contention.
+  The retry lineage and durable Undo inspection gaps from the initial integration
+  are resolved by `retryOf` and `undoReceipt` (approved additive seam changes).
 - The UX-05 core lane installed the Linux GTK/WebKit `pkg-config` prerequisites
   via apt to unblock native checks (the `docs/development.md` guidance says not
   to install them as part of a headless integration check; recorded here
   honestly — native gates are runnable in this VM, but a fresh VM still needs
   the documented setup).
+
+## 10. Parent recovery hardening after fix recheck
+
+Both reviewers confirmed the original backend findings fixed at `834bd60`.
+Their recheck found additional frontend recovery races. The parent addressed
+these directly after the worker pass; a green initial suite was not treated as
+proof those races were absent.
+
+- Storage/untyped bridge errors remain ambiguous: `toMailError` can normalize
+  an untyped response-delivery error to `storage_unavailable`, so that kind is
+  never classified as proof of non-acceptance. Regression uses the actual Tauri
+  adapter with commit-then-untyped-rejection and a failed receipt lookup.
+- Recovery looks up the original request before any replay. Failed lookups and
+  denied replays preserve the historical request/command and mutation fence;
+  current admission denial cannot disprove a past commit.
+- All mutation entrypoints share explicit `commandInFlight` ownership, including
+  targetless retries and Activity group Undo. This intentionally serializes
+  acceptance in the UI; two older tests that expected overlapping singles were
+  updated to assert refusal while pending and recovery of ownership afterwards.
+- Restart discovery is session-fenced even across same-account reconnect, and
+  discovery state resets with the other group surfaces.
+- Activity continuation is single-flight, disabled while loading and merged by
+  group identity. A later-page refresh error preserves the complete previous
+  manifest/cursor and surfaces the failure instead of silently truncating it.
+- Background detail reads have their own increasing generation; Retry reloads
+  detail directly rather than invoking its expand/collapse toggle.
+- Notices derive Undo outcomes from the durable record even when the Undo
+  response was lost. Mixed confirmed/failed/unknown/pending compensation counts
+  are reported independently rather than hidden by a priority chain.
+
+Targeted parent regression run: 103 tests passed across mailbox, group recovery,
+App selection, notice and Activity suites; typecheck passed. The original
+six-check/native parent run at `834bd60` passed (429 UI tests, 20 opt-in rendered
+skips, 7 native tests). Full post-hardening gates and focused final review are
+recorded below when completed. Native macOS, rendered-browser and disposable
+provider checks remain pending; no real mailbox was mutated.

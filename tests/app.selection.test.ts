@@ -182,6 +182,55 @@ describe('App UX-05 selection and bulk groups', () => {
     expect(w.find('[data-test="action-notice-acceptance-unknown"]').exists()).toBe(false);
   });
 
+  it('recovers a committed group Undo whose response was lost from the durable status record', async () => {
+    client = { ...client, undoOperationGroup: async (command) => {
+      await fake.undoOperationGroup(command);
+      throw new Error('Undo receipt lost after commit');
+    } };
+    const w = mountApp();
+    await settle();
+    await selectRows(w, ['conv-01']);
+    await w.get('[data-test="selection-archive"]').trigger('click');
+    await settle();
+    await w.get('[data-test="action-notice-undo-group"]').trigger('click');
+    await settle();
+    const status = w.get('[data-test="action-notice-status"]').text();
+    expect(status).toContain('Undo accepted for 1 of 1');
+    expect(status).toContain('restored');
+    expect(status).not.toContain('Undo expired');
+  });
+
+  it('retries failed background group detail without collapsing the retained detail', async () => {
+    let failDetail = false;
+    let lookups = 0;
+    client = { ...client, getOperationGroup: async (request) => {
+      lookups += 1;
+      if (failDetail) throw new Error('detail offline');
+      return fake.getOperationGroup(request);
+    } };
+    const w = mountApp();
+    await settle();
+    fake.controls.behavior.holdQueued = true;
+    await selectRows(w, ['conv-01']);
+    await w.get('[data-test="selection-archive"]').trigger('click');
+    await settle();
+    await w.get('[data-test="rail-activity"]').trigger('click');
+    await settle();
+    await w.get('[data-test^="activity-group-toggle-"]').trigger('click');
+    await settle();
+    failDetail = true;
+    window.dispatchEvent(new Event('focus'));
+    await settle();
+    const retry = w.get('[data-test^="group-detail-retry-"]');
+    const before = lookups;
+    failDetail = false;
+    await retry.trigger('click');
+    await settle();
+    expect(lookups).toBeGreaterThan(before);
+    expect(w.find('[data-test^="group-member-status-"]').exists()).toBe(true);
+    expect(w.find('[data-test^="group-detail-retry-"]').exists()).toBe(false);
+  });
+
   it('shows per-status group outcomes and honest partial-undo wording', async () => {
     const w = mountApp();
     await settle();

@@ -101,7 +101,7 @@ function bulkMembers(): ConversationRef[] | null {
   // A pending single mutation owns the dispatch boundary (P1 fence): a group
   // dispatched now would bump `commandToken`, the single's finally would stop
   // clearing its in-flight ref, and single actions could stay fenced forever.
-  if (mailbox.inFlightCommandRef.value !== null) return null;
+  if (mailbox.commandInFlight.value) return null;
   if (mailbox.listState.value === 'error') return null;
   const members = mailbox.selectionInLoadedOrder();
   return members.length > 0 ? members : null;
@@ -205,12 +205,13 @@ const actionNotice = computed(() => {
       }
     }
     let undoneView: GroupNoticeView['undone'] = null;
-    if (groupSlot.undone) {
+    const undoMembers = status?.undoReceipt?.members ?? groupSlot.undone?.members;
+    if (undoMembers) {
       const skipReasons: Record<string, number> = {};
       let cancelled = 0;
       let compensating = 0;
       let skipped = 0;
-      for (const member of groupSlot.undone.members) {
+      for (const member of undoMembers) {
         if (member.decision.kind === 'cancelled') cancelled += 1;
         else if (member.decision.kind === 'compensating') compensating += 1;
         else {
@@ -234,7 +235,7 @@ const actionNotice = computed(() => {
           }
         }
       } else {
-        for (const member of groupSlot.undone.members) {
+        for (const member of groupSlot.undone?.members ?? []) {
           for (const operationId of member.operationIds) {
             const row = mailbox.activity.value.find((item) => item.id === operationId);
             if (!row) outcomes.pending += 1;
@@ -980,7 +981,7 @@ function openDraft(ref: DraftRef): void {
 
 /** Targets are resolved at dispatch, not when the palette was opened. */
 function actionTarget(explicit?: ConversationRef): ConversationRef | null {
-  if (!accountReady.value || mailbox.inFlightCommandRef.value) return null;
+  if (!accountReady.value || mailbox.commandInFlight.value) return null;
   if (mailbox.context.value === 'done' && mailbox.listState.value === 'error') return null;
   if (explicit) {
     if (explicit.accountId !== accountId.value) return null;
@@ -1002,7 +1003,7 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   if (id === 'undo') {
     // Same guards as the key: no in-flight undo (a second dispatch would race
     // into a false already_undone), and no open reader message-details disclosure.
-    return undoWindowOpen.value && !mailbox.inFlightCommandRef.value && !mailbox.groupInFlight.value && !readerView.value?.hasOpenDetails();
+    return undoWindowOpen.value && !mailbox.commandInFlight.value && !mailbox.groupInFlight.value && !readerView.value?.hasOpenDetails();
   }
   // One-target policy: with a nonempty selection, shared dispatch resolves the
   // selection (even in the reader); explicit row actions bypass this entirely.
@@ -1482,8 +1483,8 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               :count="selectedCount"
               :loaded-count="mailbox.conversations.value.length"
               :context="mailbox.context.value"
-              :actions-enabled="mailboxActionsEnabled && !mailbox.bulkUnresolved.value"
-              :read-available="gmailActionsEnabled && !mailbox.bulkUnresolved.value"
+              :actions-enabled="mailboxActionsEnabled && !mailbox.bulkUnresolved.value && !mailbox.commandInFlight.value"
+              :read-available="gmailActionsEnabled && !mailbox.bulkUnresolved.value && !mailbox.commandInFlight.value"
               :limit-message="mailbox.selectionNotice.value"
               @archive="bulkArchiveSelection()"
               @unarchive="bulkRestoreSelection()"
@@ -1541,7 +1542,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               :conversation="mailbox.conversation.value"
               :state="mailbox.detailState.value"
               :error="mailbox.detailError.value"
-              :command-in-flight="mailbox.inFlightCommandRef.value !== null || mailbox.bulkUnresolved.value"
+              :command-in-flight="mailbox.commandInFlight.value || mailbox.bulkUnresolved.value"
               :open-ref="mailbox.openRef.value"
               :navigation-unavailable="mailbox.context.value === 'done' && mailbox.listState.value === 'error'"
               :read-only="gmailMode && !mailboxActionsEnabled"
@@ -1601,11 +1602,12 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
           <ActivityPanel
             v-if="drawer === 'activity'"
             :activity="mailbox.activity.value"
-            :actions-enabled="mailboxActionsEnabled"
+            :actions-enabled="mailboxActionsEnabled && !mailbox.commandInFlight.value && !mailbox.bulkUnresolved.value"
             :gmail-mode="gmailMode"
             :groups="mailbox.recentGroups.value"
             :groups-error="mailbox.groupsError.value"
             :groups-has-more="mailbox.groupsHasMore.value"
+            :groups-loading-more="mailbox.groupsLoadingMore.value"
             :group-detail="mailbox.groupDetail.value"
             :group-detail-error="mailbox.groupDetailError.value"
             :expanded-request-id="expandedGroupRequestId"
@@ -1615,7 +1617,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             @open-group="openActivityGroup"
             @load-more-groups="mailbox.loadMoreGroups()"
             @retry-groups="mailbox.refreshGroups()"
-            @retry-group-detail="openActivityGroup(expandedGroupRequestId ?? '')"
+            @retry-group-detail="expandedGroupRequestId && mailbox.openGroupDetail(expandedGroupRequestId)"
             @undo-group="(groupId) => mailbox.undoGroupById(groupId)"
           />
           <DraftsPanel

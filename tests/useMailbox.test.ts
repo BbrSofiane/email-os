@@ -161,7 +161,7 @@ describe('useMailbox', () => {
     stop();
   });
 
-  it('refreshes an older accepted receipt without clearing a newer command error', async () => {
+  it('fences another mutation while acceptance is pending, then refreshes the accepted receipt', async () => {
     const inner = createBrowserFakeMailClient();
     const receiptGate = deferred<OperationReceipt>();
     let accepted: OperationReceipt | undefined;
@@ -199,7 +199,8 @@ describe('useMailbox', () => {
     expect(listCalls).toBe(initialListCalls);
 
     expect(await result.setArchived(fixtureRef('conv-02'), true)).toBeNull();
-    expect(result.lastCommandError.value).toEqual({ kind: 'request_id_conflict' });
+    expect(result.lastCommandError.value).toEqual({ kind: 'busy' });
+    expect(archiveCalls).toBe(1);
     const receipt = accepted;
     if (!receipt) throw new Error('expected accepted first receipt');
     receiptGate.resolve(receipt);
@@ -208,7 +209,8 @@ describe('useMailbox', () => {
     expect(listCalls).toBeGreaterThan(initialListCalls);
     expect(result.conversations.value.some((row) => row.ref.conversationId === 'conv-01')).toBe(false);
     expect(result.activity.value.some((op) => op.id === receipt.operationId)).toBe(true);
-    expect(result.lastCommandError.value).toEqual({ kind: 'request_id_conflict' });
+    expect(result.lastCommandError.value).toBeNull();
+    expect(result.commandInFlight.value).toBe(false);
     stop();
   });
 
@@ -803,7 +805,7 @@ describe('useMailbox (Slice 02 account status and lifecycle)', () => {
     stop();
   });
 
-  it('does not clobber a newer last action recorded during the undo refresh', async () => {
+  it('fences new actions during Undo, then permits them after its ownership is released', async () => {
     const fake = createBrowserFakeMailClient();
     const { result, stop } = scopeRun(() => useMailbox(fake));
     await result.ready;
@@ -812,14 +814,17 @@ describe('useMailbox (Slice 02 account status and lifecycle)', () => {
     fake.controls.behavior.holdUndo = true;
     const pendingUndo = result.undoLastAction();
     await flushMacrotasks(1); // let the undo call reach the held fake
-    // A newer action (e.g. an Activity-drawer Unarchive) is accepted and
-    // records its own slot while the undo round trip is pending.
-    await result.setArchived(fixtureRef('conv-02'), false);
-    expect(result.lastAction.value?.receipt.operationId).toBe('op-0002');
+    // UX-05 uses a single explicit owner for all mutation entrypoints,
+    // including targetless retries and Activity group Undo.
+    expect(await result.setArchived(fixtureRef('conv-02'), false)).toBeNull();
+    expect(result.lastCommandError.value).toEqual({ kind: 'busy' });
+    expect(result.lastAction.value?.receipt.operationId).toBe('op-0001');
     fake.controls.release();
     await pendingUndo;
-    // The undo's success write-back must only ever touch its own slot.
-    expect(result.lastAction.value?.receipt.operationId).toBe('op-0002');
+    expect(result.commandInFlight.value).toBe(false);
+    expect(result.lastAction.value?.undone).not.toBeNull();
+    await result.setArchived(fixtureRef('conv-02'), false);
+    expect(result.lastAction.value?.receipt.operationId).not.toBe('op-0001');
     expect(result.lastAction.value?.undone).toBeNull();
     stop();
   });

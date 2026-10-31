@@ -100,12 +100,15 @@ const groupStatusText = computed(() => {
     const outcomes = group.undone.compensationOutcomes;
     if (outcomes.failed > 0) {
       parts.push(`restore failed for ${outcomes.failed} — see Activity`);
-    } else if (outcomes.unknown > 0) {
+    }
+    if (outcomes.unknown > 0) {
       parts.push(`restore outcome unknown for ${outcomes.unknown} — see Activity`);
-    } else if (outcomes.pending > 0) {
-      parts.push('restoring…');
-    } else if (outcomes.confirmed > 0) {
-      parts.push('restored');
+    }
+    if (outcomes.pending > 0) {
+      parts.push(`restoring… (${outcomes.pending} pending)`);
+    }
+    if (outcomes.confirmed > 0) {
+      parts.push(`restored (${outcomes.confirmed})`);
     }
     return parts.join('; ');
   }

@@ -33,6 +33,7 @@ const props = defineProps<{
   groupsError?: MailError | null;
   /** The backend returned a continuation cursor for more groups. */
   groupsHasMore?: boolean;
+  groupsLoadingMore?: boolean;
   /** Loaded detail for the expanded group (request-id addressable). */
   groupDetail?: OperationGroupStatus | null;
   /** Failed group-detail read (distinct from absence). */
@@ -174,6 +175,7 @@ function undoStatusLabel(status: string, failure: { kind: string } | null): stri
               <button
                 type="button"
                 :data-test="`group-undo-${groupDetail.group.groupId}`"
+                :disabled="!actionsEnabled"
                 @click="emit('undoGroup', groupDetail.group.groupId)"
               >Undo this group</button>
             </p>
@@ -254,6 +256,7 @@ function undoStatusLabel(status: string, failure: { kind: string } | null): stri
         type="button"
         class="activity-groups-more"
         data-test="activity-groups-more"
+        :disabled="groupsLoadingMore"
         @click="emit('loadMoreGroups')"
       >Show older groups</button>
     </section>
