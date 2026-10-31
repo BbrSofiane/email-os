@@ -562,6 +562,32 @@ proof those races were absent.
 Targeted parent regression run: 103 tests passed across mailbox, group recovery,
 App selection, notice and Activity suites; typecheck passed. The original
 six-check/native parent run at `834bd60` passed (429 UI tests, 20 opt-in rendered
-skips, 7 native tests). Full post-hardening gates and focused final review are
-recorded below when completed. Native macOS, rendered-browser and disposable
-provider checks remain pending; no real mailbox was mutated.
+skips, 7 native tests). Full post-hardening gates at `766862e` passed independently in the parent:
+136 core unit tests plus all core integration suites, contract drift check,
+Rust formatting/clippy, **438 UI tests passed / 20 opt-in rendered tests skipped**,
+typecheck, production web build, Linux native compile, **7 native bridge tests**,
+and `git diff --check`. Logs are in the session's background terminal `bt-5`.
+The final focused review verified the ten recovery scenarios, then found one
+remaining history refresh-versus-continuation race. A follow-up fix gives both
+paths shared read ownership, coalesces refresh invalidations behind a pending
+continuation, and commits its newly requested page range before replaying the
+refresh. Regression coverage exercises both acquisition orderings. The bounded
+reviewer recheck found this correct, with no remaining P1/P2 blocker in the
+reviewed scenarios.
+
+A subsequent default-parallel core run failed in two unchanged Undo tests:
+`cached_done_excludes_cancelled_and_undone_archives_but_keeps_failed_compensation`
+(expected Cancelled, observed Compensating) and
+`uncertain_failed_and_compensating_operations_are_not_undoable`
+(timed out awaiting Confirmed). No Rust source changed after the prior passing
+run; these failures are recorded rather than hidden by reruns. The first is
+another queued-versus-claim assertion race; the cause of the second timeout has
+not been independently established. The final run (background terminal `bt-7`)
+passed with `RUST_TEST_THREADS=1 mise run test:core`, followed by the unchanged
+contract, lint, UI, typecheck, web-build, native-compile and native-test commands:
+**439 UI tests passed / 20 opt-in rendered tests skipped**, **7 native tests
+passed**, and all core suites passed serially. This is not a claim of stable
+default-parallel tests.
+
+Native macOS, rendered-browser and disposable provider checks remain pending;
+no real mailbox was mutated.

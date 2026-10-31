@@ -225,6 +225,56 @@ describe('useMailbox group recovery fences', () => {
     } finally { stop(); }
   });
 
+  it('serializes history refresh against continuation in both orderings without losing the requested range', async () => {
+    const inner = createBrowserFakeMailClient();
+    for (let i = 0; i < 12; i += 1) await inner.setArchivedGroup({ accountId: 'fixture-account',
+      members: [fixtureRef(`absent-${i}`)], archived: true, requestId: `overlap-${i}` });
+    const refreshGate = deferred<void>();
+    const pageGate = deferred<void>();
+    let holdRefreshOnce = false;
+    let holdPage = false;
+    let cursorCalls = 0;
+    const client: MailClient = { ...inner, subscribe: () => Promise.resolve(() => undefined),
+      listOperationGroups: async (request) => {
+        const page = await inner.listOperationGroups(request);
+        if (request.cursor) {
+          cursorCalls += 1;
+          if (holdPage) await pageGate.promise;
+        } else if (holdRefreshOnce) {
+          holdRefreshOnce = false;
+          await refreshGate.promise;
+        }
+        return page;
+      },
+    };
+    const { result, stop } = scopeRun(() => useMailbox(client));
+    try {
+      await result.ready;
+      await flushMacrotasks(3);
+      holdRefreshOnce = true;
+      const refresh = result.refreshGroups();
+      expect(result.groupsLoadingMore.value).toBe(true);
+      // Continuation is disabled/refused while a manifest refresh owns the
+      // cursor; there can be no append using the previous manifest's cursor.
+      await result.loadMoreGroups();
+      expect(cursorCalls).toBe(0);
+      refreshGate.resolve();
+      await refresh;
+      expect(result.recentGroups.value).toHaveLength(10);
+      holdPage = true;
+      const more = result.loadMoreGroups();
+      await flushMacrotasks(1);
+      await result.refreshGroups(); // coalesced behind the pending append
+      pageGate.resolve();
+      await more;
+      await flushMacrotasks(3);
+      expect(result.recentGroups.value).toHaveLength(12);
+      expect(result.groupsHasMore.value).toBe(false);
+      expect(new Set(result.recentGroups.value.map((group) => group.groupId)).size).toBe(12);
+      expect(result.groupsLoadingMore.value).toBe(false);
+    } finally { stop(); }
+  });
+
   it('orders background detail reads so an older queued view cannot replace a newer failure', async () => {
     const inner = createBrowserFakeMailClient();
     inner.controls.behavior.holdQueued = true;

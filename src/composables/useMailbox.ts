@@ -200,6 +200,7 @@ export interface Mailbox {
   groupsError: Ref<MailError | null>;
   /** True when the backend returned a continuation cursor for more groups. */
   groupsHasMore: Ref<boolean>;
+  /** Shared history-read ownership: refresh and continuation cannot overlap. */
   groupsLoadingMore: Ref<boolean>;
   /** Bounded Activity continuation: appends the next recent-groups page. */
   loadMoreGroups(): Promise<void>;
@@ -266,6 +267,7 @@ export function useMailbox(client: MailClient): Mailbox {
   let groupStatusFetchToken = 0;
   let groupsLoadedPages = 0;
   let groupsCursor: string | null = null;
+  let groupsRefreshPending = false;
   let noticeRehydrated = false;
   let detached = false;
   let unsubscribe: (() => void) | null = null;
@@ -1054,6 +1056,7 @@ export function useMailbox(client: MailClient): Mailbox {
     ++groupDetailToken;
     groupsLoadedPages = 0;
     groupsCursor = null;
+    groupsRefreshPending = false;
     groupsLoadingMore.value = false;
     noticeRehydrated = false;
     recentGroups.value = [];
@@ -1098,8 +1101,12 @@ export function useMailbox(client: MailClient): Mailbox {
     const account = accountStatus.value?.account?.accountId;
     const sessionToken = mailboxSessionToken;
     if (!account) return;
+    if (groupsLoadingMore.value) {
+      groupsRefreshPending = true;
+      return;
+    }
     const token = ++groupsToken;
-    groupsLoadingMore.value = false; // older continuation responses are invalidated
+    groupsLoadingMore.value = true;
     const pagesToLoad = Math.max(1, groupsLoadedPages);
     const collected: OperationGroupSummary[] = [];
     let cursor: string | null = null;
@@ -1116,18 +1123,30 @@ export function useMailbox(client: MailClient): Mailbox {
         cursor = result.nextCursor;
         hasMore = true;
       }
+      groupsError.value = null;
+      groupsHasMore.value = hasMore;
+      groupsCursor = cursor;
+      groupsLoadedPages = pagesToLoad;
+      recentGroups.value = collected;
     } catch (raw) {
       if (detached || sessionToken !== mailboxSessionToken || token !== groupsToken) return;
       // A failed history read is a recovery boundary, not an empty result.
       groupsError.value = toMailError(raw);
       // Keep the last complete manifest and cursor, not a silent partial page.
-      return;
+    } finally {
+      finishGroupsRead(sessionToken, token);
     }
-    groupsError.value = null;
-    groupsHasMore.value = hasMore;
-    groupsCursor = cursor;
-    groupsLoadedPages = pagesToLoad;
-    recentGroups.value = collected;
+  }
+
+  function finishGroupsRead(sessionToken: number, token: number): void {
+    if (detached || sessionToken !== mailboxSessionToken || token !== groupsToken) return;
+    groupsLoadingMore.value = false;
+    if (groupsRefreshPending) {
+      groupsRefreshPending = false;
+      // Coalesce invalidation received during continuation, retaining the
+      // newly committed page range before the refresh captures its extent.
+      void refreshRecentGroups();
+    }
   }
 
   /** Mailbox-seam alias for retrying a failed recent-groups history read. */
@@ -1156,7 +1175,7 @@ export function useMailbox(client: MailClient): Mailbox {
       if (detached || sessionToken !== mailboxSessionToken || token !== groupsToken) return;
       groupsError.value = toMailError(raw);
     } finally {
-      if (!detached && sessionToken === mailboxSessionToken && token === groupsToken) groupsLoadingMore.value = false;
+      finishGroupsRead(sessionToken, token);
     }
   }
 
