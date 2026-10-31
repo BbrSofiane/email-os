@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { effectScope } from 'vue';
 import { useMailbox } from '../src/composables/useMailbox';
 import type { ConversationRef, InboxSnapshot, MailClient, OperationReceipt } from '../src/lib/ipc/client';
-import { accountMethods, countingClient, createBrowserFakeMailClient, deferred, fixtureRef, flushMacrotasks } from './helpers';
+import { accountMethods, countingClient, groupMethods, createBrowserFakeMailClient, deferred, fixtureRef, flushMacrotasks } from './helpers';
 import { sameConversation } from '../src/composables/useMailbox';
 
 function scopeRun<T>(fn: () => T): { result: T; stop: () => void } {
@@ -17,6 +17,7 @@ describe('useMailbox', () => {
     const inner = createBrowserFakeMailClient();
     const client: MailClient = {
       ...accountMethods(inner),
+      ...groupMethods(inner),
       listConversations: () => {
         order.push('list');
         return inner.listConversations();
@@ -75,6 +76,7 @@ describe('useMailbox', () => {
     let call = 0;
     const client: MailClient = {
       ...accountMethods(inner),
+      ...groupMethods(inner),
       listConversations: () => {
         call += 1;
         return call === 1 ? d1.promise : d2.promise;
@@ -100,6 +102,7 @@ describe('useMailbox', () => {
     let call = 0;
     const client: MailClient = {
       ...accountMethods(inner),
+      ...groupMethods(inner),
       listConversations: () => inner.listConversations(),
       getConversation: (ref: ConversationRef) => {
         call += 1;
@@ -125,6 +128,7 @@ describe('useMailbox', () => {
     const inner = createBrowserFakeMailClient();
     const client: MailClient = {
       ...accountMethods(inner),
+      ...groupMethods(inner),
       listConversations: () => inner.listConversations(),
       getConversation: (ref) =>
         ref.conversationId === 'conv-01'
@@ -165,6 +169,7 @@ describe('useMailbox', () => {
     let listCalls = 0;
     const client: MailClient = {
       ...accountMethods(inner),
+      ...groupMethods(inner),
       listConversations: async () => {
         listCalls += 1;
         return inner.listConversations();
@@ -220,6 +225,7 @@ describe('useMailbox', () => {
     let listCalls = 0;
     const client: MailClient = {
       ...accountMethods(inner),
+      ...groupMethods(inner),
       listConversations: async () => {
         listCalls += 1;
         return inner.listConversations();
@@ -297,6 +303,7 @@ describe('useMailbox', () => {
     let archiveCalls = 0;
     const client: MailClient = {
       ...accountMethods(inner),
+      ...groupMethods(inner),
       getAccountStatus: () => status.promise,
       listConversations: () => inner.listConversations(),
       getConversation: (ref) => inner.getConversation(ref),
@@ -321,6 +328,7 @@ describe('useMailbox', () => {
     const inner = createBrowserFakeMailClient();
     const client: MailClient = {
       ...accountMethods(inner),
+      ...groupMethods(inner),
       listConversations: () => inner.listConversations(),
       getConversation: (ref) => inner.getConversation(ref),
       setArchived: (c) => inner.setArchived(c),
@@ -731,6 +739,7 @@ describe('useMailbox (Slice 02 account status and lifecycle)', () => {
     let statusCall = 0;
     const client: MailClient = {
       ...accountMethods(inner),
+      ...groupMethods(inner),
       listConversations: () => inner.listConversations(),
       getConversation: (ref) => inner.getConversation(ref),
       setArchived: (command) => gate.promise.then(() => inner.setArchived(command)),

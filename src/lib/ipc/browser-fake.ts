@@ -38,7 +38,13 @@ import type {
   DraftRef,
   DraftReplyLink,
   DraftSummary,
+  GetOperationGroupRequest,
+  GroupMemberReceipt,
+  GroupMemberStatusView,
+  GroupMemberUndoResult,
+  GroupUndoReceipt,
   InboxSnapshot,
+  ListOperationGroupsRequest,
   MailClient,
   MailError,
   MailMode,
@@ -46,18 +52,25 @@ import type {
   Message,
   MutationAccess,
   OperationFailure,
+  OperationGroupPage,
+  OperationGroupReceipt,
+  OperationGroupStatus,
   OperationReceipt,
   OperationStatus,
   OperationSummary,
   RetryOperation,
   SaveDraft,
   SetArchived,
+  SetArchivedGroup,
   SetRead,
+  SetReadGroup,
   SyncState,
   UndoOperation,
+  UndoOperationGroup,
   UndoReceipt,
 } from './client';
 import { FIXTURE_MAILBOX } from './generated';
+import { OPERATION_GROUP_MAX_MEMBERS } from './client';
 
 export const BROWSER_PREVIEW_DISCLOSURE =
   'Browser preview: in-memory fake client. Nothing is durable and the native core is not connected.';
@@ -173,6 +186,29 @@ interface FakeConversation {
   retainedSnapshotAt?: string;
 }
 
+/**
+ * Durable group header (UX-05 §4.2). The fake keeps the immutable receipt, the
+ * shared action-order sequence, the one group-Undo attempt flag and the
+ * per-member undo decisions in memory only.
+ */
+interface InternalGroup {
+  groupId: string;
+  requestId: string;
+  accountId: string;
+  kind: MailboxOperationKind;
+  requestedArchived?: boolean;
+  requestedRead?: boolean;
+  acceptedAt: string;
+  /** Shared top-level action-order identity (groups and standalone singles). */
+  seq: number;
+  members: GroupMemberReceipt[];
+  /** Number of accepted children; an all-rejected group consumes no undo slot. */
+  acceptedChildren: number;
+  /** True once this group's single group-Undo attempt has been accepted. */
+  undone: boolean;
+  undoReceipt?: GroupUndoReceipt;
+}
+
 interface InternalOperation {
   id: string;
   conversationId: string;
@@ -185,6 +221,10 @@ interface InternalOperation {
   lastError?: MailError;
   /** Acceptance time from the injected clock; the undo window runs from here. */
   acceptedAt: string;
+  /** Shared action-order identity; op ids increase in the same order. */
+  seq: number;
+  /** Present on operations accepted as members of a durable group. */
+  groupId?: string;
   /**
    * Effective prior value of this operation's dimension per target message,
    * captured at acceptance; `null`/absent is an unknown fact (not undoable).
@@ -330,6 +370,7 @@ function toOperationSummary(op: InternalOperation, accountId: string, undoableUn
     ...(op.requestedRead === undefined ? {} : { requestedRead: op.requestedRead }),
     ...(op.lastError === undefined ? {} : { lastError: op.lastError }),
     ...(op.undoOf === undefined ? {} : { undoOf: op.undoOf }),
+    ...(op.groupId === undefined ? {} : { groupId: op.groupId }),
     ...(undoableUntil === undefined ? {} : { undoableUntil }),
   };
 }
@@ -346,6 +387,12 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
   let pendingClose: AppCloseRequest | null = null;
   let completedCloses = 0;
   const receiptsByRequest = new Map<string, { fingerprint: string; receipt: OperationReceipt | UndoReceipt }>();
+  const groups: InternalGroup[] = [];
+  const groupReceiptsByRequest = new Map<string, { fingerprint: string; receipt: OperationGroupReceipt }>();
+  const groupUndoReceiptsByRequest = new Map<string, { fingerprint: string; receipt: GroupUndoReceipt }>();
+  let groupCounter = 0;
+  /** Shared top-level action-order identity across singles, group children and groups. */
+  let actionSeqCounter = 0;
   const behavior: FakeBehavior = { failNext: 0, failureKind: 'provider_rejected', hold: false, holdQueued: false, holdUpgrade: false, holdUndo: false };
 
   let opCounter = 0;
@@ -484,10 +531,13 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
   /** §3.2 rules 2–7 (rule 1 holds by construction in the single-account fake). */
   function undoBlocker(op: InternalOperation): MailError | null {
     if (op.undoOf !== undefined) return { kind: 'undo_unavailable', reason: 'not_applicable' } satisfies MailError;
+    // Group children are part of their group's top-level action: they are never
+    // individually undoable (docs/ux-05-safe-bulk-processing.md §5).
+    if (op.groupId !== undefined) return { kind: 'undo_unavailable', reason: 'not_applicable' } satisfies MailError;
     if (Date.parse(now()) >= Date.parse(op.acceptedAt) + UNDO_WINDOW_MS) {
       return { kind: 'undo_unavailable', reason: 'expired' } satisfies MailError;
     }
-    if (allOps().some((entry) => entry.op.undoOf === undefined && entry.op.id > op.id)) {
+    if (supersededByNewerAction(op.seq)) {
       return { kind: 'undo_unavailable', reason: 'superseded' } satisfies MailError;
     }
     if (allOps().some((entry) => entry.op.undoOf === op.id)) {
@@ -513,6 +563,165 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       accountId,
       undoBlocker(op) ? undefined : new Date(Date.parse(op.acceptedAt) + UNDO_WINDOW_MS).toISOString(),
     );
+  }
+
+  /** A newer standalone single or a newer action-bearing group supersedes `seq`. */
+  function supersededByNewerAction(seq: number): boolean {
+    return allOps().some((entry) => entry.op.undoOf === undefined && entry.op.groupId === undefined && entry.op.seq > seq)
+      || groups.some((g) => g.acceptedChildren > 0 && g.seq > seq);
+  }
+
+  /** One group's undo window: latest top-level action, 10 s from group acceptance. */
+  function groupUndoBlocker(group: InternalGroup): MailError | null {
+    if (group.undone) return { kind: 'undo_unavailable', reason: 'already_undone' } satisfies MailError;
+    if (group.acceptedChildren === 0) return { kind: 'undo_unavailable', reason: 'not_applicable' } satisfies MailError;
+    if (Date.parse(now()) >= Date.parse(group.acceptedAt) + UNDO_WINDOW_MS) {
+      return { kind: 'undo_unavailable', reason: 'expired' } satisfies MailError;
+    }
+    if (supersededByNewerAction(group.seq)) return { kind: 'undo_unavailable', reason: 'superseded' } satisfies MailError;
+    return null;
+  }
+
+  function memberStatusView(member: GroupMemberReceipt): GroupMemberStatusView {
+    const op = member.operationId
+      ? allOps().find((entry) => entry.op.id === member.operationId)?.op ?? null
+      : null;
+    return {
+      ordinal: member.ordinal,
+      conversation: { ...member.conversation },
+      operationId: member.operationId,
+      status: op ? op.status : 'rejected',
+      failure: op ? op.failure : null,
+      rejection: member.rejection,
+    };
+  }
+
+  function groupStatus(group: InternalGroup): OperationGroupStatus {
+    const blocker = groupUndoBlocker(group);
+    return {
+      group: snapshotCopy(groupReceipt(group)),
+      members: group.members.map((member) => memberStatusView(member)),
+      undo: blocker
+        ? { available: false, reason: blocker.kind === 'undo_unavailable' ? blocker.reason : null, undoableUntil: null }
+        : { available: true, reason: null, undoableUntil: new Date(Date.parse(group.acceptedAt) + UNDO_WINDOW_MS).toISOString() },
+    };
+  }
+
+  function groupReceipt(group: InternalGroup): OperationGroupReceipt {
+    return {
+      groupId: group.groupId,
+      requestId: group.requestId,
+      accountId: group.accountId,
+      kind: group.kind,
+      ...(group.requestedArchived === undefined ? {} : { requestedArchived: group.requestedArchived }),
+      ...(group.requestedRead === undefined ? {} : { requestedRead: group.requestedRead }),
+      acceptedAt: group.acceptedAt,
+      members: snapshotCopy(group.members),
+    };
+  }
+
+  function groupSummary(group: InternalGroup): OperationGroupPage['groups'][number] {
+    return {
+      groupId: group.groupId,
+      requestId: group.requestId,
+      kind: group.kind,
+      ...(group.requestedArchived === undefined ? {} : { requestedArchived: group.requestedArchived }),
+      ...(group.requestedRead === undefined ? {} : { requestedRead: group.requestedRead }),
+      acceptedAt: group.acceptedAt,
+      members: group.members.map((member) => ({ ...member.conversation })),
+      undone: group.undone,
+    };
+  }
+
+  /**
+   * Shared group acceptance for archive and read groups (UX-05 §4.1 in-memory):
+   * structural validation, idempotent receipt lookup, per-member acceptance with
+   * typed rejections, one durable receipt. All-rejected valid requests still get
+   * an idempotent receipt with zero child operations and consume no undo slot.
+   */
+  function acceptGroup(
+    command: { accountId: string; members: ConversationRef[]; requestId: string },
+    kind: MailboxOperationKind,
+    requested: { archived?: boolean; read?: boolean },
+  ): OperationGroupReceipt {
+    requireMutationAccess(kind);
+    if (!command.accountId) throw { kind: 'invalid_request', field: 'accountId' } satisfies MailError;
+    if (!Array.isArray(command.members) || command.members.length < 1 || command.members.length > OPERATION_GROUP_MAX_MEMBERS) {
+      throw { kind: 'invalid_request', field: 'members' } satisfies MailError;
+    }
+    for (const member of command.members) {
+      if (!member || typeof member.accountId !== 'string' || !member.accountId
+        || typeof member.conversationId !== 'string' || !member.conversationId) {
+        throw { kind: 'invalid_request', field: 'members' } satisfies MailError;
+      }
+    }
+    // Cross-account members reject the whole request (no partial acceptance).
+    if (command.members.some((member) => member.accountId !== command.accountId)) {
+      throw { kind: 'invalid_request', field: 'members' } satisfies MailError;
+    }
+    const seen = new Set<string>();
+    for (const member of command.members) {
+      const key = `${member.accountId}:${member.conversationId}`;
+      if (seen.has(key)) throw { kind: 'invalid_request', field: 'members' } satisfies MailError;
+      seen.add(key);
+    }
+    const fingerprint = JSON.stringify([
+      'operation-group', kind, command.accountId,
+      command.members.map((member) => [member.accountId, member.conversationId]),
+      requested.archived, requested.read,
+    ]);
+    const requestKey = `${command.accountId}:${command.requestId}`;
+    const existing = groupReceiptsByRequest.get(requestKey);
+    if (existing) {
+      if (existing.fingerprint !== fingerprint) throw { kind: 'request_id_conflict' } satisfies MailError;
+      return snapshotCopy(existing.receipt);
+    }
+    groupCounter += 1;
+    const groupId = `grp-${String(groupCounter).padStart(4, '0')}`;
+    const acceptedAt = now();
+    const members: GroupMemberReceipt[] = [];
+    for (let ordinal = 0; ordinal < command.members.length; ordinal += 1) {
+      const ref = command.members[ordinal]!;
+      const conv = byId(ref.conversationId);
+      if (!conv || conv.ref.accountId !== command.accountId) {
+        members.push({ ordinal, conversation: { ...ref }, operationId: null, rejection: 'conversation_missing' });
+        continue;
+      }
+      // Mirrors core's existing 1000-messages-per-operation bound.
+      if (conv.messages.length > 1000) {
+        members.push({ ordinal, conversation: { ...ref }, operationId: null, rejection: 'target_bound_exceeded' });
+        continue;
+      }
+      const child = enqueueOperation(
+        conv,
+        kind,
+        requested.archived ?? false,
+        requested.read,
+        conv.messages.map((message) => message.id),
+        `${command.requestId}:${ordinal}`,
+        JSON.stringify(['group-child', command.requestId, ordinal]),
+        { groupId, acceptedAt },
+      );
+      members.push({ ordinal, conversation: { accountId: ref.accountId, conversationId: ref.conversationId }, operationId: child.operationId, rejection: null });
+    }
+    const group: InternalGroup = {
+      groupId,
+      requestId: command.requestId,
+      accountId: command.accountId,
+      kind,
+      ...(requested.archived === undefined ? {} : { requestedArchived: requested.archived }),
+      ...(requested.read === undefined ? {} : { requestedRead: requested.read }),
+      acceptedAt,
+      seq: ++actionSeqCounter,
+      members,
+      acceptedChildren: members.filter((member) => member.operationId !== null).length,
+      undone: false,
+    };
+    groups.push(group);
+    const receipt = groupReceipt(group);
+    groupReceiptsByRequest.set(requestKey, { fingerprint, receipt: snapshotCopy(receipt) });
+    notify();
+    return snapshotCopy(receipt);
   }
 
   function snapshot(): InboxSnapshot {
@@ -559,11 +768,11 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
     messageIds: string[],
     requestId: string,
     fingerprint: string,
-    options: { priorValues?: Record<string, boolean | null>; undoOf?: string } = {},
+    options: { priorValues?: Record<string, boolean | null>; undoOf?: string; groupId?: string; acceptedAt?: string } = {},
   ): OperationReceipt {
     opCounter += 1;
     const operationId = `op-${String(opCounter).padStart(4, '0')}`;
-    const acceptedAt = now();
+    const acceptedAt = options.acceptedAt ?? now();
     const receipt: OperationReceipt = { operationId, acceptedAt };
     receiptsByRequest.set(requestId, { fingerprint, receipt });
     const op: InternalOperation = {
@@ -576,12 +785,14 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       status: 'queued',
       failure: null,
       acceptedAt,
+      seq: ++actionSeqCounter,
       // Per-message effective value of THIS operation's dimension at acceptance
       // (before this op joins the overlay); retries reuse the original's preimage.
       priorValues: options.priorValues
         ? { ...options.priorValues }
         : effectivePriorValues(conv, kind, messageIds),
       ...(options.undoOf === undefined ? {} : { undoOf: options.undoOf }),
+      ...(options.groupId === undefined ? {} : { groupId: options.groupId }),
     };
     conv.ops.push(op);
     if (behavior.hold || behavior.holdQueued) holdReleased = false;
@@ -695,6 +906,9 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
           // of another account's operations or mail into the new identity.
           conversations.splice(0, conversations.length, ...seedConversations());
           receiptsByRequest.clear();
+          groups.splice(0, groups.length);
+          groupReceiptsByRequest.clear();
+          groupUndoReceiptsByRequest.clear();
           cacheCleared = false;
         }
         const accountId = account.mode === 'gmail' ? 'gmail-account' : ACCOUNT_ID;
@@ -965,6 +1179,123 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       return snapshotCopy(receipt);
     },
 
+    async setArchivedGroup(command: SetArchivedGroup): Promise<OperationGroupReceipt> {
+      return acceptGroup(command, 'archive', { archived: command.archived });
+    },
+
+    async setReadGroup(command: SetReadGroup): Promise<OperationGroupReceipt> {
+      return acceptGroup(command, 'read', { read: command.read });
+    },
+
+    async getOperationGroup(request: GetOperationGroupRequest): Promise<OperationGroupStatus | null> {
+      const active = accountStatus().account;
+      // Malformed/cross-account lookups reject; an uncommitted request resolves null.
+      if (!active || !request.accountId || request.accountId !== active.accountId) {
+        throw { kind: 'invalid_request', field: 'accountId' } satisfies MailError;
+      }
+      if (!request.requestId) throw { kind: 'invalid_request', field: 'requestId' } satisfies MailError;
+      const group = groups.find((entry) => entry.accountId === request.accountId && entry.requestId === request.requestId);
+      return group ? snapshotCopy(groupStatus(group)) : null;
+    },
+
+    async listOperationGroups(request: ListOperationGroupsRequest): Promise<OperationGroupPage> {
+      const active = accountStatus().account;
+      if (!active || request.accountId !== active.accountId) throw failNotShown();
+      if (!Number.isInteger(request.limit) || request.limit < 1 || request.limit > 100) {
+        throw { kind: 'invalid_request', field: 'limit' } satisfies MailError;
+      }
+      const sorted = groups
+        .filter((entry) => entry.accountId === request.accountId)
+        .sort((a, b) => b.seq - a.seq);
+      let start = 0;
+      if (request.cursor !== null) {
+        const index = sorted.findIndex((entry) => entry.groupId === request.cursor);
+        if (index < 0) throw { kind: 'invalid_request', field: 'cursor' } satisfies MailError;
+        start = index + 1;
+      }
+      const page = sorted.slice(start, start + request.limit);
+      const last = page[page.length - 1];
+      return snapshotCopy({
+        groups: page.map(groupSummary),
+        nextCursor: start + request.limit < sorted.length && last ? last.groupId : null,
+      });
+    },
+
+    async undoOperationGroup(command: UndoOperationGroup): Promise<GroupUndoReceipt> {
+      if (!command.requestId) throw { kind: 'invalid_request', field: 'requestId' } satisfies MailError;
+      const fingerprint = JSON.stringify(['undo-operation-group', command.groupId]);
+      const existing = groupUndoReceiptsByRequest.get(command.requestId);
+      if (existing) {
+        if (existing.fingerprint !== fingerprint) throw { kind: 'request_id_conflict' } satisfies MailError;
+        return snapshotCopy(existing.receipt);
+      }
+      const group = groups.find((entry) => entry.groupId === command.groupId);
+      if (!group) throw failNotShown();
+      const blocker = groupUndoBlocker(group);
+      if (blocker) throw blocker;
+      // Per-member decisions in persisted ordinal order; failures never roll back
+      // eligible siblings (UX-05 §5).
+      const results: GroupMemberUndoResult[] = group.members.map((member) => {
+        const base = { ordinal: member.ordinal, conversation: { ...member.conversation } };
+        if (member.rejection !== null) {
+          return { ...base, decision: { kind: 'skipped', reason: 'acceptance_rejected' } as const, operationIds: [] };
+        }
+        const entry = allOps().find((candidate) => candidate.op.id === member.operationId);
+        const op = entry?.op;
+        if (!entry || !op || member.operationId === null) {
+          return { ...base, decision: { kind: 'skipped', reason: 'outcome_unknown' } as const, operationIds: [] };
+        }
+        if (op.status === 'failed') {
+          return { ...base, decision: { kind: 'skipped', reason: 'failed' } as const, operationIds: [] };
+        }
+        if (op.status === 'outcome_unknown') {
+          return { ...base, decision: { kind: 'skipped', reason: 'outcome_unknown' } as const, operationIds: [] };
+        }
+        if (op.status === 'cancelled') {
+          return { ...base, decision: { kind: 'skipped', reason: 'already_undone' } as const, operationIds: [] };
+        }
+        if (op.status === 'queued') {
+          // Queued intent cancels in place; it never reached the provider.
+          op.status = 'cancelled';
+          return { ...base, decision: { kind: 'cancelled' } as const, operationIds: [] };
+        }
+        // applying/confirmed: ordered compensation from the original preimage.
+        if (op.messageIds.some((id) => op.priorValues[id] === undefined || op.priorValues[id] === null)) {
+          return { ...base, decision: { kind: 'skipped', reason: 'unknown_prior' } as const, operationIds: [] };
+        }
+        const priorGroups = new Map<boolean, string[]>();
+        for (const id of op.messageIds) {
+          const value = op.priorValues[id]!;
+          const group_ = priorGroups.get(value) ?? [];
+          group_.push(id);
+          priorGroups.set(value, group_);
+        }
+        const operationIds: string[] = [];
+        for (const [value, ids] of priorGroups) {
+          const compensating = enqueueOperation(
+            entry.conv,
+            op.kind,
+            op.kind === 'read' ? op.requestedArchived : value,
+            op.kind === 'read' ? value : op.requestedRead,
+            ids,
+            `${command.requestId}:${op.id}:${ids.join(',')}`,
+            JSON.stringify(['group-undo-compensation', command.requestId, op.id, value]),
+            { undoOf: op.id },
+          );
+          operationIds.push(compensating.operationId);
+        }
+        return { ...base, decision: { kind: 'compensating' } as const, operationIds };
+      });
+      const receipt: GroupUndoReceipt = { groupId: group.groupId, requestId: command.requestId, acceptedAt: now(), members: results };
+      // One undo attempt per group: the durable decision set is persisted before
+      // it is returned, and later reconciliations never re-enter this branch.
+      group.undone = true;
+      group.undoReceipt = snapshotCopy(receipt);
+      groupUndoReceiptsByRequest.set(command.requestId, { fingerprint, receipt: snapshotCopy(receipt) });
+      notify();
+      return snapshotCopy(receipt);
+    },
+
     async subscribe(listener: () => void): Promise<() => void> {
       listeners.add(listener);
       return () => {
@@ -1160,6 +1491,9 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
         delete conv.retainedSnapshotAt;
       }
       receiptsByRequest.clear();
+      groups.splice(0, groups.length);
+      groupReceiptsByRequest.clear();
+      groupUndoReceiptsByRequest.clear();
       // Core resolves only after credential deletion and local account/cache clearing.
       account.connection = 'disconnected';
       account.emailAddress = null;

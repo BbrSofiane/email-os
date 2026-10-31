@@ -20,6 +20,30 @@ import { computed } from 'vue';
 import type { LastActionId, OperationSummaryLike } from '../composables/useMailbox';
 import type { UndoOutcome } from '../lib/ipc/client';
 
+/** Skip-reason wording for partial group Undo results (UX-05 §5). */
+const SKIP_REASON_LABELS: Record<string, string> = {
+  acceptance_rejected: 'rejected at acceptance',
+  failed: 'failed',
+  outcome_unknown: 'outcome unknown',
+  unknown_prior: 'unknown prior state',
+  already_undone: 'already undone',
+};
+
+export interface GroupNoticeView {
+  count: number;
+  /** Authoritative per-status member counts (accepted ≠ succeeded). */
+  counts: { pending: number; confirmed: number; failed: number; rejected: number; unknown: number; cancelled: number };
+  /** True while acceptance itself is unresolved (lost response, not yet committed). */
+  acceptanceUnknown: boolean;
+  /** True once any authoritative member status has landed. */
+  statusKnown: boolean;
+  /** ISO group-undo deadline from authoritative state; null when not undoable. */
+  undoableUntil: string | null;
+  hadWindow: boolean;
+  /** Per-member group Undo outcomes, once the one attempt is accepted. */
+  undone: { cancelled: number; compensating: number; skipped: number; skipReasons: Record<string, number> } | null;
+}
+
 const props = defineProps<{
   /** Null renders an empty live region so slot replacement stays announceable. */
   notice: {
@@ -36,12 +60,57 @@ const props = defineProps<{
     hadWindow: boolean;
     /** Set after a successful undo: outcome plus the refreshed compensating rows. */
     undone: { outcome: UndoOutcome; compensations: OperationSummaryLike[] } | null;
+    /** Present when the slot holds a bulk group action instead of a single. */
+    group?: GroupNoticeView | null;
   } | null;
   /** Advisory wall-clock milliseconds (App-owned timer); the backend decides eligibility. */
   now: number;
 }>();
 
-const emit = defineEmits<{ undo: [] }>();
+const emit = defineEmits<{ undo: []; undoGroup: []; dismissGroup: [] }>();
+
+const isGroup = computed(() => !!props.notice?.group);
+
+/** Group status text: aggregate wording never hides partial failure (§6). */
+const groupStatusText = computed(() => {
+  const group = props.notice?.group ?? null;
+  if (!group) return '';
+  if (group.acceptanceUnknown) return 'Acceptance not yet known';
+  if (!group.statusKnown) return 'Accepting…';
+  if (group.undone) {
+    const undoneCount = group.undone.cancelled + group.undone.compensating;
+    const reasonEntries = Object.entries(group.undone.skipReasons).filter(([, n]) => n > 0);
+    const skipText = group.undone.skipped === 1 && reasonEntries.length === 1
+      ? `1 skipped — ${SKIP_REASON_LABELS[reasonEntries[0]![0]!] ?? reasonEntries[0]![0]!}`
+      : `${group.undone.skipped} skipped${reasonEntries.length ? ` — ${reasonEntries.map(([reason, n]) => `${n} ${SKIP_REASON_LABELS[reason] ?? reason}`).join(', ')}` : ''}`;
+    const parts = [`Undo accepted for ${undoneCount} of ${group.count}`, skipText];
+    if (group.undone.compensating > 0) parts.push('restoring…');
+    return parts.join('; ');
+  }
+  const c = group.counts;
+  const parts: string[] = [];
+  if (c.confirmed > 0) parts.push(`${c.confirmed} confirmed`);
+  if (c.pending > 0) parts.push(`${c.pending} pending`);
+  if (c.failed > 0) parts.push(`${c.failed} failed`);
+  if (c.unknown > 0) parts.push(`${c.unknown} outcome unknown`);
+  if (c.cancelled > 0) parts.push(`${c.cancelled} cancelled`);
+  if (c.rejected > 0) parts.push(`${c.rejected} rejected at acceptance`);
+  return parts.length > 0 ? `Accepted · ${parts.join(', ')}` : 'Accepted';
+});
+
+const groupUndoVisible = computed(() => {
+  const group = props.notice?.group ?? null;
+  if (!group || group.undone || group.acceptanceUnknown) return false;
+  const until = group.undoableUntil;
+  return until !== null && Date.parse(until) > props.now;
+});
+
+const groupUndoExpired = computed(() => {
+  const group = props.notice?.group ?? null;
+  if (!group || group.undone || group.acceptanceUnknown || !group.hadWindow) return false;
+  const until = group.undoableUntil;
+  return until === null || Date.parse(until) <= props.now;
+});
 
 /** Recovery clause after an expired window, per the action that was undone. */
 const UNDO_EXPIRED_RECOVERY: Record<LastActionId, string> = {
@@ -114,7 +183,26 @@ const truncatedSubject = computed(() => {
     aria-live="polite"
     data-test="action-notice"
   >
-    <template v-if="notice">
+    <!-- Bulk group slot (UX-05): one identity, per-status counts, partial undo. -->
+    <template v-if="notice && isGroup">
+      <p class="action-notice-text" data-test="action-notice-text">
+        <span class="action-notice-label" data-test="action-notice-label">{{ notice.label }} · {{ notice.group!.count }} conversations</span>
+        <span class="action-notice-status" data-test="action-notice-status">{{ groupStatusText }}</span>
+        <span v-if="notice.group!.acceptanceUnknown" class="action-notice-expired" data-test="action-notice-acceptance-unknown">
+          Nothing is known to have committed; checking again replays this exact request.
+        </span>
+        <span v-else-if="groupUndoExpired" class="action-notice-expired" data-test="action-notice-expired">Undo expired — recover individual members from Activity</span>
+      </p>
+      <span v-if="notice.group!.acceptanceUnknown" class="action-notice-undo">
+        <button type="button" data-test="action-notice-recover-acceptance" @click="emit('undoGroup')">Check acceptance</button>
+        <button type="button" data-test="action-notice-dismiss-group" @click="emit('dismissGroup')">Dismiss</button>
+      </span>
+      <span v-else-if="groupUndoVisible" class="action-notice-undo">
+        <button type="button" data-test="action-notice-undo-group" @click="emit('undoGroup')">Undo</button>
+        <kbd data-test="action-notice-hint">Z</kbd>
+      </span>
+    </template>
+    <template v-else-if="notice">
       <p class="action-notice-text" data-test="action-notice-text">
         <span class="action-notice-label" data-test="action-notice-label">
           {{ notice.label }}<template v-if="notice.subject"> · {{ truncatedSubject }}</template>
