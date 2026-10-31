@@ -486,7 +486,7 @@ Fix-pass gate results (integration worker, merged fix tree, logs
 
 | Check | Result |
 | --- | --- |
-| `mise run test:core` | pass — 136 lib + 2 cached_done + 7 drafts + 8 gmail_auth + 30 gmail_cache + 15 gmail_ops + 16 integration + 17 undo, 0 failed (one unrelated pre-existing flake observed once, see below; green on rerun) |
+| `mise run test:core` | pass — 136 lib + 2 cached_done + 7 drafts + 8 gmail_auth + 30 gmail_cache + 15 gmail_ops + 16 integration + 17 undo, 0 failed (one unrelated pre-existing flake observed once, see below; green on rerun; re-confirmed green after the second flake observation) |
 | `mise run check:contract` | pass — regenerated `generated.ts` matches Rust DTOs |
 | `mise run lint:core` | pass — `cargo fmt --check` + clippy `-D warnings` |
 | `mise run test:ui` | pass — 429 passed \| 20 skipped (27 new regression tests) |
@@ -495,12 +495,17 @@ Fix-pass gate results (integration worker, merged fix tree, logs
 | `mise run check:native` | pass |
 | `mise run test:native` | pass — 7/7 native bridge tests |
 
-Known pre-existing flake (documented in UX-04 §9, reproduced once at baseline
-`80441d6` under full-suite parallel load, not caused by this pass): the Gmail
+Known pre-existing flake (documented in UX-04 §9): the Gmail
 `undoable_until_survives_a_restart_within_the_window_and_expires_after_it`
 test can lose a queued-vs-claim race after restart (expects `Cancelled`, saw
-`Compensating`). Single-suite runs are stable; no scheduler/timeout change is
-made in this slice.
+`Compensating`). Observed twice — once at baseline `80441d6` (verified via
+`git stash`) and once at the fix tree under full-suite parallel load. The
+production behavior is correct (undoing an operation the worker just claimed
+compensates it); the test asserts one specific interleaving of an inherently
+raced observation. The worker's exponential backoff makes the queued phase
+last seconds, so single-suite runs — including `RUST_TEST_THREADS=1` — are
+consistently green (17/17 in both modes, re-verified after the fix pass).
+No scheduler/timeout change is made in this slice.
 
 ### Known residual gaps (not inferred as done)
 
