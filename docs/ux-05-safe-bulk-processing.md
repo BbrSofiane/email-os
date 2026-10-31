@@ -1,6 +1,6 @@
 # UX-05 — Select and process several conversations safely
 
-Status: **proposed implementation scope; not implemented or runtime-validated.**
+Status: **implemented and integrated on `feat/ux-05-safe-bulk-processing` (synthetic validation only; see §9).**
 Scoped against `ed6b2d2` after UX-04. Source requirements:
 [UX spec](../superhuman-email-browsing-ux-spec.md) §List focus, opening, and
 selection, §Context precedence, BROWSE-06/18; delivery boundary:
@@ -362,3 +362,54 @@ Recommended decisions for approval before implementation:
 
 No ADR expansion or new provider authority is needed for these existing archive/read
 operation kinds. The safety/disposable-account gates remain unchanged.
+
+## 9. Implementation ledger
+
+Status: implemented by two isolated worker lanes — backend (Rust stores, shell,
+IPC; `work/ux-05-core` commit `5e54e45`) and frontend (selection UX, group
+dispatch/recovery, browser fake; `work/ux-05-ui` commit `6d8a5fe`), both on the
+frozen seam `6ee1260` — and merged `--no-ff` into
+`feat/ux-05-safe-bulk-processing` at `e5bc3d2` (core) and `13f45dd` (UI) with
+clean merges and no integration code changes required. All four recommended
+decisions were implemented as approved (100-member bound, atomic local
+acceptance with persisted member rejections, latest top-level action with one
+partial Undo attempt, reader-surviving selection cleared on context/account
+change). Nothing here certifies native WKWebView behavior or real provider
+behavior; all tests are synthetic.
+
+### Integrated gate results (parent, merged tree, logs `/tmp/ux05-checks/`)
+
+| Check | Result |
+| --- | --- |
+| `mise run test:core` | pass — 129 lib + 2 cached_done + 7 drafts + 8 gmail_auth + 30 gmail_cache + 15 gmail_ops + 16 integration + 17 undo, 0 failed |
+| `mise run check:contract` | pass — generated.ts matches Rust DTOs |
+| `mise run lint:core` | pass — `cargo fmt --check` + clippy `-D warnings` |
+| `mise run test:ui` | pass — 402 passed \| 20 skipped (the 20 are the opt-in real-Chrome rendered suites) |
+| `mise run typecheck` | pass — `vue-tsc --noEmit`, 0 errors |
+| `mise run build:web` | pass — vite build |
+| `mise run check:native` | pass — `cargo check --locked -p email-os --all-targets` |
+| `mise run test:native` | pass — 7/7 native bridge tests |
+| `cargo build --locked -p email-os` | pass — ACL manifest (`src-tauri/gen/schemas/acl-manifests.json`) contains all five group permissions |
+
+### Known residual gaps (not inferred as done)
+
+- Native fixture macOS checklist from §7 (actual X, Shift+J/K, Cmd/Shift-click,
+  Escape, clear/last-row focus, Z, restart recovery, VoiceOver scope/outcome
+  announcements) is pending operator validation; native IPC behavior is covered
+  here only by the bridge tests and generated permissions.
+- Real-Chrome rendered layout/focus regression could not run in the Linux VM
+  (CDP `Page.navigate` timeout; opt-in at baseline). jsdom and the production
+  build cover the available paths.
+- Gmail read-group remote convergence (BROWSE-18) requires the approved
+  disposable account and opt-in modify grant; no provider test was run.
+- The retry→member inspection link (`retry_of`) is persisted and used by Undo
+  ordering but is not exposed on the wire `OperationSummary`; exposing it would
+  be an additive seam change needing separate approval.
+- Group Undo skip reasons after a restart are not re-derivable through the
+  frozen seam (no undo-receipt lookup command); Activity shows resulting member
+  statuses instead.
+- The UX-05 core lane installed the Linux GTK/WebKit `pkg-config` prerequisites
+  via apt to unblock native checks (the `docs/development.md` guidance says not
+  to install them as part of a headless integration check; recorded here
+  honestly — native gates are runnable in this VM, but a fresh VM still needs
+  the documented setup).

@@ -8,7 +8,9 @@ archive/unarchive and explicit read/unread actions; Gmail remains read-only unti
 the user explicitly requests the broader Google `gmail.modify` permission.
 Slice 04 adds a local-only plain-text composer and durable draft recovery, but
 still does not send/delete mail or expose arbitrary labels. Opening a message
-never marks it read. The browser preview remains synthetic and in-memory. See
+never marks it read. UX-05 adds bounded multi-select and durable bulk
+archive/read group processing with one-level partial group Undo; the browser
+preview remains synthetic and in-memory. See
 the slice contracts for individual acceptance scope.
 
 ## Layout
@@ -275,6 +277,54 @@ currently stops at the missing `pkg-config`/GTK prerequisites described below;
 no OS packages were installed. Native close handling and this Mac checkpoint
 remain pending operator validation.
 
+### Safe bulk selection and processing (UX-05)
+
+Conversations can be selected in the Inbox/Done list with `X`, `Shift+J/K`,
+Cmd/Ctrl-click, Shift-click ranges and per-row labelled checkboxes, bounded to
+100 selected conversations per action (additive ranges; Select all loaded is
+disabled with an explanation beyond the bound; selection clears on
+context/account changes and survives reader visits with a visible bulk-scope
+banner). Shared toolbar, palette and shortcut actions apply to the whole
+selection when one exists (group path, even for one row); inline row actions
+stay row-scoped, and Reply/open/navigation are never bulk.
+
+A bulk action accepts one durable **operation group**: structure, duplicates,
+bounds, request ID, active account and capability are validated before a single
+SQLite transaction persists the group header, immutable per-member targets and
+preimages, and per-member acceptance results. A gone/unactionable member becomes
+a persisted typed rejection, not a fabricated failed provider operation;
+all-rejected valid requests get an idempotent receipt and consume no Undo slot.
+Same-request replays (including after restart) return the original receipt;
+changed payloads are `request_id_conflict`. Archive/unarchive groups work in
+fixture and Gmail mode; read/unread groups are Gmail-only, like the single
+setters.
+
+`Z` within the 10-second Rust-clock window undoes the latest top-level action,
+whether a single or a group. A group Undo makes one durable attempt: queued
+members are cancelled, applying/confirmed members are compensated from the
+original preimages, and ineligible members (failed, unknown outcome, unknown
+prior, already undone, acceptance-rejected) are explicitly skipped with reasons.
+Partial results are worded honestly ("Undo accepted for 1 of 2; 1 skipped —
+failed"), and per-member failures stay recoverable in Activity regardless of
+current list rows. A rejected IPC acceptance is never treated as "nothing
+happened": the UI keeps the original request ID and recovers via
+`get_operation_group` / replay of the exact original request.
+
+Browser-preview group behavior is modelled by the labelled in-memory fake, which
+continues to disclose that it is non-durable; it makes no provider or storage
+calls.
+
+#### Disposable Mac smoke checklist (UX-05 pending)
+
+Run only on the operator-approved disposable Mac path, after the Slice 02–04
+checkpoints: actual `X`/`Shift+J`/`Shift+K`/Cmd-Shift-click selection and
+clear/last-row focus, Escape clearing selection before leaving a context,
+bulk Done/read against the fixture or disposable account, `Z` group Undo inside
+and outside the window, restart recovery of group receipts and Activity members,
+and VoiceOver selection/outcome announcements. Native IPC command registration
+is covered only by the bridge tests in this VM; Gmail read-group remote
+convergence (BROWSE-18) additionally requires the approved disposable account.
+
 ## Native prerequisites and platform limits
 
 The Linux Tauri build needs GTK/WebKitGTK development packages and `pkg-config`,
@@ -287,9 +337,12 @@ sudo apt install pkg-config libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev
 (Also linkable alternatives: `libsoup-3.0-dev` and
 `libjavascriptcoregtk-4.1-dev` are WebKitGTK dependencies; macOS uses Xcode
 command line tools and WKWebView.) Do not install OS packages as part of a
-headless integration check. This VM lacks `pkg-config`/GTK prerequisites, so
-native compile/test gates are expected to stop at the prerequisite check here.
-Linux cannot validate macOS WKWebView/IME, Keychain prompts, system browser
+headless integration check. During UX-05 integration the UX-05 core lane did
+install these prerequisites in the Linux integration VM (`pkg-config
+libglib2.0-dev librsvg2-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev
+libjavascriptcoregtk-4.1-dev libgtk-3-dev`), so native compile/bridge gates now
+run there; a fresh VM still needs the setup above. Native gates cannot validate
+macOS WKWebView/IME, Keychain prompts, system browser
 launch, loopback OAuth interaction, or Google TLS behavior.
 
 ## Fixture data
