@@ -221,6 +221,13 @@ pub struct OperationSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub undo_of: Option<String>,
+    /// Durable operation group this member was accepted into
+    /// (docs/ux-05-safe-bulk-processing.md §4.2); absent for standalone
+    /// singles and compensations. Group members never advertise individual
+    /// Undo via `undoableUntil`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub group_id: Option<String>,
     /// ISO-8601 UTC; present only while §3.2 rules 1–7 hold at query time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

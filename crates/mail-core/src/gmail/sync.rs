@@ -535,6 +535,40 @@ impl GmailCore {
         self.accept_operation(|store| store.accept_read(command))
     }
 
+    /// Group setters pass the same admission gates as singles (verified
+    /// mutation access, connected account, healthy lifecycle) before the
+    /// store's atomic group acceptance.
+    pub fn set_archived_group(
+        &self,
+        command: &crate::groups::SetArchivedGroup,
+    ) -> Result<crate::groups::OperationGroupReceipt, MailError> {
+        self.accept_operation(|store| store.accept_archived_group(command))
+    }
+
+    pub fn set_read_group(
+        &self,
+        command: &crate::groups::SetReadGroup,
+    ) -> Result<crate::groups::OperationGroupReceipt, MailError> {
+        self.accept_operation(|store| store.accept_read_group(command))
+    }
+
+    /// Cached group lookup by original acceptance request ID; served from
+    /// local evidence like the other cached reads.
+    pub fn get_operation_group(
+        &self,
+        request: &crate::groups::GetOperationGroupRequest,
+    ) -> Result<Option<crate::groups::OperationGroupStatus>, MailError> {
+        self.inner.store.get_operation_group(request)
+    }
+
+    /// Cached recent-group page, served from local evidence.
+    pub fn list_operation_groups(
+        &self,
+        request: &crate::groups::ListOperationGroupsRequest,
+    ) -> Result<crate::groups::OperationGroupPage, MailError> {
+        self.inner.store.list_operation_groups(request)
+    }
+
     pub fn retry_operation(&self, command: &RetryOperation) -> Result<OperationReceipt, MailError> {
         self.accept_operation(|store| store.accept_retry(command))
     }
@@ -591,10 +625,63 @@ impl GmailCore {
         Ok(receipt)
     }
 
-    fn accept_operation(
+    /// One partial group Undo attempt (docs/ux-05-safe-bulk-processing.md §5).
+    /// Same admission as the single undo: lifecycle guard and active account;
+    /// whole-group eligibility is store-owned. Compensation work dispatches
+    /// immediately after the single acceptance commit.
+    pub fn undo_operation_group(
         &self,
-        accept: impl FnOnce(&GmailStore) -> Result<OperationReceipt, MailError>,
-    ) -> Result<OperationReceipt, MailError> {
+        command: &crate::groups::UndoOperationGroup,
+    ) -> Result<crate::groups::GroupUndoReceipt, MailError> {
+        let inner = &*self.inner;
+        let mut st = inner
+            .ctrl
+            .state
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        if st.halted || st.stop {
+            return Err(MailError::StorageUnavailable);
+        }
+        if st.disconnecting {
+            return Err(MailError::Busy);
+        }
+        match inner.store.account() {
+            Ok(Some(_)) => {}
+            Ok(None) => return Err(MailError::AuthRequired),
+            Err(error) => {
+                if latch_admission_storage_error(&mut st, &inner.ctrl, &error) {
+                    drop(st);
+                    inner.hub.dispatch();
+                }
+                return Err(error);
+            }
+        }
+        let receipt = match inner.store.undo_operation_group(command) {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                if error == MailError::StorageUnavailable {
+                    st.halted = true;
+                    st.error = Some(error.clone());
+                    st.pass_cancel.cancel();
+                    cancel_reply_enrichments(&mut st);
+                    inner.ctrl.wake.notify_all();
+                }
+                return Err(error);
+            }
+        };
+        // Compensation work must dispatch immediately; cancelled members
+        // need no worker pass but the wake is harmless.
+        st.operations_requested = true;
+        inner.ctrl.wake.notify_all();
+        drop(st);
+        inner.hub.dispatch();
+        Ok(receipt)
+    }
+
+    fn accept_operation<T>(
+        &self,
+        accept: impl FnOnce(&GmailStore) -> Result<T, MailError>,
+    ) -> Result<T, MailError> {
         let inner = &*self.inner;
         let mut st = inner
             .ctrl
@@ -1668,6 +1755,7 @@ mod worker_halt_tests {
         block_history: bool,
         history_started: bool,
         writes: usize,
+        mutation_granted: bool,
     }
 
     struct HaltTestProvider {
@@ -1682,6 +1770,7 @@ mod worker_halt_tests {
                     block_history: false,
                     history_started: false,
                     writes: 0,
+                    mutation_granted: true,
                 }),
                 wake: Condvar::new(),
             })
@@ -1716,6 +1805,10 @@ mod worker_halt_tests {
 
         fn writes(&self) -> usize {
             self.state.lock().unwrap().writes
+        }
+
+        fn set_mutation_access(&self, granted: bool) {
+            self.state.lock().unwrap().mutation_granted = granted;
         }
     }
 
@@ -1775,7 +1868,17 @@ mod worker_halt_tests {
 
     impl GmailReadProvider for HaltTestProvider {
         fn mutation_access(&self) -> Result<bool, MailError> {
-            Ok(true)
+            Ok(self.state.lock().unwrap().mutation_granted)
+        }
+
+        fn apply_read(
+            &self,
+            _message_ids: &[String],
+            _read: bool,
+            _cancel: &CancelToken,
+        ) -> Result<(), MailError> {
+            self.state.lock().unwrap().writes += 1;
+            Ok(())
         }
 
         fn apply_archive(
@@ -1937,6 +2040,123 @@ mod worker_halt_tests {
                 request_id: "after-storage-recovery".to_string(),
             }),
             Err(MailError::StorageUnavailable)
+        );
+        core.stop();
+        drop(core);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Core-level group path (docs/ux-05-safe-bulk-processing.md §4.2): the
+    /// capability gate rejects before acceptance; an accepted group's members
+    /// execute serially through the unchanged worker; the group undoes as one
+    /// action and compensation dispatches immediately.
+    #[test]
+    fn gmail_core_group_gate_acceptance_execution_and_undo() {
+        let dir = std::env::temp_dir().join(format!(
+            "mail-core-gmail-group-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let provider = HaltTestProvider::new();
+        let core = GmailCore::open(&dir, Arc::clone(&provider) as Arc<dyn GmailReadProvider>)
+            .expect("open synthetic Gmail core");
+        assert!(until(|| {
+            core.account_status().is_ok_and(|status| {
+                status.connection == ConnectionState::Connected && status.sync.initial_sync_complete
+            }) && core
+                .list_conversations()
+                .is_ok_and(|snapshot| !snapshot.conversations.is_empty())
+        }));
+        let ref_ = ConversationRef {
+            account_id: TEST_ACCOUNT.to_string(),
+            conversation_id: TEST_THREAD.to_string(),
+        };
+
+        // Capability gate fires before any acceptance write.
+        provider.set_mutation_access(false);
+        assert_eq!(
+            core.set_read_group(&crate::groups::SetReadGroup {
+                account_id: TEST_ACCOUNT.into(),
+                members: vec![ref_.clone()],
+                read: true,
+                request_id: "core-group-denied".into(),
+            }),
+            Err(MailError::PermissionRequired)
+        );
+        assert!(
+            core.get_operation_group(&crate::groups::GetOperationGroupRequest {
+                account_id: TEST_ACCOUNT.into(),
+                request_id: "core-group-denied".into(),
+            })
+            .unwrap()
+            .is_none(),
+            "denied capability wrote no group"
+        );
+        provider.set_mutation_access(true);
+
+        // Accepted group executes through the serial worker.
+        let writes_before = provider.writes();
+        let receipt = core
+            .set_read_group(&crate::groups::SetReadGroup {
+                account_id: TEST_ACCOUNT.into(),
+                members: vec![ref_.clone()],
+                read: true,
+                request_id: "core-group-1".into(),
+            })
+            .expect("group accepted");
+        assert!(until(|| {
+            core.list_conversations()
+                .unwrap()
+                .activity
+                .iter()
+                .any(|row| row.status == crate::dto::OperationStatus::Confirmed)
+        }));
+        assert_eq!(provider.writes(), writes_before + 1);
+        let status = core
+            .get_operation_group(&crate::groups::GetOperationGroupRequest {
+                account_id: TEST_ACCOUNT.into(),
+                request_id: "core-group-1".into(),
+            })
+            .expect("lookup")
+            .expect("committed");
+        assert_eq!(
+            status.members[0].status,
+            crate::groups::GroupMemberStatus::Confirmed
+        );
+        assert!(status.undo.available);
+
+        // Group Undo compensates the confirmed member and dispatches.
+        let undo = core
+            .undo_operation_group(&crate::groups::UndoOperationGroup {
+                group_id: receipt.group_id.clone(),
+                request_id: "core-undo-group-1".into(),
+            })
+            .expect("group undo");
+        assert_eq!(
+            undo.members[0].decision,
+            crate::groups::GroupMemberUndoDecision::Compensating
+        );
+        assert!(until(|| {
+            core.list_conversations()
+                .unwrap()
+                .activity
+                .iter()
+                .any(|row| {
+                    undo.members[0].operation_ids.contains(&row.id)
+                        && row.status == crate::dto::OperationStatus::Confirmed
+                })
+        }));
+        // Replaying the group undo returns the same durable decisions.
+        assert_eq!(
+            core.undo_operation_group(&crate::groups::UndoOperationGroup {
+                group_id: receipt.group_id.clone(),
+                request_id: "core-undo-group-1".into(),
+            })
+            .expect("replay"),
+            undo
         );
         core.stop();
         drop(core);
