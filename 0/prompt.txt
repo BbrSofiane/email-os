@@ -1,5 +1,1 @@
-Scope the implementation for UX-04: trustworthy Undo for single-conversation triage in @superhuman-email-browsing-ux-spec.md
-
----
-
-For each 4, what does Superhuman do?
+Ok use workers to implement the functionality and reviewers to validate the changes
