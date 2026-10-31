@@ -1,6 +1,6 @@
 # UX-04 — Process one conversation with trustworthy Undo
 
-Status: **proposed implementation scope, not implemented.** Derived from the
+Status: **implemented on `feat/ux-04-trustworthy-undo`, parent-validated with the limitations in §8; native gate pending.** Derived from the
 [UX spec](../superhuman-email-browsing-ux-spec.md) (§Triage while browsing,
 §Undo and optimistic updates, BROWSE-07/08) and the
 [implementation plan](superhuman-browsing-implementation-plan.md) §UX-04, scoped
@@ -411,7 +411,40 @@ Integrated gate results after the fix pass (parent, logs `/tmp/ux04-fixpass/`):
 | `mise run typecheck` | exit 0 |
 | `mise run build:web` | exit 0 |
 
-Recheck verdicts are appended below.
+### Scoped rechecks of the fix pass
+
+Core recheck: **correct**; every accepted fix verified against the diff, each
+new/strengthened test shown to fail without its fix, no new P0–P2. One P3
+recorded as policy rather than changed: after a compensation is *retried*, an
+idempotent replay of the original undo request reports `operationIds` as all
+compensations in queue order (including the retry), not only the ids committed
+at undo time. Nothing in `src/` consumes `operationIds`. Residual pre-existing
+risk noted: the Gmail §5.3 test's `wait_status(Queued)` returns immediately at
+acceptance; a mid-claim worker could take the compensation branch. Observed
+green on every run; not changed in this slice.
+
+UI recheck: **needs attention** (no P0/P1). Accepted and applied in a second
+fix pass by the resumed UI worker: fake cached-Done filter must qualify if
+*any* archive lacks a live compensation (archive → undo → re-archive was
+wrongly hidden); backend `expired` rejection now refreshes before closing the
+slot window and the UI test holds the list read so `Z` genuinely reaches the
+backend; success write-back guarded against clobbering a newer action recorded
+during the undo's refresh; post-undo palette/key gate ignores a stale activity
+row. Applied and verified; UI: 362 passed / 20 opt-in skipped, typecheck and
+build exit 0; core 201, contract and lint exit 0 (logs `/tmp/ux04-fixpass2/`).
+
+### Still pending (not inferred from these checks)
+
+Native fixture/WKWebView gate (§5 Mac list), Tauri shell compile
+(`mise run check:native`) and the two new shell unit assertions, OS-reserved
+key handling, IME, VoiceOver announcement of the always-rendered live region,
+real-Chrome rendered suites, and Gmail remote convergence on the approved
+disposable account. `pkg-config`/GTK remain unavailable in this VM; no
+prerequisites were installed. Known unchanged baseline limitation: the
+default-locale `30 Sept 2001` layout assertion.
+
+No push, PR, merge, or publication has occurred; commits exist only on the
+local branch `feat/ux-04-trustworthy-undo`.
 
 ## 9. Known risks
 

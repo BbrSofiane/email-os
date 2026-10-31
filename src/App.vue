@@ -96,8 +96,9 @@ let nowTimer: ReturnType<typeof setInterval> | null = null;
  * on every refresh; the undo window comes from the REFRESHED activity row when
  * it exists (the slot's captured value only covers the pre-refresh gap, so a
  * backend-withdrawn window hides the control). The backend stays the
- * authority: an `expired` rejection clears the slot window below. After a
- * successful undo the slot reports the outcome through `undone`.
+ * authority: an `expired` rejection refreshes and then closes the slot window
+ * below. After a successful undo the slot reports the outcome through `undone`
+ * and the window is closed regardless of a stale activity row.
  */
 const actionNotice = computed(() => {
   const slot = mailbox.lastAction.value;
@@ -109,7 +110,9 @@ const actionNotice = computed(() => {
     actionId: slot.actionId,
     subject: slot.subject,
     operation,
-    undoableUntil: operation ? operation.undoableUntil ?? null : slot.undoableUntil,
+    // Post-undo the window is closed outright: a stale activity row can still
+    // carry undoableUntil, and the palette/key must never send a second undo.
+    undoableUntil: slot.undone ? null : operation ? operation.undoableUntil ?? null : slot.undoableUntil,
     hadWindow: slot.hadWindow,
     undone: slot.undone
       ? {

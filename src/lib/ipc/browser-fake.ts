@@ -783,15 +783,14 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
         } catch { throw { kind: 'invalid_request', field: 'cursor' } satisfies MailError; }
       }
       const compare = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
-      // Candidate query matches Rust: an archive whose compensation is still
-      // pending/confirmed/unknown is excluded BEFORE paging (a failed or
-      // cancelled compensation leaves the archive a qualifying candidate).
-      const qualifies = (conv: FakeConversation): boolean => {
-        const archive = conv.ops.find((op) => op.kind === 'archive' && op.requestedArchived && op.status !== 'failed' && op.status !== 'cancelled');
-        if (!archive) return false;
-        const compensation = conv.ops.find((op) => op.undoOf === archive.id);
-        return !compensation || compensation.status === 'failed' || compensation.status === 'cancelled';
-      };
+      // Candidate query matches Rust: ANY qualifying archive row makes the
+      // conversation a candidate, where an archive qualifies when its own
+      // compensation is absent, failed, or cancelled. A re-archive after an
+      // undone archive therefore qualifies again (before paging).
+      const qualifies = (conv: FakeConversation): boolean => conv.ops.some((op) =>
+        op.kind === 'archive' && op.requestedArchived
+        && op.status !== 'failed' && op.status !== 'cancelled'
+        && !conv.ops.some((c) => c.undoOf === op.id && c.status !== 'failed' && c.status !== 'cancelled'));
       const candidates = conversations.filter(qualifies)
         .map((conv) => ({ conv, row: summarize(conv, pendingOperationId(conv)) }))
         .sort((a, b) => compare(b.row.lastMessageAt, a.row.lastMessageAt) || compare(a.row.ref.conversationId, b.row.ref.conversationId))

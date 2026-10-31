@@ -37,6 +37,42 @@ function recordingUndo(fake: BrowserFake): { client: MailClient; undoCalls: Undo
   return { client, undoCalls, undoReceipts };
 }
 
+/**
+ * Wraps the fake so every `listConversations` read can be held open (stale
+ * activity) and every `undo_operation` call counted. Released reads resolve
+ * with the snapshot the test hands in.
+ */
+function holdableLists(fake: BrowserFake): {
+  client: MailClient;
+  undoCalls: UndoOperation[];
+  hold(): void;
+  releaseWith(snap: InboxSnapshot): void;
+} {
+  let holding = false;
+  const held: Array<(snap: InboxSnapshot) => void> = [];
+  const undoCalls: UndoOperation[] = [];
+  const client: MailClient = {
+    ...fake,
+    undoOperation: (command) => {
+      undoCalls.push({ ...command });
+      return fake.undoOperation(command);
+    },
+    listConversations: () => {
+      if (holding) return new Promise<InboxSnapshot>((resolve) => { held.push(resolve); });
+      return fake.listConversations();
+    },
+  };
+  return {
+    client,
+    undoCalls,
+    hold: () => { holding = true; },
+    releaseWith: (snap) => {
+      holding = false;
+      while (held.length > 0) held.shift()!(snap);
+    },
+  };
+}
+
 async function archiveViaKey(w: VueWrapper, conversationId: string): Promise<void> {
   (w.get(`[data-test="conversation-row-${conversationId}"]`).element as HTMLElement).focus();
   key('e');
@@ -237,13 +273,21 @@ describe('UX-04 action notice and undo', () => {
   it('exposes the authoritative expired decision with the recovery wording', async () => {
     let offsetMs = 0;
     const fake = createBrowserFakeMailClient(() => new Date(Date.now() + offsetMs).toISOString());
-    const w = await mountApp(fake);
+    const held = holdableLists(fake);
+    const w = await mountApp(held.client);
     await archiveViaKey(w, 'conv-01');
-    // Advance the backend clock past the window, then force a refresh.
+    // Hold every list read so the stale row keeps its undo window and Z really
+    // reaches the backend instead of being gated locally by a refreshed row.
+    held.hold();
     offsetMs = 11_000;
     window.dispatchEvent(new Event('focus'));
     await flushPromises();
     key('z');
+    await flushPromises();
+    expect(held.undoCalls).toHaveLength(1);
+    // Release: the authoritative row no longer carries undoableUntil; the
+    // expired branch refreshes first, then closes the slot window.
+    held.releaseWith(await fake.listConversations());
     await flushPromises();
     expect(w.get('[data-test="action-notice-expired"]').text())
       .toBe('Undo expired — Mark Not Done restores the whole conversation to Inbox');
@@ -254,6 +298,32 @@ describe('UX-04 action notice and undo', () => {
     await w.get('[data-test="rail-activity"]').trigger('click');
     await flushPromises();
     expect(w.find('[data-test="utility-drawer"]').exists()).toBe(true);
+  });
+
+  it('cannot re-undo after success while the activity read is stale (palette and key)', async () => {
+    const fake = createBrowserFakeMailClient();
+    const held = holdableLists(fake);
+    const w = await mountApp(held.client);
+    await archiveViaKey(w, 'conv-01');
+    const stale = await fake.listConversations(); // pre-undo: op-0001 confirmed with a window
+    held.hold();
+    key('z'); // the undo succeeds; its write-back refresh is held
+    await flushPromises();
+    // Resolve the undo's refresh with the STALE snapshot: the activity row
+    // still carries undoableUntil even though the undo succeeded.
+    held.releaseWith(stale);
+    await flushPromises();
+    expect(held.undoCalls).toHaveLength(1);
+    // The palette offers no Undo entry…
+    await w.get('[data-test="palette-trigger"]').trigger('click');
+    await flushPromises();
+    expect(w.find('#action-undo').exists()).toBe(false);
+    key('Escape');
+    await flushPromises();
+    // …and Z sends nothing: exactly one undo_operation in total.
+    key('z');
+    await flushPromises();
+    expect(held.undoCalls).toHaveLength(1);
   });
 
   it('offers Undo in the palette exactly while the undo window is open', async () => {

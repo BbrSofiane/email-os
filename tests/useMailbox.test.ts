@@ -793,4 +793,25 @@ describe('useMailbox (Slice 02 account status and lifecycle)', () => {
     expect(slot?.hadWindow).toBe(true);
     stop();
   });
+
+  it('does not clobber a newer last action recorded during the undo refresh', async () => {
+    const fake = createBrowserFakeMailClient();
+    const { result, stop } = scopeRun(() => useMailbox(fake));
+    await result.ready;
+    await result.setArchived(fixtureRef('conv-01'), true);
+    expect(result.lastAction.value?.receipt.operationId).toBe('op-0001');
+    fake.controls.behavior.holdUndo = true;
+    const pendingUndo = result.undoLastAction();
+    await flushMacrotasks(1); // let the undo call reach the held fake
+    // A newer action (e.g. an Activity-drawer Unarchive) is accepted and
+    // records its own slot while the undo round trip is pending.
+    await result.setArchived(fixtureRef('conv-02'), false);
+    expect(result.lastAction.value?.receipt.operationId).toBe('op-0002');
+    fake.controls.release();
+    await pendingUndo;
+    // The undo's success write-back must only ever touch its own slot.
+    expect(result.lastAction.value?.receipt.operationId).toBe('op-0002');
+    expect(result.lastAction.value?.undone).toBeNull();
+    stop();
+  });
 });

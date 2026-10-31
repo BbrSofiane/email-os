@@ -624,8 +624,12 @@ export function useMailbox(client: MailClient): Mailbox {
       if (detached || sessionToken !== mailboxSessionToken) return receipt;
       // The action is undone (no redo level), but the slot STAYS: the notice
       // reports Cancelled / Restored / the compensation outcome from the
-      // refreshed compensating rows. The window is closed by definition.
-      lastAction.value = { ...slot, undoableUntil: null, undone: receipt };
+      // refreshed compensating rows. The window is closed by definition. Only
+      // the undone operation's own slot is written back — a newer action
+      // recorded during the undo's refresh must not be clobbered.
+      if (lastAction.value?.receipt.operationId === slot.receipt.operationId) {
+        lastAction.value = { ...slot, undoableUntil: null, undone: receipt };
+      }
       return receipt;
     } catch (raw) {
       if (detached || sessionToken !== mailboxSessionToken || token !== commandToken) return null;
@@ -636,9 +640,12 @@ export function useMailbox(client: MailClient): Mailbox {
         if (!detached) repointLastAction();
       }
       if (error.kind === 'undo_unavailable' && error.reason === 'expired') {
-        // The backend's authoritative decision updates the slot: the notice
-        // shows the recovery wording and the key/palette entry close.
-        lastAction.value = { ...slot, undoableUntil: null };
+        // Mirror the superseded branch: the authoritative row no longer carries
+        // undoableUntil, so refresh FIRST — the notice wording derives from the
+        // refreshed activity — then close the slot window on the backend's
+        // decision.
+        await refresh();
+        if (!detached) lastAction.value = { ...slot, undoableUntil: null };
       }
       // Activity / Mark Not Done stay reachable either way.
       return null;

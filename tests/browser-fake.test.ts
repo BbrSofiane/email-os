@@ -604,6 +604,22 @@ describe('browser fake undo model (UX-04)', () => {
     expect(page.conversations.map((c) => c.ref.conversationId)).not.toContain('conv-01');
   });
 
+  it('excludes an archive whose compensation is confirmed, but re-archives qualify again', async () => {
+    const fake = createBrowserFakeMailClient(now);
+    clockMs = T0;
+    const request = { accountId: 'fixture-account', limit: 100, cursor: null as string | null };
+    const receipt = await fake.setArchived({ conversation: fixtureRef('conv-01'), archived: true, requestId: 'a1' });
+    await fake.controls.flush();
+    // Archive → undo: the confirmed compensation disqualifies the archive.
+    await undo(fake, receipt.operationId, 'z1');
+    await fake.controls.flush();
+    expect((await fake.listCachedDone(request)).conversations.map((c) => c.ref.conversationId)).not.toContain('conv-01');
+    // Re-archive: a fresh archive with no live compensation qualifies again.
+    await fake.setArchived({ conversation: fixtureRef('conv-01'), archived: true, requestId: 'a2' });
+    await fake.controls.flush();
+    expect((await fake.listCachedDone(request)).conversations.map((c) => c.ref.conversationId)).toContain('conv-01');
+  });
+
   it('isMailErrorShape accepts undo_unavailable only with a valid reason', async () => {
     const { isMailErrorShape } = await import('../src/lib/ipc/client');
     expect(isMailErrorShape({ kind: 'undo_unavailable', reason: 'expired' })).toBe(true);
