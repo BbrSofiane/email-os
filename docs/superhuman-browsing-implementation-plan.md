@@ -153,6 +153,8 @@ The backend verifies the active account; caller-supplied IDs do not authorize an
 
 ### UX-05 — Select and process several conversations safely
 
+Detailed proposed scope: [UX-05 implementation contract](ux-05-safe-bulk-processing.md).
+
 **Journey:** X / Shift+J/K / Cmd- or Shift-click select three rows → archive → inspect per-item results → recover failures or Undo the eligible group.
 
 - Add selected-ID set/range anchor and explicit count; focus is not selection. Plain J/K never expands selection. Escape clears selection before leaving the list; changing context clears cross-context selection.
