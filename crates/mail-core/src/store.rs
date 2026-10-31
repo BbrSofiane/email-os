@@ -700,6 +700,7 @@ impl Store {
                     requested_read: None,
                     last_error: None,
                     undo_of: row.undo_of,
+                    group_id: None,
                     undoable_until,
                 })
             })

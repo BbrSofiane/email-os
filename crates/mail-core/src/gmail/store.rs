@@ -2407,6 +2407,7 @@ fn load_activity(
             requested_read: (kind == MailboxOperationKind::Read).then_some(value != 0),
             last_error,
             undo_of,
+            group_id: None,
             undoable_until,
         });
     }

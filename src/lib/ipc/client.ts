@@ -26,14 +26,23 @@ import type {
   DraftReceipt,
   DraftRef,
   DraftSummary,
+  GetOperationGroupRequest,
+  GroupUndoReceipt,
   InboxSnapshot,
+  ListOperationGroupsRequest,
   MailError,
+  OperationGroupPage,
+  OperationGroupReceipt,
+  OperationGroupStatus,
   OperationReceipt,
   RetryOperation,
   SaveDraft,
   SetArchived,
+  SetArchivedGroup,
   SetRead,
+  SetReadGroup,
   UndoOperation,
+  UndoOperationGroup,
   UndoReceipt,
 } from './generated';
 
@@ -44,6 +53,17 @@ export type {
   CachedDoneSnapshot,
   AccountStatus,
   AppCloseRequest,
+  GetOperationGroupRequest,
+  GroupMemberReceipt,
+  GroupMemberRejection,
+  GroupMemberStatus,
+  GroupMemberStatusView,
+  GroupMemberUndoDecision,
+  GroupMemberUndoResult,
+  GroupUndoAvailability,
+  GroupUndoReceipt,
+  GroupUndoSkipReason,
+  ListOperationGroupsRequest,
   MailboxOperationKind,
   MutationAccess,
   Address,
@@ -66,17 +86,24 @@ export type {
   MailMode,
   Message,
   OperationFailure,
+  OperationGroupPage,
+  OperationGroupReceipt,
+  OperationGroupStatus,
+  OperationGroupSummary,
   OperationReceipt,
   OperationStatus,
   RetryOperation,
   OperationSummary,
   SetArchived,
+  SetArchivedGroup,
   SetRead,
+  SetReadGroup,
   SaveDraft,
   ReplyContext,
   SyncInfo,
   SyncState,
   UndoOperation,
+  UndoOperationGroup,
   UndoOutcome,
   UndoReceipt,
   UndoUnavailableReason,
@@ -93,6 +120,11 @@ export {
   MAILBOX_CHANGED_EVENT,
   REQUEST_SYNC_COMMAND,
   SET_ARCHIVED_COMMAND,
+  SET_ARCHIVED_GROUP_COMMAND,
+  SET_READ_GROUP_COMMAND,
+  GET_OPERATION_GROUP_COMMAND,
+  LIST_OPERATION_GROUPS_COMMAND,
+  UNDO_OPERATION_GROUP_COMMAND,
   ENABLE_MAILBOX_ACTIONS_COMMAND,
   SET_READ_COMMAND,
   RETRY_OPERATION_COMMAND,
@@ -109,6 +141,14 @@ export {
   CANCEL_APP_CLOSE_COMMAND,
 } from './generated';
 
+/**
+ * UX-05 product/safety bound (docs/ux-05-safe-bulk-processing.md §3.1): a
+ * selection/action group carries 1–100 unique conversations. The UI must
+ * enforce this before dispatch; the stores re-validate and never silently
+ * truncate. Mirrors `mail_core::groups::OPERATION_GROUP_MAX_MEMBERS`.
+ */
+export const OPERATION_GROUP_MAX_MEMBERS = 100;
+
 export interface MailClient {
   listConversations(): Promise<InboxSnapshot>;
   /** Local archive evidence only; short/empty pages can still have a continuation. */
@@ -121,6 +161,35 @@ export interface MailClient {
   retryOperation(command: RetryOperation): Promise<OperationReceipt>;
   /** Undo of the single latest accepted operation; rejects with `undo_unavailable`. */
   undoOperation(command: UndoOperation): Promise<UndoReceipt>;
+  /**
+   * Accepts a bounded archive/unarchive group atomically (1–`OPERATION_GROUP_MAX_MEMBERS`
+   * unique refs, one account). Idempotent per `requestId`: same request/payload returns the
+   * original receipt, a changed payload rejects with `request_id_conflict`. Atomic local
+   * acceptance only — never atomic provider application.
+   */
+  setArchivedGroup(command: SetArchivedGroup): Promise<OperationGroupReceipt>;
+  /**
+   * Group read/unread acceptance; Gmail-only like the single `setRead`, rejected read-only
+   * elsewhere. Same idempotency and atomicity contract as `setArchivedGroup`.
+   */
+  setReadGroup(command: SetReadGroup): Promise<OperationGroupReceipt>;
+  /**
+   * Active-account lookup of a committed group by its original acceptance request ID;
+   * resolves to `null` while nothing has committed for that request. Resolves a lost
+   * acceptance response without inventing a fresh request. Malformed requests reject.
+   */
+  getOperationGroup(request: GetOperationGroupRequest): Promise<OperationGroupStatus | null>;
+  /**
+   * Bounded recent group summaries with cursor, independent of Inbox/Done rows;
+   * group detail stays addressable by request ID via `getOperationGroup`.
+   */
+  listOperationGroups(request: ListOperationGroupsRequest): Promise<OperationGroupPage>;
+  /**
+   * One partial group Undo attempt for the whole group; durable per-member cancel/
+   * compensate/skip decisions. Same-request retries return the same decisions;
+   * rejects with `undo_unavailable` when expired, superseded or already undone.
+   */
+  undoOperationGroup(command: UndoOperationGroup): Promise<GroupUndoReceipt>;
   /** Registers a change listener; resolves with an unsubscribe function. */
   subscribe(listener: () => void): Promise<() => void>;
   /** Authoritative fixture-vs-Gmail mode and connection/sync state. */

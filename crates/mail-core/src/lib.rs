@@ -12,6 +12,7 @@ pub mod drafts;
 pub mod dto;
 pub mod error;
 pub mod gmail;
+pub mod groups;
 mod lock;
 pub mod provider;
 mod seed;
