@@ -17,7 +17,7 @@ use mail_core::dto::{
     Address, CachedDoneCoverage, CachedDoneRequest, CachedDoneSnapshot, Conversation,
     ConversationRef, ConversationSummary, InboxSnapshot, MailboxOperationKind, Message,
     OperationFailure, OperationReceipt, OperationStatus, OperationSummary, RetryOperation,
-    SetArchived, SetRead,
+    SetArchived, SetRead, UndoOperation, UndoOutcome, UndoReceipt, UndoUnavailableReason,
 };
 use mail_core::error::MailError;
 use mail_core::gmail::types::{
@@ -38,6 +38,10 @@ fn declarations() -> Vec<String> {
         SetArchived::decl(),
         SetRead::decl(),
         RetryOperation::decl(),
+        UndoOperation::decl(),
+        UndoUnavailableReason::decl(),
+        UndoOutcome::decl(),
+        UndoReceipt::decl(),
         MailboxOperationKind::decl(),
         ConversationSummary::decl(),
         Message::decl(),
@@ -92,6 +96,7 @@ const IPC_NAMES: &[(&str, &str)] = &[
     ),
     ("SET_READ_COMMAND", "set_read"),
     ("RETRY_OPERATION_COMMAND", "retry_operation"),
+    ("UNDO_OPERATION_COMMAND", "undo_operation"),
     ("LIST_DRAFTS_COMMAND", "list_drafts"),
     ("GET_DRAFT_COMMAND", "get_draft"),
     ("CREATE_DRAFT_COMMAND", "create_draft"),

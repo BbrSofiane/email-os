@@ -32,6 +32,8 @@ pub enum OperationStatus {
     Confirmed,
     Failed,
     OutcomeUnknown,
+    /// Undone before dispatch via `undo_operation`; still visible in Activity.
+    Cancelled,
 }
 
 /// Definite failure kinds. Cancelled work is not a failure; it is recovered.
@@ -81,6 +83,49 @@ pub struct SetRead {
 pub struct RetryOperation {
     pub operation_id: String,
     pub request_id: String,
+}
+
+/// Why the last action cannot be undone. Rust owns eligibility (§3.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum UndoUnavailableReason {
+    Expired,
+    Superseded,
+    AlreadyUndone,
+    NotApplicable,
+    Uncertain,
+    UnknownPrior,
+}
+
+/// Undo the single latest accepted non-compensating operation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct UndoOperation {
+    pub operation_id: String,
+    pub request_id: String,
+}
+
+/// How the undo was executed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum UndoOutcome {
+    /// The operation was still queued; it was cancelled in place.
+    Cancelled,
+    /// One compensating operation per distinct prior value was queued.
+    Compensating,
+}
+
+/// Durable result of a committed `undo_operation`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct UndoReceipt {
+    pub undone_operation_id: String,
+    pub outcome: UndoOutcome,
+    /// Compensating operation ids in queue order; empty when `cancelled`.
+    pub operation_ids: Vec<String>,
+    pub accepted_at: String,
 }
 
 /// One cached plain-text message.
@@ -172,6 +217,14 @@ pub struct OperationSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub last_error: Option<crate::error::MailError>,
+    /// Id of the operation this one compensates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub undo_of: Option<String>,
+    /// ISO-8601 UTC; present only while §3.2 rules 1–7 hold at query time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub undoable_until: Option<String>,
 }
 
 /// Inbox list plus full operation history for this fixture slice.

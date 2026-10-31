@@ -34,6 +34,7 @@ import {
   SET_READ_COMMAND,
   SAVE_DRAFT_COMMAND,
   RETRY_OPERATION_COMMAND,
+  UNDO_OPERATION_COMMAND,
   type AccountStatus,
   type AppCloseRequest,
   type CreateDraft,
@@ -49,6 +50,8 @@ import {
   type MailClient,
   type OperationReceipt,
   type RetryOperation,
+  type UndoOperation,
+  type UndoReceipt,
   type SaveDraft,
   type SetArchived,
   type SetRead,
@@ -84,6 +87,9 @@ export function createTauriMailClient(): MailClient {
     },
     retryOperation(command: RetryOperation): Promise<OperationReceipt> {
       return call<OperationReceipt>(RETRY_OPERATION_COMMAND, { command });
+    },
+    undoOperation(command: UndoOperation): Promise<UndoReceipt> {
+      return call<UndoReceipt>(UNDO_OPERATION_COMMAND, { command });
     },
     async subscribe(listener: () => void): Promise<() => void> {
       const unlisten = await listen(MAILBOX_CHANGED_EVENT, () => listener());

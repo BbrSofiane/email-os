@@ -15,6 +15,7 @@ export const ENABLE_MAILBOX_ACTIONS_COMMAND = 'enable_mailbox_actions';
 export const CANCEL_MAILBOX_ACTION_UPGRADE_COMMAND = 'cancel_mailbox_action_upgrade';
 export const SET_READ_COMMAND = 'set_read';
 export const RETRY_OPERATION_COMMAND = 'retry_operation';
+export const UNDO_OPERATION_COMMAND = 'undo_operation';
 export const LIST_DRAFTS_COMMAND = 'list_drafts';
 export const GET_DRAFT_COMMAND = 'get_draft';
 export const CREATE_DRAFT_COMMAND = 'create_draft';
@@ -34,7 +35,7 @@ export type Address = {
  */
 displayName: string | null, mailbox: string, };
 
-export type OperationStatus = "queued" | "applying" | "confirmed" | "failed" | "outcome_unknown";
+export type OperationStatus = "queued" | "applying" | "confirmed" | "failed" | "outcome_unknown" | "cancelled";
 
 export type OperationFailure = { "kind": "provider_unavailable" } | { "kind": "provider_rejected" };
 
@@ -42,7 +43,11 @@ export type MailError = { "kind": "not_found" } | { "kind": "invalid_request",
 /**
  * Name of the offending request field (camelCase DTO name).
  */
-field: string, } | { "kind": "request_id_conflict" } | { "kind": "storage_unavailable" } | { "kind": "profile_in_use" } | { "kind": "read_only" } | { "kind": "not_configured" } | { "kind": "auth_required" } | { "kind": "auth_cancelled" } | { "kind": "auth_failed" } | { "kind": "secrets_unavailable" } | { "kind": "network_unavailable" } | { "kind": "rate_limited" } | { "kind": "provider_unavailable" } | { "kind": "invalid_provider_response" } | { "kind": "busy" } | { "kind": "permission_required" } | { "kind": "provider_rejected" } | { "kind": "outcome_unknown" } | { "kind": "draft_conflict", currentRevision: number, } | { "kind": "reply_unavailable" };
+field: string, } | { "kind": "request_id_conflict" } | { "kind": "storage_unavailable" } | { "kind": "profile_in_use" } | { "kind": "read_only" } | { "kind": "not_configured" } | { "kind": "auth_required" } | { "kind": "auth_cancelled" } | { "kind": "auth_failed" } | { "kind": "secrets_unavailable" } | { "kind": "network_unavailable" } | { "kind": "rate_limited" } | { "kind": "provider_unavailable" } | { "kind": "invalid_provider_response" } | { "kind": "busy" } | { "kind": "permission_required" } | { "kind": "provider_rejected" } | { "kind": "outcome_unknown" } | { "kind": "draft_conflict", currentRevision: number, } | { "kind": "reply_unavailable" } | { "kind": "undo_unavailable",
+/**
+ * Typed eligibility failure (docs/ux-04-trustworthy-undo.md §3.2).
+ */
+reason: UndoUnavailableReason, };
 
 export type OperationReceipt = { operationId: string, acceptedAt: string, };
 
@@ -51,6 +56,18 @@ export type SetArchived = { conversation: ConversationRef, archived: boolean, re
 export type SetRead = { conversation: ConversationRef, read: boolean, requestId: string, };
 
 export type RetryOperation = { operationId: string, requestId: string, };
+
+export type UndoOperation = { operationId: string, requestId: string, };
+
+export type UndoUnavailableReason = "expired" | "superseded" | "already_undone" | "not_applicable" | "uncertain" | "unknown_prior";
+
+export type UndoOutcome = "cancelled" | "compensating";
+
+export type UndoReceipt = { undoneOperationId: string, outcome: UndoOutcome,
+/**
+ * Compensating operation ids in queue order; empty when `cancelled`.
+ */
+operationIds: Array<string>, acceptedAt: string, };
 
 export type MailboxOperationKind = "archive" | "read";
 
@@ -110,7 +127,15 @@ failure: OperationFailure | null,
 /**
  * Absent kind is legacy fixture archive.
  */
-kind?: MailboxOperationKind, requestedRead?: boolean, lastError?: MailError, };
+kind?: MailboxOperationKind, requestedRead?: boolean, lastError?: MailError,
+/**
+ * Id of the operation this one compensates.
+ */
+undoOf?: string,
+/**
+ * ISO-8601 UTC; present only while §3.2 rules 1–7 hold at query time.
+ */
+undoableUntil?: string, };
 
 export type InboxSnapshot = {
 /**

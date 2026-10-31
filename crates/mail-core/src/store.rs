@@ -4,6 +4,7 @@
 //! surfaced; nothing is logged-and-ignored. No subjects, addresses, or bodies
 //! are ever logged.
 
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,6 +17,7 @@ use crate::drafts::types::ReplyContext;
 use crate::dto::{
     Address, Conversation, ConversationRef, ConversationSummary, InboxSnapshot, Message,
     OperationFailure, OperationReceipt, OperationStatus, OperationSummary, SetArchived,
+    UndoOperation, UndoOutcome, UndoReceipt, UndoUnavailableReason,
 };
 use crate::error::MailError;
 use crate::seed::{self, SeedConversation};
@@ -51,6 +53,8 @@ struct OperationRow {
     requested_archived: bool,
     status: OperationStatus,
     failure: Option<OperationFailure>,
+    undo_of: Option<String>,
+    accepted_at: String,
 }
 
 impl std::fmt::Debug for Store {
@@ -136,12 +140,14 @@ impl Store {
                 conversation_id    TEXT NOT NULL,
                 requested_archived INTEGER NOT NULL CHECK (requested_archived IN (0, 1)),
                 status             TEXT NOT NULL
-                    CHECK (status IN ('queued', 'applying', 'confirmed', 'failed')),
+                    CHECK (status IN ('queued', 'applying', 'confirmed', 'failed', 'cancelled')),
                 failure_kind       TEXT,
                 accepted_at        TEXT NOT NULL,
                 confirmed_at       TEXT,
                 message_ids        TEXT NOT NULL,
-                request_id         TEXT NOT NULL
+                request_id         TEXT NOT NULL,
+                undo_of            TEXT,
+                prior_values       TEXT
             );
             CREATE TABLE IF NOT EXISTS request_keys (
                 account_id      TEXT NOT NULL,
@@ -153,7 +159,6 @@ impl Store {
             );",
         )
         .map_err(|_| MailError::StorageUnavailable)?;
-
         let schema_version: Option<String> = tx
             .query_row(
                 "SELECT value FROM meta WHERE key = 'schema_version'",
@@ -163,11 +168,50 @@ impl Store {
             .optional()
             .map_err(|_| MailError::StorageUnavailable)?;
         match schema_version {
-            Some(version) if version == "1" => {}
+            Some(version) if version == "2" => {}
+            Some(_) if schema_version.as_deref() == Some("1") => {
+                // UX-04 migration (docs/ux-04-trustworthy-undo.md §3.5): admit
+                // 'cancelled' and add the undo columns. Copy-rebuild in one
+                // transaction, preserving every row, its seq order and the
+                // request keys. Older versions still fail closed.
+                tx.execute_batch(
+                    "ALTER TABLE operations RENAME TO operations_v1;
+                     CREATE TABLE operations (
+                         seq                INTEGER PRIMARY KEY AUTOINCREMENT,
+                         operation_id       TEXT NOT NULL UNIQUE,
+                         account_id         TEXT NOT NULL,
+                         conversation_id    TEXT NOT NULL,
+                         requested_archived INTEGER NOT NULL CHECK (requested_archived IN (0, 1)),
+                         status             TEXT NOT NULL
+                             CHECK (status IN ('queued', 'applying', 'confirmed', 'failed', 'cancelled')),
+                         failure_kind       TEXT,
+                         accepted_at        TEXT NOT NULL,
+                         confirmed_at       TEXT,
+                         message_ids        TEXT NOT NULL,
+                         request_id         TEXT NOT NULL,
+                         undo_of            TEXT,
+                         prior_values       TEXT
+                     );
+                     INSERT INTO operations
+                         (seq, operation_id, account_id, conversation_id, requested_archived,
+                          status, failure_kind, accepted_at, confirmed_at, message_ids,
+                          request_id, undo_of, prior_values)
+                     SELECT seq, operation_id, account_id, conversation_id, requested_archived,
+                            status, failure_kind, accepted_at, confirmed_at, message_ids,
+                            request_id, NULL, NULL FROM operations_v1;
+                     DROP TABLE operations_v1;",
+                )
+                .map_err(|_| MailError::StorageUnavailable)?;
+                tx.execute(
+                    "UPDATE meta SET value = '2' WHERE key = 'schema_version'",
+                    [],
+                )
+                .map_err(|_| MailError::StorageUnavailable)?;
+            }
             Some(_) => return Err(MailError::StorageUnavailable),
             None => {
                 tx.execute(
-                    "INSERT INTO meta (key, value) VALUES ('schema_version', '1')",
+                    "INSERT INTO meta (key, value) VALUES ('schema_version', '2')",
                     [],
                 )
                 .map_err(|_| MailError::StorageUnavailable)?;
@@ -295,13 +339,35 @@ impl Store {
         )?;
         let operation_id = format!("op-{}", uuid::Uuid::new_v4());
         let accepted_at = self.clock.now_iso();
+        // Preimage capture (docs/ux-04-trustworthy-undo.md §3.1): the effective
+        // per-message INBOX state at acceptance, in the same transaction, in
+        // the operation's own value domain (prior archived = !in_inbox).
+        let view = build_conversation_view(
+            &tx,
+            &command.conversation.account_id,
+            &command.conversation.conversation_id,
+        )?;
+        let prior_values: BTreeMap<&str, bool> = message_ids
+            .iter()
+            .map(|message_id| {
+                let in_inbox = view
+                    .effective_inbox
+                    .get(message_id)
+                    .copied()
+                    .ok_or(MailError::StorageUnavailable)?;
+                Ok((message_id.as_str(), !in_inbox))
+            })
+            .collect::<Result<BTreeMap<&str, bool>, MailError>>()?;
+        let prior_values_json =
+            serde_json::to_string(&prior_values).map_err(|_| MailError::StorageUnavailable)?;
         let message_ids_json =
             serde_json::to_string(&message_ids).map_err(|_| MailError::StorageUnavailable)?;
         tx.execute(
             "INSERT INTO operations
                 (operation_id, account_id, conversation_id, requested_archived, status,
-                 failure_kind, accepted_at, confirmed_at, message_ids, request_id)
-             VALUES (?1, ?2, ?3, ?4, 'queued', NULL, ?5, NULL, ?6, ?7)",
+                 failure_kind, accepted_at, confirmed_at, message_ids, request_id,
+                 undo_of, prior_values)
+             VALUES (?1, ?2, ?3, ?4, 'queued', NULL, ?5, NULL, ?6, ?7, NULL, ?8)",
             params![
                 operation_id,
                 command.conversation.account_id,
@@ -310,6 +376,7 @@ impl Store {
                 accepted_at,
                 message_ids_json,
                 command.request_id,
+                prior_values_json,
             ],
         )
         .map_err(|_| MailError::StorageUnavailable)?;
@@ -331,6 +398,88 @@ impl Store {
             operation_id,
             accepted_at,
         })
+    }
+
+    /// Undo of the single latest accepted non-compensating operation for the
+    /// fixture archive setter (docs/ux-04-trustworthy-undo.md §3.2/§3.3).
+    /// Idempotent under `requestId` through the existing request dedup.
+    pub(crate) fn undo_operation(&self, command: &UndoOperation) -> Result<UndoReceipt, MailError> {
+        if command.request_id.trim().is_empty() {
+            return Err(MailError::InvalidRequest {
+                field: "requestId".to_string(),
+            });
+        }
+        self.persistence_gate()?;
+        let mut conn = self.lock_conn()?;
+        let tx = conn
+            .transaction()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let fingerprint = format!("undo_operation|v1|operation={}", command.operation_id);
+        let existing = tx
+            .query_row(
+                "SELECT operation_id, fingerprint, accepted_at FROM request_keys
+                 WHERE account_id = ?1 AND request_id = ?2",
+                params![ACCOUNT_ID, command.request_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        if let Some((operation_id, stored_fingerprint, accepted_at)) = existing {
+            if stored_fingerprint == fingerprint {
+                let receipt = reconstruct_undo_receipt(&tx, &operation_id, accepted_at)?;
+                tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+                return Ok(receipt);
+            }
+            return Err(MailError::RequestIdConflict);
+        }
+
+        let target = load_undo_target(&tx, &command.operation_id)?.ok_or(MailError::NotFound)?;
+        check_undoable(&tx, &target, &self.clock.now_iso())?;
+        let accepted_at = self.clock.now_iso();
+        let receipt = if target.status == OperationStatus::Queued {
+            // Cancel in place; zero rows changed means the worker claimed the
+            // operation concurrently, so fall through to compensation.
+            let cancelled = tx
+                .execute(
+                    "UPDATE operations SET status = 'cancelled'
+                     WHERE operation_id = ?1 AND status = 'queued'",
+                    params![target.operation_id],
+                )
+                .map_err(|_| MailError::StorageUnavailable)?;
+            if cancelled == 1 {
+                UndoReceipt {
+                    undone_operation_id: target.operation_id.clone(),
+                    outcome: UndoOutcome::Cancelled,
+                    operation_ids: Vec::new(),
+                    accepted_at: accepted_at.clone(),
+                }
+            } else {
+                compensate_fixture_tx(&tx, &target, &accepted_at)?
+            }
+        } else {
+            compensate_fixture_tx(&tx, &target, &accepted_at)?
+        };
+        tx.execute(
+            "INSERT INTO request_keys
+                (account_id, request_id, operation_id, fingerprint, accepted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                ACCOUNT_ID,
+                command.request_id,
+                target.operation_id,
+                fingerprint,
+                accepted_at,
+            ],
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        Ok(receipt)
     }
 
     /// Effective inbox list plus full operation history.
@@ -400,7 +549,11 @@ impl Store {
                 WHERE c.account_id = ?1 AND EXISTS (
                     SELECT 1 FROM operations o WHERE o.account_id = c.account_id
                     AND o.conversation_id = c.conversation_id AND o.requested_archived = 1
-                    AND o.status IN ('queued', 'applying', 'confirmed'))
+                    AND o.status IN ('queued', 'applying', 'confirmed')
+                    AND NOT EXISTS (
+                        SELECT 1 FROM operations u
+                        WHERE u.account_id = o.account_id AND u.undo_of = o.operation_id
+                        AND u.status IN ('queued', 'applying', 'confirmed')))
                 GROUP BY c.conversation_id)
              SELECT date, conversation_id FROM candidates
              WHERE ?2 IS NULL OR date < ?2 OR (date = ?2 AND conversation_id > ?3)
@@ -479,10 +632,22 @@ impl Store {
     }
 
     fn activity_rows(&self, conn: &Connection) -> Result<Vec<OperationSummary>, MailError> {
+        // Shared eligibility facts (§3.2 rules 4–5), computed once per load on
+        // the same injected clock as the undo command path.
+        let newest_undoable: Option<String> = conn
+            .query_row(
+                "SELECT operation_id FROM operations
+                 WHERE account_id = ?1 AND undo_of IS NULL ORDER BY seq DESC LIMIT 1",
+                params![ACCOUNT_ID],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let now = self.clock.now_iso();
         let mut stmt = conn
             .prepare(
                 "SELECT operation_id, account_id, conversation_id, requested_archived,
-                        status, failure_kind
+                        status, failure_kind, undo_of, accepted_at
                  FROM operations WHERE account_id = ?1 ORDER BY seq DESC",
             )
             .map_err(|_| MailError::StorageUnavailable)?;
@@ -495,27 +660,48 @@ impl Store {
                     requested_archived: row.get::<_, i64>(3)? != 0,
                     status: status_from_str(&row.get::<_, String>(4)?),
                     failure: failure_from_str(&row.get::<_, Option<String>>(5)?),
+                    undo_of: row.get(6)?,
+                    accepted_at: row.get(7)?,
                 })
             })
             .map_err(|_| MailError::StorageUnavailable)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| MailError::StorageUnavailable)?;
-        Ok(rows
-            .into_iter()
-            .map(|row| OperationSummary {
-                id: row.operation_id,
-                conversation: ConversationRef {
-                    account_id: row.account_id,
-                    conversation_id: row.conversation_id,
-                },
-                requested_archived: row.requested_archived,
-                status: row.status,
-                failure: row.failure,
-                kind: None,
-                requested_read: None,
-                last_error: None,
+        rows.into_iter()
+            .map(|row| {
+                let undoable_until = if row.undo_of.is_none()
+                    && matches!(
+                        row.status,
+                        OperationStatus::Queued
+                            | OperationStatus::Applying
+                            | OperationStatus::Confirmed
+                    )
+                    && newest_undoable.as_deref() == Some(row.operation_id.as_str())
+                    && !undo_rows_exist(conn, &row.operation_id)?
+                    && prior_values_present(conn, &row.operation_id)?
+                    && crate::clock::within_undo_window(&row.accepted_at, &now)
+                {
+                    crate::clock::undo_deadline_iso(&row.accepted_at)
+                } else {
+                    None
+                };
+                Ok(OperationSummary {
+                    id: row.operation_id,
+                    conversation: ConversationRef {
+                        account_id: row.account_id,
+                        conversation_id: row.conversation_id,
+                    },
+                    requested_archived: row.requested_archived,
+                    status: row.status,
+                    failure: row.failure,
+                    kind: None,
+                    requested_read: None,
+                    last_error: None,
+                    undo_of: row.undo_of,
+                    undoable_until,
+                })
             })
-            .collect())
+            .collect::<Result<Vec<_>, MailError>>()
     }
 
     /// Claims the oldest queued operation and flips it to `applying` atomically.
@@ -684,11 +870,243 @@ fn parse_ids(json: &str) -> Result<Vec<String>, MailError> {
     serde_json::from_str(json).map_err(|_| MailError::StorageUnavailable)
 }
 
+/// The persisted facts about a fixture operation needed to decide Undo.
+struct UndoTarget {
+    operation_id: String,
+    conversation_id: String,
+    status: OperationStatus,
+    undo_of: Option<String>,
+    accepted_at: String,
+    prior_values: Option<String>,
+}
+
+fn load_undo_target(
+    conn: &Connection,
+    operation_id: &str,
+) -> Result<Option<UndoTarget>, MailError> {
+    let row = conn
+        .query_row(
+            "SELECT conversation_id, requested_archived, status, undo_of, accepted_at,
+                    prior_values
+             FROM operations WHERE account_id = ?1 AND operation_id = ?2",
+            params![ACCOUNT_ID, operation_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| MailError::StorageUnavailable)?;
+    let Some((conversation_id, status, undo_of, accepted_at, prior_values)) = row else {
+        return Ok(None);
+    };
+    Ok(Some(UndoTarget {
+        operation_id: operation_id.to_string(),
+        conversation_id,
+        status: status_from_str(&status),
+        undo_of,
+        accepted_at,
+        prior_values,
+    }))
+}
+
+/// Applies eligibility rules §3.2 in order; the first failure returns its
+/// typed reason. Fixture facts are never unknown, but pre-UX-04 rows have no
+/// persisted preimage and fail closed as `unknown_prior`.
+fn check_undoable(tx: &Transaction<'_>, target: &UndoTarget, now: &str) -> Result<(), MailError> {
+    if target.undo_of.is_some() {
+        return Err(undo_unavailable(UndoUnavailableReason::NotApplicable));
+    }
+    if !crate::clock::within_undo_window(&target.accepted_at, now) {
+        return Err(undo_unavailable(UndoUnavailableReason::Expired));
+    }
+    // Rule 4: newest accepted non-compensating operation on the account.
+    let newest: Option<String> = tx
+        .query_row(
+            "SELECT operation_id FROM operations
+             WHERE account_id = ?1 AND undo_of IS NULL ORDER BY seq DESC LIMIT 1",
+            params![ACCOUNT_ID],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| MailError::StorageUnavailable)?;
+    if newest.as_deref() != Some(target.operation_id.as_str()) {
+        return Err(undo_unavailable(UndoUnavailableReason::Superseded));
+    }
+    let undone: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM operations WHERE account_id = ?1 AND undo_of = ?2)",
+            params![ACCOUNT_ID, target.operation_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+    if undone {
+        return Err(undo_unavailable(UndoUnavailableReason::AlreadyUndone));
+    }
+    match target.status {
+        OperationStatus::Queued | OperationStatus::Applying | OperationStatus::Confirmed => {}
+        OperationStatus::Failed => {
+            return Err(undo_unavailable(UndoUnavailableReason::NotApplicable))
+        }
+        OperationStatus::OutcomeUnknown => {
+            return Err(undo_unavailable(UndoUnavailableReason::Uncertain))
+        }
+        OperationStatus::Cancelled => {
+            return Err(undo_unavailable(UndoUnavailableReason::AlreadyUndone))
+        }
+    }
+    if target.prior_values.is_none() {
+        return Err(undo_unavailable(UndoUnavailableReason::UnknownPrior));
+    }
+    Ok(())
+}
+
+fn undo_unavailable(reason: UndoUnavailableReason) -> MailError {
+    MailError::UndoUnavailable { reason }
+}
+
+/// Stages one queued compensating operation per distinct prior value with
+/// explicit targets and `undo_of` set (docs/ux-04-trustworthy-undo.md §3.3).
+/// Compensating operations record their own preimage from the effective
+/// state at their acceptance.
+fn compensate_fixture_tx(
+    tx: &Transaction<'_>,
+    target: &UndoTarget,
+    accepted_at: &str,
+) -> Result<UndoReceipt, MailError> {
+    let prior_values: BTreeMap<String, bool> = serde_json::from_str(
+        target
+            .prior_values
+            .as_deref()
+            .ok_or(MailError::StorageUnavailable)?,
+    )
+    .map_err(|_| MailError::StorageUnavailable)?;
+    let message_ids: Vec<String> = parse_ids(&target_message_ids(tx, target)?)?;
+    let mut restore_group = Vec::new();
+    let mut reapply_group = Vec::new();
+    for message_id in message_ids {
+        match prior_values.get(&message_id) {
+            Some(false) => restore_group.push(message_id),
+            Some(true) => reapply_group.push(message_id),
+            None => return Err(undo_unavailable(UndoUnavailableReason::UnknownPrior)),
+        }
+    }
+    // Effective per-message state at compensation acceptance; each
+    // compensating operation records it as its own preimage.
+    let view = build_conversation_view(tx, ACCOUNT_ID, &target.conversation_id)?;
+    let mut operation_ids = Vec::new();
+    for (value, ids) in [(false, restore_group), (true, reapply_group)] {
+        if ids.is_empty() {
+            continue;
+        }
+        let operation_id = format!("op-{}", uuid::Uuid::new_v4());
+        let request_id = format!("undo-{}", uuid::Uuid::new_v4());
+        let own_prior: BTreeMap<&str, bool> = ids
+            .iter()
+            .map(|message_id| {
+                let in_inbox = view
+                    .effective_inbox
+                    .get(message_id)
+                    .copied()
+                    .ok_or(MailError::StorageUnavailable)?;
+                Ok((message_id.as_str(), !in_inbox))
+            })
+            .collect::<Result<BTreeMap<&str, bool>, MailError>>()?;
+        tx.execute(
+            "INSERT INTO operations
+                (operation_id, account_id, conversation_id, requested_archived, status,
+                 failure_kind, accepted_at, confirmed_at, message_ids, request_id,
+                 undo_of, prior_values)
+             VALUES (?1, ?2, ?3, ?4, 'queued', NULL, ?5, NULL, ?6, ?7, ?8, ?9)",
+            params![
+                operation_id,
+                ACCOUNT_ID,
+                target.conversation_id,
+                value as i64,
+                accepted_at,
+                serde_json::to_string(&ids).map_err(|_| MailError::StorageUnavailable)?,
+                request_id,
+                target.operation_id,
+                serde_json::to_string(&own_prior).map_err(|_| MailError::StorageUnavailable)?,
+            ],
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+        tx.execute(
+            "INSERT INTO request_keys
+                (account_id, request_id, operation_id, fingerprint, accepted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                ACCOUNT_ID,
+                request_id,
+                operation_id,
+                format!(
+                    "undo_compensation|v1|undo_of={}|value={}",
+                    target.operation_id, value
+                ),
+                accepted_at,
+            ],
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+        operation_ids.push(operation_id);
+    }
+    Ok(UndoReceipt {
+        undone_operation_id: target.operation_id.clone(),
+        outcome: UndoOutcome::Compensating,
+        operation_ids,
+        accepted_at: accepted_at.to_string(),
+    })
+}
+
+fn target_message_ids(tx: &Transaction<'_>, target: &UndoTarget) -> Result<String, MailError> {
+    tx.query_row(
+        "SELECT message_ids FROM operations WHERE account_id = ?1 AND operation_id = ?2",
+        params![ACCOUNT_ID, target.operation_id],
+        |row| row.get(0),
+    )
+    .map_err(|_| MailError::StorageUnavailable)
+}
+
+/// Rebuilds a committed undo receipt from the durable compensating rows.
+fn reconstruct_undo_receipt(
+    conn: &Connection,
+    undone_operation_id: &str,
+    accepted_at: String,
+) -> Result<UndoReceipt, MailError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT operation_id FROM operations
+             WHERE account_id = ?1 AND undo_of = ?2 ORDER BY seq",
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+    let operation_ids = stmt
+        .query_map(params![ACCOUNT_ID, undone_operation_id], |row| row.get(0))
+        .map_err(|_| MailError::StorageUnavailable)?
+        .collect::<Result<Vec<String>, _>>()
+        .map_err(|_| MailError::StorageUnavailable)?;
+    let outcome = if operation_ids.is_empty() {
+        UndoOutcome::Cancelled
+    } else {
+        UndoOutcome::Compensating
+    };
+    Ok(UndoReceipt {
+        undone_operation_id: undone_operation_id.to_string(),
+        outcome,
+        operation_ids,
+        accepted_at,
+    })
+}
+
 fn status_from_str(s: &str) -> OperationStatus {
     match s {
         "queued" => OperationStatus::Queued,
         "applying" => OperationStatus::Applying,
         "confirmed" => OperationStatus::Confirmed,
+        "cancelled" => OperationStatus::Cancelled,
         _ => OperationStatus::Failed,
     }
 }
@@ -701,12 +1119,37 @@ fn failure_from_str(s: &Option<String>) -> Option<OperationFailure> {
     }
 }
 
+/// Rule 5: whether any compensating operation already points at this one.
+fn undo_rows_exist(conn: &Connection, operation_id: &str) -> Result<bool, MailError> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM operations WHERE account_id = ?1 AND undo_of = ?2)",
+        params![ACCOUNT_ID, operation_id],
+        |row| row.get(0),
+    )
+    .map_err(|_| MailError::StorageUnavailable)
+}
+
+/// Rule 7: a preimage row must exist for the operation. Fixture facts are
+/// never unknown, so presence of the JSON map means every target is known.
+fn prior_values_present(conn: &Connection, operation_id: &str) -> Result<bool, MailError> {
+    conn.query_row(
+        "SELECT prior_values IS NOT NULL FROM operations
+         WHERE account_id = ?1 AND operation_id = ?2",
+        params![ACCOUNT_ID, operation_id],
+        |row| row.get(0),
+    )
+    .map_err(|_| MailError::StorageUnavailable)
+}
+
 struct ConversationView {
     conversation_ref: ConversationRef,
     subject: String,
     messages: Vec<Message>,
     is_in_inbox: bool,
     pending_operation_id: Option<String>,
+    /// Effective per-message INBOX membership (cached facts + pending
+    /// overlay); the preimage source for undo (§3.1).
+    effective_inbox: HashMap<String, bool>,
 }
 
 /// Reads base provider facts plus pending operations (acceptance order) and
@@ -735,6 +1178,7 @@ fn build_conversation_view(
             messages: Vec::new(),
             is_in_inbox: false,
             pending_operation_id: None,
+            effective_inbox: HashMap::new(),
         });
     };
 
@@ -800,12 +1244,16 @@ fn build_conversation_view(
 
     // Overlay: each pending operation applies, in acceptance order, to the
     // message ids it snapshotted at acceptance time.
+    let mut effective_inbox = HashMap::<String, bool>::new();
     for (_, archived, ids) in &pending {
         for (message, in_inbox) in &mut messages {
             if ids.contains(&message.id) {
                 *in_inbox = !archived;
             }
         }
+    }
+    for (message, in_inbox) in &messages {
+        effective_inbox.insert(message.id.clone(), *in_inbox);
     }
 
     Ok(ConversationView {
@@ -817,6 +1265,7 @@ fn build_conversation_view(
         },
         subject,
         messages: messages.into_iter().map(|(message, _)| message).collect(),
+        effective_inbox,
     })
 }
 

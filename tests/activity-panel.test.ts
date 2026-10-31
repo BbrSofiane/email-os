@@ -34,4 +34,19 @@ describe('ActivityPanel', () => {
       wrapper.unmount();
     },
   );
+
+  it('renders cancelled operations as Cancelled by Undo with the undoOf linkage', () => {
+    const cancelled: OperationSummary = {
+      ...operation('cancelled'),
+      failure: null,
+      lastError: undefined,
+      undoOf: 'op-0001',
+    };
+    const wrapper = mount(ActivityPanel, {
+      props: { activity: [cancelled], actionsEnabled: true, gmailMode: false },
+    });
+    expect(wrapper.get('[data-test="activity-cancelled"] .activity-status').text()).toBe('Cancelled by Undo');
+    expect(wrapper.get('[data-test="activity-undo-of-operation-cancelled"]').text()).toBe('Undo of op-0001');
+    wrapper.unmount();
+  });
 });

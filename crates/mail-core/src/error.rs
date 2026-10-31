@@ -57,6 +57,11 @@ pub enum MailError {
     },
     #[error("complete and safe reply context is unavailable")]
     ReplyUnavailable,
+    #[error("the last action cannot be undone")]
+    UndoUnavailable {
+        /// Typed eligibility failure (docs/ux-04-trustworthy-undo.md §3.2).
+        reason: crate::dto::UndoUnavailableReason,
+    },
 }
 
 /// Fake-provider outcome. `Cancelled` is not a failure: the operation stays

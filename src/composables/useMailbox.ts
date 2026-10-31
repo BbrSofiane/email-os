@@ -9,6 +9,7 @@ import type {
   MailError,
   MailMode,
   OperationReceipt,
+  UndoReceipt,
 } from '../lib/ipc/client';
 import { toMailError } from '../lib/ipc/client';
 
@@ -18,6 +19,21 @@ export type AccountState = 'loading' | 'ready' | 'error';
 export type AccountAction = 'connect' | 'disconnect' | 'sync' | 'enable-actions' | 'cancel-upgrade';
 export type ConversationSummaryLike = InboxSnapshot['conversations'][number];
 export type OperationSummaryLike = InboxSnapshot['activity'][number];
+/** The setter action an undoable last action was performed with. */
+export type LastActionId = 'archive' | 'unarchive' | 'read' | 'unread';
+
+/**
+ * Single-slot notice state for the most recent accepted conversation action
+ * (UX-04). `undoableUntil` comes from the refreshed activity row, never from a
+ * local guess; the backend stays the authority on undo eligibility.
+ */
+export interface LastAction {
+  receipt: OperationReceipt;
+  actionId: LastActionId;
+  target: ConversationRef;
+  subject: string;
+  undoableUntil: string | null;
+}
 
 export function sameConversation(a: ConversationRef | null, b: ConversationRef | null): boolean {
   return a !== null && b !== null && a.accountId === b.accountId && a.conversationId === b.conversationId;
@@ -81,6 +97,10 @@ export interface Mailbox {
   setArchived(target: ConversationRef, archived: boolean): Promise<OperationReceipt | null>;
   setRead(target: ConversationRef, read: boolean): Promise<OperationReceipt | null>;
   retryOperation(operationId: string): Promise<OperationReceipt | null>;
+  /** Single-slot notice state for the latest accepted setter action. */
+  lastAction: Ref<LastAction | null>;
+  /** Undo of the last action; re-points on `superseded`, exposes `expired`. */
+  undoLastAction(): Promise<UndoReceipt | null>;
   enableMailboxActions(): Promise<void>;
   cancelMailboxActionUpgrade(): Promise<void>;
   archiveFocused(): Promise<void>;
@@ -110,6 +130,7 @@ export function useMailbox(client: MailClient): Mailbox {
   const accountState = ref<AccountState>('loading');
   const accountError = ref<MailError | null>(null);
   const accountBusy = ref<AccountAction | null>(null);
+  const lastAction = ref<LastAction | null>(null);
 
   let listToken = 0;
   let activityToken = 0;
@@ -266,6 +287,7 @@ export function useMailbox(client: MailClient): Mailbox {
         ++mailboxSessionToken;
         ++commandToken;
         inFlightCommandRef.value = null;
+        lastAction.value = null;
         exactTotal.value = null;
         lastSyncedAt.value = null;
         closeReader();
@@ -420,6 +442,7 @@ export function useMailbox(client: MailClient): Mailbox {
     commandToken += 1;
     mailboxSessionToken += 1;
     inFlightCommandRef.value = null;
+    lastAction.value = null;
     conversations.value = [];
     activity.value = [];
     // Focus is account-scoped: a new account starts with no conversation focus.
@@ -492,10 +515,13 @@ export function useMailbox(client: MailClient): Mailbox {
   }
 
   async function setArchived(target: ConversationRef, archived: boolean): Promise<OperationReceipt | null> {
-    return submitMutation(
+    const subject = subjectFor(target);
+    const receipt = await submitMutation(
       (requestId) => client.setArchived({ conversation: { ...target }, archived, requestId }),
       target,
     );
+    if (receipt && !detached) recordLastAction(receipt, archived ? 'archive' : 'unarchive', target, subject);
+    return receipt;
   }
 
   async function setRead(target: ConversationRef, read: boolean): Promise<OperationReceipt | null> {
@@ -503,10 +529,96 @@ export function useMailbox(client: MailClient): Mailbox {
       lastCommandError.value = { kind: 'read_only' };
       return null;
     }
-    return submitMutation(
+    const subject = subjectFor(target);
+    const receipt = await submitMutation(
       (requestId) => client.setRead({ conversation: { ...target }, read, requestId }),
       target,
     );
+    if (receipt && !detached) recordLastAction(receipt, read ? 'read' : 'unread', target, subject);
+    return receipt;
+  }
+
+  /** Best-effort subject at action time; rows may vanish during the refresh. */
+  function subjectFor(target: ConversationRef): string {
+    const row = conversations.value.find((entry) => sameConversation(entry.ref, target));
+    if (row) return row.subject;
+    const open = conversation.value;
+    if (open && sameConversation(open.ref, target)) return open.subject;
+    return target.conversationId;
+  }
+
+  function recordLastAction(receipt: OperationReceipt, actionId: LastActionId, target: ConversationRef, subject: string): void {
+    const operation = activity.value.find((item) => item.id === receipt.operationId);
+    lastAction.value = {
+      receipt: { ...receipt },
+      actionId,
+      target: { ...target },
+      subject,
+      undoableUntil: operation?.undoableUntil ?? null,
+    };
+  }
+
+  /**
+   * On `superseded`, re-point the slot at the newest still-undoable activity
+   * row instead of guessing: only the backend knows which operation (if any)
+   * currently satisfies the undo rules. Only `receipt.operationId` is consumed
+   * after re-pointing; the receipt's `acceptedAt` is not a real acceptance.
+   */
+  function repointLastAction(): void {
+    const candidates = activity.value.filter((item) => item.undoableUntil !== undefined);
+    let newest: OperationSummaryLike | null = null;
+    for (const item of candidates) {
+      if (!newest || (item.undoableUntil ?? '') >= (newest.undoableUntil ?? '')) newest = item;
+    }
+    if (!newest) {
+      lastAction.value = null;
+      return;
+    }
+    lastAction.value = {
+      receipt: { operationId: newest.id, acceptedAt: newest.undoableUntil ?? '' },
+      actionId: newest.kind === 'read' ? (newest.requestedRead ? 'read' : 'unread') : newest.requestedArchived ? 'archive' : 'unarchive',
+      target: { ...newest.conversation },
+      subject: subjectFor(newest.conversation),
+      undoableUntil: newest.undoableUntil ?? null,
+    };
+  }
+
+  async function undoLastAction(): Promise<UndoReceipt | null> {
+    const slot = lastAction.value;
+    if (!slot) return null;
+    if (!mutationsAllowed()) return null;
+    const token = ++commandToken;
+    const sessionToken = mailboxSessionToken;
+    inFlightCommandRef.value = { ...slot.target };
+    try {
+      const receipt = await client.undoOperation({ operationId: slot.receipt.operationId, requestId: crypto.randomUUID() });
+      if (detached || sessionToken !== mailboxSessionToken) return receipt;
+      if (token === commandToken) lastCommandError.value = null;
+      await refresh();
+      if (detached || sessionToken !== mailboxSessionToken) return receipt;
+      // The action is undone: the single slot is cleared (no redo level).
+      lastAction.value = null;
+      return receipt;
+    } catch (raw) {
+      if (detached || sessionToken !== mailboxSessionToken || token !== commandToken) return null;
+      const error = toMailError(raw);
+      lastCommandError.value = error;
+      if (error.kind === 'undo_unavailable' && error.reason === 'superseded') {
+        await refresh();
+        if (!detached) repointLastAction();
+      }
+      if (error.kind === 'undo_unavailable' && error.reason === 'expired') {
+        // The backend's authoritative decision updates the slot: the notice
+        // shows the recovery wording and the key/palette entry close.
+        lastAction.value = { ...slot, undoableUntil: null };
+      }
+      // Activity / Mark Not Done stay reachable either way.
+      return null;
+    } finally {
+      if (!detached && sessionToken === mailboxSessionToken && token === commandToken) {
+        inFlightCommandRef.value = null;
+      }
+    }
   }
 
   async function retryOperation(operationId: string): Promise<OperationReceipt | null> {
@@ -593,6 +705,7 @@ export function useMailbox(client: MailClient): Mailbox {
     openRef, conversation, detailState, detailError, lastCommandError,
     inFlightCommandRef, ready, refresh, focusConversation, moveFocus,
     openConversationByRef, openFocused, closeReader, setArchived, setRead, retryOperation,
+    lastAction, undoLastAction,
     enableMailboxActions, cancelMailboxActionUpgrade, archiveFocused,
     accountStatus, accountState, accountError, accountBusy, mode, isGmail,
     connectAccount, disconnectAccount, requestSync,

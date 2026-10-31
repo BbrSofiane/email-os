@@ -52,3 +52,26 @@ pub fn utc(s: &str) -> DateTime<Utc> {
         .expect("valid ISO-8601 UTC timestamp")
         .with_timezone(&Utc)
 }
+
+/// Undo eligibility window measured from acceptance (docs/ux-04-trustworthy-undo.md §3.2 rule 3).
+pub(crate) const UNDO_WINDOW_SECONDS: i64 = 10;
+
+/// Whether `now` is strictly before `accepted_at + UNDO_WINDOW_SECONDS`.
+/// Unparseable timestamps fail closed (window over).
+pub(crate) fn within_undo_window(accepted_at: &str, now: &str) -> bool {
+    undo_deadline(accepted_at)
+        .zip(DateTime::parse_from_rfc3339(now).ok())
+        .is_some_and(|(deadline, now)| now < deadline)
+}
+
+/// The ISO-8601 UTC instant after which the operation is no longer undoable.
+pub(crate) fn undo_deadline_iso(accepted_at: &str) -> Option<String> {
+    Some(undo_deadline(accepted_at)?.to_rfc3339_opts(SecondsFormat::Secs, true))
+}
+
+fn undo_deadline(accepted_at: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(accepted_at)
+        .ok()
+        .map(|t| t.with_timezone(&Utc))
+        .map(|t| t + chrono::Duration::seconds(UNDO_WINDOW_SECONDS))
+}

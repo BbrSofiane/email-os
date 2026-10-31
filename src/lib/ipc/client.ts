@@ -33,6 +33,8 @@ import type {
   SaveDraft,
   SetArchived,
   SetRead,
+  UndoOperation,
+  UndoReceipt,
 } from './generated';
 
 export type {
@@ -74,6 +76,10 @@ export type {
   ReplyContext,
   SyncInfo,
   SyncState,
+  UndoOperation,
+  UndoOutcome,
+  UndoReceipt,
+  UndoUnavailableReason,
 } from './generated';
 
 export {
@@ -90,6 +96,7 @@ export {
   ENABLE_MAILBOX_ACTIONS_COMMAND,
   SET_READ_COMMAND,
   RETRY_OPERATION_COMMAND,
+  UNDO_OPERATION_COMMAND,
   LIST_DRAFTS_COMMAND,
   GET_DRAFT_COMMAND,
   CREATE_DRAFT_COMMAND,
@@ -112,6 +119,8 @@ export interface MailClient {
   cancelMailboxActionUpgrade(): Promise<void>;
   setRead(command: SetRead): Promise<OperationReceipt>;
   retryOperation(command: RetryOperation): Promise<OperationReceipt>;
+  /** Undo of the single latest accepted operation; rejects with `undo_unavailable`. */
+  undoOperation(command: UndoOperation): Promise<UndoReceipt>;
   /** Registers a change listener; resolves with an unsubscribe function. */
   subscribe(listener: () => void): Promise<() => void>;
   /** Authoritative fixture-vs-Gmail mode and connection/sync state. */
@@ -162,10 +171,23 @@ export function isMailErrorShape(value: unknown): value is MailError {
       return typeof (value as unknown as { currentRevision: unknown }).currentRevision === 'number';
     case 'invalid_request':
       return typeof (value as unknown as { field: unknown }).field === 'string';
+    case 'undo_unavailable':
+      return UNDO_UNAVAILABLE_REASONS.includes(
+        (value as unknown as { reason: unknown }).reason as string,
+    );
     default:
       return false;
   }
 }
+
+const UNDO_UNAVAILABLE_REASONS: readonly string[] = [
+  'expired',
+  'superseded',
+  'already_undone',
+  'not_applicable',
+  'uncertain',
+  'unknown_prior',
+];
 
 /**
  * Normalizes a rejected command result into the MailError union. The native shell

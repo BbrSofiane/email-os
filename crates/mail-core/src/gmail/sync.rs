@@ -12,10 +12,10 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use crate::clock::SystemClock;
+use crate::clock::{Clock, SystemClock};
 use crate::dto::{
     Address, Conversation, ConversationRef, InboxSnapshot, Message, OperationReceipt,
-    RetryOperation, SetArchived, SetRead,
+    RetryOperation, SetArchived, SetRead, UndoOperation, UndoReceipt,
 };
 use crate::error::MailError;
 use crate::gmail::store::{
@@ -203,9 +203,19 @@ impl GmailCore {
         profile_dir: impl AsRef<Path>,
         provider: Arc<dyn GmailReadProvider>,
     ) -> Result<GmailCore, MailError> {
+        Self::open_with_clock(profile_dir, provider, Arc::new(SystemClock))
+    }
+
+    /// Like [`Self::open`] with an injectable clock; tests inject
+    /// [`crate::clock::FakeClock`] for deterministic undo-window behavior.
+    pub fn open_with_clock(
+        profile_dir: impl AsRef<Path>,
+        provider: Arc<dyn GmailReadProvider>,
+        clock: Arc<dyn Clock>,
+    ) -> Result<GmailCore, MailError> {
         let profile_dir = profile_dir.as_ref();
         let profile = Arc::new(ProfileGuard::acquire(profile_dir)?);
-        let store = Arc::new(GmailStore::open(profile_dir, Arc::new(SystemClock))?);
+        let store = Arc::new(GmailStore::open(profile_dir, clock)?);
 
         // Startup credential detection; sync starts independently of Vue.
         let (connection, error, restore) = if !provider.is_configured() {
@@ -527,6 +537,58 @@ impl GmailCore {
 
     pub fn retry_operation(&self, command: &RetryOperation) -> Result<OperationReceipt, MailError> {
         self.accept_operation(|store| store.accept_retry(command))
+    }
+
+    /// Undo of the single latest accepted non-compensating operation
+    /// (docs/ux-04-trustworthy-undo.md §3.2/§3.3). Eligibility is store-owned;
+    /// this admission only guards lifecycle (halted/stopping/disconnecting)
+    /// and the active account. Cancelling a still-queued operation is purely
+    /// local; compensating operations recheck capability in the unchanged
+    /// executor, so no mutation-access gate is applied here.
+    pub fn undo_operation(&self, command: &UndoOperation) -> Result<UndoReceipt, MailError> {
+        let inner = &*self.inner;
+        let mut st = inner
+            .ctrl
+            .state
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        if st.halted || st.stop {
+            return Err(MailError::StorageUnavailable);
+        }
+        if st.disconnecting {
+            return Err(MailError::Busy);
+        }
+        match inner.store.account() {
+            Ok(Some(_)) => {}
+            Ok(None) => return Err(MailError::AuthRequired),
+            Err(error) => {
+                if latch_admission_storage_error(&mut st, &inner.ctrl, &error) {
+                    drop(st);
+                    inner.hub.dispatch();
+                }
+                return Err(error);
+            }
+        }
+        let receipt = match inner.store.undo_operation(command) {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                if error == MailError::StorageUnavailable {
+                    st.halted = true;
+                    st.error = Some(error.clone());
+                    st.pass_cancel.cancel();
+                    cancel_reply_enrichments(&mut st);
+                    inner.ctrl.wake.notify_all();
+                }
+                return Err(error);
+            }
+        };
+        // Compensation work must dispatch immediately; a cancelled operation
+        // needs no worker pass but the wake is harmless.
+        st.operations_requested = true;
+        inner.ctrl.wake.notify_all();
+        drop(st);
+        inner.hub.dispatch();
+        Ok(receipt)
     }
 
     fn accept_operation(

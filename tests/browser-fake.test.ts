@@ -430,3 +430,187 @@ describe('browser fake MailClient (Slice 02 account lifecycle)', () => {
     expect(inboxIds(await fake.listConversations())).toContain('conv-01');
   });
 });
+
+describe('browser fake undo model (UX-04)', () => {
+  const T0 = Date.parse('2025-01-01T00:00:00.000Z');
+  let clockMs = T0;
+  const now = (): string => new Date(clockMs).toISOString();
+  const undo = (fake: ReturnType<typeof createBrowserFakeMailClient>, operationId: string, requestId: string) =>
+    fake.undoOperation({ operationId, requestId });
+
+  it('captures the per-message preimage at acceptance and compensates with explicit targets', async () => {
+    const fake = createBrowserFakeMailClient(now);
+    clockMs = T0;
+    fake.controls.setAccount({ mode: 'gmail', connection: 'connected', emailAddress: 'operator@example.test', mutationAccess: 'enabled' });
+    // conv-01 seeds: m1 read, m2 read, m3 unread — a mixed read preimage.
+    const receipt = await fake.setRead({ conversation: gmailRef('conv-01'), read: true, requestId: 'r1' });
+    await fake.controls.flush();
+    expect(await fake.getConversation(gmailRef('conv-01'))).toMatchObject({ isRead: true });
+    const undoReceipt = await undo(fake, receipt.operationId, 'z1');
+    expect(undoReceipt.outcome).toBe('compensating');
+    expect(undoReceipt.undoneOperationId).toBe(receipt.operationId);
+    // One compensating operation per DISTINCT prior value: true (m1, m2) and false (m3).
+    expect(undoReceipt.operationIds).toHaveLength(2);
+    await fake.controls.flush();
+    const compensating = fake.controls.activity().filter((op) => op.undoOf === receipt.operationId);
+    expect(compensating.map((op) => [op.kind, op.requestedRead, op.status]).sort()).toEqual([['read', false, 'confirmed'], ['read', true, 'confirmed']]);
+    expect(await fake.getConversation(gmailRef('conv-01'))).toMatchObject({ isRead: false });
+  });
+
+  it('compensates from the effective preimage at acceptance, not stale cached facts', async () => {
+    const fake = createBrowserFakeMailClient(now);
+    clockMs = T0;
+    await fake.setArchived({ conversation: fixtureRef('conv-01'), archived: true, requestId: 'a1' });
+    await fake.controls.flush();
+    const notDone = await fake.setArchived({ conversation: fixtureRef('conv-01'), archived: false, requestId: 'a2' });
+    await fake.controls.flush();
+    // The unarchive's effective prior value is "archived" (the queued/confirmed
+    // archive), not the stale seeded inbox fact: undo must re-archive.
+    const undoReceipt = await undo(fake, notDone.operationId, 'z1');
+    expect(undoReceipt.outcome).toBe('compensating');
+    expect(undoReceipt.operationIds).toHaveLength(1);
+    await fake.controls.flush();
+    expect(fake.controls.activity().find((op) => op.undoOf === notDone.operationId)).toMatchObject({ requestedArchived: true });
+    expect(await fake.getConversation(fixtureRef('conv-01'))).toMatchObject({ isInInbox: false });
+  });
+
+  it('keeps later arrivals out of compensating targets', async () => {
+    const fake = createBrowserFakeMailClient(now);
+    clockMs = T0;
+    const receipt = await fake.setArchived({ conversation: fixtureRef('conv-01'), archived: true, requestId: 'a1' });
+    await fake.controls.flush();
+    fake.controls.addMessage('conv-01', false);
+    const undoReceipt = await undo(fake, receipt.operationId, 'z1');
+    expect(undoReceipt.outcome).toBe('compensating');
+    await fake.controls.flush();
+    expect(inboxIds(await fake.listConversations())).toContain('conv-01');
+    expect(await fake.getConversation(fixtureRef('conv-01'))).toMatchObject({ isInInbox: true, isRead: false });
+  });
+
+  it('cancels a still-queued operation in place and drops it from the pending overlay', async () => {
+    const fake = createBrowserFakeMailClient(now);
+    clockMs = T0;
+    fake.controls.behavior.holdQueued = true;
+    const receipt = await fake.setArchived({ conversation: fixtureRef('conv-01'), archived: true, requestId: 'a1' });
+    expect(inboxIds(await fake.listConversations())).not.toContain('conv-01');
+    const undoReceipt = await undo(fake, receipt.operationId, 'z1');
+    expect(undoReceipt).toMatchObject({ undoneOperationId: receipt.operationId, outcome: 'cancelled', operationIds: [] });
+    // Overlay gone, row back, still visible in Activity as cancelled.
+    expect(inboxIds(await fake.listConversations())).toContain('conv-01');
+    expect(await fake.getConversation(fixtureRef('conv-01'))).toMatchObject({ pendingOperationId: null, isInInbox: true });
+    expect(fake.controls.activity().find((op) => op.id === receipt.operationId)?.status).toBe('cancelled');
+    expect(fake.controls.activity().find((op) => op.id === receipt.operationId)?.undoableUntil).toBeUndefined();
+    fake.controls.release();
+    await fake.controls.flush();
+    expect(fake.controls.activity().find((op) => op.id === receipt.operationId)).toMatchObject({ status: 'cancelled' });
+  });
+
+  it('derives undoableUntil from the injected clock (10 s) and drops it once ineligible', async () => {
+    const fake = createBrowserFakeMailClient(now);
+    clockMs = T0;
+    const receipt = await fake.setArchived({ conversation: fixtureRef('conv-01'), archived: true, requestId: 'a1' });
+    await fake.controls.flush();
+    expect(fake.controls.activity().find((op) => op.id === receipt.operationId)?.undoableUntil)
+      .toBe(new Date(T0 + 10_000).toISOString());
+    clockMs = T0 + 10_001;
+    const snap = await fake.listConversations();
+    expect(snap.activity.find((op) => op.id === receipt.operationId)?.undoableUntil).toBeUndefined();
+  });
+
+  it('rejects expired with nothing enqueued, and failed/compensating as not_applicable, unknown outcome as uncertain', async () => {
+    const fake = createBrowserFakeMailClient(now);
+    clockMs = T0;
+    const receipt = await fake.setArchived({ conversation: fixtureRef('conv-01'), archived: true, requestId: 'a1' });
+    await fake.controls.flush();
+    clockMs = T0 + 10_001;
+    await expect(undo(fake, receipt.operationId, 'z1')).rejects.toEqual({ kind: 'undo_unavailable', reason: 'expired' });
+    expect(fake.controls.activity()).toHaveLength(1);
+
+    fake.controls.behavior.failNext = 1;
+    fake.controls.behavior.failureKind = 'provider_rejected';
+    const failed = await fake.setArchived({ conversation: fixtureRef('conv-02'), archived: true, requestId: 'a2' });
+    await fake.controls.flush();
+    clockMs = T0 + 10_001; // past failed op's own window; failed blocks before expiry matters less
+    clockMs = T0 + 5_000;
+    await expect(undo(fake, failed.operationId, 'z2')).rejects.toEqual({ kind: 'undo_unavailable', reason: 'not_applicable' });
+
+    fake.controls.behavior.failureKind = 'outcome_unknown';
+    fake.controls.behavior.failNext = 1;
+    const uncertain = await fake.setArchived({ conversation: fixtureRef('conv-03'), archived: true, requestId: 'a3' });
+    await fake.controls.flush();
+    await expect(undo(fake, uncertain.operationId, 'z3')).rejects.toEqual({ kind: 'undo_unavailable', reason: 'uncertain' });
+  });
+
+  it('rejects superseded until the newest op is undone, then already_undone; retry preimage copies', async () => {
+    const fake = createBrowserFakeMailClient(now);
+    clockMs = T0;
+    const first = await fake.setArchived({ conversation: fixtureRef('conv-01'), archived: true, requestId: 'a1' });
+    await fake.controls.flush();
+    const second = await fake.setArchived({ conversation: fixtureRef('conv-02'), archived: true, requestId: 'a2' });
+    await fake.controls.flush();
+    await expect(undo(fake, first.operationId, 'z1')).rejects.toEqual({ kind: 'undo_unavailable', reason: 'superseded' });
+    const undoReceipt = await undo(fake, second.operationId, 'z2');
+    expect(undoReceipt.outcome).toBe('compensating');
+    await fake.controls.flush();
+    // Idempotent under the same requestId; a fresh requestId is already_undone.
+    expect(await undo(fake, second.operationId, 'z2')).toEqual(undoReceipt);
+    await expect(undo(fake, second.operationId, 'z3')).rejects.toEqual({ kind: 'undo_unavailable', reason: 'already_undone' });
+    // The compensating operation itself is never undoable.
+    await expect(undo(fake, undoReceipt.operationIds[0]!, 'z4')).rejects.toEqual({ kind: 'undo_unavailable', reason: 'not_applicable' });
+    // Undoing the older op now still fails: it was superseded and stays rejected.
+    await expect(undo(fake, first.operationId, 'z5')).rejects.toEqual({ kind: 'undo_unavailable', reason: 'superseded' });
+  });
+
+  it('rejects undo when a target prior fact is unknown', async () => {
+    const fake = createBrowserFakeMailClient(now);
+    clockMs = T0;
+    fake.controls.setAccount({ mode: 'gmail', connection: 'connected', emailAddress: 'operator@example.test', mutationAccess: 'enabled' });
+    fake.controls.markReadUnknown('conv-01');
+    const receipt = await fake.setRead({ conversation: gmailRef('conv-01'), read: true, requestId: 'r1' });
+    await fake.controls.flush();
+    await expect(undo(fake, receipt.operationId, 'z1')).rejects.toEqual({ kind: 'undo_unavailable', reason: 'unknown_prior' });
+    expect(fake.controls.activity().find((op) => op.id === receipt.operationId)?.undoableUntil).toBeUndefined();
+  });
+
+  it('a retry copies the original preimage so undo restores the same prior world', async () => {
+    const fake = createBrowserFakeMailClient(now);
+    clockMs = T0;
+    fake.controls.setAccount({ mode: 'gmail', connection: 'connected', emailAddress: 'operator@example.test', mutationAccess: 'enabled' });
+    fake.controls.behavior.failNext = 1;
+    const original = await fake.setRead({ conversation: gmailRef('conv-01'), read: true, requestId: 'r1' });
+    await fake.controls.flush();
+    // The world moves on after the definite failure: everything becomes read.
+    await fake.setRead({ conversation: gmailRef('conv-01'), read: true, requestId: 'r2' });
+    await fake.controls.flush();
+    const retry = await fake.retryOperation({ operationId: original.operationId, requestId: 'r3' });
+    await fake.controls.flush();
+    // Copied mixed preimage (m3 was unread) → two groups; a fresh capture would be one.
+    const undoReceipt = await undo(fake, retry.operationId, 'z1');
+    expect(undoReceipt.outcome).toBe('compensating');
+    expect(undoReceipt.operationIds).toHaveLength(2);
+    await fake.controls.flush();
+    expect(await fake.getConversation(gmailRef('conv-01'))).toMatchObject({ isRead: false });
+  });
+
+  it('excludes cancelled archives from cached Done evidence', async () => {
+    const fake = createBrowserFakeMailClient(now);
+    clockMs = T0;
+    fake.controls.behavior.holdQueued = true;
+    const receipt = await fake.setArchived({ conversation: fixtureRef('conv-01'), archived: true, requestId: 'a1' });
+    await undo(fake, receipt.operationId, 'z1');
+    fake.controls.release();
+    await fake.controls.flush();
+    const page = await fake.listCachedDone({ accountId: 'fixture-account', limit: 100, cursor: null });
+    expect(page.conversations.map((c) => c.ref.conversationId)).not.toContain('conv-01');
+  });
+
+  it('isMailErrorShape accepts undo_unavailable only with a valid reason', async () => {
+    const { isMailErrorShape } = await import('../src/lib/ipc/client');
+    expect(isMailErrorShape({ kind: 'undo_unavailable', reason: 'expired' })).toBe(true);
+    for (const reason of ['superseded', 'already_undone', 'not_applicable', 'uncertain', 'unknown_prior']) {
+      expect(isMailErrorShape({ kind: 'undo_unavailable', reason })).toBe(true);
+    }
+    expect(isMailErrorShape({ kind: 'undo_unavailable', reason: 'other' })).toBe(false);
+    expect(isMailErrorShape({ kind: 'undo_unavailable' })).toBe(false);
+  });
+});

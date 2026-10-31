@@ -32,6 +32,7 @@ function statusLabel(status: string, failure: { kind: string } | null): string {
     case 'confirmed': return 'confirmed';
     case 'failed': return `failed (${failure?.kind ?? 'unknown'})`;
     case 'outcome_unknown': return 'outcome unknown';
+    case 'cancelled': return 'Cancelled by Undo';
     default: return status;
   }
 }
@@ -74,6 +75,7 @@ function canRetry(status: string): boolean {
       >
         <span class="activity-status">{{ statusLabel(op.status, op.failure) }}</span>
         <span class="activity-action">{{ actionLabel(op) }}</span>
+        <span v-if="op.undoOf" class="activity-undo-of" :data-test="`activity-undo-of-${op.id}`">Undo of {{ op.undoOf }}</span>
         <span class="activity-id">{{ op.conversation.conversationId }}</span>
         <p v-if="op.lastError" class="activity-error" data-test="activity-error">{{ errorLabel(op.lastError.kind) }}</p>
         <p v-if="op.status === 'outcome_unknown'" class="activity-warning" data-test="activity-unknown-warning">
