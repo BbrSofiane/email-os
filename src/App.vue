@@ -20,6 +20,9 @@
  * - Enter: open the focused conversation. Escape: close the active utility or
  *   contact disclosure first, then the reader.
  * - e: archive the focused (or reader-open) conversation when actions are enabled.
+ * - Shift+E: restore to Inbox; G then E (within 1000ms): cached Done.
+ * - Left from list navigation: destination navigator; pointer Commands opens palette.
+ * - Cmd+K opens the palette in native mode only (browser reservations stay native).
  * - Shift+U: explicitly mark the focused/open conversation unread.
  * - Ignored with Ctrl/Meta/Alt held, during IME composition, inside text fields, and
  *   Enter/e are ignored when a button owns the key (it activates itself).
@@ -30,6 +33,8 @@
  *   rendered only as ordinary text.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import ActionOverlay from './components/ActionOverlay.vue';
+import { browsingActions, actionLabel, type BrowsingActionId } from './lib/browsing-actions';
 import InboxList from './components/InboxList.vue';
 import ReaderView from './components/ReaderView.vue';
 import ActivityPanel from './components/ActivityPanel.vue';
@@ -39,7 +44,7 @@ import ContactPane from './components/ContactPane.vue';
 import { BROWSER_PREVIEW_DISCLOSURE } from './lib/ipc/browser-fake';
 import type { ClientMode } from './lib/ipc';
 import type { ConversationRef, DraftRef, DraftSource, MailClient } from './lib/ipc/client';
-import { sameConversation, useMailbox } from './composables/useMailbox';
+import { sameConversation, useMailbox, type BrowseContext, type DoneBoundary } from './composables/useMailbox';
 import { useDrafts } from './composables/useDrafts';
 
 const props = defineProps<{
@@ -61,7 +66,7 @@ interface ListAnchor { ref: ConversationRef; offsetTop: number; scrollTop: numbe
  * recapture from an unmounted list.
  */
 interface ReaderOrigin {
-  surface: 'inbox' | 'activity';
+  surface: BrowseContext | 'activity';
   /** Original entry focus reference; Back restores it (with fallbacks). */
   focusedRef: ConversationRef | null;
   /** Entry-time Inbox ordering, used to resolve a removed cursor. */
@@ -184,7 +189,7 @@ const wideViewport = ref(wideQuery ? wideQuery.matches : true);
  * active disclosure itself stay interactive. Reactivity restores normal central
  * interaction as soon as the disclosure is dismissed.
  */
-const centralCovered = computed(() => !!drawer.value || (!wideViewport.value && contactDisclosure.value));
+const centralCovered = computed(() => !!overlay.value || !!drawer.value || (!wideViewport.value && contactDisclosure.value));
 
 function onViewportChange(event: MediaQueryListEvent): void {
   const wasWide = wideViewport.value;
@@ -246,11 +251,18 @@ async function closeContactDisclosure(): Promise<void> {
 
 onMounted(() => {
   window.addEventListener('keydown', onKeydown);
+  window.addEventListener('blur', cancelGo);
+  window.addEventListener('compositionstart', cancelGo);
+  window.addEventListener('focusin', cancelGo);
   wideQuery?.addEventListener('change', onViewportChange);
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown);
+  window.removeEventListener('blur', cancelGo);
+  window.removeEventListener('compositionstart', cancelGo);
+  window.removeEventListener('focusin', cancelGo);
+  cancelGo();
   wideQuery?.removeEventListener('change', onViewportChange);
 });
 
@@ -297,6 +309,96 @@ const contactContext = computed<ContactContext>(() => (readerOpen.value ? 'open'
 // Reader origin, focus, and scroll restoration
 // ---------------------------------------------------------------------------
 
+// Context history is account-scoped and stores references/geometry, never indices.
+interface ContextEntry extends ReaderOrigin { context: BrowseContext; accountId: string; loadedDonePages: number; doneBoundary: DoneBoundary | null }
+const history = ref<ContextEntry[]>([]);
+let navigationToken = 0;
+const overlay = ref<'palette' | 'navigator' | null>(null);
+const paletteButton = ref<HTMLElement | null>(null);
+let overlayOrigin: HTMLElement | null = null;
+let overlayRowOrigin: ConversationRef | null = null;
+let goTimer: ReturnType<typeof setTimeout> | null = null;
+function cancelGo(): void { if (goTimer) clearTimeout(goTimer); goTimer = null; }
+function openOverlay(kind: 'palette' | 'navigator'): void {
+  cancelGo();
+  if (!accountReady.value) return;
+  overlayOrigin = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  overlayRowOrigin = overlayOrigin?.matches('.inbox-row') && mailbox.focusedRef.value
+    ? { ...mailbox.focusedRef.value } : null;
+  overlay.value = kind;
+}
+async function closeOverlay(restore = true): Promise<void> {
+  overlay.value = null;
+  await nextTick();
+  if (!restore) return;
+  if (overlayOrigin?.isConnected && !overlayOrigin.closest('[inert]')) {
+    if (overlayRowOrigin && inboxList.value) inboxList.value.focusRef(overlayRowOrigin, { preventScroll: true });
+    else overlayOrigin.focus({ preventScroll: true });
+  } else if (drawer.value) drawerEl.value?.focus({ preventScroll: true });
+  else if (contactDisclosure.value) contactPanelEl.value?.focus({ preventScroll: true });
+  else if (readerOpen.value) (readerView.value?.$el as HTMLElement | undefined)?.focus({ preventScroll: true });
+  else if (mailbox.listState.value === 'ready') await focusFocusedRow(true);
+  else paletteButton.value?.focus({ preventScroll: true });
+}
+async function executeOverlay(id: BrowsingActionId): Promise<void> {
+  // Resolve availability again BEFORE removing the overlay; never retain a row target.
+  if (!actionAvailable(id)) return;
+  await closeOverlay(true);
+  await executeAction(id);
+}
+function captureContext(): ContextEntry | null {
+  if (!accountId.value) return null;
+  const entry = readerOpen.value ? origin.value : null;
+  return {
+    accountId: accountId.value, context: mailbox.context.value, surface: mailbox.context.value,
+    loadedDonePages: mailbox.loadedDonePages.value,
+    doneBoundary: mailbox.loadedDoneBoundary.value ? { ...mailbox.loadedDoneBoundary.value } : null,
+    focusedRef: entry?.focusedRef ?? mailbox.focusedRef.value,
+    ordering: entry?.ordering ?? mailbox.conversations.value.map((row) => ({ ...row.ref })),
+    anchor: entry?.anchor ?? inboxList.value?.captureAnchor() ?? null,
+  };
+}
+async function navigateContext(context: BrowseContext, saved?: ContextEntry): Promise<boolean> {
+  cancelGo();
+  if (drawer.value === 'drafts' && !(await releaseDraftsDrawer())) return false;
+  const token = ++navigationToken;
+  const account = accountId.value;
+  if (context !== mailbox.context.value && !saved) {
+    const current = captureContext();
+    if (current) history.value.push(current);
+  }
+  drawer.value = null;
+  contactDisclosure.value = false;
+  if (readerOpen.value && context === mailbox.context.value && !saved) {
+    closeReader(true);
+    return true;
+  }
+  if (readerOpen.value) mailbox.closeReader();
+  await mailbox.setContext(context, saved?.loadedDonePages, saved?.doneBoundary);
+  if (token !== navigationToken || account !== accountId.value) return false;
+  await nextTick();
+  if (saved && mailbox.listState.value !== 'ready') return false;
+  if (saved && saved.accountId === accountId.value) {
+    mailbox.focusConversation(resolveOriginFocus(saved));
+    if (saved.anchor) await inboxList.value?.restoreAnchor(saved.anchor);
+  }
+  await focusFocusedRow(!!saved);
+  return true;
+}
+async function contextBack(): Promise<void> {
+  const saved = history.value[history.value.length - 1];
+  if (!saved || saved.accountId !== accountId.value) return;
+  if (await navigateContext(saved.context, saved)) history.value.pop();
+}
+watch(accountId, () => {
+  ++navigationToken;
+  history.value = [];
+  origin.value = null;
+  overlay.value = null;
+  cancelGo();
+});
+watch([drawer, contactDisclosure, readerOpen], cancelGo);
+
 const origin = ref<ReaderOrigin | null>(null);
 const readerView = ref<InstanceType<typeof ReaderView> | null>(null);
 /** Message identity that currently owns reader focus (for the contact baseline). */
@@ -306,7 +408,7 @@ const contactOverride = ref<
   { ref: ConversationRef; messageId: string; displayName: string | null; mailbox: string } | null
 >(null);
 
-function captureListOrigin(surface: 'inbox' | 'activity'): void {
+function captureListOrigin(surface: BrowseContext | 'activity'): void {
   // Only the mounted list supplies an anchor; J/K and Activity opens inside the
   // reader never recapture (they would erase the entry context with nulls).
   origin.value = {
@@ -369,6 +471,8 @@ function resolveOriginFocus(originState: ReaderOrigin): ConversationRef | null {
  */
 function closeReader(explicitInbox = false): void {
   const originState = origin.value;
+  const token = navigationToken;
+  const account = accountId.value;
   mailbox.closeReader();
   void (async () => {
     // An active draft editor owns attention: keep it visible rather than
@@ -378,9 +482,10 @@ function closeReader(explicitInbox = false): void {
       return;
     }
     await nextTick();
+    if (token !== navigationToken || account !== accountId.value || readerOpen.value) return;
     const anchor = originState?.anchor ?? null;
     if (anchor && inboxList.value) await inboxList.value.restoreAnchor(anchor);
-    if (originState && originState.surface === 'inbox' && !explicitInbox) {
+    if (originState && originState.surface !== 'activity' && !explicitInbox) {
       const resolved = resolveOriginFocus(originState);
       if (resolved) mailbox.focusConversation(resolved);
     }
@@ -397,24 +502,11 @@ function closeReader(explicitInbox = false): void {
  * is overridden only for this explicit destination.
  */
 async function navigateToInbox(): Promise<void> {
-  // Leaving an active drafts editor must go through its protected lifecycle;
-  // on failed flush the editor and recovery controls stay visible and the
-  // navigation aborts instead of hiding the buffer.
-  if (drawer.value === 'drafts' && !(await releaseDraftsDrawer())) return;
-  // Clear both disclosure surfaces so no overlay survives the destination.
-  drawer.value = null;
-  contactDisclosure.value = false;
-  if (readerOpen.value) {
-    // Explicit Inbox navigation keeps the list's own current focus rather than
-    // restoring the saved entry reference, and never reopens Activity.
-    closeReader(true);
-  } else {
-    await focusFocusedRow();
-  }
+  await navigateContext('inbox');
 }
 
 async function openFocusedFromList(): Promise<void> {
-  captureListOrigin('inbox');
+  captureListOrigin(mailbox.context.value);
   await mailbox.openFocused();
 }
 
@@ -467,7 +559,7 @@ function resolveReaderNeighbor(delta: number): ConversationRef | null {
 async function moveReaderConversation(delta: number): Promise<void> {
   // Activity-origin readers never navigate and never issue getConversation
   // calls — including when Activity history duplicates the reference.
-  if (!readerOpen.value || origin.value?.surface !== 'inbox') return;
+  if (!readerOpen.value || origin.value?.surface === 'activity') return;
   if (mailbox.listState.value !== 'ready') return;
   const target = resolveReaderNeighbor(delta);
   if (!target) return;
@@ -574,35 +666,8 @@ async function archiveFromReader(): Promise<void> {
   else closeReader();
 }
 
-async function unarchiveFromReader(): Promise<void> {
-  const target = currentReaderTarget();
-  if (target) await mailbox.setArchived(target, false);
-}
-
 async function unarchiveFromActivity(target: ConversationRef): Promise<void> {
   await mailbox.setArchived(target, false);
-}
-
-async function setReadFromList(target: ConversationRef, read: boolean): Promise<void> {
-  if (!gmailActionsEnabled.value) return;
-  await mailbox.setRead(target, read);
-}
-
-async function setReadFromReader(read: boolean): Promise<void> {
-  if (!gmailActionsEnabled.value) return;
-  const target = currentReaderTarget();
-  if (target) await mailbox.setRead(target, read);
-}
-
-async function markUnread(): Promise<void> {
-  if (!gmailActionsEnabled.value) return;
-  if (readerOpen.value) {
-    const target = currentReaderTarget();
-    if (target) await mailbox.setRead(target, false);
-    return;
-  }
-  const summary = mailbox.focusedSummary.value;
-  if (summary) await mailbox.setRead(summary.ref, false);
 }
 
 async function retryFromActivity(operationId: string): Promise<void> {
@@ -639,6 +704,60 @@ function openDraft(ref: DraftRef): void {
   void drafts.openDraft(ref);
 }
 
+/** Targets are resolved at dispatch, not when the palette was opened. */
+function actionTarget(explicit?: ConversationRef): ConversationRef | null {
+  if (!accountReady.value || mailbox.inFlightCommandRef.value) return null;
+  if (mailbox.context.value === 'done' && mailbox.listState.value === 'error') return null;
+  if (explicit) {
+    if (explicit.accountId !== accountId.value) return null;
+    return mailbox.listState.value === 'ready' && mailbox.conversations.value.some((row) => sameConversation(row.ref, explicit)) ? explicit : null;
+  }
+  const target = readerOpen.value ? currentReaderTarget()
+    : mailbox.listState.value === 'ready' ? mailbox.focusedSummary.value?.ref ?? null : null;
+  return target?.accountId === accountId.value ? target : null;
+}
+function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): boolean {
+  if (!accountReady.value) return false;
+  if (['inbox', 'done', 'activity'].includes(id)) return !!accountId.value;
+  if (id === 'account') return gmailMode.value;
+  if (id === 'drafts') return !!accountId.value;
+  if (id === 'back') return readerOpen.value || history.value.length > 0;
+  if (drafts.activeRef.value || drawer.value || contactDisclosure.value) return false;
+  const target = actionTarget(explicit);
+  if (!target) return false;
+  if (id === 'open') return !readerOpen.value;
+  if (id === 'read' || id === 'unread') return gmailActionsEnabled.value;
+  if (!mailboxActionsEnabled.value) return false;
+  const inInbox = readerOpen.value ? mailbox.conversation.value?.isInInbox : mailbox.context.value === 'inbox';
+  return id === 'archive' ? inInbox === true : inInbox === false;
+}
+const availableActions = computed(() => browsingActions.filter((action) => actionAvailable(action.id)
+  && (overlay.value !== 'navigator' || ['inbox', 'done', 'account', 'activity', 'drafts'].includes(action.id))));
+async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): Promise<void> {
+  if (!actionAvailable(id, explicit)) return;
+  switch (id) {
+    case 'inbox': await navigateToInbox(); return;
+    case 'done': await navigateContext('done'); return;
+    case 'account': case 'activity': case 'drafts': await openDrawer(id); return;
+    case 'back': if (readerOpen.value) closeReader(); else await contextBack(); return;
+    case 'open': if (explicit) await openRowFromList(explicit); else await openFocusedFromList(); return;
+    case 'archive':
+      if (explicit) await archiveRowFromList(explicit);
+      else if (readerOpen.value) await archiveFromReader();
+      else await archiveFocusedRow();
+      return;
+    case 'unarchive': {
+      const target = actionTarget(explicit);
+      if (target) await mailbox.setArchived(target, false);
+      return;
+    }
+    case 'read': case 'unread': {
+      const target = actionTarget(explicit);
+      if (target) await mailbox.setRead(target, id === 'read');
+    }
+  }
+}
+
 function isEditableTarget(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;
   if (!el) return false;
@@ -669,6 +788,18 @@ function actionShortcutBlocked(target: EventTarget | null): boolean {
 }
 
 function onKeydown(event: KeyboardEvent): void {
+  if (overlay.value) return;
+  if (event.isComposing || event.keyCode === 229 || event.altKey || event.ctrlKey || event.metaKey) cancelGo();
+  // Cmd+K is the native app binding. Browser preview leaves reserved shortcuts alone.
+  if (props.mode !== 'browser-preview' && event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'k' && !event.isComposing && event.keyCode !== 229) {
+    event.preventDefault(); openOverlay('palette'); return;
+  }
+  if (goTimer) {
+    cancelGo();
+    if (event.key === 'e' && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey && !event.isComposing && !isEditableTarget(event.target) && !drawer.value && !contactDisclosure.value && !readerOpen.value) {
+      event.preventDefault(); void executeAction('done'); return;
+    }
+  }
   // Only a visible composer owns all keys; a suspended editor behind another
   // disclosure must not silently keep keyboard ownership from the inbox.
   if (drafts.activeRef.value && drawer.value === 'drafts') return;
@@ -700,15 +831,27 @@ function onKeydown(event: KeyboardEvent): void {
         return;
       }
       event.preventDefault();
-      closeReader();
+      void executeAction('back');
+    } else if (history.value.length) {
+      event.preventDefault(); void executeAction('back');
     }
     return;
   }
   if (drawer.value || (!wideViewport.value && contactDisclosure.value)) return;
 
+  const browsingOwns = !readerIsOpen && !buttonOwns(event.target) && (event.target === document.body || (event.target instanceof Node && !!inboxList.value?.$el?.contains(event.target)) || event.target === emptyState.value);
+  if (browsingOwns && !event.shiftKey && key === 'ArrowLeft') {
+    event.preventDefault(); openOverlay('navigator'); return;
+  }
+  if (browsingOwns && !event.shiftKey && key === 'g') {
+    event.preventDefault(); goTimer = setTimeout(cancelGo, 1000); return;
+  }
+  if (key === 'E' && event.shiftKey && !actionShortcutBlocked(event.target)) {
+    event.preventDefault(); void executeAction('unarchive'); return;
+  }
   if (key === 'U' && event.shiftKey && !actionShortcutBlocked(event.target)) {
     event.preventDefault();
-    void markUnread();
+    void executeAction('unread');
     return;
   }
   if (readerIsOpen) {
@@ -745,7 +888,7 @@ function onKeydown(event: KeyboardEvent): void {
     }
     if (key === 'e' && mailboxActionsEnabled.value && !actionShortcutBlocked(event.target)) {
       event.preventDefault();
-      void archiveFromReader();
+      void executeAction('archive');
     }
     return;
   }
@@ -764,12 +907,12 @@ function onKeydown(event: KeyboardEvent): void {
     case 'Enter':
       if (buttonOwns(event.target)) return;
       event.preventDefault();
-      void openFocusedFromList();
+      void executeAction('open');
       return;
     case 'e':
       if (!mailboxActionsEnabled.value || buttonOwns(event.target)) return;
       event.preventDefault();
-      void archiveFocusedRow();
+      void executeAction('archive');
       return;
     default:
       return;
@@ -785,6 +928,7 @@ function errorText(error: { kind: string; field?: string }): string {
     case 'not_found':
       return 'not found';
     case 'invalid_request':
+      if (error.field === 'cachedDoneRestoreRange') return 'cached Done changed beyond the restoration limit; retry or return to Inbox';
       return `invalid request (field: ${error.field ?? '?'})`;
     case 'request_id_conflict':
       return 'request ID conflict';
@@ -828,16 +972,19 @@ function errorText(error: { kind: string; field?: string }): string {
 
 <template>
   <div class="app" :data-client-mode="props.mode">
-    <header class="app-header">
+    <header class="app-header" :inert="!!overlay || undefined">
       <div class="app-title-row">
         <span class="rail-brand">Email</span>
-        <h1 class="app-title" data-test="inbox-title">Inbox</h1>
+        <h1 class="app-title" data-test="inbox-title">{{ mailbox.context.value === 'done' ? 'Cached Done' : 'Inbox' }}</h1>
+        <button type="button" data-test="palette-trigger" ref="paletteButton" title="Commands (Cmd+K in native app)" @click="openOverlay('palette')">Commands</button>
+        <button type="button" data-test="navigator-trigger" title="Destinations (Left from list)" @click="openOverlay('navigator')">Destinations</button>
+        <button v-if="history.length && !readerOpen" type="button" data-test="context-back" @click="executeAction('back')">Back to previous context</button>
       </div>
       <p v-if="props.mode === 'browser-preview'" class="preview-banner" data-test="preview-banner" role="note">
         {{ BROWSER_PREVIEW_DISCLOSURE }}
       </p>
       <p class="status-line" data-test="status-line">
-        <span data-test="inbox-count">{{ mailbox.conversations.value.length }} in inbox</span>
+        <span data-test="inbox-count">{{ mailbox.conversations.value.length }} {{ mailbox.context.value === 'inbox' ? 'in inbox' : 'loaded in cached Done' }}</span>
         <span v-if="pendingCount > 0" data-test="pending-count">{{ pendingCount }} pending operation(s)</span>
         <span v-if="gmailActionsEnabled" data-test="read-shortcut-note">Shift+U marks the focused or open conversation unread.</span>
         <span v-if="mailbox.lastCommandError.value" role="alert" data-test="command-error">
@@ -859,7 +1006,8 @@ function errorText(error: { kind: string; field?: string }): string {
       <button v-if="drafts.isVisible.value && drafts.error.value" type="button" data-test="draft-attention-open" @click="openDrawer('drafts')">Open drafts</button>
     </div>
 
-    <main class="app-main">
+    <p v-if="mailbox.context.value === 'done'" class="cached-coverage" role="note" data-test="done-coverage">Local cache only — not provider-complete Done or All Mail. {{ mailbox.exactTotal.value === null ? 'Total unknown.' : `${mailbox.exactTotal.value} known locally.` }} {{ mailbox.lastSyncedAt.value ? `Last synced: ${mailbox.lastSyncedAt.value}` : 'Last sync unknown.' }}</p>
+    <main class="app-main" :inert="!!overlay || undefined">
       <section v-if="!accountReady" class="account-gate" aria-label="Account">
         <p
           v-if="mailbox.accountState.value === 'loading' && mailbox.listState.value !== 'error'"
@@ -883,15 +1031,17 @@ function errorText(error: { kind: string; field?: string }): string {
             type="button"
             class="rail-item rail-inbox"
             data-test="rail-inbox"
-            :aria-current="!readerOpen && drawer === null ? 'page' : undefined"
-            @click="navigateToInbox()"
+            :aria-current="!readerOpen && drawer === null && mailbox.context.value === 'inbox' ? 'page' : undefined"
+            :title="actionLabel('inbox')" @click="executeAction('inbox')"
           >Inbox</button>
+          <button v-if="accountId" type="button" class="rail-item rail-done" data-test="rail-done" :title="actionLabel('done')" :aria-current="mailbox.context.value === 'done' && !readerOpen ? 'page' : undefined" @click="executeAction('done')">Cached Done</button>
           <span class="rail-spacer" aria-hidden="true"></span>
           <button
             v-if="gmailMode && accountStatus"
             type="button"
             class="rail-item"
             data-test="rail-account"
+            :title="actionLabel('account')"
             :ref="setToggleRef('account')"
             :aria-expanded="drawer === 'account'"
             @click="toggleDrawer('account')"
@@ -900,6 +1050,7 @@ function errorText(error: { kind: string; field?: string }): string {
             type="button"
             class="rail-item"
             data-test="rail-activity"
+            :title="actionLabel('activity')"
             :ref="setToggleRef('activity')"
             :aria-expanded="drawer === 'activity'"
             @click="toggleDrawer('activity')"
@@ -909,6 +1060,7 @@ function errorText(error: { kind: string; field?: string }): string {
             type="button"
             class="rail-item"
             data-test="rail-drafts"
+            :title="actionLabel('drafts')"
             :ref="setToggleRef('drafts')"
             :aria-expanded="drawer === 'drafts'"
             @click="toggleDrawer('drafts')"
@@ -926,9 +1078,9 @@ function errorText(error: { kind: string; field?: string }): string {
 
         <section class="central" :aria-label="readerOpen ? 'Reader' : 'Conversation list'" :inert="centralCovered || undefined" data-test="central-surface">
           <template v-if="!readerOpen">
-            <p v-if="mailbox.listState.value === 'loading'" data-test="inbox-loading">Loading inbox…</p>
+            <p v-if="mailbox.listState.value === 'loading'" data-test="inbox-loading">Loading {{ mailbox.context.value === 'inbox' ? 'inbox' : 'cached Done' }}…</p>
             <div v-else-if="mailbox.listState.value === 'error'" data-test="inbox-error">
-              <p role="alert">Could not load the inbox: {{ mailbox.listError.value ? errorText(mailbox.listError.value) : 'unknown error' }}.</p>
+              <p role="alert">Could not load {{ mailbox.context.value === 'inbox' ? 'the inbox' : 'cached Done' }}: {{ mailbox.listError.value ? errorText(mailbox.listError.value) : 'unknown error' }}.</p>
               <button type="button" data-test="inbox-retry" @click="mailbox.refresh()">Retry</button>
             </div>
             <p
@@ -937,23 +1089,30 @@ function errorText(error: { kind: string; field?: string }): string {
               ref="emptyState"
               tabindex="-1"
             >
-              No conversations are currently in the inbox. Archived conversations stay recoverable from Activity.
+              {{ mailbox.context.value === 'inbox' ? 'No conversations are currently in the inbox. Archived conversations stay recoverable from Activity.' : mailbox.nextCursor.value ? 'No conversations on this cache page; more cached candidates are available.' : 'No known archived conversations in this local cache.' }}
             </p>
             <InboxList
               v-else
               ref="inboxList"
               :rows="mailbox.conversations.value"
+              :context="mailbox.context.value"
               :focused-ref="mailbox.focusedRef.value"
               :actions-enabled="mailboxActionsEnabled"
               :show-read-state="gmailMode"
               :show-read-controls="gmailActionsEnabled"
               @focus="mailbox.focusConversation($event)"
-              @open="openRowFromList"
-              @archive="archiveRowFromList"
-              @set-read="setReadFromList"
+              @open="executeAction('open', $event)"
+              @archive="executeAction('archive', $event)"
+              @unarchive="executeAction('unarchive', $event)"
+              @set-read="(target, read) => executeAction(read ? 'read' : 'unread', target)"
             />
+            <button v-if="mailbox.nextCursor.value" type="button" :disabled="mailbox.loadingMore.value || mailbox.listState.value !== 'ready'" data-test="done-more" @click="mailbox.loadMore()">Load more cached Done</button>
           </template>
           <section v-else class="reader-pane" aria-label="Reader">
+            <div v-if="mailbox.listState.value === 'error'" role="alert" data-test="reader-navigation-error">
+              Could not refresh the originating list: {{ mailbox.listError.value ? errorText(mailbox.listError.value) : 'unknown error' }}.
+              Conversation navigation is paused. <button type="button" @click="mailbox.refresh()">Retry list</button>
+            </div>
             <ReaderView
               ref="readerView"
               :conversation="mailbox.conversation.value"
@@ -961,12 +1120,13 @@ function errorText(error: { kind: string; field?: string }): string {
               :error="mailbox.detailError.value"
               :command-in-flight="mailbox.inFlightCommandRef.value !== null"
               :open-ref="mailbox.openRef.value"
+              :navigation-unavailable="mailbox.context.value === 'done' && mailbox.listState.value === 'error'"
               :read-only="gmailMode && !mailboxActionsEnabled"
               :show-read-controls="gmailActionsEnabled"
-              @close="closeReader()"
-              @archive="archiveFromReader"
-              @unarchive="unarchiveFromReader"
-              @set-read="setReadFromReader"
+              @close="executeAction('back')"
+              @archive="executeAction('archive')"
+              @unarchive="executeAction('unarchive')"
+              @set-read="executeAction($event ? 'read' : 'unread')"
               @prepare-reply="prepareReply"
               @active-message="onReaderActiveMessage"
               @contact-override="onReaderContactOverride"
@@ -1012,6 +1172,7 @@ function errorText(error: { kind: string; field?: string }): string {
             @enable-actions="mailbox.enableMailboxActions()"
             @cancel-upgrade="mailbox.cancelMailboxActionUpgrade()"
           />
+          <p v-if="drawer === 'activity' && mailbox.activityError.value" role="alert">Could not refresh Activity. <button type="button" @click="mailbox.refresh()">Retry</button></p>
           <ActivityPanel
             v-if="drawer === 'activity'"
             :activity="mailbox.activity.value"
@@ -1086,5 +1247,6 @@ function errorText(error: { kind: string; field?: string }): string {
         </div>
       </template>
     </main>
+    <ActionOverlay v-if="overlay" :kind="overlay" :actions="availableActions" @close="closeOverlay()" @execute="executeOverlay" />
   </div>
 </template>

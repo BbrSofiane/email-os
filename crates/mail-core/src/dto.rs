@@ -183,3 +183,28 @@ pub struct InboxSnapshot {
     /// Persisted operations, newest acceptance first.
     pub activity: Vec<OperationSummary>,
 }
+
+/// Bounded, account-scoped access to locally evidenced archived mail only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct CachedDoneRequest {
+    pub account_id: String,
+    pub limit: u32,
+    pub cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum CachedDoneCoverage {
+    LocalCache,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct CachedDoneSnapshot {
+    pub conversations: Vec<ConversationSummary>,
+    pub next_cursor: Option<String>,
+    pub coverage: CachedDoneCoverage,
+    pub exact_total: Option<u32>,
+    pub last_synced_at: Option<String>,
+}

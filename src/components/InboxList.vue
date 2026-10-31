@@ -19,10 +19,12 @@ import { computed, nextTick, onBeforeUnmount, onBeforeUpdate, onMounted, reactiv
 import type { ConversationRef } from '../lib/ipc/client';
 import type { ConversationSummaryLike } from '../composables/useMailbox';
 import { sameConversation } from '../composables/useMailbox';
+import { actionLabel } from '../lib/browsing-actions';
 import { compactDateLabel, dateGroupCaption, dateGroupFor } from '../lib/browsing-dates';
 
 const props = defineProps<{
   rows: ConversationSummaryLike[];
+  context?: 'inbox' | 'done';
   focusedRef: ConversationRef | null;
   actionsEnabled?: boolean;
   showReadState?: boolean;
@@ -33,6 +35,7 @@ const emit = defineEmits<{
   focus: [ref: ConversationRef];
   open: [ref: ConversationRef];
   archive: [ref: ConversationRef];
+  unarchive: [ref: ConversationRef];
   setRead: [ref: ConversationRef, read: boolean];
 }>();
 
@@ -401,7 +404,7 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
 </script>
 
 <template>
-  <ul class="inbox-list inbox-scroll" role="list" aria-label="Inbox conversations" ref="listEl">
+  <ul class="inbox-list inbox-scroll" role="list" :aria-label="context === 'done' ? 'Cached Done conversations' : 'Inbox conversations'" ref="listEl">
     <template v-for="item in items" :key="item.kind === 'group' ? `group-${item.id}` : rowKey(item.row.ref)">
       <li
         v-if="item.kind === 'group'"
@@ -478,8 +481,9 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
               type="button"
               class="row-archive-action"
               :data-test="`row-archive-${item.row.ref.conversationId}`"
-              @click.stop="emit('archive', item.row.ref)"
-            >Archive</button>
+              :title="actionLabel(context === 'done' ? 'unarchive' : 'archive')"
+              @click.stop="context === 'done' ? emit('unarchive', item.row.ref) : emit('archive', item.row.ref)"
+            >{{ context === 'done' ? 'Restore to Inbox' : 'Archive' }}</button>
           </span>
         </span>
       </li>

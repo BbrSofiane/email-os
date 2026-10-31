@@ -2,7 +2,85 @@ import { describe, expect, it } from 'vitest';
 import type { ConnectionState } from '../src/lib/ipc/client';
 import { createBrowserFakeMailClient, fixtureRef, flushMacrotasks, inboxIds } from './helpers';
 
+const gmailRef = (conversationId: string) => ({ accountId: 'gmail-account', conversationId });
+
 describe('browser fake MailClient (core-like semantics, memory-only)', () => {
+  it('lists only locally evidenced archived mail, paginates and keeps recovery restrictions', async () => {
+    const fake = createBrowserFakeMailClient();
+    const request = { accountId: 'fixture-account', limit: 1, cursor: null as string | null };
+    expect(await fake.listCachedDone(request)).toEqual({ conversations: [], nextCursor: null, coverage: 'local_cache', exactTotal: null, lastSyncedAt: null });
+    for (const id of ['conv-01', 'conv-02']) {
+      await fake.setArchived({ conversation: fixtureRef(id), archived: true, requestId: `done-${id}` });
+    }
+    fake.controls.markRetainedSnapshot('conv-01', '2026-01-01T00:00:00Z');
+    fake.controls.markUnsupported('conv-01', 'incomplete cached body', false);
+    const first = await fake.listCachedDone(request);
+    expect(first.conversations.map((c) => c.ref.conversationId)).toEqual(['conv-01']);
+    expect(first.nextCursor).not.toBeNull();
+    const detail = await fake.getConversation(first.conversations[0]!.ref);
+    expect(detail).toMatchObject({ retainedSnapshotAt: '2026-01-01T00:00:00Z', contextComplete: false, unsupportedReason: 'incomplete cached body' });
+    expect(detail.replyContext).toBeUndefined();
+    request.cursor = first.nextCursor;
+    expect((await fake.listCachedDone(request)).conversations.map((c) => c.ref.conversationId)).toEqual(['conv-02']);
+    await fake.setArchived({ conversation: fixtureRef('conv-01'), archived: false, requestId: 'restore' });
+    request.cursor = null;
+    const sparse = await fake.listCachedDone(request);
+    expect(sparse.conversations).toEqual([]);
+    expect(sparse.nextCursor).not.toBeNull();
+    fake.controls.addMessage('conv-02');
+    request.limit = 100;
+    expect((await fake.listCachedDone(request)).conversations).toEqual([]);
+  });
+
+  it('rejects foreign accounts and malformed/foreign cursors and invalid page bounds', async () => {
+    const fake = createBrowserFakeMailClient();
+    const request = { accountId: 'fixture-account', limit: 100, cursor: null as string | null };
+    await expect(fake.listCachedDone({ ...request, accountId: 'other' })).rejects.toEqual({ kind: 'not_found' });
+    for (const limit of [0, 101, 1.5, NaN]) {
+      await expect(fake.listCachedDone({ ...request, limit })).rejects.toEqual({ kind: 'invalid_request', field: 'limit' });
+    }
+    for (const cursor of ['bad', 'cached-done-v1:[]', 'cached-done-v1:["other","date","id"]', 'x'.repeat(8193)]) {
+      await expect(fake.listCachedDone({ ...request, cursor })).rejects.toEqual({ kind: 'invalid_request', field: 'cursor' });
+    }
+  });
+
+  it('excludes definite failures while keeping queued archive intent discoverable', async () => {
+    const fake = createBrowserFakeMailClient();
+    const request = { accountId: 'fixture-account', limit: 100, cursor: null };
+    fake.controls.behavior.failNext = 1;
+    await fake.setArchived({ conversation: fixtureRef('conv-01'), archived: true, requestId: 'fail' });
+    await fake.controls.flush();
+    expect((await fake.listCachedDone(request)).conversations).toEqual([]);
+    fake.controls.behavior.hold = true;
+    await fake.setArchived({ conversation: fixtureRef('conv-02'), archived: true, requestId: 'pending' });
+    const pending = await fake.listCachedDone(request);
+    expect(pending.conversations[0]?.ref.conversationId).toBe('conv-02');
+    expect(pending.conversations[0]?.pendingOperationId).not.toBeNull();
+    fake.controls.release();
+    await fake.controls.flush();
+  });
+
+  it('uses one active synthetic identity across status/list/Done/reader/actions and clears prior-account intent', async () => {
+    const fake = createBrowserFakeMailClient();
+    await fake.setArchived({ conversation: fixtureRef('conv-01'), archived: true, requestId: 'old-account' });
+    fake.controls.setAccount({ mode: 'gmail', connection: 'connected', emailAddress: 'operator@example.test', mutationAccess: 'enabled' });
+    const accountId = (await fake.getAccountStatus()).account!.accountId;
+    expect(accountId).toBe('gmail-account');
+    const request = { accountId, limit: 100, cursor: null };
+    expect((await fake.listCachedDone(request)).conversations).toEqual([]);
+    expect((await fake.listConversations()).conversations.every((row) => row.ref.accountId === accountId)).toBe(true);
+    await expect(fake.getConversation(fixtureRef('conv-01'))).rejects.toEqual({ kind: 'not_found' });
+    await expect(fake.listCachedDone({ ...request, accountId: 'fixture-account' })).rejects.toEqual({ kind: 'not_found' });
+    await fake.setArchived({ conversation: gmailRef('conv-01'), archived: true, requestId: 'new-account' });
+    const page = await fake.listCachedDone(request);
+    expect(page.conversations[0]?.ref).toEqual(gmailRef('conv-01'));
+    expect((await fake.getConversation(page.conversations[0]!.ref)).isInInbox).toBe(false);
+    expect((await fake.listConversations()).activity.every((op) => op.conversation.accountId === accountId)).toBe(true);
+    await fake.disconnectAccount();
+    await expect(fake.listCachedDone(request)).rejects.toEqual({ kind: 'not_found' });
+    await expect(fake.getConversation(gmailRef('conv-01'))).rejects.toEqual({ kind: 'not_found' });
+  });
+
   it('seeds 18 conversations once, newest first', async () => {
     const fake = createBrowserFakeMailClient(() => '2025-01-01T00:00:00.000Z');
     const snap = await fake.listConversations();
@@ -148,7 +226,7 @@ describe('browser fake MailClient (Slice 02 account lifecycle)', () => {
   it('rejects archive commands with read_only in gmail mode and records no operation', async () => {
     const fake = createBrowserFakeMailClient();
     fake.controls.setAccount({ mode: 'gmail', connection: 'connected', emailAddress: 'operator@example.test' });
-    await expect(fake.setArchived({ conversation: fixtureRef('conv-01'), archived: true, requestId: 'r-g' }))
+    await expect(fake.setArchived({ conversation: gmailRef('conv-01'), archived: true, requestId: 'r-g' }))
       .rejects.toEqual({ kind: 'read_only' });
     expect(fake.controls.activity()).toHaveLength(0);
     // Snapshot stays untouched: gmail is read-only end to end.
@@ -279,7 +357,7 @@ describe('browser fake MailClient (Slice 02 account lifecycle)', () => {
     const fake = createBrowserFakeMailClient();
     fake.controls.setAccount({ mode: 'gmail', connection: 'connected', emailAddress: 'operator@example.test' });
     expect((await fake.getAccountStatus()).mutationAccess).toBe('read_only');
-    await expect(fake.setArchived({ conversation: fixtureRef('conv-01'), archived: true, requestId: 'readonly' }))
+    await expect(fake.setArchived({ conversation: gmailRef('conv-01'), archived: true, requestId: 'readonly' }))
       .rejects.toEqual({ kind: 'read_only' });
     fake.controls.failNextEnable({ kind: 'permission_required' });
     await expect(fake.enableMailboxActions()).rejects.toEqual({ kind: 'permission_required' });
@@ -299,16 +377,16 @@ describe('browser fake MailClient (Slice 02 account lifecycle)', () => {
   it('requires enabled grant for synthetic read setters and applies read/unread explicitly', async () => {
     const fake = createBrowserFakeMailClient();
     fake.controls.setAccount({ mode: 'gmail', connection: 'connected', emailAddress: 'operator@example.test' });
-    await expect(fake.setRead({ conversation: fixtureRef('conv-01'), read: true, requestId: 'read-denied' }))
+    await expect(fake.setRead({ conversation: gmailRef('conv-01'), read: true, requestId: 'read-denied' }))
       .rejects.toEqual({ kind: 'read_only' });
     await fake.enableMailboxActions();
     await fake.controls.flush();
-    await fake.setRead({ conversation: fixtureRef('conv-01'), read: true, requestId: 'read-1' });
+    await fake.setRead({ conversation: gmailRef('conv-01'), read: true, requestId: 'read-1' });
     await fake.controls.flush();
-    expect(await fake.getConversation(fixtureRef('conv-01'))).toMatchObject({ isRead: true });
-    await fake.setRead({ conversation: fixtureRef('conv-01'), read: false, requestId: 'unread-1' });
+    expect(await fake.getConversation(gmailRef('conv-01'))).toMatchObject({ isRead: true });
+    await fake.setRead({ conversation: gmailRef('conv-01'), read: false, requestId: 'unread-1' });
     await fake.controls.flush();
-    expect(await fake.getConversation(fixtureRef('conv-01'))).toMatchObject({ isRead: false });
+    expect(await fake.getConversation(gmailRef('conv-01'))).toMatchObject({ isRead: false });
     expect(fake.controls.activity().map((op) => [op.kind, op.requestedRead, op.status])).toEqual([
       ['read', true, 'confirmed'], ['read', false, 'confirmed'],
     ]);
@@ -317,10 +395,10 @@ describe('browser fake MailClient (Slice 02 account lifecycle)', () => {
   it('disconnect removes pending fake actions but preserves confirmed provider changes', async () => {
     const fake = createBrowserFakeMailClient();
     fake.controls.setAccount({ mode: 'gmail', connection: 'connected', emailAddress: 'operator@example.test', mutationAccess: 'enabled' });
-    await fake.setArchived({ conversation: fixtureRef('conv-02'), archived: true, requestId: 'confirmed-before-disconnect' });
+    await fake.setArchived({ conversation: gmailRef('conv-02'), archived: true, requestId: 'confirmed-before-disconnect' });
     await fake.controls.flush();
     fake.controls.behavior.hold = true;
-    await fake.setRead({ conversation: fixtureRef('conv-01'), read: true, requestId: 'pending-before-disconnect' });
+    await fake.setRead({ conversation: gmailRef('conv-01'), read: true, requestId: 'pending-before-disconnect' });
     await fake.disconnectAccount();
     expect(fake.controls.activity()).toHaveLength(0);
     expect(inboxIds(await fake.listConversations())).toEqual([]);
@@ -338,7 +416,7 @@ describe('browser fake MailClient (Slice 02 account lifecycle)', () => {
     fake.controls.setAccount({ mode: 'gmail', connection: 'connected', emailAddress: 'operator@example.test', mutationAccess: 'enabled' });
     fake.controls.behavior.failNext = 1;
     fake.controls.behavior.failureKind = 'outcome_unknown';
-    const receipt = await fake.setArchived({ conversation: fixtureRef('conv-01'), archived: true, requestId: 'unknown-1' });
+    const receipt = await fake.setArchived({ conversation: gmailRef('conv-01'), archived: true, requestId: 'unknown-1' });
     await fake.controls.flush();
     expect(fake.controls.activity()[0]).toMatchObject({ id: receipt.operationId, status: 'outcome_unknown', lastError: { kind: 'outcome_unknown' } });
     fake.controls.addMessage('conv-01', false);

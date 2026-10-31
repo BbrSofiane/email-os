@@ -384,6 +384,71 @@ impl Store {
         })
     }
 
+    pub(crate) fn list_cached_done(
+        &self,
+        request: &crate::dto::CachedDoneRequest,
+    ) -> Result<crate::dto::CachedDoneSnapshot, MailError> {
+        let position = crate::cached_done::validate(request, ACCOUNT_ID)?;
+        self.persistence_gate()?;
+        let conn = self.lock_conn()?;
+        let mut stmt = conn
+            .prepare(
+                "WITH candidates AS (
+                SELECT c.conversation_id, COALESCE(MAX(m.sent_at), '') AS date
+                FROM conversations c LEFT JOIN messages m
+                ON m.account_id = c.account_id AND m.conversation_id = c.conversation_id
+                WHERE c.account_id = ?1 AND EXISTS (
+                    SELECT 1 FROM operations o WHERE o.account_id = c.account_id
+                    AND o.conversation_id = c.conversation_id AND o.requested_archived = 1
+                    AND o.status IN ('queued', 'applying', 'confirmed'))
+                GROUP BY c.conversation_id)
+             SELECT date, conversation_id FROM candidates
+             WHERE ?2 IS NULL OR date < ?2 OR (date = ?2 AND conversation_id > ?3)
+             ORDER BY date DESC, conversation_id ASC LIMIT ?4",
+            )
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let candidates = stmt
+            .query_map(
+                params![
+                    ACCOUNT_ID,
+                    position.as_ref().map(|p| &p.0),
+                    position.as_ref().map(|p| &p.1),
+                    request.limit + 1
+                ],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .map_err(|_| MailError::StorageUnavailable)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut summaries = Vec::new();
+        for (_, id) in candidates.iter().take(request.limit as usize) {
+            let built = build_conversation_view(&conn, ACCOUNT_ID, id)?;
+            if built.is_in_inbox || built.messages.is_empty() {
+                continue;
+            }
+            summaries.push(ConversationSummary {
+                conversation_ref: built.conversation_ref,
+                subject: built.subject,
+                participants: participants_of(&built.messages),
+                primary_correspondent: built.messages.last().map(|m| m.from.clone()),
+                is_read: None,
+                preview: preview_of(&built.messages),
+                last_message_at: built
+                    .messages
+                    .last()
+                    .map(|m| m.sent_at.clone())
+                    .unwrap_or_default(),
+                pending_operation_id: built.pending_operation_id,
+            });
+        }
+        Ok(crate::cached_done::finish(
+            request,
+            &candidates,
+            summaries,
+            None,
+        ))
+    }
+
     /// Full reader view of one conversation, scoped by account.
     pub(crate) fn get_conversation(
         &self,

@@ -3,6 +3,7 @@
 
 export const FIXTURE_MAILBOX = 'you@fixture.emailos';
 export const LIST_CONVERSATIONS_COMMAND = 'list_conversations';
+export const LIST_CACHED_DONE_COMMAND = 'list_cached_done';
 export const GET_CONVERSATION_COMMAND = 'get_conversation';
 export const SET_ARCHIVED_COMMAND = 'set_archived';
 export const MAILBOX_CHANGED_EVENT = 'mailbox_changed';
@@ -120,6 +121,12 @@ conversations: Array<ConversationSummary>,
  * Persisted operations, newest acceptance first.
  */
 activity: Array<OperationSummary>, };
+
+export type CachedDoneRequest = { accountId: string, limit: number, cursor: string | null, };
+
+export type CachedDoneCoverage = "local_cache";
+
+export type CachedDoneSnapshot = { conversations: Array<ConversationSummary>, nextCursor: string | null, coverage: CachedDoneCoverage, exactTotal: number | null, lastSyncedAt: string | null, };
 
 export type MailMode = "fixture" | "gmail";
 

@@ -13,6 +13,8 @@
  * typed client seam; results never stand in for OAuth, sync, or provider-send success.
  */
 import type {
+  CachedDoneRequest,
+  CachedDoneSnapshot,
   AccountStatus,
   AppCloseRequest,
   Conversation,
@@ -35,6 +37,9 @@ import type {
 
 export type {
   AccountInfo,
+  CachedDoneCoverage,
+  CachedDoneRequest,
+  CachedDoneSnapshot,
   AccountStatus,
   AppCloseRequest,
   MailboxOperationKind,
@@ -78,6 +83,7 @@ export {
   GET_ACCOUNT_STATUS_COMMAND,
   GET_CONVERSATION_COMMAND,
   LIST_CONVERSATIONS_COMMAND,
+  LIST_CACHED_DONE_COMMAND,
   MAILBOX_CHANGED_EVENT,
   REQUEST_SYNC_COMMAND,
   SET_ARCHIVED_COMMAND,
@@ -98,6 +104,8 @@ export {
 
 export interface MailClient {
   listConversations(): Promise<InboxSnapshot>;
+  /** Local archive evidence only; short/empty pages can still have a continuation. */
+  listCachedDone(request: CachedDoneRequest): Promise<CachedDoneSnapshot>;
   getConversation(ref: ConversationRef): Promise<Conversation>;
   setArchived(command: SetArchived): Promise<OperationReceipt>;
   enableMailboxActions(): Promise<void>;

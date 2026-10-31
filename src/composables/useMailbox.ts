@@ -23,7 +23,29 @@ export function sameConversation(a: ConversationRef | null, b: ConversationRef |
   return a !== null && b !== null && a.accountId === b.accountId && a.conversationId === b.conversationId;
 }
 
+export type BrowseContext = 'inbox' | 'done';
+export interface DoneBoundary { lastMessageAt: string; conversationId: string }
+function reachesBoundary(rows: ConversationSummaryLike[], boundary: DoneBoundary | null): boolean {
+  const last = rows.at(-1);
+  return !boundary || !!last && (last.lastMessageAt < boundary.lastMessageAt
+    || last.lastMessageAt === boundary.lastMessageAt && last.ref.conversationId >= boundary.conversationId);
+}
+function boundaryOf(rows: ConversationSummaryLike[]): DoneBoundary | null {
+  const last = rows.at(-1);
+  return last ? { lastMessageAt: last.lastMessageAt, conversationId: last.ref.conversationId } : null;
+}
+
 export interface Mailbox {
+  context: Ref<BrowseContext>;
+  nextCursor: Ref<string | null>;
+  loadingMore: Ref<boolean>;
+  exactTotal: Ref<number | null>;
+  lastSyncedAt: Ref<string | null>;
+  activityError: Ref<MailError | null>;
+  loadedDonePages: Ref<number>;
+  loadedDoneBoundary: Ref<DoneBoundary | null>;
+  setContext(context: BrowseContext, pages?: number, boundary?: DoneBoundary | null): Promise<void>;
+  loadMore(): Promise<void>;
   conversations: Ref<ConversationSummaryLike[]>;
   activity: Ref<OperationSummaryLike[]>;
   listState: Ref<ListState>;
@@ -65,6 +87,14 @@ export interface Mailbox {
 }
 
 export function useMailbox(client: MailClient): Mailbox {
+  const context = ref<BrowseContext>('inbox');
+  const loadingMore = ref(false);
+  const loadedDonePages = ref(1);
+  const loadedDoneBoundary = ref<DoneBoundary | null>(null);
+  const nextCursor = ref<string | null>(null);
+  const exactTotal = ref<number | null>(null);
+  const lastSyncedAt = ref<string | null>(null);
+  const activityError = ref<MailError | null>(null);
   const conversations = ref<ConversationSummaryLike[]>([]);
   const activity = ref<OperationSummaryLike[]>([]);
   const listState = ref<ListState>('loading');
@@ -82,6 +112,7 @@ export function useMailbox(client: MailClient): Mailbox {
   const accountBusy = ref<AccountAction | null>(null);
 
   let listToken = 0;
+  let activityToken = 0;
   let detailToken = 0;
   let commandToken = 0;
   let mailboxSessionToken = 0;
@@ -106,16 +137,91 @@ export function useMailbox(client: MailClient): Mailbox {
   }
 
   async function refreshList(token: number): Promise<void> {
-    const snap = await client.listConversations();
-    if (detached || token !== listToken) return;
-    // Preserve identity, not position: a surviving focused reference survives
-    // inserts/reordering; a removed one resolves to a surviving neighbor.
-    const previous = conversations.value;
-    conversations.value = snap.conversations;
-    activity.value = snap.activity;
-    focusedRef.value = resolveFocus(previous, focusedRef.value, snap.conversations);
+    const source = context.value;
+    const account = accountStatus.value?.account?.accountId;
+    // Activity always comes from the unfiltered inbox snapshot, not Done rows.
+    const activityRequest = ++activityToken;
+    const inbox = client.listConversations();
+    const activityRead = inbox.then((snap) => {
+      if (detached || activityRequest !== activityToken) return;
+      activity.value = snap.activity;
+      activityError.value = null;
+    }, (raw) => {
+      if (!detached && activityRequest === activityToken) activityError.value = toMailError(raw);
+    });
+    try {
+      let snap = source === 'inbox' ? await inbox : await client.listCachedDone({ accountId: account!, limit: 100, cursor: null });
+      if (source === 'done' && 'nextCursor' in snap) {
+        // Recover the saved identity range even when new archives shift page edges.
+        const pages = loadedDonePages.value;
+        const boundary = loadedDoneBoundary.value;
+        let replayed = 1;
+        while (snap.nextCursor && (replayed < pages || !reachesBoundary(snap.conversations, boundary))) {
+          if (detached || token !== listToken || source !== context.value) return;
+          // Finite recovery budget beyond the user's explicitly loaded range.
+          // Never misclassify an uninspected target as removed on budget exhaustion.
+          if (replayed >= pages + 10) throw { kind: 'invalid_request', field: 'cachedDoneRestoreRange' } satisfies MailError;
+          const next = await client.listCachedDone({ accountId: account!, limit: 100, cursor: snap.nextCursor });
+          snap = { ...next, conversations: [...snap.conversations, ...next.conversations.filter((row) => !snap.conversations.some((old) => sameConversation(old.ref, row.ref)))] };
+          replayed += 1;
+        }
+        if (detached || token !== listToken || source !== context.value) return;
+        loadedDonePages.value = replayed;
+      }
+      if (detached || token !== listToken || source !== context.value) return;
+      const previous = conversations.value;
+      conversations.value = snap.conversations;
+      if (source === 'done' && 'nextCursor' in snap) {
+        nextCursor.value = snap.nextCursor;
+        exactTotal.value = snap.exactTotal;
+        lastSyncedAt.value = snap.lastSyncedAt;
+        loadedDoneBoundary.value = boundaryOf(snap.conversations);
+      }
+      focusedRef.value = resolveFocus(previous, focusedRef.value, snap.conversations);
+      listError.value = null;
+      listState.value = 'ready';
+    } finally { await activityRead; }
+  }
+
+  async function setContext(next: BrowseContext, pages = 1, boundary: DoneBoundary | null = null): Promise<void> {
+    if (next === context.value && listState.value === 'ready') return;
+    loadedDonePages.value = Math.max(1, Math.floor(pages));
+    loadedDoneBoundary.value = boundary;
+    ++listToken;
+    closeReader();
+    context.value = next;
+    conversations.value = [];
+    focusedRef.value = null;
+    nextCursor.value = null;
+    exactTotal.value = null;
+    lastSyncedAt.value = null;
+    listState.value = 'loading';
     listError.value = null;
-    listState.value = 'ready';
+    await refresh();
+  }
+
+  async function loadMore(): Promise<void> {
+    const cursor = nextCursor.value;
+    const account = accountStatus.value?.account?.accountId;
+    if (context.value !== 'done' || !cursor || !account || loadingMore.value || listState.value !== 'ready') return;
+    const token = ++listToken;
+    loadingMore.value = true;
+    try {
+      const snap = await client.listCachedDone({ accountId: account, limit: 100, cursor });
+      if (detached || token !== listToken || context.value !== 'done') return;
+      conversations.value = [...conversations.value, ...snap.conversations.filter((row: ConversationSummaryLike) => !conversations.value.some((old) => sameConversation(old.ref, row.ref)))];
+      focusedRef.value = resolveFocus(conversations.value, focusedRef.value, conversations.value);
+      loadedDonePages.value += 1;
+      loadedDoneBoundary.value = boundaryOf(conversations.value);
+      nextCursor.value = snap.nextCursor;
+      exactTotal.value = snap.exactTotal;
+      lastSyncedAt.value = snap.lastSyncedAt;
+      listState.value = 'ready';
+    } catch (raw) {
+      if (detached || token !== listToken) return;
+      listError.value = toMailError(raw);
+      listState.value = 'error';
+    } finally { if (token === listToken) loadingMore.value = false; }
   }
 
   /**
@@ -152,6 +258,27 @@ export function useMailbox(client: MailClient): Mailbox {
     try {
       const status = await client.getAccountStatus();
       if (detached || token !== statusToken) return;
+      const oldAccount = accountStatus.value?.account?.accountId;
+      if (oldAccount && oldAccount !== status.account?.accountId) {
+        ++listToken;
+        ++activityToken;
+        activityError.value = null;
+        ++mailboxSessionToken;
+        ++commandToken;
+        inFlightCommandRef.value = null;
+        exactTotal.value = null;
+        lastSyncedAt.value = null;
+        closeReader();
+        conversations.value = [];
+        activity.value = [];
+        focusedRef.value = null;
+        context.value = 'inbox';
+        loadedDonePages.value = 1;
+        loadedDoneBoundary.value = null;
+        nextCursor.value = null;
+        listState.value = 'loading';
+        queueMicrotask(() => { if (!detached) void refresh(); });
+      }
       accountStatus.value = status;
       accountError.value = null;
       accountState.value = 'ready';
@@ -165,6 +292,7 @@ export function useMailbox(client: MailClient): Mailbox {
   async function refresh(): Promise<void> {
     if (detached) return;
     const token = ++listToken;
+    loadingMore.value = false;
     try {
       // Subscription-before-read: events are registered before any status/list/detail
       // read so a change occurring mid-refresh cannot be lost. A successful list alone
@@ -275,10 +403,19 @@ export function useMailbox(client: MailClient): Mailbox {
       if (!detached) accountBusy.value = null;
     }
     if (detached) return;
+    context.value = 'inbox';
+    nextCursor.value = null;
+    loadedDonePages.value = 1;
+    loadedDoneBoundary.value = null;
+    loadingMore.value = false;
+    exactTotal.value = null;
+    lastSyncedAt.value = null;
     // Drop every cached surface immediately and invalidate in-flight reads so stale
     // responses cannot repopulate the UI after a disconnect.
     closeReader();
     listToken += 1;
+    activityToken += 1;
+    activityError.value = null;
     detailToken += 1;
     commandToken += 1;
     mailboxSessionToken += 1;
@@ -435,6 +572,7 @@ export function useMailbox(client: MailClient): Mailbox {
   onScopeDispose(() => {
     detached = true;
     listToken += 1;
+    activityToken += 1;
     detailToken += 1;
     unsubscribe?.();
     unsubscribe = null;
@@ -450,6 +588,7 @@ export function useMailbox(client: MailClient): Mailbox {
   const mode = computed<MailMode | null>(() => accountStatus.value?.mode ?? null);
   const isGmail = computed(() => mode.value === 'gmail');
   return {
+    context, nextCursor, loadingMore, loadedDonePages, loadedDoneBoundary, exactTotal, lastSyncedAt, activityError, setContext, loadMore,
     conversations, activity, listState, listError, focusedRef, focusedSummary,
     openRef, conversation, detailState, detailError, lastCommandError,
     inFlightCommandRef, ready, refresh, focusConversation, moveFocus,

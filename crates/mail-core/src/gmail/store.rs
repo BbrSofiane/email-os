@@ -246,6 +246,24 @@ impl GmailStore {
             .map_err(|_| MailError::StorageUnavailable)?;
         }
 
+        let has_snapshot_sort_column = {
+            let mut stmt = tx
+                .prepare("PRAGMA table_info(gmail_operation_snapshots)")
+                .map_err(|_| MailError::StorageUnavailable)?;
+            let columns = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|_| MailError::StorageUnavailable)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| MailError::StorageUnavailable)?;
+            columns.iter().any(|column| column == "last_message_at")
+        };
+        if !has_snapshot_sort_column {
+            // One-time additive migration; page reads never parse unselected bodies.
+            tx.execute_batch("ALTER TABLE gmail_operation_snapshots ADD COLUMN last_message_at TEXT NOT NULL DEFAULT '';
+                UPDATE gmail_operation_snapshots SET last_message_at = COALESCE(json_extract(snapshot_json, '$.messages[#-1].sentAt'), '');")
+                .map_err(|_| MailError::StorageUnavailable)?;
+        }
+
         let version: Option<String> = meta_get(&tx, "schema_version")?;
         match version {
             Some(v) if v == SCHEMA_VERSION => {}
@@ -501,6 +519,90 @@ impl GmailStore {
             conversations: summaries,
             activity,
         })
+    }
+
+    pub(crate) fn list_cached_done(
+        &self,
+        request: &crate::dto::CachedDoneRequest,
+    ) -> Result<crate::dto::CachedDoneSnapshot, MailError> {
+        self.persistence_gate()?;
+        let conn = self.lock_conn()?;
+        let account = meta_get(&conn, "account_id")?.ok_or(MailError::NotFound)?;
+        let position = crate::cached_done::validate(request, &account)?;
+        // Only durable archive evidence qualifies, never arbitrary absence of INBOX.
+        // Bodies remain bounded to the requested candidate page, including recovery data.
+        let mut stmt = conn.prepare(
+            "WITH candidates AS (
+                SELECT o.conversation_id, COALESCE(
+                    (SELECT MAX(m.sent_at) FROM gmail_messages m WHERE m.account_id = o.account_id AND m.conversation_id = o.conversation_id),
+                    s.last_message_at, '') AS date
+                FROM gmail_operations o LEFT JOIN gmail_operation_snapshots s
+                ON s.account_id = o.account_id AND s.conversation_id = o.conversation_id
+                WHERE o.account_id = ?1 AND o.kind = 'archive' AND o.requested_value = 1
+                AND o.status IN ('queued', 'applying', 'confirmed', 'outcome_unknown')
+                AND (s.conversation_id IS NOT NULL OR EXISTS (SELECT 1 FROM gmail_conversations c
+                    WHERE c.account_id = o.account_id AND c.conversation_id = o.conversation_id))
+                GROUP BY o.conversation_id)
+             SELECT date, conversation_id FROM candidates
+             WHERE ?2 IS NULL OR date < ?2 OR (date = ?2 AND conversation_id > ?3)
+             ORDER BY date DESC, conversation_id ASC LIMIT ?4"
+        ).map_err(|_| MailError::StorageUnavailable)?;
+        let candidates = stmt
+            .query_map(
+                params![
+                    account,
+                    position.as_ref().map(|p| &p.0),
+                    position.as_ref().map(|p| &p.1),
+                    request.limit + 1
+                ],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .map_err(|_| MailError::StorageUnavailable)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut summaries = Vec::new();
+        for (_, id) in candidates.iter().take(request.limit as usize) {
+            let (inbox, is_read, pending_operation_id, known) =
+                effective_conversation_state_with_coverage(&conn, &account, id)?;
+            if inbox || !known {
+                continue;
+            }
+            let built = if let Some(built) = build_conversation(&conn, &account, id)? {
+                built
+            } else {
+                let json: String = conn.query_row("SELECT snapshot_json FROM gmail_operation_snapshots WHERE account_id = ?1 AND conversation_id = ?2", params![account, id], |row| row.get(0)).map_err(|_| MailError::StorageUnavailable)?;
+                let snapshot: Conversation =
+                    serde_json::from_str(&json).map_err(|_| MailError::StorageUnavailable)?;
+                BuiltConversation {
+                    conversation_ref: snapshot.conversation_ref,
+                    subject: snapshot.subject,
+                    messages: snapshot.messages,
+                    context_complete: snapshot.context_complete,
+                    unsupported_reason: snapshot.unsupported_reason,
+                    reply_context: snapshot.reply_context,
+                }
+            };
+            summaries.push(ConversationSummary {
+                conversation_ref: built.conversation_ref,
+                subject: built.subject,
+                participants: participants_of(&built.messages),
+                primary_correspondent: built.messages.last().map(|m| m.from.clone()),
+                is_read,
+                preview: preview_of(&built.messages),
+                last_message_at: built
+                    .messages
+                    .last()
+                    .map(|m| m.sent_at.clone())
+                    .unwrap_or_default(),
+                pending_operation_id,
+            });
+        }
+        Ok(crate::cached_done::finish(
+            request,
+            &candidates,
+            summaries,
+            meta_get(&conn, "last_synced_at")?,
+        ))
     }
 
     /// Full reader view of one conversation, scoped by the connected account.
@@ -1494,11 +1596,12 @@ fn accept_operation_tx(
     .map_err(|_| MailError::StorageUnavailable)?;
     tx.execute(
         "INSERT INTO gmail_operation_snapshots
-         (account_id, conversation_id, snapshot_json, snapshot_saved_at)
-         VALUES (?1, ?2, ?3, ?4)
+         (account_id, conversation_id, snapshot_json, snapshot_saved_at, last_message_at)
+         VALUES (?1, ?2, ?3, ?4, COALESCE(json_extract(?3, '$.messages[#-1].sentAt'), ''))
          ON CONFLICT(account_id, conversation_id) DO UPDATE SET
              snapshot_json = excluded.snapshot_json,
-             snapshot_saved_at = excluded.snapshot_saved_at",
+             snapshot_saved_at = excluded.snapshot_saved_at,
+             last_message_at = excluded.last_message_at",
         params![
             account_id,
             conversation.conversation_id,
@@ -1601,6 +1704,16 @@ fn effective_conversation_state(
     account_id: &str,
     conversation_id: &str,
 ) -> Result<(bool, Option<bool>, Option<String>), MailError> {
+    let (inbox, read, pending, _) =
+        effective_conversation_state_with_coverage(conn, account_id, conversation_id)?;
+    Ok((inbox, read, pending))
+}
+
+fn effective_conversation_state_with_coverage(
+    conn: &Connection,
+    account_id: &str,
+    conversation_id: &str,
+) -> Result<(bool, Option<bool>, Option<String>, bool), MailError> {
     let mut facts = HashMap::<String, (Option<bool>, Option<bool>)>::new();
     let mut stmt = conn
         .prepare(
@@ -1679,7 +1792,12 @@ fn effective_conversation_state(
     } else {
         Some(!facts.values().any(|(_, unread)| *unread == Some(true)))
     };
-    Ok((inbox, is_read, active.map(|(_, id)| id)))
+    Ok((
+        inbox,
+        is_read,
+        active.map(|(_, id)| id),
+        !facts.is_empty() && facts.values().all(|(inbox, _)| inbox.is_some()),
+    ))
 }
 
 fn load_activity(conn: &Connection, account_id: &str) -> Result<Vec<OperationSummary>, MailError> {
@@ -3072,5 +3190,200 @@ mod tests {
         store.set_test_persistence_failure(false);
         assert!(store.has_account().is_ok());
         let _ = std::fs::remove_dir_all(dir);
+    }
+    #[test]
+    fn list_cached_done_membership_scoping_ordering_bounds_and_recovery() {
+        use crate::dto::CachedDoneRequest;
+        let (store, dir) = open_store("cached-done");
+        store
+            .begin_account(&profile("acct", "a@example.test", "h1"), 0)
+            .unwrap();
+        let ids = [
+            "a",
+            "b",
+            "failed",
+            "restore",
+            "incoming",
+            "unknown",
+            "sent-only",
+            "spam-only",
+            "trash-only",
+        ];
+        let threads: Vec<_> = ids
+            .iter()
+            .map(|id| {
+                cached(thread(
+                    "acct",
+                    id,
+                    "h1",
+                    vec![message(&format!("m-{id}"), "2026-02-01T00:00:00Z")],
+                    &[&format!("m-{id}")],
+                ))
+            })
+            .collect();
+        store
+            .apply_discovery_page(&threads, None, true, false, 0)
+            .unwrap();
+        for id in &ids[..6] {
+            store
+                .accept_archived(&SetArchived {
+                    conversation: ConversationRef {
+                        account_id: "acct".into(),
+                        conversation_id: (*id).into(),
+                    },
+                    archived: true,
+                    request_id: format!("archive-{id}"),
+                })
+                .unwrap();
+        }
+        {
+            let conn = store.lock_conn().unwrap();
+            conn.execute("UPDATE gmail_message_facts SET in_inbox = 0 WHERE conversation_id IN ('sent-only', 'spam-only', 'trash-only')", []).unwrap();
+            conn.execute(
+                "UPDATE gmail_operations SET status = 'failed' WHERE conversation_id = 'failed'",
+                [],
+            )
+            .unwrap();
+            conn.execute("UPDATE gmail_operations SET status = 'confirmed' WHERE conversation_id IN ('a', 'b', 'incoming', 'unknown')", []).unwrap();
+            conn.execute(
+                "UPDATE gmail_message_facts SET in_inbox = 0 WHERE conversation_id IN ('a', 'b')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE gmail_message_facts SET in_inbox = NULL WHERE conversation_id = 'unknown'",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO gmail_message_facts VALUES ('acct', 'incoming', 'new-arrival', 1, 0)",
+                [],
+            )
+            .unwrap();
+            // A foreign account with a lexically newer row must never leak in.
+            conn.execute("INSERT INTO gmail_operations SELECT 'foreign', 'foreign-op', 'a', kind, requested_value, status, failure, last_error, accepted_seq, accepted_at, request_id FROM gmail_operations WHERE conversation_id = 'a'", []).unwrap();
+        }
+        store
+            .accept_archived(&SetArchived {
+                conversation: ConversationRef {
+                    account_id: "acct".into(),
+                    conversation_id: "restore".into(),
+                },
+                archived: false,
+                request_id: "restore".into(),
+            })
+            .unwrap();
+        let mut request = CachedDoneRequest {
+            account_id: "acct".into(),
+            limit: 1,
+            cursor: None,
+        };
+        let first = store.list_cached_done(&request).unwrap();
+        assert_eq!(first.conversations[0].conversation_ref.conversation_id, "a");
+        assert_eq!(first.exact_total, None);
+        assert_eq!(first.last_synced_at, store.last_synced_at().unwrap());
+        request.cursor = first.next_cursor;
+        let second = store.list_cached_done(&request).unwrap();
+        assert_eq!(
+            second.conversations[0].conversation_ref.conversation_id,
+            "b"
+        );
+        request.cursor = second.next_cursor;
+        let mut pages = 2;
+        while request.cursor.is_some() {
+            let page = store.list_cached_done(&request).unwrap();
+            assert!(
+                page.conversations.is_empty(),
+                "restored, failed, incoming and unknown are excluded"
+            );
+            request.cursor = page.next_cursor;
+            pages += 1;
+            assert!(pages <= 6, "candidate paging must terminate");
+        }
+        assert_eq!(pages, 5); // failed and unrelated non-INBOX rows are not candidates.
+        for limit in [0, 101, u32::MAX] {
+            request.limit = limit;
+            assert!(
+                matches!(store.list_cached_done(&request), Err(MailError::InvalidRequest { field }) if field == "limit")
+            );
+        }
+        request.limit = 100;
+        request.cursor = Some("bad-cursor".into());
+        assert!(
+            matches!(store.list_cached_done(&request), Err(MailError::InvalidRequest { field }) if field == "cursor")
+        );
+        request.cursor = Some("cached-done-v1:[\"foreign\",\"date\",\"id\"]".into());
+        assert!(
+            matches!(store.list_cached_done(&request), Err(MailError::InvalidRequest { field }) if field == "cursor")
+        );
+        request.cursor = None;
+        request.account_id = "foreign".into();
+        assert_eq!(store.list_cached_done(&request), Err(MailError::NotFound));
+        request.account_id = "acct".into();
+        // Real persisted operation snapshot, then remove only bounded cache bodies.
+        {
+            let conn = store.lock_conn().unwrap();
+            conn.execute("UPDATE gmail_conversations SET context_complete = 0, unsupported_reason = 'synthetic incomplete' WHERE conversation_id = 'a'", []).unwrap();
+        }
+        store
+            .accept_archived(&SetArchived {
+                conversation: ConversationRef {
+                    account_id: "acct".into(),
+                    conversation_id: "a".into(),
+                },
+                archived: true,
+                request_id: "refresh-snapshot".into(),
+            })
+            .unwrap();
+        {
+            let conn = store.lock_conn().unwrap();
+            conn.execute(
+                "DELETE FROM gmail_messages WHERE account_id = 'acct' AND conversation_id = 'a'",
+                [],
+            )
+            .unwrap();
+            conn.execute("DELETE FROM gmail_conversations WHERE account_id = 'acct' AND conversation_id = 'a'", []).unwrap();
+            // Simulate a pre-UX03 profile: reopen must backfill lightweight sort metadata.
+            conn.execute(
+                "ALTER TABLE gmail_operation_snapshots DROP COLUMN last_message_at",
+                [],
+            )
+            .unwrap();
+        }
+        drop(store);
+        let store = GmailStore::open(&dir, Arc::new(SystemClock)).unwrap();
+        let page = store.list_cached_done(&request).unwrap();
+        assert_eq!(page.conversations.len(), 2);
+        assert_eq!(page.conversations[0].conversation_ref.conversation_id, "a");
+        let retained = store
+            .get_conversation(&page.conversations[0].conversation_ref)
+            .unwrap();
+        assert!(retained.retained_snapshot_at.is_some());
+        assert_eq!(retained.context_complete, Some(false));
+        assert_eq!(
+            retained.unsupported_reason.as_deref(),
+            Some("synthetic incomplete")
+        );
+        // An unselected retained body is not parsed to sort a one-row page.
+        {
+            let conn = store.lock_conn().unwrap();
+            conn.execute("DELETE FROM gmail_messages WHERE conversation_id = 'b'", [])
+                .unwrap();
+            conn.execute(
+                "DELETE FROM gmail_conversations WHERE conversation_id = 'b'",
+                [],
+            )
+            .unwrap();
+            conn.execute("UPDATE gmail_operation_snapshots SET snapshot_json = 'invalid-unselected-body' WHERE conversation_id = 'b'", []).unwrap();
+        }
+        request.limit = 1;
+        let bounded = store.list_cached_done(&request).unwrap();
+        assert_eq!(
+            bounded.conversations[0].conversation_ref.conversation_id,
+            "a"
+        );
+        assert!(bounded.next_cursor.is_some());
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

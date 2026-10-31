@@ -154,6 +154,12 @@ textarea {
   padding: 0.2rem 0.5rem;
 }
 
+/* Keep the new local destination from widening the compact browsing rail. */
+.rail-done {
+  width: 5rem;
+  white-space: normal;
+}
+
 .rail-item:hover {
   color: var(--text-primary);
 }
@@ -810,3 +816,15 @@ textarea {
   color: var(--warning);
   font-size: 0.85rem;
 }
+
+/* UX-03 discovery overlays: input owns keyboard focus; covered shell is inert. */
+.cached-coverage { margin: 0; padding: .4rem 1rem; color: var(--text-muted, #bbb); font-size: .85rem; }
+.action-backdrop { position: fixed; inset: 0; z-index: 100; background: #0008; display: flex; align-items: flex-start; justify-content: center; padding: min(15vh, 6rem) 1rem 1rem; }
+.action-overlay { width: min(36rem, 100%); max-height: 75vh; overflow: auto; background: #24212a; color: #f4f0fa; border: 1px solid #81718f; border-radius: .6rem; padding: 1rem; box-shadow: 0 1rem 4rem #0008; }
+.action-overlay label { display: block; margin-bottom: .5rem; }
+.action-overlay input { box-sizing: border-box; width: 100%; padding: .65rem; color: #fff; background: #17151d; border: 1px solid #b9a0ed; border-radius: .3rem; }
+.action-overlay ul { list-style: none; padding: 0; margin: .6rem 0; }
+.action-overlay li { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .65rem; cursor: pointer; border-left: 3px solid transparent; }
+.action-overlay li.highlighted { background: #493d60; border-color: #c7a7ff; }
+.action-overlay kbd { font-size: .75rem; color: #e0d3f4; }
+.action-hint { font-size: .8rem; color: #d2c5df; }
