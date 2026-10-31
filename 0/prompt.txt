@@ -1,0 +1,1 @@
+Ok we need to implement UX 05 from @superhuman-email-browsing-ux-spec.md. Scope the implemenation for it

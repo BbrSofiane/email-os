@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M692V7Z1F4TJ4P7Y8TYYGH2A",
+  "strategy": "manual-commit",
+  "branch": "feat/ux-05-safe-bulk-processing",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "docs/superhuman-browsing-implementation-plan.md",
+    "docs/ux-05-safe-bulk-processing.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 63,
+    "cache_creation_tokens": 80662,
+    "cache_read_tokens": 1071987,
+    "output_tokens": 8517,
+    "api_call_count": 21
+  }
+}
