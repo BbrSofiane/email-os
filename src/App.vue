@@ -24,6 +24,9 @@
  * - Left from list navigation: destination navigator; pointer Commands opens palette.
  * - Cmd+K opens the palette in native mode only (browser reservations stay native).
  * - Shift+U: explicitly mark the focused/open conversation unread.
+ * - z: undo the last accepted conversation action (single level, 10 s window;
+ *   the backend's eligibility decision is authoritative). Cmd/Ctrl+Z is left
+ *   to native text editing.
  * - Ignored with Ctrl/Meta/Alt held, during IME composition, inside text fields, and
  *   Enter/e are ignored when a button owns the key (it activates itself).
  * - While a visible draft editor exists, every mailbox shortcut is suppressed;
@@ -34,6 +37,7 @@
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import ActionOverlay from './components/ActionOverlay.vue';
+import ActionNotice from './components/ActionNotice.vue';
 import { browsingActions, actionLabel, type BrowsingActionId } from './lib/browsing-actions';
 import InboxList from './components/InboxList.vue';
 import ReaderView from './components/ReaderView.vue';
@@ -77,6 +81,76 @@ interface ReaderOrigin {
 const mailbox = useMailbox(props.client);
 const inboxList = ref<InstanceType<typeof InboxList> | null>(null);
 const emptyState = ref<HTMLElement | null>(null);
+const actionNoticeComponent = ref<InstanceType<typeof ActionNotice> | null>(null);
+
+// ---------------------------------------------------------------------------
+// Action notice (UX-04): single-slot undo notification
+// ---------------------------------------------------------------------------
+
+/** Advisory wall clock for the Undo hint; the backend owns eligibility. */
+const nowMs = ref(Date.now());
+let nowTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Single-slot notice state. Status text derives from the matching Activity row
+ * on every refresh; the undo window comes from the REFRESHED activity row when
+ * it exists (the slot's captured value only covers the pre-refresh gap, so a
+ * backend-withdrawn window hides the control). The backend stays the
+ * authority: an `expired` rejection refreshes and then closes the slot window
+ * below. After a successful undo the slot reports the outcome through `undone`
+ * and the window is closed regardless of a stale activity row.
+ */
+const actionNotice = computed(() => {
+  const slot = mailbox.lastAction.value;
+  if (!slot) return null;
+  const operation = mailbox.activity.value.find((item) => item.id === slot.receipt.operationId) ?? null;
+  const label = browsingActions.find((action) => action.id === slot.actionId)?.label ?? slot.actionId;
+  return {
+    label,
+    actionId: slot.actionId,
+    subject: slot.subject,
+    operation,
+    // Post-undo the window is closed outright: a stale activity row can still
+    // carry undoableUntil, and the palette/key must never send a second undo.
+    undoableUntil: slot.undone ? null : operation ? operation.undoableUntil ?? null : slot.undoableUntil,
+    hadWindow: slot.hadWindow,
+    undone: slot.undone
+      ? {
+          outcome: slot.undone.outcome,
+          compensations: mailbox.activity.value.filter((item) => slot.undone?.operationIds.includes(item.id) ?? false),
+        }
+      : null,
+  };
+});
+
+/** Palette/key availability share this window check; expiry is advisory only.
+ *  An in-flight undo owns the slot: a second dispatch (key repeat, double-tap,
+ *  button+key) must never race it into a false `already_undone` failure. */
+const undoWindowOpen = computed(() => {
+  const until = actionNotice.value?.undoableUntil ?? null;
+  return until !== null && Date.parse(until) > nowMs.value;
+});
+
+/** Undo succeeded: re-focus the restored row only when it is in the current context. */
+async function undoFromNotice(): Promise<void> {
+  const active = document.activeElement;
+  const noticeEl = actionNoticeComponent.value?.$el as Node | undefined;
+  const focusWasInNotice = !!active && active instanceof Node && !!noticeEl && noticeEl.contains(active);
+  const target = mailbox.lastAction.value?.target ?? null;
+  const receipt = await mailbox.undoLastAction();
+  if (receipt && target && !readerOpen.value && mailbox.listState.value === 'ready'
+    && mailbox.conversations.value.some((row) => sameConversation(row.ref, target))) {
+    mailbox.focusConversation(target);
+    await focusFocusedRow(true);
+    return;
+  }
+  // The clicked Undo button is removed with the successful slot; if the restored
+  // row cannot take focus, hand focus to the reader (or the list) instead of
+  // dropping it to <body>.
+  if (!receipt || !focusWasInNotice) return;
+  if (readerOpen.value) (readerView.value?.$el as HTMLElement | undefined)?.focus({ preventScroll: true });
+  else if (mailbox.listState.value === 'ready') await focusFocusedRow(true);
+}
 
 const readerOpen = computed(() => mailbox.openRef.value !== null);
 const gmailMode = computed(() => mailbox.isGmail.value);
@@ -255,6 +329,7 @@ onMounted(() => {
   window.addEventListener('compositionstart', cancelGo);
   window.addEventListener('focusin', cancelGo);
   wideQuery?.addEventListener('change', onViewportChange);
+  nowTimer = setInterval(() => { nowMs.value = Date.now(); }, 250);
 });
 
 onBeforeUnmount(() => {
@@ -263,6 +338,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('compositionstart', cancelGo);
   window.removeEventListener('focusin', cancelGo);
   cancelGo();
+  if (nowTimer !== null) clearInterval(nowTimer);
+  nowTimer = null;
   wideQuery?.removeEventListener('change', onViewportChange);
 });
 
@@ -723,6 +800,11 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   if (id === 'drafts') return !!accountId.value;
   if (id === 'back') return readerOpen.value || history.value.length > 0;
   if (drafts.activeRef.value || drawer.value || contactDisclosure.value) return false;
+  if (id === 'undo') {
+    // Same guards as the key: no in-flight undo (a second dispatch would race
+    // into a false already_undone), and no open reader message-details disclosure.
+    return undoWindowOpen.value && !mailbox.inFlightCommandRef.value && !readerView.value?.hasOpenDetails();
+  }
   const target = actionTarget(explicit);
   if (!target) return false;
   if (id === 'open') return !readerOpen.value;
@@ -754,7 +836,11 @@ async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): 
     case 'read': case 'unread': {
       const target = actionTarget(explicit);
       if (target) await mailbox.setRead(target, id === 'read');
+      return;
     }
+    case 'undo':
+      await undoFromNotice();
+      return;
   }
 }
 
@@ -854,6 +940,15 @@ function onKeydown(event: KeyboardEvent): void {
     void executeAction('unread');
     return;
   }
+  // Undo works from BOTH the list and the reader; the same guard set as E
+  // applies. Availability (window, in-flight undo, reader disclosure) lives in
+  // actionAvailable so the palette entry and the key cannot disagree.
+  if (key === 'z' && !event.shiftKey && !actionShortcutBlocked(event.target)) {
+    if (event.repeat) return; // key auto-repeat must not double-dispatch undo
+    event.preventDefault();
+    void executeAction('undo');
+    return;
+  }
   if (readerIsOpen) {
     const reader = readerView.value;
     if (key === 'n' || key === 'N') {
@@ -923,7 +1018,19 @@ const pendingCount = computed(
   () => mailbox.activity.value.filter((op) => op.status === 'queued' || op.status === 'applying' || op.status === 'outcome_unknown').length,
 );
 
-function errorText(error: { kind: string; field?: string }): string {
+/**
+ * Alert text for the status line. An expired undo window is already announced
+ * by the polite action notice (expired wording); repeating it as a role=alert
+ * would double-announce. Every other failure keeps its alert.
+ */
+const commandError = computed(() => {
+  const error = mailbox.lastCommandError.value;
+  if (!error) return null;
+  if (error.kind === 'undo_unavailable' && error.reason === 'expired') return null;
+  return error;
+});
+
+function errorText(error: { kind: string; field?: string; reason?: string }): string {
   switch (error.kind) {
     case 'not_found':
       return 'not found';
@@ -964,6 +1071,16 @@ function errorText(error: { kind: string; field?: string }): string {
       return 'provider rejected action';
     case 'outcome_unknown':
       return 'provider outcome unknown';
+    case 'undo_unavailable':
+      switch (error.reason) {
+        case 'expired': return 'undo window expired';
+        case 'superseded': return 'superseded by a newer action';
+        case 'already_undone': return 'already undone';
+        case 'not_applicable': return 'not undoable';
+        case 'uncertain': return 'outcome unknown; use Activity';
+        case 'unknown_prior': return 'prior state unknown';
+        default: return 'undo unavailable';
+      }
     default:
       return 'unknown error';
   }
@@ -987,8 +1104,8 @@ function errorText(error: { kind: string; field?: string }): string {
         <span data-test="inbox-count">{{ mailbox.conversations.value.length }} {{ mailbox.context.value === 'inbox' ? 'in inbox' : 'loaded in cached Done' }}</span>
         <span v-if="pendingCount > 0" data-test="pending-count">{{ pendingCount }} pending operation(s)</span>
         <span v-if="gmailActionsEnabled" data-test="read-shortcut-note">Shift+U marks the focused or open conversation unread.</span>
-        <span v-if="mailbox.lastCommandError.value" role="alert" data-test="command-error">
-          last command failed: {{ errorText(mailbox.lastCommandError.value) }}
+        <span v-if="commandError" role="alert" data-test="command-error">
+          last command failed: {{ errorText(commandError) }}
         </span>
       </p>
     </header>
@@ -1007,6 +1124,12 @@ function errorText(error: { kind: string; field?: string }): string {
     </div>
 
     <p v-if="mailbox.context.value === 'done'" class="cached-coverage" role="note" data-test="done-coverage">Local cache only — not provider-complete Done or All Mail. {{ mailbox.exactTotal.value === null ? 'Total unknown.' : `${mailbox.exactTotal.value} known locally.` }} {{ mailbox.lastSyncedAt.value ? `Last synced: ${mailbox.lastSyncedAt.value}` : 'Last sync unknown.' }}</p>
+    <!-- In normal flow above the central surface: never covers the focused row,
+         the reader back path, and stays visible in the empty-Inbox state. Inert
+         under a palette/navigator overlay exactly like header/main, so its Undo
+         button cannot be reached while covered; drawer/disclosure guards apply
+         through executeAction. -->
+    <ActionNotice ref="actionNoticeComponent" :notice="actionNotice" :now="nowMs" :inert="!!overlay || undefined" @undo="executeAction('undo')" />
     <main class="app-main" :inert="!!overlay || undefined">
       <section v-if="!accountReady" class="account-gate" aria-label="Account">
         <p

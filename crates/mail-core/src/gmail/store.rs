@@ -22,7 +22,8 @@ use crate::drafts::types::ReplyContext;
 use crate::dto::{
     Address, Conversation, ConversationRef, ConversationSummary, InboxSnapshot,
     MailboxOperationKind, Message, OperationFailure, OperationReceipt, OperationStatus,
-    OperationSummary, RetryOperation, SetArchived, SetRead,
+    OperationSummary, RetryOperation, SetArchived, SetRead, UndoOperation, UndoOutcome,
+    UndoReceipt, UndoUnavailableReason,
 };
 use crate::error::MailError;
 use crate::gmail::types::{AccountInfo, GmailProfile, GmailThread, HistoryPage};
@@ -61,6 +62,11 @@ struct OperationAcceptance<'a> {
     request_id: &'a str,
     payload: &'a str,
     clone_targets_from: Option<&'a str>,
+    /// Undo compensations target exactly the preimage group; targets are
+    /// never re-derived from current facts.
+    explicit_targets: Option<Vec<String>>,
+    /// Set only for undo compensations; points at the undone operation.
+    undo_of: Option<&'a str>,
     accepted_at: &'a str,
 }
 
@@ -215,7 +221,15 @@ impl GmailStore {
                 request_id TEXT NOT NULL,
                 payload TEXT NOT NULL,
                 operation_id TEXT NOT NULL,
+                accepted_at TEXT,
                 PRIMARY KEY (account_id, request_id)
+            );
+            CREATE TABLE IF NOT EXISTS gmail_operation_preimages (
+                account_id TEXT NOT NULL,
+                operation_id TEXT NOT NULL,
+                message_id TEXT NOT NULL,
+                prior_value INTEGER NULL CHECK (prior_value IN (0, 1)),
+                PRIMARY KEY (account_id, operation_id, message_id)
             );
             CREATE TABLE IF NOT EXISTS gmail_operation_snapshots (
                 account_id TEXT NOT NULL,
@@ -262,6 +276,44 @@ impl GmailStore {
             tx.execute_batch("ALTER TABLE gmail_operation_snapshots ADD COLUMN last_message_at TEXT NOT NULL DEFAULT '';
                 UPDATE gmail_operation_snapshots SET last_message_at = COALESCE(json_extract(snapshot_json, '$.messages[#-1].sentAt'), '');")
                 .map_err(|_| MailError::StorageUnavailable)?;
+        }
+
+        let has_undo_of_column = {
+            let mut stmt = tx
+                .prepare("PRAGMA table_info(gmail_operations)")
+                .map_err(|_| MailError::StorageUnavailable)?;
+            let columns = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|_| MailError::StorageUnavailable)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| MailError::StorageUnavailable)?;
+            columns.iter().any(|column| column == "undo_of")
+        };
+        if !has_undo_of_column {
+            // Undo of the latest operation (docs/ux-04-trustworthy-undo.md §3.5):
+            // the id of the operation this row compensates, NULL otherwise.
+            tx.execute("ALTER TABLE gmail_operations ADD COLUMN undo_of TEXT", [])
+                .map_err(|_| MailError::StorageUnavailable)?;
+        }
+        let has_request_accepted_at_column = {
+            let mut stmt = tx
+                .prepare("PRAGMA table_info(gmail_operation_requests)")
+                .map_err(|_| MailError::StorageUnavailable)?;
+            let columns = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|_| MailError::StorageUnavailable)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| MailError::StorageUnavailable)?;
+            columns.iter().any(|column| column == "accepted_at")
+        };
+        if !has_request_accepted_at_column {
+            // Only undo requests need their own acceptance time persisted so an
+            // idempotent replay reconstructs the exact committed receipt.
+            tx.execute(
+                "ALTER TABLE gmail_operation_requests ADD COLUMN accepted_at TEXT",
+                [],
+            )
+            .map_err(|_| MailError::StorageUnavailable)?;
         }
 
         let version: Option<String> = meta_get(&tx, "schema_version")?;
@@ -514,7 +566,7 @@ impl GmailStore {
                     .cmp(&b.conversation_ref.conversation_id)
             })
         });
-        let activity = load_activity(&conn, &account_id)?;
+        let activity = load_activity(&conn, &account_id, self.clock.as_ref())?;
         Ok(InboxSnapshot {
             conversations: summaries,
             activity,
@@ -542,6 +594,10 @@ impl GmailStore {
                 AND o.status IN ('queued', 'applying', 'confirmed', 'outcome_unknown')
                 AND (s.conversation_id IS NOT NULL OR EXISTS (SELECT 1 FROM gmail_conversations c
                     WHERE c.account_id = o.account_id AND c.conversation_id = o.conversation_id))
+                AND NOT EXISTS (
+                    SELECT 1 FROM gmail_operations u
+                    WHERE u.account_id = o.account_id AND u.undo_of = o.operation_id
+                    AND u.status IN ('queued', 'applying', 'confirmed', 'outcome_unknown'))
                 GROUP BY o.conversation_id)
              SELECT date, conversation_id FROM candidates
              WHERE ?2 IS NULL OR date < ?2 OR (date = ?2 AND conversation_id > ?3)
@@ -562,8 +618,13 @@ impl GmailStore {
             .map_err(|_| MailError::StorageUnavailable)?;
         let mut summaries = Vec::new();
         for (_, id) in candidates.iter().take(request.limit as usize) {
-            let (inbox, is_read, pending_operation_id, known) =
-                effective_conversation_state_with_coverage(&conn, &account, id)?;
+            let effective = effective_conversation_state_with_coverage(&conn, &account, id)?;
+            let (inbox, is_read, pending_operation_id, known) = (
+                effective.inbox,
+                effective.is_read,
+                effective.pending_operation_id,
+                effective.coverage_known,
+            );
             if inbox || !known {
                 continue;
             }
@@ -784,6 +845,8 @@ impl GmailStore {
                 request_id,
                 payload: &payload,
                 clone_targets_from: None,
+                explicit_targets: None,
+                undo_of: None,
                 accepted_at: &accepted_at,
             },
         )?;
@@ -821,6 +884,17 @@ impl GmailStore {
             account_id: account_id.clone(),
             conversation_id: original.conversation_id.clone(),
         };
+        // A retry of a compensating operation stays a compensation: it keeps
+        // the original's `undo_of`, so it is never itself undoable (no redo)
+        // and keeps the `Undo of …` linkage in Activity.
+        let original_undo_of: Option<String> = tx
+            .query_row(
+                "SELECT undo_of FROM gmail_operations
+                 WHERE account_id = ?1 AND operation_id = ?2",
+                params![account_id, original.operation_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| MailError::StorageUnavailable)?;
         let accepted_at = self.clock.now_iso();
         let receipt = accept_operation_tx(
             &tx,
@@ -831,10 +905,85 @@ impl GmailStore {
                 value: original.value,
                 request_id: &command.request_id,
                 payload: &payload,
+                // A retry restores the same prior world as the operation it
+                // retries, so it clones the original's preimage verbatim.
                 clone_targets_from: Some(&original.operation_id),
+                explicit_targets: None,
+                undo_of: original_undo_of.as_deref(),
                 accepted_at: &accepted_at,
             },
         )?;
+        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        Ok(receipt)
+    }
+
+    /// Undo of the single latest accepted non-compensating operation
+    /// (docs/ux-04-trustworthy-undo.md §3.2/§3.3). Idempotent under `requestId`
+    /// through the existing request dedup; eligibility failures are typed
+    /// [`MailError::UndoUnavailable`]. Still-queued intent is cancelled in
+    /// place; anything already claimed or confirmed is compensated with one
+    /// queued operation per distinct prior value with explicit targets.
+    pub(crate) fn undo_operation(&self, command: &UndoOperation) -> Result<UndoReceipt, MailError> {
+        validate_request_id(&command.request_id)?;
+        self.persistence_gate()?;
+        let mut conn = self.lock_conn()?;
+        let tx = conn
+            .transaction()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let account_id = match meta_get(&tx, "account_id")? {
+            Some(id) => id,
+            // Rule 1: the operation must belong to the active account.
+            None => return Err(MailError::NotFound),
+        };
+        let payload = serde_json::json!({ "undoOperationId": command.operation_id }).to_string();
+        if let Some(receipt) =
+            existing_undo_receipt(&tx, &account_id, &command.request_id, &payload)?
+        {
+            tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+            return Ok(receipt);
+        }
+        let target = load_undo_target(&tx, &account_id, &command.operation_id)?
+            .ok_or(MailError::NotFound)?;
+        check_undoable(&tx, &account_id, &target, &self.clock.now_iso())?;
+        let accepted_at = self.clock.now_iso();
+        let receipt = if target.status == OperationStatus::Queued {
+            // Cancel in place. The zero-rows branch is defensive only: the
+            // status was read in this same transaction, which runs under the
+            // connection mutex the worker's claim also needs, so the worker
+            // cannot claim concurrently; fall through to compensation anyway.
+            let cancelled = tx
+                .execute(
+                    "UPDATE gmail_operations SET status = 'cancelled', last_error = NULL
+                     WHERE account_id = ?1 AND operation_id = ?2 AND status = 'queued'",
+                    params![account_id, target.operation_id],
+                )
+                .map_err(|_| MailError::StorageUnavailable)?;
+            if cancelled == 1 {
+                UndoReceipt {
+                    undone_operation_id: target.operation_id.clone(),
+                    outcome: UndoOutcome::Cancelled,
+                    operation_ids: Vec::new(),
+                    accepted_at: accepted_at.clone(),
+                }
+            } else {
+                compensate_tx(&tx, &account_id, &target, &accepted_at)?
+            }
+        } else {
+            compensate_tx(&tx, &account_id, &target, &accepted_at)?
+        };
+        tx.execute(
+            "INSERT INTO gmail_operation_requests
+             (account_id, request_id, payload, operation_id, accepted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                account_id,
+                command.request_id,
+                payload,
+                target.operation_id,
+                accepted_at
+            ],
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
         tx.commit().map_err(|_| MailError::StorageUnavailable)?;
         Ok(receipt)
     }
@@ -1411,6 +1560,8 @@ impl GmailStore {
             .map_err(|_| MailError::StorageUnavailable)?;
         tx.execute("DELETE FROM gmail_operation_snapshots", [])
             .map_err(|_| MailError::StorageUnavailable)?;
+        tx.execute("DELETE FROM gmail_operation_preimages", [])
+            .map_err(|_| MailError::StorageUnavailable)?;
         tx.execute("DELETE FROM gmail_discovery_seen", [])
             .map_err(|_| MailError::StorageUnavailable)?;
         tx.execute(
@@ -1471,6 +1622,281 @@ fn existing_receipt(
     }))
 }
 
+/// Reconstructs the committed receipt for a repeated undo request. Undo rows
+/// persist their own acceptance time; outcome and operation ids derive from
+/// the compensating rows (docs/ux-04-trustworthy-undo.md §3.3).
+fn existing_undo_receipt(
+    tx: &rusqlite::Transaction<'_>,
+    account_id: &str,
+    request_id: &str,
+    payload: &str,
+) -> Result<Option<UndoReceipt>, MailError> {
+    let existing = tx
+        .query_row(
+            "SELECT payload, operation_id, accepted_at FROM gmail_operation_requests
+         WHERE account_id = ?1 AND request_id = ?2",
+            params![account_id, request_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| MailError::StorageUnavailable)?;
+    let Some((saved_payload, operation_id, accepted_at)) = existing else {
+        return Ok(None);
+    };
+    if saved_payload != payload {
+        return Err(MailError::RequestIdConflict);
+    }
+    let operation_ids = compensating_ids(tx, account_id, &operation_id)?;
+    let outcome = if operation_ids.is_empty() {
+        UndoOutcome::Cancelled
+    } else {
+        UndoOutcome::Compensating
+    };
+    Ok(Some(UndoReceipt {
+        undone_operation_id: operation_id,
+        outcome,
+        operation_ids,
+        accepted_at: accepted_at.ok_or(MailError::StorageUnavailable)?,
+    }))
+}
+
+fn compensating_ids(
+    conn: &Connection,
+    account_id: &str,
+    undone_operation_id: &str,
+) -> Result<Vec<String>, MailError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT operation_id FROM gmail_operations
+         WHERE account_id = ?1 AND undo_of = ?2 ORDER BY accepted_seq",
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+    let ids = stmt
+        .query_map(params![account_id, undone_operation_id], |row| row.get(0))
+        .map_err(|_| MailError::StorageUnavailable)?
+        .collect::<Result<Vec<String>, _>>()
+        .map_err(|_| MailError::StorageUnavailable)?;
+    Ok(ids)
+}
+
+/// The persisted facts about an operation needed to decide and execute Undo.
+struct UndoTarget {
+    operation_id: String,
+    conversation_id: String,
+    kind: MailboxOperationKind,
+    status: OperationStatus,
+    undo_of: Option<String>,
+    accepted_at: String,
+}
+
+fn load_undo_target(
+    conn: &Connection,
+    account_id: &str,
+    operation_id: &str,
+) -> Result<Option<UndoTarget>, MailError> {
+    let row = conn
+        .query_row(
+            "SELECT conversation_id, kind, status, undo_of, accepted_at FROM gmail_operations
+         WHERE account_id = ?1 AND operation_id = ?2",
+            params![account_id, operation_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| MailError::StorageUnavailable)?;
+    let Some((conversation_id, kind, status, undo_of, accepted_at)) = row else {
+        return Ok(None);
+    };
+    Ok(Some(UndoTarget {
+        operation_id: operation_id.to_string(),
+        conversation_id,
+        kind: parse_kind(&kind)?,
+        status: parse_status(&status)?,
+        undo_of,
+        accepted_at,
+    }))
+}
+
+/// Applies eligibility rules §3.2 in order; the first failure returns its
+/// typed reason.
+fn check_undoable(
+    tx: &rusqlite::Transaction<'_>,
+    account_id: &str,
+    target: &UndoTarget,
+    now: &str,
+) -> Result<(), MailError> {
+    // Rule 2: a compensating operation is never itself undoable.
+    if target.undo_of.is_some() {
+        return Err(undo_unavailable(UndoUnavailableReason::NotApplicable));
+    }
+    // Rule 3: the 10 s window from acceptance, on the injected clock.
+    if !crate::clock::within_undo_window(&target.accepted_at, now) {
+        return Err(undo_unavailable(UndoUnavailableReason::Expired));
+    }
+    // Rule 4: newest accepted non-compensating operation on the account.
+    let newest: Option<String> = tx
+        .query_row(
+            "SELECT operation_id FROM gmail_operations
+         WHERE account_id = ?1 AND undo_of IS NULL ORDER BY accepted_seq DESC LIMIT 1",
+            params![account_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| MailError::StorageUnavailable)?;
+    if newest.as_deref() != Some(target.operation_id.as_str()) {
+        return Err(undo_unavailable(UndoUnavailableReason::Superseded));
+    }
+    // Rule 5: not already undone.
+    let undone: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM gmail_operations
+             WHERE account_id = ?1 AND undo_of = ?2)",
+            params![account_id, target.operation_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+    if undone {
+        return Err(undo_unavailable(UndoUnavailableReason::AlreadyUndone));
+    }
+    // Rule 6: only live intent is undoable.
+    match target.status {
+        OperationStatus::Queued | OperationStatus::Applying | OperationStatus::Confirmed => {}
+        OperationStatus::Failed => {
+            return Err(undo_unavailable(UndoUnavailableReason::NotApplicable))
+        }
+        OperationStatus::OutcomeUnknown => {
+            return Err(undo_unavailable(UndoUnavailableReason::Uncertain))
+        }
+        OperationStatus::Cancelled => {
+            return Err(undo_unavailable(UndoUnavailableReason::AlreadyUndone))
+        }
+    }
+    // Rule 7: every target's preimage must be known.
+    if has_unknown_prior_value(tx, account_id, &target.operation_id)? {
+        return Err(undo_unavailable(UndoUnavailableReason::UnknownPrior));
+    }
+    Ok(())
+}
+
+fn undo_unavailable(reason: UndoUnavailableReason) -> MailError {
+    MailError::UndoUnavailable { reason }
+}
+
+/// True when any target lacks a known (non-NULL) preimage row.
+fn has_unknown_prior_value(
+    conn: &Connection,
+    account_id: &str,
+    operation_id: &str,
+) -> Result<bool, MailError> {
+    let unknown: bool = conn
+        .query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM gmail_operation_targets t
+                 WHERE t.account_id = ?1 AND t.operation_id = ?2
+                   AND NOT EXISTS (
+                     SELECT 1 FROM gmail_operation_preimages p
+                     WHERE p.account_id = t.account_id
+                       AND p.operation_id = t.operation_id
+                       AND p.message_id = t.message_id
+                       AND p.prior_value IS NOT NULL))",
+            params![account_id, operation_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+    Ok(unknown)
+}
+
+/// Stages one queued compensating operation per distinct known prior value
+/// (docs/ux-04-trustworthy-undo.md §3.3): same kind and dimension, explicit
+/// targets, `undo_of` pointing at the undone operation.
+fn compensate_tx(
+    tx: &rusqlite::Transaction<'_>,
+    account_id: &str,
+    target: &UndoTarget,
+    accepted_at: &str,
+) -> Result<UndoReceipt, MailError> {
+    let mut stmt = tx
+        .prepare(
+            "SELECT t.message_id, p.prior_value FROM gmail_operation_targets t
+         LEFT JOIN gmail_operation_preimages p
+           ON p.account_id = t.account_id AND p.operation_id = t.operation_id
+          AND p.message_id = t.message_id
+         WHERE t.account_id = ?1 AND t.operation_id = ?2",
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+    let rows = stmt
+        .query_map(params![account_id, target.operation_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?))
+        })
+        .map_err(|_| MailError::StorageUnavailable)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| MailError::StorageUnavailable)?;
+    drop(stmt);
+    // Deterministic queue order: restore non-value group first, then value.
+    let mut restore_group = Vec::new();
+    let mut reapply_group = Vec::new();
+    for (message_id, prior_value) in rows {
+        match prior_value {
+            Some(0) => restore_group.push(message_id),
+            Some(_) => reapply_group.push(message_id),
+            // Rule 7 was checked before compensation; fail closed regardless.
+            None => return Err(undo_unavailable(UndoUnavailableReason::UnknownPrior)),
+        }
+    }
+    let mut operation_ids = Vec::new();
+    for (prior_value, ids) in [(false, restore_group), (true, reapply_group)] {
+        if ids.is_empty() {
+            continue;
+        }
+        let conversation = ConversationRef {
+            account_id: account_id.to_string(),
+            conversation_id: target.conversation_id.clone(),
+        };
+        let payload = serde_json::json!({
+            "undoOf": target.operation_id,
+            "kind": kind_name(target.kind),
+            "value": prior_value,
+        })
+        .to_string();
+        let request_id = format!("undo-{}", uuid::Uuid::new_v4());
+        let receipt = accept_operation_tx(
+            tx,
+            account_id,
+            OperationAcceptance {
+                conversation: &conversation,
+                kind: target.kind,
+                value: prior_value,
+                request_id: &request_id,
+                payload: &payload,
+                clone_targets_from: None,
+                explicit_targets: Some(ids),
+                undo_of: Some(target.operation_id.as_str()),
+                accepted_at,
+            },
+        )?;
+        operation_ids.push(receipt.operation_id);
+    }
+    Ok(UndoReceipt {
+        undone_operation_id: target.operation_id.clone(),
+        outcome: UndoOutcome::Compensating,
+        operation_ids,
+        accepted_at: accepted_at.to_string(),
+    })
+}
+
 fn accept_operation_tx(
     tx: &rusqlite::Transaction<'_>,
     account_id: &str,
@@ -1483,10 +1909,14 @@ fn accept_operation_tx(
         request_id,
         payload,
         clone_targets_from,
+        explicit_targets,
+        undo_of,
         accepted_at,
     } = acceptance;
     let mut targets: Vec<String>;
-    if let Some(original_id) = clone_targets_from {
+    if let Some(explicit) = explicit_targets {
+        targets = explicit;
+    } else if let Some(original_id) = clone_targets_from {
         let mut stmt = tx
             .prepare(
                 "SELECT message_id FROM gmail_operation_targets
@@ -1523,6 +1953,7 @@ fn accept_operation_tx(
             field: "targets".to_string(),
         });
     }
+    let operation_id = uuid::Uuid::new_v4().to_string();
     let existing_snapshot: Option<(String, String)> = tx
         .query_row(
             "SELECT snapshot_json, snapshot_saved_at FROM gmail_operation_snapshots
@@ -1532,31 +1963,69 @@ fn accept_operation_tx(
         )
         .optional()
         .map_err(|_| MailError::StorageUnavailable)?;
-    let (snapshot_json, snapshot_saved_at) = if clone_targets_from.is_some() {
+    let (snapshot_json, snapshot_saved_at) = if let Some(original_id) = clone_targets_from {
+        // A retry restores the same prior world as the operation it retries,
+        // so it clones the original's preimage instead of capturing a new one.
+        tx.execute(
+            "INSERT INTO gmail_operation_preimages
+             (account_id, operation_id, message_id, prior_value)
+             SELECT account_id, ?2, message_id, prior_value FROM gmail_operation_preimages
+             WHERE account_id = ?1 AND operation_id = ?3",
+            params![account_id, operation_id, original_id],
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
         existing_snapshot.ok_or(MailError::NotFound)?
     } else if let Some(built) = build_conversation(tx, account_id, &conversation.conversation_id)? {
-        let (is_in_inbox, is_read, pending_operation_id) =
-            effective_conversation_state(tx, account_id, &conversation.conversation_id)?;
+        let effective = effective_conversation_state_with_coverage(
+            tx,
+            account_id,
+            &conversation.conversation_id,
+        )?;
+        // Preimage capture (docs/ux-04-trustworthy-undo.md §3.1): the effective
+        // per-message value of this operation's dimension at acceptance, in the
+        // same transaction. Compensating operations record their own preimage.
+        capture_preimages(
+            tx,
+            account_id,
+            &operation_id,
+            kind,
+            &effective.facts,
+            &targets,
+        )?;
         let current = Conversation {
             conversation_ref: built.conversation_ref,
             subject: built.subject,
             messages: built.messages,
-            is_in_inbox,
-            is_read,
+            is_in_inbox: effective.inbox,
+            is_read: effective.is_read,
             context_complete: built.context_complete,
             unsupported_reason: built.unsupported_reason,
             retained_snapshot_at: None,
             reply_context: None,
-            pending_operation_id,
+            pending_operation_id: effective.pending_operation_id,
         };
         (
             serde_json::to_string(&current).map_err(|_| MailError::StorageUnavailable)?,
             accepted_at.to_string(),
         )
     } else {
+        // No renderable conversation body: still capture preimages from the
+        // per-message facts retained for this operation's recovery view.
+        let effective = effective_conversation_state_with_coverage(
+            tx,
+            account_id,
+            &conversation.conversation_id,
+        )?;
+        capture_preimages(
+            tx,
+            account_id,
+            &operation_id,
+            kind,
+            &effective.facts,
+            &targets,
+        )?;
         existing_snapshot.ok_or(MailError::NotFound)?
     };
-    let operation_id = uuid::Uuid::new_v4().to_string();
     let accepted_seq: i64 = tx
         .query_row(
             "SELECT COALESCE(MAX(accepted_seq), 0) + 1 FROM gmail_operations WHERE account_id = ?1",
@@ -1567,8 +2036,8 @@ fn accept_operation_tx(
     tx.execute(
         "INSERT INTO gmail_operations
          (account_id, operation_id, conversation_id, kind, requested_value, status,
-          accepted_seq, accepted_at, request_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, 'queued', ?6, ?7, ?8)",
+          accepted_seq, accepted_at, request_id, undo_of)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'queued', ?6, ?7, ?8, ?9)",
         params![
             account_id,
             operation_id,
@@ -1577,7 +2046,8 @@ fn accept_operation_tx(
             value as i64,
             accepted_seq,
             accepted_at,
-            request_id
+            request_id,
+            undo_of,
         ],
     )
     .map_err(|_| MailError::StorageUnavailable)?;
@@ -1616,6 +2086,43 @@ fn accept_operation_tx(
     })
 }
 
+/// Persists the effective prior value of `kind`'s dimension for every target
+/// message (docs/ux-04-trustworthy-undo.md §3.1). `prior_value` uses the
+/// operation's own requested-value domain: for archive it is the effective
+/// archived state (`!in_inbox`), for read the effective read state
+/// (`!is_unread`); `NULL` records an unknown fact.
+fn capture_preimages(
+    tx: &rusqlite::Transaction<'_>,
+    account_id: &str,
+    operation_id: &str,
+    kind: MailboxOperationKind,
+    facts: &HashMap<String, (Option<bool>, Option<bool>)>,
+    targets: &[String],
+) -> Result<(), MailError> {
+    for message_id in targets {
+        let Some((in_inbox, unread)) = facts.get(message_id) else {
+            continue;
+        };
+        let prior_value = match kind {
+            MailboxOperationKind::Archive => in_inbox.map(|v| !v),
+            MailboxOperationKind::Read => unread.map(|v| !v),
+        };
+        tx.execute(
+            "INSERT INTO gmail_operation_preimages
+             (account_id, operation_id, message_id, prior_value)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                account_id,
+                operation_id,
+                message_id,
+                prior_value.map(|v| v as i64)
+            ],
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+    }
+    Ok(())
+}
+
 fn kind_name(kind: MailboxOperationKind) -> &'static str {
     match kind {
         MailboxOperationKind::Archive => "archive",
@@ -1638,6 +2145,7 @@ fn status_name(status: OperationStatus) -> &'static str {
         OperationStatus::Confirmed => "confirmed",
         OperationStatus::Failed => "failed",
         OperationStatus::OutcomeUnknown => "outcome_unknown",
+        OperationStatus::Cancelled => "cancelled",
     }
 }
 
@@ -1648,6 +2156,7 @@ fn parse_status(status: &str) -> Result<OperationStatus, MailError> {
         "confirmed" => Ok(OperationStatus::Confirmed),
         "failed" => Ok(OperationStatus::Failed),
         "outcome_unknown" => Ok(OperationStatus::OutcomeUnknown),
+        "cancelled" => Ok(OperationStatus::Cancelled),
         _ => Err(MailError::StorageUnavailable),
     }
 }
@@ -1704,16 +2213,26 @@ fn effective_conversation_state(
     account_id: &str,
     conversation_id: &str,
 ) -> Result<(bool, Option<bool>, Option<String>), MailError> {
-    let (inbox, read, pending, _) =
-        effective_conversation_state_with_coverage(conn, account_id, conversation_id)?;
-    Ok((inbox, read, pending))
+    let state = effective_conversation_state_with_coverage(conn, account_id, conversation_id)?;
+    Ok((state.inbox, state.is_read, state.pending_operation_id))
+}
+
+/// Effective aggregates plus the per-message fact map the overlay is built
+/// from (docs/ux-04-trustworthy-undo.md §2). `facts` maps message id to
+/// `(in_inbox, is_unread)`; `None` marks an unknown fact.
+pub(crate) struct EffectiveState {
+    pub(crate) inbox: bool,
+    pub(crate) is_read: Option<bool>,
+    pub(crate) pending_operation_id: Option<String>,
+    pub(crate) coverage_known: bool,
+    pub(crate) facts: HashMap<String, (Option<bool>, Option<bool>)>,
 }
 
 fn effective_conversation_state_with_coverage(
     conn: &Connection,
     account_id: &str,
     conversation_id: &str,
-) -> Result<(bool, Option<bool>, Option<String>, bool), MailError> {
+) -> Result<EffectiveState, MailError> {
     let mut facts = HashMap::<String, (Option<bool>, Option<bool>)>::new();
     let mut stmt = conn
         .prepare(
@@ -1792,19 +2311,40 @@ fn effective_conversation_state_with_coverage(
     } else {
         Some(!facts.values().any(|(_, unread)| *unread == Some(true)))
     };
-    Ok((
+    Ok(EffectiveState {
         inbox,
         is_read,
-        active.map(|(_, id)| id),
-        !facts.is_empty() && facts.values().all(|(inbox, _)| inbox.is_some()),
-    ))
+        pending_operation_id: active.map(|(_, id)| id),
+        coverage_known: !facts.is_empty() && facts.values().all(|(inbox, _)| inbox.is_some()),
+        facts,
+    })
 }
 
-fn load_activity(conn: &Connection, account_id: &str) -> Result<Vec<OperationSummary>, MailError> {
+/// Activity rows plus, per row, the derived undo window (§3.2): present only
+/// while all undoability rules hold at query time, on the same injected clock
+/// as the `undo_operation` command path.
+fn load_activity(
+    conn: &Connection,
+    account_id: &str,
+    clock: &dyn Clock,
+) -> Result<Vec<OperationSummary>, MailError> {
     let mut stmt = conn.prepare(
-        "SELECT operation_id, conversation_id, kind, requested_value, status, failure, last_error
+        "SELECT operation_id, conversation_id, kind, requested_value, status, failure, last_error,
+                undo_of, accepted_at
          FROM gmail_operations WHERE account_id = ?1 ORDER BY accepted_seq DESC",
     ).map_err(|_| MailError::StorageUnavailable)?;
+    // Shared eligibility facts (§3.2 rules 4–5): the newest non-compensating
+    // operation id and the set of already-undone ids.
+    let newest_undoable: Option<String> = conn
+        .query_row(
+            "SELECT operation_id FROM gmail_operations
+         WHERE account_id = ?1 AND undo_of IS NULL ORDER BY accepted_seq DESC LIMIT 1",
+            params![account_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| MailError::StorageUnavailable)?;
+    let now = clock.now_iso();
     let mut activity = Vec::new();
     for row in stmt
         .query_map(params![account_id], |row| {
@@ -1816,11 +2356,13 @@ fn load_activity(conn: &Connection, account_id: &str) -> Result<Vec<OperationSum
                 row.get::<_, String>(4)?,
                 row.get::<_, Option<String>>(5)?,
                 row.get::<_, Option<String>>(6)?,
+                row.get::<_, Option<String>>(7)?,
+                row.get::<_, String>(8)?,
             ))
         })
         .map_err(|_| MailError::StorageUnavailable)?
     {
-        let (id, conversation_id, kind, value, status, failure, last_error) =
+        let (id, conversation_id, kind, value, status, failure, last_error, undo_of, accepted_at) =
             row.map_err(|_| MailError::StorageUnavailable)?;
         let kind = parse_kind(&kind)?;
         let status = parse_status(&status)?;
@@ -1834,6 +2376,20 @@ fn load_activity(conn: &Connection, account_id: &str) -> Result<Vec<OperationSum
         let last_error = last_error
             .map(|json| serde_json::from_str(&json).map_err(|_| MailError::StorageUnavailable))
             .transpose()?;
+        let undoable_until = if undo_of.is_none()
+            && matches!(
+                status,
+                OperationStatus::Queued | OperationStatus::Applying | OperationStatus::Confirmed
+            )
+            && newest_undoable.as_deref() == Some(id.as_str())
+            && !has_undo_rows(conn, account_id, &id)?
+            && !has_unknown_prior_value(conn, account_id, &id)?
+            && crate::clock::within_undo_window(&accepted_at, &now)
+        {
+            crate::clock::undo_deadline_iso(&accepted_at)
+        } else {
+            None
+        };
         activity.push(OperationSummary {
             id,
             conversation: ConversationRef {
@@ -1850,9 +2406,26 @@ fn load_activity(conn: &Connection, account_id: &str) -> Result<Vec<OperationSum
             kind: Some(kind),
             requested_read: (kind == MailboxOperationKind::Read).then_some(value != 0),
             last_error,
+            undo_of,
+            undoable_until,
         });
     }
     Ok(activity)
+}
+
+/// Rule 5: whether any compensation already points at this operation.
+fn has_undo_rows(
+    conn: &Connection,
+    account_id: &str,
+    operation_id: &str,
+) -> Result<bool, MailError> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM gmail_operations
+         WHERE account_id = ?1 AND undo_of = ?2)",
+        params![account_id, operation_id],
+        |row| row.get(0),
+    )
+    .map_err(|_| MailError::StorageUnavailable)
 }
 
 fn meta_get(conn: &Connection, key: &str) -> Result<Option<String>, MailError> {
@@ -3261,7 +3834,7 @@ mod tests {
             )
             .unwrap();
             // A foreign account with a lexically newer row must never leak in.
-            conn.execute("INSERT INTO gmail_operations SELECT 'foreign', 'foreign-op', 'a', kind, requested_value, status, failure, last_error, accepted_seq, accepted_at, request_id FROM gmail_operations WHERE conversation_id = 'a'", []).unwrap();
+            conn.execute("INSERT INTO gmail_operations SELECT 'foreign', 'foreign-op', 'a', kind, requested_value, status, failure, last_error, accepted_seq, accepted_at, request_id, undo_of FROM gmail_operations WHERE conversation_id = 'a'", []).unwrap();
         }
         store
             .accept_archived(&SetArchived {

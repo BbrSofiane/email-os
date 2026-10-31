@@ -12,6 +12,8 @@ import {
   LIST_CACHED_DONE_COMMAND,
   LIST_DRAFTS_COMMAND,
   SAVE_DRAFT_COMMAND,
+  UNDO_OPERATION_COMMAND,
+  isMailErrorShape,
 } from '../src/lib/ipc/client';
 
 const mocks = vi.hoisted(() => ({
@@ -105,6 +107,43 @@ describe('Tauri draft and close protocol adapter', () => {
     const deletion = { ref, expectedRevision: 1, requestId: 'delete-1' };
     await client.deleteDraft(deletion);
     expect(mocks.invoke).toHaveBeenLastCalledWith(DELETE_DRAFT_COMMAND, { command: deletion });
+  });
+
+  it('transports undoOperation on the named command and preserves the typed receipt', async () => {
+    const client = createTauriMailClient();
+    const command = { operationId: 'op-1', requestId: 'undo-req-1' };
+    const receipt = {
+      undoneOperationId: 'op-1',
+      outcome: 'compensating',
+      operationIds: ['op-2', 'op-3'],
+      acceptedAt: '2026-01-01T00:00:00Z',
+    };
+    mocks.invoke.mockResolvedValue(receipt);
+    const result = await client.undoOperation(command);
+    expect(result).toBe(receipt);
+    expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith(UNDO_OPERATION_COMMAND, { command });
+    mocks.invoke.mockRejectedValue({ kind: 'undo_unavailable', reason: 'expired' });
+    await expect(client.undoOperation(command)).rejects.toEqual({
+      kind: 'undo_unavailable',
+      reason: 'expired',
+    });
+  });
+
+  it('accepts undo_unavailable errors only with a valid eligibility reason', () => {
+    for (const reason of [
+      'expired',
+      'superseded',
+      'already_undone',
+      'not_applicable',
+      'uncertain',
+      'unknown_prior',
+    ]) {
+      expect(isMailErrorShape({ kind: 'undo_unavailable', reason })).toBe(true);
+    }
+    expect(isMailErrorShape({ kind: 'undo_unavailable', reason: 'someday' })).toBe(false);
+    expect(isMailErrorShape({ kind: 'undo_unavailable' })).toBe(false);
+    expect(isMailErrorShape({ kind: 'not_found' })).toBe(true);
+    expect(isMailErrorShape({ kind: 'something_else' })).toBe(false);
   });
 
   it('subscribes to change hints and listens before querying and deduplicates pending close requests', async () => {

@@ -819,6 +819,27 @@ textarea {
 
 /* UX-03 discovery overlays: input owns keyboard focus; covered shell is inert. */
 .cached-coverage { margin: 0; padding: .4rem 1rem; color: var(--text-muted, #bbb); font-size: .85rem; }
+
+/* UX-04 single-slot action notice: in-flow, never covers rows or reader controls. */
+.action-notice {
+  display: flex;
+  gap: .75rem;
+  align-items: center;
+  flex-wrap: wrap;
+  min-height: 1rem;
+  padding: .4rem 1rem;
+  border-bottom: 1px solid var(--divider);
+}
+/* The empty region stays rendered at zero height/padding (never display:none):
+   a hidden live region is removed from the accessibility tree and inserted
+   content at the moment it becomes rendered may not be announced. */
+.action-notice-empty { min-height: 0; padding: 0; border-bottom: none; }
+.action-notice-text { margin: 0; font-size: .85rem; display: flex; gap: .5rem; flex-wrap: wrap; align-items: baseline; }
+.action-notice-label { color: var(--text-primary); font-weight: 600; }
+.action-notice-status { color: var(--text-secondary); }
+.action-notice-expired { color: var(--warning); }
+.action-notice-undo { display: flex; gap: .4rem; align-items: center; }
+.action-notice-undo kbd { font-size: .75rem; color: var(--text-secondary); }
 .action-backdrop { position: fixed; inset: 0; z-index: 100; background: #0008; display: flex; align-items: flex-start; justify-content: center; padding: min(15vh, 6rem) 1rem 1rem; }
 .action-overlay { width: min(36rem, 100%); max-height: 75vh; overflow: auto; background: #24212a; color: #f4f0fa; border: 1px solid #81718f; border-radius: .6rem; padding: 1rem; box-shadow: 0 1rem 4rem #0008; }
 .action-overlay label { display: block; margin-bottom: .5rem; }

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
-  "description": "Main window only: twelve approved mail commands, five local-draft commands, three close-protocol commands, and the core event listener. No plugins, no shell, no broad capability grants.",
+  "description": "Main window only: thirteen approved mail commands, five local-draft commands, three close-protocol commands, and the core event listener. No plugins, no shell, no broad capability grants.",
   "windows": ["main"],
   "permissions": [
     "core:event:allow-listen",
@@ -14,6 +14,7 @@
     "allow-cancel-mailbox-action-upgrade",
     "allow-set-read",
     "allow-retry-operation",
+    "allow-undo-operation",
     "allow-get-account-status",
     "allow-connect-account",
     "allow-disconnect-account",

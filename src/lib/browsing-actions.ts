@@ -4,6 +4,7 @@ export const browsingActions = [
   { id: 'back', label: 'Back', shortcut: 'Escape' },
   { id: 'archive', label: 'Mark Done (Archive)', shortcut: 'E' },
   { id: 'unarchive', label: 'Mark Not Done (Restore to Inbox)', shortcut: 'Shift+E' },
+  { id: 'undo', label: 'Undo last action', shortcut: 'Z' },
   { id: 'read', label: 'Mark read', shortcut: '' },
   { id: 'unread', label: 'Mark unread', shortcut: 'Shift+U' },
   { id: 'inbox', label: 'Go to Inbox', shortcut: '' },

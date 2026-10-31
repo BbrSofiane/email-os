@@ -24,7 +24,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use dto::{Conversation, ConversationRef, InboxSnapshot, OperationReceipt, SetArchived};
+use dto::{
+    Conversation, ConversationRef, InboxSnapshot, OperationReceipt, SetArchived, UndoOperation,
+    UndoReceipt,
+};
 pub use error::{MailError, ProviderError};
 use lock::ProfileGuard;
 pub use provider::{ArchiveProvider, CancelToken, FakeArchiveProvider};
@@ -86,9 +89,17 @@ impl MailCore {
     /// the 18 synthetic conversations exactly once, and requeues interrupted
     /// `applying` operations in original sequence.
     pub fn open(profile_dir: impl AsRef<Path>) -> Result<MailCore, MailError> {
+        Self::open_with_clock(profile_dir, Arc::new(clock::SystemClock))
+    }
+
+    /// Like [`Self::open`] with an injectable clock; tests inject
+    /// [`clock::FakeClock`] for deterministic undo-window behavior.
+    pub fn open_with_clock(
+        profile_dir: impl AsRef<Path>,
+        clock: Arc<dyn clock::Clock>,
+    ) -> Result<MailCore, MailError> {
         let profile_dir = profile_dir.as_ref();
         let profile = Arc::new(ProfileGuard::acquire(profile_dir)?);
-        let clock: Arc<dyn clock::Clock> = Arc::new(clock::SystemClock);
         let store = Arc::new(Store::open(profile_dir, clock)?);
         store.recover_applying()?;
         let hub = Arc::new(ListenerHub {
@@ -139,6 +150,18 @@ impl MailCore {
     pub fn set_archived(&self, command: &SetArchived) -> Result<OperationReceipt, MailError> {
         self.ensure_worker_healthy()?;
         let receipt = self.inner.store.set_archived(command)?;
+        self.dispatch();
+        self.inner.signal.wake();
+        Ok(receipt)
+    }
+
+    /// Undo of the single latest accepted non-compensating operation
+    /// (docs/ux-04-trustworthy-undo.md §3.2/§3.3): cancels a still-queued
+    /// operation in place or stages compensating operations, then wakes the
+    /// worker so compensation dispatches immediately.
+    pub fn undo_operation(&self, command: &UndoOperation) -> Result<UndoReceipt, MailError> {
+        self.ensure_worker_healthy()?;
+        let receipt = self.inner.store.undo_operation(command)?;
         self.dispatch();
         self.inner.signal.wake();
         Ok(receipt)

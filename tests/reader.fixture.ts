@@ -373,6 +373,7 @@ export function createReaderFixtureClient(): ReaderFixture {
       return Promise.resolve({ operationId: `read-read-${readCommands.length}`, acceptedAt: READ_NOW });
     },
     retryOperation: () => Promise.reject({ kind: 'invalid_request', field: 'mode' } satisfies MailError),
+    undoOperation: () => Promise.reject({ kind: 'not_found' } satisfies MailError),
     enableMailboxActions: () => Promise.resolve(),
     cancelMailboxActionUpgrade: () => Promise.resolve(),
     subscribe: (listener) => {

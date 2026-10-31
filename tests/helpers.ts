@@ -83,7 +83,7 @@ export function countingClient(inner: MailClient): CountingClient {
  */
 export function accountMethods(
   inner: MailClient,
-): Pick<MailClient, 'listCachedDone' | 'getAccountStatus' | 'connectAccount' | 'disconnectAccount' | 'requestSync' | 'enableMailboxActions' | 'cancelMailboxActionUpgrade' | 'setRead' | 'retryOperation' | 'listDrafts' | 'getDraft' | 'createDraft' | 'saveDraft' | 'deleteDraft' | 'subscribeDrafts' | 'subscribeAppClose' | 'completeAppClose' | 'cancelAppClose'> {
+): Pick<MailClient, 'listCachedDone' | 'getAccountStatus' | 'connectAccount' | 'disconnectAccount' | 'requestSync' | 'enableMailboxActions' | 'cancelMailboxActionUpgrade' | 'setRead' | 'retryOperation' | 'undoOperation' | 'listDrafts' | 'getDraft' | 'createDraft' | 'saveDraft' | 'deleteDraft' | 'subscribeDrafts' | 'subscribeAppClose' | 'completeAppClose' | 'cancelAppClose'> {
   return {
     listCachedDone: (request) => inner.listCachedDone(request),
     listDrafts: () => inner.listDrafts(),
@@ -103,6 +103,7 @@ export function accountMethods(
     cancelMailboxActionUpgrade: () => inner.cancelMailboxActionUpgrade(),
     setRead: (command) => inner.setRead(command),
     retryOperation: (command) => inner.retryOperation(command),
+    undoOperation: (command) => inner.undoOperation(command),
   };
 }
 
@@ -325,6 +326,7 @@ export function createSixConversationClient(): SixConversationClient {
       return Promise.resolve({ operationId: `six-read-${readCommands.length}`, acceptedAt: SIX_NOW });
     },
     retryOperation: () => Promise.reject({ kind: 'invalid_request', field: 'mode' }),
+    undoOperation: () => Promise.reject({ kind: 'not_found' }),
     enableMailboxActions: () => Promise.resolve(),
     cancelMailboxActionUpgrade: () => Promise.resolve(),
     subscribe: (listener) => {

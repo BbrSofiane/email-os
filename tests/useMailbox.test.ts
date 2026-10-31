@@ -721,4 +721,97 @@ describe('useMailbox (Slice 02 account status and lifecycle)', () => {
     expect(result.accountBusy.value).toBeNull();
     stop();
   });
+
+  it('does not record a last action when the account identity changes mid-call', async () => {
+    const inner = createBrowserFakeMailClient();
+    const gate = deferred<void>();
+    // The status wrapper can report a changed account identity independently of
+    // the fake's fixed fixture account id.
+    let reportedAccount = 'fixture-account';
+    let statusCall = 0;
+    const client: MailClient = {
+      ...accountMethods(inner),
+      listConversations: () => inner.listConversations(),
+      getConversation: (ref) => inner.getConversation(ref),
+      setArchived: (command) => gate.promise.then(() => inner.setArchived(command)),
+      getAccountStatus: async () => {
+        statusCall += 1;
+        const status = await inner.getAccountStatus();
+        return status.account && reportedAccount !== status.account.accountId
+          ? { ...status, account: { ...status.account, accountId: reportedAccount } }
+          : status;
+      },
+      subscribe: () => Promise.resolve(() => undefined),
+    };
+    const { result, stop } = scopeRun(() => useMailbox(client));
+    await result.ready;
+    expect(statusCall).toBe(1);
+
+    const pending = result.setArchived(fixtureRef('conv-01'), true);
+    // The account identity changes while the setter round trip is pending; the
+    // next status read lands and starts a new mailbox session.
+    reportedAccount = 'fixture-account-2';
+    await result.refresh();
+    gate.resolve();
+    await pending;
+    // A late receipt from the previous account session must not repopulate the
+    // notice with mail that is not in this mailbox.
+    expect(result.lastAction.value).toBeNull();
+    stop();
+  });
+
+  it('clears the last action on superseded when no activity row carries undoableUntil', async () => {
+    const fake = createBrowserFakeMailClient();
+    const { result, stop } = scopeRun(() => useMailbox(fake));
+    await result.ready;
+    await result.setArchived(fixtureRef('conv-01'), true);
+    expect(result.lastAction.value?.receipt.operationId).toBe('op-0001');
+    // A newer op is accepted externally and FAILS: it supersedes op-0001 and is
+    // itself not undoable, so no row carries undoableUntil after the refresh.
+    fake.controls.behavior.failNext = 1;
+    await fake.setArchived({ conversation: fixtureRef('conv-02'), archived: true, requestId: 'external' });
+    await fake.controls.flush();
+    await result.refresh();
+    await result.undoLastAction(); // rejected: superseded; the re-point finds nothing
+    expect(result.lastAction.value).toBeNull();
+    stop();
+  });
+
+  it('keeps the slot with a closed window when the backend reports expired', async () => {
+    let offsetMs = 0;
+    const fake = createBrowserFakeMailClient(() => new Date(Date.now() + offsetMs).toISOString());
+    const { result, stop } = scopeRun(() => useMailbox(fake));
+    await result.ready;
+    await result.setArchived(fixtureRef('conv-01'), true);
+    expect(result.lastAction.value?.undoableUntil).not.toBeNull();
+    offsetMs = 11_000;
+    await result.refresh(); // the refreshed row no longer carries undoableUntil
+    await result.undoLastAction();
+    const slot = result.lastAction.value;
+    expect(slot?.receipt.operationId).toBe('op-0001');
+    expect(slot?.undoableUntil).toBeNull();
+    expect(slot?.hadWindow).toBe(true);
+    stop();
+  });
+
+  it('does not clobber a newer last action recorded during the undo refresh', async () => {
+    const fake = createBrowserFakeMailClient();
+    const { result, stop } = scopeRun(() => useMailbox(fake));
+    await result.ready;
+    await result.setArchived(fixtureRef('conv-01'), true);
+    expect(result.lastAction.value?.receipt.operationId).toBe('op-0001');
+    fake.controls.behavior.holdUndo = true;
+    const pendingUndo = result.undoLastAction();
+    await flushMacrotasks(1); // let the undo call reach the held fake
+    // A newer action (e.g. an Activity-drawer Unarchive) is accepted and
+    // records its own slot while the undo round trip is pending.
+    await result.setArchived(fixtureRef('conv-02'), false);
+    expect(result.lastAction.value?.receipt.operationId).toBe('op-0002');
+    fake.controls.release();
+    await pendingUndo;
+    // The undo's success write-back must only ever touch its own slot.
+    expect(result.lastAction.value?.receipt.operationId).toBe('op-0002');
+    expect(result.lastAction.value?.undone).toBeNull();
+    stop();
+  });
 });

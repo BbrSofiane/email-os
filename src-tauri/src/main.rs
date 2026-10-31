@@ -16,7 +16,7 @@ use mail_core::drafts::types::{
 use mail_core::drafts::DraftCore;
 use mail_core::dto::{
     CachedDoneRequest, CachedDoneSnapshot, Conversation, ConversationRef, InboxSnapshot,
-    OperationReceipt, RetryOperation, SetArchived, SetRead,
+    OperationReceipt, RetryOperation, SetArchived, SetRead, UndoOperation, UndoReceipt,
 };
 use mail_core::error::MailError;
 use mail_core::gmail::provider::GmailProvider;
@@ -170,6 +170,15 @@ impl Backend {
                 field: "mode".to_owned(),
             }),
             Self::Gmail(core) => core.retry_operation(command),
+        }
+    }
+
+    /// Unlike the Gmail-only setters, Undo is forwarded for both backends:
+    /// the fixture store covers Done/Not Done undo (archive only).
+    fn undo_operation(&self, command: &UndoOperation) -> Result<UndoReceipt, MailError> {
+        match self {
+            Self::Fixture(core) => core.undo_operation(command),
+            Self::Gmail(core) => core.undo_operation(command),
         }
     }
 
@@ -341,6 +350,15 @@ async fn retry_operation(
 ) -> Result<OperationReceipt, MailError> {
     let backend = state.backend.clone();
     run_blocking(backend, move |backend| backend.retry_operation(&command)).await
+}
+
+#[tauri::command]
+async fn undo_operation(
+    state: State<'_, AppState>,
+    command: UndoOperation,
+) -> Result<UndoReceipt, MailError> {
+    let backend = state.backend.clone();
+    run_blocking(backend, move |backend| backend.undo_operation(&command)).await
 }
 
 #[tauri::command]
@@ -595,6 +613,7 @@ fn main() {
             cancel_mailbox_action_upgrade,
             set_read,
             retry_operation,
+            undo_operation,
             get_account_status,
             connect_account,
             disconnect_account,
@@ -805,6 +824,15 @@ mod tests {
             }),
             Err(MailError::PermissionRequired)
         );
+        // Undo requires an active account that owns the operation; without
+        // credentials the Gmail backend has none.
+        assert_eq!(
+            gmail.undo_operation(&mail_core::dto::UndoOperation {
+                operation_id: "bridge-operation".into(),
+                request_id: "bridge-undo".into(),
+            }),
+            Err(MailError::AuthRequired)
+        );
         gmail.stop();
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -839,6 +867,16 @@ mod tests {
                 request_id: "fixture-retry".into(),
             }),
             Err(mode_error)
+        );
+        // Undo is NOT Gmail-only: the fixture backend forwards it, so an
+        // unknown operation fails typed as not found rather than as a mode
+        // rejection.
+        assert_eq!(
+            backend.undo_operation(&mail_core::dto::UndoOperation {
+                operation_id: "fixture-operation".into(),
+                request_id: "fixture-undo".into(),
+            }),
+            Err(MailError::NotFound)
         );
         backend.stop();
         let _ = std::fs::remove_dir_all(dir);

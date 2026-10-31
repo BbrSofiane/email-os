@@ -8,6 +8,7 @@ fn main() {
         "cancel_mailbox_action_upgrade",
         "set_read",
         "retry_operation",
+        "undo_operation",
         "get_account_status",
         "connect_account",
         "disconnect_account",

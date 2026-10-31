@@ -54,6 +54,8 @@ import type {
   SetArchived,
   SetRead,
   SyncState,
+  UndoOperation,
+  UndoReceipt,
 } from './client';
 import { FIXTURE_MAILBOX } from './generated';
 
@@ -67,6 +69,10 @@ export interface FakeBehavior {
   failureKind: 'provider_unavailable' | 'provider_rejected' | 'outcome_unknown';
   /** When true, operations stay in `applying` until `release()`. */
   hold: boolean;
+  /** When true, operations stay in `queued` (unclaimed by the worker) until `release()`. */
+  holdQueued: boolean;
+  /** When true, `undoOperation` calls stay pending until `release()`. */
+  holdUndo: boolean;
   /** Hold the synthetic OAuth-upgrade completion until releaseUpgrade(). */
   holdUpgrade: boolean;
 }
@@ -177,6 +183,16 @@ interface InternalOperation {
   status: OperationStatus;
   failure: OperationFailure | null;
   lastError?: MailError;
+  /** Acceptance time from the injected clock; the undo window runs from here. */
+  acceptedAt: string;
+  /**
+   * Effective prior value of this operation's dimension per target message,
+   * captured at acceptance; `null`/absent is an unknown fact (not undoable).
+   * For `archive` the dimension is archived-ness; for `read`, read-ness.
+   */
+  priorValues: Record<string, boolean | null>;
+  /** Present on compensating operations; they are never themselves undoable. */
+  undoOf?: string;
 }
 
 const iso = (minutesOffset: number): string =>
@@ -272,7 +288,7 @@ function summarize(conv: FakeConversation, pendingOperationId: string | null): C
 function effectiveInInbox(conv: FakeConversation): boolean[] {
   const flags = conv.messages.map((m) => m.seededInInbox);
   for (const op of conv.ops) {
-    if (op.status === 'failed' || op.kind !== 'archive') continue;
+    if (op.status === 'failed' || op.status === 'cancelled' || op.kind !== 'archive') continue;
     for (let i = 0; i < conv.messages.length; i += 1) {
       const m = conv.messages[i];
       if (m && op.messageIds.includes(m.id)) flags[i] = !op.requestedArchived;
@@ -284,7 +300,7 @@ function effectiveInInbox(conv: FakeConversation): boolean[] {
 function effectiveRead(conv: FakeConversation): Array<boolean | null> {
   const flags = conv.messages.map((message) => message.seededRead);
   for (const op of conv.ops) {
-    if (op.status === 'failed' || op.kind !== 'read' || op.requestedRead === undefined) continue;
+    if (op.status === 'failed' || op.status === 'cancelled' || op.kind !== 'read' || op.requestedRead === undefined) continue;
     for (let i = 0; i < conv.messages.length; i += 1) {
       const message = conv.messages[i];
       if (message && op.messageIds.includes(message.id)) flags[i] = op.requestedRead;
@@ -301,7 +317,9 @@ function pendingOperationId(conv: FakeConversation): string | null {
   return null;
 }
 
-function toOperationSummary(op: InternalOperation, accountId: string): OperationSummary {
+const UNDO_WINDOW_MS = 10_000;
+
+function toOperationSummary(op: InternalOperation, accountId: string, undoableUntil?: string): OperationSummary {
   return {
     id: op.id,
     conversation: { accountId, conversationId: op.conversationId },
@@ -311,6 +329,8 @@ function toOperationSummary(op: InternalOperation, accountId: string): Operation
     kind: op.kind,
     ...(op.requestedRead === undefined ? {} : { requestedRead: op.requestedRead }),
     ...(op.lastError === undefined ? {} : { lastError: op.lastError }),
+    ...(op.undoOf === undefined ? {} : { undoOf: op.undoOf }),
+    ...(undoableUntil === undefined ? {} : { undoableUntil }),
   };
 }
 
@@ -325,13 +345,14 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
   let closeCounter = 0;
   let pendingClose: AppCloseRequest | null = null;
   let completedCloses = 0;
-  const receiptsByRequest = new Map<string, { fingerprint: string; receipt: OperationReceipt }>();
-  const behavior: FakeBehavior = { failNext: 0, failureKind: 'provider_rejected', hold: false, holdUpgrade: false };
+  const receiptsByRequest = new Map<string, { fingerprint: string; receipt: OperationReceipt | UndoReceipt }>();
+  const behavior: FakeBehavior = { failNext: 0, failureKind: 'provider_rejected', hold: false, holdQueued: false, holdUpgrade: false, holdUndo: false };
 
   let opCounter = 0;
   let inFlight = 0;
   let holdReleased = false;
   const holdWaiters: Array<() => void> = [];
+  const undoWaiters: Array<() => void> = [];
 
   // Slice 02 account simulation. Fixture mode is the default so the Slice 01 preview
   // and its tests keep working unchanged.
@@ -442,6 +463,58 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
     cacheCleared || !accountStatus().account ? undefined :
       conversations.find((c) => c.ref.conversationId === conversationId && c.ref.accountId === accountStatus().account?.accountId);
 
+  const allOps = (): Array<{ conv: FakeConversation; op: InternalOperation }> =>
+    conversations.flatMap((conv) => conv.ops.map((op) => ({ conv, op })));
+
+  /** Effective prior value of the operation's dimension per target, captured before it joins the overlay. */
+  function effectivePriorValues(conv: FakeConversation, kind: MailboxOperationKind, messageIds: string[]): Record<string, boolean | null> {
+    const inbox = effectiveInInbox(conv);
+    const read = effectiveRead(conv);
+    const values: Record<string, boolean | null> = {};
+    for (let i = 0; i < conv.messages.length; i += 1) {
+      const message = conv.messages[i];
+      if (!message || !messageIds.includes(message.id)) continue;
+      // Archive ops restore archived-ness (the inverse of INBOX membership);
+      // read ops restore read-ness, which can be an unknown fact.
+      values[message.id] = kind === 'archive' ? !inbox[i] : read[i] ?? null;
+    }
+    return values;
+  }
+
+  /** §3.2 rules 2–7 (rule 1 holds by construction in the single-account fake). */
+  function undoBlocker(op: InternalOperation): MailError | null {
+    if (op.undoOf !== undefined) return { kind: 'undo_unavailable', reason: 'not_applicable' } satisfies MailError;
+    if (Date.parse(now()) >= Date.parse(op.acceptedAt) + UNDO_WINDOW_MS) {
+      return { kind: 'undo_unavailable', reason: 'expired' } satisfies MailError;
+    }
+    if (allOps().some((entry) => entry.op.undoOf === undefined && entry.op.id > op.id)) {
+      return { kind: 'undo_unavailable', reason: 'superseded' } satisfies MailError;
+    }
+    if (allOps().some((entry) => entry.op.undoOf === op.id)) {
+      return { kind: 'undo_unavailable', reason: 'already_undone' } satisfies MailError;
+    }
+    if (op.status === 'outcome_unknown') return { kind: 'undo_unavailable', reason: 'uncertain' } satisfies MailError;
+    if (op.status !== 'queued' && op.status !== 'applying' && op.status !== 'confirmed') {
+      // A cancelled op was already undone in place; a re-undo reports
+      // already_undone, matching Rust's rule ordering.
+      if (op.status === 'cancelled') return { kind: 'undo_unavailable', reason: 'already_undone' } satisfies MailError;
+      return { kind: 'undo_unavailable', reason: 'not_applicable' } satisfies MailError;
+    }
+    if (op.messageIds.some((id) => op.priorValues[id] === undefined || op.priorValues[id] === null)) {
+      return { kind: 'undo_unavailable', reason: 'unknown_prior' } satisfies MailError;
+    }
+    return null;
+  }
+
+  /** `undoableUntil` is present only while every undo rule still holds at query time. */
+  function summarizeOperation(op: InternalOperation, accountId: string): OperationSummary {
+    return toOperationSummary(
+      op,
+      accountId,
+      undoBlocker(op) ? undefined : new Date(Date.parse(op.acceptedAt) + UNDO_WINDOW_MS).toISOString(),
+    );
+  }
+
   function snapshot(): InboxSnapshot {
     // No account / cleared cache means no cached mail; core would return the same.
     const empty =
@@ -450,7 +523,7 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
     const activity = empty
       ? []
       : conversations
-          .flatMap((c) => c.ops.map((op) => toOperationSummary(op, c.ref.accountId)))
+          .flatMap((c) => c.ops.map((op) => summarizeOperation(op, c.ref.accountId)))
           .sort((a, b) => a.id.localeCompare(b.id));
     const rows = empty
       ? []
@@ -471,11 +544,11 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
     if (account.mode === 'gmail' && account.mutationAccess !== 'enabled') throw { kind: 'read_only' } satisfies MailError;
   }
 
-  function existingReceipt(requestId: string, fingerprint: string): OperationReceipt | null {
+  function existingReceipt<T = OperationReceipt>(requestId: string, fingerprint: string): T | null {
     const existing = receiptsByRequest.get(requestId);
     if (!existing) return null;
     if (existing.fingerprint !== fingerprint) throw { kind: 'request_id_conflict' } satisfies MailError;
-    return snapshotCopy(existing.receipt);
+    return snapshotCopy(existing.receipt) as T;
   }
 
   function enqueueOperation(
@@ -486,10 +559,12 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
     messageIds: string[],
     requestId: string,
     fingerprint: string,
+    options: { priorValues?: Record<string, boolean | null>; undoOf?: string } = {},
   ): OperationReceipt {
     opCounter += 1;
     const operationId = `op-${String(opCounter).padStart(4, '0')}`;
-    const receipt: OperationReceipt = { operationId, acceptedAt: now() };
+    const acceptedAt = now();
+    const receipt: OperationReceipt = { operationId, acceptedAt };
     receiptsByRequest.set(requestId, { fingerprint, receipt });
     const op: InternalOperation = {
       id: operationId,
@@ -500,9 +575,16 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       messageIds: [...messageIds],
       status: 'queued',
       failure: null,
+      acceptedAt,
+      // Per-message effective value of THIS operation's dimension at acceptance
+      // (before this op joins the overlay); retries reuse the original's preimage.
+      priorValues: options.priorValues
+        ? { ...options.priorValues }
+        : effectivePriorValues(conv, kind, messageIds),
+      ...(options.undoOf === undefined ? {} : { undoOf: options.undoOf }),
     };
     conv.ops.push(op);
-    if (behavior.hold) holdReleased = false;
+    if (behavior.hold || behavior.holdQueued) holdReleased = false;
     notify();
     void runOperation(op).then(() => notify());
     return snapshotCopy(receipt);
@@ -511,6 +593,12 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
   async function runOperation(op: InternalOperation): Promise<void> {
     inFlight += 1;
     try {
+      // holdQueued models a worker that has not claimed the intent yet: the
+      // operation stays `queued`, so undo can still cancel it in place.
+      if (behavior.holdQueued && !holdReleased) {
+        await new Promise<void>((resolve) => holdWaiters.push(resolve));
+      }
+      if (op.status === 'cancelled') return; // cancelled while still queued
       // queued -> applying (worker claims in acceptance order; fake uses FIFO)
       op.status = 'applying';
       notify();
@@ -552,7 +640,7 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       async flush(): Promise<void> {
         for (let guard = 0; guard < 1000; guard += 1) {
           if (inFlight === 0) return;
-          if (behavior.hold) return; // held work cannot finish until release()
+          if (behavior.hold || behavior.holdQueued) return; // held work cannot finish until release()
           await new Promise((resolve) => setTimeout(resolve, 0));
         }
       },
@@ -562,10 +650,14 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
           const w = holdWaiters.shift();
           w?.();
         }
+        while (undoWaiters.length > 0) {
+          const w = undoWaiters.shift();
+          w?.();
+        }
       },
       activity(): OperationSummary[] {
         return snapshotCopy(conversations
-          .flatMap((c) => c.ops.map((op) => toOperationSummary(op, c.ref.accountId)))
+          .flatMap((c) => c.ops.map((op) => summarizeOperation(op, c.ref.accountId)))
           .sort((a, b) => a.id.localeCompare(b.id)));
       },
       listenerCount(): number {
@@ -691,8 +783,15 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
         } catch { throw { kind: 'invalid_request', field: 'cursor' } satisfies MailError; }
       }
       const compare = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
-      const candidates = conversations.filter((conv) => conv.ops.some((op) =>
-        op.kind === 'archive' && op.requestedArchived && op.status !== 'failed'))
+      // Candidate query matches Rust: ANY qualifying archive row makes the
+      // conversation a candidate, where an archive qualifies when its own
+      // compensation is absent, failed, or cancelled. A re-archive after an
+      // undone archive therefore qualifies again (before paging).
+      const qualifies = (conv: FakeConversation): boolean => conv.ops.some((op) =>
+        op.kind === 'archive' && op.requestedArchived
+        && op.status !== 'failed' && op.status !== 'cancelled'
+        && !conv.ops.some((c) => c.undoOf === op.id && c.status !== 'failed' && c.status !== 'cancelled'));
+      const candidates = conversations.filter(qualifies)
         .map((conv) => ({ conv, row: summarize(conv, pendingOperationId(conv)) }))
         .sort((a, b) => compare(b.row.lastMessageAt, a.row.lastMessageAt) || compare(a.row.ref.conversationId, b.row.ref.conversationId))
         .filter(({ row }) => !position || row.lastMessageAt < position[0] ||
@@ -812,7 +911,58 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       if (original.op.status !== 'failed' && original.op.status !== 'outcome_unknown') {
         throw { kind: 'invalid_request', field: 'operationId' } satisfies MailError;
       }
-      return enqueueOperation(original.conv, original.op.kind, original.op.requestedArchived, original.op.requestedRead, [...original.op.messageIds], command.requestId, fingerprint);
+      // A retry restores the same prior world as the operation it retries: it
+      // copies the original's preimage instead of capturing a fresh one.
+      return enqueueOperation(original.conv, original.op.kind, original.op.requestedArchived, original.op.requestedRead, [...original.op.messageIds], command.requestId, fingerprint, { priorValues: original.op.priorValues });
+    },
+
+    async undoOperation(command: UndoOperation): Promise<UndoReceipt> {
+      const fingerprint = JSON.stringify(['undo', command.operationId]);
+      const existing = existingReceipt(command.requestId, fingerprint);
+      if (existing) return existing as unknown as UndoReceipt;
+      // Test hook: hold the IPC round trip open so in-flight undo gating is observable.
+      if (behavior.holdUndo) await new Promise<void>((resolve) => { undoWaiters.push(resolve); });
+      const entry = allOps().find(({ op }) => op.id === command.operationId);
+      if (!entry) throw failNotShown();
+      const blocker = undoBlocker(entry.op);
+      if (blocker) throw blocker;
+      if (entry.op.status === 'queued') {
+        // Cancel-in-place: the intent never reaches the provider and drops out
+        // of the pending overlay, but stays visible in Activity.
+        entry.op.status = 'cancelled';
+        notify();
+        const cancelled: UndoReceipt = { undoneOperationId: entry.op.id, outcome: 'cancelled', operationIds: [], acceptedAt: now() };
+        receiptsByRequest.set(command.requestId, { fingerprint, receipt: cancelled });
+        return snapshotCopy(cancelled);
+      }
+      // Compensation: one queued operation per distinct prior value, each with
+      // EXPLICIT targets captured in the original's preimage — never re-derived
+      // from current facts, so later arrivals are untouched.
+      const groups = new Map<boolean, string[]>();
+      for (const id of entry.op.messageIds) {
+        const value = entry.op.priorValues[id];
+        if (value === null || value === undefined) continue; // unknown_prior already rejected
+        const group = groups.get(value) ?? [];
+        group.push(id);
+        groups.set(value, group);
+      }
+      const operationIds: string[] = [];
+      for (const [value, ids] of groups) {
+        const compensating = enqueueOperation(
+          entry.conv,
+          entry.op.kind,
+          entry.op.kind === 'read' ? entry.op.requestedArchived : value,
+          entry.op.kind === 'read' ? value : entry.op.requestedRead,
+          ids,
+          `${command.requestId}:${ids.join(',')}`,
+          JSON.stringify(['undo-compensation', command.requestId, value]),
+          { undoOf: entry.op.id },
+        );
+        operationIds.push(compensating.operationId);
+      }
+      const receipt: UndoReceipt = { undoneOperationId: entry.op.id, outcome: 'compensating', operationIds, acceptedAt: now() };
+      receiptsByRequest.set(command.requestId, { fingerprint, receipt });
+      return snapshotCopy(receipt);
     },
 
     async subscribe(listener: () => void): Promise<() => void> {
