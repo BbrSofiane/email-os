@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
-  "description": "Main window only: thirteen approved mail commands, five local-draft commands, three close-protocol commands, and the core event listener. No plugins, no shell, no broad capability grants.",
+  "description": "Main window only: thirteen approved mail commands, five UX-05 operation-group commands, five local-draft commands, three close-protocol commands, and the core event listener. No plugins, no shell, no broad capability grants.",
   "windows": ["main"],
   "permissions": [
     "core:event:allow-listen",
@@ -15,6 +15,11 @@
     "allow-set-read",
     "allow-retry-operation",
     "allow-undo-operation",
+    "allow-set-archived-group",
+    "allow-set-read-group",
+    "allow-get-operation-group",
+    "allow-list-operation-groups",
+    "allow-undo-operation-group",
     "allow-get-account-status",
     "allow-connect-account",
     "allow-disconnect-account",

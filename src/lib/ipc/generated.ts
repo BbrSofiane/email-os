@@ -166,7 +166,8 @@ requestedArchived?: boolean,
  */
 requestedRead?: boolean, acceptedAt: string,
 /**
- * Immutable accepted member manifest in persisted ordinal order.
+ * Immutable member manifest in persisted ordinal order; rejected
+ * members keep their place in the group they were submitted with.
  */
 members: Array<ConversationRef>,
 /**

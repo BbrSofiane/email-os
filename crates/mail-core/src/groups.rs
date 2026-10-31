@@ -1,6 +1,5 @@
-//! UX-05 durable operation-group wire DTOs (docs/ux-05-safe-bulk-processing.md
-//! §4.2). Frozen seam stage: types, bounds and command shapes only; both-store
-//! acceptance/undo algorithms land in the next stage. Naming and encoding follow
+//! UX-05 durable operation-group wire DTOs and shared acceptance/validation
+//! rules (docs/ux-05-safe-bulk-processing.md §4). Naming and encoding follow
 //! `crate::dto`: camelCase JSON fields, snake_case discriminants, ISO-8601 UTC
 //! timestamps, `null`/absent optionals.
 
@@ -8,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::dto::{ConversationRef, MailboxOperationKind, OperationFailure, UndoUnavailableReason};
+use crate::error::MailError;
+use std::collections::HashSet;
 
 /// Product/safety bound (docs/ux-05-safe-bulk-processing.md §3.1): a group
 /// carries 1–100 unique conversations. Not a provider limit.
@@ -177,7 +178,8 @@ pub struct OperationGroupSummary {
     #[ts(optional)]
     pub requested_read: Option<bool>,
     pub accepted_at: String,
-    /// Immutable accepted member manifest in persisted ordinal order.
+    /// Immutable member manifest in persisted ordinal order; rejected
+    /// members keep their place in the group they were submitted with.
     pub members: Vec<ConversationRef>,
     /// True once this group's single group-Undo attempt has been accepted.
     pub undone: bool,
@@ -252,6 +254,128 @@ pub struct GroupUndoReceipt {
     pub accepted_at: String,
     /// One entry per receipt member, in persisted member order.
     pub members: Vec<GroupMemberUndoResult>,
+}
+
+/// Structural validation shared by both stores (§4.1): 1–100 unique member
+/// refs, every one carrying the command's owning account. Duplicates,
+/// cross-account members and bound violations reject the whole request.
+pub(crate) fn validate_group_members(
+    account_id: &str,
+    members: &[ConversationRef],
+) -> Result<(), MailError> {
+    if members.len() < OPERATION_GROUP_MIN_MEMBERS || members.len() > OPERATION_GROUP_MAX_MEMBERS {
+        return Err(invalid_members());
+    }
+    let mut seen = HashSet::<&str>::new();
+    for member in members {
+        if member.account_id != account_id || member.conversation_id.trim().is_empty() {
+            return Err(invalid_members());
+        }
+        if !seen.insert(member.conversation_id.as_str()) {
+            return Err(invalid_members());
+        }
+    }
+    Ok(())
+}
+
+/// Group request IDs follow the existing request-ID rules.
+pub(crate) fn validate_group_request_id(request_id: &str) -> Result<(), MailError> {
+    if request_id.trim().is_empty() || request_id.len() > 200 {
+        return Err(MailError::InvalidRequest {
+            field: "requestId".to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// Canonical fingerprint input (§4.1): the sorted member identities. Manifest
+/// order is presentation, not identity, so a reordered replay of the same
+/// request returns the original receipt and original persisted ordering.
+pub(crate) fn canonical_member_ids(members: &[ConversationRef]) -> Vec<&str> {
+    let mut ids: Vec<&str> = members.iter().map(|m| m.conversation_id.as_str()).collect();
+    ids.sort_unstable();
+    ids
+}
+
+/// List pages use the shared bounded-limit convention (1–100).
+pub(crate) fn validate_group_page_limit(limit: u32) -> Result<(), MailError> {
+    if !(1..=100).contains(&limit) {
+        return Err(MailError::InvalidRequest {
+            field: "limit".to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// Opaque, account-bound, versioned group-page cursor.
+pub(crate) fn encode_group_cursor(account_id: &str, group_seq: i64) -> String {
+    format!(
+        "op-groups-v1:{}",
+        serde_json::json!([account_id, group_seq])
+    )
+}
+
+pub(crate) fn decode_group_cursor(account_id: &str, cursor: &str) -> Result<i64, MailError> {
+    if cursor.len() > 8192 {
+        return Err(invalid_cursor());
+    }
+    let encoded = cursor
+        .strip_prefix("op-groups-v1:")
+        .ok_or_else(invalid_cursor)?;
+    let (owner, seq): (String, i64) =
+        serde_json::from_str(encoded).map_err(|_| invalid_cursor())?;
+    if owner != account_id {
+        return Err(invalid_cursor());
+    }
+    Ok(seq)
+}
+
+fn invalid_cursor() -> MailError {
+    MailError::InvalidRequest {
+        field: "cursor".to_string(),
+    }
+}
+
+fn invalid_members() -> MailError {
+    MailError::InvalidRequest {
+        field: "members".to_string(),
+    }
+}
+
+pub(crate) fn rejection_name(rejection: GroupMemberRejection) -> &'static str {
+    match rejection {
+        GroupMemberRejection::ConversationMissing => "conversation_missing",
+        GroupMemberRejection::TargetBoundExceeded => "target_bound_exceeded",
+    }
+}
+
+pub(crate) fn rejection_from_name(name: &str) -> Option<GroupMemberRejection> {
+    match name {
+        "conversation_missing" => Some(GroupMemberRejection::ConversationMissing),
+        "target_bound_exceeded" => Some(GroupMemberRejection::TargetBoundExceeded),
+        _ => None,
+    }
+}
+
+pub(crate) fn skip_reason_name(reason: GroupUndoSkipReason) -> &'static str {
+    match reason {
+        GroupUndoSkipReason::AcceptanceRejected => "acceptance_rejected",
+        GroupUndoSkipReason::Failed => "failed",
+        GroupUndoSkipReason::OutcomeUnknown => "outcome_unknown",
+        GroupUndoSkipReason::UnknownPrior => "unknown_prior",
+        GroupUndoSkipReason::AlreadyUndone => "already_undone",
+    }
+}
+
+pub(crate) fn skip_reason_from_name(name: &str) -> Option<GroupUndoSkipReason> {
+    match name {
+        "acceptance_rejected" => Some(GroupUndoSkipReason::AcceptanceRejected),
+        "failed" => Some(GroupUndoSkipReason::Failed),
+        "outcome_unknown" => Some(GroupUndoSkipReason::OutcomeUnknown),
+        "unknown_prior" => Some(GroupUndoSkipReason::UnknownPrior),
+        "already_undone" => Some(GroupUndoSkipReason::AlreadyUndone),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

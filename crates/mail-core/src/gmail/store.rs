@@ -27,12 +27,13 @@ use crate::dto::{
 };
 use crate::error::MailError;
 use crate::gmail::types::{AccountInfo, GmailProfile, GmailThread, HistoryPage};
+use crate::groups::{GroupMemberRejection, OperationGroupReceipt, OperationGroupStatus};
 
 /// Cache cap: at most this many conversations are retained after a completed
 /// discovery/history pass. Disclosed to the wire through `SyncInfo.coverageLimit`.
 pub(crate) const DISCOVERY_CAP: usize = 100;
 
-const SCHEMA_VERSION: &str = "gmail-1";
+const SCHEMA_VERSION: &str = "gmail-2";
 
 /// Outcome of a checkpointed write. [`Commit::Discarded`] means the write
 /// lost a disconnect race: the account was cleared mid-pass, so the stale
@@ -67,6 +68,13 @@ struct OperationAcceptance<'a> {
     explicit_targets: Option<Vec<String>>,
     /// Set only for undo compensations; points at the undone operation.
     undo_of: Option<&'a str>,
+    /// Top-level action identity (docs/ux-05-safe-bulk-processing.md §5):
+    /// set only for group children (their group id). Singles and retries
+    /// derive their own action id; compensations have none.
+    action_id: Option<&'a str>,
+    /// Set only for retry acceptance; inspection link to the retried
+    /// operation (backend-only; not part of the wire DTOs).
+    retry_of: Option<&'a str>,
     accepted_at: &'a str,
 }
 
@@ -237,6 +245,29 @@ impl GmailStore {
                 snapshot_json TEXT NOT NULL,
                 snapshot_saved_at TEXT NOT NULL,
                 PRIMARY KEY (account_id, conversation_id)
+            );
+            CREATE TABLE IF NOT EXISTS gmail_operation_groups (
+                group_id      TEXT PRIMARY KEY,
+                account_id    TEXT NOT NULL,
+                request_id    TEXT NOT NULL,
+                kind          TEXT NOT NULL,
+                requested_value INTEGER NOT NULL CHECK (requested_value IN (0, 1)),
+                accepted_at   TEXT NOT NULL,
+                undone_at     TEXT,
+                group_seq     INTEGER NOT NULL,
+                UNIQUE (account_id, request_id)
+            );
+            CREATE TABLE IF NOT EXISTS gmail_operation_group_members (
+                account_id      TEXT NOT NULL,
+                group_id        TEXT NOT NULL,
+                ordinal         INTEGER NOT NULL,
+                conversation_id TEXT NOT NULL,
+                operation_id    TEXT,
+                rejection       TEXT,
+                undo_decision   TEXT,
+                undo_skip_reason TEXT,
+                undo_operation_ids TEXT,
+                PRIMARY KEY (account_id, group_id, ordinal)
             );",
         )
         .map_err(|_| MailError::StorageUnavailable)?;
@@ -315,10 +346,30 @@ impl GmailStore {
             )
             .map_err(|_| MailError::StorageUnavailable)?;
         }
+        // UX-05 (docs/ux-05-safe-bulk-processing.md §4.2): group tables come
+        // from the idempotent batch above; operations gain their top-level
+        // action-order identity and retry linkage. Backfill: standalone
+        // setters are their own action; compensations belong to none.
+        // Existing operations, requests, preimages and undo links are
+        // preserved untouched.
+        if !has_column(&tx, "gmail_operations", "action_id")? {
+            tx.execute("ALTER TABLE gmail_operations ADD COLUMN action_id TEXT", [])
+                .map_err(|_| MailError::StorageUnavailable)?;
+        }
+        if !has_column(&tx, "gmail_operations", "retry_of")? {
+            tx.execute("ALTER TABLE gmail_operations ADD COLUMN retry_of TEXT", [])
+                .map_err(|_| MailError::StorageUnavailable)?;
+        }
+        tx.execute(
+            "UPDATE gmail_operations SET action_id = operation_id
+             WHERE undo_of IS NULL AND action_id IS NULL",
+            [],
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
 
         let version: Option<String> = meta_get(&tx, "schema_version")?;
-        match version {
-            Some(v) if v == SCHEMA_VERSION => {}
+        match version.as_deref() {
+            Some(v) if v == SCHEMA_VERSION || v == "gmail-1" => {}
             Some(_) => return Err(MailError::StorageUnavailable),
             None => {
                 tx.execute(
@@ -847,6 +898,8 @@ impl GmailStore {
                 clone_targets_from: None,
                 explicit_targets: None,
                 undo_of: None,
+                action_id: None,
+                retry_of: None,
                 accepted_at: &accepted_at,
             },
         )?;
@@ -910,6 +963,9 @@ impl GmailStore {
                 clone_targets_from: Some(&original.operation_id),
                 explicit_targets: None,
                 undo_of: original_undo_of.as_deref(),
+                action_id: None,
+                // Inspection link to the retried operation (backend-only).
+                retry_of: Some(original.operation_id.as_str()),
                 accepted_at: &accepted_at,
             },
         )?;
@@ -986,6 +1042,376 @@ impl GmailStore {
         .map_err(|_| MailError::StorageUnavailable)?;
         tx.commit().map_err(|_| MailError::StorageUnavailable)?;
         Ok(receipt)
+    }
+
+    /// Accepts a bounded archive or read group atomically
+    /// (docs/ux-05-safe-bulk-processing.md §4.1): canonical fingerprint
+    /// idempotency, per-member savepointed child acceptance with persisted
+    /// rejections, one commit.
+    fn accept_group(
+        &self,
+        account_id_command: &str,
+        kind: MailboxOperationKind,
+        value: bool,
+        request_id: &str,
+        members: &[ConversationRef],
+    ) -> Result<OperationGroupReceipt, MailError> {
+        crate::groups::validate_group_request_id(request_id)?;
+        crate::groups::validate_group_members(account_id_command, members)?;
+        let payload = serde_json::json!({
+            "kind": kind_name(kind),
+            "value": value,
+            "members": crate::groups::canonical_member_ids(members),
+        })
+        .to_string();
+        self.persistence_gate()?;
+        let mut conn = self.lock_conn()?;
+        let mut tx = conn
+            .transaction()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let account_id = account_id_of(&tx)?;
+        if account_id != account_id_command {
+            return Err(MailError::NotFound);
+        }
+        // Same request/payload returns the original receipt — including the
+        // original persisted member ordering (§4.1 step 1).
+        if let Some(receipt) = existing_group_receipt(&tx, &account_id, request_id, &payload)? {
+            tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+            return Ok(receipt);
+        }
+
+        let accepted_at = self.clock.now_iso();
+        let group_id = uuid::Uuid::new_v4().to_string();
+        let group_seq: i64 = tx
+            .query_row(
+                "SELECT COALESCE(MAX(group_seq), 0) + 1 FROM gmail_operation_groups
+                 WHERE account_id = ?1",
+                params![account_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut member_rows = Vec::with_capacity(members.len());
+        for (ordinal, member) in members.iter().enumerate() {
+            let child_request_id = format!("{group_id}-{ordinal}");
+            let child_payload = serde_json::json!({
+                "groupOf": group_id,
+                "ordinal": ordinal,
+            })
+            .to_string();
+            // Member savepoint (§4.1 step 3): a rejected member rolls back to
+            // a clean slate and keeps its typed rejection; valid siblings are
+            // unaffected; storage errors still abort the whole acceptance.
+            let mut savepoint = tx.savepoint().map_err(|_| MailError::StorageUnavailable)?;
+            let outcome = accept_operation_tx(
+                &savepoint,
+                &account_id,
+                OperationAcceptance {
+                    conversation: member,
+                    kind,
+                    value,
+                    request_id: &child_request_id,
+                    payload: &child_payload,
+                    clone_targets_from: None,
+                    explicit_targets: None,
+                    undo_of: None,
+                    action_id: Some(&group_id),
+                    retry_of: None,
+                    accepted_at: &accepted_at,
+                },
+            );
+            match outcome {
+                Ok(receipt) => {
+                    savepoint
+                        .commit()
+                        .map_err(|_| MailError::StorageUnavailable)?;
+                    member_rows.push(GroupMemberInsert {
+                        ordinal,
+                        conversation_id: member.conversation_id.clone(),
+                        operation_id: Some(receipt.operation_id),
+                        rejection: None,
+                    });
+                }
+                Err(MailError::NotFound) => {
+                    // Gone or unactionable: no immutable targets exist.
+                    savepoint
+                        .rollback()
+                        .map_err(|_| MailError::StorageUnavailable)?;
+                    member_rows.push(GroupMemberInsert {
+                        ordinal,
+                        conversation_id: member.conversation_id.clone(),
+                        operation_id: None,
+                        rejection: Some(GroupMemberRejection::ConversationMissing),
+                    });
+                }
+                Err(MailError::InvalidRequest { field }) if field == "targets" => {
+                    savepoint
+                        .rollback()
+                        .map_err(|_| MailError::StorageUnavailable)?;
+                    member_rows.push(GroupMemberInsert {
+                        ordinal,
+                        conversation_id: member.conversation_id.clone(),
+                        operation_id: None,
+                        rejection: Some(GroupMemberRejection::TargetBoundExceeded),
+                    });
+                }
+                // Storage/integrity failure: roll back the entire acceptance.
+                Err(error) => return Err(error),
+            }
+        }
+        tx.execute(
+            "INSERT INTO gmail_operation_groups
+                (group_id, account_id, request_id, kind, requested_value, accepted_at,
+                 undone_at, group_seq)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7)",
+            params![
+                group_id,
+                account_id,
+                request_id,
+                kind_name(kind),
+                value as i64,
+                accepted_at,
+                group_seq,
+            ],
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+        for member in &member_rows {
+            insert_group_member_row(&tx, &account_id, &group_id, member)?;
+        }
+        // The group's own idempotency request row: a replay (including a lost
+        // response) resolves here instead of re-running acceptance, and no
+        // other command kind can silently reuse this request id (payload
+        // mismatch → request_id_conflict).
+        tx.execute(
+            "INSERT INTO gmail_operation_requests
+             (account_id, request_id, payload, operation_id, accepted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![account_id, request_id, payload, group_id, accepted_at],
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        Ok(group_receipt(
+            &group_id,
+            request_id,
+            &account_id,
+            kind,
+            Some(value),
+            &accepted_at,
+            &member_rows,
+        ))
+    }
+
+    pub(crate) fn accept_archived_group(
+        &self,
+        command: &crate::groups::SetArchivedGroup,
+    ) -> Result<OperationGroupReceipt, MailError> {
+        self.accept_group(
+            &command.account_id,
+            MailboxOperationKind::Archive,
+            command.archived,
+            &command.request_id,
+            &command.members,
+        )
+    }
+
+    pub(crate) fn accept_read_group(
+        &self,
+        command: &crate::groups::SetReadGroup,
+    ) -> Result<OperationGroupReceipt, MailError> {
+        self.accept_group(
+            &command.account_id,
+            MailboxOperationKind::Read,
+            command.read,
+            &command.request_id,
+            &command.members,
+        )
+    }
+
+    /// Active-account lookup by original acceptance request ID
+    /// (docs/ux-05-safe-bulk-processing.md §4.2); `Ok(None)` while nothing
+    /// has committed for that request.
+    pub(crate) fn get_operation_group(
+        &self,
+        request: &crate::groups::GetOperationGroupRequest,
+    ) -> Result<Option<OperationGroupStatus>, MailError> {
+        crate::groups::validate_group_request_id(&request.request_id)?;
+        self.persistence_gate()?;
+        let conn = self.lock_conn()?;
+        let account_id = account_id_of(&conn)?;
+        if account_id != request.account_id {
+            return Err(MailError::NotFound);
+        }
+        let group_id: Option<String> = conn
+            .query_row(
+                "SELECT group_id FROM gmail_operation_groups
+                 WHERE account_id = ?1 AND request_id = ?2",
+                params![account_id, request.request_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let Some(group_id) = group_id else {
+            return Ok(None);
+        };
+        load_group_status(&conn, &account_id, &group_id, self.clock.now_iso()).map(Some)
+    }
+
+    /// Bounded recent group summaries with cursor, independent of Inbox/Done
+    /// rows (docs/ux-05-safe-bulk-processing.md §4.2).
+    pub(crate) fn list_operation_groups(
+        &self,
+        request: &crate::groups::ListOperationGroupsRequest,
+    ) -> Result<crate::groups::OperationGroupPage, MailError> {
+        crate::groups::validate_group_page_limit(request.limit)?;
+        self.persistence_gate()?;
+        let conn = self.lock_conn()?;
+        let account_id = account_id_of(&conn)?;
+        if account_id != request.account_id {
+            return Err(MailError::NotFound);
+        }
+        let before_seq = request
+            .cursor
+            .as_deref()
+            .map(|cursor| crate::groups::decode_group_cursor(&account_id, cursor))
+            .transpose()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT group_id, request_id, kind, requested_value, accepted_at, undone_at,
+                        group_seq
+                 FROM gmail_operation_groups WHERE account_id = ?1
+                   AND (?2 IS NULL OR group_seq < ?2)
+                 ORDER BY group_seq DESC LIMIT ?3",
+            )
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut rows = stmt
+            .query_map(
+                params![account_id, before_seq, request.limit as i64 + 1],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, i64>(6)?,
+                    ))
+                },
+            )
+            .map_err(|_| MailError::StorageUnavailable)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let has_more = rows.len() > request.limit as usize;
+        rows.truncate(request.limit as usize);
+        let mut summaries = Vec::with_capacity(rows.len());
+        let mut last_seq: Option<i64> = None;
+        for (group_id, group_request_id, kind, value, accepted_at, undone_at, group_seq) in rows {
+            let kind = parse_kind(&kind)?;
+            let members = load_group_member_refs(&conn, &account_id, &group_id)?;
+            summaries.push(crate::groups::OperationGroupSummary {
+                group_id,
+                request_id: group_request_id,
+                kind,
+                requested_archived: (kind == MailboxOperationKind::Archive).then_some(value != 0),
+                requested_read: (kind == MailboxOperationKind::Read).then_some(value != 0),
+                accepted_at,
+                members,
+                undone: undone_at.is_some(),
+            });
+            last_seq = Some(group_seq);
+        }
+        let next_cursor = has_more
+            .then(|| last_seq.map(|seq| crate::groups::encode_group_cursor(&account_id, seq)))
+            .flatten();
+        Ok(crate::groups::OperationGroupPage {
+            groups: summaries,
+            next_cursor,
+        })
+    }
+
+    /// One partial group Undo attempt (docs/ux-05-safe-bulk-processing.md §5):
+    /// whole-group eligibility, per-member cancel/compensate/skip decisions
+    /// from the original immutable targets/preimages, all persisted in one
+    /// transaction under the store lock; idempotent under `requestId`.
+    pub(crate) fn undo_operation_group(
+        &self,
+        command: &crate::groups::UndoOperationGroup,
+    ) -> Result<crate::groups::GroupUndoReceipt, MailError> {
+        crate::groups::validate_group_request_id(&command.request_id)?;
+        self.persistence_gate()?;
+        let mut conn = self.lock_conn()?;
+        let tx = conn
+            .transaction()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let account_id = account_id_of(&tx)?;
+        let payload = serde_json::json!({ "undoGroupId": command.group_id }).to_string();
+        if let Some(receipt) =
+            existing_group_undo_receipt(&tx, &account_id, &command.request_id, &payload)?
+        {
+            tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+            return Ok(receipt);
+        }
+        let header =
+            load_group_header(&tx, &account_id, &command.group_id)?.ok_or(MailError::NotFound)?;
+        let members = load_group_undo_rows(&tx, &account_id, &command.group_id)?;
+        let now = self.clock.now_iso();
+        check_group_undoable(&tx, &account_id, &header, &now)?;
+
+        let accepted_at = self.clock.now_iso();
+        let mut results = Vec::with_capacity(members.len());
+        for member in &members {
+            let (decision, operation_ids) =
+                decide_member_undo(&tx, &account_id, member, &accepted_at)?;
+            tx.execute(
+                "UPDATE gmail_operation_group_members
+                 SET undo_decision = ?4, undo_skip_reason = ?5, undo_operation_ids = ?6
+                 WHERE account_id = ?1 AND group_id = ?2 AND ordinal = ?3",
+                params![
+                    account_id,
+                    command.group_id,
+                    member.ordinal,
+                    group_decision_name(&decision),
+                    decision_skip_reason(&decision).map(crate::groups::skip_reason_name),
+                    serde_json::to_string(&operation_ids)
+                        .map_err(|_| MailError::StorageUnavailable)?,
+                ],
+            )
+            .map_err(|_| MailError::StorageUnavailable)?;
+            results.push(crate::groups::GroupMemberUndoResult {
+                ordinal: member.ordinal as u32,
+                conversation: ConversationRef {
+                    account_id: account_id.clone(),
+                    conversation_id: member.conversation_id.clone(),
+                },
+                decision,
+                operation_ids,
+            });
+        }
+        tx.execute(
+            "UPDATE gmail_operation_groups SET undone_at = ?3
+             WHERE account_id = ?1 AND group_id = ?2",
+            params![account_id, command.group_id, accepted_at],
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+        tx.execute(
+            "INSERT INTO gmail_operation_requests
+             (account_id, request_id, payload, operation_id, accepted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                account_id,
+                command.request_id,
+                payload,
+                command.group_id,
+                accepted_at
+            ],
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        Ok(crate::groups::GroupUndoReceipt {
+            group_id: command.group_id.clone(),
+            request_id: command.request_id.clone(),
+            accepted_at,
+            members: results,
+        })
     }
 
     pub(crate) fn claim_next_operation(&self) -> Result<Option<OperationRecord>, MailError> {
@@ -1693,6 +2119,10 @@ struct UndoTarget {
     status: OperationStatus,
     undo_of: Option<String>,
     accepted_at: String,
+    /// Top-level action identity (docs/ux-05-safe-bulk-processing.md §5):
+    /// standalone setters/retries carry their own operation id, group
+    /// children carry their group id, compensations none.
+    action_id: Option<String>,
 }
 
 fn load_undo_target(
@@ -1702,7 +2132,8 @@ fn load_undo_target(
 ) -> Result<Option<UndoTarget>, MailError> {
     let row = conn
         .query_row(
-            "SELECT conversation_id, kind, status, undo_of, accepted_at FROM gmail_operations
+            "SELECT conversation_id, kind, status, undo_of, accepted_at, action_id
+             FROM gmail_operations
          WHERE account_id = ?1 AND operation_id = ?2",
             params![account_id, operation_id],
             |row| {
@@ -1712,12 +2143,13 @@ fn load_undo_target(
                     row.get::<_, String>(2)?,
                     row.get::<_, Option<String>>(3)?,
                     row.get::<_, String>(4)?,
+                    row.get::<_, Option<String>>(5)?,
                 ))
             },
         )
         .optional()
         .map_err(|_| MailError::StorageUnavailable)?;
-    let Some((conversation_id, kind, status, undo_of, accepted_at)) = row else {
+    let Some((conversation_id, kind, status, undo_of, accepted_at, action_id)) = row else {
         return Ok(None);
     };
     Ok(Some(UndoTarget {
@@ -1727,6 +2159,7 @@ fn load_undo_target(
         status: parse_status(&status)?,
         undo_of,
         accepted_at,
+        action_id,
     }))
 }
 
@@ -1742,20 +2175,18 @@ fn check_undoable(
     if target.undo_of.is_some() {
         return Err(undo_unavailable(UndoUnavailableReason::NotApplicable));
     }
+    // UX-05 (§5): a group member is undone by the group's one attempt, never
+    // individually — no last-child escape around group eligibility.
+    if target.action_id.as_deref() != Some(target.operation_id.as_str()) {
+        return Err(undo_unavailable(UndoUnavailableReason::NotApplicable));
+    }
     // Rule 3: the 10 s window from acceptance, on the injected clock.
     if !crate::clock::within_undo_window(&target.accepted_at, now) {
         return Err(undo_unavailable(UndoUnavailableReason::Expired));
     }
-    // Rule 4: newest accepted non-compensating operation on the account.
-    let newest: Option<String> = tx
-        .query_row(
-            "SELECT operation_id FROM gmail_operations
-         WHERE account_id = ?1 AND undo_of IS NULL ORDER BY accepted_seq DESC LIMIT 1",
-            params![account_id],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(|_| MailError::StorageUnavailable)?;
+    // Rule 4: newest top-level user action on the account — a single, a
+    // group, or a retry; never a compensation (docs/ux-05-safe-bulk-processing.md §5).
+    let newest = latest_action_id(tx, account_id)?;
     if newest.as_deref() != Some(target.operation_id.as_str()) {
         return Err(undo_unavailable(UndoUnavailableReason::Superseded));
     }
@@ -1884,6 +2315,8 @@ fn compensate_tx(
                 clone_targets_from: None,
                 explicit_targets: Some(ids),
                 undo_of: Some(target.operation_id.as_str()),
+                action_id: None,
+                retry_of: None,
                 accepted_at,
             },
         )?;
@@ -1898,7 +2331,7 @@ fn compensate_tx(
 }
 
 fn accept_operation_tx(
-    tx: &rusqlite::Transaction<'_>,
+    tx: &Connection,
     account_id: &str,
     acceptance: OperationAcceptance<'_>,
 ) -> Result<OperationReceipt, MailError> {
@@ -1911,6 +2344,8 @@ fn accept_operation_tx(
         clone_targets_from,
         explicit_targets,
         undo_of,
+        action_id,
+        retry_of,
         accepted_at,
     } = acceptance;
     let mut targets: Vec<String>;
@@ -2033,11 +2468,23 @@ fn accept_operation_tx(
             |row| row.get(0),
         )
         .map_err(|_| MailError::StorageUnavailable)?;
+    // Top-level action identity (docs/ux-05-safe-bulk-processing.md §5):
+    // group children share their group's identity; standalone setters and
+    // retries are their own action; compensations are never top-level.
+    let effective_action_id: Option<String> = if undo_of.is_some() {
+        None
+    } else {
+        Some(
+            action_id
+                .map(str::to_string)
+                .unwrap_or_else(|| operation_id.clone()),
+        )
+    };
     tx.execute(
         "INSERT INTO gmail_operations
          (account_id, operation_id, conversation_id, kind, requested_value, status,
-          accepted_seq, accepted_at, request_id, undo_of)
-         VALUES (?1, ?2, ?3, ?4, ?5, 'queued', ?6, ?7, ?8, ?9)",
+          accepted_seq, accepted_at, request_id, undo_of, action_id, retry_of)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'queued', ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             account_id,
             operation_id,
@@ -2048,6 +2495,8 @@ fn accept_operation_tx(
             accepted_at,
             request_id,
             undo_of,
+            effective_action_id,
+            retry_of,
         ],
     )
     .map_err(|_| MailError::StorageUnavailable)?;
@@ -2092,7 +2541,7 @@ fn accept_operation_tx(
 /// archived state (`!in_inbox`), for read the effective read state
 /// (`!is_unread`); `NULL` records an unknown fact.
 fn capture_preimages(
-    tx: &rusqlite::Transaction<'_>,
+    tx: &Connection,
     account_id: &str,
     operation_id: &str,
     kind: MailboxOperationKind,
@@ -2330,20 +2779,12 @@ fn load_activity(
 ) -> Result<Vec<OperationSummary>, MailError> {
     let mut stmt = conn.prepare(
         "SELECT operation_id, conversation_id, kind, requested_value, status, failure, last_error,
-                undo_of, accepted_at
+                undo_of, accepted_at, action_id
          FROM gmail_operations WHERE account_id = ?1 ORDER BY accepted_seq DESC",
     ).map_err(|_| MailError::StorageUnavailable)?;
-    // Shared eligibility facts (§3.2 rules 4–5): the newest non-compensating
-    // operation id and the set of already-undone ids.
-    let newest_undoable: Option<String> = conn
-        .query_row(
-            "SELECT operation_id FROM gmail_operations
-         WHERE account_id = ?1 AND undo_of IS NULL ORDER BY accepted_seq DESC LIMIT 1",
-            params![account_id],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(|_| MailError::StorageUnavailable)?;
+    // Shared eligibility facts (§3.2 rules 4–5 plus UX-05 action ordering):
+    // the newest top-level action id and the set of already-undone ids.
+    let newest_action = latest_action_id(conn, account_id)?;
     let now = clock.now_iso();
     let mut activity = Vec::new();
     for row in stmt
@@ -2358,12 +2799,23 @@ fn load_activity(
                 row.get::<_, Option<String>>(6)?,
                 row.get::<_, Option<String>>(7)?,
                 row.get::<_, String>(8)?,
+                row.get::<_, Option<String>>(9)?,
             ))
         })
         .map_err(|_| MailError::StorageUnavailable)?
     {
-        let (id, conversation_id, kind, value, status, failure, last_error, undo_of, accepted_at) =
-            row.map_err(|_| MailError::StorageUnavailable)?;
+        let (
+            id,
+            conversation_id,
+            kind,
+            value,
+            status,
+            failure,
+            last_error,
+            undo_of,
+            accepted_at,
+            action_id,
+        ) = row.map_err(|_| MailError::StorageUnavailable)?;
         let kind = parse_kind(&kind)?;
         let status = parse_status(&status)?;
         let failure = failure.map(|f| {
@@ -2377,11 +2829,12 @@ fn load_activity(
             .map(|json| serde_json::from_str(&json).map_err(|_| MailError::StorageUnavailable))
             .transpose()?;
         let undoable_until = if undo_of.is_none()
+            && action_id.as_deref() == Some(id.as_str())
             && matches!(
                 status,
                 OperationStatus::Queued | OperationStatus::Applying | OperationStatus::Confirmed
             )
-            && newest_undoable.as_deref() == Some(id.as_str())
+            && newest_action.as_deref() == Some(id.as_str())
             && !has_undo_rows(conn, account_id, &id)?
             && !has_unknown_prior_value(conn, account_id, &id)?
             && crate::clock::within_undo_window(&accepted_at, &now)
@@ -2427,6 +2880,621 @@ fn has_undo_rows(
         |row| row.get(0),
     )
     .map_err(|_| MailError::StorageUnavailable)
+}
+
+fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool, MailError> {
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(|_| MailError::StorageUnavailable)?;
+    let found = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|_| MailError::StorageUnavailable)?
+        .any(|name| name.map(|n| n == column).unwrap_or(false));
+    Ok(found)
+}
+
+/// Newest top-level user action on the account (docs/ux-05-safe-bulk-processing.md
+/// §5): singles and retries are their own action, group children share the
+/// group's identity, compensations are none. Transactional acceptance order
+/// (`accepted_seq`) is the action order; timestamp comparison is insufficient.
+fn latest_action_id(conn: &Connection, account_id: &str) -> Result<Option<String>, MailError> {
+    conn.query_row(
+        "SELECT action_id FROM gmail_operations
+         WHERE account_id = ?1 AND action_id IS NOT NULL
+         GROUP BY action_id ORDER BY MAX(accepted_seq) DESC LIMIT 1",
+        params![account_id],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(|_| MailError::StorageUnavailable)
+}
+
+struct GroupMemberInsert {
+    ordinal: usize,
+    conversation_id: String,
+    operation_id: Option<String>,
+    rejection: Option<GroupMemberRejection>,
+}
+
+fn insert_group_member_row(
+    conn: &Connection,
+    account_id: &str,
+    group_id: &str,
+    member: &GroupMemberInsert,
+) -> Result<(), MailError> {
+    conn.execute(
+        "INSERT INTO gmail_operation_group_members
+            (account_id, group_id, ordinal, conversation_id, operation_id, rejection)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            account_id,
+            group_id,
+            member.ordinal as i64,
+            member.conversation_id,
+            member.operation_id,
+            member.rejection.map(crate::groups::rejection_name),
+        ],
+    )
+    .map_err(|_| MailError::StorageUnavailable)?;
+    Ok(())
+}
+
+fn group_receipt(
+    group_id: &str,
+    request_id: &str,
+    account_id: &str,
+    kind: MailboxOperationKind,
+    requested_value: Option<bool>,
+    accepted_at: &str,
+    members: &[GroupMemberInsert],
+) -> OperationGroupReceipt {
+    OperationGroupReceipt {
+        group_id: group_id.to_string(),
+        request_id: request_id.to_string(),
+        account_id: account_id.to_string(),
+        kind,
+        requested_archived: (kind == MailboxOperationKind::Archive)
+            .then_some(requested_value)
+            .flatten(),
+        requested_read: (kind == MailboxOperationKind::Read)
+            .then_some(requested_value)
+            .flatten(),
+        accepted_at: accepted_at.to_string(),
+        members: members
+            .iter()
+            .map(|member| crate::groups::GroupMemberReceipt {
+                ordinal: member.ordinal as u32,
+                conversation: ConversationRef {
+                    account_id: account_id.to_string(),
+                    conversation_id: member.conversation_id.clone(),
+                },
+                operation_id: member.operation_id.clone(),
+                rejection: member.rejection,
+            })
+            .collect(),
+    }
+}
+
+/// Idempotent group-command replay: the stored canonical payload must match;
+/// any other reuse of the request id is a typed conflict.
+fn existing_group_receipt(
+    conn: &Connection,
+    account_id: &str,
+    request_id: &str,
+    payload: &str,
+) -> Result<Option<OperationGroupReceipt>, MailError> {
+    let existing = conn
+        .query_row(
+            "SELECT payload, operation_id FROM gmail_operation_requests
+         WHERE account_id = ?1 AND request_id = ?2",
+            params![account_id, request_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(|_| MailError::StorageUnavailable)?;
+    let Some((saved_payload, group_id)) = existing else {
+        return Ok(None);
+    };
+    if saved_payload != payload {
+        return Err(MailError::RequestIdConflict);
+    }
+    load_group_receipt(conn, account_id, &group_id).map(Some)
+}
+
+fn existing_group_undo_receipt(
+    conn: &Connection,
+    account_id: &str,
+    request_id: &str,
+    payload: &str,
+) -> Result<Option<crate::groups::GroupUndoReceipt>, MailError> {
+    let existing = conn
+        .query_row(
+            "SELECT payload, operation_id, accepted_at FROM gmail_operation_requests
+         WHERE account_id = ?1 AND request_id = ?2",
+            params![account_id, request_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| MailError::StorageUnavailable)?;
+    let Some((saved_payload, group_id, accepted_at)) = existing else {
+        return Ok(None);
+    };
+    if saved_payload != payload {
+        return Err(MailError::RequestIdConflict);
+    }
+    let accepted_at = accepted_at.ok_or(MailError::StorageUnavailable)?;
+    reconstruct_group_undo_receipt(conn, account_id, &group_id, request_id, &accepted_at).map(Some)
+}
+
+struct GroupHeader {
+    group_id: String,
+    request_id: String,
+    kind: MailboxOperationKind,
+    requested_value: bool,
+    accepted_at: String,
+    undone_at: Option<String>,
+}
+
+fn load_group_header(
+    conn: &Connection,
+    account_id: &str,
+    group_id: &str,
+) -> Result<Option<GroupHeader>, MailError> {
+    let row = conn
+        .query_row(
+            "SELECT request_id, kind, requested_value, accepted_at, undone_at
+             FROM gmail_operation_groups WHERE account_id = ?1 AND group_id = ?2",
+            params![account_id, group_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| MailError::StorageUnavailable)?;
+    let Some((request_id, kind, requested_value, accepted_at, undone_at)) = row else {
+        return Ok(None);
+    };
+    Ok(Some(GroupHeader {
+        group_id: group_id.to_string(),
+        request_id,
+        kind: parse_kind(&kind)?,
+        requested_value: requested_value != 0,
+        accepted_at,
+        undone_at,
+    }))
+}
+
+struct GroupMemberRow {
+    ordinal: i64,
+    conversation_id: String,
+    operation_id: Option<String>,
+    rejection: Option<GroupMemberRejection>,
+    undo_decision: Option<String>,
+    undo_skip_reason: Option<String>,
+    undo_operation_ids: Option<String>,
+}
+
+fn load_group_undo_rows(
+    conn: &Connection,
+    account_id: &str,
+    group_id: &str,
+) -> Result<Vec<GroupMemberRow>, MailError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT ordinal, conversation_id, operation_id, rejection,
+                    undo_decision, undo_skip_reason, undo_operation_ids
+             FROM gmail_operation_group_members
+             WHERE account_id = ?1 AND group_id = ?2 ORDER BY ordinal",
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+    let rows = stmt
+        .query_map(params![account_id, group_id], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, Option<String>>(6)?,
+            ))
+        })
+        .map_err(|_| MailError::StorageUnavailable)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| MailError::StorageUnavailable)?;
+    rows.into_iter()
+        .map(
+            |(
+                ordinal,
+                conversation_id,
+                operation_id,
+                rejection,
+                undo_decision,
+                undo_skip_reason,
+                undo_operation_ids,
+            )| {
+                let rejection = rejection
+                    .map(|name| {
+                        crate::groups::rejection_from_name(&name)
+                            .ok_or(MailError::StorageUnavailable)
+                    })
+                    .transpose()?;
+                Ok(GroupMemberRow {
+                    ordinal,
+                    conversation_id,
+                    operation_id,
+                    rejection,
+                    undo_decision,
+                    undo_skip_reason,
+                    undo_operation_ids,
+                })
+            },
+        )
+        .collect()
+}
+
+fn load_group_member_refs(
+    conn: &Connection,
+    account_id: &str,
+    group_id: &str,
+) -> Result<Vec<ConversationRef>, MailError> {
+    let members = load_group_undo_rows(conn, account_id, group_id)?;
+    Ok(members
+        .into_iter()
+        .map(|member| ConversationRef {
+            account_id: account_id.to_string(),
+            conversation_id: member.conversation_id,
+        })
+        .collect())
+}
+
+fn load_group_receipt(
+    conn: &Connection,
+    account_id: &str,
+    group_id: &str,
+) -> Result<OperationGroupReceipt, MailError> {
+    let header =
+        load_group_header(conn, account_id, group_id)?.ok_or(MailError::StorageUnavailable)?;
+    let members = load_group_undo_rows(conn, account_id, group_id)?;
+    Ok(group_receipt(
+        &header.group_id,
+        &header.request_id,
+        account_id,
+        header.kind,
+        Some(header.requested_value),
+        &header.accepted_at,
+        &members
+            .iter()
+            .map(|member| GroupMemberInsert {
+                ordinal: member.ordinal as usize,
+                conversation_id: member.conversation_id.clone(),
+                operation_id: member.operation_id.clone(),
+                rejection: member.rejection,
+            })
+            .collect::<Vec<_>>(),
+    ))
+}
+
+/// Whole-group eligibility (§5): not already undone, inside the 10 s window
+/// from the group's acceptance, and still the newest top-level action.
+/// Per-member ineligibility never rejects the attempt; it becomes a persisted
+/// skip.
+fn check_group_undoable(
+    conn: &Connection,
+    account_id: &str,
+    header: &GroupHeader,
+    now: &str,
+) -> Result<(), MailError> {
+    if header.undone_at.is_some() {
+        return Err(undo_unavailable(UndoUnavailableReason::AlreadyUndone));
+    }
+    if !crate::clock::within_undo_window(&header.accepted_at, now) {
+        return Err(undo_unavailable(UndoUnavailableReason::Expired));
+    }
+    if latest_action_id(conn, account_id)?.as_deref() != Some(header.group_id.as_str()) {
+        return Err(undo_unavailable(UndoUnavailableReason::Superseded));
+    }
+    Ok(())
+}
+
+fn member_status_of(status: OperationStatus) -> crate::groups::GroupMemberStatus {
+    match status {
+        OperationStatus::Queued => crate::groups::GroupMemberStatus::Queued,
+        OperationStatus::Applying => crate::groups::GroupMemberStatus::Applying,
+        OperationStatus::Confirmed => crate::groups::GroupMemberStatus::Confirmed,
+        OperationStatus::Failed => crate::groups::GroupMemberStatus::Failed,
+        OperationStatus::OutcomeUnknown => crate::groups::GroupMemberStatus::OutcomeUnknown,
+        OperationStatus::Cancelled => crate::groups::GroupMemberStatus::Cancelled,
+    }
+}
+
+fn load_group_status(
+    conn: &Connection,
+    account_id: &str,
+    group_id: &str,
+    now: String,
+) -> Result<OperationGroupStatus, MailError> {
+    let header =
+        load_group_header(conn, account_id, group_id)?.ok_or(MailError::StorageUnavailable)?;
+    let members = load_group_undo_rows(conn, account_id, group_id)?;
+    let mut views = Vec::with_capacity(members.len());
+    for member in &members {
+        let (status, failure) = if member.rejection.is_some() {
+            (crate::groups::GroupMemberStatus::Rejected, None)
+        } else {
+            let Some(operation_id) = &member.operation_id else {
+                return Err(MailError::StorageUnavailable);
+            };
+            let row = conn
+                .query_row(
+                    "SELECT status, failure FROM gmail_operations
+                     WHERE account_id = ?1 AND operation_id = ?2",
+                    params![account_id, operation_id],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+                )
+                .optional()
+                .map_err(|_| MailError::StorageUnavailable)?
+                .ok_or(MailError::StorageUnavailable)?;
+            let failure = row.1.map(|f| {
+                if f == "providerunavailable" {
+                    OperationFailure::ProviderUnavailable
+                } else {
+                    OperationFailure::ProviderRejected
+                }
+            });
+            (member_status_of(parse_status(&row.0)?), failure)
+        };
+        views.push(crate::groups::GroupMemberStatusView {
+            ordinal: member.ordinal as u32,
+            conversation: ConversationRef {
+                account_id: account_id.to_string(),
+                conversation_id: member.conversation_id.clone(),
+            },
+            operation_id: member.operation_id.clone(),
+            status,
+            failure,
+            rejection: member.rejection,
+        });
+    }
+    let undo = group_undo_availability(conn, account_id, &header, &members, &now)?;
+    let group = load_group_receipt(conn, account_id, group_id)?;
+    Ok(OperationGroupStatus {
+        group,
+        members: views,
+        undo,
+    })
+}
+
+fn group_undo_availability(
+    conn: &Connection,
+    account_id: &str,
+    header: &GroupHeader,
+    members: &[GroupMemberRow],
+    now: &str,
+) -> Result<crate::groups::GroupUndoAvailability, MailError> {
+    if header.undone_at.is_some() {
+        return Ok(crate::groups::GroupUndoAvailability {
+            available: false,
+            reason: Some(UndoUnavailableReason::AlreadyUndone),
+            undoable_until: None,
+        });
+    }
+    if !crate::clock::within_undo_window(&header.accepted_at, now) {
+        return Ok(crate::groups::GroupUndoAvailability {
+            available: false,
+            reason: Some(UndoUnavailableReason::Expired),
+            undoable_until: None,
+        });
+    }
+    if latest_action_id(conn, account_id)?.as_deref() != Some(header.group_id.as_str()) {
+        return Ok(crate::groups::GroupUndoAvailability {
+            available: false,
+            reason: Some(UndoUnavailableReason::Superseded),
+            undoable_until: None,
+        });
+    }
+    // An all-ineligible group offers no enabled Undo (§5).
+    let mut any_eligible = false;
+    for member in members {
+        if member.rejection.is_some() {
+            continue;
+        }
+        let Some(operation_id) = &member.operation_id else {
+            continue;
+        };
+        let Some(record) = load_operation(conn, account_id, operation_id)? else {
+            continue;
+        };
+        let live = matches!(
+            record.status,
+            OperationStatus::Queued | OperationStatus::Applying | OperationStatus::Confirmed
+        );
+        if live
+            && !has_undo_rows(conn, account_id, operation_id)?
+            && !has_unknown_prior_value(conn, account_id, operation_id)?
+        {
+            any_eligible = true;
+        }
+    }
+    if !any_eligible {
+        return Ok(crate::groups::GroupUndoAvailability {
+            available: false,
+            reason: Some(UndoUnavailableReason::NotApplicable),
+            undoable_until: None,
+        });
+    }
+    Ok(crate::groups::GroupUndoAvailability {
+        available: true,
+        reason: None,
+        undoable_until: crate::clock::undo_deadline_iso(&header.accepted_at),
+    })
+}
+
+fn group_decision_name(decision: &crate::groups::GroupMemberUndoDecision) -> &'static str {
+    match decision {
+        crate::groups::GroupMemberUndoDecision::Cancelled => "cancelled",
+        crate::groups::GroupMemberUndoDecision::Compensating => "compensating",
+        crate::groups::GroupMemberUndoDecision::Skipped { .. } => "skipped",
+    }
+}
+
+fn decision_skip_reason(
+    decision: &crate::groups::GroupMemberUndoDecision,
+) -> Option<crate::groups::GroupUndoSkipReason> {
+    match decision {
+        crate::groups::GroupMemberUndoDecision::Skipped { reason } => Some(*reason),
+        _ => None,
+    }
+}
+
+/// Per-member group Undo decision (§5): queued → atomic cancel;
+/// applying/confirmed → ordered compensation from the original immutable
+/// targets and preimages; everything else is an explicit persisted skip.
+fn decide_member_undo(
+    tx: &rusqlite::Transaction<'_>,
+    account_id: &str,
+    member: &GroupMemberRow,
+    accepted_at: &str,
+) -> Result<(crate::groups::GroupMemberUndoDecision, Vec<String>), MailError> {
+    if member.rejection.is_some() {
+        return Ok((
+            crate::groups::GroupMemberUndoDecision::Skipped {
+                reason: crate::groups::GroupUndoSkipReason::AcceptanceRejected,
+            },
+            Vec::new(),
+        ));
+    }
+    let Some(operation_id) = &member.operation_id else {
+        return Err(MailError::StorageUnavailable);
+    };
+    let Some(target) = load_undo_target(tx, account_id, operation_id)? else {
+        return Err(MailError::StorageUnavailable);
+    };
+    match target.status {
+        OperationStatus::Failed => Ok((
+            crate::groups::GroupMemberUndoDecision::Skipped {
+                reason: crate::groups::GroupUndoSkipReason::Failed,
+            },
+            Vec::new(),
+        )),
+        OperationStatus::OutcomeUnknown => Ok((
+            crate::groups::GroupMemberUndoDecision::Skipped {
+                reason: crate::groups::GroupUndoSkipReason::OutcomeUnknown,
+            },
+            Vec::new(),
+        )),
+        OperationStatus::Cancelled => Ok((
+            crate::groups::GroupMemberUndoDecision::Skipped {
+                reason: crate::groups::GroupUndoSkipReason::AlreadyUndone,
+            },
+            Vec::new(),
+        )),
+        OperationStatus::Queued => {
+            let cancelled = tx
+                .execute(
+                    "UPDATE gmail_operations SET status = 'cancelled', last_error = NULL
+                     WHERE account_id = ?1 AND operation_id = ?2 AND status = 'queued'",
+                    params![account_id, target.operation_id],
+                )
+                .map_err(|_| MailError::StorageUnavailable)?;
+            if cancelled == 1 {
+                Ok((
+                    crate::groups::GroupMemberUndoDecision::Cancelled,
+                    Vec::new(),
+                ))
+            } else {
+                // Defensive: the status was read in this same transaction,
+                // which runs under the connection mutex the worker's claim
+                // also needs.
+                member_compensation(tx, account_id, &target, accepted_at)
+            }
+        }
+        OperationStatus::Applying | OperationStatus::Confirmed => {
+            member_compensation(tx, account_id, &target, accepted_at)
+        }
+    }
+}
+
+fn member_compensation(
+    tx: &rusqlite::Transaction<'_>,
+    account_id: &str,
+    target: &UndoTarget,
+    accepted_at: &str,
+) -> Result<(crate::groups::GroupMemberUndoDecision, Vec<String>), MailError> {
+    match compensate_tx(tx, account_id, target, accepted_at) {
+        Ok(receipt) => Ok((
+            crate::groups::GroupMemberUndoDecision::Compensating,
+            receipt.operation_ids,
+        )),
+        Err(MailError::UndoUnavailable {
+            reason: UndoUnavailableReason::UnknownPrior,
+        }) => Ok((
+            crate::groups::GroupMemberUndoDecision::Skipped {
+                reason: crate::groups::GroupUndoSkipReason::UnknownPrior,
+            },
+            Vec::new(),
+        )),
+        Err(error) => Err(error),
+    }
+}
+
+fn reconstruct_group_undo_receipt(
+    conn: &Connection,
+    account_id: &str,
+    group_id: &str,
+    request_id: &str,
+    accepted_at: &str,
+) -> Result<crate::groups::GroupUndoReceipt, MailError> {
+    let members = load_group_undo_rows(conn, account_id, group_id)?;
+    let mut results = Vec::with_capacity(members.len());
+    for member in members {
+        let decision = match member.undo_decision.as_deref() {
+            Some("cancelled") => crate::groups::GroupMemberUndoDecision::Cancelled,
+            Some("compensating") => crate::groups::GroupMemberUndoDecision::Compensating,
+            Some("skipped") => {
+                let reason = member
+                    .undo_skip_reason
+                    .as_deref()
+                    .and_then(crate::groups::skip_reason_from_name)
+                    .ok_or(MailError::StorageUnavailable)?;
+                crate::groups::GroupMemberUndoDecision::Skipped { reason }
+            }
+            _ => return Err(MailError::StorageUnavailable),
+        };
+        let operation_ids = member
+            .undo_operation_ids
+            .as_deref()
+            .map(|json| serde_json::from_str(json).map_err(|_| MailError::StorageUnavailable))
+            .transpose()?
+            .unwrap_or_default();
+        results.push(crate::groups::GroupMemberUndoResult {
+            ordinal: member.ordinal as u32,
+            conversation: ConversationRef {
+                account_id: account_id.to_string(),
+                conversation_id: member.conversation_id,
+            },
+            decision,
+            operation_ids,
+        });
+    }
+    Ok(crate::groups::GroupUndoReceipt {
+        group_id: group_id.to_string(),
+        request_id: request_id.to_string(),
+        accepted_at: accepted_at.to_string(),
+        members: results,
+    })
 }
 
 fn meta_get(conn: &Connection, key: &str) -> Result<Option<String>, MailError> {
@@ -3835,7 +4903,7 @@ mod tests {
             )
             .unwrap();
             // A foreign account with a lexically newer row must never leak in.
-            conn.execute("INSERT INTO gmail_operations SELECT 'foreign', 'foreign-op', 'a', kind, requested_value, status, failure, last_error, accepted_seq, accepted_at, request_id, undo_of FROM gmail_operations WHERE conversation_id = 'a'", []).unwrap();
+            conn.execute("INSERT INTO gmail_operations (account_id, operation_id, conversation_id, kind, requested_value, status, failure, last_error, accepted_seq, accepted_at, request_id, undo_of) SELECT 'foreign', 'foreign-op', 'a', kind, requested_value, status, failure, last_error, accepted_seq, accepted_at, request_id, undo_of FROM gmail_operations WHERE conversation_id = 'a'", []).unwrap();
         }
         store
             .accept_archived(&SetArchived {
@@ -3957,6 +5025,583 @@ mod tests {
             "a"
         );
         assert!(bounded.next_cursor.is_some());
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    // -------------------------------------------------- UX-05 group tests
+
+    fn open_store_with_clock(tag: &str, clock: Arc<dyn Clock>) -> (GmailStore, std::path::PathBuf) {
+        let dir = temp_dir(tag);
+        let store = GmailStore::open(&dir, clock).expect("store opens");
+        (store, dir)
+    }
+
+    /// Seeds an account and three cached threads, each with two messages,
+    /// all in the inbox and all unread (known read facts so read-kind
+    /// preimages are capturable).
+    fn seed_group_threads(store: &GmailStore, thread_ids: &[&str]) {
+        store
+            .begin_account(&profile("acct", "acct@example.test", "hist-1"), 0)
+            .expect("account");
+        let fetches: Vec<ThreadFetch> = thread_ids
+            .iter()
+            .map(|id| {
+                let mut thread = thread(
+                    "acct",
+                    id,
+                    "hist-2",
+                    vec![
+                        message(&format!("{id}-m1"), "2026-01-01T00:00:00Z"),
+                        message(&format!("{id}-m2"), "2026-01-02T00:00:00Z"),
+                    ],
+                    &[&format!("{id}-m1"), &format!("{id}-m2")],
+                );
+                thread.unread_message_ids = Some(vec![format!("{id}-m1"), format!("{id}-m2")]);
+                cached(thread)
+            })
+            .collect();
+        store
+            .apply_discovery_page(&fetches, None, true, false, 0)
+            .expect("cache threads");
+    }
+
+    fn group_ref(id: &str) -> ConversationRef {
+        ConversationRef {
+            account_id: "acct".to_string(),
+            conversation_id: id.to_string(),
+        }
+    }
+
+    fn group_counts(store: &GmailStore) -> (usize, usize) {
+        let conn = store.lock_conn().expect("conn");
+        let operations: i64 = conn
+            .query_row("SELECT COUNT(*) FROM gmail_operations", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let groups: i64 = conn
+            .query_row("SELECT COUNT(*) FROM gmail_operation_groups", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        (operations as usize, groups as usize)
+    }
+
+    /// Archive and read groups both accept atomically; the canonical payload
+    /// makes reordered replays return the original receipt and ordering; a
+    /// changed payload conflicts (§7.4).
+    #[test]
+    fn gmail_group_acceptance_is_idempotent_for_archive_and_read() {
+        let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+            "2026-01-01T00:00:00Z",
+        )));
+        let (store, dir) = open_store_with_clock("gmail-group-idempotent", clock);
+        seed_group_threads(&store, &["thr-a", "thr-b"]);
+
+        let command = crate::groups::SetReadGroup {
+            account_id: "acct".into(),
+            members: vec![group_ref("thr-b"), group_ref("thr-a")],
+            read: true,
+            request_id: "gmail-group-req-1".into(),
+        };
+        let receipt = store.accept_read_group(&command).expect("read group");
+        assert_eq!(receipt.kind, MailboxOperationKind::Read);
+        assert_eq!(receipt.requested_read, Some(true));
+        assert_eq!(receipt.members[0].conversation.conversation_id, "thr-b");
+        let replay = store.accept_read_group(&command).expect("replay");
+        assert_eq!(replay, receipt);
+        // Reordered replay: same canonical identity, original ordering kept.
+        let reordered = crate::groups::SetReadGroup {
+            members: vec![group_ref("thr-a"), group_ref("thr-b")],
+            ..command.clone()
+        };
+        assert_eq!(
+            store.accept_read_group(&reordered).expect("replay"),
+            receipt
+        );
+        // Changed payload conflicts.
+        assert_eq!(
+            store.accept_read_group(&crate::groups::SetReadGroup {
+                read: false,
+                ..command.clone()
+            }),
+            Err(MailError::RequestIdConflict)
+        );
+        // Cross-command reuse of the request id conflicts.
+        assert_eq!(
+            store.accept_archived(&SetArchived {
+                conversation: group_ref("thr-a"),
+                archived: true,
+                request_id: "gmail-group-req-1".into(),
+            }),
+            Err(MailError::RequestIdConflict)
+        );
+
+        // Archive group on a fresh request id.
+        let archive_receipt = store
+            .accept_archived_group(&crate::groups::SetArchivedGroup {
+                account_id: "acct".into(),
+                members: vec![group_ref("thr-a")],
+                archived: true,
+                request_id: "gmail-group-req-2".into(),
+            })
+            .expect("archive group");
+        assert_eq!(archive_receipt.kind, MailboxOperationKind::Archive);
+        assert_eq!(archive_receipt.requested_archived, Some(true));
+        assert_eq!(group_counts(&store), (3, 2));
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A member without immutable targets is a persisted acceptance rejection
+    /// (never a fabricated failed operation); valid siblings are accepted and
+    /// the replay returns the identical receipt (§7.2).
+    #[test]
+    fn gmail_group_member_rejection_is_persisted_and_savepointed() {
+        let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+            "2026-01-01T00:00:00Z",
+        )));
+        let (store, dir) = open_store_with_clock("gmail-group-rejection", clock);
+        seed_group_threads(&store, &["thr-a"]);
+        let receipt = store
+            .accept_archived_group(&crate::groups::SetArchivedGroup {
+                account_id: "acct".into(),
+                members: vec![group_ref("thr-a"), group_ref("missing-thr")],
+                archived: true,
+                request_id: "gmail-group-req-mixed".into(),
+            })
+            .expect("mixed group accepted");
+        assert!(receipt.members[0].operation_id.is_some());
+        assert_eq!(
+            receipt.members[1].rejection,
+            Some(GroupMemberRejection::ConversationMissing)
+        );
+        assert_eq!(receipt.members[1].operation_id, None);
+        assert_eq!(group_counts(&store), (1, 1), "one child, one group");
+        // Rejected member left no partial request/target rows behind: only
+        // the group's own request row and the accepted child's remain.
+        {
+            let conn = store.lock_conn().unwrap();
+            let requests: i64 = conn
+                .query_row("SELECT COUNT(*) FROM gmail_operation_requests", [], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            assert_eq!(requests, 2, "group request row + accepted child only");
+        }
+        let status = store
+            .get_operation_group(&crate::groups::GetOperationGroupRequest {
+                account_id: "acct".into(),
+                request_id: "gmail-group-req-mixed".into(),
+            })
+            .expect("lookup")
+            .expect("committed");
+        assert_eq!(
+            status.members[1].status,
+            crate::groups::GroupMemberStatus::Rejected
+        );
+        assert_eq!(
+            status.members[0].status,
+            crate::groups::GroupMemberStatus::Queued
+        );
+        assert!(status.undo.available);
+        let replay = store
+            .accept_archived_group(&crate::groups::SetArchivedGroup {
+                members: vec![group_ref("missing-thr"), group_ref("thr-a")],
+                ..crate::groups::SetArchivedGroup {
+                    account_id: "acct".into(),
+                    members: Vec::new(),
+                    archived: true,
+                    request_id: "gmail-group-req-mixed".into(),
+                }
+            })
+            .expect("replay");
+        assert_eq!(replay, receipt, "original ordering preserved on replay");
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Storage failure at acceptance rejects the whole group; the same
+    /// request retried after recovery commits exactly once (§7.3).
+    #[test]
+    fn gmail_group_storage_failure_rolls_back_and_retry_is_safe() {
+        let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+            "2026-01-01T00:00:00Z",
+        )));
+        let (store, dir) = open_store_with_clock("gmail-group-rollback", clock);
+        seed_group_threads(&store, &["thr-a", "thr-b"]);
+        store.set_test_persistence_failure(true);
+        assert_eq!(
+            store.accept_archived_group(&crate::groups::SetArchivedGroup {
+                account_id: "acct".into(),
+                members: vec![group_ref("thr-a"), group_ref("thr-b")],
+                archived: true,
+                request_id: "gmail-group-req-rb".into(),
+            }),
+            Err(MailError::StorageUnavailable)
+        );
+        assert_eq!(group_counts(&store), (0, 0));
+        store.set_test_persistence_failure(false);
+        let receipt = store
+            .accept_archived_group(&crate::groups::SetArchivedGroup {
+                account_id: "acct".into(),
+                members: vec![group_ref("thr-a"), group_ref("thr-b")],
+                archived: true,
+                request_id: "gmail-group-req-rb".into(),
+            })
+            .expect("retry safe");
+        assert_eq!(receipt.members.len(), 2);
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Group Undo at 9 seconds (§7.6): confirmed member compensates from the
+    /// original targets/preimages, failed and unknown members are skipped
+    /// with typed reasons, queued member cancels; no rollback of successful
+    /// siblings; one attempt, idempotent replay.
+    #[test]
+    fn gmail_group_undo_is_partial_typed_and_one_shot() {
+        let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+            "2026-01-01T00:00:00Z",
+        )));
+        let (store, dir) = open_store_with_clock("gmail-group-undo", clock.clone());
+        seed_group_threads(&store, &["thr-a", "thr-b", "thr-c"]);
+        let receipt = store
+            .accept_read_group(&crate::groups::SetReadGroup {
+                account_id: "acct".into(),
+                members: vec![group_ref("thr-a"), group_ref("thr-b"), group_ref("thr-c")],
+                read: true,
+                request_id: "gmail-group-req-u".into(),
+            })
+            .expect("read group");
+        let ops: Vec<String> = receipt
+            .members
+            .iter()
+            .map(|m| m.operation_id.clone().unwrap())
+            .collect();
+        // thr-a confirms, thr-b fails, thr-c stays queued.
+        let claimed_a = store.claim_next_operation().unwrap().unwrap();
+        assert_eq!(claimed_a.operation_id, ops[0]);
+        store.confirm_operation(&claimed_a).unwrap();
+        let claimed_b = store.claim_next_operation().unwrap().unwrap();
+        assert_eq!(claimed_b.operation_id, ops[1]);
+        store
+            .fail_operation(&claimed_b, MailError::ProviderRejected)
+            .unwrap();
+
+        clock.advance_seconds(9);
+        let undo = store
+            .undo_operation_group(&crate::groups::UndoOperationGroup {
+                group_id: receipt.group_id.clone(),
+                request_id: "gmail-undo-group-1".into(),
+            })
+            .expect("group undo");
+        assert_eq!(
+            undo.members[0].decision,
+            crate::groups::GroupMemberUndoDecision::Compensating
+        );
+        assert!(!undo.members[0].operation_ids.is_empty());
+        assert_eq!(
+            undo.members[1].decision,
+            crate::groups::GroupMemberUndoDecision::Skipped {
+                reason: crate::groups::GroupUndoSkipReason::Failed
+            }
+        );
+        assert_eq!(
+            undo.members[2].decision,
+            crate::groups::GroupMemberUndoDecision::Cancelled
+        );
+
+        // One attempt: replay identical; second different request rejected.
+        let replay = store
+            .undo_operation_group(&crate::groups::UndoOperationGroup {
+                group_id: receipt.group_id.clone(),
+                request_id: "gmail-undo-group-1".into(),
+            })
+            .expect("replay");
+        assert_eq!(replay, undo);
+        assert_eq!(
+            store.undo_operation_group(&crate::groups::UndoOperationGroup {
+                group_id: receipt.group_id.clone(),
+                request_id: "gmail-undo-group-2".into(),
+            }),
+            Err(MailError::UndoUnavailable {
+                reason: UndoUnavailableReason::AlreadyUndone
+            })
+        );
+        // Member statuses: confirmed original, failed original, cancelled.
+        let status = store
+            .get_operation_group(&crate::groups::GetOperationGroupRequest {
+                account_id: "acct".into(),
+                request_id: "gmail-group-req-u".into(),
+            })
+            .expect("lookup")
+            .expect("committed");
+        assert_eq!(
+            status.members[0].status,
+            crate::groups::GroupMemberStatus::Confirmed
+        );
+        assert_eq!(
+            status.members[1].status,
+            crate::groups::GroupMemberStatus::Failed
+        );
+        assert_eq!(
+            status.members[2].status,
+            crate::groups::GroupMemberStatus::Cancelled
+        );
+        assert_eq!(
+            status.undo.reason,
+            Some(UndoUnavailableReason::AlreadyUndone)
+        );
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Outcome-unknown members are explicitly skipped (never compensated,
+    /// never silently retried) while eligible siblings still undo (§7.5/§7.6).
+    #[test]
+    fn gmail_group_undo_skips_unknown_members_and_keeps_sibling_recovery() {
+        let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+            "2026-01-01T00:00:00Z",
+        )));
+        let (store, dir) = open_store_with_clock("gmail-group-unknown", clock.clone());
+        seed_group_threads(&store, &["thr-a", "thr-b"]);
+        let receipt = store
+            .accept_read_group(&crate::groups::SetReadGroup {
+                account_id: "acct".into(),
+                members: vec![group_ref("thr-a"), group_ref("thr-b")],
+                read: true,
+                request_id: "gmail-group-req-unk".into(),
+            })
+            .expect("read group");
+        let ops: Vec<String> = receipt
+            .members
+            .iter()
+            .map(|m| m.operation_id.clone().unwrap())
+            .collect();
+        // thr-a becomes outcome-unknown (interrupted dispatch).
+        let claimed_a = store.claim_next_operation().unwrap().unwrap();
+        assert_eq!(claimed_a.operation_id, ops[0]);
+        store.unknown_operation(&claimed_a).unwrap();
+        clock.advance_seconds(1);
+        let undo = store
+            .undo_operation_group(&crate::groups::UndoOperationGroup {
+                group_id: receipt.group_id.clone(),
+                request_id: "gmail-undo-unk".into(),
+            })
+            .expect("group undo");
+        assert_eq!(
+            undo.members[0].decision,
+            crate::groups::GroupMemberUndoDecision::Skipped {
+                reason: crate::groups::GroupUndoSkipReason::OutcomeUnknown
+            }
+        );
+        assert_eq!(
+            undo.members[1].decision,
+            crate::groups::GroupMemberUndoDecision::Cancelled
+        );
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Expiry, supersession by a newer single/group/retry, and the child
+    /// single-Undo bypass all fail closed with typed reasons (§7.7).
+    #[test]
+    fn gmail_group_undo_respects_expiry_supersession_and_no_child_bypass() {
+        let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+            "2026-01-01T00:00:00Z",
+        )));
+        let (store, dir) = open_store_with_clock("gmail-group-gates", clock.clone());
+        seed_group_threads(&store, &["thr-a", "thr-b", "thr-c"]);
+        let receipt = store
+            .accept_archived_group(&crate::groups::SetArchivedGroup {
+                account_id: "acct".into(),
+                members: vec![group_ref("thr-a"), group_ref("thr-b")],
+                archived: true,
+                request_id: "gmail-group-req-g".into(),
+            })
+            .expect("group accepted");
+        let child = receipt.members[0].operation_id.clone().unwrap();
+
+        // A single Undo of a group child never bypasses group ordering.
+        assert_eq!(
+            store.undo_operation(&UndoOperation {
+                operation_id: child.clone(),
+                request_id: "child-bypass".into(),
+            }),
+            Err(MailError::UndoUnavailable {
+                reason: UndoUnavailableReason::NotApplicable
+            })
+        );
+        // A newer single action supersedes the group.
+        store
+            .accept_archived(&SetArchived {
+                conversation: group_ref("thr-c"),
+                archived: true,
+                request_id: "single-after-group".into(),
+            })
+            .expect("single accepted");
+        assert_eq!(
+            store.undo_operation_group(&crate::groups::UndoOperationGroup {
+                group_id: receipt.group_id.clone(),
+                request_id: "undo-after-single".into(),
+            }),
+            Err(MailError::UndoUnavailable {
+                reason: UndoUnavailableReason::Superseded
+            })
+        );
+        // A newer group supersedes the older group.
+        let newer = store
+            .accept_archived_group(&crate::groups::SetArchivedGroup {
+                account_id: "acct".into(),
+                members: vec![group_ref("thr-a")],
+                archived: false,
+                request_id: "gmail-group-req-new".into(),
+            })
+            .expect("newer group");
+        assert_eq!(
+            store.undo_operation_group(&crate::groups::UndoOperationGroup {
+                group_id: receipt.group_id.clone(),
+                request_id: "undo-after-newer-group".into(),
+            }),
+            Err(MailError::UndoUnavailable {
+                reason: UndoUnavailableReason::Superseded
+            })
+        );
+        // A retry of a failed member is also a new top-level action.
+        // Mark one child failed first.
+        let failed_child = newer.members[0].operation_id.clone().unwrap();
+        let record = {
+            let conn = store.lock_conn().unwrap();
+            load_operation(&conn, "acct", &failed_child)
+                .unwrap()
+                .unwrap()
+        };
+        store
+            .fail_operation(&record, MailError::ProviderRejected)
+            .unwrap();
+        let retry = store
+            .accept_retry(&RetryOperation {
+                operation_id: failed_child.clone(),
+                request_id: "retry-after-group".into(),
+            })
+            .expect("retry accepted");
+        assert_eq!(
+            store.undo_operation_group(&crate::groups::UndoOperationGroup {
+                group_id: newer.group_id.clone(),
+                request_id: "undo-after-retry".into(),
+            }),
+            Err(MailError::UndoUnavailable {
+                reason: UndoUnavailableReason::Superseded
+            }),
+            "a newer individual retry supersedes the older group"
+        );
+        // The retry itself is top-level and undoable (newest action).
+        let record = {
+            let conn = store.lock_conn().unwrap();
+            load_operation(&conn, "acct", &retry.operation_id)
+                .unwrap()
+                .unwrap()
+        };
+        store.confirm_operation(&record).unwrap();
+        assert!(store
+            .undo_operation(&UndoOperation {
+                operation_id: retry.operation_id.clone(),
+                request_id: "undo-retry".into(),
+            })
+            .is_ok());
+        // Expiry at 10 seconds.
+        let expired = store
+            .accept_archived_group(&crate::groups::SetArchivedGroup {
+                account_id: "acct".into(),
+                members: vec![group_ref("thr-b")],
+                archived: true,
+                request_id: "gmail-group-req-exp".into(),
+            })
+            .expect("group accepted");
+        clock.advance_seconds(10);
+        assert_eq!(
+            store.undo_operation_group(&crate::groups::UndoOperationGroup {
+                group_id: expired.group_id.clone(),
+                request_id: "undo-expired".into(),
+            }),
+            Err(MailError::UndoUnavailable {
+                reason: UndoUnavailableReason::Expired
+            })
+        );
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Group listing pagination and account fencing (§7.9); a group absent
+    /// from a recent page stays queryable by request identity; foreign
+    /// accounts fail closed.
+    #[test]
+    fn gmail_group_listing_paginates_and_fences_accounts() {
+        let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+            "2026-01-01T00:00:00Z",
+        )));
+        let (store, dir) = open_store_with_clock("gmail-group-pages", clock);
+        seed_group_threads(&store, &["thr-a"]);
+        let mut group_ids = Vec::new();
+        for i in 0..3 {
+            let receipt = store
+                .accept_archived_group(&crate::groups::SetArchivedGroup {
+                    account_id: "acct".into(),
+                    members: vec![group_ref("thr-a")],
+                    archived: true,
+                    request_id: format!("gmail-group-page-{i}"),
+                })
+                .expect("group accepted");
+            group_ids.push(receipt.group_id);
+        }
+        let page = store
+            .list_operation_groups(&crate::groups::ListOperationGroupsRequest {
+                account_id: "acct".into(),
+                limit: 2,
+                cursor: None,
+            })
+            .expect("page 1");
+        assert_eq!(page.groups.len(), 2);
+        assert_eq!(page.groups[0].request_id, "gmail-group-page-2");
+        let cursor = page.next_cursor.expect("continuation");
+        assert!(page
+            .groups
+            .iter()
+            .all(|g| g.request_id != "gmail-group-page-0"));
+        let oldest = store
+            .get_operation_group(&crate::groups::GetOperationGroupRequest {
+                account_id: "acct".into(),
+                request_id: "gmail-group-page-0".into(),
+            })
+            .expect("lookup")
+            .expect("detail stays addressable");
+        assert_eq!(oldest.group.group_id, group_ids[0]);
+        let page2 = store
+            .list_operation_groups(&crate::groups::ListOperationGroupsRequest {
+                account_id: "acct".into(),
+                limit: 2,
+                cursor: Some(cursor),
+            })
+            .expect("page 2");
+        assert_eq!(page2.groups.len(), 1);
+        assert_eq!(page2.groups[0].request_id, "gmail-group-page-0");
+        // Foreign account fencing and uncommitted lookups.
+        assert_eq!(
+            store.list_operation_groups(&crate::groups::ListOperationGroupsRequest {
+                account_id: "foreign".into(),
+                limit: 2,
+                cursor: None,
+            }),
+            Err(MailError::NotFound)
+        );
+        assert!(store
+            .get_operation_group(&crate::groups::GetOperationGroupRequest {
+                account_id: "acct".into(),
+                request_id: "never-committed".into(),
+            })
+            .unwrap()
+            .is_none());
         drop(store);
         std::fs::remove_dir_all(dir).unwrap();
     }

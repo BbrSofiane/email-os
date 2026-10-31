@@ -168,6 +168,53 @@ impl MailCore {
         Ok(receipt)
     }
 
+    /// Accepts a bounded archive/unarchive group atomically
+    /// (docs/ux-05-safe-bulk-processing.md §4.1) and wakes the worker only
+    /// after the single acceptance commit. Idempotent per `requestId`.
+    pub fn set_archived_group(
+        &self,
+        command: &crate::groups::SetArchivedGroup,
+    ) -> Result<crate::groups::OperationGroupReceipt, MailError> {
+        self.ensure_worker_healthy()?;
+        let receipt = self.inner.store.set_archived_group(command)?;
+        self.dispatch();
+        self.inner.signal.wake();
+        Ok(receipt)
+    }
+
+    /// Active-account group lookup by original acceptance request ID;
+    /// `Ok(None)` while nothing has committed for that request.
+    pub fn get_operation_group(
+        &self,
+        request: &crate::groups::GetOperationGroupRequest,
+    ) -> Result<Option<crate::groups::OperationGroupStatus>, MailError> {
+        self.ensure_worker_healthy()?;
+        self.inner.store.get_operation_group(request)
+    }
+
+    /// Bounded recent group summaries with cursor, independent of Inbox/Done
+    /// rows.
+    pub fn list_operation_groups(
+        &self,
+        request: &crate::groups::ListOperationGroupsRequest,
+    ) -> Result<crate::groups::OperationGroupPage, MailError> {
+        self.ensure_worker_healthy()?;
+        self.inner.store.list_operation_groups(request)
+    }
+
+    /// One partial group Undo attempt (docs/ux-05-safe-bulk-processing.md §5);
+    /// compensation work wakes the worker immediately after commit.
+    pub fn undo_operation_group(
+        &self,
+        command: &crate::groups::UndoOperationGroup,
+    ) -> Result<crate::groups::GroupUndoReceipt, MailError> {
+        self.ensure_worker_healthy()?;
+        let receipt = self.inner.store.undo_operation_group(command)?;
+        self.dispatch();
+        self.inner.signal.wake();
+        Ok(receipt)
+    }
+
     /// Starts the single serial worker. The provider is injected by the
     /// caller (the shell uses [`FakeArchiveProvider::from_env`]). Starting
     /// twice is rejected; it is not a valid request field, but the shell
@@ -389,5 +436,166 @@ mod facade_tests {
         assert!(restarted.list_conversations().is_ok());
         drop(restarted);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Core forwarding for the UX-05 group path (docs/ux-05-safe-bulk-processing.md
+    /// §4): the accepted group's children execute serially through the
+    /// unchanged worker, the group lookup reflects statuses, and the one-shot
+    /// group Undo dispatches compensation immediately.
+    #[test]
+    fn group_children_execute_serially_and_group_undo_compensates() {
+        let dir = std::env::temp_dir().join(format!("mail-core-group-{}", uuid::Uuid::new_v4()));
+        let core = MailCore::open(&dir).unwrap();
+        core.start_worker(Arc::new(FakeArchiveProvider::new()))
+            .unwrap();
+        let receipt = core
+            .set_archived_group(&crate::groups::SetArchivedGroup {
+                account_id: ACCOUNT_ID.into(),
+                members: vec![
+                    ConversationRef {
+                        account_id: ACCOUNT_ID.into(),
+                        conversation_id: "conv-01".into(),
+                    },
+                    ConversationRef {
+                        account_id: ACCOUNT_ID.into(),
+                        conversation_id: "conv-02".into(),
+                    },
+                ],
+                archived: true,
+                request_id: "core-group-1".into(),
+            })
+            .expect("group accepted");
+        assert!(
+            core.set_archived_group(&crate::groups::SetArchivedGroup {
+                account_id: ACCOUNT_ID.into(),
+                members: vec![
+                    ConversationRef {
+                        account_id: ACCOUNT_ID.into(),
+                        conversation_id: "conv-02".into()
+                    },
+                    ConversationRef {
+                        account_id: ACCOUNT_ID.into(),
+                        conversation_id: "conv-01".into()
+                    },
+                ],
+                archived: true,
+                request_id: "core-group-1".into(),
+            })
+            .is_ok(),
+            "reordered replay is the same request"
+        );
+        let child_ids: Vec<String> = receipt
+            .members
+            .iter()
+            .map(|m| m.operation_id.clone().unwrap())
+            .collect();
+        // Both members execute serially through the worker.
+        assert!(wait_for(|| {
+            core.list_conversations()
+                .unwrap()
+                .activity
+                .iter()
+                .all(|row| {
+                    !child_ids.contains(&row.id) || row.status == dto::OperationStatus::Confirmed
+                })
+        }));
+        let status = core
+            .get_operation_group(&crate::groups::GetOperationGroupRequest {
+                account_id: ACCOUNT_ID.into(),
+                request_id: "core-group-1".into(),
+            })
+            .unwrap()
+            .expect("committed group");
+        assert!(status
+            .members
+            .iter()
+            .all(|m| m.status == crate::groups::GroupMemberStatus::Confirmed));
+        assert!(status.undo.available, "inside the 10 s window");
+
+        // One-shot group Undo: compensation dispatches immediately.
+        let undo = core
+            .undo_operation_group(&crate::groups::UndoOperationGroup {
+                group_id: receipt.group_id.clone(),
+                request_id: "core-undo-group-1".into(),
+            })
+            .expect("group undo");
+        assert!(undo
+            .members
+            .iter()
+            .all(|m| m.decision == crate::groups::GroupMemberUndoDecision::Compensating));
+        let compensations: Vec<String> = undo
+            .members
+            .iter()
+            .flat_map(|m| m.operation_ids.clone())
+            .collect();
+        assert_eq!(compensations.len(), 2);
+        assert!(wait_for(|| {
+            core.list_conversations()
+                .unwrap()
+                .activity
+                .iter()
+                .all(|row| {
+                    !compensations.contains(&row.id)
+                        || row.status == dto::OperationStatus::Confirmed
+                })
+        }));
+        // Restored overlays: both conversations are back in the inbox.
+        let snapshot = core.list_conversations().unwrap();
+        for conversation_id in ["conv-01", "conv-02"] {
+            assert!(snapshot
+                .conversations
+                .iter()
+                .any(|c| c.conversation_ref.conversation_id == conversation_id));
+        }
+        // Restart: the group, member outcomes and receipt replay survive.
+        core.stop_worker();
+        drop(core);
+        let reopened = MailCore::open(&dir).unwrap();
+        assert_eq!(
+            reopened
+                .set_archived_group(&crate::groups::SetArchivedGroup {
+                    account_id: ACCOUNT_ID.into(),
+                    members: vec![
+                        ConversationRef {
+                            account_id: ACCOUNT_ID.into(),
+                            conversation_id: "conv-01".into()
+                        },
+                        ConversationRef {
+                            account_id: ACCOUNT_ID.into(),
+                            conversation_id: "conv-02".into()
+                        },
+                    ],
+                    archived: true,
+                    request_id: "core-group-1".into(),
+                })
+                .unwrap(),
+            receipt,
+            "same request replays the original receipt after restart"
+        );
+        let status = reopened
+            .get_operation_group(&crate::groups::GetOperationGroupRequest {
+                account_id: ACCOUNT_ID.into(),
+                request_id: "core-group-1".into(),
+            })
+            .unwrap()
+            .expect("group survives restart");
+        assert_eq!(
+            status.undo.reason,
+            Some(dto::UndoUnavailableReason::AlreadyUndone),
+            "group undo outcome survives restart"
+        );
+        drop(reopened);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn wait_for(predicate: impl Fn() -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !predicate() {
+            if Instant::now() >= deadline {
+                return predicate();
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        true
     }
 }

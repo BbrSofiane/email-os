@@ -23,6 +23,11 @@ use mail_core::gmail::provider::GmailProvider;
 use mail_core::gmail::secrets::KeychainSecrets;
 use mail_core::gmail::sync::GmailCore;
 use mail_core::gmail::types::{AccountInfo, AccountStatus, MailMode, SyncInfo, SyncState};
+use mail_core::groups::{
+    GetOperationGroupRequest, GroupUndoReceipt, ListOperationGroupsRequest, OperationGroupPage,
+    OperationGroupReceipt, OperationGroupStatus, SetArchivedGroup, SetReadGroup,
+    UndoOperationGroup,
+};
 use mail_core::{FakeArchiveProvider, MailCore, ACCOUNT_ID};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -179,6 +184,60 @@ impl Backend {
         match self {
             Self::Fixture(core) => core.undo_operation(command),
             Self::Gmail(core) => core.undo_operation(command),
+        }
+    }
+
+    /// Archive/unarchive group acceptance; both backends support it (the
+    /// fixture covers archive groups like the single setter).
+    fn set_archived_group(
+        &self,
+        command: &SetArchivedGroup,
+    ) -> Result<OperationGroupReceipt, MailError> {
+        match self {
+            Self::Fixture(core) => core.set_archived_group(command),
+            Self::Gmail(core) => core.set_archived_group(command),
+        }
+    }
+
+    /// Group read/unread is Gmail-only, like the single `set_read`.
+    fn set_read_group(&self, command: &SetReadGroup) -> Result<OperationGroupReceipt, MailError> {
+        match self {
+            Self::Fixture(_) => Err(MailError::InvalidRequest {
+                field: "mode".to_owned(),
+            }),
+            Self::Gmail(core) => core.set_read_group(command),
+        }
+    }
+
+    fn get_operation_group(
+        &self,
+        request: &GetOperationGroupRequest,
+    ) -> Result<Option<OperationGroupStatus>, MailError> {
+        match self {
+            Self::Fixture(core) => core.get_operation_group(request),
+            Self::Gmail(core) => core.get_operation_group(request),
+        }
+    }
+
+    fn list_operation_groups(
+        &self,
+        request: &ListOperationGroupsRequest,
+    ) -> Result<OperationGroupPage, MailError> {
+        match self {
+            Self::Fixture(core) => core.list_operation_groups(request),
+            Self::Gmail(core) => core.list_operation_groups(request),
+        }
+    }
+
+    /// Group Undo is forwarded for both backends (fixture groups are archive
+    /// groups; Gmail groups are archive or read).
+    fn undo_operation_group(
+        &self,
+        command: &UndoOperationGroup,
+    ) -> Result<GroupUndoReceipt, MailError> {
+        match self {
+            Self::Fixture(core) => core.undo_operation_group(command),
+            Self::Gmail(core) => core.undo_operation_group(command),
         }
     }
 
@@ -359,6 +418,60 @@ async fn undo_operation(
 ) -> Result<UndoReceipt, MailError> {
     let backend = state.backend.clone();
     run_blocking(backend, move |backend| backend.undo_operation(&command)).await
+}
+
+#[tauri::command]
+async fn set_archived_group(
+    state: State<'_, AppState>,
+    command: SetArchivedGroup,
+) -> Result<OperationGroupReceipt, MailError> {
+    let backend = state.backend.clone();
+    run_blocking(backend, move |backend| backend.set_archived_group(&command)).await
+}
+
+#[tauri::command]
+async fn set_read_group(
+    state: State<'_, AppState>,
+    command: SetReadGroup,
+) -> Result<OperationGroupReceipt, MailError> {
+    let backend = state.backend.clone();
+    run_blocking(backend, move |backend| backend.set_read_group(&command)).await
+}
+
+#[tauri::command]
+async fn get_operation_group(
+    state: State<'_, AppState>,
+    request: GetOperationGroupRequest,
+) -> Result<Option<OperationGroupStatus>, MailError> {
+    let backend = state.backend.clone();
+    run_blocking(backend, move |backend| {
+        backend.get_operation_group(&request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_operation_groups(
+    state: State<'_, AppState>,
+    request: ListOperationGroupsRequest,
+) -> Result<OperationGroupPage, MailError> {
+    let backend = state.backend.clone();
+    run_blocking(backend, move |backend| {
+        backend.list_operation_groups(&request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn undo_operation_group(
+    state: State<'_, AppState>,
+    command: UndoOperationGroup,
+) -> Result<GroupUndoReceipt, MailError> {
+    let backend = state.backend.clone();
+    run_blocking(backend, move |backend| {
+        backend.undo_operation_group(&command)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -614,6 +727,11 @@ fn main() {
             set_read,
             retry_operation,
             undo_operation,
+            set_archived_group,
+            set_read_group,
+            get_operation_group,
+            list_operation_groups,
+            undo_operation_group,
             get_account_status,
             connect_account,
             disconnect_account,
