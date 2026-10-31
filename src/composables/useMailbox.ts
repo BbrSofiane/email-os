@@ -89,6 +89,9 @@ export interface GroupNotice {
   receipt: OperationGroupReceipt | null;
   /** Authoritative member statuses/undo availability from `getOperationGroup`. */
   status: OperationGroupStatus | null;
+  /** True when the latest authoritative status read FAILED (distinct from
+   * absence — never rendered as "Accepting…"). */
+  statusError: boolean;
   /** Receipt of the group's single Undo attempt, once accepted. */
   undone: GroupUndoReceipt | null;
   /** True once this group ever had an undo window. */
@@ -191,8 +194,18 @@ export interface Mailbox {
   undoGroupAction(): Promise<GroupUndoReceipt | null>;
   /** Activity: bounded recent group summaries, independent of list rows. */
   recentGroups: Ref<OperationGroupSummary[]>;
+  /** True when the most recent group-history read failed (not an empty result). */
+  groupsError: Ref<MailError | null>;
+  /** True when the backend returned a continuation cursor for more groups. */
+  groupsHasMore: Ref<boolean>;
+  /** Bounded Activity continuation: appends the next recent-groups page. */
+  loadMoreGroups(): Promise<void>;
+  /** Retry a failed recent-groups history read. */
+  refreshGroups(): Promise<void>;
   /** Activity: detail for one group by request id; null while loading/absent. */
   groupDetail: Ref<OperationGroupStatus | null>;
+  /** True when the most recent group-detail read failed (not absence). */
+  groupDetailError: Ref<MailError | null>;
   openGroupDetail(requestId: string): Promise<void>;
   /** Undo an arbitrary addressable group from Activity detail. */
   undoGroupById(groupId: string): Promise<GroupUndoReceipt | null>;
@@ -232,7 +245,10 @@ export function useMailbox(client: MailClient): Mailbox {
   const rangeAnchorRef = ref<ConversationRef | null>(null);
   const selectionNotice = ref<string | null>(null);
   const recentGroups = ref<OperationGroupSummary[]>([]);
+  const groupsError = ref<MailError | null>(null);
+  const groupsHasMore = ref(false);
   const groupDetail = ref<OperationGroupStatus | null>(null);
+  const groupDetailError = ref<MailError | null>(null);
 
   let listToken = 0;
   let activityToken = 0;
@@ -241,6 +257,10 @@ export function useMailbox(client: MailClient): Mailbox {
   let mailboxSessionToken = 0;
   let statusToken = 0;
   let groupDetailToken = 0;
+  let groupsToken = 0;
+  let groupStatusFetchToken = 0;
+  let groupsLoadedPages = 0;
+  let groupsCursor: string | null = null;
   let noticeRehydrated = false;
   let detached = false;
   let unsubscribe: (() => void) | null = null;
@@ -398,6 +418,7 @@ export function useMailbox(client: MailClient): Mailbox {
         lastAction.value = null;
         lastGroup.value = null;
         groupInFlight.value = false;
+        clearGroupSurfaces();
         clearSelection();
         exactTotal.value = null;
         lastSyncedAt.value = null;
@@ -445,6 +466,10 @@ export function useMailbox(client: MailClient): Mailbox {
       // successful refresh rehydrates the latest eligible notice after restart.
       void refreshRecentGroups();
       void refreshGroupStatus();
+      // An expanded Activity group detail follows authoritative changes so it
+      // cannot keep showing queued members/stale Undo availability after the
+      // children finish (§6).
+      if (groupDetail.value) void refreshExpandedGroupDetail();
       if (!noticeRehydrated) {
         noticeRehydrated = true;
         void rehydrateNotice();
@@ -500,6 +525,7 @@ export function useMailbox(client: MailClient): Mailbox {
         state: 'accepted',
         receipt: { ...g.group },
         status: g,
+        statusError: false,
         undone: null,
         hadWindow: true,
         originalCommand: g.group.kind === 'read'
@@ -601,17 +627,26 @@ export function useMailbox(client: MailClient): Mailbox {
     const rows = conversations.value;
     const targetIndex = rows.findIndex((row) => sameConversation(row.ref, target));
     if (targetIndex < 0) return;
-    const anchor = rangeAnchorRef.value && loadedContains(rangeAnchorRef.value)
+    const explicitAnchor = rangeAnchorRef.value && loadedContains(rangeAnchorRef.value)
       ? rangeAnchorRef.value
-      : fallbackAnchor && loadedContains(fallbackAnchor) ? fallbackAnchor : null;
+      : null;
+    const fallback = fallbackAnchor && !explicitAnchor && loadedContains(fallbackAnchor) ? fallbackAnchor : null;
+    const anchor = explicitAnchor ?? fallback;
     if (!anchor) {
-      if (isSelected(target)) return;
+      if (isSelected(target)) {
+        // Target-only range still establishes the initial anchor (§3.1).
+        rangeAnchorRef.value = copyRef(target);
+        return;
+      }
       if (selectedRefs.value.length + 1 > SELECTION_MAX) {
         rejectSelectionBound();
         return;
       }
       selectedRefs.value = [...selectedRefs.value, copyRef(target)];
       selectionNotice.value = null;
+      // First accepted range establishes the persistent anchor at the target;
+      // later ranges extend from here even after independent focus moves.
+      rangeAnchorRef.value = copyRef(target);
       return;
     }
     const anchorIndex = rows.findIndex((row) => sameConversation(row.ref, anchor));
@@ -620,13 +655,20 @@ export function useMailbox(client: MailClient): Mailbox {
     const addition = rows.slice(start, end + 1)
       .map((row) => row.ref)
       .filter((ref) => !isSelected(ref));
-    if (addition.length === 0) return;
+    if (addition.length === 0) {
+      // The first accepted range still anchors even when nothing was added.
+      if (!explicitAnchor) rangeAnchorRef.value = copyRef(anchor);
+      return;
+    }
     if (selectedRefs.value.length + addition.length > SELECTION_MAX) {
       rejectSelectionBound();
       return;
     }
     selectedRefs.value = [...selectedRefs.value, ...addition.map(copyRef)];
     selectionNotice.value = null;
+    // A fallback anchor used for the first range becomes THE anchor; the
+    // explicit anchor is retained untouched (never moved by range extension).
+    if (!explicitAnchor) rangeAnchorRef.value = copyRef(anchor);
   }
 
   /** Select all loaded rows; beyond the bound this refuses with visible wording. */
@@ -746,6 +788,7 @@ export function useMailbox(client: MailClient): Mailbox {
     lastAction.value = null;
     lastGroup.value = null;
     groupInFlight.value = false;
+    clearGroupSurfaces();
     clearSelection();
     conversations.value = [];
     activity.value = [];
@@ -990,26 +1033,110 @@ export function useMailbox(client: MailClient): Mailbox {
     return lastGroup.value?.requestId === requestId;
   }
 
-  /** Best-effort authoritative refresh of the slot's member statuses/undo state. */
+  /** Drops all Activity group surfaces and invalidates their in-flight reads
+   * so old-account responses cannot repopulate after disconnect/reconnect. */
+  function clearGroupSurfaces(): void {
+    ++groupsToken;
+    ++groupDetailToken;
+    groupsLoadedPages = 0;
+    groupsCursor = null;
+    recentGroups.value = [];
+    groupsError.value = null;
+    groupsHasMore.value = false;
+    groupDetail.value = null;
+    groupDetailError.value = null;
+  }
+
+  /** Authoritative refresh of the slot's member statuses/undo state. Fenced by
+   * session, request generation and slot identity, and MERGED into the current
+   * slot: a delayed pre-undo response must never overwrite a newer undo
+   * receipt or roll back hadWindow. Failures set statusError (distinct from
+   * absence) instead of silently rendering "Accepting…" forever. */
   async function refreshGroupStatus(): Promise<void> {
     const slot = lastGroup.value;
     if (!slot?.receipt) return;
-    const status = await client.getOperationGroup({ accountId: slot.accountId, requestId: slot.requestId }).catch(() => null);
-    if (detached || !status || !sameSlot(slot.requestId)) return;
+    const sessionToken = mailboxSessionToken;
+    const fetchToken = ++groupStatusFetchToken;
+    const outcome = await client.getOperationGroup({ accountId: slot.accountId, requestId: slot.requestId })
+      .then(
+        (status) => ({ status, failed: false }),
+        (): { status: OperationGroupStatus | null; failed: boolean } => ({ status: null, failed: true }),
+      );
+    const current = lastGroup.value;
+    if (detached || sessionToken !== mailboxSessionToken || !current || current.requestId !== slot.requestId) return;
+    if (fetchToken !== groupStatusFetchToken) return; // a newer status read owns the slot
     lastGroup.value = {
-      ...slot,
-      status,
-      hadWindow: slot.hadWindow || status.undo.undoableUntil !== null,
+      ...current,
+      // Never roll a newer status or undo receipt back to the captured view.
+      status: outcome.status ?? current.status,
+      statusError: outcome.failed,
+      hadWindow: current.hadWindow || (outcome.status?.undo.undoableUntil !== null && outcome.status?.undo.undoableUntil !== undefined),
     };
   }
 
-  /** Best-effort recent group summaries for Activity, independent of list rows. */
+  /** Bounded recent group summaries for Activity, independent of list rows.
+   * Session/account fenced and token-invalidated: a late response from a
+   * previous account/session never repopulates the surface. A refresh retains
+   * the already-loaded page range (bounded) instead of collapsing to one page. */
   async function refreshRecentGroups(): Promise<void> {
     const account = accountStatus.value?.account?.accountId;
+    const sessionToken = mailboxSessionToken;
     if (!account) return;
-    const page = await client.listOperationGroups({ accountId: account, limit: 10, cursor: null }).catch(() => null);
-    if (detached || !page) return;
-    recentGroups.value = page.groups;
+    const token = ++groupsToken;
+    const pagesToLoad = Math.max(1, groupsLoadedPages);
+    const collected: OperationGroupSummary[] = [];
+    let cursor: string | null = null;
+    let hasMore = false;
+    try {
+      for (let page = 0; page < pagesToLoad; page += 1) {
+        const result = await client.listOperationGroups({ accountId: account, limit: 10, cursor });
+        if (detached || sessionToken !== mailboxSessionToken || token !== groupsToken) return;
+        collected.push(...result.groups);
+        if (!result.nextCursor) {
+          hasMore = false;
+          break;
+        }
+        cursor = result.nextCursor;
+        hasMore = true;
+      }
+    } catch (raw) {
+      if (detached || sessionToken !== mailboxSessionToken || token !== groupsToken) return;
+      // A failed history read is a recovery boundary, not an empty result.
+      if (collected.length === 0) groupsError.value = toMailError(raw);
+      else recentGroups.value = collected;
+      return;
+    }
+    groupsError.value = null;
+    groupsHasMore.value = hasMore;
+    groupsCursor = cursor;
+    groupsLoadedPages = pagesToLoad;
+    recentGroups.value = collected;
+  }
+
+  /** Mailbox-seam alias for retrying a failed recent-groups history read. */
+  function refreshGroups(): Promise<void> {
+    return refreshRecentGroups();
+  }
+
+  /** Activity continuation: append the next bounded page via the retained
+   * opaque cursor; never fabricated from UI state. */
+  async function loadMoreGroups(): Promise<void> {
+    const account = accountStatus.value?.account?.accountId;
+    const sessionToken = mailboxSessionToken;
+    const token = groupsToken;
+    if (!account || !groupsHasMore.value || groupsCursor === null) return;
+    try {
+      const result = await client.listOperationGroups({ accountId: account, limit: 10, cursor: groupsCursor });
+      if (detached || sessionToken !== mailboxSessionToken || token !== groupsToken) return;
+      groupsCursor = result.nextCursor;
+      groupsHasMore.value = result.nextCursor !== null;
+      groupsError.value = null;
+      groupsLoadedPages += 1;
+      recentGroups.value = [...recentGroups.value, ...result.groups];
+    } catch (raw) {
+      if (detached || sessionToken !== mailboxSessionToken || token !== groupsToken) return;
+      groupsError.value = toMailError(raw);
+    }
   }
 
   function adoptGroupReceipt(receipt: OperationGroupReceipt): void {
@@ -1026,12 +1153,40 @@ export function useMailbox(client: MailClient): Mailbox {
    */
   async function resolveUnknownAcceptance(): Promise<void> {
     const slot = lastGroup.value;
-    if (!slot || slot.state !== 'awaiting-acceptance') return;
-    lastGroup.value = { ...slot, state: 'acceptance-unknown' };
+    if (!slot || slot.state === 'accepted') return;
+    if (slot.state === 'awaiting-acceptance') lastGroup.value = { ...slot, state: 'acceptance-unknown' };
     const status = await client.getOperationGroup({ accountId: slot.accountId, requestId: slot.requestId }).catch(() => null);
     if (detached || !status || !sameSlot(slot.requestId)) return;
     lastGroup.value = { ...lastGroup.value!, state: 'accepted', receipt: { ...status.group }, status };
     await refresh();
+  }
+
+  /**
+   * Typed admission rejections that PROVE nothing committed (the command was
+   * refused before any write). Only transport-level ambiguity — where the
+   * request may or may not have committed — enters `acceptance-unknown`.
+   * Storage failures roll back the entire local acceptance (§4.1), so they are
+   * definitive too; without this, a read-only or invalid group would lock all
+   * mutations forever behind an unresolvable "not yet known" slot.
+   */
+  const DEFINITIVE_ACCEPTANCE_ERRORS: ReadonlySet<MailError['kind']> = new Set([
+    'invalid_request',
+    'request_id_conflict',
+    'read_only',
+    'permission_required',
+    'not_found',
+    'busy',
+    'storage_unavailable',
+    'not_configured',
+    'auth_required',
+    'auth_failed',
+    'auth_cancelled',
+    'secrets_unavailable',
+  ]);
+
+  function acceptanceDefinitivelyRejected(raw: unknown): boolean {
+    const error = toMailError(raw);
+    return DEFINITIVE_ACCEPTANCE_ERRORS.has(error.kind);
   }
 
   /**
@@ -1059,15 +1214,29 @@ export function useMailbox(client: MailClient): Mailbox {
     } catch (raw) {
       if (detached || sessionToken !== mailboxSessionToken) return;
       lastCommandError.value = toMailError(raw);
-      // Re-query by request id; the slot stays honest while unresolved.
+      if (acceptanceDefinitivelyRejected(raw)) {
+        // The exact original request was definitively refused (nothing
+        // committed): release the fence instead of locking mutations forever.
+        if (sameSlot(slot.requestId)) lastGroup.value = null;
+        return;
+      }
+      // Transport ambiguity: re-query by request id; the slot stays honest
+      // while unresolved.
       await resolveUnknownAcceptance();
     } finally {
       if (!detached && sessionToken === mailboxSessionToken) groupInFlight.value = false;
     }
   }
 
+  /**
+   * Dismissal is only available for a RESOLVED slot: an unresolved acceptance
+   * (lost response) keeps the immutable request id and command and holds the
+   * mutation fence until authoritative resolution (§3.3/§4.3) — dismissal
+   * must never release them for a fresh, different request.
+   */
   function dismissGroupNotice(): void {
     if (groupInFlight.value) return; // an in-flight acceptance owns the slot
+    if (lastGroup.value?.state !== 'accepted') return; // unresolved intent is kept
     lastGroup.value = null;
   }
 
@@ -1082,6 +1251,14 @@ export function useMailbox(client: MailClient): Mailbox {
     value: boolean,
   ): Promise<boolean> {
     if (!mutationsAllowed()) return false;
+    // P1 fence (§3.3): a pending single mutation (inline row action, undo,
+    // retry) must never race a group dispatch — the group would bump
+    // `commandToken`, the single's finally would stop clearing its in-flight
+    // ref, and single actions could stay permanently fenced afterwards.
+    if (inFlightCommandRef.value !== null) {
+      lastCommandError.value = { kind: 'busy' };
+      return false;
+    }
     if (kind === 'read' && accountStatus.value?.mode !== 'gmail') {
       lastCommandError.value = { kind: 'read_only' };
       return false;
@@ -1110,6 +1287,7 @@ export function useMailbox(client: MailClient): Mailbox {
       state: 'awaiting-acceptance',
       receipt: null,
       status: null,
+      statusError: false,
       undone: null,
       hadWindow: false,
       originalCommand,
@@ -1126,6 +1304,13 @@ export function useMailbox(client: MailClient): Mailbox {
     } catch (raw) {
       if (!detached && sessionToken === mailboxSessionToken && token === commandToken) {
         lastCommandError.value = toMailError(raw);
+        if (acceptanceDefinitivelyRejected(raw)) {
+          // Typed proof that nothing committed: release the fence and the
+          // slot; the honest error stays in the status line.
+          if (sameSlot(requestId)) lastGroup.value = null;
+          groupInFlight.value = false;
+          return false;
+        }
         // Nothing yet establishes that nothing committed: query by request id.
         await resolveUnknownAcceptance();
       }
@@ -1206,15 +1391,43 @@ export function useMailbox(client: MailClient): Mailbox {
     }
   }
 
-  /** Activity: load one group's authoritative detail by original request id. */
+  /** Activity: load one group's authoritative detail by original request id.
+   * Session/account fenced; a failed read surfaces typed (distinct from
+   * absence) so persisted recovery records are never silently hidden. */
   async function openGroupDetail(requestId: string): Promise<void> {
     const account = accountStatus.value?.account?.accountId;
+    const sessionToken = mailboxSessionToken;
     if (!account) return;
     const token = ++groupDetailToken;
     groupDetail.value = null;
-    const status = await client.getOperationGroup({ accountId: account, requestId }).catch(() => null);
-    if (detached || token !== groupDetailToken) return;
-    groupDetail.value = status;
+    groupDetailError.value = null;
+    const outcome = await client.getOperationGroup({ accountId: account, requestId })
+      .then(
+        (status) => ({ status, error: null as MailError | null }),
+        (raw): { status: OperationGroupStatus | null; error: MailError | null } => ({ status: null, error: toMailError(raw) }),
+      );
+    if (detached || token !== groupDetailToken || sessionToken !== mailboxSessionToken) return;
+    groupDetail.value = outcome.status;
+    groupDetailError.value = outcome.error;
+  }
+
+  /** Background re-fetch of the currently expanded group detail (authoritative
+   * change events): keeps the old detail visible until the fresh view lands,
+   * with the same session/account/token fences as an explicit open. */
+  async function refreshExpandedGroupDetail(): Promise<void> {
+    const current = groupDetail.value;
+    const account = accountStatus.value?.account?.accountId;
+    if (!current || !account || current.group.accountId !== account) return;
+    const sessionToken = mailboxSessionToken;
+    const token = groupDetailToken;
+    const outcome = await client.getOperationGroup({ accountId: account, requestId: current.group.requestId })
+      .then(
+        (status) => ({ status, error: null as MailError | null }),
+        (raw): { status: OperationGroupStatus | null; error: MailError | null } => ({ status: null, error: toMailError(raw) }),
+      );
+    if (detached || sessionToken !== mailboxSessionToken || token !== groupDetailToken) return;
+    if (outcome.status) groupDetail.value = outcome.status;
+    groupDetailError.value = outcome.error;
   }
 
   async function enableMailboxActions(): Promise<void> {
@@ -1294,8 +1507,10 @@ export function useMailbox(client: MailClient): Mailbox {
     selectedRefs, rangeAnchorRef, selectionNotice, isSelected, toggleSelected, extendSelectionTo,
     selectAllLoaded, clearSelection, selectionInLoadedOrder,
     lastGroup, bulkUnresolved, groupInFlight, setArchivedGroup, setReadGroup, recoverGroupAcceptance,
-    dismissGroupNotice, undoGroupAction, recentGroups, groupDetail, openGroupDetail, undoGroupById,
+    dismissGroupNotice, undoGroupAction, recentGroups, groupsError, groupsHasMore, loadMoreGroups,
+    groupDetail, groupDetailError, openGroupDetail, undoGroupById,
     enableMailboxActions, cancelMailboxActionUpgrade, archiveFocused,
+    refreshGroups,
     accountStatus, accountState, accountError, accountBusy, mode, isGmail,
     connectAccount, disconnectAccount, requestSync,
   };

@@ -228,6 +228,13 @@ pub struct OperationSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub group_id: Option<String>,
+    /// Operation this one retries (docs/ux-05-safe-bulk-processing.md §4.3);
+    /// persisted by `accept_retry` so a retry stays inspectable as the
+    /// recovery attempt of its original operation after restart. Retries are
+    /// new top-level actions and never rewrite the original result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub retry_of: Option<String>,
     /// ISO-8601 UTC; present only while §3.2 rules 1–7 hold at query time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

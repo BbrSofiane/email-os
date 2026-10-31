@@ -152,7 +152,12 @@ group: OperationGroupReceipt,
 /**
  * One entry per receipt member, in persisted member order.
  */
-members: Array<GroupMemberStatusView>, undo: GroupUndoAvailability, };
+members: Array<GroupMemberStatusView>, undo: GroupUndoAvailability,
+/**
+ * The group's single persisted Undo attempt with CURRENT compensation
+ * outcomes; absent until a group Undo has been accepted.
+ */
+undoReceipt?: GroupUndoRecord, };
 
 export type ListOperationGroupsRequest = { accountId: string, limit: number, cursor: string | null, };
 
@@ -189,6 +194,26 @@ export type GroupMemberUndoResult = { ordinal: number, conversation: Conversatio
  * `cancelled`/`skipped` members.
  */
 operationIds: Array<string>, };
+
+export type GroupUndoRecord = {
+/**
+ * Request id of the accepted `undo_operation_group` attempt.
+ */
+requestId: string, acceptedAt: string,
+/**
+ * One entry per receipt member, in persisted member order.
+ */
+members: Array<GroupMemberUndoStatus>, };
+
+export type GroupMemberUndoStatus = { ordinal: number, decision: GroupMemberUndoDecision,
+/**
+ * Current status of each compensating operation in queue order; empty
+ * for `cancelled`/`skipped` members. Distinct from the original child
+ * execution status in `OperationGroupStatus.members`.
+ */
+compensations: Array<GroupCompensationStatus>, };
+
+export type GroupCompensationStatus = { operationId: string, status: OperationStatus, failure: OperationFailure | null, };
 
 export type GroupUndoReceipt = { groupId: string, requestId: string, acceptedAt: string,
 /**
@@ -266,6 +291,13 @@ undoOf?: string,
  * Undo via `undoableUntil`.
  */
 groupId?: string,
+/**
+ * Operation this one retries (docs/ux-05-safe-bulk-processing.md §4.3);
+ * persisted by `accept_retry` so a retry stays inspectable as the
+ * recovery attempt of its original operation after restart. Retries are
+ * new top-level actions and never rewrite the original result.
+ */
+retryOf?: string,
 /**
  * ISO-8601 UTC; present only while §3.2 rules 1–7 hold at query time.
  */

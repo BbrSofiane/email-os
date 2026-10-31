@@ -71,6 +71,25 @@ describe('useMailbox selection state', () => {
     stop();
   });
 
+  it('the first fallback range establishes a PERSISTENT anchor (review P2-4)', async () => {
+    const fake = createBrowserFakeMailClient();
+    const { result, stop } = scopeRun(() => useMailbox(fake));
+    await result.ready;
+    await flushMacrotasks(2);
+    const ref = (id: string): ConversationRef => fixtureRef(id);
+    // First range with no explicit anchor: fallback (pre-move focus) row 1.
+    result.extendSelectionTo(ref('conv-02'), ref('conv-01'));
+    expect(selectedIds(result.selectedRefs.value).sort()).toEqual(['conv-01', 'conv-02']);
+    // The fallback becomes THE anchor.
+    expect(result.rangeAnchorRef.value).toEqual(ref('conv-01'));
+    // Independent focus movement, then a reversed range: it extends from the
+    // original anchor (rows 1–5), it does not start a new 5–6 range.
+    result.extendSelectionTo(ref('conv-05'), ref('conv-06'));
+    expect(selectedIds(result.selectedRefs.value).sort())
+      .toEqual(['conv-01', 'conv-02', 'conv-03', 'conv-04', 'conv-05']);
+    stop();
+  });
+
   it('rejects additions beyond the bound without replacing the existing selection', async () => {
     const fake = createBrowserFakeMailClient();
     const { result, stop } = scopeRun(() => useMailbox(fake));

@@ -126,8 +126,11 @@ describe('App UX-05 selection and bulk groups', () => {
     await w.find('[data-test="conversation-row-conv-03"]').trigger('click');
     await settle();
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
-    // Reader archive acts on the visible scope (the selection).
-    await w.find('[data-test="reader-archive-toggle"]').trigger('click');
+    // Reader archive acts on the visible scope (the selection): the reader
+    // shows explicit count-labelled selected-scope controls, not the open
+    // conversation's single-state toggle.
+    expect(w.find('[data-test="reader-archive-toggle"]').exists()).toBe(false);
+    await w.find('[data-test="reader-selection-archive"]').trigger('click');
     await settle();
     expect(groupArchives).toHaveLength(1);
     expect(groupArchives[0]!.members.map((m) => m.conversationId).sort()).toEqual(['conv-01', 'conv-02']);
@@ -297,4 +300,82 @@ describe('App UX-05 selection and bulk groups', () => {
     await settle();
     expect(w.find('[data-test^="group-detail-"]').exists()).toBe(false);
   });
+
+  it('select-all reacts to the loaded count across the bound (review P2-12)', async () => {
+    // Done context pages via listCachedDone; stub >100 loaded rows.
+    const baseRows = fake.listCachedDone({ accountId: 'fixture-account', limit: 100, cursor: null });
+    const template = (await baseRows).conversations[0]!;
+    const oversized = Array.from({ length: OPERATION_GROUP_MAX_MEMBERS + 20 }, (_, i) => ({
+      ...template,
+      ref: fixtureRef(`extra-${i}`),
+    }));
+    const client: MailClient = {
+      ...inner0(fake),
+      listCachedDone: async () => ({
+        conversations: oversized,
+        nextCursor: null,
+        coverage: (await baseRows).coverage,
+        exactTotal: oversized.length,
+        lastSyncedAt: null,
+      }),
+    };
+    const w = mount(App, { props: { client, mode: 'browser-preview' }, attachTo: document.body });
+    wrapper = w;
+    await settle();
+    await w.find('[data-test="rail-done"]').trigger('click');
+    await settle();
+    // Select one row to show the bar, then check the reactive disabled state.
+    await w.find('[data-test="row-select-extra-0"]').setValue(true);
+    const selectAll = w.find('[data-test="selection-select-all"]');
+    expect((selectAll.element as HTMLButtonElement).disabled).toBe(true);
+    expect(selectAll.attributes('title')).toContain('limited to 100');
+  });
+
+  it('X on a focused wide-contact column never mutates the hidden selection (review P2-14)', async () => {
+    const w = mountApp();
+    await settle();
+    const contactColumn = w.find('[data-test="contact-column"]');
+    expect(contactColumn.exists()).toBe(true);
+    (contactColumn.element as HTMLElement).focus();
+    expect(document.activeElement).toBe(contactColumn.element);
+    (contactColumn.element as HTMLElement).dispatchEvent(keydown({ key: 'x' }));
+    await settle();
+    expect(w.find('[data-test="selection-bar"]').exists()).toBe(false);
+  });
+
+  it('Clear from the selection bar hands focus to a surviving row (review P2-15)', async () => {
+    const w = mountApp();
+    await settle();
+    await selectRows(w, ['conv-01', 'conv-02']);
+    const clearButton = w.find('[data-test="selection-clear"]');
+    (clearButton.element as HTMLElement).focus();
+    await clearButton.trigger('click');
+    await settle();
+    expect(w.find('[data-test="selection-bar"]').exists()).toBe(false);
+    // Focus did not drop to <body>: the focused row (or empty state) owns it.
+    const focusOnRow = document.activeElement?.matches?.('[role="listitem"]') ?? false;
+    const focusOnEmpty = document.activeElement?.matches?.('[data-test="inbox-empty"]') ?? false;
+    expect(focusOnRow || focusOnEmpty).toBe(true);
+  });
+
+  it('the reader with a selection offers both explicit desired-state read controls (review P2-5)', async () => {
+    useGmailMode(fake, { mutationAccess: 'enabled' });
+    const w = mountApp();
+    await settle();
+    await selectRows(w, ['conv-01', 'conv-02']);
+    await w.find('[data-test="conversation-row-conv-03"]').trigger('click');
+    await settle();
+    expect(w.find('[data-test="reader"]').exists()).toBe(true);
+    // Mixed selection: both explicit count-labelled controls, never a
+    // mixed-state toggle derived from the open conversation.
+    expect(w.find('[data-test="reader-selection-mark-read"]').exists()).toBe(true);
+    expect(w.find('[data-test="reader-selection-mark-unread"]').exists()).toBe(true);
+    expect(w.find('[data-test="reader-toggle-read"]').exists()).toBe(false);
+    expect(w.find('[data-test="reader-selection-mark-read"]').text()).toContain('2 read');
+    expect(w.find('[data-test="reader-selection-mark-unread"]').text()).toContain('2 unread');
+  });
 });
+
+function inner0(fake: BrowserFake): MailClient {
+  return fake as unknown as MailClient;
+}

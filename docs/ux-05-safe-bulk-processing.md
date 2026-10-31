@@ -377,7 +377,7 @@ partial Undo attempt, reader-surviving selection cleared on context/account
 change). Nothing here certifies native WKWebView behavior or real provider
 behavior; all tests are synthetic.
 
-### Integrated gate results (parent, merged tree, logs `/tmp/ux05-checks/`)
+### Integrated gate results (integration worker, merged tree `80441d6`, logs `/tmp/ux05-checks/`)
 
 | Check | Result |
 | --- | --- |
@@ -390,6 +390,117 @@ behavior; all tests are synthetic.
 | `mise run check:native` | pass — `cargo check --locked -p email-os --all-targets` |
 | `mise run test:native` | pass — 7/7 native bridge tests |
 | `cargo build --locked -p email-os` | pass — ACL manifest (`src-tauri/gen/schemas/acl-manifests.json`) contains all five group permissions |
+
+The parent independently re-ran all six factory checks plus `check:native` and
+`test:native` at the same revision `80441d6` before dispatching reviews: pass,
+UI 402 passed / 20 opt-in rendered skipped, native 7 passed.
+
+### Review fix pass (parent-approved, at `feat/ux-05-safe-bulk-processing`)
+
+Two complete fresh-context reviews (backend group safety; frontend selection
+scope) returned *needs attention* with four backend P2s and sixteen UI
+findings (P1 1–3, P2 4–16). All findings were fixed in one writer pass on this
+branch; nothing was deferred except where noted. Additive wire DTOs were
+approved and used: `OperationGroupStatus.undoReceipt` (persisted group-Undo
+record with CURRENT compensation outcomes) and `OperationSummary.retryOf`.
+
+Backend (all four P2s fixed, plus the parent's test-coverage requirements):
+
+- **Disconnect cleanup**: `GmailStore::clear_account` deletes
+  `gmail_operation_group_members`/`gmail_operation_groups` in the same
+  transaction; test proves reconnect and clean original-request-id reuse.
+- **Persisted Undo receipt through the recovery query**: both stores rebuild
+  the committed group-Undo record (request id, per-member decisions, current
+  compensation statuses/failures) inside `get_operation_group`; restart,
+  reopen, failed-compensation and lost-response cases are tested in both
+  stores.
+- **`OperationSummary.groupId` populated** for group children in both stores
+  (compensations stay ungrouped); asserted across restarts.
+- **`OperationSummary.retryOf` exposed** and populated by the Gmail activity
+  load; restart test proves failed member → confirmed retry → lineage
+  survives while the historical member result is not rewritten.
+- **Mid-transaction failure**: a TEMP SQL trigger aborts the second member's
+  insert AFTER the first member is staged inside the open acceptance
+  transaction; the whole group rolls back (no orphan rows/request key) and
+  the same request retries safely. This is a genuine mid-transaction test,
+  unlike the earlier pre-entry persistence-gate tests (which remain).
+- **Claim-versus-Undo interleaving**: two threads with a barrier run claims
+  and group Undo concurrently; the test requires completion (no deadlock,
+  30 s recv timeout), unique compensations, and decision/state consistency.
+- **Authentic pre-UX-05 migration**: a hand-built UX-04-era schema
+  (`schema_version = '2'`, no new columns/tables) is opened by current code;
+  rows survive with backfilled `action_id`, group tables exist empty, and the
+  historical single stays undoable from its preserved preimage.
+
+Frontend (P1 1–3 and P2 4–16 fixed; regressions added per finding):
+
+- P1-1: Dismissal no longer exists (or works) for an unresolved acceptance —
+  the original request id/command and the mutation fence are held until
+  authoritative resolution; typed definitive admission rejections
+  (`invalid_request`, `read_only`, `permission_required`, `storage_unavailable`,
+  `request_id_conflict`, …) release the fence immediately instead of locking
+  mutations behind an unresolvable "not yet known" slot; transport-ambiguous
+  failures (`network_unavailable`, `provider_unavailable`, unknown shapes)
+  stay `acceptance-unknown`.
+- P1-2: group dispatch is refused with `busy` while a single mutation is in
+  flight, at both the App (`bulkMembers`) and composable (`submitGroup`)
+  boundaries; the pre-existing single-side fence (`bulkUnresolved`) is kept.
+- P1-3: group surfaces (`recentGroups`, `groupDetail`) are cleared and their
+  in-flight reads token-invalidated on disconnect and account changes; late
+  old-session responses are fenced by session token + request generation and
+  can never repopulate Activity.
+- P2-4: the first accepted range adopts its fallback (or target-only) anchor
+  permanently; a later reversed range extends from the original anchor.
+- P2-5: with a selection, the reader shows explicit count-labelled
+  Mark N Done / Mark N Not Done and Mark N read / Mark N unread controls
+  instead of the open conversation's single-state toggles.
+- P2-6: Activity keeps the group cursor, offers bounded "Show older groups"
+  continuation, and retains the loaded page range across refreshes.
+- P2-7: an expanded group detail refetches on authoritative changes
+  (session/token fenced) so finished children/stale Undo availability cannot
+  linger.
+- P2-8: failed group-history and group-detail reads surface typed errors with
+  retry controls instead of rendering "No operations yet" / "Accepting…"; a
+  failed status read marks the slot `statusError` instead of faking pending.
+- P2-9: the notice tracks CURRENT compensation outcomes (restored / restore
+  failed for N / restore outcome unknown / restoring…) from the backend's
+  persisted undo record, falling back to refreshed activity rows.
+- P2-10/P2-11: the new wire fields are rendered in Activity detail (undo
+  decisions, compensation outcomes, retry lineage links).
+- P2-12: select-all disabled state and explanation are reactive to the
+  current loaded count.
+- P2-13: delayed status reads are fenced by fetch generation and MERGED into
+  the current slot; a pre-undo capture can never overwrite the accepted undo
+  receipt or re-offer undo.
+- P2-14: selection shortcuts require actual list-surface ownership (a real
+  Node in the list/body/empty state); the wide contact column can no longer
+  mutate a hidden selection. Window-targeted synthetic events stay list-owned.
+- P2-15: Clear from the selection bar hands focus to the focused row or the
+  empty state instead of dropping it to `document.body`.
+- P2-16: the browser fake's group undo availability includes per-member
+  eligibility — an all-failed/all-unknown group offers no enabled Undo and
+  rejects an all-skipped attempt, matching Rust.
+
+Fix-pass gate results (integration worker, merged fix tree, logs
+`/tmp/ux05-fix/`):
+
+| Check | Result |
+| --- | --- |
+| `mise run test:core` | pass — 136 lib + 2 cached_done + 7 drafts + 8 gmail_auth + 30 gmail_cache + 15 gmail_ops + 16 integration + 17 undo, 0 failed (one unrelated pre-existing flake observed once, see below; green on rerun) |
+| `mise run check:contract` | pass — regenerated `generated.ts` matches Rust DTOs |
+| `mise run lint:core` | pass — `cargo fmt --check` + clippy `-D warnings` |
+| `mise run test:ui` | pass — 429 passed \| 20 skipped (27 new regression tests) |
+| `mise run typecheck` | pass — 0 errors |
+| `mise run build:web` | pass |
+| `mise run check:native` | pass |
+| `mise run test:native` | pass — 7/7 native bridge tests |
+
+Known pre-existing flake (documented in UX-04 §9, reproduced once at baseline
+`80441d6` under full-suite parallel load, not caused by this pass): the Gmail
+`undoable_until_survives_a_restart_within_the_window_and_expires_after_it`
+test can lose a queued-vs-claim race after restart (expects `Cancelled`, saw
+`Compensating`). Single-suite runs are stable; no scheduler/timeout change is
+made in this slice.
 
 ### Known residual gaps (not inferred as done)
 

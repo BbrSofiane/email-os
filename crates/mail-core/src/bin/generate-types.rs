@@ -24,11 +24,12 @@ use mail_core::gmail::types::{
     AccountInfo, AccountStatus, ConnectionState, MailMode, MutationAccess, SyncInfo, SyncState,
 };
 use mail_core::groups::{
-    GetOperationGroupRequest, GroupMemberReceipt, GroupMemberRejection, GroupMemberStatus,
-    GroupMemberStatusView, GroupMemberUndoDecision, GroupMemberUndoResult, GroupUndoAvailability,
-    GroupUndoReceipt, GroupUndoSkipReason, ListOperationGroupsRequest, OperationGroupPage,
-    OperationGroupReceipt, OperationGroupStatus, OperationGroupSummary, SetArchivedGroup,
-    SetReadGroup, UndoOperationGroup,
+    GetOperationGroupRequest, GroupCompensationStatus, GroupMemberReceipt, GroupMemberRejection,
+    GroupMemberStatus, GroupMemberStatusView, GroupMemberUndoDecision, GroupMemberUndoResult,
+    GroupMemberUndoStatus, GroupUndoAvailability, GroupUndoReceipt, GroupUndoRecord,
+    GroupUndoSkipReason, ListOperationGroupsRequest, OperationGroupPage, OperationGroupReceipt,
+    OperationGroupStatus, OperationGroupSummary, SetArchivedGroup, SetReadGroup,
+    UndoOperationGroup,
 };
 use ts_rs::TS;
 
@@ -66,6 +67,9 @@ fn declarations() -> Vec<String> {
         GroupUndoSkipReason::decl(),
         GroupMemberUndoDecision::decl(),
         GroupMemberUndoResult::decl(),
+        GroupUndoRecord::decl(),
+        GroupMemberUndoStatus::decl(),
+        GroupCompensationStatus::decl(),
         GroupUndoReceipt::decl(),
         MailboxOperationKind::decl(),
         ConversationSummary::decl(),

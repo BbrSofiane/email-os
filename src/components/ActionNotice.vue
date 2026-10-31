@@ -40,8 +40,20 @@ export interface GroupNoticeView {
   /** ISO group-undo deadline from authoritative state; null when not undoable. */
   undoableUntil: string | null;
   hadWindow: boolean;
+  /** True when the latest authoritative member-status read FAILED (distinct
+   * from absence — never rendered as "Accepting…"). */
+  statusError: boolean;
   /** Per-member group Undo outcomes, once the one attempt is accepted. */
-  undone: { cancelled: number; compensating: number; skipped: number; skipReasons: Record<string, number> } | null;
+  undone: {
+    cancelled: number;
+    compensating: number;
+    skipped: number;
+    skipReasons: Record<string, number>;
+    /** CURRENT compensation outcomes, tracked separately from the original
+     * execution statuses; a failed restoration is never hidden behind
+     * permanent "restoring…" wording (§5/§6). */
+    compensationOutcomes: { confirmed: number; failed: number; unknown: number; pending: number };
+  } | null;
 }
 
 const props = defineProps<{
@@ -76,6 +88,7 @@ const groupStatusText = computed(() => {
   const group = props.notice?.group ?? null;
   if (!group) return '';
   if (group.acceptanceUnknown) return 'Acceptance not yet known';
+  if (group.statusError && !group.statusKnown) return 'Status check failed — will retry on next refresh';
   if (!group.statusKnown) return 'Accepting…';
   if (group.undone) {
     const undoneCount = group.undone.cancelled + group.undone.compensating;
@@ -84,7 +97,16 @@ const groupStatusText = computed(() => {
       ? `1 skipped — ${SKIP_REASON_LABELS[reasonEntries[0]![0]!] ?? reasonEntries[0]![0]!}`
       : `${group.undone.skipped} skipped${reasonEntries.length ? ` — ${reasonEntries.map(([reason, n]) => `${n} ${SKIP_REASON_LABELS[reason] ?? reason}`).join(', ')}` : ''}`;
     const parts = [`Undo accepted for ${undoneCount} of ${group.count}`, skipText];
-    if (group.undone.compensating > 0) parts.push('restoring…');
+    const outcomes = group.undone.compensationOutcomes;
+    if (outcomes.failed > 0) {
+      parts.push(`restore failed for ${outcomes.failed} — see Activity`);
+    } else if (outcomes.unknown > 0) {
+      parts.push(`restore outcome unknown for ${outcomes.unknown} — see Activity`);
+    } else if (outcomes.pending > 0) {
+      parts.push('restoring…');
+    } else if (outcomes.confirmed > 0) {
+      parts.push('restored');
+    }
     return parts.join('; ');
   }
   const c = group.counts;
@@ -195,7 +217,9 @@ const truncatedSubject = computed(() => {
       </p>
       <span v-if="notice.group!.acceptanceUnknown" class="action-notice-undo">
         <button type="button" data-test="action-notice-recover-acceptance" @click="emit('undoGroup')">Check acceptance</button>
-        <button type="button" data-test="action-notice-dismiss-group" @click="emit('dismissGroup')">Dismiss</button>
+        <!-- No Dismiss while acceptance is unresolved: the original request id
+             and command must be kept and the mutation fence held until
+             authoritative resolution (§3.3/§4.3). -->
       </span>
       <span v-else-if="groupUndoVisible" class="action-notice-undo">
         <button type="button" data-test="action-notice-undo-group" @click="emit('undoGroup')">Undo</button>

@@ -218,3 +218,58 @@ describe('browser fake: group undo', () => {
       .rejects.toMatchObject({ kind: 'undo_unavailable' });
   });
 });
+
+// --- UX-05 review fixes: per-member undo availability, persisted undo record
+// exposure, and retry lineage (synthetic parity with the Rust stores). ---
+
+describe('browser fake: group undo availability and recovery inspection', () => {
+  it('an all-failed group offers NO enabled undo and rejects an all-skipped attempt (review U16)', async () => {
+    const fake = createBrowserFakeMailClient();
+    fake.controls.behavior.failNext = 2; // both children fail definitively
+    await fake.setArchivedGroup({ accountId: 'fixture-account', members: [ref(1), ref(2)], archived: true, requestId: 'req-fail' });
+    await waitFor(() => fake.controls.activity().every((op) => op.status === 'failed'));
+    const status = await fake.getOperationGroup({ accountId: 'fixture-account', requestId: 'req-fail' });
+    expect(status!.undo).toMatchObject({ available: false, reason: 'not_applicable' });
+    await expect(fake.undoOperationGroup({ groupId: status!.group.groupId, requestId: 'undo-fail' }))
+      .rejects.toMatchObject({ kind: 'undo_unavailable', reason: 'not_applicable' });
+  });
+
+  it('exposes the persisted undo record with current compensation outcomes (review U10)', async () => {
+    const fake = createBrowserFakeMailClient();
+    fake.controls.behavior.failNext = 1;
+    await fake.setArchivedGroup({ accountId: 'fixture-account', members: [ref(1), ref(2)], archived: true, requestId: 'req-rec' });
+    await waitFor(() => fake.controls.activity().every((op) => op.status !== 'queued' && op.status !== 'applying'));
+    const status = await fake.getOperationGroup({ accountId: 'fixture-account', requestId: 'req-rec' });
+    const receipt = await fake.undoOperationGroup({ groupId: status!.group.groupId, requestId: 'undo-rec' });
+    const after = await fake.getOperationGroup({ accountId: 'fixture-account', requestId: 'req-rec' });
+    const record = after!.undoReceipt;
+    expect(record).toBeTruthy();
+    expect(record!.requestId).toBe('undo-rec');
+    const compensated = record!.members.find((m) => m.decision.kind === 'compensating');
+    expect(compensated!.compensations.length).toBeGreaterThan(0);
+    // The compensation outcome converges to confirmed; the skipped member
+    // carries its reason and no compensations.
+    await waitFor(() => compensated!.compensations.every((c) => c.status === 'confirmed'));
+    expect(record!.members.find((m) => m.decision.kind === 'skipped')!.compensations).toEqual([]);
+    void receipt;
+  });
+
+  it('exposes retry lineage on activity rows and never on the group child (review U11)', async () => {
+    const fake = createBrowserFakeMailClient();
+    useGmailMode(fake, { mutationAccess: 'enabled' });
+    fake.controls.behavior.failNext = 1;
+    const gmailRef = (id: string): ConversationRef => ({ accountId: 'gmail-account', conversationId: id });
+    await fake.setReadGroup({ accountId: 'gmail-account', members: [gmailRef('conv-01'), gmailRef('conv-02')], read: true, requestId: 'req-retry' });
+    await waitFor(() => fake.controls.activity().every((op) => op.status !== 'queued' && op.status !== 'applying'));
+    const status = await fake.getOperationGroup({ accountId: 'gmail-account', requestId: 'req-retry' });
+    const failed = status!.members.find((m) => m.status === 'failed')!;
+    const child = fake.controls.activity().find((op) => op.id === failed.operationId);
+    expect(child!.groupId).toBe(status!.group.groupId);
+    expect(child!.retryOf).toBeUndefined();
+    const retry = await fake.retryOperation({ operationId: failed.operationId!, requestId: 'retry-1' });
+    await waitFor(() => fake.controls.activity().some((op) => op.id === retry.operationId && op.status === 'confirmed'));
+    const retryRow = fake.controls.activity().find((op) => op.id === retry.operationId)!;
+    expect(retryRow.retryOf).toBe(failed.operationId);
+    expect(retryRow.groupId).toBeUndefined();
+  });
+});

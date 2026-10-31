@@ -159,3 +159,85 @@ describe('ActionNotice', () => {
     expect(label).not.toContain('·');
   });
 });
+
+describe('ActionNotice group undo wording (review fixes)', () => {
+  // --- UX-05 group notices: partial undo wording tracks CURRENT compensation
+  // outcomes instead of a permanent "restoring…" (review U9). ---
+  const groupBase = {
+    label: 'Mark Done (Archive)',
+    actionId: 'archive' as LastActionId,
+    subject: null,
+    operation: null,
+    undoableUntil: null,
+    hadWindow: true,
+    undone: null,
+    group: {
+      count: 2,
+      counts: { pending: 0, confirmed: 2, failed: 0, rejected: 0, unknown: 0, cancelled: 0 },
+      acceptanceUnknown: false,
+      statusKnown: true,
+      statusError: false,
+      undoableUntil: null,
+      hadWindow: true,
+      undone: {
+        cancelled: 0,
+        compensating: 1,
+        skipped: 1,
+        skipReasons: { unknown_prior: 1 },
+        compensationOutcomes: { confirmed: 0, failed: 0, unknown: 0, pending: 0 },
+      },
+    },
+  };
+
+  it('shows restoring wording while a compensation is still pending', () => {
+    const wrapper = mount(ActionNotice, {
+      props: { notice: { ...groupBase, group: { ...groupBase.group!, undone: { ...groupBase.group!.undone!, compensationOutcomes: { confirmed: 0, failed: 0, unknown: 0, pending: 1 } } } }, now: NOW },
+    });
+    expect(wrapper.get('[data-test="action-notice-status"]').text())
+      .toContain('Undo accepted for 1 of 2; 1 skipped — unknown prior state; restoring…');
+  });
+
+  it('shows restore-failed wording instead of permanent restoring (review U9)', () => {
+    const wrapper = mount(ActionNotice, {
+      props: { notice: { ...groupBase, group: { ...groupBase.group!, undone: { ...groupBase.group!.undone!, compensationOutcomes: { confirmed: 0, failed: 1, unknown: 0, pending: 0 } } } }, now: NOW },
+    });
+    expect(wrapper.get('[data-test="action-notice-status"]').text())
+      .toContain('restore failed for 1 — see Activity');
+    expect(wrapper.get('[data-test="action-notice-status"]').text()).not.toContain('restoring');
+  });
+
+  it('shows restored wording when every compensation confirmed', () => {
+    const wrapper = mount(ActionNotice, {
+      props: { notice: { ...groupBase, group: { ...groupBase.group!, undone: { ...groupBase.group!.undone!, compensationOutcomes: { confirmed: 1, failed: 0, unknown: 0, pending: 0 } } } }, now: NOW },
+    });
+    expect(wrapper.get('[data-test="action-notice-status"]').text()).toContain('restored');
+  });
+
+  it('shows a failed status check instead of pretending acceptance is pending (review U8)', () => {
+    const wrapper = mount(ActionNotice, {
+      props: {
+        notice: {
+          ...groupBase,
+          group: { ...groupBase.group!, statusKnown: false, statusError: true, undone: null },
+        },
+        now: NOW,
+      },
+    });
+    expect(wrapper.get('[data-test="action-notice-status"]').text()).toContain('Status check failed');
+    expect(wrapper.get('[data-test="action-notice-status"]').text()).not.toContain('Accepting');
+  });
+
+  it('offers no Dismiss while acceptance is unresolved (review P1-1)', () => {
+    const wrapper = mount(ActionNotice, {
+      props: {
+        notice: {
+          ...groupBase,
+          group: { ...groupBase.group!, acceptanceUnknown: true, statusKnown: false, undone: null },
+        },
+        now: NOW,
+      },
+    });
+    expect(wrapper.find('[data-test="action-notice-recover-acceptance"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="action-notice-dismiss-group"]').exists()).toBe(false);
+  });
+});

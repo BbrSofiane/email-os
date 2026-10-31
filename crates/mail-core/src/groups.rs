@@ -140,7 +140,11 @@ pub struct GroupMemberStatusView {
     pub rejection: Option<GroupMemberRejection>,
 }
 
-/// Committed group plus current member statuses and Undo availability.
+/// Committed group plus current member statuses, Undo availability, and the
+/// persisted group Undo attempt (if any). `undoReceipt` is additive
+/// (docs/ux-05-safe-bulk-processing.md §4.2/§5): a restart or a lost group-Undo
+/// response must still expose the committed per-member decisions and the
+/// current compensation outcomes without the frontend keeping any state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct OperationGroupStatus {
@@ -149,6 +153,47 @@ pub struct OperationGroupStatus {
     /// One entry per receipt member, in persisted member order.
     pub members: Vec<GroupMemberStatusView>,
     pub undo: GroupUndoAvailability,
+    /// The group's single persisted Undo attempt with CURRENT compensation
+    /// outcomes; absent until a group Undo has been accepted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub undo_receipt: Option<GroupUndoRecord>,
+}
+
+/// Durable record of the one accepted group-Undo attempt, rebuilt from the
+/// persisted member decisions plus the live compensation rows. Aggregate
+/// counts stay derived from members; compensations are distinct from the
+/// original execution statuses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupUndoRecord {
+    /// Request id of the accepted `undo_operation_group` attempt.
+    pub request_id: String,
+    pub accepted_at: String,
+    /// One entry per receipt member, in persisted member order.
+    pub members: Vec<GroupMemberUndoStatus>,
+}
+
+/// Persisted Undo decision for one member plus the current outcome of each
+/// compensation operation it staged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupMemberUndoStatus {
+    pub ordinal: u32,
+    pub decision: GroupMemberUndoDecision,
+    /// Current status of each compensating operation in queue order; empty
+    /// for `cancelled`/`skipped` members. Distinct from the original child
+    /// execution status in `OperationGroupStatus.members`.
+    pub compensations: Vec<GroupCompensationStatus>,
+}
+
+/// Live outcome of one compensation operation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupCompensationStatus {
+    pub operation_id: String,
+    pub status: crate::dto::OperationStatus,
+    pub failure: Option<OperationFailure>,
 }
 
 /// Bounded, account-scoped recent group summaries with cursor, independent of
@@ -522,12 +567,29 @@ mod tests {
                 reason: None,
                 undoable_until: Some("2026-01-01T00:00:10Z".to_string()),
             },
+            undo_receipt: Some(GroupUndoRecord {
+                request_id: "undo-req-1".to_string(),
+                accepted_at: "2026-01-01T00:00:02Z".to_string(),
+                members: vec![GroupMemberUndoStatus {
+                    ordinal: 0,
+                    decision: GroupMemberUndoDecision::Compensating,
+                    compensations: vec![GroupCompensationStatus {
+                        operation_id: "op-9".to_string(),
+                        status: crate::dto::OperationStatus::Confirmed,
+                        failure: None,
+                    }],
+                }],
+            }),
         };
         let status_json = serde_json::to_value(&status).unwrap();
         assert_eq!(status_json["undo"]["available"], serde_json::json!(true));
         assert_eq!(
             status_json["undo"]["undoableUntil"],
             serde_json::json!("2026-01-01T00:00:10Z")
+        );
+        assert_eq!(
+            status_json["undoReceipt"]["members"][0]["compensations"][0]["status"],
+            serde_json::json!("confirmed")
         );
         let roundtrip: OperationGroupStatus = serde_json::from_value(status_json).unwrap();
         assert_eq!(roundtrip, status);

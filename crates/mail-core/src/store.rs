@@ -62,6 +62,8 @@ struct OperationRow {
     undo_of: Option<String>,
     accepted_at: String,
     action_id: Option<String>,
+    retry_of: Option<String>,
+    group_id: Option<String>,
 }
 
 impl std::fmt::Debug for Store {
@@ -1056,9 +1058,13 @@ impl Store {
         let now = self.clock.now_iso();
         let mut stmt = conn
             .prepare(
-                "SELECT operation_id, account_id, conversation_id, requested_archived,
-                        status, failure_kind, undo_of, accepted_at, action_id
-                 FROM operations WHERE account_id = ?1 ORDER BY seq DESC",
+                "SELECT o.operation_id, o.account_id, o.conversation_id, o.requested_archived,
+                        o.status, o.failure_kind, o.undo_of, o.accepted_at, o.action_id,
+                        o.retry_of,
+                        (SELECT m.group_id FROM operation_group_members m
+                         WHERE m.account_id = o.account_id
+                           AND m.operation_id = o.operation_id)
+                 FROM operations o WHERE o.account_id = ?1 ORDER BY o.seq DESC",
             )
             .map_err(|_| MailError::StorageUnavailable)?;
         let rows = stmt
@@ -1073,6 +1079,8 @@ impl Store {
                     undo_of: row.get(6)?,
                     accepted_at: row.get(7)?,
                     action_id: row.get(8)?,
+                    retry_of: row.get(9)?,
+                    group_id: row.get(10)?,
                 })
             })
             .map_err(|_| MailError::StorageUnavailable)?
@@ -1110,7 +1118,8 @@ impl Store {
                     requested_read: None,
                     last_error: None,
                     undo_of: row.undo_of,
-                    group_id: None,
+                    group_id: row.group_id,
+                    retry_of: row.retry_of,
                     undoable_until,
                 })
             })
@@ -1966,11 +1975,96 @@ fn load_group_status(
     }
     let undo = group_undo_availability(conn, account_id, &header, &members, &now)?;
     let receipt = load_group_receipt(conn, account_id, group_id, &header.accepted_at)?;
+    let undo_receipt = persisted_group_undo_record(conn, account_id, group_id, &members)?;
     Ok(OperationGroupStatus {
         group: receipt,
         members: views,
         undo,
+        undo_receipt,
     })
+}
+
+/// Persisted group-Undo attempt for this group, rebuilt from the stored
+/// per-member decisions plus the live compensation rows (§4.2/§5). `None`
+/// until a group Undo has been accepted; a restart or lost Undo response
+/// still returns the committed record. The fixture keeps the undo request in
+/// `request_keys` under the group-undo fingerprint; `operation_id` carries
+/// the group id.
+fn persisted_group_undo_record(
+    conn: &Connection,
+    account_id: &str,
+    group_id: &str,
+    members: &[GroupMemberRow],
+) -> Result<Option<crate::groups::GroupUndoRecord>, MailError> {
+    let undo_request: Option<(String, String)> = conn
+        .query_row(
+            "SELECT request_id, accepted_at FROM request_keys
+             WHERE account_id = ?1 AND operation_id = ?2
+               AND fingerprint LIKE 'undo_operation_group|v1|%'
+             ORDER BY accepted_at DESC LIMIT 1",
+            params![account_id, group_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|_| MailError::StorageUnavailable)?;
+    let Some((request_id, accepted_at)) = undo_request else {
+        return Ok(None);
+    };
+    let mut views = Vec::with_capacity(members.len());
+    for member in members {
+        let Some(decision_json) = &member.undo_decision else {
+            // Members persisted before the group's Undo attempt carry no
+            // decision; the record is only built after one was accepted.
+            return Ok(None);
+        };
+        let decision = match decision_json.as_str() {
+            "cancelled" => GroupMemberUndoDecision::Cancelled,
+            "compensating" => GroupMemberUndoDecision::Compensating,
+            "skipped" => {
+                let reason = member
+                    .undo_skip_reason
+                    .as_deref()
+                    .and_then(crate::groups::skip_reason_from_name)
+                    .ok_or(MailError::StorageUnavailable)?;
+                GroupMemberUndoDecision::Skipped { reason }
+            }
+            _ => return Err(MailError::StorageUnavailable),
+        };
+        let compensation_ids: Vec<String> = member
+            .undo_operation_ids
+            .as_deref()
+            .map(|json| serde_json::from_str(json).map_err(|_| MailError::StorageUnavailable))
+            .transpose()?
+            .unwrap_or_default();
+        let mut compensations = Vec::with_capacity(compensation_ids.len());
+        for compensation_id in compensation_ids {
+            let row = conn
+                .query_row(
+                    "SELECT status, failure_kind FROM operations
+                     WHERE account_id = ?1 AND operation_id = ?2",
+                    params![account_id, compensation_id],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+                )
+                .optional()
+                .map_err(|_| MailError::StorageUnavailable)?
+                .ok_or(MailError::StorageUnavailable)?;
+            compensations.push(crate::groups::GroupCompensationStatus {
+                operation_id: compensation_id,
+                status: status_from_str(&row.0),
+                failure: failure_from_str(&row.1),
+            });
+        }
+        views.push(crate::groups::GroupMemberUndoStatus {
+            ordinal: member.ordinal as u32,
+            decision,
+            compensations,
+        });
+    }
+    Ok(Some(crate::groups::GroupUndoRecord {
+        request_id,
+        accepted_at,
+        members: views,
+    }))
 }
 
 fn group_undo_availability(
@@ -3201,6 +3295,434 @@ mod tests {
             })
             .expect("historical single still undoable after migration");
         assert_eq!(undo.outcome, UndoOutcome::Compensating);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Genuine MID-TRANSACTION failure (§7.3): a TEMP trigger aborts the
+    /// second member's child insert after the first member is already staged
+    /// inside the open acceptance transaction. The whole group must roll
+    /// back — no orphan children, header, or request key — and the same
+    /// request must be retried safely afterwards. Unlike the pre-entry
+    /// persistence-gate test, this failure happens after real member writes.
+    #[test]
+    fn mid_transaction_failure_after_staged_member_rolls_back_whole_group() {
+        let dir = temp_dir("group-mid-tx-failure");
+        let clock: Arc<dyn Clock> = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+            "2026-01-01T00:00:00Z",
+        )));
+        let store = Store::open(&dir, clock).expect("store opens");
+        {
+            let conn = store.lock_conn().unwrap();
+            conn.execute_batch(
+                "CREATE TEMP TRIGGER inject_member_failure
+                 BEFORE INSERT ON operations
+                 WHEN NEW.conversation_id = 'conv-02'
+                 BEGIN
+                     SELECT RAISE(ABORT, 'injected mid-group failure');
+                 END;",
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            store.set_archived_group(&group_command(
+                "group-req-mid",
+                &["conv-01", "conv-02", "conv-03"],
+                true
+            )),
+            Err(MailError::StorageUnavailable),
+            "the aborted member insert surfaces as a storage failure"
+        );
+        {
+            let conn = store.lock_conn().unwrap();
+            conn.execute_batch("DROP TRIGGER inject_member_failure")
+                .unwrap();
+        }
+        // Nothing from the aborted acceptance survives: first member included.
+        assert_eq!(counts(&store), (0, 0), "no partial group/children");
+        {
+            let conn = store.lock_conn().unwrap();
+            let keys: i64 = conn
+                .query_row("SELECT COUNT(*) FROM request_keys", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(keys, 0, "no request key survives the rollback");
+        }
+        // Same request retries safely and commits exactly once.
+        let receipt = store
+            .set_archived_group(&group_command(
+                "group-req-mid",
+                &["conv-01", "conv-02", "conv-03"],
+                true,
+            ))
+            .expect("same request retried safely after full rollback");
+        assert_eq!(receipt.members.len(), 3);
+        assert_eq!(counts(&store), (3, 1));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Worker claims and group Undo serialize on the same connection mutex:
+    /// run concurrently from two threads, both must complete (no deadlock)
+    /// and the outcome must stay consistent — every member has exactly one
+    /// decision, compensation ids are unique, and a claimed member is either
+    /// compensated or cancelled, never both (§7.6 worker-claim race).
+    #[test]
+    fn worker_claims_and_group_undo_interleave_without_deadlock_or_duplicates() {
+        let dir = temp_dir("group-claim-race");
+        let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+            "2026-01-01T00:00:00Z",
+        )));
+        let store =
+            Arc::new(Store::open(&dir, clock.clone() as Arc<dyn Clock>).expect("store opens"));
+        let receipt = store
+            .set_archived_group(&group_command(
+                "group-req-race",
+                &["conv-01", "conv-02", "conv-03"],
+                true,
+            ))
+            .expect("group accepted");
+        let group_id = receipt.group_id.clone();
+        // Member 1 is confirmed before the race, so the undo always stages a
+        // compensation; the race is over the still-queued members 2 and 3.
+        let first_child = receipt.members[0].operation_id.clone().unwrap();
+        let claimed = store.claim_next_queued().unwrap().unwrap();
+        assert_eq!(claimed.operation_id, first_child);
+        store.confirm_op(&claimed).unwrap();
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let claim_store = Arc::clone(&store);
+        let claim_barrier = Arc::clone(&barrier);
+        let claimer = std::thread::spawn(move || {
+            claim_barrier.wait();
+            let mut claims = 0;
+            let mut first_error: Option<String> = None;
+            loop {
+                match claim_store.claim_next_queued() {
+                    Ok(Some(_)) => claims += 1,
+                    Ok(None) => break,
+                    Err(error) => {
+                        first_error = Some(format!("{error:?}"));
+                        break;
+                    }
+                }
+            }
+            (claims, first_error)
+        });
+        let undo_barrier = Arc::clone(&barrier);
+        let undo_store = Arc::clone(&store);
+        let undoer = std::thread::spawn(move || {
+            undo_barrier.wait();
+            undo_store.undo_operation_group(&UndoOperationGroup {
+                group_id,
+                request_id: "undo-group-race".into(),
+            })
+        });
+        // No deadlock: both threads must finish; a hang fails the recv timeout.
+        let (timeout_tx, timeout_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let claim_outcome = claimer.join().expect("claimer does not panic");
+            let undo = undoer.join().expect("undoer does not panic");
+            let _ = timeout_tx.send((claim_outcome, undo));
+        });
+        let ((claims, claim_error), undo) = timeout_rx
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("claim/undo interleave must not deadlock");
+        let undo = undo.expect("group undo succeeds under concurrent claims");
+        assert!(
+            claims >= 1,
+            "the claimer observed claimable work (claim error: {claim_error:?})"
+        );
+        // Exactly one decision per member, compensation ids unique.
+        assert_eq!(undo.members.len(), 3);
+        let mut compensation_ids = Vec::new();
+        for member in &undo.members {
+            compensation_ids.extend(member.operation_ids.iter().cloned());
+        }
+        let unique = compensation_ids
+            .iter()
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(
+            unique.len(),
+            compensation_ids.len(),
+            "no duplicate compensations"
+        );
+        // Decisions agree with the final durable states: a cancelled member's
+        // child is cancelled; a compensated member's child carries undo rows
+        // pointing at exactly its persisted compensation ids; skipped members
+        // have no compensation rows at all.
+        {
+            let conn = store.lock_conn().unwrap();
+            for member in &undo.members {
+                let child_id: Option<String> = conn
+                    .query_row(
+                        "SELECT operation_id FROM operation_group_members
+                         WHERE account_id = ?1 AND group_id = ?2 AND ordinal = ?3",
+                        params![ACCOUNT_ID, undo.group_id, member.ordinal],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                match &member.decision {
+                    GroupMemberUndoDecision::Cancelled => {
+                        let status: String = conn
+                            .query_row(
+                                "SELECT status FROM operations WHERE operation_id = ?1",
+                                params![child_id],
+                                |row| row.get(0),
+                            )
+                            .unwrap();
+                        assert_eq!(status, "cancelled");
+                        assert!(member.operation_ids.is_empty());
+                    }
+                    GroupMemberUndoDecision::Compensating => {
+                        for compensation_id in &member.operation_ids {
+                            let undo_of: String = conn
+                                .query_row(
+                                    "SELECT undo_of FROM operations WHERE operation_id = ?1",
+                                    params![compensation_id],
+                                    |row| row.get(0),
+                                )
+                                .unwrap();
+                            assert_eq!(
+                                &undo_of,
+                                child_id.as_deref().expect("compensated member has a child"),
+                                "compensation points at exactly its own member child"
+                            );
+                        }
+                    }
+                    GroupMemberUndoDecision::Skipped { .. } => {
+                        assert!(member.operation_ids.is_empty());
+                        let has_compensation: bool = conn
+                            .query_row(
+                                "SELECT EXISTS(SELECT 1 FROM operations WHERE undo_of = ?1)",
+                                params![child_id],
+                                |row| row.get(0),
+                            )
+                            .unwrap();
+                        assert!(!has_compensation, "skipped members are never compensated");
+                    }
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An AUTHENTIC pre-UX-05 profile (hand-built UX-04-era schema: no
+    /// action_id/retry_of columns, no group tables, `schema_version = '2'`)
+    /// is migrated additively: rows survive with backfilled action identity,
+    /// the new tables exist empty, and the historical single stays undoable
+    /// from its preserved preimage.
+    #[test]
+    fn authentic_pre_ux05_database_migrates_additively() {
+        let dir = temp_dir("group-authentic-v2");
+        std::fs::create_dir_all(&dir).unwrap();
+        {
+            let conn = Connection::open(dir.join("mail.db")).unwrap();
+            conn.pragma_update(None, "journal_mode", "WAL").unwrap();
+            conn.execute_batch(
+                "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 CREATE TABLE conversations (
+                     account_id TEXT NOT NULL, conversation_id TEXT NOT NULL,
+                     subject TEXT NOT NULL, PRIMARY KEY (account_id, conversation_id));
+                 CREATE TABLE messages (
+                     account_id TEXT NOT NULL, conversation_id TEXT NOT NULL,
+                     message_id TEXT NOT NULL, from_display TEXT, from_mailbox TEXT NOT NULL,
+                     to_json TEXT NOT NULL, sent_at TEXT NOT NULL, body_text TEXT NOT NULL,
+                     provider_inbox INTEGER NOT NULL CHECK (provider_inbox IN (0, 1)),
+                     PRIMARY KEY (account_id, conversation_id, message_id));
+                 CREATE TABLE operations (
+                     seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                     operation_id TEXT NOT NULL UNIQUE, account_id TEXT NOT NULL,
+                     conversation_id TEXT NOT NULL,
+                     requested_archived INTEGER NOT NULL CHECK (requested_archived IN (0, 1)),
+                     status TEXT NOT NULL CHECK (status IN ('queued', 'applying', 'confirmed', 'failed', 'cancelled')),
+                     failure_kind TEXT, accepted_at TEXT NOT NULL, confirmed_at TEXT,
+                     message_ids TEXT NOT NULL, request_id TEXT NOT NULL,
+                     undo_of TEXT, prior_values TEXT);
+                 CREATE TABLE request_keys (
+                     account_id TEXT NOT NULL, request_id TEXT NOT NULL,
+                     operation_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
+                     accepted_at TEXT NOT NULL, PRIMARY KEY (account_id, request_id));
+                 INSERT INTO meta VALUES ('schema_version', '2');
+                 INSERT INTO meta VALUES ('seed_version', 'fixture-seed-v1');
+                 INSERT INTO conversations VALUES ('fixture-account', 'conv-old', 'Old subject');
+                 INSERT INTO messages VALUES ('fixture-account', 'conv-old', 'm-1', NULL,
+                     'ana@ridpath.example', '[]',
+                     '2026-01-01T00:00:00Z', 'hello', 1);
+                 INSERT INTO operations (operation_id, account_id, conversation_id,
+                     requested_archived, status, accepted_at, message_ids, request_id, prior_values)
+                     VALUES ('op-old', 'fixture-account', 'conv-old', 1, 'confirmed',
+                     '2026-01-01T00:00:00Z', '[\"m-1\"]', 'req-old', '{\"m-1\": false}');
+                 INSERT INTO request_keys VALUES ('fixture-account', 'req-old', 'op-old',
+                     'set_archived|v1|account=fixture-account|archived=true|conv=conv-old',
+                     '2026-01-01T00:00:00Z');",
+            )
+            .unwrap();
+        }
+        let clock: Arc<dyn Clock> = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+            "2026-01-01T00:00:00Z",
+        )));
+        let store = Store::open(&dir, clock.clone()).expect("pre-UX-05 profile migrates");
+        {
+            let conn = store.lock_conn().unwrap();
+            let version: String = conn
+                .query_row(
+                    "SELECT value FROM meta WHERE key = 'schema_version'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(version, "3");
+            // UX-05 columns and tables exist; nothing was invented.
+            let action_id: String = conn
+                .query_row(
+                    "SELECT action_id FROM operations WHERE operation_id = 'op-old'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                action_id, "op-old",
+                "standalone setter backfilled as its own action"
+            );
+            let retry_of: Option<String> = conn
+                .query_row(
+                    "SELECT retry_of FROM operations WHERE operation_id = 'op-old'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(retry_of, None);
+            let groups: i64 = conn
+                .query_row("SELECT COUNT(*) FROM operation_groups", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(groups, 0, "no fabricated group history");
+        }
+        // The migrated row keeps its request key, preimage and undo
+        // eligibility (rule 4 with backfilled action identity).
+        let undo = store
+            .undo_operation(&UndoOperation {
+                operation_id: "op-old".into(),
+                request_id: "undo-after-migration".into(),
+            })
+            .expect("historical single still undoable from its preserved preimage");
+        assert_eq!(undo.outcome, UndoOutcome::Compensating);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Restart after a partial group Undo: `get_operation_group` rebuilds the
+    /// persisted Undo receipt — per-member decisions and CURRENT compensation
+    /// outcomes — from durable rows alone (no frontend state), and tracks
+    /// compensation completion across another restart (§7.5/§7.8).
+    #[test]
+    fn group_undo_decisions_and_compensation_outcomes_survive_restart() {
+        let dir = temp_dir("group-undo-restart");
+        let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+            "2026-01-01T00:00:00Z",
+        )));
+        let store = Store::open(&dir, clock.clone() as Arc<dyn Clock>).expect("store opens");
+        let receipt = store
+            .set_archived_group(&group_command(
+                "group-req-restart",
+                &["conv-01", "conv-02"],
+                true,
+            ))
+            .expect("group accepted");
+        let child = receipt.members[0].operation_id.clone().unwrap();
+        let claimed = store.claim_next_queued().unwrap().unwrap();
+        assert_eq!(claimed.operation_id, child);
+        store.confirm_op(&claimed).unwrap();
+        // Member 2 stays queued and is cancelled by the undo.
+        let undo = store
+            .undo_operation_group(&UndoOperationGroup {
+                group_id: receipt.group_id.clone(),
+                request_id: "undo-restart-1".into(),
+            })
+            .expect("group undo");
+        assert_eq!(
+            undo.members[0].decision,
+            GroupMemberUndoDecision::Compensating
+        );
+        assert_eq!(undo.members[1].decision, GroupMemberUndoDecision::Cancelled);
+        let compensation_id = undo.members[0].operation_ids[0].clone();
+        drop(store);
+
+        // Restart: the undo record is rebuilt from durable rows alone.
+        let store = Store::open(&dir, clock.clone() as Arc<dyn Clock>).expect("reopen");
+        let status = store
+            .get_operation_group(&GetOperationGroupRequest {
+                account_id: ACCOUNT_ID.into(),
+                request_id: "group-req-restart".into(),
+            })
+            .unwrap()
+            .expect("committed group");
+        let undo_record = status
+            .undo_receipt
+            .as_ref()
+            .expect("persisted group undo record survives restart");
+        assert_eq!(undo_record.request_id, "undo-restart-1");
+        assert_eq!(undo_record.members.len(), 2);
+        assert_eq!(
+            undo_record.members[0].decision,
+            GroupMemberUndoDecision::Compensating
+        );
+        assert_eq!(
+            undo_record.members[0].compensations.len(),
+            1,
+            "compensation linkage survives"
+        );
+        assert_eq!(
+            undo_record.members[0].compensations[0].operation_id,
+            compensation_id
+        );
+        assert_eq!(
+            undo_record.members[0].compensations[0].status,
+            OperationStatus::Queued,
+            "compensation still pending right after restart"
+        );
+        assert_eq!(
+            undo_record.members[1].decision,
+            GroupMemberUndoDecision::Cancelled
+        );
+        assert!(undo_record.members[1].compensations.is_empty());
+
+        // The compensation completes; a second restart shows the CURRENT
+        // outcome, distinct from the original member's confirmed execution.
+        let claimed = store.claim_next_queued().unwrap().unwrap();
+        assert_eq!(claimed.operation_id, compensation_id);
+        store.confirm_op(&claimed).unwrap();
+        drop(store);
+        let store = Store::open(&dir, clock as Arc<dyn Clock>).expect("reopen 2");
+        let status = store
+            .get_operation_group(&GetOperationGroupRequest {
+                account_id: ACCOUNT_ID.into(),
+                request_id: "group-req-restart".into(),
+            })
+            .unwrap()
+            .unwrap();
+        let undo_record = status.undo_receipt.as_ref().unwrap();
+        assert_eq!(
+            undo_record.members[0].compensations[0].status,
+            OperationStatus::Confirmed,
+            "completed compensation visible after restart"
+        );
+        // The original member's execution status is unchanged history.
+        assert_eq!(status.members[0].status, GroupMemberStatus::Confirmed);
+        // A group child carries its group linkage; a compensation belongs to
+        // no group.
+        let activity = store.list_snapshot().unwrap().activity;
+        let child_row = activity.iter().find(|row| row.id == child).unwrap();
+        assert_eq!(
+            child_row.group_id.as_deref(),
+            Some(receipt.group_id.as_str())
+        );
+        let compensation_row = activity
+            .iter()
+            .find(|row| row.id == compensation_id)
+            .unwrap();
+        assert_eq!(
+            compensation_row.group_id, None,
+            "compensations are ungrouped"
+        );
+        assert_eq!(compensation_row.undo_of.as_deref(), Some(child.as_str()));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

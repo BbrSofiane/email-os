@@ -39,6 +39,11 @@ const props = defineProps<{
   readOnly?: boolean;
   navigationUnavailable?: boolean;
   showReadControls?: boolean;
+  /** Nonzero: shared controls dispatch to the SELECTION (§3.3), so the reader
+   * offers explicit count-labelled desired-state controls instead of the open
+   * conversation's single-state toggles (mixed selections included). */
+  selectionCount?: number;
+  selectionContext?: 'inbox' | 'done';
 }>();
 
 const emit = defineEmits<{
@@ -60,6 +65,14 @@ const emit = defineEmits<{
 const container = ref<HTMLElement | null>(null);
 const scrollerEl = ref<HTMLElement | null>(null);
 const messageEls = new Map<string, HTMLElement>();
+
+/** Selected-scope toolbar mode: nonzero selection dispatches to the whole
+ * selection with explicit count labels (§3.3); null keeps single behavior. */
+const bulkScope = computed(() =>
+  (props.selectionCount ?? 0) > 0
+    ? { count: props.selectionCount!, context: props.selectionContext ?? 'inbox' }
+    : null,
+);
 
 const latestMessage = computed(() => props.conversation?.messages.at(-1) ?? null);
 const replyBlockedReason = computed(() => {
@@ -602,7 +615,7 @@ defineExpose({
         data-test="reply-source-label"
       >Reply targets the latest message from {{ latestMessage.from.displayName ?? latestMessage.from.mailbox }}</span>
       <button
-        v-if="!props.readOnly && props.state === 'ready' && props.conversation"
+        v-if="!props.readOnly && props.state === 'ready' && props.conversation && !bulkScope"
         type="button"
         data-test="reader-archive-toggle"
         :title="actionLabel(props.conversation?.isInInbox ? 'archive' : 'unarchive')"
@@ -611,15 +624,37 @@ defineExpose({
       >
         {{ props.conversation.isInInbox ? 'Archive (e)' : 'Unarchive' }}
       </button>
+      <!-- Selected scope: explicit count-labelled desired-state controls, never
+           a toggle derived from the OPEN conversation's state (§3.3). -->
+      <button
+        v-if="!props.readOnly && props.state === 'ready' && bulkScope && bulkScope.context === 'inbox'"
+        type="button"
+        data-test="reader-selection-archive"
+        :disabled="props.commandInFlight || props.navigationUnavailable"
+        @click="emit('archive')"
+      >Mark {{ bulkScope.count }} Done (archive)</button>
+      <button
+        v-if="!props.readOnly && props.state === 'ready' && bulkScope && bulkScope.context === 'done'"
+        type="button"
+        data-test="reader-selection-unarchive"
+        :disabled="props.commandInFlight || props.navigationUnavailable"
+        @click="emit('unarchive')"
+      >Mark {{ bulkScope.count }} Not Done</button>
       <span v-if="(props.readOnly || props.showReadControls) && props.conversation" data-test="reader-read-state">
         {{ props.conversation.isRead === undefined ? 'Read state unknown' : props.conversation.isRead ? 'Read' : 'Unread' }}
       </span>
-      <template v-if="props.showReadControls && props.conversation && props.conversation.isRead === undefined">
+      <template v-if="props.showReadControls && props.conversation && !bulkScope && props.conversation.isRead === undefined">
         <button type="button" :title="actionLabel('read')" data-test="reader-mark-read" :disabled="props.commandInFlight || props.navigationUnavailable" @click="emit('setRead', true)">Mark read</button>
         <button type="button" :title="actionLabel('unread')" data-test="reader-mark-unread" :disabled="props.commandInFlight || props.navigationUnavailable" @click="emit('setRead', false)">Mark unread</button>
       </template>
+      <template v-if="props.showReadControls && bulkScope">
+        <!-- Explicit Mark N read / Mark N unread for a (possibly mixed)
+             selection; never a mixed-state toggle from the open row. -->
+        <button type="button" data-test="reader-selection-mark-read" :disabled="props.commandInFlight || props.navigationUnavailable" @click="emit('setRead', true)">Mark {{ bulkScope.count }} read</button>
+        <button type="button" data-test="reader-selection-mark-unread" :disabled="props.commandInFlight || props.navigationUnavailable" @click="emit('setRead', false)">Mark {{ bulkScope.count }} unread</button>
+      </template>
       <button
-        v-if="props.showReadControls && props.conversation && props.conversation.isRead !== undefined"
+        v-if="props.showReadControls && props.conversation && !bulkScope && props.conversation.isRead !== undefined"
         type="button"
         data-test="reader-toggle-read"
         :disabled="props.commandInFlight || props.navigationUnavailable"

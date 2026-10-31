@@ -29,12 +29,17 @@ const emit = defineEmits<{
   clear: [];
 }>();
 
+import { computed } from 'vue';
 import { OPERATION_GROUP_MAX_MEMBERS } from '../lib/ipc/client';
 
-const selectAllDisabled = props.loadedCount > OPERATION_GROUP_MAX_MEMBERS;
-const selectAllTitle = selectAllDisabled
-  ? `Select all loaded is limited to ${OPERATION_GROUP_MAX_MEMBERS} conversations; ${props.loadedCount} rows are loaded.`
-  : 'Select every currently loaded row (unseen pages are not included).';
+// Reactive: the loaded count changes across pagination and new arrivals, so
+// the enabled state and explanation must follow it, never the mount-time value.
+const selectAllDisabled = computed(() => props.loadedCount > OPERATION_GROUP_MAX_MEMBERS);
+const selectAllTitle = computed(() =>
+  selectAllDisabled.value
+    ? `Select all loaded is limited to ${OPERATION_GROUP_MAX_MEMBERS} conversations; ${props.loadedCount} rows are loaded.`
+    : 'Select every currently loaded row (unseen pages are not included).',
+);
 </script>
 
 <template>

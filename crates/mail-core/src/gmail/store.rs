@@ -1988,6 +1988,15 @@ impl GmailStore {
             .map_err(|_| MailError::StorageUnavailable)?;
         tx.execute("DELETE FROM gmail_operation_preimages", [])
             .map_err(|_| MailError::StorageUnavailable)?;
+        // Durable group headers/manifests are account-scoped recovery records
+        // whose child operations, requests and preimages are deleted above;
+        // keeping them would leave detail loads typed-failing and let a
+        // reused request id collide with the retained header's unique
+        // constraint (docs/ux-05-safe-bulk-processing.md §4.2).
+        tx.execute("DELETE FROM gmail_operation_group_members", [])
+            .map_err(|_| MailError::StorageUnavailable)?;
+        tx.execute("DELETE FROM gmail_operation_groups", [])
+            .map_err(|_| MailError::StorageUnavailable)?;
         tx.execute("DELETE FROM gmail_discovery_seen", [])
             .map_err(|_| MailError::StorageUnavailable)?;
         tx.execute(
@@ -2778,9 +2787,11 @@ fn load_activity(
     clock: &dyn Clock,
 ) -> Result<Vec<OperationSummary>, MailError> {
     let mut stmt = conn.prepare(
-        "SELECT operation_id, conversation_id, kind, requested_value, status, failure, last_error,
-                undo_of, accepted_at, action_id
-         FROM gmail_operations WHERE account_id = ?1 ORDER BY accepted_seq DESC",
+        "SELECT o.operation_id, o.conversation_id, o.kind, o.requested_value, o.status, o.failure, o.last_error,
+                o.undo_of, o.accepted_at, o.action_id, o.retry_of,
+                (SELECT m.group_id FROM gmail_operation_group_members m
+                 WHERE m.account_id = o.account_id AND m.operation_id = o.operation_id)
+         FROM gmail_operations o WHERE o.account_id = ?1 ORDER BY o.accepted_seq DESC",
     ).map_err(|_| MailError::StorageUnavailable)?;
     // Shared eligibility facts (§3.2 rules 4–5 plus UX-05 action ordering):
     // the newest top-level action id and the set of already-undone ids.
@@ -2800,6 +2811,8 @@ fn load_activity(
                 row.get::<_, Option<String>>(7)?,
                 row.get::<_, String>(8)?,
                 row.get::<_, Option<String>>(9)?,
+                row.get::<_, Option<String>>(10)?,
+                row.get::<_, Option<String>>(11)?,
             ))
         })
         .map_err(|_| MailError::StorageUnavailable)?
@@ -2815,6 +2828,8 @@ fn load_activity(
             undo_of,
             accepted_at,
             action_id,
+            retry_of,
+            group_id,
         ) = row.map_err(|_| MailError::StorageUnavailable)?;
         let kind = parse_kind(&kind)?;
         let status = parse_status(&status)?;
@@ -2860,7 +2875,8 @@ fn load_activity(
             requested_read: (kind == MailboxOperationKind::Read).then_some(value != 0),
             last_error,
             undo_of,
-            group_id: None,
+            group_id,
+            retry_of,
             undoable_until,
         });
     }
@@ -3270,11 +3286,104 @@ fn load_group_status(
     }
     let undo = group_undo_availability(conn, account_id, &header, &members, &now)?;
     let group = load_group_receipt(conn, account_id, group_id)?;
+    let undo_receipt = persisted_group_undo_record(conn, account_id, group_id, &members)?;
     Ok(OperationGroupStatus {
         group,
         members: views,
         undo,
+        undo_receipt,
     })
+}
+
+/// Persisted group-Undo attempt for this group, rebuilt from the stored
+/// per-member decisions plus the live compensation rows (§4.2/§5). `None`
+/// until a group Undo has been accepted; a restart or lost Undo response
+/// still returns the committed record. The Gmail store keeps the undo request
+/// in `gmail_operation_requests` under the group-undo payload;
+/// `operation_id` carries the group id.
+fn persisted_group_undo_record(
+    conn: &Connection,
+    account_id: &str,
+    group_id: &str,
+    members: &[GroupMemberRow],
+) -> Result<Option<crate::groups::GroupUndoRecord>, MailError> {
+    let undo_request: Option<(String, Option<String>)> = conn
+        .query_row(
+            "SELECT request_id, accepted_at FROM gmail_operation_requests
+             WHERE account_id = ?1 AND operation_id = ?2
+               AND payload LIKE '{\"undoGroupId\":%'
+             ORDER BY accepted_at DESC LIMIT 1",
+            params![account_id, group_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|_| MailError::StorageUnavailable)?;
+    let Some((request_id, accepted_at)) = undo_request else {
+        return Ok(None);
+    };
+    let accepted_at = accepted_at.ok_or(MailError::StorageUnavailable)?;
+    let mut views = Vec::with_capacity(members.len());
+    for member in members {
+        let Some(decision_json) = &member.undo_decision else {
+            // Members persisted before the group's Undo attempt carry no
+            // decision; the record is only built after one was accepted.
+            return Ok(None);
+        };
+        let decision = match decision_json.as_str() {
+            "cancelled" => crate::groups::GroupMemberUndoDecision::Cancelled,
+            "compensating" => crate::groups::GroupMemberUndoDecision::Compensating,
+            "skipped" => {
+                let reason = member
+                    .undo_skip_reason
+                    .as_deref()
+                    .and_then(crate::groups::skip_reason_from_name)
+                    .ok_or(MailError::StorageUnavailable)?;
+                crate::groups::GroupMemberUndoDecision::Skipped { reason }
+            }
+            _ => return Err(MailError::StorageUnavailable),
+        };
+        let compensation_ids: Vec<String> = member
+            .undo_operation_ids
+            .as_deref()
+            .map(|json| serde_json::from_str(json).map_err(|_| MailError::StorageUnavailable))
+            .transpose()?
+            .unwrap_or_default();
+        let mut compensations = Vec::with_capacity(compensation_ids.len());
+        for compensation_id in compensation_ids {
+            let row = conn
+                .query_row(
+                    "SELECT status, failure FROM gmail_operations
+                     WHERE account_id = ?1 AND operation_id = ?2",
+                    params![account_id, compensation_id],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+                )
+                .optional()
+                .map_err(|_| MailError::StorageUnavailable)?
+                .ok_or(MailError::StorageUnavailable)?;
+            let failure = row.1.map(|f| {
+                if f == "providerunavailable" {
+                    OperationFailure::ProviderUnavailable
+                } else {
+                    OperationFailure::ProviderRejected
+                }
+            });
+            compensations.push(crate::groups::GroupCompensationStatus {
+                operation_id: compensation_id,
+                status: parse_status(&row.0)?,
+                failure,
+            });
+        }
+        views.push(crate::groups::GroupMemberUndoStatus {
+            ordinal: member.ordinal as u32,
+            decision,
+            compensations,
+        });
+    }
+    Ok(Some(crate::groups::GroupUndoRecord {
+        request_id,
+        accepted_at,
+        members: views,
+    }))
 }
 
 fn group_undo_availability(
@@ -5602,6 +5711,290 @@ mod tests {
             })
             .unwrap()
             .is_none());
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Disconnect cleanup (§4.2): `clear_account` deletes the durable group
+    /// header/member rows in the same transaction as their backing
+    /// operations/requests/preimages. Detail loads and a reused original
+    /// request id must neither orphan the retained header nor trip its unique
+    /// constraint into a storage halt.
+    #[test]
+    fn gmail_clear_account_removes_group_tables_and_allows_request_id_reuse() {
+        let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+            "2026-01-01T00:00:00Z",
+        )));
+        let (store, dir) = open_store_with_clock("gmail-group-clear-account", clock);
+        seed_group_threads(&store, &["thr-a", "thr-b"]);
+        let receipt = store
+            .accept_archived_group(&crate::groups::SetArchivedGroup {
+                account_id: "acct".into(),
+                members: vec![group_ref("thr-a"), group_ref("thr-b")],
+                archived: true,
+                request_id: "gmail-group-req-clear".into(),
+            })
+            .expect("group accepted");
+        assert_eq!(group_counts(&store), (2, 1));
+
+        store.clear_account().expect("disconnect clears account");
+        assert_eq!(group_counts(&store), (0, 0), "group tables are wiped too");
+
+        // Reconnect the same Google account and reuse the ORIGINAL request id:
+        // this must be a clean acceptance, not a unique-constraint failure.
+        // Reconnect runs against the generation the disconnect bumped to.
+        let generation = store.generation().expect("generation");
+        store
+            .begin_account(&profile("acct", "acct@example.test", "hist-1"), generation)
+            .expect("reconnect begins the account");
+        store
+            .apply_discovery_page(
+                &[
+                    cached(thread(
+                        "acct",
+                        "thr-a",
+                        "hist-2",
+                        vec![
+                            message("thr-a-m1", "2026-01-01T00:00:00Z"),
+                            message("thr-a-m2", "2026-01-02T00:00:00Z"),
+                        ],
+                        &["thr-a-m1", "thr-a-m2"],
+                    )),
+                    cached(thread(
+                        "acct",
+                        "thr-b",
+                        "hist-2",
+                        vec![
+                            message("thr-b-m1", "2026-01-01T00:00:00Z"),
+                            message("thr-b-m2", "2026-01-02T00:00:00Z"),
+                        ],
+                        &["thr-b-m1", "thr-b-m2"],
+                    )),
+                ],
+                None,
+                true,
+                false,
+                generation,
+            )
+            .expect("reconnect caches threads");
+        let reaccepted = store
+            .accept_archived_group(&crate::groups::SetArchivedGroup {
+                account_id: "acct".into(),
+                members: vec![group_ref("thr-a"), group_ref("thr-b")],
+                archived: true,
+                request_id: "gmail-group-req-clear".into(),
+            })
+            .expect("reused request id accepts cleanly after disconnect");
+        assert_eq!(reaccepted.members.len(), 2);
+        assert_ne!(
+            reaccepted.group_id, receipt.group_id,
+            "a fresh group identity is committed after disconnect"
+        );
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Restart after a partial group Undo with a FAILED compensation: the
+    /// reopened store rebuilds the persisted undo record from durable rows,
+    /// and compensation outcomes (failed, with its failure kind) stay
+    /// inspectable and distinct from the original member's execution status.
+    #[test]
+    fn gmail_group_undo_record_survives_reopen_with_failed_compensation() {
+        let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+            "2026-01-01T00:00:00Z",
+        )));
+        let dir;
+        let compensation_id;
+        {
+            let (store, path) = open_store_with_clock("gmail-group-undo-reopen", clock.clone());
+            dir = path;
+            seed_group_threads(&store, &["thr-a", "thr-b"]);
+            let receipt = store
+                .accept_read_group(&crate::groups::SetReadGroup {
+                    account_id: "acct".into(),
+                    members: vec![group_ref("thr-a"), group_ref("thr-b")],
+                    read: true,
+                    request_id: "gmail-group-req-reopen".into(),
+                })
+                .expect("read group");
+            let child = receipt.members[0].operation_id.clone().unwrap();
+            let claimed = store.claim_next_operation().unwrap().unwrap();
+            assert_eq!(claimed.operation_id, child);
+            store.confirm_operation(&claimed).unwrap();
+            let undo = store
+                .undo_operation_group(&crate::groups::UndoOperationGroup {
+                    group_id: receipt.group_id.clone(),
+                    request_id: "gmail-undo-reopen-1".into(),
+                })
+                .expect("group undo");
+            assert_eq!(
+                undo.members[0].decision,
+                crate::groups::GroupMemberUndoDecision::Compensating
+            );
+            assert_eq!(
+                undo.members[1].decision,
+                crate::groups::GroupMemberUndoDecision::Cancelled
+            );
+            compensation_id = undo.members[0].operation_ids[0].clone();
+            // The compensation fails before the "restart".
+            let claimed = store.claim_next_operation().unwrap().unwrap();
+            assert_eq!(claimed.operation_id, compensation_id);
+            store
+                .fail_operation(&claimed, MailError::ProviderRejected)
+                .expect("compensation fails");
+        }
+
+        // Reopen (same profile, fresh store): the undo record comes back.
+        let store = GmailStore::open(&dir, clock).expect("reopen");
+        let status = store
+            .get_operation_group(&crate::groups::GetOperationGroupRequest {
+                account_id: "acct".into(),
+                request_id: "gmail-group-req-reopen".into(),
+            })
+            .expect("lookup")
+            .expect("committed group after reopen");
+        let undo_record = status
+            .undo_receipt
+            .as_ref()
+            .expect("persisted undo record survives reopen");
+        assert_eq!(undo_record.request_id, "gmail-undo-reopen-1");
+        assert_eq!(
+            undo_record.members[0].decision,
+            crate::groups::GroupMemberUndoDecision::Compensating
+        );
+        assert_eq!(undo_record.members[0].compensations.len(), 1);
+        assert_eq!(
+            undo_record.members[0].compensations[0].operation_id,
+            compensation_id
+        );
+        assert_eq!(
+            undo_record.members[0].compensations[0].status,
+            OperationStatus::Failed,
+            "failed compensation outcome visible after reopen"
+        );
+        assert_eq!(
+            undo_record.members[0].compensations[0].failure,
+            Some(OperationFailure::ProviderRejected)
+        );
+        assert_eq!(
+            undo_record.members[1].decision,
+            crate::groups::GroupMemberUndoDecision::Cancelled
+        );
+        // The original member's execution status is untouched history.
+        assert_eq!(
+            status.members[0].status,
+            crate::groups::GroupMemberStatus::Confirmed
+        );
+        // Activity exposes the group linkage on the child and the undo/none
+        // linkage on the compensation.
+        let activity = store.list_snapshot().unwrap().activity;
+        let child_row = activity
+            .iter()
+            .find(|row| row.id == "x")
+            .or_else(|| activity.iter().find(|row| row.group_id.is_some()))
+            .expect("group child present in activity");
+        assert!(
+            child_row.group_id.is_some(),
+            "group child carries its groupId"
+        );
+        let compensation_row = activity
+            .iter()
+            .find(|row| row.id == compensation_id)
+            .expect("compensation in activity");
+        assert_eq!(
+            compensation_row.group_id, None,
+            "compensations are ungrouped"
+        );
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A retried failed group member stays linked for inspection across a
+    /// restart: the retry row carries `retryOf` (its own top-level action,
+    /// no group), while the original member's historical failure is not
+    /// rewritten (§4.3).
+    #[test]
+    fn gmail_retry_lineage_persists_across_restart() {
+        let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+            "2026-01-01T00:00:00Z",
+        )));
+        let (store, dir) = open_store_with_clock("gmail-group-retry-lineage", clock.clone());
+        seed_group_threads(&store, &["thr-a", "thr-b"]);
+        let receipt = store
+            .accept_read_group(&crate::groups::SetReadGroup {
+                account_id: "acct".into(),
+                members: vec![group_ref("thr-a"), group_ref("thr-b")],
+                read: true,
+                request_id: "gmail-group-req-retry".into(),
+            })
+            .expect("read group");
+        let failed_child = receipt.members[0].operation_id.clone().unwrap();
+        let claimed = store.claim_next_operation().unwrap().unwrap();
+        assert_eq!(claimed.operation_id, failed_child);
+        store
+            .fail_operation(&claimed, MailError::ProviderRejected)
+            .expect("member fails");
+
+        // Explicit retry of the failed member: a new top-level action linked
+        // to the original member for inspection.
+        let retry = store
+            .accept_retry(&crate::dto::RetryOperation {
+                operation_id: failed_child.clone(),
+                request_id: "gmail-retry-1".into(),
+            })
+            .expect("retry accepted");
+        let retry_id = retry.operation_id.clone();
+        // The other member is still queued and older; drain it first.
+        let claimed = store.claim_next_operation().unwrap().unwrap();
+        assert_eq!(
+            claimed.operation_id,
+            receipt.members[1].operation_id.clone().unwrap()
+        );
+        store
+            .fail_operation(&claimed, MailError::ProviderRejected)
+            .expect("sibling member fails");
+        let claimed = store.claim_next_operation().unwrap().unwrap();
+        assert_eq!(claimed.operation_id, retry_id);
+        store.confirm_operation(&claimed).unwrap();
+
+        // Restart: the lineage and the historical failure both survive.
+        drop(store);
+        let store = GmailStore::open(&dir, clock).expect("reopen");
+        let activity = store.list_snapshot().unwrap().activity;
+        let retry_row = activity
+            .iter()
+            .find(|row| row.id == retry_id)
+            .expect("retry row");
+        assert_eq!(retry_row.retry_of.as_deref(), Some(failed_child.as_str()));
+        assert_eq!(
+            retry_row.group_id, None,
+            "a retry is a new top-level action, ungrouped"
+        );
+        let failed_row = activity
+            .iter()
+            .find(|row| row.id == failed_child)
+            .expect("failed member row");
+        assert_eq!(
+            failed_row.status,
+            OperationStatus::Failed,
+            "history not rewritten"
+        );
+        assert_eq!(
+            failed_row.group_id.as_deref(),
+            Some(receipt.group_id.as_str())
+        );
+        // Group detail still addresses the group by its original request id.
+        let status = store
+            .get_operation_group(&crate::groups::GetOperationGroupRequest {
+                account_id: "acct".into(),
+                request_id: "gmail-group-req-retry".into(),
+            })
+            .expect("lookup")
+            .expect("group");
+        assert_eq!(
+            status.members[0].status,
+            crate::groups::GroupMemberStatus::Failed
+        );
         drop(store);
         std::fs::remove_dir_all(dir).unwrap();
     }

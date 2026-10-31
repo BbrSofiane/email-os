@@ -233,6 +233,8 @@ interface InternalOperation {
   priorValues: Record<string, boolean | null>;
   /** Present on compensating operations; they are never themselves undoable. */
   undoOf?: string;
+  /** Present on retry operations; the original operation they recover. */
+  retryOf?: string;
 }
 
 const iso = (minutesOffset: number): string =>
@@ -370,6 +372,7 @@ function toOperationSummary(op: InternalOperation, accountId: string, undoableUn
     ...(op.requestedRead === undefined ? {} : { requestedRead: op.requestedRead }),
     ...(op.lastError === undefined ? {} : { lastError: op.lastError }),
     ...(op.undoOf === undefined ? {} : { undoOf: op.undoOf }),
+    ...(op.retryOf === undefined ? {} : { retryOf: op.retryOf }),
     ...(op.groupId === undefined ? {} : { groupId: op.groupId }),
     ...(undoableUntil === undefined ? {} : { undoableUntil }),
   };
@@ -571,7 +574,9 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       || groups.some((g) => g.acceptedChildren > 0 && g.seq > seq);
   }
 
-  /** One group's undo window: latest top-level action, 10 s from group acceptance. */
+  /** One group's undo window: latest top-level action, 10 s from group
+   * acceptance, and at least one member still eligible (an all-ineligible
+   * group offers no enabled Undo, §5). */
   function groupUndoBlocker(group: InternalGroup): MailError | null {
     if (group.undone) return { kind: 'undo_unavailable', reason: 'already_undone' } satisfies MailError;
     if (group.acceptedChildren === 0) return { kind: 'undo_unavailable', reason: 'not_applicable' } satisfies MailError;
@@ -579,6 +584,18 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       return { kind: 'undo_unavailable', reason: 'expired' } satisfies MailError;
     }
     if (supersededByNewerAction(group.seq)) return { kind: 'undo_unavailable', reason: 'superseded' } satisfies MailError;
+    // Per-member eligibility mirrors Rust: some accepted child must be live
+    // (queued/applying/confirmed), not already compensated, with known priors.
+    const anyEligible = group.members.some((member) => {
+      if (member.operationId === null) return false;
+      const op = allOps().find((entry) => entry.op.id === member.operationId)?.op;
+      if (!op) return false;
+      const live = op.status === 'queued' || op.status === 'applying' || op.status === 'confirmed';
+      const knownPriors = op.messageIds.every((id) => op.priorValues[id] !== undefined && op.priorValues[id] !== null);
+      const notUndone = !allOps().some((entry) => entry.op.undoOf === op.id);
+      return live && knownPriors && notUndone;
+    });
+    if (!anyEligible) return { kind: 'undo_unavailable', reason: 'not_applicable' } satisfies MailError;
     return null;
   }
 
@@ -604,6 +621,30 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       undo: blocker
         ? { available: false, reason: blocker.kind === 'undo_unavailable' ? blocker.reason : null, undoableUntil: null }
         : { available: true, reason: null, undoableUntil: new Date(Date.parse(group.acceptedAt) + UNDO_WINDOW_MS).toISOString() },
+      ...(group.undone && group.undoReceipt ? { undoReceipt: persistedUndoRecord(group) } : {}),
+    };
+  }
+
+  /** Persisted group-Undo record with CURRENT compensation outcomes (§4.2/§5);
+   * mirrors Rust's `OperationGroupStatus.undoReceipt`. */
+  function persistedUndoRecord(group: InternalGroup): OperationGroupStatus['undoReceipt'] {
+    const receipt = group.undoReceipt;
+    if (!receipt) return undefined;
+    return {
+      requestId: receipt.requestId,
+      acceptedAt: receipt.acceptedAt,
+      members: receipt.members.map((member) => ({
+        ordinal: member.ordinal,
+        decision: member.decision,
+        compensations: member.operationIds.map((operationId) => {
+          const op = allOps().find((entry) => entry.op.id === operationId)?.op;
+          return {
+            operationId,
+            status: op?.status ?? 'outcome_unknown',
+            failure: op?.failure ?? null,
+          };
+        }),
+      })),
     };
   }
 
@@ -768,7 +809,7 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
     messageIds: string[],
     requestId: string,
     fingerprint: string,
-    options: { priorValues?: Record<string, boolean | null>; undoOf?: string; groupId?: string; acceptedAt?: string } = {},
+    options: { priorValues?: Record<string, boolean | null>; undoOf?: string; groupId?: string; acceptedAt?: string; retryOf?: string } = {},
   ): OperationReceipt {
     opCounter += 1;
     const operationId = `op-${String(opCounter).padStart(4, '0')}`;
@@ -792,6 +833,7 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
         ? { ...options.priorValues }
         : effectivePriorValues(conv, kind, messageIds),
       ...(options.undoOf === undefined ? {} : { undoOf: options.undoOf }),
+      ...(options.retryOf === undefined ? {} : { retryOf: options.retryOf }),
       ...(options.groupId === undefined ? {} : { groupId: options.groupId }),
     };
     conv.ops.push(op);
@@ -1127,7 +1169,7 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       }
       // A retry restores the same prior world as the operation it retries: it
       // copies the original's preimage instead of capturing a fresh one.
-      return enqueueOperation(original.conv, original.op.kind, original.op.requestedArchived, original.op.requestedRead, [...original.op.messageIds], command.requestId, fingerprint, { priorValues: original.op.priorValues });
+      return enqueueOperation(original.conv, original.op.kind, original.op.requestedArchived, original.op.requestedRead, [...original.op.messageIds], command.requestId, fingerprint, { priorValues: original.op.priorValues, retryOf: original.op.id });
     },
 
     async undoOperation(command: UndoOperation): Promise<UndoReceipt> {
