@@ -297,6 +297,26 @@ textarea {
   background: rgba(255, 255, 255, 0.03);
 }
 
+/*
+ * UX-05 selection: a distinct marker that is not color-only (the checkbox is
+ * rendered and the row carries an inset bar), never replacing the lavender
+ * focus cue, which stays on the focused row.
+ */
+.inbox-row.selected {
+  box-shadow: inset 3px 0 0 var(--text-secondary);
+}
+
+.inbox-row.selected.focused {
+  box-shadow: inset 3px 0 0 var(--focus-accent), inset 4px 0 0 var(--text-secondary);
+}
+
+.row-select {
+  flex: 0 0 auto;
+  align-self: center;
+  margin: 0;
+  cursor: pointer;
+}
+
 .row-sender {
   flex: 0 1 160px;
   min-width: 90px;
@@ -849,3 +869,35 @@ textarea {
 .action-overlay li.highlighted { background: #493d60; border-color: #c7a7ff; }
 .action-overlay kbd { font-size: .75rem; color: #e0d3f4; }
 .action-hint { font-size: .8rem; color: #d2c5df; }
+
+/* UX-05 selection action bar: compact, in normal flow above the list. */
+.selection-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .5rem 1rem;
+  padding: .4rem .6rem;
+  border-bottom: 1px solid var(--divider);
+  font-size: .85rem;
+}
+.selection-scope { margin: 0; }
+.selection-loaded-scope { color: var(--text-secondary); }
+.selection-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
+.selection-limit { margin: 0; flex-basis: 100%; color: var(--warning); }
+.reader-selection-scope {
+  margin: 0;
+  padding: .4rem .6rem;
+  border-bottom: 1px solid var(--divider);
+  color: var(--text-secondary);
+  font-size: .85rem;
+}
+
+/* UX-05 Activity group sections. */
+.activity-groups { margin-bottom: 1rem; }
+.activity-groups-title { margin: .2rem 0 .4rem; font-size: .9rem; }
+.activity-group-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .35rem; }
+.activity-group-toggle { width: 100%; text-align: left; cursor: pointer; }
+.activity-group-detail { margin-top: .4rem; padding: .5rem; border: 1px solid var(--divider); border-radius: .3rem; }
+.activity-group-request { margin: 0 0 .4rem; color: var(--text-secondary); font-size: .8rem; overflow-wrap: anywhere; }
+.activity-group-members { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .35rem; }
+.activity-group-member { display: flex; flex-wrap: wrap; align-items: baseline; gap: .4rem; }

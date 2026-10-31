@@ -9,20 +9,31 @@
  *
  * Gmail recovery controls are gated by the authoritative mailbox-action capability.
  */
+import type { OperationGroupStatus, OperationGroupSummary } from '../lib/ipc/client';
 import type { OperationSummaryLike } from '../composables/useMailbox';
 
-defineProps<{
+const props = defineProps<{
   activity: OperationSummaryLike[];
   /** Whether authoritative status currently permits mailbox commands. */
   actionsEnabled?: boolean;
   /** Retry is a durable Gmail operation and is unavailable in fixture mode. */
   gmailMode?: boolean;
+  /** UX-05: recent group summaries, independent of Inbox/Done rows. */
+  groups?: OperationGroupSummary[];
+  /** Loaded detail for the expanded group (request-id addressable). */
+  groupDetail?: OperationGroupStatus | null;
+  /** Request id of the currently expanded group, if any. */
+  expandedRequestId?: string | null;
 }>();
 
 const emit = defineEmits<{
   open: [ref: OperationSummaryLike['conversation']];
   unarchive: [ref: OperationSummaryLike['conversation']];
   retry: [operationId: string];
+  /** Expand a group summary; the parent loads authoritative detail by request id. */
+  openGroup: [requestId: string];
+  /** The group's single partial Undo attempt. */
+  undoGroup: [groupId: string];
 }>();
 
 function statusLabel(status: string, failure: { kind: string } | null): string {
@@ -59,12 +70,95 @@ function errorLabel(kind: string): string {
 function canRetry(status: string): boolean {
   return status === 'failed' || status === 'outcome_unknown';
 }
+
+function groupActionLabel(group: OperationGroupSummary): string {
+  if (group.kind === 'read') return group.requestedRead ? 'Mark read' : 'Mark unread';
+  return group.requestedArchived ? 'Mark Done (archive)' : 'Mark Not Done (restore)';
+}
+
+function groupDateLabel(group: OperationGroupSummary): string {
+  return group.acceptedAt.replace('T', ' ').replace(/\.\d+Z$/, ' UTC').replace(/Z$/, ' UTC');
+}
+
+function memberStatusLabel(status: string, failure: { kind: string } | null, rejection: string | null): string {
+  if (rejection === 'conversation_missing') return 'rejected — conversation unavailable';
+  if (rejection === 'target_bound_exceeded') return 'rejected — too many messages';
+  return statusLabel(status, failure);
+}
+
+function memberCanRetry(member: OperationGroupStatus['members'][number]): boolean {
+  return !!props.gmailMode && !!props.actionsEnabled && member.operationId !== null && canRetry(member.status);
+}
 </script>
 
 <template>
   <aside class="activity" aria-label="Operation activity">
     <h2 class="activity-title">Activity</h2>
-    <p v-if="activity.length === 0" data-test="activity-empty">No operations yet.</p>
+    <p v-if="activity.length === 0 && (groups ?? []).length === 0" data-test="activity-empty">No operations yet.</p>
+
+    <!-- UX-05 durable groups: addressable independently of current list rows;
+         per-member recovery and one partial group Undo. -->
+    <section v-if="(groups ?? []).length > 0" class="activity-groups" aria-label="Conversation groups" data-test="activity-groups">
+      <h3 class="activity-groups-title">Conversation groups</h3>
+      <ul class="activity-group-list">
+        <li
+          v-for="group in groups"
+          :key="group.groupId"
+          class="activity-group"
+          :data-test="`activity-group-${group.groupId}`"
+        >
+          <button
+            type="button"
+            class="activity-group-toggle"
+            :data-test="`activity-group-toggle-${group.groupId}`"
+            :aria-expanded="expandedRequestId === group.requestId ? 'true' : 'false'"
+            @click="emit('openGroup', group.requestId)"
+          >
+            {{ groupActionLabel(group) }} · {{ group.members.length }} conversations · {{ groupDateLabel(group) }}
+            <template v-if="group.undone"> · undo accepted</template>
+          </button>
+          <div
+            v-if="expandedRequestId === group.requestId && groupDetail && groupDetail.group.groupId === group.groupId"
+            class="activity-group-detail"
+            :data-test="`group-detail-${group.groupId}`"
+          >
+            <p class="activity-group-request" data-test="group-detail-request">Request {{ groupDetail.group.requestId }}</p>
+            <p v-if="groupDetail.undo.available" data-test="group-undo-available">
+              <button
+                type="button"
+                :data-test="`group-undo-${groupDetail.group.groupId}`"
+                @click="emit('undoGroup', groupDetail.group.groupId)"
+              >Undo this group</button>
+            </p>
+            <p v-else-if="groupDetail.undo.reason" data-test="group-undo-unavailable">Group Undo unavailable: {{ groupDetail.undo.reason.replace('_', ' ') }}.</p>
+            <ul class="activity-group-members">
+              <li
+                v-for="member in groupDetail.members"
+                :key="member.ordinal"
+                class="activity-group-member"
+                :data-test="`group-member-${member.ordinal}`"
+              >
+                <span class="activity-status" :data-test="`group-member-status-${member.status}`">{{ memberStatusLabel(member.status, member.failure, member.rejection) }}</span>
+                <span class="activity-id">{{ member.conversation.conversationId }}</span>
+                <p v-if="member.status === 'outcome_unknown'" class="activity-warning" data-test="member-unknown-warning">
+                  Verify current mailbox state first. Retrying may override the current state.
+                </p>
+                <span class="activity-buttons">
+                  <button type="button" :data-test="`group-member-open-${member.ordinal}`" @click="emit('open', member.conversation)">Open</button>
+                  <button
+                    v-if="memberCanRetry(member)"
+                    type="button"
+                    :data-test="`group-member-retry-${member.ordinal}`"
+                    @click="emit('retry', member.operationId!)"
+                  >Retry with a new request ID</button>
+                </span>
+              </li>
+            </ul>
+          </div>
+        </li>
+      </ul>
+    </section>
+
     <ul class="activity-list">
       <li
         v-for="op in activity"

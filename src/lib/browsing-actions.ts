@@ -7,6 +7,8 @@ export const browsingActions = [
   { id: 'undo', label: 'Undo last action', shortcut: 'Z' },
   { id: 'read', label: 'Mark read', shortcut: '' },
   { id: 'unread', label: 'Mark unread', shortcut: 'Shift+U' },
+  { id: 'select-all-loaded', label: 'Select all loaded', shortcut: '' },
+  { id: 'clear-selection', label: 'Clear selection', shortcut: 'Escape' },
   { id: 'inbox', label: 'Go to Inbox', shortcut: '' },
   { id: 'done', label: 'Go to cached Done', shortcut: 'G then E (within 1 second)' },
   { id: 'account', label: 'Go to Account', shortcut: '' },

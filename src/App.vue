@@ -37,7 +37,8 @@
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import ActionOverlay from './components/ActionOverlay.vue';
-import ActionNotice from './components/ActionNotice.vue';
+import ActionNotice, { type GroupNoticeView } from './components/ActionNotice.vue';
+import SelectionBar from './components/SelectionBar.vue';
 import { browsingActions, actionLabel, type BrowsingActionId } from './lib/browsing-actions';
 import InboxList from './components/InboxList.vue';
 import ReaderView from './components/ReaderView.vue';
@@ -48,7 +49,7 @@ import ContactPane from './components/ContactPane.vue';
 import { BROWSER_PREVIEW_DISCLOSURE } from './lib/ipc/browser-fake';
 import type { ClientMode } from './lib/ipc';
 import type { ConversationRef, DraftRef, DraftSource, MailClient } from './lib/ipc/client';
-import { sameConversation, useMailbox, type BrowseContext, type DoneBoundary } from './composables/useMailbox';
+import { sameConversation, useMailbox, type BrowseContext, type DoneBoundary, type LastActionId } from './composables/useMailbox';
 import { useDrafts } from './composables/useDrafts';
 
 const props = defineProps<{
@@ -84,6 +85,71 @@ const emptyState = ref<HTMLElement | null>(null);
 const actionNoticeComponent = ref<InstanceType<typeof ActionNotice> | null>(null);
 
 // ---------------------------------------------------------------------------
+// UX-05 selection: one-target policy, bulk dispatch, escape precedence
+// ---------------------------------------------------------------------------
+
+const selectedCount = computed(() => mailbox.selectedRefs.value.length);
+
+/**
+ * One-target policy (§3.3): shared toolbar/palette/shortcut dispatch resolves
+ * the nonempty selection FIRST (even in the reader, even for one row); explicit
+ * inline row actions bypass this and resolve exactly one row.
+ */
+function bulkMembers(): ConversationRef[] | null {
+  if (selectedCount.value === 0) return null;
+  if (!accountReady.value || mailbox.bulkUnresolved.value) return null;
+  if (mailbox.listState.value === 'error') return null;
+  const members = mailbox.selectionInLoadedOrder();
+  return members.length > 0 ? members : null;
+}
+
+function bulkActionAvailable(id: BrowsingActionId): boolean {
+  if (!bulkMembers()) return false;
+  if (id === 'archive') return mailbox.context.value === 'inbox' && mailboxActionsEnabled.value;
+  if (id === 'unarchive') return mailbox.context.value === 'done' && mailboxActionsEnabled.value;
+  if (id === 'read' || id === 'unread') return gmailActionsEnabled.value;
+  return false;
+}
+
+function toggleRowSelection(target: ConversationRef): void {
+  if (!accountReady.value) return;
+  // Cmd-click moves focus and the anchor; X keeps focus on the toggled row.
+  if (!sameConversation(target, mailbox.focusedRef.value)) mailbox.focusConversation(target);
+  mailbox.toggleSelected(target);
+}
+
+function rangeSelectRow(target: ConversationRef): void {
+  if (!accountReady.value) return;
+  const preFocus = mailbox.focusedRef.value ? { ...mailbox.focusedRef.value } : null;
+  mailbox.focusConversation(target);
+  mailbox.extendSelectionTo(target, preFocus);
+}
+
+function bulkArchiveSelection(): Promise<void> {
+  const members = bulkMembers();
+  if (!members) return Promise.resolve();
+  // The group path never invokes the single-reader archive-and-advance flow.
+  return mailbox.setArchivedGroup(members, true).then(() => undefined);
+}
+
+function bulkRestoreSelection(): Promise<void> {
+  const members = bulkMembers();
+  if (!members) return Promise.resolve();
+  return mailbox.setArchivedGroup(members, false).then(() => undefined);
+}
+
+function bulkSetReadSelection(read: boolean): Promise<void> {
+  const members = bulkMembers();
+  if (!members) return Promise.resolve();
+  return mailbox.setReadGroup(members, read).then(() => undefined);
+}
+
+/** Escape-level selection clearing; navigation state is untouched. */
+function clearSelectionAndReport(): void {
+  mailbox.clearSelection();
+}
+
+// ---------------------------------------------------------------------------
 // Action notice (UX-04): single-slot undo notification
 // ---------------------------------------------------------------------------
 
@@ -92,15 +158,66 @@ const nowMs = ref(Date.now());
 let nowTimer: ReturnType<typeof setInterval> | null = null;
 
 /**
- * Single-slot notice state. Status text derives from the matching Activity row
- * on every refresh; the undo window comes from the REFRESHED activity row when
- * it exists (the slot's captured value only covers the pre-refresh gap, so a
- * backend-withdrawn window hides the control). The backend stays the
- * authority: an `expired` rejection refreshes and then closes the slot window
- * below. After a successful undo the slot reports the outcome through `undone`
- * and the window is closed regardless of a stale activity row.
+ * Single-slot notice state, single-or-group identity (UX-04/UX-05). Status text
+ * derives from the matching Activity row / authoritative group status on every
+ * refresh; undo windows come only from refreshed authoritative state. The
+ * backend stays the authority: an `expired` rejection refreshes and then closes
+ * the slot window below. After a successful undo the slot reports the outcome.
  */
 const actionNotice = computed(() => {
+  const groupSlot = mailbox.lastGroup.value;
+  if (groupSlot) {
+    const status = groupSlot.status;
+    const counts = { pending: 0, confirmed: 0, failed: 0, rejected: 0, unknown: 0, cancelled: 0 };
+    if (status) {
+      for (const member of status.members) {
+        if (member.status === 'rejected') counts.rejected += 1;
+        else if (member.status === 'confirmed') counts.confirmed += 1;
+        else if (member.status === 'failed') counts.failed += 1;
+        else if (member.status === 'outcome_unknown') counts.unknown += 1;
+        else if (member.status === 'cancelled') counts.cancelled += 1;
+        else counts.pending += 1; // queued | applying
+      }
+    }
+    let undoneView: GroupNoticeView['undone'] = null;
+    if (groupSlot.undone) {
+      const skipReasons: Record<string, number> = {};
+      let cancelled = 0;
+      let compensating = 0;
+      let skipped = 0;
+      for (const member of groupSlot.undone.members) {
+        if (member.decision.kind === 'cancelled') cancelled += 1;
+        else if (member.decision.kind === 'compensating') compensating += 1;
+        else {
+          skipped += 1;
+          skipReasons[member.decision.reason] = (skipReasons[member.decision.reason] ?? 0) + 1;
+        }
+      }
+      undoneView = { cancelled, compensating, skipped, skipReasons };
+    }
+    const group: GroupNoticeView = {
+      count: groupSlot.members.length,
+      counts,
+      acceptanceUnknown: groupSlot.state === 'acceptance-unknown',
+      statusKnown: status !== null,
+      undoableUntil: status?.undo.undoableUntil ?? null,
+      hadWindow: groupSlot.hadWindow,
+      undone: undoneView,
+    };
+    const groupActionId: LastActionId = groupSlot.kind === 'read'
+      ? (groupSlot.requestedRead ? 'read' : 'unread')
+      : (groupSlot.requestedArchived ? 'archive' : 'unarchive');
+    return {
+      label: groupSlot.kind === 'read' ? (groupSlot.requestedRead ? 'Mark read' : 'Mark unread') : (groupSlot.requestedArchived ? 'Mark Done (Archive)' : 'Mark Not Done (Restore)'),
+      actionId: groupActionId,
+      subject: null,
+      operation: null,
+      undoableUntil: null,
+      hadWindow: false,
+      undone: null,
+      group,
+    };
+  }
   const slot = mailbox.lastAction.value;
   if (!slot) return null;
   const operation = mailbox.activity.value.find((item) => item.id === slot.receipt.operationId) ?? null;
@@ -127,7 +244,9 @@ const actionNotice = computed(() => {
  *  An in-flight undo owns the slot: a second dispatch (key repeat, double-tap,
  *  button+key) must never race it into a false `already_undone` failure. */
 const undoWindowOpen = computed(() => {
-  const until = actionNotice.value?.undoableUntil ?? null;
+  const notice = actionNotice.value;
+  if (!notice || notice.undone) return false;
+  const until = notice.group ? notice.group.undoableUntil : notice.undoableUntil;
   return until !== null && Date.parse(until) > nowMs.value;
 });
 
@@ -136,6 +255,11 @@ async function undoFromNotice(): Promise<void> {
   const active = document.activeElement;
   const noticeEl = actionNoticeComponent.value?.$el as Node | undefined;
   const focusWasInNotice = !!active && active instanceof Node && !!noticeEl && noticeEl.contains(active);
+  // Group slot: the group's single partial Undo attempt.
+  if (mailbox.lastGroup.value) {
+    await mailbox.undoGroupAction();
+    return;
+  }
   const target = mailbox.lastAction.value?.target ?? null;
   const receipt = await mailbox.undoLastAction();
   if (receipt && target && !readerOpen.value && mailbox.listState.value === 'ready'
@@ -150,6 +274,24 @@ async function undoFromNotice(): Promise<void> {
   if (!receipt || !focusWasInNotice) return;
   if (readerOpen.value) (readerView.value?.$el as HTMLElement | undefined)?.focus({ preventScroll: true });
   else if (mailbox.listState.value === 'ready') await focusFocusedRow(true);
+}
+
+/** Notice group action: 'Check acceptance' recovers the ORIGINAL request; the
+ * Undo button runs the group's single partial Undo attempt. */
+function onNoticeGroupAction(): void {
+  if (mailbox.lastGroup.value?.state === 'acceptance-unknown') void mailbox.recoverGroupAcceptance();
+  else void undoFromNotice();
+}
+
+const expandedGroupRequestId = ref<string | null>(null);
+
+async function openActivityGroup(requestId: string): Promise<void> {
+  if (expandedGroupRequestId.value === requestId && mailbox.groupDetail.value) {
+    expandedGroupRequestId.value = null;
+    return;
+  }
+  expandedGroupRequestId.value = requestId;
+  await mailbox.openGroupDetail(requestId);
 }
 
 const readerOpen = computed(() => mailbox.openRef.value !== null);
@@ -799,11 +941,19 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   if (id === 'account') return gmailMode.value;
   if (id === 'drafts') return !!accountId.value;
   if (id === 'back') return readerOpen.value || history.value.length > 0;
+  if (id === 'select-all-loaded') return !drafts.activeRef.value && !drawer.value && !contactDisclosure.value && !readerOpen.value && mailbox.listState.value === 'ready' && mailbox.conversations.value.length > 0;
+  if (id === 'clear-selection') return !drafts.activeRef.value && !drawer.value && !contactDisclosure.value && selectedCount.value > 0;
   if (drafts.activeRef.value || drawer.value || contactDisclosure.value) return false;
   if (id === 'undo') {
     // Same guards as the key: no in-flight undo (a second dispatch would race
     // into a false already_undone), and no open reader message-details disclosure.
-    return undoWindowOpen.value && !mailbox.inFlightCommandRef.value && !readerView.value?.hasOpenDetails();
+    return undoWindowOpen.value && !mailbox.inFlightCommandRef.value && !mailbox.groupInFlight.value && !readerView.value?.hasOpenDetails();
+  }
+  // One-target policy: with a nonempty selection, shared dispatch resolves the
+  // selection (even in the reader); explicit row actions bypass this entirely.
+  if (!explicit && (id === 'archive' || id === 'unarchive' || id === 'read' || id === 'unread')) {
+    if (bulkActionAvailable(id)) return true;
+    if (selectedCount.value > 0) return false;
   }
   const target = actionTarget(explicit);
   if (!target) return false;
@@ -813,8 +963,17 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   const inInbox = readerOpen.value ? mailbox.conversation.value?.isInInbox : mailbox.context.value === 'inbox';
   return id === 'archive' ? inInbox === true : inInbox === false;
 }
-const availableActions = computed(() => browsingActions.filter((action) => actionAvailable(action.id)
-  && (overlay.value !== 'navigator' || ['inbox', 'done', 'account', 'activity', 'drafts'].includes(action.id))));
+const availableActions = computed(() => browsingActions
+  .filter((action) => actionAvailable(action.id)
+    && (overlay.value !== 'navigator' || ['inbox', 'done', 'account', 'activity', 'drafts'].includes(action.id)))
+  .map((action) => ({
+    id: action.id,
+    shortcut: action.shortcut,
+    // Selected-scope actions are labelled with the count (§3.3).
+    label: selectedCount.value > 0 && ['archive', 'unarchive', 'read', 'unread'].includes(action.id)
+      ? `${action.label} — ${selectedCount.value} selected`
+      : action.label,
+  })));
 async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): Promise<void> {
   if (!actionAvailable(id, explicit)) return;
   switch (id) {
@@ -825,19 +984,36 @@ async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): 
     case 'open': if (explicit) await openRowFromList(explicit); else await openFocusedFromList(); return;
     case 'archive':
       if (explicit) await archiveRowFromList(explicit);
+      // Selection scope wins over focused/reader singles; the group path never
+      // invokes the single-reader archive-and-advance flow.
+      else if (bulkMembers()) await bulkArchiveSelection();
       else if (readerOpen.value) await archiveFromReader();
       else await archiveFocusedRow();
       return;
     case 'unarchive': {
+      if (!explicit && bulkMembers()) {
+        await bulkRestoreSelection();
+        return;
+      }
       const target = actionTarget(explicit);
       if (target) await mailbox.setArchived(target, false);
       return;
     }
     case 'read': case 'unread': {
+      if (!explicit && bulkMembers()) {
+        await bulkSetReadSelection(id === 'read');
+        return;
+      }
       const target = actionTarget(explicit);
       if (target) await mailbox.setRead(target, id === 'read');
       return;
     }
+    case 'select-all-loaded':
+      mailbox.selectAllLoaded();
+      return;
+    case 'clear-selection':
+      clearSelectionAndReport();
+      return;
     case 'undo':
       await undoFromNotice();
       return;
@@ -916,8 +1092,19 @@ function onKeydown(event: KeyboardEvent): void {
         readerView.value.dismissMessageDetails();
         return;
       }
+      // Escape order (§3.2): disclosure/drawer → selected set → reader Back.
+      if (selectedCount.value > 0) {
+        event.preventDefault();
+        clearSelectionAndReport();
+        return;
+      }
       event.preventDefault();
       void executeAction('back');
+    } else if (selectedCount.value > 0) {
+      // Escape order (§3.2): the selected set clears before any context Back,
+      // including when no context history exists.
+      event.preventDefault();
+      clearSelectionAndReport();
     } else if (history.value.length) {
       event.preventDefault(); void executeAction('back');
     }
@@ -985,6 +1172,27 @@ function onKeydown(event: KeyboardEvent): void {
       event.preventDefault();
       void executeAction('archive');
     }
+    return;
+  }
+
+  // Selection keys share the plain-J/K ownership predicate (no reader, no
+  // drawer/disclosure, not editable, not a button/link) so they never hijack
+  // other surfaces; window-targeted events are treated like list-owned keys.
+  const selectionKeysOwned = !readerIsOpen && !buttonOwns(event.target);
+  if (selectionKeysOwned && (key === 'x' || key === 'X')) {
+    if (event.repeat) return; // X ignores auto-repeat
+    event.preventDefault();
+    if (mailbox.focusedRef.value) mailbox.toggleSelected(mailbox.focusedRef.value);
+    return;
+  }
+  if (selectionKeysOwned && event.shiftKey && (key === 'J' || key === 'K')) {
+    // Shift+J/K: move one row, then add the inclusive anchor→destination range.
+    // Boundary moves are a no-op (focus does not change).
+    event.preventDefault();
+    const preMove = mailbox.focusedRef.value ? { ...mailbox.focusedRef.value } : null;
+    moveFocus(key === 'J' ? 1 : -1);
+    const destination = mailbox.focusedRef.value;
+    if (destination && preMove && !sameConversation(destination, preMove)) mailbox.extendSelectionTo(destination, preMove);
     return;
   }
 
@@ -1102,6 +1310,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
       </p>
       <p class="status-line" data-test="status-line">
         <span data-test="inbox-count">{{ mailbox.conversations.value.length }} {{ mailbox.context.value === 'inbox' ? 'in inbox' : 'loaded in cached Done' }}</span>
+        <span v-if="selectedCount > 0" role="status" data-test="selection-live">{{ selectedCount }} selected</span>
         <span v-if="pendingCount > 0" data-test="pending-count">{{ pendingCount }} pending operation(s)</span>
         <span v-if="gmailActionsEnabled" data-test="read-shortcut-note">Shift+U marks the focused or open conversation unread.</span>
         <span v-if="commandError" role="alert" data-test="command-error">
@@ -1129,7 +1338,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
          under a palette/navigator overlay exactly like header/main, so its Undo
          button cannot be reached while covered; drawer/disclosure guards apply
          through executeAction. -->
-    <ActionNotice ref="actionNoticeComponent" :notice="actionNotice" :now="nowMs" :inert="!!overlay || undefined" @undo="executeAction('undo')" />
+    <ActionNotice ref="actionNoticeComponent" :notice="actionNotice" :now="nowMs" :inert="!!overlay || undefined" @undo="executeAction('undo')" @undo-group="onNoticeGroupAction" @dismiss-group="mailbox.dismissGroupNotice()" />
     <main class="app-main" :inert="!!overlay || undefined">
       <section v-if="!accountReady" class="account-gate" aria-label="Account">
         <p
@@ -1201,6 +1410,21 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
 
         <section class="central" :aria-label="readerOpen ? 'Reader' : 'Conversation list'" :inert="centralCovered || undefined" data-test="central-surface">
           <template v-if="!readerOpen">
+            <SelectionBar
+              v-if="selectedCount > 0 && mailbox.listState.value === 'ready'"
+              :count="selectedCount"
+              :loaded-count="mailbox.conversations.value.length"
+              :context="mailbox.context.value"
+              :actions-enabled="mailboxActionsEnabled && !mailbox.bulkUnresolved.value"
+              :read-available="gmailActionsEnabled && !mailbox.bulkUnresolved.value"
+              :limit-message="mailbox.selectionNotice.value"
+              @archive="bulkArchiveSelection()"
+              @unarchive="bulkRestoreSelection()"
+              @mark-read="bulkSetReadSelection(true)"
+              @mark-unread="bulkSetReadSelection(false)"
+              @select-all="mailbox.selectAllLoaded()"
+              @clear="clearSelectionAndReport()"
+            />
             <p v-if="mailbox.listState.value === 'loading'" data-test="inbox-loading">Loading {{ mailbox.context.value === 'inbox' ? 'inbox' : 'cached Done' }}…</p>
             <div v-else-if="mailbox.listState.value === 'error'" data-test="inbox-error">
               <p role="alert">Could not load {{ mailbox.context.value === 'inbox' ? 'the inbox' : 'cached Done' }}: {{ mailbox.listError.value ? errorText(mailbox.listError.value) : 'unknown error' }}.</p>
@@ -1223,15 +1447,24 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               :actions-enabled="mailboxActionsEnabled"
               :show-read-state="gmailMode"
               :show-read-controls="gmailActionsEnabled"
+              :selected-refs="mailbox.selectedRefs.value"
               @focus="mailbox.focusConversation($event)"
               @open="executeAction('open', $event)"
               @archive="executeAction('archive', $event)"
               @unarchive="executeAction('unarchive', $event)"
               @set-read="(target, read) => executeAction(read ? 'read' : 'unread', target)"
+              @select-toggle="toggleRowSelection"
+              @select-range="rangeSelectRow"
             />
             <button v-if="mailbox.nextCursor.value" type="button" :disabled="mailbox.loadingMore.value || mailbox.listState.value !== 'ready'" data-test="done-more" @click="mailbox.loadMore()">Load more cached Done</button>
           </template>
           <section v-else class="reader-pane" aria-label="Reader">
+            <p
+              v-if="selectedCount > 0"
+              class="reader-selection-scope"
+              role="note"
+              data-test="reader-selection-scope"
+            >{{ selectedCount }} selected — bulk actions apply to the selection, not only this conversation.</p>
             <div v-if="mailbox.listState.value === 'error'" role="alert" data-test="reader-navigation-error">
               Could not refresh the originating list: {{ mailbox.listError.value ? errorText(mailbox.listError.value) : 'unknown error' }}.
               Conversation navigation is paused. <button type="button" @click="mailbox.refresh()">Retry list</button>
@@ -1241,7 +1474,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               :conversation="mailbox.conversation.value"
               :state="mailbox.detailState.value"
               :error="mailbox.detailError.value"
-              :command-in-flight="mailbox.inFlightCommandRef.value !== null"
+              :command-in-flight="mailbox.inFlightCommandRef.value !== null || mailbox.bulkUnresolved.value"
               :open-ref="mailbox.openRef.value"
               :navigation-unavailable="mailbox.context.value === 'done' && mailbox.listState.value === 'error'"
               :read-only="gmailMode && !mailboxActionsEnabled"
@@ -1301,9 +1534,14 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             :activity="mailbox.activity.value"
             :actions-enabled="mailboxActionsEnabled"
             :gmail-mode="gmailMode"
+            :groups="mailbox.recentGroups.value"
+            :group-detail="mailbox.groupDetail.value"
+            :expanded-request-id="expandedGroupRequestId"
             @open="openFromActivity($event)"
             @unarchive="unarchiveFromActivity"
             @retry="retryFromActivity"
+            @open-group="openActivityGroup"
+            @undo-group="(groupId) => mailbox.undoGroupById(groupId)"
           />
           <DraftsPanel
             v-if="drawer === 'drafts'"
