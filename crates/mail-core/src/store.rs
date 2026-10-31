@@ -443,11 +443,13 @@ impl Store {
         check_undoable(&tx, &target, &self.clock.now_iso())?;
         let accepted_at = self.clock.now_iso();
         let receipt = if target.status == OperationStatus::Queued {
-            // Cancel in place; zero rows changed means the worker claimed the
-            // operation concurrently, so fall through to compensation.
+            // Cancel in place. The zero-rows branch is defensive only: the
+            // status was read in this same transaction, which runs under the
+            // connection mutex the worker's claim also needs, so the worker
+            // cannot claim concurrently; fall through to compensation anyway.
             let cancelled = tx
                 .execute(
-                    "UPDATE operations SET status = 'cancelled'
+                    "UPDATE operations SET status = 'cancelled', failure_kind = NULL
                      WHERE operation_id = ?1 AND status = 'queued'",
                     params![target.operation_id],
                 )

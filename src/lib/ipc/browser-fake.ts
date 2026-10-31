@@ -71,6 +71,8 @@ export interface FakeBehavior {
   hold: boolean;
   /** When true, operations stay in `queued` (unclaimed by the worker) until `release()`. */
   holdQueued: boolean;
+  /** When true, `undoOperation` calls stay pending until `release()`. */
+  holdUndo: boolean;
   /** Hold the synthetic OAuth-upgrade completion until releaseUpgrade(). */
   holdUpgrade: boolean;
 }
@@ -344,12 +346,13 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
   let pendingClose: AppCloseRequest | null = null;
   let completedCloses = 0;
   const receiptsByRequest = new Map<string, { fingerprint: string; receipt: OperationReceipt | UndoReceipt }>();
-  const behavior: FakeBehavior = { failNext: 0, failureKind: 'provider_rejected', hold: false, holdQueued: false, holdUpgrade: false };
+  const behavior: FakeBehavior = { failNext: 0, failureKind: 'provider_rejected', hold: false, holdQueued: false, holdUpgrade: false, holdUndo: false };
 
   let opCounter = 0;
   let inFlight = 0;
   let holdReleased = false;
   const holdWaiters: Array<() => void> = [];
+  const undoWaiters: Array<() => void> = [];
 
   // Slice 02 account simulation. Fixture mode is the default so the Slice 01 preview
   // and its tests keep working unchanged.
@@ -492,6 +495,9 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
     }
     if (op.status === 'outcome_unknown') return { kind: 'undo_unavailable', reason: 'uncertain' } satisfies MailError;
     if (op.status !== 'queued' && op.status !== 'applying' && op.status !== 'confirmed') {
+      // A cancelled op was already undone in place; a re-undo reports
+      // already_undone, matching Rust's rule ordering.
+      if (op.status === 'cancelled') return { kind: 'undo_unavailable', reason: 'already_undone' } satisfies MailError;
       return { kind: 'undo_unavailable', reason: 'not_applicable' } satisfies MailError;
     }
     if (op.messageIds.some((id) => op.priorValues[id] === undefined || op.priorValues[id] === null)) {
@@ -644,6 +650,10 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
           const w = holdWaiters.shift();
           w?.();
         }
+        while (undoWaiters.length > 0) {
+          const w = undoWaiters.shift();
+          w?.();
+        }
       },
       activity(): OperationSummary[] {
         return snapshotCopy(conversations
@@ -773,8 +783,16 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
         } catch { throw { kind: 'invalid_request', field: 'cursor' } satisfies MailError; }
       }
       const compare = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
-      const candidates = conversations.filter((conv) => conv.ops.some((op) =>
-        op.kind === 'archive' && op.requestedArchived && op.status !== 'failed' && op.status !== 'cancelled'))
+      // Candidate query matches Rust: an archive whose compensation is still
+      // pending/confirmed/unknown is excluded BEFORE paging (a failed or
+      // cancelled compensation leaves the archive a qualifying candidate).
+      const qualifies = (conv: FakeConversation): boolean => {
+        const archive = conv.ops.find((op) => op.kind === 'archive' && op.requestedArchived && op.status !== 'failed' && op.status !== 'cancelled');
+        if (!archive) return false;
+        const compensation = conv.ops.find((op) => op.undoOf === archive.id);
+        return !compensation || compensation.status === 'failed' || compensation.status === 'cancelled';
+      };
+      const candidates = conversations.filter(qualifies)
         .map((conv) => ({ conv, row: summarize(conv, pendingOperationId(conv)) }))
         .sort((a, b) => compare(b.row.lastMessageAt, a.row.lastMessageAt) || compare(a.row.ref.conversationId, b.row.ref.conversationId))
         .filter(({ row }) => !position || row.lastMessageAt < position[0] ||
@@ -903,6 +921,8 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       const fingerprint = JSON.stringify(['undo', command.operationId]);
       const existing = existingReceipt(command.requestId, fingerprint);
       if (existing) return existing as unknown as UndoReceipt;
+      // Test hook: hold the IPC round trip open so in-flight undo gating is observable.
+      if (behavior.holdUndo) await new Promise<void>((resolve) => { undoWaiters.push(resolve); });
       const entry = allOps().find(({ op }) => op.id === command.operationId);
       if (!entry) throw failNotShown();
       const blocker = undoBlocker(entry.op);

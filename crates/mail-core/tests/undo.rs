@@ -585,18 +585,31 @@ fn undo_after_the_ten_second_window_is_rejected_as_expired_and_enqueues_nothing(
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// §5 item 3: a still-queued operation is cancelled in place with zero
-/// provider calls; the overlay disappears and Activity shows `cancelled`.
+/// §5 item 3: a still-queued operation is cancelled in place; the overlay
+/// disappears and Activity shows `cancelled`. After the cancel, a running
+/// worker with a working provider dispatches only an unrelated operation —
+/// the cancelled row is never claimed. The cancelled receipt replays
+/// identically under the same requestId; a new requestId is `already_undone`.
 #[test]
 fn undo_of_a_still_queued_operation_cancels_in_place_with_zero_provider_calls() {
     let dir = temp_profile("gmail-cancel-in-place");
     let clock = Arc::new(FakeClock::new(utc("2026-01-01T00:00:00Z")));
-    let provider = FakeProvider::new(vec![thread(
-        THREAD,
-        vec![message("m-1", "2026-01-01T00:00:00Z")],
-        &["m-1"],
-        &["m-1"],
-    )]);
+    let provider = FakeProvider::new(vec![
+        thread(
+            THREAD,
+            vec![message("m-1", "2026-01-01T00:00:00Z")],
+            &["m-1"],
+            &["m-1"],
+        ),
+        // A second conversation for the unrelated operation dispatched after
+        // the cancel: its write must be the only provider call.
+        thread(
+            "thread-undo-2",
+            vec![message("m-u2-1", "2026-01-01T00:00:00Z")],
+            &["m-u2-1"],
+            &["m-u2-1"],
+        ),
+    ]);
     let core = open_core(&dir, &provider, &clock);
     wait_ready(&core);
     provider.set_apply_plan(ApplyPlan::BeforeDispatchError(
@@ -615,9 +628,43 @@ fn undo_of_a_still_queued_operation_cancels_in_place_with_zero_provider_calls() 
     assert_eq!(receipt.undone_operation_id, archive.operation_id);
     assert_eq!(receipt.outcome, UndoOutcome::Cancelled);
     assert!(receipt.operation_ids.is_empty());
-    assert!(
-        provider.writes().is_empty(),
-        "cancelled in place, zero provider calls"
+    let replay = core
+        .undo_operation(&undo(&archive.operation_id, "undo-1"))
+        .unwrap();
+    assert_eq!(receipt, replay, "same requestId replays the same receipt");
+    let error = core
+        .undo_operation(&undo(&archive.operation_id, "undo-2"))
+        .unwrap_err();
+    assert_eq!(
+        undo_reason(&error),
+        Some(UndoUnavailableReason::AlreadyUndone),
+        "a new requestId on a cancelled op is already_undone"
+    );
+
+    // Now let the worker run with a working provider and accept one unrelated
+    // operation: its write must be the only provider call, proving the
+    // cancelled row is never claimed.
+    provider.set_apply_plan(ApplyPlan::Success);
+    let unrelated = core
+        .set_archived(&SetArchived {
+            conversation: conversation_ref("thread-undo-2"),
+            archived: true,
+            request_id: "archive-unrelated".to_string(),
+        })
+        .unwrap();
+    assert!(wait_status(
+        &core,
+        &unrelated.operation_id,
+        OperationStatus::Confirmed
+    ));
+    assert_eq!(
+        provider.writes(),
+        vec![(
+            MailboxOperationKind::Archive,
+            true,
+            vec!["m-u2-1".to_string()]
+        )],
+        "only the unrelated op was dispatched; the cancelled row is not"
     );
 
     let snapshot = core.list_conversations().unwrap();
@@ -642,8 +689,10 @@ fn undo_of_a_still_queued_operation_cancels_in_place_with_zero_provider_calls() 
 }
 
 /// §5 item 4: an operation claimed by the worker (`applying`) is compensated;
-/// a cancel attempt that loses to the claim falls through to compensation,
-/// and the compensation runs after the original and restores it.
+/// the compensation runs after the original and restores it. (The cancel
+/// UPDATE's zero-rows branch is defensive only — it runs in the same
+/// transaction under the connection mutex, so the test exercises the
+/// compensation path by undoing an `applying` operation, not a lost race.)
 #[test]
 fn undo_of_a_claimed_operation_falls_through_to_compensation_which_runs_after_it() {
     let dir = temp_profile("gmail-compensate-applying");
@@ -669,7 +718,7 @@ fn undo_of_a_claimed_operation_falls_through_to_compensation_which_runs_after_it
     assert_eq!(
         receipt.outcome,
         UndoOutcome::Compensating,
-        "cancel lost to the claim"
+        "undo of an applying operation compensates"
     );
     assert_eq!(receipt.operation_ids.len(), 1);
 
@@ -1342,6 +1391,159 @@ fn cached_done_excludes_cancelled_and_undone_archives_but_keeps_failed_compensat
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// Retrying a failed compensating operation stays a compensation (§1 no
+/// redo, §3.1 compensations are never themselves undoable): the retry keeps
+/// the original's `undo_of`, discloses no undo window, and is itself not
+/// undoable.
+#[test]
+fn retrying_a_failed_compensation_keeps_the_undo_linkage_and_is_not_undoable() {
+    let dir = temp_profile("gmail-retry-compensation");
+    let clock = Arc::new(FakeClock::new(utc("2026-01-01T00:00:00Z")));
+    let provider = FakeProvider::new(vec![thread(
+        THREAD,
+        vec![message("m-1", "2026-01-01T00:00:00Z")],
+        &["m-1"],
+        &["m-1"],
+    )]);
+    let core = open_core(&dir, &provider, &clock);
+    wait_ready(&core);
+    let archive = core.set_archived(&archived(true, "archive-1")).unwrap();
+    assert!(wait_status(
+        &core,
+        &archive.operation_id,
+        OperationStatus::Confirmed
+    ));
+
+    provider.set_apply_plan(ApplyPlan::Error(MailError::ProviderRejected));
+    let receipt = core
+        .undo_operation(&undo(&archive.operation_id, "undo-1"))
+        .unwrap();
+    assert_eq!(receipt.outcome, UndoOutcome::Compensating);
+    let compensation = receipt.operation_ids[0].clone();
+    assert!(wait_status(&core, &compensation, OperationStatus::Failed));
+
+    provider.set_apply_plan(ApplyPlan::Success);
+    let retry = core
+        .retry_operation(&RetryOperation {
+            operation_id: compensation,
+            request_id: "retry-compensation".to_string(),
+        })
+        .unwrap();
+    assert!(wait_status(
+        &core,
+        &retry.operation_id,
+        OperationStatus::Confirmed
+    ));
+    let activity = core.list_conversations().unwrap().activity;
+    let retry_row = activity
+        .iter()
+        .find(|op| op.id == retry.operation_id)
+        .unwrap();
+    assert_eq!(
+        retry_row.undo_of.as_deref(),
+        Some(archive.operation_id.as_str()),
+        "the retried compensation keeps the undo linkage"
+    );
+    assert_eq!(
+        retry_row.undoable_until, None,
+        "a retried compensation is never undoable"
+    );
+    let error = core
+        .undo_operation(&undo(&retry.operation_id, "undo-retry"))
+        .unwrap_err();
+    assert_eq!(
+        undo_reason(&error),
+        Some(UndoUnavailableReason::NotApplicable),
+        "undoing the retried compensation is not a redo"
+    );
+    core.stop();
+    drop(core);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// §2 pinned in Rust: the preimage is the effective value at acceptance
+/// (cached fact + pending overlay), never the stale cached fact. With a
+/// pending archive A on the account, unarchive B captures prior = archived,
+/// so undoing B compensates with archive=true and the final effective state
+/// is archived.
+#[test]
+fn the_preimage_is_the_effective_value_under_a_pending_earlier_operation() {
+    let dir = temp_profile("gmail-effective-preimage");
+    let clock = Arc::new(FakeClock::new(utc("2026-01-01T00:00:00Z")));
+    let provider = FakeProvider::new(vec![thread(
+        THREAD,
+        vec![message("m-1", "2026-01-01T00:00:00Z")],
+        &["m-1"],
+        &["m-1"],
+    )]);
+    let core = open_core(&dir, &provider, &clock);
+    wait_ready(&core);
+
+    // A claims the worker and blocks inside the provider, so it stays
+    // pending (applying) while B is accepted.
+    provider.set_apply_plan(ApplyPlan::BlockThenSuccess);
+    let a = core.set_archived(&archived(true, "archive-a")).unwrap();
+    assert!(provider.wait_for_apply(1), "worker claimed A (blocked)");
+    // B's preimage is captured now: the effective value under A's pending
+    // overlay is archived, not the stale cached in-inbox fact.
+    let b = core.set_archived(&archived(false, "unarchive-b")).unwrap();
+
+    provider.release_apply();
+    assert!(wait_status(
+        &core,
+        &a.operation_id,
+        OperationStatus::Confirmed
+    ));
+    assert!(provider.wait_for_apply(2), "worker claimed B (blocked)");
+    provider.release_apply();
+    assert!(wait_status(
+        &core,
+        &b.operation_id,
+        OperationStatus::Confirmed
+    ));
+
+    provider.set_apply_plan(ApplyPlan::Success);
+    let receipt = core
+        .undo_operation(&undo(&b.operation_id, "undo-b"))
+        .unwrap();
+    assert_eq!(receipt.outcome, UndoOutcome::Compensating);
+    assert_eq!(receipt.operation_ids.len(), 1);
+    assert!(wait_status(
+        &core,
+        &receipt.operation_ids[0],
+        OperationStatus::Confirmed
+    ));
+    let activity = core.list_conversations().unwrap().activity;
+    let compensation = activity
+        .iter()
+        .find(|op| op.id == receipt.operation_ids[0])
+        .unwrap();
+    assert_eq!(
+        compensation.undo_of.as_deref(),
+        Some(b.operation_id.as_str())
+    );
+    assert!(
+        compensation.requested_archived,
+        "the compensation restores the effective prior value (archived), \
+         not the stale cached fact"
+    );
+    assert_eq!(
+        provider.writes().last(),
+        Some(&(MailboxOperationKind::Archive, true, vec!["m-1".to_string()])),
+        "explicit targets from the effective preimage"
+    );
+    assert!(
+        until(|| !core
+            .get_conversation(&conversation_ref(THREAD))
+            .unwrap()
+            .is_in_inbox),
+        "final effective state is archived"
+    );
+    core.stop();
+    drop(core);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 // ------------------------------------------------------------ Fixture §5.1–3, 12
 
 fn fixture_ref(conversation_id: &str) -> ConversationRef {
@@ -1475,9 +1677,12 @@ fn fixture_undo_after_the_window_is_rejected_as_expired_and_enqueues_nothing() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// §5 item 3 (fixture): a still-queued archive is cancelled in place with
-/// zero provider calls; the overlay disappears, Activity shows `cancelled`,
-/// and the cancelled archive is not cached-Done evidence.
+/// §5 item 3 (fixture): a still-queued archive is cancelled in place; the
+/// overlay disappears, Activity shows `cancelled`, and the cancelled archive
+/// is not cached-Done evidence. After the cancel, a running worker with an
+/// unpaused provider dispatches only an unrelated operation — the cancelled
+/// row is never claimed. The cancelled receipt replays identically under the
+/// same requestId; a new requestId is `already_undone`.
 #[test]
 fn fixture_undo_of_a_queued_operation_cancels_in_place_with_zero_provider_calls() {
     use mail_core::dto::CachedDoneRequest;
@@ -1487,8 +1692,7 @@ fn fixture_undo_of_a_queued_operation_cancels_in_place_with_zero_provider_calls(
         MailCore::open_with_clock(&dir, Arc::clone(&clock) as Arc<dyn mail_core::clock::Clock>)
             .unwrap();
     let provider = Arc::new(FakeArchiveProvider::new());
-    provider.set_paused(true);
-    // No worker started: the accepted archive stays durably queued.
+    // No worker yet: the accepted archive stays durably queued.
     let archive = core
         .set_archived(&SetArchived {
             conversation: fixture_ref("conv-01"),
@@ -1517,10 +1721,41 @@ fn fixture_undo_of_a_queued_operation_cancels_in_place_with_zero_provider_calls(
     assert_eq!(receipt.undone_operation_id, archive.operation_id);
     assert_eq!(receipt.outcome, UndoOutcome::Cancelled);
     assert!(receipt.operation_ids.is_empty());
+    let replay = core
+        .undo_operation(&undo(&archive.operation_id, "fixture-undo-3"))
+        .unwrap();
+    assert_eq!(receipt, replay, "same requestId replays the same receipt");
+    let error = core
+        .undo_operation(&undo(&archive.operation_id, "fixture-undo-3b"))
+        .unwrap_err();
+    assert_eq!(
+        undo_reason(&error),
+        Some(UndoUnavailableReason::AlreadyUndone),
+        "a new requestId on a cancelled op is already_undone"
+    );
+
+    // Now run the worker with the provider unpaused and accept one unrelated
+    // operation: its call must be the only provider call, proving the
+    // cancelled row is never claimed.
+    core.start_worker(provider.clone()).unwrap();
+    let unrelated = core
+        .set_archived(&SetArchived {
+            conversation: fixture_ref("conv-02"),
+            archived: true,
+            request_id: "fixture-archive-unrelated".to_string(),
+        })
+        .unwrap();
+    assert!(until(|| {
+        core.list_conversations()
+            .unwrap()
+            .activity
+            .iter()
+            .any(|op| op.id == unrelated.operation_id && op.status == OperationStatus::Confirmed)
+    }));
     assert_eq!(
         provider.call_count(),
-        0,
-        "cancelled in place, zero provider calls"
+        1,
+        "only the unrelated op was dispatched; the cancelled row is not"
     );
 
     let snapshot = core.list_conversations().unwrap();
@@ -1546,8 +1781,11 @@ fn fixture_undo_of_a_queued_operation_cancels_in_place_with_zero_provider_calls(
         })
         .unwrap();
     assert!(
-        page.conversations.is_empty(),
-        "a cancelled archive is not cached-Done evidence"
+        page.conversations
+            .iter()
+            .all(|c| c.conversation_ref.conversation_id == "conv-02"),
+        "a cancelled archive is not cached-Done evidence; only the unrelated \
+         confirmed archive qualifies"
     );
     core.stop_worker();
     let _ = std::fs::remove_dir_all(dir);

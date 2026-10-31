@@ -323,7 +323,97 @@ which describes mechanism a decade ago and is supporting inference, not `D`.
    binding. The fixture limitation is a repository constraint, not a target
    behavior.
 
-## 8. Known risks
+## 8. Implementation ledger
+
+Status: implemented on `feat/ux-04-trustworthy-undo` by two isolated worker
+lanes (backend: Rust/shell/IPC; frontend: components/composables/browser fake),
+integrated by the parent at `7cc2131`, then reviewed by two fresh-context
+read-only reviewers. Nothing here certifies native WKWebView behavior.
+
+### Integrated gate results (parent, `7cc2131`, logs `/tmp/ux04-integrated/`)
+
+| Configured command | Result |
+| --- | --- |
+| `mise run test:core` | 199 passed (106 unit; 2 cached_done; 7 draft_core; 8 gmail_auth_contract; 30 gmail_cache_sync; 15 gmail_operations; 16 integration; 15 new `tests/undo.rs`) |
+| `mise run check:contract` | exit 0 |
+| `mise run lint:core` | exit 0 |
+| `mise run test:ui` | 335 passed / 20 opt-in browser tests skipped |
+| `mise run typecheck` | exit 0 |
+| `mise run build:web` | exit 0 |
+
+### Deviations accepted from the lanes
+
+- `MailCore::open_with_clock` / `GmailCore::open_with_clock` additive
+  constructors so the 10 s window is testable with `FakeClock`.
+- `gmail_operation_requests.accepted_at` (nullable, additive) so an idempotent
+  replay of a *cancelled* undo returns the identical receipt.
+- Undo admission does not require Gmail mutation access: cancel is local;
+  compensations recheck capability in the unchanged executor.
+- Re-undo of an already-cancelled operation reports `already_undone`.
+- Preimage `prior_value` is stored in the operation's own requested-value
+  domain (archive → effective archived; read → effective read).
+- `Z` is also suppressed while a reader message-details disclosure is open.
+
+### Review findings
+
+Core reviewer: no P0/P1; verdict *needs attention*. Accepted: retry of a
+failed compensation must keep `undo_of` (otherwise a redo path appears);
+vacuous zero-provider-call assertions; cancelled-replay untested; stale
+`last_error` on cancel; capability description count; misleading race comment;
+add an effective-preimage pin test. **Declined:** skipping the compensation
+group whose prior value equals the original's requested value — a remote no-op
+that halves network writes in the sent-reply case; recorded as a follow-up
+optimisation, not a defect.
+
+UI reviewer: two P1s; verdict *needs attention*. Accepted: post-undo
+"Restored / Cancelled / Restore failed / Restore outcome unknown" feedback
+(the slot was cleared on success, so the cancel path showed nothing);
+key-repeat double undo producing a false `already_undone` error; notice button
+not `inert` under overlays; undo control driven by stale slot `undoableUntil`;
+expired wording shown for never-undoable actions and with Done-specific
+recovery advice for Not Done/read; late receipt after account change
+re-populating the slot; focus dropped to `body` after a button undo;
+`display:none` live region; fake/Rust divergences; test gaps. **Declined:**
+letting `Z` reach the backend after the local 10 s gate closes. Policy: the
+local timer closes the key, palette entry and button; anything that *is* sent
+is still decided by Rust, and the expiry wording after a locally closed window
+is a local statement about the control, not a claim about backend state. This
+is a proposed reconstruction policy.
+
+### Fix pass
+
+Two fresh worktree workers applied the accepted findings off `7cc2131`.
+Backend: `accept_retry` now propagates the original's `undo_of` (regression
+test mutation-verified); both §5.3 tests now confirm an unrelated operation
+after the cancel and assert the provider saw only that one; cancelled-replay
+idempotency and `already_undone` asserted in both stores; `last_error`
+(Gmail) / `failure_kind` (fixture) cleared on cancel; comments reworded; new
+effective-preimage pin test (`the_preimage_is_the_effective_value_under_a_pending_earlier_operation`).
+Frontend: slot retained after undo with `undone` receipt and compensation
+lookup ("Cancelled" / "Restored" / "Restore failed — see Activity" /
+"Restore outcome unknown — see Activity" / "Restoring…"); `event.repeat`
+and in-flight gate on `undo`; notice button routed through `executeAction` and
+`inert` under overlays; undo control driven by the refreshed row's
+`undoableUntil`; `hadWindow` gate and per-action expiry recovery clause;
+session-fenced `recordLastAction`; focus fallback to reader/list after a
+button undo; always-rendered live region; fake aligned with Rust
+(`already_undone`, cached-Done candidate exclusion); Activity hides Unarchive
+for cancelled archives; expired alert de-duplicated; test gaps filled.
+
+Integrated gate results after the fix pass (parent, logs `/tmp/ux04-fixpass/`):
+
+| Configured command | Result |
+| --- | --- |
+| `mise run test:core` | 201 passed (17 in `tests/undo.rs`); no gmail_operations flake observed |
+| `mise run check:contract` | exit 0 (no DTO change in the fix pass) |
+| `mise run lint:core` | exit 0 |
+| `mise run test:ui` | 359 passed / 20 opt-in browser tests skipped |
+| `mise run typecheck` | exit 0 |
+| `mise run build:web` | exit 0 |
+
+Recheck verdicts are appended below.
+
+## 9. Known risks
 
 - `gmail_operations.rs` confirmation-wait flakiness recorded in the UX-03
   ledger is unresolved; Undo tests add more worker waits. Use the same

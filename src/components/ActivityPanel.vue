@@ -86,7 +86,7 @@ function canRetry(status: string): boolean {
             Open
           </button>
           <button
-            v-if="(op.kind === undefined || op.kind === 'archive') && op.requestedArchived && actionsEnabled"
+            v-if="(op.kind === undefined || op.kind === 'archive') && op.requestedArchived && op.status !== 'cancelled' && actionsEnabled"
             type="button"
             :data-test="`activity-unarchive-${op.id}`"
             @click="emit('unarchive', op.conversation)"

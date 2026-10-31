@@ -28,11 +28,20 @@ export type LastActionId = 'archive' | 'unarchive' | 'read' | 'unread';
  * local guess; the backend stays the authority on undo eligibility.
  */
 export interface LastAction {
-  receipt: OperationReceipt;
+  /** The accepted operation. `acceptedAt` is carried only when it is real:
+   * a re-pointed slot knows no acceptance time and fabricates none. */
+  receipt: { operationId: string; acceptedAt?: string };
   actionId: LastActionId;
   target: ConversationRef;
-  subject: string;
+  /** Best-effort subject; null when no row carried one — never a raw id. */
+  subject: string | null;
   undoableUntil: string | null;
+  /** True once this action ever had an undo window; the expired wording is
+   * shown only then, never for actions that were never undoable. */
+  hadWindow: boolean;
+  /** Receipt of a successful undo of this action. Keeps the slot alive after
+   * the undo so the notice can report Cancelled/Restored/compensation outcome. */
+  undone: UndoReceipt | null;
 }
 
 export function sameConversation(a: ConversationRef | null, b: ConversationRef | null): boolean {
@@ -516,11 +525,16 @@ export function useMailbox(client: MailClient): Mailbox {
 
   async function setArchived(target: ConversationRef, archived: boolean): Promise<OperationReceipt | null> {
     const subject = subjectFor(target);
+    // Fenced at CALL time: an account identity change while the IPC round trip is
+    // pending must never repopulate the notice with the previous account's op.
+    const sessionToken = mailboxSessionToken;
     const receipt = await submitMutation(
       (requestId) => client.setArchived({ conversation: { ...target }, archived, requestId }),
       target,
     );
-    if (receipt && !detached) recordLastAction(receipt, archived ? 'archive' : 'unarchive', target, subject);
+    if (receipt && !detached && sessionToken === mailboxSessionToken) {
+      recordLastAction(receipt, archived ? 'archive' : 'unarchive', target, subject);
+    }
     return receipt;
   }
 
@@ -530,31 +544,39 @@ export function useMailbox(client: MailClient): Mailbox {
       return null;
     }
     const subject = subjectFor(target);
+    // Same call-time session fence as setArchived.
+    const sessionToken = mailboxSessionToken;
     const receipt = await submitMutation(
       (requestId) => client.setRead({ conversation: { ...target }, read, requestId }),
       target,
     );
-    if (receipt && !detached) recordLastAction(receipt, read ? 'read' : 'unread', target, subject);
+    if (receipt && !detached && sessionToken === mailboxSessionToken) {
+      recordLastAction(receipt, read ? 'read' : 'unread', target, subject);
+    }
     return receipt;
   }
 
-  /** Best-effort subject at action time; rows may vanish during the refresh. */
-  function subjectFor(target: ConversationRef): string {
+  /** Best-effort subject at action time; rows may vanish during the refresh.
+   * Returns null rather than a raw conversation id — the id is never a subject. */
+  function subjectFor(target: ConversationRef): string | null {
     const row = conversations.value.find((entry) => sameConversation(entry.ref, target));
     if (row) return row.subject;
     const open = conversation.value;
     if (open && sameConversation(open.ref, target)) return open.subject;
-    return target.conversationId;
+    return null;
   }
 
-  function recordLastAction(receipt: OperationReceipt, actionId: LastActionId, target: ConversationRef, subject: string): void {
+  function recordLastAction(receipt: OperationReceipt, actionId: LastActionId, target: ConversationRef, subject: string | null): void {
     const operation = activity.value.find((item) => item.id === receipt.operationId);
+    const undoableUntil = operation?.undoableUntil ?? null;
     lastAction.value = {
       receipt: { ...receipt },
       actionId,
       target: { ...target },
       subject,
-      undoableUntil: operation?.undoableUntil ?? null,
+      undoableUntil,
+      hadWindow: undoableUntil !== null,
+      undone: null,
     };
   }
 
@@ -575,11 +597,15 @@ export function useMailbox(client: MailClient): Mailbox {
       return;
     }
     lastAction.value = {
-      receipt: { operationId: newest.id, acceptedAt: newest.undoableUntil ?? '' },
+      // Only the operation id is consumed from a re-pointed slot; no fake
+      // acceptedAt is invented (undoableUntil is carried on the slot itself).
+      receipt: { operationId: newest.id },
       actionId: newest.kind === 'read' ? (newest.requestedRead ? 'read' : 'unread') : newest.requestedArchived ? 'archive' : 'unarchive',
       target: { ...newest.conversation },
       subject: subjectFor(newest.conversation),
       undoableUntil: newest.undoableUntil ?? null,
+      hadWindow: true,
+      undone: null,
     };
   }
 
@@ -596,8 +622,10 @@ export function useMailbox(client: MailClient): Mailbox {
       if (token === commandToken) lastCommandError.value = null;
       await refresh();
       if (detached || sessionToken !== mailboxSessionToken) return receipt;
-      // The action is undone: the single slot is cleared (no redo level).
-      lastAction.value = null;
+      // The action is undone (no redo level), but the slot STAYS: the notice
+      // reports Cancelled / Restored / the compensation outcome from the
+      // refreshed compensating rows. The window is closed by definition.
+      lastAction.value = { ...slot, undoableUntil: null, undone: receipt };
       return receipt;
     } catch (raw) {
       if (detached || sessionToken !== mailboxSessionToken || token !== commandToken) return null;

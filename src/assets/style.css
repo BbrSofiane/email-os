@@ -830,7 +830,10 @@ textarea {
   padding: .4rem 1rem;
   border-bottom: 1px solid var(--divider);
 }
-.action-notice:empty { display: none; }
+/* The empty region stays rendered at zero height/padding (never display:none):
+   a hidden live region is removed from the accessibility tree and inserted
+   content at the moment it becomes rendered may not be announced. */
+.action-notice-empty { min-height: 0; padding: 0; border-bottom: none; }
 .action-notice-text { margin: 0; font-size: .85rem; display: flex; gap: .5rem; flex-wrap: wrap; align-items: baseline; }
 .action-notice-label { color: var(--text-primary); font-weight: 600; }
 .action-notice-status { color: var(--text-secondary); }

@@ -884,6 +884,17 @@ impl GmailStore {
             account_id: account_id.clone(),
             conversation_id: original.conversation_id.clone(),
         };
+        // A retry of a compensating operation stays a compensation: it keeps
+        // the original's `undo_of`, so it is never itself undoable (no redo)
+        // and keeps the `Undo of …` linkage in Activity.
+        let original_undo_of: Option<String> = tx
+            .query_row(
+                "SELECT undo_of FROM gmail_operations
+                 WHERE account_id = ?1 AND operation_id = ?2",
+                params![account_id, original.operation_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| MailError::StorageUnavailable)?;
         let accepted_at = self.clock.now_iso();
         let receipt = accept_operation_tx(
             &tx,
@@ -898,7 +909,7 @@ impl GmailStore {
                 // retries, so it clones the original's preimage verbatim.
                 clone_targets_from: Some(&original.operation_id),
                 explicit_targets: None,
-                undo_of: None,
+                undo_of: original_undo_of.as_deref(),
                 accepted_at: &accepted_at,
             },
         )?;
@@ -936,11 +947,13 @@ impl GmailStore {
         check_undoable(&tx, &account_id, &target, &self.clock.now_iso())?;
         let accepted_at = self.clock.now_iso();
         let receipt = if target.status == OperationStatus::Queued {
-            // Cancel in place. Zero rows changed means the worker claimed the
-            // operation concurrently; fall through to compensation.
+            // Cancel in place. The zero-rows branch is defensive only: the
+            // status was read in this same transaction, which runs under the
+            // connection mutex the worker's claim also needs, so the worker
+            // cannot claim concurrently; fall through to compensation anyway.
             let cancelled = tx
                 .execute(
-                    "UPDATE gmail_operations SET status = 'cancelled'
+                    "UPDATE gmail_operations SET status = 'cancelled', last_error = NULL
                      WHERE account_id = ?1 AND operation_id = ?2 AND status = 'queued'",
                     params![account_id, target.operation_id],
                 )
