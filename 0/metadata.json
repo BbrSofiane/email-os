@@ -1,0 +1,65 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M694HDPW85ZM77SMAW333E2C",
+  "session_id": "01a19228-fcee-744d-b5b5-64ba145d2320",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-31T14:06:41.903558147Z",
+  "branch": "work/ux-05-ui",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/App.vue",
+    "src/assets/style.css",
+    "src/components/ActionNotice.vue",
+    "src/components/ActivityPanel.vue",
+    "src/components/InboxList.vue",
+    "src/components/SelectionBar.vue",
+    "src/composables/useMailbox.ts",
+    "src/lib/browsing-actions.ts",
+    "src/lib/ipc/browser-fake.ts",
+    "tests/app.component.test.ts",
+    "tests/app.selection.test.ts",
+    "tests/browser-fake.groups.test.ts",
+    "tests/discovery.component.test.ts",
+    "tests/helpers.ts",
+    "tests/reader.fixture.ts",
+    "tests/useMailbox.selection.test.ts",
+    "tests/useMailbox.test.ts"
+  ],
+  "agent": "Pi",
+  "model": "gpt-6.1-sol",
+  "turn_id": "a9a3681c8229",
+  "checkpoint_transcript_start": 61,
+  "transcript_lines_at_start": 61,
+  "compact_transcript_start": 25,
+  "token_usage": {
+    "input_tokens": 3,
+    "cache_creation_tokens": 571,
+    "cache_read_tokens": 83552,
+    "output_tokens": 54,
+    "api_call_count": 1
+  },
+  "session_metrics": {
+    "turn_count": 2
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-31T14:06:41.847955873Z",
+    "agent_lines": 2245,
+    "agent_removed": 33,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 2245,
+    "total_lines_changed": 2278,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}
