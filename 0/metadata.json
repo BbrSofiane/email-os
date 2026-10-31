@@ -1,0 +1,120 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6989QHBXGPF7QA9TER3S7AY",
+  "session_id": "01a19228-fcee-744d-b5b5-64ba145d2320",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-31T15:12:24.342751224Z",
+  "branch": "feat/ux-05-safe-bulk-processing",
+  "checkpoints_count": 7,
+  "save_step_count": 2,
+  "files_touched": [
+    "crates/mail-core/src/bin/generate-types.rs",
+    "crates/mail-core/src/dto.rs",
+    "crates/mail-core/src/gmail/store.rs",
+    "crates/mail-core/src/groups.rs",
+    "crates/mail-core/src/store.rs",
+    "src/App.vue",
+    "src/components/ActionNotice.vue",
+    "src/components/ActivityPanel.vue",
+    "src/components/ReaderView.vue",
+    "src/components/SelectionBar.vue",
+    "src/composables/useMailbox.ts",
+    "src/lib/ipc/browser-fake.ts",
+    "src/lib/ipc/client.ts",
+    "src/lib/ipc/generated.ts",
+    "tests/action-notice.component.test.ts",
+    "tests/activity-panel.test.ts",
+    "tests/app.selection.test.ts",
+    "tests/browser-fake.groups.test.ts",
+    "tests/useMailbox.selection.test.ts"
+  ],
+  "agent": "Pi",
+  "model": "gpt-6.1-sol",
+  "turn_id": "463cf8e54cd3",
+  "checkpoint_transcript_start": 72,
+  "transcript_lines_at_start": 72,
+  "compact_transcript_start": 30,
+  "token_usage": {
+    "input_tokens": 99,
+    "cache_creation_tokens": 52090,
+    "cache_read_tokens": 3898553,
+    "output_tokens": 6298,
+    "api_call_count": 33
+  },
+  "session_metrics": {
+    "turn_count": 9
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-31T15:12:24.274986491Z",
+    "agent_lines": 6272,
+    "agent_removed": 73,
+    "human_added": 782,
+    "human_modified": 93,
+    "human_removed": 0,
+    "total_committed": 7116,
+    "total_lines_changed": 7221,
+    "agent_percentage": 87.8687162442875,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 1476,
+      "user_lines_removed": 57,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "crates/mail-core/src/bin/generate-types.rs": 9,
+        "crates/mail-core/src/dto.rs": 7,
+        "crates/mail-core/src/gmail/store.rs": 349,
+        "crates/mail-core/src/groups.rs": 63,
+        "crates/mail-core/src/store.rs": 492,
+        "src/App.vue": 70,
+        "src/components/ActionNotice.vue": 27,
+        "src/components/ActivityPanel.vue": 94,
+        "src/components/ReaderView.vue": 38,
+        "src/components/SelectionBar.vue": 9,
+        "src/composables/useMailbox.ts": 237,
+        "src/lib/ipc/browser-fake.ts": 45,
+        "src/lib/ipc/client.ts": 3,
+        "src/lib/ipc/generated.ts": 33
+      },
+      "user_removed_per_file": {
+        "crates/mail-core/src/bin/generate-types.rs": 5,
+        "crates/mail-core/src/gmail/store.rs": 4,
+        "crates/mail-core/src/groups.rs": 1,
+        "crates/mail-core/src/store.rs": 4,
+        "src/App.vue": 6,
+        "src/components/ActionNotice.vue": 3,
+        "src/components/ActivityPanel.vue": 1,
+        "src/components/ReaderView.vue": 3,
+        "src/components/SelectionBar.vue": 4,
+        "src/composables/useMailbox.ts": 22,
+        "src/lib/ipc/browser-fake.ts": 3,
+        "src/lib/ipc/generated.ts": 1
+      }
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 650,
+      "user_lines_removed": 5,
+      "agent_lines_added": 1479,
+      "agent_lines_removed": 57,
+      "user_added_per_file": {
+        "src/App.vue": 9,
+        "src/components/ActivityPanel.vue": 8,
+        "tests/action-notice.component.test.ts": 82,
+        "tests/activity-panel.test.ts": 98,
+        "tests/app.selection.test.ts": 83,
+        "tests/browser-fake.groups.test.ts": 55,
+        "tests/useMailbox.group-recovery.test.ts": 296,
+        "tests/useMailbox.selection.test.ts": 19
+      },
+      "user_removed_per_file": {
+        "src/App.vue": 1,
+        "src/components/ActivityPanel.vue": 2,
+        "tests/app.selection.test.ts": 2
+      }
+    }
+  ]
+}
