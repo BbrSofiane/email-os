@@ -240,6 +240,9 @@ Each increment reuses contexts, action scopes, durable intent, groups and recove
 
 ### UX-11 — Manual reminders with correct pending and returned states
 
+Bounded increment and remaining Gmail blockers: [desktop-local reminder contract](ux-11-local-reminders.md).
+This checkout implements the native synthetic fixture capability, not provider-backed reminders.
+
 **Scope gate:** Explicitly revise ADR 0001's reminder deferral before implementation.
 
 **Journey:** H → choose manual time/“if no reply” → pending Reminders folder → simulated clock/reply event → returned Reminders split → cancel/recover.

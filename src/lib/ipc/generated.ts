@@ -4,6 +4,9 @@
 export const FIXTURE_MAILBOX = 'you@fixture.emailos';
 export const LIST_PROVIDER_DESTINATIONS_COMMAND = 'list_provider_destinations';
 export const BROWSE_PROVIDER_DESTINATION_COMMAND = 'browse_provider_destination';
+export const LIST_REMINDERS_COMMAND = 'list_reminders';
+export const PUT_REMINDER_COMMAND = 'put_reminder';
+export const CANCEL_REMINDER_COMMAND = 'cancel_reminder';
 export const LIST_CONVERSATIONS_COMMAND = 'list_conversations';
 export const LIST_CACHED_DONE_COMMAND = 'list_cached_done';
 export const LIST_CACHED_STARRED_COMMAND = 'list_cached_starred';
@@ -70,6 +73,16 @@ export type DestinationRequest = { accountId: string, destinationId: string, cur
 export type DestinationPage = { accountId: string, destinationId: string, conversations: Array<Conversation>, nextCursor: string | null, fetchedAt: string, };
 
 export type ConversationRef = { accountId: string, conversationId: string, };
+
+export type ReminderCondition = "if_no_reply" | "regardless";
+
+export type ReminderPhase = "removing" | "pending" | "returning" | "returned" | "suppressed" | "cancelling" | "cancelled" | "failed";
+
+export type Reminder = { conversation: ConversationRef, subject: string, revision: number, sourceMessageId: string, dueAt: string | null, condition: ReminderCondition, phase: ReminderPhase, };
+
+export type PutReminder = { conversation: ConversationRef, sourceMessageId: string, dueAt: string | null, condition: ReminderCondition, expectedRevision: number | null, requestId: string, };
+
+export type CancelReminder = { conversation: ConversationRef, expectedRevision: number, requestId: string, };
 
 export type Address = {
 /**

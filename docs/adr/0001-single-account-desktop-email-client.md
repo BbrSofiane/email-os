@@ -145,7 +145,17 @@ Do not put mailbox content or credentials into routine diagnostic logs. Any reus
 - Multiple accounts, multiple providers, or a custom mobile client.
 - AI classification, generated replies, or agent-authored configuration.
 - Public plugins, arbitrary extension code, a marketplace, or stable external APIs.
-- Follow-up automation, reminders, scheduled send, sophisticated snooze, or background execution while quit.
+- Follow-up automation, scheduled send, sophisticated snooze, or background execution while quit.
+- Provider-backed reminders remain deferred. UX-11 explicitly permits only the
+  bounded desktop-local synthetic fixture reminder contract in
+  [UX-11](../ux-11-local-reminders.md): manual fixed-offset time or unscheduled
+  someday, conditional/regardless reply handling, durable exact-target archive
+  and return, distinct pending/returned membership and cancellation recovery.
+  Rationale: exercise scheduling and recovery without claiming that Gmail's
+  incomplete cache proves no reply. This narrows the reminder deferral, not
+  mailbox authority: Gmail reminders require fresh reply evidence, pinned
+  inventories and their own transactional integration before exposure. No
+  calendar, cross-device or fully-quit execution promise is introduced.
 - Application-owned state replication across devices.
 - Complete offline mailbox search, advanced rich-text editing, attachment previews, or inline attachment composition.
 - Recruitment, billing, or the customization pilot described in Experiment 1.
