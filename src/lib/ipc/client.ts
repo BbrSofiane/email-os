@@ -13,6 +13,7 @@
  * typed client seam; results never stand in for OAuth, sync, or provider-send success.
  */
 import type {
+  SavedSplit,
   CachedDoneRequest,
   CachedDoneSnapshot,
   AccountStatus,
@@ -47,6 +48,8 @@ import type {
 } from './generated';
 
 export type {
+  SavedSplit,
+  SplitCriterion,
   AccountInfo,
   CachedDoneCoverage,
   CachedDoneRequest,
@@ -153,6 +156,8 @@ export {
 export const OPERATION_GROUP_MAX_MEMBERS = 100;
 
 export interface MailClient {
+  getSavedSplit(accountId: string): Promise<SavedSplit | null>;
+  saveSavedSplit(accountId: string, split: SavedSplit): Promise<SavedSplit>;
   listConversations(): Promise<InboxSnapshot>;
   /** Local archive evidence only; short/empty pages can still have a continuation. */
   listCachedDone(request: CachedDoneRequest): Promise<CachedDoneSnapshot>;

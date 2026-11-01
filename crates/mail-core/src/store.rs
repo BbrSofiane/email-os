@@ -110,6 +110,20 @@ impl Store {
             .store(on, Ordering::SeqCst);
     }
 
+    pub(crate) fn get_saved_split(&self, account: &str) -> Result<Option<crate::splits::SavedSplit>, MailError> {
+        self.persistence_gate()?;
+        let conn = self.lock_conn()?;
+        if account != ACCOUNT_ID { return Err(MailError::NotFound); }
+        crate::splits::get(&conn, account)
+    }
+
+    pub(crate) fn save_saved_split(&self, account: &str, split: &crate::splits::SavedSplit) -> Result<crate::splits::SavedSplit, MailError> {
+        self.persistence_gate()?;
+        let conn = self.lock_conn()?;
+        if account != ACCOUNT_ID { return Err(MailError::NotFound); }
+        crate::splits::save(&conn, account, split)
+    }
+
     fn lock_conn(&self) -> Result<MutexGuard<'_, Connection>, MailError> {
         self.conn.lock().map_err(|_| MailError::StorageUnavailable)
     }

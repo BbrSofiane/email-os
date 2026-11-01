@@ -1070,7 +1070,7 @@ fn b64url_decode(input: &str) -> Result<Vec<u8>, MailError> {
 /// without a safe plain-text body, oversized bodies, and undecodable content
 /// are disclosed via `unsupported_reason` and `context_complete: false`.
 /// Attachment presence is disclosed but never read.
-fn parse_thread(account_id: &str, thread_id: &str, body: &str) -> Result<GmailThread, MailError> {
+pub(super) fn parse_thread(account_id: &str, thread_id: &str, body: &str) -> Result<GmailThread, MailError> {
     let json: Value = parse_json(body)?;
     let history_id = str_field(&json, "historyId")?;
     let messages = json
@@ -1162,8 +1162,18 @@ fn parse_thread(account_id: &str, thread_id: &str, body: &str) -> Result<GmailTh
         reply_context,
         pending_operation_id: None,
     };
+    let newest_sender = latest_payload
+        .and_then(|message| message.get("payload"))
+        .and_then(|payload| {
+            // Reuse the bounded single-mailbox header parser, not reply eligibility.
+            // Absent, malformed, duplicate, or ambiguous From is explicitly unknown.
+            let mailbox = parse_single_mailbox_header(payload, "From")?;
+            parse_addresses(&json_header_value(payload, "From"))
+                .into_iter().find(|address| address.mailbox == mailbox)
+        });
     Ok(GmailThread {
         conversation,
+        newest_sender,
         inbox_message_ids,
         message_ids: Some(message_ids),
         unread_message_ids: Some(unread_message_ids),

@@ -339,6 +339,8 @@ export function createReaderFixtureClient(): ReaderFixture {
   };
 
   const client: MailClient = {
+    getSavedSplit: async () => null,
+    saveSavedSplit: async () => { throw { kind: 'storage_unavailable' }; },
     // UX-05 group seam stub: reader fixture journeys never exercise groups;
     // queries resolve empty, mutations reject (never fake success).
     setArchivedGroup: () => Promise.reject({ kind: 'invalid_request', field: 'members' } satisfies MailError),
