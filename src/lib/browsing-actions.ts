@@ -5,7 +5,7 @@ export const browsingActions = [
   { id: 'archive', label: 'Mark Done (Archive)', shortcut: 'E' },
   { id: 'unarchive', label: 'Mark Not Done (Restore to Inbox)', shortcut: 'Shift+E' },
   { id: 'undo', label: 'Undo last action', shortcut: 'Z' },
-  { id: 'star', label: 'Star', shortcut: 'S (toggle single target)' },
+  { id: 'star', label: 'Star', shortcut: 'S' },
   { id: 'unstar', label: 'Unstar', shortcut: '' },
   { id: 'read', label: 'Mark read', shortcut: '' },
   { id: 'unread', label: 'Mark unread', shortcut: 'Shift+U' },
@@ -19,7 +19,7 @@ export const browsingActions = [
   { id: 'drafts', label: 'Go to local Drafts', shortcut: '' },
 ] as const;
 export type BrowsingActionId = typeof browsingActions[number]['id'];
-export interface AvailableAction { id: BrowsingActionId; label: string; shortcut: string }
+export interface AvailableAction { id: BrowsingActionId; label: string; shortcut: string; disabledReason?: string }
 export function actionLabel(id: BrowsingActionId): string {
   const action = browsingActions.find((item) => item.id === id)!;
   return `${action.label}${action.shortcut ? ` — ${action.shortcut}` : ''}`;

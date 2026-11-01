@@ -229,7 +229,9 @@ describe.skipIf(chromePath === '')('UX-03 discovery (real Chrome, opt-in)', () =
     await cdp!.js('window.__h.wait(100)');
     await click('[data-test="rail-starred"]'); await cdp!.js('window.__h.wait(100)');
     expect(await cdp!.js(`document.querySelector('[data-test="starred-coverage"]').textContent`)).toContain('not provider-complete');
-    await click('[data-test="unstar-action"]'); await cdp!.js('window.__h.wait(100)');
+    await click('[data-test="palette-trigger"]'); await cdp!.js('window.__h.wait(60)');
+    await cdp!.cmd('Input.insertText', { text: 'unstar' });
+    await press('Enter'); await cdp!.js('window.__h.wait(100)');
     expect(await cdp!.js(`document.querySelector('[data-test="inbox-empty"]').textContent`)).toContain('No known starred');
     await click('[data-test="context-back"]'); await cdp!.js('window.__h.wait(100)');
     expect(await cdp!.js(`document.querySelector('[data-test="inbox-title"]').textContent`)).toBe('Inbox');

@@ -8,8 +8,15 @@ const fixtureRef = (conversationId: string) => ({accountId:'gmail-account',conve
 let wrapper: VueWrapper | null = null;
 afterEach(() => { wrapper?.unmount(); wrapper = null; });
 async function settle(fake: BrowserFake) { await flushPromises(); await fake.controls.flush(); await flushPromises(); }
-async function setup() {
-  const fake = createBrowserFakeMailClient(); useGmailMode(fake, { mutationAccess: 'enabled' });
+async function command(w: VueWrapper, id: 'star' | 'unstar') {
+  await w.get('[data-test="palette-trigger"]').trigger('click');
+  await flushPromises();
+  await w.get('[data-test="action-query"]').setValue(id);
+  await w.get(`#action-${id}`).trigger('click');
+  await flushPromises();
+}
+async function setup(mutationAccess: 'enabled' | 'read_only' | 'upgrading' = 'enabled') {
+  const fake = createBrowserFakeMailClient(); useGmailMode(fake, { mutationAccess });
   wrapper = mount(App, { props:{client:fake,mode:'browser-preview'},attachTo:document.body });
   await settle(fake); return {fake,w:wrapper};
 }
@@ -26,7 +33,7 @@ describe('UX-08 synthetic star browsing (memory only)', () => {
     expect(w.find('[data-test="inbox-title"]').text()).toBe('Cached Starred');
     expect(w.find('[data-test="starred-coverage"]').text()).toContain('not provider-complete');
     expect(w.find('[data-test="conversation-row-conv-01"]').exists()).toBe(true);
-    await w.find('[data-test="unstar-action"]').trigger('click'); await settle(fake);
+    await command(w, 'unstar'); await settle(fake);
     expect(w.find('[data-test="inbox-empty"]').text()).toContain('No known starred');
     expect((await fake.getConversation(before.ref)).isInInbox).toBe(false);
     expect((await fake.getConversation(before.ref)).isRead).toBe(before.isRead);
@@ -37,7 +44,7 @@ describe('UX-08 synthetic star browsing (memory only)', () => {
     const {fake,w} = await setup();
     const group = vi.spyOn(fake,'setStarredGroup'); const single = vi.spyOn(fake,'setStarred');
     for(const id of ['conv-02','conv-04']) await w.find(`[data-test="row-select-${id}"]`).setValue(true);
-    await w.find('[data-test="star-action"]').trigger('click'); await settle(fake);
+    await command(w, 'star'); await settle(fake);
     expect(group).toHaveBeenCalledTimes(1); expect(single).not.toHaveBeenCalled();
     expect(group.mock.calls[0]![0].members).toEqual(['conv-02','conv-04'].map(fixtureRef));
     expect(group.mock.calls[0]![0].starred).toBe(true);
@@ -53,7 +60,7 @@ describe('UX-08 synthetic star browsing (memory only)', () => {
     await settle(fake);
     await w.find('[data-test="rail-starred"]').trigger('click'); await settle(fake);
     await w.find('[data-test="conversation-row-conv-02"]').trigger('click'); await settle(fake);
-    await w.find('[data-test="unstar-action"]').trigger('click'); await settle(fake);
+    await command(w, 'unstar'); await settle(fake);
     expect(w.find('[data-test="reader"]').text()).toContain('Fixture thread 3');
     window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})); await settle(fake);
     expect(w.find('[data-test="inbox-title"]').text()).toBe('Cached Starred');
@@ -77,13 +84,13 @@ describe('UX-08 synthetic star browsing (memory only)', () => {
 
   it('the single starred filter preserves Inbox membership, unstar empties it and Back restores the filter', async () => {
     const {fake,w} = await setup();
-    await w.find('[data-test="star-action"]').trigger('click'); await settle(fake);
+    await command(w, 'star'); await settle(fake);
     await w.find('[data-test="starred-filter"]').trigger('click'); await settle(fake);
     expect(w.findAll('.inbox-row')).toHaveLength(1);
     await w.find('[data-test="rail-starred"]').trigger('click'); await settle(fake);
     await w.find('[data-test="context-back"]').trigger('click'); await settle(fake);
     expect(w.find('[data-test="starred-filter"]').attributes('aria-pressed')).toBe('true');
-    await w.find('[data-test="unstar-action"]').trigger('click'); await settle(fake);
+    await command(w, 'unstar'); await settle(fake);
     expect(w.find('[data-test="inbox-empty"]').text()).toContain('No known starred');
     expect((await fake.getConversation(fixtureRef('conv-01'))).isInInbox).toBe(true);
     await w.find('[data-test="starred-filter"]').trigger('click'); await settle(fake);
@@ -103,6 +110,63 @@ describe('UX-08 synthetic star browsing (memory only)', () => {
     expect(second.exactTotal).toBeNull();
     await expect(fake.listCachedStarred({...request,cursor:first.nextCursor!.replace('cached-starred-v1:','cached-done-v1:')})).rejects.toMatchObject({kind:'invalid_request'});
     await expect(fake.listCachedStarred({...request,accountId:'other'})).rejects.toMatchObject({kind:'not_found'});
+  });
+
+  it('native Cmd+K → st → Enter dispatches Star on the focused target, without header action buttons', async () => {
+    const {fake,w} = await setup();
+    await w.setProps({mode:'native'});
+    const setter = vi.spyOn(fake,'setStarred');
+    const row = w.get('[data-test="conversation-row-conv-02"]');
+    (row.element as HTMLElement).focus();
+    await row.trigger('keydown',{key:'k',metaKey:true}); await flushPromises();
+    await w.get('[data-test="action-query"]').setValue('st');
+    expect(w.get('#action-star kbd').text()).toBe('S');
+    expect(w.find('[data-test="star-action"]').exists()).toBe(false);
+    expect(w.find('[data-test="unstar-action"]').exists()).toBe(false);
+    await w.get('[data-test="action-query"]').trigger('keydown',{key:'Enter'}); await settle(fake);
+    expect(setter).toHaveBeenCalledTimes(1);
+    expect(setter.mock.calls[0]![0]).toMatchObject({conversation:fixtureRef('conv-02'),starred:true});
+    expect((await fake.getConversation(fixtureRef('conv-02'))).stars?.starredMessages).toBeGreaterThan(0);
+    expect(w.find('[role="dialog"]').exists()).toBe(false);
+  });
+
+  it.each(['read_only','upgrading'] as const)('explains %s access in native commands; S opens Account without requesting permission or writing', async access => {
+    const {fake,w} = await setup(access);
+    await w.setProps({mode:'native'});
+    const setter = vi.spyOn(fake,'setStarred');
+    const group = vi.spyOn(fake,'setStarredGroup');
+    const upgrade = vi.spyOn(fake,'enableMailboxActions');
+    expect(w.get('[data-test="mailbox-access-hint"]').text()).toContain(access === 'upgrading' ? 'pending' : 'read-only');
+    await w.get('[data-test="palette-trigger"]').trigger('click'); await flushPromises();
+    await w.get('[data-test="action-query"]').setValue('st');
+    expect(w.get('#action-star').attributes('aria-disabled')).toBe('true');
+    expect(w.get('#action-unstar').attributes('aria-disabled')).toBe('true');
+    expect(w.get('#action-star').text()).toContain(access === 'upgrading' ? 'Waiting for Google permission' : 'Enable mailbox actions');
+    await w.get('[data-test="action-query"]').trigger('keydown',{key:'Enter'});
+    await w.get('#action-star').trigger('click'); await settle(fake);
+    expect(w.find('[role="dialog"]').exists()).toBe(true);
+    await w.get('[data-test="action-query"]').trigger('keydown',{key:'Escape'}); await flushPromises();
+    await w.get('[data-test="conversation-row-conv-01"]').trigger('keydown',{key:'s'}); await settle(fake);
+    expect(w.get('[data-test="account-panel"]').text()).toContain(access === 'upgrading' ? 'upgrade in progress' : 'Enable mailbox actions');
+    expect(setter).not.toHaveBeenCalled(); expect(group).not.toHaveBeenCalled(); expect(upgrade).not.toHaveBeenCalled();
+  });
+
+  it('keeps commands guarded if permission changes while the palette is open', async () => {
+    const {fake,w} = await setup(); const setter = vi.spyOn(fake,'setStarred');
+    await w.get('[data-test="palette-trigger"]').trigger('click'); await flushPromises();
+    await w.get('[data-test="action-query"]').setValue('star');
+    fake.controls.setAccount({mutationAccess:'read_only'}); await settle(fake);
+    expect(w.get('#action-star').attributes('aria-disabled')).toBe('true');
+    await w.get('[data-test="action-query"]').trigger('keydown',{key:'Enter'}); await settle(fake);
+    expect(setter).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a native command permission rejection instead of reporting success', async () => {
+    const {fake,w} = await setup(); await w.setProps({mode:'native'});
+    vi.spyOn(fake,'setStarred').mockRejectedValueOnce({kind:'permission_required'});
+    await command(w,'star'); await settle(fake);
+    expect(w.get('[data-test="command-error"]').text()).toContain('Google permission required');
+    expect((await fake.getConversation(fixtureRef('conv-01'))).stars?.starredMessages).toBe(0);
   });
 
   it('fixture profile has no unsupported star controls or destination', async () => {

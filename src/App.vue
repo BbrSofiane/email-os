@@ -1030,19 +1030,33 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   const inInbox = readerOpen.value ? mailbox.conversation.value?.isInInbox : mailbox.context.value === 'inbox';
   return id === 'archive' ? inInbox === true : inInbox === false;
 }
+/** Keep permission-blocked star commands discoverable without allowing writes. */
+function starPermissionReason(id: BrowsingActionId): string | undefined {
+  if ((id !== 'star' && id !== 'unstar') || !accountReady.value || !gmailMode.value || gmailActionsEnabled.value) return;
+  if (drafts.activeRef.value || drawer.value || contactDisclosure.value) return;
+  if (!(selectedCount.value > 0 ? bulkMembers() : actionTarget())) return;
+  return accountStatus.value?.mutationAccess === 'upgrading'
+    ? 'Waiting for Google permission. Review access in Account.'
+    : 'Read-only. Open Account → Enable mailbox actions to use Star/Unstar.';
+}
 const availableActions = computed(() => browsingActions
-  .filter((action) => actionAvailable(action.id)
+  .filter((action) => (actionAvailable(action.id) || starPermissionReason(action.id))
     && (overlay.value !== 'navigator' || ['inbox', 'done', 'starred', 'account', 'activity', 'drafts'].includes(action.id)))
   .map((action) => ({
     id: action.id,
     shortcut: action.shortcut,
+    disabledReason: starPermissionReason(action.id),
     // Selected-scope actions are labelled with the count (§3.3).
     label: selectedCount.value > 0 && ['archive', 'unarchive', 'read', 'unread', 'star', 'unstar'].includes(action.id)
       ? `${action.label} — ${selectedCount.value} selected`
       : action.label,
   })));
 async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): Promise<void> {
-  if (!actionAvailable(id, explicit)) return;
+  if (!actionAvailable(id, explicit)) {
+    // A permission-blocked S opens the explanation, never an OAuth flow or write.
+    if (starPermissionReason(id)) await openDrawer('account');
+    return;
+  }
   switch (id) {
     case 'inbox': await navigateToInbox(); return;
     case 'done': await navigateContext('done'); return;
@@ -1397,8 +1411,6 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
         <h1 class="app-title" data-test="inbox-title">{{ contextTitle }}</h1>
         <button type="button" data-test="palette-trigger" ref="paletteButton" title="Commands (Cmd+K in native app)" @click="openOverlay('palette')">Commands</button>
         <button v-if="gmailMode && !readerOpen && mailbox.context.value !== 'starred'" type="button" data-test="starred-filter" :aria-pressed="mailbox.starredOnly.value" :disabled="mailbox.listState.value !== 'ready'" @click="toggleStarFilter()">Starred only (cached)</button>
-        <button v-if="gmailMode" type="button" data-test="star-action" :disabled="!actionAvailable('star')" @click="executeAction('star')">{{ selectedCount ? `Star ${selectedCount}` : 'Star' }}</button>
-        <button v-if="gmailMode" type="button" data-test="unstar-action" :disabled="!actionAvailable('unstar')" @click="executeAction('unstar')">{{ selectedCount ? `Unstar ${selectedCount}` : 'Unstar' }}</button>
         <button type="button" data-test="navigator-trigger" title="Destinations (Left from list)" @click="openOverlay('navigator')">Destinations</button>
         <button v-if="history.length && !readerOpen" type="button" data-test="context-back" @click="executeAction('back')">Back to previous context</button>
       </div>
@@ -1407,6 +1419,10 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
       </p>
       <p class="status-line" data-test="status-line">
         <span data-test="inbox-count">{{ mailbox.conversations.value.length }} {{ mailbox.context.value === 'inbox' ? 'in inbox' : `loaded in ${contextTitle}` }}</span>
+        <span v-if="gmailMode && !mailboxActionsEnabled" data-test="mailbox-access-hint">
+          {{ accountStatus?.mutationAccess === 'upgrading' ? 'Mailbox permission pending.' : 'Gmail is read-only.' }}
+          <button type="button" @click="openDrawer('account')">Review access in Account</button>
+        </span>
         <span v-if="selectedCount > 0" role="status" data-test="selection-live">{{ selectedCount }} selected</span>
         <span v-if="pendingCount > 0" data-test="pending-count">{{ pendingCount }} pending operation(s)</span>
         <span v-if="gmailActionsEnabled" data-test="read-shortcut-note">Shift+U marks the focused or open conversation unread.</span>

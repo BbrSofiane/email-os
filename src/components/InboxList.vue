@@ -487,7 +487,12 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
             :data-test="item.row.isRead === undefined ? 'row-read-unknown' : item.row.isRead ? 'row-read' : 'row-unread'"
             :aria-label="item.row.isRead === undefined ? 'Read state unknown' : undefined"
           >{{ readStateLabel(item.row) }}</span>
-          <span v-if="item.row.stars" class="row-read-state" data-test="row-stars" role="img" :aria-label="`${item.row.stars.starredMessages > 0 ? 'Starred' : item.row.stars.knownMessages === item.row.stars.totalMessages && item.row.stars.totalMessages > 0 ? 'Not starred' : 'Star state unknown'}; effective star values known for ${item.row.stars.knownMessages} of ${item.row.stars.totalMessages} cached messages; may include pending intent`" :title="`Effective star values known for ${item.row.stars.knownMessages} of ${item.row.stars.totalMessages} cached messages; pending intent is not provider confirmation`">{{ item.row.stars.starredMessages > 0 ? '★' : item.row.stars.knownMessages === item.row.stars.totalMessages && item.row.stars.totalMessages > 0 ? '☆' : 'Star unknown' }}{{ item.row.stars.knownMessages < item.row.stars.totalMessages ? ' (partial)' : '' }}</span>
+          <span
+            v-if="item.row.stars && (item.row.stars.starredMessages > 0 || item.row.stars.knownMessages < item.row.stars.totalMessages || item.row.stars.totalMessages === 0)"
+            class="row-read-state" data-test="row-stars" role="img"
+            :aria-label="`${item.row.stars.starredMessages > 0 ? 'Starred' : 'Star state unknown'}; effective star values known for ${item.row.stars.knownMessages} of ${item.row.stars.totalMessages} cached messages; may include pending intent`"
+            :title="`Effective star values known for ${item.row.stars.knownMessages} of ${item.row.stars.totalMessages} cached messages; pending intent is not provider confirmation`"
+          >{{ item.row.stars.starredMessages > 0 ? '★' : 'Star unknown' }}{{ item.row.stars.knownMessages < item.row.stars.totalMessages ? ' (partial)' : '' }}</span>
           <span class="row-time">{{ compactDateLabel(item.row.lastMessageAt) }}</span>
           <button
             v-if="hasRowActions()"

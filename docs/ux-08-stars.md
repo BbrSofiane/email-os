@@ -73,7 +73,7 @@ A single starred-only filter works within Inbox/cached Done over returned cached
 rows. Unknowns do not match. Changing it clears selection, preserves ordinary mail
 membership and adds a Back entry; destination Back restores filter/focus/loaded
 range. No saved split, provider search, cross-page selection or filter-combination
-engine is implied. Catalog, rail, header controls, S, notices, Activity and Z all
+engine is implied. Catalog, rail, command palette, S, notices, Activity and Z all
 reuse the existing named durable action paths. The reader advances on single
 unstar removal in Starred/filtered views using action-time next/previous ordering;
 bulk dispatch deliberately does not use single-reader auto-advance.
@@ -83,7 +83,36 @@ STARRED only, without new OAuth scopes or arbitrary-label authority.
 
 ## Validation ledger
 
-### Headless synthetic core / Vue / IPC
+### Native dogfooding follow-up — command-first stars
+
+Removed the standalone header Star/Unstar buttons. The existing native Cmd+K
+palette now presents explicit Star/Unstar commands (including selected counts),
+outlined star icons and a compact S hint in a neutral raised command surface.
+Keyboard, pointer commands, groups and Undo still use the same guarded dispatch.
+
+The previous UI silently disabled the header buttons and hid the palette entries
+when Gmail was read-only or permission was pending. Those star commands now stay
+discoverable with an accessible disabled reason. A persistent access hint links to
+Account; permission-blocked S opens Account's explanation, never the OAuth flow
+or a mailbox write. Only the existing explicit Enable mailbox actions control can
+request the broader Google grant. Enabled commands still surface typed IPC errors.
+This fixes that feedback gap; the screenshot alone does not establish the live
+account's authorization or prove provider convergence.
+
+Synthetic/local validation for this follow-up:
+
+- Focused star/discovery/transport suites: **43 passed**. The star suite now has
+  **12 cases**, including native-mode Cmd+K → st → Enter with an exact target,
+  read-only/pending permission explanations with zero setter/upgrade calls,
+  permission changes while the palette is open, and typed native-command denial.
+- Full `mise run test:ui`: **452 passed, 21 opt-in rendered tests skipped**.
+- `mise run typecheck` and `mise run build:web`: **pass**.
+- The opt-in rendered star journey now executes Unstar through the palette; it
+  was not run. No native GUI, real provider calls, OAuth or credentials were used.
+- The four previously deferred P2 notes and the core Undo-race gate remain
+  unchanged. This follow-up does not claim those gates green.
+
+### Initial headless synthetic core / Vue / IPC
 
 - `mise run test:ui`: **447 passed, 21 opt-in rendered tests skipped**. Includes
   seven new star cases: archived browsing/unstar; exact noncontiguous bulk targets
