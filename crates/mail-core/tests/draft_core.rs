@@ -40,6 +40,7 @@ fn conversation(reply_context: Option<ReplyContext>) -> Conversation {
         conversation_id: "thread-1".into(),
     };
     Conversation {
+        stars: None,
         conversation_ref: reference,
         subject: "Re: café".into(),
         messages: vec![Message {

@@ -61,6 +61,9 @@ pub(crate) fn run_one(
         return Ok(true);
     }
     let result = match record.kind {
+        MailboxOperationKind::Star => {
+            provider.apply_star(&record.message_ids, record.value, cancel)
+        }
         MailboxOperationKind::Archive => {
             provider.apply_archive(&record.message_ids, record.value, cancel)
         }
@@ -128,6 +131,9 @@ fn reconcile(
         return Ok(true);
     }
     let matches_all = record.message_ids.iter().all(|id| match record.kind {
+        MailboxOperationKind::Star => {
+            fetched.star_facts.as_ref().and_then(|facts| facts.get(id)) == Some(&record.value)
+        }
         MailboxOperationKind::Archive => fetched.inbox_message_ids.contains(id) != record.value,
         MailboxOperationKind::Read => fetched
             .unread_message_ids

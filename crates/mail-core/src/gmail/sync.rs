@@ -289,6 +289,13 @@ impl GmailCore {
         self.inner.store.list_snapshot()
     }
 
+    pub fn list_cached_starred(
+        &self,
+        request: &crate::dto::CachedDoneRequest,
+    ) -> Result<crate::dto::CachedDoneSnapshot, MailError> {
+        self.inner.store.list_cached_starred(request)
+    }
+
     pub fn list_cached_done(
         &self,
         request: &crate::dto::CachedDoneRequest,
@@ -531,6 +538,18 @@ impl GmailCore {
         self.accept_operation(|store| store.accept_archived(command))
     }
 
+    pub fn set_starred(
+        &self,
+        command: &crate::stars::SetStarred,
+    ) -> Result<OperationReceipt, MailError> {
+        self.accept_operation(|store| store.accept_starred(command))
+    }
+    pub fn set_starred_group(
+        &self,
+        command: &crate::stars::SetStarredGroup,
+    ) -> Result<crate::groups::OperationGroupReceipt, MailError> {
+        self.accept_operation(|store| store.accept_starred_group(command))
+    }
     pub fn set_read(&self, command: &SetRead) -> Result<OperationReceipt, MailError> {
         self.accept_operation(|store| store.accept_read(command))
     }
@@ -1835,7 +1854,9 @@ mod worker_halt_tests {
 
     fn test_thread() -> GmailThread {
         GmailThread {
+            star_facts: None,
             conversation: Conversation {
+                stars: None,
                 conversation_ref: ConversationRef {
                     account_id: TEST_ACCOUNT.to_string(),
                     conversation_id: TEST_THREAD.to_string(),

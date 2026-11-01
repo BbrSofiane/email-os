@@ -62,12 +62,13 @@ pub struct SetArchived {
     pub request_id: String,
 }
 
-/// The two explicit mailbox setters; no arbitrary label execution.
+/// Closed mailbox dimensions; no arbitrary label execution (UX-08 adds Star).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum MailboxOperationKind {
     Archive,
     Read,
+    Star,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -144,6 +145,10 @@ pub struct Message {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Conversation {
+    /// Effective per-message star coverage; absent on legacy/unsupported profiles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub stars: Option<crate::stars::StarState>,
     #[serde(rename = "ref")]
     pub conversation_ref: ConversationRef,
     pub subject: String,
@@ -178,6 +183,9 @@ pub struct Conversation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationSummary {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub stars: Option<crate::stars::StarState>,
     #[serde(rename = "ref")]
     pub conversation_ref: ConversationRef,
     pub subject: String,
@@ -214,6 +222,9 @@ pub struct OperationSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub requested_read: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub requested_starred: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub last_error: Option<crate::error::MailError>,

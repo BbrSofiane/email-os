@@ -773,6 +773,15 @@ impl GmailReadProvider for GmailProvider {
         self.apply_label_setter(message_ids, !archived, "INBOX", cancel)
     }
 
+    fn apply_star(
+        &self,
+        message_ids: &[String],
+        starred: bool,
+        cancel: &CancelToken,
+    ) -> Result<(), MailError> {
+        self.apply_label_setter(message_ids, starred, "STARRED", cancel)
+    }
+
     fn apply_read(
         &self,
         message_ids: &[String],
@@ -1084,6 +1093,7 @@ fn parse_thread(account_id: &str, thread_id: &str, body: &str) -> Result<GmailTh
     let mut inbox_message_ids = Vec::new();
     let mut message_ids = Vec::with_capacity(messages.len());
     let mut unread_message_ids = Vec::new();
+    let mut star_facts = std::collections::HashMap::new();
     let mut no_plain_text = 0usize;
     let mut attachments = false;
     let mut omitted_inline_content = false;
@@ -1096,7 +1106,11 @@ fn parse_thread(account_id: &str, thread_id: &str, body: &str) -> Result<GmailTh
             latest_key = Some(key);
             latest_payload = Some(message);
         }
-        let labels = optional_string_array(message, "labelIds")?.unwrap_or_default();
+        let label_facts = optional_string_array(message, "labelIds")?;
+        if let Some(labels) = &label_facts {
+            star_facts.insert(id.clone(), labels.contains(&"STARRED"));
+        }
+        let labels = label_facts.unwrap_or_default();
         if labels.contains(&"INBOX") {
             inbox_message_ids.push(id.clone());
         }
@@ -1148,6 +1162,7 @@ fn parse_thread(account_id: &str, thread_id: &str, body: &str) -> Result<GmailTh
         parse_reply_context(payload, source_message_id)
     });
     let conversation = Conversation {
+        stars: None,
         conversation_ref: ConversationRef {
             account_id: account_id.to_string(),
             conversation_id: thread_id.to_string(),
@@ -1163,6 +1178,7 @@ fn parse_thread(account_id: &str, thread_id: &str, body: &str) -> Result<GmailTh
         pending_operation_id: None,
     };
     Ok(GmailThread {
+        star_facts: Some(star_facts),
         conversation,
         inbox_message_ids,
         message_ids: Some(message_ids),
@@ -2870,6 +2886,29 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn stars_include_unsupported_bodies_and_preserve_missing_label_unknowns() {
+        let payload = || {
+            text_payload(
+                "text/html",
+                &[("From", "s@example.test")],
+                Some(b"<b>not rendered</b>"),
+            )
+        };
+        let known_star = gmail_message("star", &["STARRED"], payload());
+        let known_false = gmail_message("false", &[], payload());
+        let mut unknown = gmail_message("unknown", &[], payload());
+        unknown.as_object_mut().unwrap().remove("labelIds");
+        let body = thread_response("t", "h", vec![known_star, known_false, unknown]);
+        let thread = parse_thread("a", "t", &body).unwrap();
+        let facts = thread.star_facts.unwrap();
+        assert_eq!(facts.get("star"), Some(&true));
+        assert_eq!(facts.get("false"), Some(&false));
+        assert!(!facts.contains_key("unknown"));
+        assert!(thread.conversation.messages.is_empty());
+        assert_eq!(thread.message_ids.unwrap().len(), 3);
+    }
+
+    #[test]
     fn get_thread_parses_plain_text_and_discloses_unsupported() {
         let headers = [
             ("From", "Sender Name <sender@example.test>"),
@@ -3099,6 +3138,8 @@ pub(crate) mod tests {
             ("/gmail/v1/users/me/messages/batchModify", 200, ""),
             ("/gmail/v1/users/me/messages/batchModify", 200, ""),
             ("/gmail/v1/users/me/messages/batchModify", 200, ""),
+            ("/gmail/v1/users/me/messages/batchModify", 200, ""),
+            ("/gmail/v1/users/me/messages/batchModify", 200, ""),
         ]);
         let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
         let granted = TokenBundle {
@@ -3127,12 +3168,18 @@ pub(crate) mod tests {
             .apply_read(&ids, false, &CancelToken::default())
             .unwrap();
 
+        provider
+            .apply_star(&ids, true, &CancelToken::default())
+            .unwrap();
+        provider
+            .apply_star(&ids, false, &CancelToken::default())
+            .unwrap();
         let bodies: Vec<Value> = api
             .bodies()
             .iter()
             .map(|body| serde_json::from_str(body).unwrap())
             .collect();
-        assert_eq!(bodies.len(), 4);
+        assert_eq!(bodies.len(), 6);
         for body in &bodies {
             assert_eq!(body["ids"], json!(ids));
         }
@@ -3140,6 +3187,11 @@ pub(crate) mod tests {
         assert_eq!(bodies[1], json!({"ids": ids, "addLabelIds": ["INBOX"]}));
         assert_eq!(bodies[2], json!({"ids": ids, "removeLabelIds": ["UNREAD"]}));
         assert_eq!(bodies[3], json!({"ids": ids, "addLabelIds": ["UNREAD"]}));
+        assert_eq!(bodies[4], json!({"ids": ids, "addLabelIds": ["STARRED"]}));
+        assert_eq!(
+            bodies[5],
+            json!({"ids": ids, "removeLabelIds": ["STARRED"]})
+        );
         assert!(api
             .requests()
             .iter()

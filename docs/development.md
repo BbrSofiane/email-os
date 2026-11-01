@@ -11,7 +11,11 @@ still does not send/delete mail or expose arbitrary labels. Opening a message
 never marks it read. UX-05 adds bounded multi-select and durable bulk
 archive/read group processing with one-level partial group Undo; the browser
 preview remains synthetic and in-memory. See
-the slice contracts for individual acceptance scope.
+the slice contracts for individual acceptance scope. UX-08 adds narrow Gmail-mode
+Star/Unstar singles/groups, durable Undo/reconciliation, cache-only Starred and a
+single cached starred filter; see [its contract and validation ledger](ux-08-stars.md).
+The legacy native fixture remains archive-only; unsupported star controls are
+absent there. No real provider writes are authorized by implementation tests.
 
 ## Layout
 

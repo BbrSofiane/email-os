@@ -47,6 +47,9 @@ import type {
 } from './generated';
 
 export type {
+  StarState,
+  SetStarred,
+  SetStarredGroup,
   AccountInfo,
   CachedDoneCoverage,
   CachedDoneRequest,
@@ -113,6 +116,9 @@ export type {
 } from './generated';
 
 export {
+  LIST_CACHED_STARRED_COMMAND,
+  SET_STARRED_COMMAND,
+  SET_STARRED_GROUP_COMMAND,
   CANCEL_MAILBOX_ACTION_UPGRADE_COMMAND,
   CONNECT_ACCOUNT_COMMAND,
   DISCONNECT_ACCOUNT_COMMAND,
@@ -153,6 +159,10 @@ export {
 export const OPERATION_GROUP_MAX_MEMBERS = 100;
 
 export interface MailClient {
+  /** Cache-only Starred, Gmail profile; same bounded paging envelope as cached Done. */
+  listCachedStarred(request: CachedDoneRequest): Promise<CachedDoneSnapshot>;
+  setStarred(command: import('./generated').SetStarred): Promise<OperationReceipt>;
+  setStarredGroup(command: import('./generated').SetStarredGroup): Promise<OperationGroupReceipt>;
   listConversations(): Promise<InboxSnapshot>;
   /** Local archive evidence only; short/empty pages can still have a continuation. */
   listCachedDone(request: CachedDoneRequest): Promise<CachedDoneSnapshot>;

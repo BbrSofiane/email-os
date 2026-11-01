@@ -69,6 +69,9 @@ pub struct GroupMemberReceipt {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct OperationGroupReceipt {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub requested_starred: Option<bool>,
     pub group_id: String,
     pub request_id: String,
     pub account_id: String,
@@ -211,6 +214,9 @@ pub struct ListOperationGroupsRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct OperationGroupSummary {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub requested_starred: Option<bool>,
     pub group_id: String,
     pub request_id: String,
     pub kind: MailboxOperationKind,
@@ -535,6 +541,7 @@ mod tests {
     #[test]
     fn receipt_omits_absent_requested_values_and_group_status_roundtrips() {
         let receipt = OperationGroupReceipt {
+            requested_starred: None,
             group_id: "group-1".to_string(),
             request_id: "group-req-1".to_string(),
             account_id: "fixture-account".to_string(),

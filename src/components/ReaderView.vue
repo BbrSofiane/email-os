@@ -43,7 +43,7 @@ const props = defineProps<{
    * offers explicit count-labelled desired-state controls instead of the open
    * conversation's single-state toggles (mixed selections included). */
   selectionCount?: number;
-  selectionContext?: 'inbox' | 'done';
+  selectionContext?: 'inbox' | 'done' | 'starred';
 }>();
 
 const emit = defineEmits<{
@@ -671,6 +671,7 @@ defineExpose({
       </p>
       <template v-else-if="props.conversation">
         <h2 class="reader-subject">{{ props.conversation.subject }}</h2>
+        <p v-if="props.conversation.stars" data-test="reader-stars" class="reader-context-note">{{ props.conversation.stars.starredMessages > 0 ? 'Starred' : props.conversation.stars.knownMessages === props.conversation.stars.totalMessages && props.conversation.stars.totalMessages > 0 ? 'Not starred' : 'Star state unknown' }} — effective star values known for {{ props.conversation.stars.knownMessages }} of {{ props.conversation.stars.totalMessages }} cached messages. Pending intent is not provider confirmation.</p>
         <p v-if="replyBlockedReason" class="reader-notice" data-test="reply-blocked" role="note">
           {{ replyBlockedReason }}
         </p>

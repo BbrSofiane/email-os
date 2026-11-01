@@ -160,7 +160,9 @@ fn thread(context: Option<ReplyContext>, complete: bool) -> GmailThread {
         },
     ];
     GmailThread {
+        star_facts: None,
         conversation: Conversation {
+            stars: None,
             conversation_ref: ConversationRef {
                 account_id: "acct-reply".to_string(),
                 conversation_id: "thread-reply".to_string(),

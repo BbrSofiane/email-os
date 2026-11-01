@@ -15,6 +15,7 @@ import type {
   OperationReceipt,
   SetArchivedGroup,
   SetReadGroup,
+  SetStarredGroup,
   UndoReceipt,
 } from '../lib/ipc/client';
 import { OPERATION_GROUP_MAX_MEMBERS, toMailError } from '../lib/ipc/client';
@@ -26,7 +27,7 @@ export type AccountAction = 'connect' | 'disconnect' | 'sync' | 'enable-actions'
 export type ConversationSummaryLike = InboxSnapshot['conversations'][number];
 export type OperationSummaryLike = InboxSnapshot['activity'][number];
 /** The setter action an undoable last action was performed with. */
-export type LastActionId = 'archive' | 'unarchive' | 'read' | 'unread';
+export type LastActionId = 'archive' | 'unarchive' | 'read' | 'unread' | 'star' | 'unstar';
 
 /**
  * Single-slot notice state for the most recent accepted conversation action
@@ -54,7 +55,7 @@ export function sameConversation(a: ConversationRef | null, b: ConversationRef |
   return a !== null && b !== null && a.accountId === b.accountId && a.conversationId === b.conversationId;
 }
 
-export type BrowseContext = 'inbox' | 'done';
+export type BrowseContext = 'inbox' | 'done' | 'starred';
 
 /**
  * UX-05 product/safety bound for selection and groups (docs/ux-05-safe-bulk-
@@ -74,9 +75,10 @@ export const SELECTION_MAX = OPERATION_GROUP_MAX_MEMBERS;
 export interface GroupNotice {
   requestId: string;
   accountId: string;
-  kind: 'archive' | 'read';
+  kind: 'archive' | 'read' | 'star';
   requestedArchived?: boolean;
   requestedRead?: boolean;
+  requestedStarred?: boolean;
   /** Frozen dispatch-order member refs (current loaded order at dispatch). */
   members: ConversationRef[];
   /**
@@ -97,7 +99,7 @@ export interface GroupNotice {
   /** True once this group ever had an undo window. */
   hadWindow: boolean;
   /** The exact original command, replayed verbatim for lost-response recovery. */
-  originalCommand: SetArchivedGroup | SetReadGroup;
+  originalCommand: SetArchivedGroup | SetReadGroup | SetStarredGroup;
 }
 
 export interface DoneBoundary { lastMessageAt: string; conversationId: string }
@@ -113,6 +115,7 @@ function boundaryOf(rows: ConversationSummaryLike[]): DoneBoundary | null {
 
 export interface Mailbox {
   context: Ref<BrowseContext>;
+  starredOnly: Ref<boolean>;
   nextCursor: Ref<string | null>;
   loadingMore: Ref<boolean>;
   exactTotal: Ref<number | null>;
@@ -120,7 +123,7 @@ export interface Mailbox {
   activityError: Ref<MailError | null>;
   loadedDonePages: Ref<number>;
   loadedDoneBoundary: Ref<DoneBoundary | null>;
-  setContext(context: BrowseContext, pages?: number, boundary?: DoneBoundary | null): Promise<void>;
+  setContext(context: BrowseContext, pages?: number, boundary?: DoneBoundary | null, starredOnly?: boolean): Promise<void>;
   loadMore(): Promise<void>;
   conversations: Ref<ConversationSummaryLike[]>;
   activity: Ref<OperationSummaryLike[]>;
@@ -157,6 +160,8 @@ export interface Mailbox {
   openFocused(): Promise<void>;
   closeReader(): void;
   setArchived(target: ConversationRef, archived: boolean): Promise<OperationReceipt | null>;
+  setStarred(target: ConversationRef, starred: boolean): Promise<OperationReceipt | null>;
+  setStarredGroup(members: ConversationRef[], starred: boolean): Promise<boolean>;
   setRead(target: ConversationRef, read: boolean): Promise<OperationReceipt | null>;
   retryOperation(operationId: string): Promise<OperationReceipt | null>;
   /** Single-slot notice state for the latest accepted setter action. */
@@ -220,6 +225,7 @@ export interface Mailbox {
 
 export function useMailbox(client: MailClient): Mailbox {
   const context = ref<BrowseContext>('inbox');
+  const starredOnly = ref(false);
   const loadingMore = ref(false);
   const loadedDonePages = ref(1);
   const loadedDoneBoundary = ref<DoneBoundary | null>(null);
@@ -302,8 +308,8 @@ export function useMailbox(client: MailClient): Mailbox {
       if (!detached && activityRequest === activityToken) activityError.value = toMailError(raw);
     });
     try {
-      let snap = source === 'inbox' ? await inbox : await client.listCachedDone({ accountId: account!, limit: 100, cursor: null });
-      if (source === 'done' && 'nextCursor' in snap) {
+      let snap = source === 'inbox' ? await inbox : await (source === 'starred' ? client.listCachedStarred : client.listCachedDone)({ accountId: account!, limit: 100, cursor: null });
+      if (source !== 'inbox' && 'nextCursor' in snap) {
         // Recover the saved identity range even when new archives shift page edges.
         const pages = loadedDonePages.value;
         const boundary = loadedDoneBoundary.value;
@@ -313,7 +319,7 @@ export function useMailbox(client: MailClient): Mailbox {
           // Finite recovery budget beyond the user's explicitly loaded range.
           // Never misclassify an uninspected target as removed on budget exhaustion.
           if (replayed >= pages + 10) throw { kind: 'invalid_request', field: 'cachedDoneRestoreRange' } satisfies MailError;
-          const next = await client.listCachedDone({ accountId: account!, limit: 100, cursor: snap.nextCursor });
+          const next = await (source === 'starred' ? client.listCachedStarred : client.listCachedDone)({ accountId: account!, limit: 100, cursor: snap.nextCursor });
           snap = { ...next, conversations: [...snap.conversations, ...next.conversations.filter((row) => !snap.conversations.some((old) => sameConversation(old.ref, row.ref)))] };
           replayed += 1;
         }
@@ -322,8 +328,9 @@ export function useMailbox(client: MailClient): Mailbox {
       }
       if (detached || token !== listToken || source !== context.value) return;
       const previous = conversations.value;
+      if (starredOnly.value) snap = { ...snap, conversations: snap.conversations.filter(row => (row.stars?.starredMessages ?? 0) > 0) };
       conversations.value = snap.conversations;
-      if (source === 'done' && 'nextCursor' in snap) {
+      if (source !== 'inbox' && 'nextCursor' in snap) {
         nextCursor.value = snap.nextCursor;
         exactTotal.value = snap.exactTotal;
         lastSyncedAt.value = snap.lastSyncedAt;
@@ -336,8 +343,9 @@ export function useMailbox(client: MailClient): Mailbox {
     } finally { await activityRead; }
   }
 
-  async function setContext(next: BrowseContext, pages = 1, boundary: DoneBoundary | null = null): Promise<void> {
-    if (next === context.value && listState.value === 'ready') return;
+  async function setContext(next: BrowseContext, pages = 1, boundary: DoneBoundary | null = null, filter = false): Promise<void> {
+    if (next === context.value && filter === starredOnly.value && listState.value === 'ready') return;
+    starredOnly.value = filter;
     loadedDonePages.value = Math.max(1, Math.floor(pages));
     loadedDoneBoundary.value = boundary;
     ++listToken;
@@ -357,14 +365,16 @@ export function useMailbox(client: MailClient): Mailbox {
   }
 
   async function loadMore(): Promise<void> {
+    const source = context.value;
     const cursor = nextCursor.value;
     const account = accountStatus.value?.account?.accountId;
-    if (context.value !== 'done' || !cursor || !account || loadingMore.value || listState.value !== 'ready') return;
+    if (source === 'inbox' || !cursor || !account || loadingMore.value || listState.value !== 'ready') return;
     const token = ++listToken;
     loadingMore.value = true;
     try {
-      const snap = await client.listCachedDone({ accountId: account, limit: 100, cursor });
-      if (detached || token !== listToken || context.value !== 'done') return;
+      let snap = await (source === 'starred' ? client.listCachedStarred : client.listCachedDone)({ accountId: account, limit: 100, cursor });
+      if (detached || token !== listToken || context.value !== source) return;
+      if (starredOnly.value) snap = {...snap, conversations:snap.conversations.filter(row => (row.stars?.starredMessages ?? 0) > 0)};
       conversations.value = [...conversations.value, ...snap.conversations.filter((row: ConversationSummaryLike) => !conversations.value.some((old) => sameConversation(old.ref, row.ref)))];
       focusedRef.value = resolveFocus(conversations.value, focusedRef.value, conversations.value);
       loadedDonePages.value += 1;
@@ -435,6 +445,7 @@ export function useMailbox(client: MailClient): Mailbox {
         activity.value = [];
         focusedRef.value = null;
         context.value = 'inbox';
+        starredOnly.value = false;
         loadedDonePages.value = 1;
         loadedDoneBoundary.value = null;
         nextCursor.value = null;
@@ -529,7 +540,8 @@ export function useMailbox(client: MailClient): Mailbox {
       setGroupSlot({
         requestId: g.group.requestId,
         accountId: g.group.accountId,
-        kind: g.group.kind === 'read' ? 'read' : 'archive',
+        kind: g.group.kind,
+        requestedStarred: g.group.requestedStarred,
         ...(g.group.requestedArchived === undefined ? {} : { requestedArchived: g.group.requestedArchived }),
         ...(g.group.requestedRead === undefined ? {} : { requestedRead: g.group.requestedRead }),
         members: g.group.members.map((member) => ({ ...member.conversation })),
@@ -539,7 +551,9 @@ export function useMailbox(client: MailClient): Mailbox {
         statusError: false,
         undone: null,
         hadWindow: true,
-        originalCommand: g.group.kind === 'read'
+        originalCommand: g.group.kind === 'star'
+          ? { accountId: g.group.accountId, members: g.group.members.map(member => ({...member.conversation})), starred: g.group.requestedStarred ?? true, requestId: g.group.requestId }
+          : g.group.kind === 'read'
           ? { accountId: g.group.accountId, members: g.group.members.map((member) => ({ ...member.conversation })), read: g.group.requestedRead ?? true, requestId: g.group.requestId }
           : { accountId: g.group.accountId, members: g.group.members.map((member) => ({ ...member.conversation })), archived: g.group.requestedArchived ?? true, requestId: g.group.requestId },
       });
@@ -780,6 +794,7 @@ export function useMailbox(client: MailClient): Mailbox {
     }
     if (detached) return;
     context.value = 'inbox';
+    starredOnly.value = false;
     nextCursor.value = null;
     loadedDonePages.value = 1;
     loadedDoneBoundary.value = null;
@@ -898,6 +913,17 @@ export function useMailbox(client: MailClient): Mailbox {
     return receipt;
   }
 
+  async function setStarred(target: ConversationRef, starred: boolean): Promise<OperationReceipt | null> {
+    if (accountStatus.value?.mode !== 'gmail') {
+      lastCommandError.value = { kind: 'read_only' };
+      return null;
+    }
+    const subject = subjectFor(target);
+    const session = mailboxSessionToken;
+    const receipt = await submitMutation(requestId => client.setStarred({ conversation: { ...target }, starred, requestId }), target);
+    if (receipt && !detached && session === mailboxSessionToken) recordLastAction(receipt, starred ? 'star' : 'unstar', target, subject);
+    return receipt;
+  }
   async function setRead(target: ConversationRef, read: boolean): Promise<OperationReceipt | null> {
     if (accountStatus.value?.mode !== 'gmail') {
       lastCommandError.value = { kind: 'read_only' };
@@ -960,7 +986,7 @@ export function useMailbox(client: MailClient): Mailbox {
       // Only the operation id is consumed from a re-pointed slot; no fake
       // acceptedAt is invented (undoableUntil is carried on the slot itself).
       receipt: { operationId: newest.id },
-      actionId: newest.kind === 'read' ? (newest.requestedRead ? 'read' : 'unread') : newest.requestedArchived ? 'archive' : 'unarchive',
+      actionId: newest.kind === 'star' ? (newest.requestedStarred ? 'star' : 'unstar') : newest.kind === 'read' ? (newest.requestedRead ? 'read' : 'unread') : newest.requestedArchived ? 'archive' : 'unarchive',
       target: { ...newest.conversation },
       subject: subjectFor(newest.conversation),
       undoableUntil: newest.undoableUntil ?? null,
@@ -1254,7 +1280,7 @@ export function useMailbox(client: MailClient): Mailbox {
       const command = slot.originalCommand;
       const receipt = 'archived' in command
         ? await client.setArchivedGroup(command)
-        : await client.setReadGroup(command);
+        : 'starred' in command ? await client.setStarredGroup(command) : await client.setReadGroup(command);
       if (detached || sessionToken !== mailboxSessionToken) return;
       lastCommandError.value = null;
       if (sameSlot(slot.requestId)) {
@@ -1291,7 +1317,7 @@ export function useMailbox(client: MailClient): Mailbox {
    * recovery, and blocks duplicate dispatch until acceptance is resolved.
    */
   async function submitGroup(
-    kind: 'archive' | 'read',
+    kind: 'archive' | 'read' | 'star',
     members: ConversationRef[],
     value: boolean,
   ): Promise<boolean> {
@@ -1304,7 +1330,7 @@ export function useMailbox(client: MailClient): Mailbox {
       lastCommandError.value = { kind: 'busy' };
       return false;
     }
-    if (kind === 'read' && accountStatus.value?.mode !== 'gmail') {
+    if ((kind === 'read' || kind === 'star') && accountStatus.value?.mode !== 'gmail') {
       lastCommandError.value = { kind: 'read_only' };
       return false;
     }
@@ -1317,7 +1343,9 @@ export function useMailbox(client: MailClient): Mailbox {
     const sessionToken = mailboxSessionToken;
     const requestId = crypto.randomUUID();
     const frozen = members.map(copyRef);
-    const originalCommand: SetArchivedGroup | SetReadGroup = kind === 'archive'
+    const originalCommand: SetArchivedGroup | SetReadGroup | SetStarredGroup = kind === 'star'
+      ? {accountId:account,members:frozen,starred:value,requestId}
+      : kind === 'archive'
       ? { accountId: account, members: frozen, archived: value, requestId }
       : { accountId: account, members: frozen, read: value, requestId };
     // Single-slot: a new group action replaces any single notice.
@@ -1327,7 +1355,7 @@ export function useMailbox(client: MailClient): Mailbox {
       requestId,
       accountId: account,
       kind,
-      ...(kind === 'archive' ? { requestedArchived: value } : { requestedRead: value }),
+      ...(kind === 'star' ? { requestedStarred:value } : kind === 'archive' ? { requestedArchived: value } : { requestedRead: value }),
       members: frozen,
       state: 'awaiting-acceptance',
       receipt: null,
@@ -1340,7 +1368,7 @@ export function useMailbox(client: MailClient): Mailbox {
     try {
       const receipt = kind === 'archive'
         ? await client.setArchivedGroup(originalCommand as SetArchivedGroup)
-        : await client.setReadGroup(originalCommand as SetReadGroup);
+        : kind === 'star' ? await client.setStarredGroup(originalCommand as SetStarredGroup) : await client.setReadGroup(originalCommand as SetReadGroup);
       if (detached || sessionToken !== mailboxSessionToken) return true;
       if (token === commandToken) lastCommandError.value = null;
       if (sameSlot(requestId)) adoptGroupReceipt(receipt);
@@ -1371,6 +1399,7 @@ export function useMailbox(client: MailClient): Mailbox {
     return submitGroup('archive', members, archived);
   }
 
+  function setStarredGroup(members: ConversationRef[], starred: boolean): Promise<boolean> { return submitGroup('star',members,starred); }
   function setReadGroup(members: ConversationRef[], read: boolean): Promise<boolean> {
     return submitGroup('read', members, read);
   }
@@ -1541,11 +1570,11 @@ export function useMailbox(client: MailClient): Mailbox {
   const mode = computed<MailMode | null>(() => accountStatus.value?.mode ?? null);
   const isGmail = computed(() => mode.value === 'gmail');
   return {
-    context, nextCursor, loadingMore, loadedDonePages, loadedDoneBoundary, exactTotal, lastSyncedAt, activityError, setContext, loadMore,
+    context, starredOnly, nextCursor, loadingMore, loadedDonePages, loadedDoneBoundary, exactTotal, lastSyncedAt, activityError, setContext, loadMore,
     conversations, activity, listState, listError, focusedRef, focusedSummary,
     openRef, conversation, detailState, detailError, lastCommandError,
     inFlightCommandRef, commandInFlight, ready, refresh, focusConversation, moveFocus,
-    openConversationByRef, openFocused, closeReader, setArchived, setRead, retryOperation,
+    openConversationByRef, openFocused, closeReader, setArchived, setRead, setStarred, setStarredGroup, retryOperation,
     lastAction, undoLastAction,
     selectedRefs, rangeAnchorRef, selectionNotice, isSelected, toggleSelected, extendSelectionTo,
     selectAllLoaded, clearSelection, selectionInLoadedOrder,

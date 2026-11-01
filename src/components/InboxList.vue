@@ -24,7 +24,7 @@ import { compactDateLabel, dateGroupCaption, dateGroupFor } from '../lib/browsin
 
 const props = defineProps<{
   rows: ConversationSummaryLike[];
-  context?: 'inbox' | 'done';
+  context?: 'inbox' | 'done' | 'starred';
   focusedRef: ConversationRef | null;
   actionsEnabled?: boolean;
   showReadState?: boolean;
@@ -429,7 +429,7 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
 </script>
 
 <template>
-  <ul class="inbox-list inbox-scroll" role="list" :aria-label="context === 'done' ? 'Cached Done conversations' : 'Inbox conversations'" ref="listEl">
+  <ul class="inbox-list inbox-scroll" role="list" :aria-label="context === 'starred' ? 'Cached Starred conversations' : context === 'done' ? 'Cached Done conversations' : 'Inbox conversations'" ref="listEl">
     <template v-for="item in items" :key="item.kind === 'group' ? `group-${item.id}` : rowKey(item.row.ref)">
       <li
         v-if="item.kind === 'group'"
@@ -487,6 +487,7 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
             :data-test="item.row.isRead === undefined ? 'row-read-unknown' : item.row.isRead ? 'row-read' : 'row-unread'"
             :aria-label="item.row.isRead === undefined ? 'Read state unknown' : undefined"
           >{{ readStateLabel(item.row) }}</span>
+          <span v-if="item.row.stars" class="row-read-state" data-test="row-stars" role="img" :aria-label="`${item.row.stars.starredMessages > 0 ? 'Starred' : item.row.stars.knownMessages === item.row.stars.totalMessages && item.row.stars.totalMessages > 0 ? 'Not starred' : 'Star state unknown'}; effective star values known for ${item.row.stars.knownMessages} of ${item.row.stars.totalMessages} cached messages; may include pending intent`" :title="`Effective star values known for ${item.row.stars.knownMessages} of ${item.row.stars.totalMessages} cached messages; pending intent is not provider confirmation`">{{ item.row.stars.starredMessages > 0 ? '★' : item.row.stars.knownMessages === item.row.stars.totalMessages && item.row.stars.totalMessages > 0 ? '☆' : 'Star unknown' }}{{ item.row.stars.knownMessages < item.row.stars.totalMessages ? ' (partial)' : '' }}</span>
           <span class="row-time">{{ compactDateLabel(item.row.lastMessageAt) }}</span>
           <button
             v-if="hasRowActions()"
@@ -516,7 +517,7 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
               @click.stop="emit('setRead', item.row.ref, !item.row.isRead)"
             >Mark {{ item.row.isRead ? 'unread' : 'read' }}</button>
             <button
-              v-if="props.actionsEnabled"
+              v-if="props.actionsEnabled && context !== 'starred'"
               type="button"
               class="row-archive-action"
               :data-test="`row-archive-${item.row.ref.conversationId}`"

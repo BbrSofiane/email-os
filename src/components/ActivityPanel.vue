@@ -71,6 +71,7 @@ function statusLabel(status: string, failure: { kind: string } | null): string {
 }
 
 function actionLabel(op: OperationSummaryLike): string {
+  if (op.kind === 'star') return op.requestedStarred ? 'star' : 'unstar';
   if (op.kind === 'read') return op.requestedRead === true ? 'mark read' : op.requestedRead === false ? 'mark unread' : 'read state change';
   return op.requestedArchived ? 'archive' : 'unarchive';
 }
@@ -94,6 +95,7 @@ function canRetry(status: string): boolean {
 }
 
 function groupActionLabel(group: OperationGroupSummary): string {
+  if (group.kind === 'star') return group.requestedStarred ? 'Star' : 'Unstar';
   if (group.kind === 'read') return group.requestedRead ? 'Mark read' : 'Mark unread';
   return group.requestedArchived ? 'Mark Done (archive)' : 'Mark Not Done (restore)';
 }

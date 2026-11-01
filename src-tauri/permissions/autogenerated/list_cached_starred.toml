@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-cached-starred"
+description = "Enables the list_cached_starred command without any pre-configured scope."
+commands.allow = ["list_cached_starred"]
+
+[[permission]]
+identifier = "deny-list-cached-starred"
+description = "Denies the list_cached_starred command without any pre-configured scope."
+commands.deny = ["list_cached_starred"]

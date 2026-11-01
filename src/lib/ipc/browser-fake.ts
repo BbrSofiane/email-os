@@ -172,6 +172,7 @@ interface SeedMessage {
   /** Per-message INBOX membership as seeded (core owns the real facts). */
   seededInInbox: boolean;
   seededRead: boolean | null;
+  seededStarred?: boolean | null;
 }
 
 interface FakeConversation {
@@ -213,6 +214,9 @@ interface InternalOperation {
   id: string;
   conversationId: string;
   kind: MailboxOperationKind;
+  /** Legacy private desired-value slot for Archive/Star, discriminated by kind.
+   * Public summaries/receipts expose Star only as requestedStarred. Inbox
+   * overlays MUST continue to ignore non-archive operations. */
   requestedArchived: boolean;
   requestedRead?: boolean;
   messageIds: string[];
@@ -311,6 +315,7 @@ function summarize(conv: FakeConversation, pendingOperationId: string | null): C
   const readStates = effectiveRead(conv);
   return {
     ref: { ...conv.ref },
+    stars: starState(conv),
     subject: conv.subject,
     participants: unique.map((participant) => ({ ...participant })),
     // Backend-derived like core: newest message's sender, never a participant guess.
@@ -339,6 +344,19 @@ function effectiveInInbox(conv: FakeConversation): boolean[] {
   return flags;
 }
 
+function effectiveStars(conv: FakeConversation): Array<boolean | null> {
+  const facts = conv.messages.map(m => m.seededStarred === undefined ? false : m.seededStarred);
+  for (const op of conv.ops) {
+    if (op.kind !== 'star' || op.status === 'failed' || op.status === 'cancelled') continue;
+    conv.messages.forEach((m, i) => { if (op.messageIds.includes(m.id)) facts[i] = op.requestedArchived; });
+  }
+  return facts;
+}
+function starState(conv: FakeConversation): import('./client').StarState {
+  const facts = effectiveStars(conv);
+  return { totalMessages: facts.length, knownMessages: facts.filter(v => v !== null).length,
+    starredMessages: facts.filter(v => v === true).length };
+}
 function effectiveRead(conv: FakeConversation): Array<boolean | null> {
   const flags = conv.messages.map((message) => message.seededRead);
   for (const op of conv.ops) {
@@ -365,7 +383,8 @@ function toOperationSummary(op: InternalOperation, accountId: string, undoableUn
   return {
     id: op.id,
     conversation: { accountId, conversationId: op.conversationId },
-    requestedArchived: op.requestedArchived,
+    requestedArchived: op.kind === 'star' ? false : op.requestedArchived,
+    ...(op.kind === 'star' ? { requestedStarred: op.requestedArchived } : {}),
     status: op.status,
     failure: op.failure,
     kind: op.kind,
@@ -526,7 +545,7 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       if (!message || !messageIds.includes(message.id)) continue;
       // Archive ops restore archived-ness (the inverse of INBOX membership);
       // read ops restore read-ness, which can be an unknown fact.
-      values[message.id] = kind === 'archive' ? !inbox[i] : read[i] ?? null;
+      values[message.id] = kind === 'star' ? effectiveStars(conv)[i] ?? null : kind === 'archive' ? !inbox[i] : read[i] ?? null;
     }
     return values;
   }
@@ -654,7 +673,8 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       requestId: group.requestId,
       accountId: group.accountId,
       kind: group.kind,
-      ...(group.requestedArchived === undefined ? {} : { requestedArchived: group.requestedArchived }),
+      ...(group.kind === 'star' ? {requestedStarred:group.requestedArchived} : {}),
+      ...(group.kind === 'star' || group.requestedArchived === undefined ? {} : { requestedArchived: group.requestedArchived }),
       ...(group.requestedRead === undefined ? {} : { requestedRead: group.requestedRead }),
       acceptedAt: group.acceptedAt,
       members: snapshotCopy(group.members),
@@ -666,7 +686,8 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       groupId: group.groupId,
       requestId: group.requestId,
       kind: group.kind,
-      ...(group.requestedArchived === undefined ? {} : { requestedArchived: group.requestedArchived }),
+      ...(group.kind === 'star' ? {requestedStarred:group.requestedArchived} : {}),
+      ...(group.kind === 'star' || group.requestedArchived === undefined ? {} : { requestedArchived: group.requestedArchived }),
       ...(group.requestedRead === undefined ? {} : { requestedRead: group.requestedRead }),
       acceptedAt: group.acceptedAt,
       members: group.members.map((member) => ({ ...member.conversation })),
@@ -790,7 +811,7 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
   }
 
   function requireMutationAccess(kind: MailboxOperationKind): void {
-    if (kind === 'read' && account.mode !== 'gmail') throw { kind: 'read_only' } satisfies MailError;
+    if ((kind === 'read' || kind === 'star') && account.mode !== 'gmail') throw { kind: 'read_only' } satisfies MailError;
     if (account.mode === 'gmail' && account.mutationAccess !== 'enabled') throw { kind: 'read_only' } satisfies MailError;
   }
 
@@ -1076,6 +1097,7 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       }));
       const readStates = effectiveRead(conv);
       const result: Conversation = {
+        stars: starState(conv),
         ref: { ...conv.ref },
         subject: conv.subject,
         messages,
@@ -1146,6 +1168,54 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       }
     },
 
+    async listCachedStarred(request: CachedDoneRequest): Promise<CachedDoneSnapshot> {
+      const active = accountStatus().account;
+      if (!active || active.accountId !== request.accountId) throw failNotShown();
+      if (account.mode !== 'gmail') throw { kind: 'read_only' } satisfies MailError;
+      if (!Number.isInteger(request.limit) || request.limit < 1 || request.limit > 100) {
+        throw { kind: 'invalid_request', field: 'limit' } satisfies MailError;
+      }
+      let position: [string, string] | null = null;
+      if (request.cursor !== null) {
+        const prefix = 'cached-starred-v1:';
+        try {
+          if (request.cursor.length > 8192 || !request.cursor.startsWith(prefix)) throw new Error();
+          const [owner, date, id] = JSON.parse(request.cursor.slice(prefix.length)) as unknown[];
+          if (owner !== request.accountId || typeof date !== 'string' || date.length > 128
+            || typeof id !== 'string' || !id || id.length > 1024) throw new Error();
+          position = [date, id];
+        } catch {
+          throw { kind: 'invalid_request', field: 'cursor' } satisfies MailError;
+        }
+      }
+      const compare = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
+      const candidates = conversations.map(c => summarize(c, pendingOperationId(c)))
+        .sort((a, b) => compare(b.lastMessageAt, a.lastMessageAt) || compare(a.ref.conversationId, b.ref.conversationId))
+        .filter(row => !position || row.lastMessageAt < position[0]
+          || row.lastMessageAt === position[0] && row.ref.conversationId > position[1])
+        .slice(0, request.limit + 1);
+      const page = candidates.slice(0, request.limit);
+      const last = page.at(-1);
+      return snapshotCopy({
+        conversations: page.filter(row => (row.stars?.starredMessages ?? 0) > 0),
+        coverage: 'local_cache', exactTotal: null, lastSyncedAt: account.lastSyncedAt,
+        nextCursor: candidates.length > request.limit && last
+          ? 'cached-starred-v1:' + JSON.stringify([request.accountId, last.lastMessageAt, last.ref.conversationId]) : null,
+      });
+    },
+    async setStarred(command: import('./client').SetStarred): Promise<OperationReceipt> {
+      requireMutationAccess('star');
+      if (!command.requestId || command.requestId.length > 128) throw { kind: 'invalid_request', field: 'requestId' } satisfies MailError;
+      const fingerprint = JSON.stringify(['star', command.conversation.accountId, command.conversation.conversationId, command.starred]);
+      const existing = existingReceipt(command.requestId, fingerprint);
+      if (existing) return existing;
+      const conv = byId(command.conversation.conversationId);
+      if (!conv || conv.ref.accountId !== command.conversation.accountId) throw failNotShown();
+      return enqueueOperation(conv, 'star', command.starred, undefined, conv.messages.map(m => m.id), command.requestId, fingerprint);
+    },
+    async setStarredGroup(command: import('./client').SetStarredGroup): Promise<OperationGroupReceipt> {
+      return acceptGroup(command, 'star', { archived: command.starred });
+    },
     async setRead(command: SetRead): Promise<OperationReceipt> {
       requireMutationAccess('read');
       const fingerprint = JSON.stringify(['read', command.conversation.accountId, command.conversation.conversationId, command.read]);

@@ -9,6 +9,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import {
+  LIST_CACHED_STARRED_COMMAND,
+  SET_STARRED_COMMAND,
+  SET_STARRED_GROUP_COMMAND,
+  type SetStarred,
+  type SetStarredGroup,
   CANCEL_MAILBOX_ACTION_UPGRADE_COMMAND,
   CANCEL_APP_CLOSE_COMMAND,
   CONNECT_ACCOUNT_COMMAND,
@@ -78,7 +83,15 @@ function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
 
 export function createTauriMailClient(): MailClient {
   return {
-    listConversations(): Promise<InboxSnapshot> {
+    listCachedStarred(request: CachedDoneRequest): Promise<CachedDoneSnapshot> {
+      return call(LIST_CACHED_STARRED_COMMAND, { request });
+    },
+    setStarred(command: SetStarred): Promise<OperationReceipt> {
+      return call(SET_STARRED_COMMAND, { command });
+    },
+    setStarredGroup(command: SetStarredGroup): Promise<OperationGroupReceipt> {
+      return call(SET_STARRED_GROUP_COMMAND, { command });
+    },    listConversations(): Promise<InboxSnapshot> {
       return call<InboxSnapshot>(LIST_CONVERSATIONS_COMMAND);
     },
     listCachedDone(request: CachedDoneRequest): Promise<CachedDoneSnapshot> {

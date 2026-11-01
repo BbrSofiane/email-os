@@ -16,6 +16,7 @@ pub mod groups;
 mod lock;
 pub mod provider;
 mod seed;
+pub mod stars;
 mod store;
 mod worker;
 

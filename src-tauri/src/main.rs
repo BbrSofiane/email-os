@@ -160,6 +160,34 @@ impl Backend {
         }
     }
 
+    fn set_starred(
+        &self,
+        command: &mail_core::stars::SetStarred,
+    ) -> Result<OperationReceipt, MailError> {
+        match self {
+            Self::Fixture(_) => Err(MailError::ReadOnly),
+            Self::Gmail(core) => core.set_starred(command),
+        }
+    }
+    fn set_starred_group(
+        &self,
+        command: &mail_core::stars::SetStarredGroup,
+    ) -> Result<OperationGroupReceipt, MailError> {
+        match self {
+            Self::Fixture(_) => Err(MailError::ReadOnly),
+            Self::Gmail(core) => core.set_starred_group(command),
+        }
+    }
+    fn list_cached_starred(
+        &self,
+        request: &CachedDoneRequest,
+    ) -> Result<CachedDoneSnapshot, MailError> {
+        match self {
+            Self::Fixture(_) => Err(MailError::ReadOnly),
+            Self::Gmail(core) => core.list_cached_starred(request),
+        }
+    }
+
     fn set_read(&self, command: &SetRead) -> Result<OperationReceipt, MailError> {
         match self {
             Self::Fixture(_) => Err(MailError::InvalidRequest {
@@ -348,6 +376,33 @@ where
         .map_err(|_| MailError::StorageUnavailable)?
 }
 
+#[tauri::command]
+async fn list_cached_starred(
+    state: State<'_, AppState>,
+    request: CachedDoneRequest,
+) -> Result<CachedDoneSnapshot, MailError> {
+    let backend = state.backend.clone();
+    run_blocking(backend, move |backend| {
+        backend.list_cached_starred(&request)
+    })
+    .await
+}
+#[tauri::command]
+async fn set_starred(
+    state: State<'_, AppState>,
+    command: mail_core::stars::SetStarred,
+) -> Result<OperationReceipt, MailError> {
+    let backend = state.backend.clone();
+    run_blocking(backend, move |backend| backend.set_starred(&command)).await
+}
+#[tauri::command]
+async fn set_starred_group(
+    state: State<'_, AppState>,
+    command: mail_core::stars::SetStarredGroup,
+) -> Result<OperationGroupReceipt, MailError> {
+    let backend = state.backend.clone();
+    run_blocking(backend, move |backend| backend.set_starred_group(&command)).await
+}
 #[tauri::command]
 async fn list_cached_done(
     state: State<'_, AppState>,
@@ -720,6 +775,9 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             list_conversations,
             list_cached_done,
+            list_cached_starred,
+            set_starred,
+            set_starred_group,
             get_conversation,
             set_archived,
             enable_mailbox_actions,
@@ -957,9 +1015,47 @@ mod tests {
 
     #[test]
     fn fixture_rejects_gmail_only_mailbox_commands() {
+        // UX-08 stays fail-closed on the legacy archive-only fixture backend.
+        let source = include_str!("main.rs");
+        for command in ["list_cached_starred", "set_starred", "set_starred_group"] {
+            assert!(source.contains(&format!("async fn {command}(")));
+            assert!(include_str!("../build.rs").contains(&format!("\"{command}\"")));
+            assert!(include_str!("../capabilities/main-window.json")
+                .contains(&command.replace('_', "-")));
+        }
+
         let dir = temp_dir("fixture-gmail-actions");
         let core = MailCore::open(&dir).unwrap();
         let backend = Backend::Fixture(core);
+        let target = ConversationRef {
+            account_id: ACCOUNT_ID.into(),
+            conversation_id: "conv-01".into(),
+        };
+        assert_eq!(
+            backend.set_starred(&mail_core::stars::SetStarred {
+                conversation: target.clone(),
+                starred: true,
+                request_id: "star-disabled".into()
+            }),
+            Err(MailError::ReadOnly)
+        );
+        assert_eq!(
+            backend.set_starred_group(&mail_core::stars::SetStarredGroup {
+                account_id: ACCOUNT_ID.into(),
+                members: vec![target],
+                starred: true,
+                request_id: "group-star-disabled".into()
+            }),
+            Err(MailError::ReadOnly)
+        );
+        assert_eq!(
+            backend.list_cached_starred(&CachedDoneRequest {
+                account_id: ACCOUNT_ID.into(),
+                limit: 100,
+                cursor: None
+            }),
+            Err(MailError::ReadOnly)
+        );
         let mode_error = MailError::InvalidRequest {
             field: "mode".to_owned(),
         };

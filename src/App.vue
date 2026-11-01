@@ -80,6 +80,7 @@ interface ReaderOrigin {
 }
 
 const mailbox = useMailbox(props.client);
+const contextTitle = computed(() => mailbox.context.value === 'starred' ? 'Cached Starred' : mailbox.context.value === 'done' ? 'Cached Done' : 'Inbox');
 const inboxList = ref<InstanceType<typeof InboxList> | null>(null);
 const emptyState = ref<HTMLElement | null>(null);
 const actionNoticeComponent = ref<InstanceType<typeof ActionNotice> | null>(null);
@@ -111,7 +112,7 @@ function bulkActionAvailable(id: BrowsingActionId): boolean {
   if (!bulkMembers()) return false;
   if (id === 'archive') return mailbox.context.value === 'inbox' && mailboxActionsEnabled.value;
   if (id === 'unarchive') return mailbox.context.value === 'done' && mailboxActionsEnabled.value;
-  if (id === 'read' || id === 'unread') return gmailActionsEnabled.value;
+  if (id === 'read' || id === 'unread' || id === 'star' || id === 'unstar') return gmailActionsEnabled.value;
   return false;
 }
 
@@ -258,11 +259,11 @@ const actionNotice = computed(() => {
       hadWindow: groupSlot.hadWindow,
       undone: undoneView,
     };
-    const groupActionId: LastActionId = groupSlot.kind === 'read'
+    const groupActionId: LastActionId = groupSlot.kind === 'star' ? (groupSlot.requestedStarred ? 'star' : 'unstar') : groupSlot.kind === 'read'
       ? (groupSlot.requestedRead ? 'read' : 'unread')
       : (groupSlot.requestedArchived ? 'archive' : 'unarchive');
     return {
-      label: groupSlot.kind === 'read' ? (groupSlot.requestedRead ? 'Mark read' : 'Mark unread') : (groupSlot.requestedArchived ? 'Mark Done (Archive)' : 'Mark Not Done (Restore)'),
+      label: groupSlot.kind === 'star' ? (groupSlot.requestedStarred ? 'Star' : 'Unstar') : groupSlot.kind === 'read' ? (groupSlot.requestedRead ? 'Mark read' : 'Mark unread') : (groupSlot.requestedArchived ? 'Mark Done (Archive)' : 'Mark Not Done (Restore)'),
       actionId: groupActionId,
       subject: null,
       operation: null,
@@ -583,7 +584,7 @@ const contactContext = computed<ContactContext>(() => (readerOpen.value ? 'open'
 // ---------------------------------------------------------------------------
 
 // Context history is account-scoped and stores references/geometry, never indices.
-interface ContextEntry extends ReaderOrigin { context: BrowseContext; accountId: string; loadedDonePages: number; doneBoundary: DoneBoundary | null }
+interface ContextEntry extends ReaderOrigin { starredOnly: boolean; context: BrowseContext; accountId: string; loadedDonePages: number; doneBoundary: DoneBoundary | null }
 const history = ref<ContextEntry[]>([]);
 let navigationToken = 0;
 const overlay = ref<'palette' | 'navigator' | null>(null);
@@ -623,6 +624,7 @@ function captureContext(): ContextEntry | null {
   if (!accountId.value) return null;
   const entry = readerOpen.value ? origin.value : null;
   return {
+    starredOnly: mailbox.starredOnly.value,
     accountId: accountId.value, context: mailbox.context.value, surface: mailbox.context.value,
     loadedDonePages: mailbox.loadedDonePages.value,
     doneBoundary: mailbox.loadedDoneBoundary.value ? { ...mailbox.loadedDoneBoundary.value } : null,
@@ -647,7 +649,7 @@ async function navigateContext(context: BrowseContext, saved?: ContextEntry): Pr
     return true;
   }
   if (readerOpen.value) mailbox.closeReader();
-  await mailbox.setContext(context, saved?.loadedDonePages, saved?.doneBoundary);
+  await mailbox.setContext(context, saved?.loadedDonePages, saved?.doneBoundary, saved?.starredOnly ?? (context === mailbox.context.value && mailbox.starredOnly.value));
   if (token !== navigationToken || account !== accountId.value) return false;
   await nextTick();
   if (saved && mailbox.listState.value !== 'ready') return false;
@@ -657,6 +659,13 @@ async function navigateContext(context: BrowseContext, saved?: ContextEntry): Pr
   }
   await focusFocusedRow(!!saved);
   return true;
+}
+async function toggleStarFilter(): Promise<void> {
+  if (readerOpen.value || mailbox.listState.value !== 'ready') return;
+  const previous = captureContext();
+  if (previous) history.value.push(previous);
+  await mailbox.setContext(mailbox.context.value, 1, null, !mailbox.starredOnly.value);
+  await focusFocusedRow();
 }
 async function contextBack(): Promise<void> {
   const saved = history.value[history.value.length - 1];
@@ -893,7 +902,7 @@ function currentReaderTarget() {
   return sameConversation(target, mailbox.openRef.value) ? target : null;
 }
 
-async function archiveFromReader(): Promise<void> {
+async function archiveFromReader(starred?: boolean): Promise<void> {
   const target = currentReaderTarget();
   const opened = mailbox.openRef.value;
   if (!target) return;
@@ -907,7 +916,7 @@ async function archiveFromReader(): Promise<void> {
   const actionOrdering: ConversationRef[] = mailbox.conversations.value
     .filter((row) => row.ref.accountId === target.accountId)
     .map((row) => ({ accountId: row.ref.accountId, conversationId: row.ref.conversationId }));
-  const receipt = await mailbox.setArchived(target, true);
+  const receipt = starred === undefined ? await mailbox.setArchived(target, true) : await mailbox.setStarred(target, starred);
   // A late receipt must not drag the user back after they navigate or close.
   if (!receipt || mailbox.openRef.value !== opened || mailbox.listState.value !== 'ready') return;
   const op = mailbox.activity.value.find((item) => item.id === receipt.operationId);
@@ -982,7 +991,7 @@ function openDraft(ref: DraftRef): void {
 /** Targets are resolved at dispatch, not when the palette was opened. */
 function actionTarget(explicit?: ConversationRef): ConversationRef | null {
   if (!accountReady.value || mailbox.commandInFlight.value) return null;
-  if (mailbox.context.value === 'done' && mailbox.listState.value === 'error') return null;
+  if (mailbox.context.value !== 'inbox' && mailbox.listState.value === 'error') return null;
   if (explicit) {
     if (explicit.accountId !== accountId.value) return null;
     return mailbox.listState.value === 'ready' && mailbox.conversations.value.some((row) => sameConversation(row.ref, explicit)) ? explicit : null;
@@ -993,6 +1002,7 @@ function actionTarget(explicit?: ConversationRef): ConversationRef | null {
 }
 function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): boolean {
   if (!accountReady.value) return false;
+  if (id === 'starred') return gmailMode.value && !!accountId.value;
   if (['inbox', 'done', 'activity'].includes(id)) return !!accountId.value;
   if (id === 'account') return gmailMode.value;
   if (id === 'drafts') return !!accountId.value;
@@ -1007,26 +1017,27 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   }
   // One-target policy: with a nonempty selection, shared dispatch resolves the
   // selection (even in the reader); explicit row actions bypass this entirely.
-  if (!explicit && (id === 'archive' || id === 'unarchive' || id === 'read' || id === 'unread')) {
+  if (!explicit && (id === 'archive' || id === 'unarchive' || id === 'read' || id === 'unread' || id === 'star' || id === 'unstar')) {
     if (bulkActionAvailable(id)) return true;
     if (selectedCount.value > 0) return false;
   }
   const target = actionTarget(explicit);
   if (!target) return false;
   if (id === 'open') return !readerOpen.value;
-  if (id === 'read' || id === 'unread') return gmailActionsEnabled.value;
+  if (id === 'read' || id === 'unread' || id === 'star' || id === 'unstar') return gmailActionsEnabled.value;
+  if (mailbox.context.value === 'starred' && !readerOpen.value) return false;
   if (!mailboxActionsEnabled.value) return false;
   const inInbox = readerOpen.value ? mailbox.conversation.value?.isInInbox : mailbox.context.value === 'inbox';
   return id === 'archive' ? inInbox === true : inInbox === false;
 }
 const availableActions = computed(() => browsingActions
   .filter((action) => actionAvailable(action.id)
-    && (overlay.value !== 'navigator' || ['inbox', 'done', 'account', 'activity', 'drafts'].includes(action.id)))
+    && (overlay.value !== 'navigator' || ['inbox', 'done', 'starred', 'account', 'activity', 'drafts'].includes(action.id)))
   .map((action) => ({
     id: action.id,
     shortcut: action.shortcut,
     // Selected-scope actions are labelled with the count (§3.3).
-    label: selectedCount.value > 0 && ['archive', 'unarchive', 'read', 'unread'].includes(action.id)
+    label: selectedCount.value > 0 && ['archive', 'unarchive', 'read', 'unread', 'star', 'unstar'].includes(action.id)
       ? `${action.label} — ${selectedCount.value} selected`
       : action.label,
   })));
@@ -1035,6 +1046,16 @@ async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): 
   switch (id) {
     case 'inbox': await navigateToInbox(); return;
     case 'done': await navigateContext('done'); return;
+    case 'starred': await navigateContext('starred'); return;
+    case 'star': case 'unstar': {
+      const members = !explicit ? bulkMembers() : null;
+      if (members) { await mailbox.setStarredGroup(members, id === 'star'); return; }
+      const target = actionTarget(explicit);
+      if (!target) return;
+      if (readerOpen.value && (mailbox.context.value === 'starred' || mailbox.starredOnly.value) && id === 'unstar') await archiveFromReader(false);
+      else { await mailbox.setStarred(target, id === 'star'); if (!readerOpen.value) await focusFocusedRow(); }
+      return;
+    }
     case 'account': case 'activity': case 'drafts': await openDrawer(id); return;
     case 'back': if (readerOpen.value) closeReader(); else await contextBack(); return;
     case 'open': if (explicit) await openRowFromList(explicit); else await openFocusedFromList(); return;
@@ -1174,6 +1195,12 @@ function onKeydown(event: KeyboardEvent): void {
   }
   if (browsingOwns && !event.shiftKey && key === 'g') {
     event.preventDefault(); goTimer = setTimeout(cancelGo, 1000); return;
+  }
+  if (key === 's' && !event.shiftKey && !event.repeat && (browsingOwns || readerIsOpen) && !actionShortcutBlocked(event.target)) {
+    const stars = readerIsOpen ? mailbox.conversation.value?.stars : mailbox.focusedSummary.value?.stars;
+    event.preventDefault();
+    void executeAction(selectedCount.value === 0 && stars?.knownMessages === stars?.totalMessages && (stars?.starredMessages ?? 0) > 0 ? 'unstar' : 'star');
+    return;
   }
   if (key === 'E' && event.shiftKey && !actionShortcutBlocked(event.target)) {
     event.preventDefault(); void executeAction('unarchive'); return;
@@ -1367,8 +1394,11 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
     <header class="app-header" :inert="!!overlay || undefined">
       <div class="app-title-row">
         <span class="rail-brand">Email</span>
-        <h1 class="app-title" data-test="inbox-title">{{ mailbox.context.value === 'done' ? 'Cached Done' : 'Inbox' }}</h1>
+        <h1 class="app-title" data-test="inbox-title">{{ contextTitle }}</h1>
         <button type="button" data-test="palette-trigger" ref="paletteButton" title="Commands (Cmd+K in native app)" @click="openOverlay('palette')">Commands</button>
+        <button v-if="gmailMode && !readerOpen && mailbox.context.value !== 'starred'" type="button" data-test="starred-filter" :aria-pressed="mailbox.starredOnly.value" :disabled="mailbox.listState.value !== 'ready'" @click="toggleStarFilter()">Starred only (cached)</button>
+        <button v-if="gmailMode" type="button" data-test="star-action" :disabled="!actionAvailable('star')" @click="executeAction('star')">{{ selectedCount ? `Star ${selectedCount}` : 'Star' }}</button>
+        <button v-if="gmailMode" type="button" data-test="unstar-action" :disabled="!actionAvailable('unstar')" @click="executeAction('unstar')">{{ selectedCount ? `Unstar ${selectedCount}` : 'Unstar' }}</button>
         <button type="button" data-test="navigator-trigger" title="Destinations (Left from list)" @click="openOverlay('navigator')">Destinations</button>
         <button v-if="history.length && !readerOpen" type="button" data-test="context-back" @click="executeAction('back')">Back to previous context</button>
       </div>
@@ -1376,7 +1406,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
         {{ BROWSER_PREVIEW_DISCLOSURE }}
       </p>
       <p class="status-line" data-test="status-line">
-        <span data-test="inbox-count">{{ mailbox.conversations.value.length }} {{ mailbox.context.value === 'inbox' ? 'in inbox' : 'loaded in cached Done' }}</span>
+        <span data-test="inbox-count">{{ mailbox.conversations.value.length }} {{ mailbox.context.value === 'inbox' ? 'in inbox' : `loaded in ${contextTitle}` }}</span>
         <span v-if="selectedCount > 0" role="status" data-test="selection-live">{{ selectedCount }} selected</span>
         <span v-if="pendingCount > 0" data-test="pending-count">{{ pendingCount }} pending operation(s)</span>
         <span v-if="gmailActionsEnabled" data-test="read-shortcut-note">Shift+U marks the focused or open conversation unread.</span>
@@ -1399,6 +1429,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
       <button v-if="drafts.isVisible.value && drafts.error.value" type="button" data-test="draft-attention-open" @click="openDrawer('drafts')">Open drafts</button>
     </div>
 
+    <p v-if="mailbox.context.value === 'starred'" class="cached-coverage" role="note" data-test="starred-coverage">Local cache only — not provider-complete Starred. Total unknown. Unknown star facts are not treated as unstarred.</p>
     <p v-if="mailbox.context.value === 'done'" class="cached-coverage" role="note" data-test="done-coverage">Local cache only — not provider-complete Done or All Mail. {{ mailbox.exactTotal.value === null ? 'Total unknown.' : `${mailbox.exactTotal.value} known locally.` }} {{ mailbox.lastSyncedAt.value ? `Last synced: ${mailbox.lastSyncedAt.value}` : 'Last sync unknown.' }}</p>
     <!-- In normal flow above the central surface: never covers the focused row,
          the reader back path, and stays visible in the empty-Inbox state. Inert
@@ -1433,6 +1464,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             :aria-current="!readerOpen && drawer === null && mailbox.context.value === 'inbox' ? 'page' : undefined"
             :title="actionLabel('inbox')" @click="executeAction('inbox')"
           >Inbox</button>
+          <button v-if="accountId && gmailMode" type="button" class="rail-item" data-test="rail-starred" :aria-current="mailbox.context.value === 'starred' && !readerOpen ? 'page' : undefined" @click="executeAction('starred')">Starred</button>
           <button v-if="accountId" type="button" class="rail-item rail-done" data-test="rail-done" :title="actionLabel('done')" :aria-current="mailbox.context.value === 'done' && !readerOpen ? 'page' : undefined" @click="executeAction('done')">Cached Done</button>
           <span class="rail-spacer" aria-hidden="true"></span>
           <button
@@ -1493,9 +1525,9 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               @select-all="mailbox.selectAllLoaded()"
               @clear="clearSelectionFromBar()"
             />
-            <p v-if="mailbox.listState.value === 'loading'" data-test="inbox-loading">Loading {{ mailbox.context.value === 'inbox' ? 'inbox' : 'cached Done' }}…</p>
+            <p v-if="mailbox.listState.value === 'loading'" data-test="inbox-loading">Loading {{ contextTitle }}…</p>
             <div v-else-if="mailbox.listState.value === 'error'" data-test="inbox-error">
-              <p role="alert">Could not load {{ mailbox.context.value === 'inbox' ? 'the inbox' : 'cached Done' }}: {{ mailbox.listError.value ? errorText(mailbox.listError.value) : 'unknown error' }}.</p>
+              <p role="alert">Could not load {{ contextTitle }}: {{ mailbox.listError.value ? errorText(mailbox.listError.value) : 'unknown error' }}.</p>
               <button type="button" data-test="inbox-retry" @click="mailbox.refresh()">Retry</button>
             </div>
             <p
@@ -1504,7 +1536,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               ref="emptyState"
               tabindex="-1"
             >
-              {{ mailbox.context.value === 'inbox' ? 'No conversations are currently in the inbox. Archived conversations stay recoverable from Activity.' : mailbox.nextCursor.value ? 'No conversations on this cache page; more cached candidates are available.' : 'No known archived conversations in this local cache.' }}
+              {{ mailbox.starredOnly.value ? 'No known starred conversations in this cached view; unknown facts and uncached mail are not included.' : mailbox.context.value === 'inbox' ? 'No conversations are currently in the inbox. Archived conversations stay recoverable from Activity.' : mailbox.nextCursor.value ? 'No conversations on this cache page; more cached candidates are available.' : mailbox.context.value === 'starred' ? 'No known starred conversations in this local cache; unknown and uncached mail is not included.' : 'No known archived conversations in this local cache.' }}
             </p>
             <InboxList
               v-else
@@ -1524,7 +1556,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               @select-toggle="toggleRowSelection"
               @select-range="rangeSelectRow"
             />
-            <button v-if="mailbox.nextCursor.value" type="button" :disabled="mailbox.loadingMore.value || mailbox.listState.value !== 'ready'" data-test="done-more" @click="mailbox.loadMore()">Load more cached Done</button>
+            <button v-if="mailbox.nextCursor.value" type="button" :disabled="mailbox.loadingMore.value || mailbox.listState.value !== 'ready'" data-test="done-more" @click="mailbox.loadMore()">Load more {{ contextTitle }}</button>
           </template>
           <section v-else class="reader-pane" aria-label="Reader">
             <p
@@ -1544,7 +1576,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               :error="mailbox.detailError.value"
               :command-in-flight="mailbox.commandInFlight.value || mailbox.bulkUnresolved.value"
               :open-ref="mailbox.openRef.value"
-              :navigation-unavailable="mailbox.context.value === 'done' && mailbox.listState.value === 'error'"
+              :navigation-unavailable="mailbox.context.value !== 'inbox' && mailbox.listState.value === 'error'"
               :read-only="gmailMode && !mailboxActionsEnabled"
               :show-read-controls="gmailActionsEnabled"
               :selection-count="selectedCount"
