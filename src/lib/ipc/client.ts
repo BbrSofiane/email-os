@@ -13,6 +13,7 @@
  * typed client seam; results never stand in for OAuth, sync, or provider-send success.
  */
 import type {
+  SavedSplit,
   CachedDoneRequest,
   CachedDoneSnapshot,
   AccountStatus,
@@ -50,6 +51,8 @@ export type {
   StarState,
   SetStarred,
   SetStarredGroup,
+  SavedSplit,
+  SplitCriterion,
   AccountInfo,
   CachedDoneCoverage,
   CachedDoneRequest,
@@ -163,6 +166,8 @@ export interface MailClient {
   listCachedStarred(request: CachedDoneRequest): Promise<CachedDoneSnapshot>;
   setStarred(command: import('./generated').SetStarred): Promise<OperationReceipt>;
   setStarredGroup(command: import('./generated').SetStarredGroup): Promise<OperationGroupReceipt>;
+  getSavedSplit(accountId: string): Promise<SavedSplit | null>;
+  saveSavedSplit(accountId: string, split: SavedSplit): Promise<SavedSplit>;
   listConversations(): Promise<InboxSnapshot>;
   /** Local archive evidence only; short/empty pages can still have a continuation. */
   listCachedDone(request: CachedDoneRequest): Promise<CachedDoneSnapshot>;

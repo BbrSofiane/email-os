@@ -80,6 +80,7 @@ struct FakeState {
     apply_blocked: bool,
     writes: Vec<(MailboxOperationKind, bool, Vec<String>)>,
     thread_fetches: usize,
+    before_dispatch_errors: usize,
     changed_history: bool,
 }
 
@@ -97,6 +98,7 @@ impl FakeProvider {
                 apply_blocked: false,
                 writes: Vec::new(),
                 thread_fetches: 0,
+                before_dispatch_errors: 0,
                 changed_history: false,
             }),
             gate: Condvar::new(),
@@ -179,8 +181,10 @@ impl FakeProvider {
     ) -> Result<(), MailError> {
         let plan = {
             let mut state = self.state.lock().unwrap();
-            if let ApplyPlan::BeforeDispatchError(error) = &state.apply_plan {
-                return Err(error.clone());
+            if let ApplyPlan::BeforeDispatchError(error) = state.apply_plan.clone() {
+                state.before_dispatch_errors += 1;
+                self.gate.notify_all();
+                return Err(error);
             }
             state.writes.push((kind, value, ids.to_vec()));
             self.gate.notify_all();
@@ -387,6 +391,10 @@ fn thread(id: &str, msgs: Vec<Message>, inbox: &[&str], unread: &[&str]) -> Gmai
     let message_ids: Vec<String> = msgs.iter().map(|m| m.id.clone()).collect();
     GmailThread {
         star_facts: None,
+        newest_sender: msgs
+            .iter()
+            .max_by(|a, b| (&a.sent_at, &a.id).cmp(&(&b.sent_at, &b.id)))
+            .map(|m| m.from.clone()),
         conversation: Conversation {
             stars: None,
             conversation_ref: conversation_ref(id),
@@ -1306,6 +1314,10 @@ fn cached_done_excludes_cancelled_and_undone_archives_but_keeps_failed_compensat
             request_id: "archive-cancelled".to_string(),
         })
         .unwrap();
+    // Acceptance itself is already Queued. Wait for the worker's definite
+    // pre-dispatch failure before waiting for its requeue; otherwise Undo can
+    // race the first claim and legitimately return Compensating, not Cancelled.
+    assert!(provider.wait_for(|state| state.before_dispatch_errors >= 1));
     assert!(wait_status(
         &core,
         &cancelled_archive.operation_id,

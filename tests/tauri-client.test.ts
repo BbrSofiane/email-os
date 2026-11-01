@@ -67,6 +67,20 @@ describe('Tauri draft and close protocol adapter', () => {
     await expect(client.listCachedStarred(request)).rejects.toEqual({kind:'storage_unavailable'});
   });
 
+  it('transports the account-scoped local split without invoking mailbox mutations', async () => {
+    const client = createTauriMailClient();
+    const split = { name: 'Clients', criterion: 'domain' as const, value: 'example.com', enabled: true, hideWhenEmpty: true };
+    mocks.invoke.mockResolvedValue(split);
+    expect(await client.saveSavedSplit('account', split)).toBe(split);
+    expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith('save_saved_split', { accountId: 'account', split });
+    mocks.invoke.mockClear();
+    expect(await client.getSavedSplit('account')).toBe(split);
+    expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith('get_saved_split', { accountId: 'account' });
+    mocks.invoke.mockRejectedValue({ kind: 'storage_unavailable' });
+    await expect(client.saveSavedSplit('account', split)).rejects.toEqual({ kind: 'storage_unavailable' });
+    expect(mocks.listen).not.toHaveBeenCalled();
+  });
+
   it('transports cached Done using only the named read query and exact request envelope', async () => {
     const client = createTauriMailClient();
     const request = { accountId: 'account', limit: 25, cursor: 'opaque-cursor' };

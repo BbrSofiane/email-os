@@ -1,0 +1,29 @@
+[
+  {
+    "ref": { "accountId": "acct", "conversationId": "thread" },
+    "subject": "Sender metadata",
+    "participants": [
+      { "displayName": "Alice", "mailbox": "alice@old.test" },
+      { "displayName": "Bob", "mailbox": "bob@new.test" }
+    ],
+    "primaryCorrespondent": { "displayName": "Bob", "mailbox": "bob@new.test" },
+    "stars": { "totalMessages": 3, "knownMessages": 3, "starredMessages": 0 },
+    "isRead": true,
+    "preview": "old plain",
+    "lastMessageAt": "1970-01-01T00:00:01Z",
+    "pendingOperationId": null
+  },
+  {
+    "ref": { "accountId": "acct", "conversationId": "thread" },
+    "subject": "Sender metadata",
+    "participants": [
+      { "displayName": "Alice", "mailbox": "alice@old.test" },
+      { "displayName": "Bob", "mailbox": "bob@new.test" }
+    ],
+    "stars": { "totalMessages": 3, "knownMessages": 3, "starredMessages": 0 },
+    "isRead": true,
+    "preview": "old plain",
+    "lastMessageAt": "1970-01-01T00:00:01Z",
+    "pendingOperationId": null
+  }
+]

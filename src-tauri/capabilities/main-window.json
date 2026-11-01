@@ -11,6 +11,8 @@
     "allow-list-cached-starred",
     "allow-set-starred",
     "allow-set-starred-group",
+    "allow-get-saved-split",
+    "allow-save-saved-split",
     "allow-get-conversation",
     "allow-set-archived",
     "allow-enable-mailbox-actions",

@@ -5,6 +5,8 @@ fn main() {
         "list_cached_starred",
         "set_starred",
         "set_starred_group",
+        "get_saved_split",
+        "save_saved_split",
         "get_conversation",
         "set_archived",
         "enable_mailbox_actions",

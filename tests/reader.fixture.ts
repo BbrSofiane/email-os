@@ -342,6 +342,8 @@ export function createReaderFixtureClient(): ReaderFixture {
     listCachedStarred: () => Promise.reject({kind:'read_only'} satisfies MailError),
     setStarred: () => Promise.reject({kind:'read_only'} satisfies MailError),
     setStarredGroup: () => Promise.reject({kind:'read_only'} satisfies MailError),
+    getSavedSplit: async () => null,
+    saveSavedSplit: async () => { throw { kind: 'storage_unavailable' }; },
     // UX-05 group seam stub: reader fixture journeys never exercise groups;
     // queries resolve empty, mutations reject (never fake success).
     setArchivedGroup: () => Promise.reject({ kind: 'invalid_request', field: 'members' } satisfies MailError),

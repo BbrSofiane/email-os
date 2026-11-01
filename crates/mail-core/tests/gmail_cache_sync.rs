@@ -572,6 +572,10 @@ fn thread(id: &str, history_id: &str, msgs: Vec<Message>, inbox_ids: &[&str]) ->
         .any(|inbox_id| msgs.iter().any(|m| m.id == **inbox_id));
     GmailThread {
         star_facts: None,
+        newest_sender: msgs
+            .iter()
+            .max_by(|a, b| (&a.sent_at, &a.id).cmp(&(&b.sent_at, &b.id)))
+            .map(|m| m.from.clone()),
         conversation: mail_core::dto::Conversation {
             stars: None,
             conversation_ref: ConversationRef {

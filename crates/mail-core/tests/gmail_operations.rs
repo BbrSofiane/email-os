@@ -42,6 +42,7 @@ fn profile() -> GmailProfile {
 fn sample_thread() -> GmailThread {
     GmailThread {
         star_facts: None,
+        newest_sender: None,
         conversation: Conversation {
             stars: None,
             conversation_ref: ConversationRef {

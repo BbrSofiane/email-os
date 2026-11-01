@@ -69,7 +69,8 @@ import type {
   UndoOperationGroup,
   UndoReceipt,
 } from './client';
-import { FIXTURE_MAILBOX } from './generated';
+import { FIXTURE_MAILBOX, type SavedSplit } from './generated';
+import { normalizeSplit } from '../saved-split';
 import { OPERATION_GROUP_MAX_MEMBERS } from './client';
 
 export const BROWSER_PREVIEW_DISCLOSURE =
@@ -398,6 +399,7 @@ function toOperationSummary(op: InternalOperation, accountId: string, undoableUn
 }
 
 export function createBrowserFakeMailClient(now: () => string = () => new Date().toISOString()): BrowserFake {
+  let savedSplit: SavedSplit | null = null;
   const conversations = seedConversations();
   const listeners = new Set<() => void>();
   const draftListeners = new Set<() => void>();
@@ -1038,6 +1040,16 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       },
     },
 
+    async getSavedSplit(accountId: string): Promise<SavedSplit | null> {
+      if (accountStatus().account?.accountId !== accountId || cacheCleared) throw failNotShown();
+      return savedSplit ? { ...savedSplit } : null;
+    },
+    async saveSavedSplit(accountId: string, split: SavedSplit): Promise<SavedSplit> {
+      if (accountStatus().account?.accountId !== accountId || cacheCleared) throw failNotShown();
+      savedSplit = normalizeSplit(split);
+      notify();
+      return { ...savedSplit };
+    },
     async listConversations(): Promise<InboxSnapshot> {
       return snapshot();
     },
@@ -1602,6 +1614,7 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
         conv.ops = [];
         delete conv.retainedSnapshotAt;
       }
+      savedSplit = null;
       receiptsByRequest.clear();
       groups.splice(0, groups.length);
       groupReceiptsByRequest.clear();

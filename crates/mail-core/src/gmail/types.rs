@@ -86,6 +86,9 @@ pub struct GmailThread {
     /// Absent map/entries are unknown, not false (legacy/partial label coverage).
     pub star_facts: Option<std::collections::HashMap<String, bool>>,
     pub conversation: Conversation,
+    /// From of the newest observed provider message, independent of body support.
+    /// None is explicitly unknown; never derive it from the renderable stack.
+    pub newest_sender: Option<crate::dto::Address>,
     pub inbox_message_ids: Vec<String>,
     /// Full observed inventory, including unsupported bodies. None for legacy fakes.
     pub message_ids: Option<Vec<String>>,

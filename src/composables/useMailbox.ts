@@ -2,6 +2,7 @@
 import { computed, onScopeDispose, ref, type ComputedRef, type Ref } from 'vue';
 import type {
   AccountStatus,
+  SavedSplit,
   Conversation,
   ConversationRef,
   GroupUndoReceipt,
@@ -18,6 +19,7 @@ import type {
   SetStarredGroup,
   UndoReceipt,
 } from '../lib/ipc/client';
+import { matchesSplit } from '../lib/saved-split';
 import { OPERATION_GROUP_MAX_MEMBERS, toMailError } from '../lib/ipc/client';
 
 export type ListState = 'loading' | 'ready' | 'error';
@@ -55,7 +57,7 @@ export function sameConversation(a: ConversationRef | null, b: ConversationRef |
   return a !== null && b !== null && a.accountId === b.accountId && a.conversationId === b.conversationId;
 }
 
-export type BrowseContext = 'inbox' | 'done' | 'starred';
+export type BrowseContext = 'inbox' | 'saved' | 'done' | 'starred';
 
 /**
  * UX-05 product/safety bound for selection and groups (docs/ux-05-safe-bulk-
@@ -114,6 +116,14 @@ function boundaryOf(rows: ConversationSummaryLike[]): DoneBoundary | null {
 }
 
 export interface Mailbox {
+  savedSplit: Ref<SavedSplit | null>;
+  splitError: Ref<MailError | null>;
+  splitBusy: Ref<boolean>;
+  inboxTotal: Ref<number | null>;
+  savedTotal: Ref<number | null>;
+  unreadOnly: Ref<boolean>;
+  saveSplit(split: SavedSplit): Promise<boolean>;
+  setUnreadOnly(unread: boolean): Promise<void>;
   context: Ref<BrowseContext>;
   starredOnly: Ref<boolean>;
   nextCursor: Ref<string | null>;
@@ -156,12 +166,13 @@ export interface Mailbox {
   requestSync(): Promise<void>;
   focusConversation(target: ConversationRef | null): void;
   moveFocus(delta: number): void;
-  openConversationByRef(ref: ConversationRef): Promise<void>;
+  openConversationByRef(ref: ConversationRef, source?: 'list' | 'activity'): Promise<void>;
   openFocused(): Promise<void>;
   closeReader(): void;
   setArchived(target: ConversationRef, archived: boolean): Promise<OperationReceipt | null>;
   setStarred(target: ConversationRef, starred: boolean): Promise<OperationReceipt | null>;
   setStarredGroup(members: ConversationRef[], starred: boolean): Promise<boolean>;
+  unarchiveFromActivity(target: ConversationRef): Promise<OperationReceipt | null>;
   setRead(target: ConversationRef, read: boolean): Promise<OperationReceipt | null>;
   retryOperation(operationId: string): Promise<OperationReceipt | null>;
   /** Single-slot notice state for the latest accepted setter action. */
@@ -226,6 +237,12 @@ export interface Mailbox {
 export function useMailbox(client: MailClient): Mailbox {
   const context = ref<BrowseContext>('inbox');
   const starredOnly = ref(false);
+  const savedSplit = ref<SavedSplit | null>(null);
+  const splitError = ref<MailError | null>(null);
+  const splitBusy = ref(false);
+  const inboxTotal = ref<number | null>(null);
+  const savedTotal = ref<number | null>(null);
+  const unreadOnly = ref(false);
   const loadingMore = ref(false);
   const loadedDonePages = ref(1);
   const loadedDoneBoundary = ref<DoneBoundary | null>(null);
@@ -262,6 +279,7 @@ export function useMailbox(client: MailClient): Mailbox {
   const groupDetail = ref<OperationGroupStatus | null>(null);
   const groupDetailError = ref<MailError | null>(null);
 
+  let readerSource: 'list' | 'activity' = 'list';
   let listToken = 0;
   let activityToken = 0;
   let detailToken = 0;
@@ -294,6 +312,32 @@ export function useMailbox(client: MailClient): Mailbox {
     await subscriptionAttempt;
   }
 
+  function sameSplit(a: SavedSplit | null, b: SavedSplit | null): boolean {
+    return a === b || (a !== null && b !== null && a.name === b.name
+      && a.criterion === b.criterion && a.value === b.value
+      && a.enabled === b.enabled && a.hideWhenEmpty === b.hideWhenEmpty);
+  }
+
+  /** A new rule cannot inherit the old view's rows, selection or reader visit. */
+  function invalidateSavedView(): void {
+    if (context.value !== 'saved') return;
+    // Activity owns an explicit recovery visit, independent of split membership.
+    if (readerSource !== 'activity') closeReader(); // fences old list-detail reads
+    clearSelection();
+    focusedRef.value = null;
+    conversations.value = [];
+    listState.value = 'loading';
+    listError.value = null;
+    inboxTotal.value = null;
+    savedTotal.value = null;
+  }
+
+  /** Independent cache filters compose by intersection; unknown facts never qualify. */
+  function matchesCachedFilters(row: ConversationSummaryLike): boolean {
+    return (!unreadOnly.value || row.isRead === false)
+      && (!starredOnly.value || (row.stars?.starredMessages ?? 0) > 0);
+  }
+
   async function refreshList(token: number): Promise<void> {
     const source = context.value;
     const account = accountStatus.value?.account?.accountId;
@@ -305,11 +349,65 @@ export function useMailbox(client: MailClient): Mailbox {
       activity.value = snap.activity;
       activityError.value = null;
     }, (raw) => {
-      if (!detached && activityRequest === activityToken) activityError.value = toMailError(raw);
+      if (!detached && activityRequest === activityToken) {
+        activityError.value = toMailError(raw);
+      }
     });
+    const current = (): boolean => !detached && token === listToken && source === context.value;
+    // Stage the definition with the exact Inbox snapshot used for membership and
+    // totals. Activity never publishes projection state, even if it finishes first.
+    const projectionRead = (async () => {
+      let definition = savedSplit.value;
+      let definitionError: MailError | null = null;
+      if (account) {
+        try {
+          definition = await client.getSavedSplit(account);
+          if (!current()) return null;
+          if (!sameSplit(definition, savedSplit.value)) invalidateSavedView();
+        } catch (raw) {
+          if (!current()) return null;
+          definitionError = toMailError(raw);
+          if (source === 'saved') {
+            invalidateSavedView();
+            splitError.value = definitionError;
+            throw raw;
+          }
+        }
+      }
+      const snap = await inbox;
+      if (!current()) return null;
+      const matching = definition ? snap.conversations.filter((row) => matchesSplit(row, definition!)) : [];
+      return { definition, definitionError, snap, matching };
+    })();
+    const publishProjection = (projection: NonNullable<Awaited<typeof projectionRead>>): void => {
+      savedSplit.value = projection.definition;
+      splitError.value = projection.definitionError;
+      inboxTotal.value = projection.snap.conversations.length;
+      savedTotal.value = projection.definitionError ? null : projection.matching.length;
+    };
+    // Done owns its own list read. A delayed/failed Inbox or definition read must
+    // not hold Done rows hostage; its badges still use a fenced projection pair.
+    const doneProjection = (source === 'done' || source === 'starred') ? projectionRead.then((projection) => {
+      if (current() && projection) publishProjection(projection);
+    }, () => {
+      if (current()) { inboxTotal.value = null; savedTotal.value = null; }
+    }) : null;
     try {
-      let snap = source === 'inbox' ? await inbox : await (source === 'starred' ? client.listCachedStarred : client.listCachedDone)({ accountId: account!, limit: 100, cursor: null });
-      if (source !== 'inbox' && 'nextCursor' in snap) {
+      const projection = (source === 'inbox' || source === 'saved') ? await projectionRead : null;
+      const initial = (source === 'inbox' || source === 'saved') ? projection?.snap : await (source === 'starred' ? client.listCachedStarred : client.listCachedDone)({ accountId: account!, limit: 100, cursor: null });
+      if (!current() || !initial) return;
+      let snap = initial;
+      if (projection) {
+        if (source === 'saved') {
+          if (!projection.definition?.enabled) {
+            publishProjection(projection);
+            await setContext('inbox');
+            return;
+          }
+          snap = { ...snap, conversations: projection.matching };
+        }
+      }
+      if ((source === 'done' || source === 'starred') && 'nextCursor' in snap) {
         // Recover the saved identity range even when new archives shift page edges.
         const pages = loadedDonePages.value;
         const boundary = loadedDoneBoundary.value;
@@ -328,22 +426,23 @@ export function useMailbox(client: MailClient): Mailbox {
       }
       if (detached || token !== listToken || source !== context.value) return;
       const previous = conversations.value;
-      if (starredOnly.value) snap = { ...snap, conversations: snap.conversations.filter(row => (row.stars?.starredMessages ?? 0) > 0) };
-      conversations.value = snap.conversations;
-      if (source !== 'inbox' && 'nextCursor' in snap) {
+      conversations.value = snap.conversations.filter(matchesCachedFilters);
+      if ((source === 'done' || source === 'starred') && 'nextCursor' in snap) {
         nextCursor.value = snap.nextCursor;
         exactTotal.value = snap.exactTotal;
         lastSyncedAt.value = snap.lastSyncedAt;
         loadedDoneBoundary.value = boundaryOf(snap.conversations);
       }
-      focusedRef.value = resolveFocus(previous, focusedRef.value, snap.conversations);
+      focusedRef.value = resolveFocus(previous, focusedRef.value, conversations.value);
       intersectSelectionWithLoaded();
+      if (projection) publishProjection(projection);
       listError.value = null;
       listState.value = 'ready';
-    } finally { await activityRead; }
+    } finally { await Promise.all([activityRead, doneProjection]); }
   }
 
   async function setContext(next: BrowseContext, pages = 1, boundary: DoneBoundary | null = null, filter = false): Promise<void> {
+    if (next === 'saved' && (!savedSplit.value?.enabled || splitError.value)) next = 'inbox';
     if (next === context.value && filter === starredOnly.value && listState.value === 'ready') return;
     starredOnly.value = filter;
     loadedDonePages.value = Math.max(1, Math.floor(pages));
@@ -364,21 +463,53 @@ export function useMailbox(client: MailClient): Mailbox {
     await refresh();
   }
 
+  async function setUnreadOnly(unread: boolean): Promise<void> {
+    if (unread === unreadOnly.value) return;
+    unreadOnly.value = unread;
+    closeReader();
+    clearSelection();
+    focusedRef.value = null;
+    conversations.value = [];
+    listState.value = 'loading';
+    await refresh();
+  }
+
+  async function saveSplit(split: SavedSplit): Promise<boolean> {
+    const account = accountStatus.value?.account?.accountId;
+    if (!account || splitBusy.value) return false;
+    const session = mailboxSessionToken;
+    splitBusy.value = true;
+    splitError.value = null;
+    try {
+      await client.saveSavedSplit(account, split);
+      if (detached || session !== mailboxSessionToken) return false;
+      // Fence reads started before acceptance (including the save change hint).
+      // Keep the published definition until matching rows/totals are ready.
+      ++listToken;
+      invalidateSavedView();
+      savedTotal.value = null;
+      await refresh();
+      return true;
+    } catch (raw) {
+      if (!detached && session === mailboxSessionToken) splitError.value = toMailError(raw);
+      return false;
+    } finally { if (session === mailboxSessionToken) splitBusy.value = false; }
+  }
+
   async function loadMore(): Promise<void> {
     const source = context.value;
     const cursor = nextCursor.value;
     const account = accountStatus.value?.account?.accountId;
-    if (source === 'inbox' || !cursor || !account || loadingMore.value || listState.value !== 'ready') return;
+    if (source === 'inbox' || source === 'saved' || !cursor || !account || loadingMore.value || listState.value !== 'ready') return;
     const token = ++listToken;
     loadingMore.value = true;
     try {
-      let snap = await (source === 'starred' ? client.listCachedStarred : client.listCachedDone)({ accountId: account, limit: 100, cursor });
+      const snap = await (source === 'starred' ? client.listCachedStarred : client.listCachedDone)({ accountId: account, limit: 100, cursor });
       if (detached || token !== listToken || context.value !== source) return;
-      if (starredOnly.value) snap = {...snap, conversations:snap.conversations.filter(row => (row.stars?.starredMessages ?? 0) > 0)};
-      conversations.value = [...conversations.value, ...snap.conversations.filter((row: ConversationSummaryLike) => !conversations.value.some((old) => sameConversation(old.ref, row.ref)))];
+      conversations.value = [...conversations.value, ...snap.conversations.filter((row) => matchesCachedFilters(row) && !conversations.value.some((old) => sameConversation(old.ref, row.ref)))];
       focusedRef.value = resolveFocus(conversations.value, focusedRef.value, conversations.value);
       loadedDonePages.value += 1;
-      loadedDoneBoundary.value = boundaryOf(conversations.value);
+      loadedDoneBoundary.value = boundaryOf(snap.conversations) ?? loadedDoneBoundary.value;
       nextCursor.value = snap.nextCursor;
       exactTotal.value = snap.exactTotal;
       lastSyncedAt.value = snap.lastSyncedAt;
@@ -446,6 +577,12 @@ export function useMailbox(client: MailClient): Mailbox {
         focusedRef.value = null;
         context.value = 'inbox';
         starredOnly.value = false;
+        savedSplit.value = null;
+        splitError.value = null;
+        splitBusy.value = false;
+        inboxTotal.value = null;
+        savedTotal.value = null;
+        unreadOnly.value = false;
         loadedDonePages.value = 1;
         loadedDoneBoundary.value = null;
         nextCursor.value = null;
@@ -474,8 +611,13 @@ export function useMailbox(client: MailClient): Mailbox {
       if (detached) return;
       // Status failures are handled inside refreshStatus (the UI gate renders them
       // fail-closed); list/detail failures reject into the catch below.
+      // Bootstrap the account once; subsequent status/list reads remain
+      // independent, preserving Activity and mutation refresh ownership.
+      const bootstrap = !accountStatus.value;
+      if (bootstrap) await refreshStatus(++statusToken);
+      if (detached) return;
       await Promise.all([
-        refreshStatus(++statusToken),
+        bootstrap ? Promise.resolve() : refreshStatus(++statusToken),
         refreshList(token),
         openRef.value ? loadDetail(openRef.value, true) : Promise.resolve(),
       ]);
@@ -495,6 +637,8 @@ export function useMailbox(client: MailClient): Mailbox {
       }
     } catch (raw) {
       if (detached || token !== listToken) return;
+      inboxTotal.value = null;
+      savedTotal.value = null;
       listError.value = toMailError(raw);
       listState.value = 'error';
     }
@@ -562,10 +706,11 @@ export function useMailbox(client: MailClient): Mailbox {
     if (newestSingle) repointLastAction();
   }
 
-  async function loadDetail(target: ConversationRef, background = false): Promise<void> {
+  async function loadDetail(target: ConversationRef, background = false, source: 'list' | 'activity' = 'list'): Promise<void> {
     if (detached) return;
     const token = ++detailToken;
     if (!background) {
+      readerSource = source;
       // New object records explicit navigation independently of background refreshes.
       openRef.value = { ...target };
       conversation.value = null;
@@ -587,6 +732,7 @@ export function useMailbox(client: MailClient): Mailbox {
   }
 
   function focusConversation(target: ConversationRef | null): void {
+    if (target && !savedTargetAvailable(target)) return;
     focusedRef.value = target === null ? null : { accountId: target.accountId, conversationId: target.conversationId };
   }
 
@@ -625,6 +771,7 @@ export function useMailbox(client: MailClient): Mailbox {
 
   /** X / checkbox / Cmd-click: toggle one row; the anchor moves there. */
   function toggleSelected(target: ConversationRef): void {
+    if (!savedTargetAvailable(target)) return;
     const existing = indexOfSelected(target);
     if (existing >= 0) {
       selectedRefs.value = selectedRefs.value.filter((entry) => !sameConversation(entry, target));
@@ -740,8 +887,12 @@ export function useMailbox(client: MailClient): Mailbox {
     return [...loaded, ...remaining.map(copyRef)];
   }
 
-  async function openConversationByRef(target: ConversationRef): Promise<void> {
-    await loadDetail(target);
+  async function openConversationByRef(target: ConversationRef, source: 'list' | 'activity' = 'list'): Promise<void> {
+    if (source === 'activity') {
+      // Recovery is an explicit account-scoped source, not a stale list callback.
+      if (target.accountId !== accountStatus.value?.account?.accountId) return;
+    } else if (!savedTargetAvailable(target)) return;
+    await loadDetail(target, false, source);
   }
 
   async function openFocused(): Promise<void> {
@@ -752,6 +903,7 @@ export function useMailbox(client: MailClient): Mailbox {
   }
 
   function closeReader(): void {
+    readerSource = 'list';
     detailToken += 1;
     openRef.value = null;
     conversation.value = null;
@@ -795,6 +947,12 @@ export function useMailbox(client: MailClient): Mailbox {
     if (detached) return;
     context.value = 'inbox';
     starredOnly.value = false;
+    savedSplit.value = null;
+    splitError.value = null;
+    splitBusy.value = false;
+    inboxTotal.value = null;
+    savedTotal.value = null;
+    unreadOnly.value = false;
     nextCursor.value = null;
     loadedDonePages.value = 1;
     loadedDoneBoundary.value = null;
@@ -845,6 +1003,17 @@ export function useMailbox(client: MailClient): Mailbox {
     } finally {
       if (!detached) accountBusy.value = null;
     }
+  }
+
+  // Only saved-view targets need this membership fence. Recovery/Undo owns
+  // immutable operation targets independently, and ordinary Inbox/Done behavior
+  // is unchanged. An existing reader may outlive ordinary membership refreshes,
+  // but definition invalidation always closes that visit.
+  function savedTargetAvailable(target: ConversationRef, allowReader = false): boolean {
+    const openTarget = allowReader && detailState.value === 'ready'
+      && sameConversation(openRef.value, target) && sameConversation(conversation.value?.ref ?? null, target);
+    return context.value !== 'saved' || (readerSource === 'activity' && openTarget)
+      || (listState.value === 'ready' && (loadedContains(target) || openTarget));
   }
 
   function mutationsAllowed(): boolean {
@@ -899,6 +1068,22 @@ export function useMailbox(client: MailClient): Mailbox {
   }
 
   async function setArchived(target: ConversationRef, archived: boolean): Promise<OperationReceipt | null> {
+    if (!savedTargetAvailable(target, true)) return null;
+    return submitArchived(target, archived);
+  }
+
+  /** Explicit recovery authority: only a current-account, restorable Activity
+   * target, never a saved-list callback or a reader/loading-state exception. */
+  async function unarchiveFromActivity(target: ConversationRef): Promise<OperationReceipt | null> {
+    if (detached || target.accountId !== accountStatus.value?.account?.accountId) return null;
+    const restorable = activity.value.some((op) => sameConversation(op.conversation, target)
+      && (op.kind === undefined || op.kind === 'archive') && op.requestedArchived && op.status !== 'cancelled');
+    if (!restorable) return null;
+    return submitArchived(target, false);
+  }
+
+  /** Shared durable setter/notice pipeline; callers establish target authority. */
+  async function submitArchived(target: ConversationRef, archived: boolean): Promise<OperationReceipt | null> {
     const subject = subjectFor(target);
     // Fenced at CALL time: an account identity change while the IPC round trip is
     // pending must never repopulate the notice with the previous account's op.
@@ -914,6 +1099,7 @@ export function useMailbox(client: MailClient): Mailbox {
   }
 
   async function setStarred(target: ConversationRef, starred: boolean): Promise<OperationReceipt | null> {
+    if (!savedTargetAvailable(target, true)) return null;
     if (accountStatus.value?.mode !== 'gmail') {
       lastCommandError.value = { kind: 'read_only' };
       return null;
@@ -925,6 +1111,7 @@ export function useMailbox(client: MailClient): Mailbox {
     return receipt;
   }
   async function setRead(target: ConversationRef, read: boolean): Promise<OperationReceipt | null> {
+    if (!savedTargetAvailable(target, true)) return null;
     if (accountStatus.value?.mode !== 'gmail') {
       lastCommandError.value = { kind: 'read_only' };
       return null;
@@ -1321,6 +1508,7 @@ export function useMailbox(client: MailClient): Mailbox {
     members: ConversationRef[],
     value: boolean,
   ): Promise<boolean> {
+    if (members.some((member) => !savedTargetAvailable(member))) return false;
     if (!mutationsAllowed()) return false;
     // P1 fence (§3.3): a pending single mutation (inline row action, undo,
     // retry) must never race a group dispatch — the group would bump
@@ -1570,11 +1758,12 @@ export function useMailbox(client: MailClient): Mailbox {
   const mode = computed<MailMode | null>(() => accountStatus.value?.mode ?? null);
   const isGmail = computed(() => mode.value === 'gmail');
   return {
+    savedSplit, splitError, splitBusy, inboxTotal, savedTotal, unreadOnly, saveSplit, setUnreadOnly,
     context, starredOnly, nextCursor, loadingMore, loadedDonePages, loadedDoneBoundary, exactTotal, lastSyncedAt, activityError, setContext, loadMore,
     conversations, activity, listState, listError, focusedRef, focusedSummary,
     openRef, conversation, detailState, detailError, lastCommandError,
     inFlightCommandRef, commandInFlight, ready, refresh, focusConversation, moveFocus,
-    openConversationByRef, openFocused, closeReader, setArchived, setRead, setStarred, setStarredGroup, retryOperation,
+    openConversationByRef, openFocused, closeReader, setArchived, unarchiveFromActivity, setRead, setStarred, setStarredGroup, retryOperation,
     lastAction, undoLastAction,
     selectedRefs, rangeAnchorRef, selectionNotice, isSelected, toggleSelected, extendSelectionTo,
     selectAllLoaded, clearSelection, selectionInLoadedOrder,

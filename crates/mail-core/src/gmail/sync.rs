@@ -296,6 +296,23 @@ impl GmailCore {
         self.inner.store.list_cached_starred(request)
     }
 
+    pub fn get_saved_split(
+        &self,
+        account: &str,
+    ) -> Result<Option<crate::splits::SavedSplit>, MailError> {
+        self.inner.store.get_saved_split(account)
+    }
+
+    pub fn save_saved_split(
+        &self,
+        account: &str,
+        split: &crate::splits::SavedSplit,
+    ) -> Result<crate::splits::SavedSplit, MailError> {
+        let saved = self.inner.store.save_saved_split(account, split)?;
+        self.inner.hub.dispatch();
+        Ok(saved)
+    }
+
     pub fn list_cached_done(
         &self,
         request: &crate::dto::CachedDoneRequest,
@@ -1679,6 +1696,11 @@ fn retained_thread_bytes(thread: &GmailThread) -> usize {
                 .saturating_mul(std::mem::size_of::<String>()),
         )
         .saturating_add(thread.history_id.capacity());
+    if let Some(sender) = &thread.newest_sender {
+        bytes = bytes
+            .saturating_add(sender.mailbox.capacity())
+            .saturating_add(sender.display_name.as_ref().map_or(0, String::capacity));
+    }
     if let Some(reply_context) = &conversation.reply_context {
         bytes = bytes
             .saturating_add(std::mem::size_of::<crate::drafts::types::ReplyContext>())
@@ -1855,6 +1877,7 @@ mod worker_halt_tests {
     fn test_thread() -> GmailThread {
         GmailThread {
             star_facts: None,
+            newest_sender: None,
             conversation: Conversation {
                 stars: None,
                 conversation_ref: ConversationRef {

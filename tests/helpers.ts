@@ -84,8 +84,10 @@ export function countingClient(inner: MailClient): CountingClient {
  */
 export function accountMethods(
   inner: MailClient,
-): Pick<MailClient, 'listCachedDone' | 'getAccountStatus' | 'connectAccount' | 'disconnectAccount' | 'requestSync' | 'enableMailboxActions' | 'cancelMailboxActionUpgrade' | 'setRead' | 'retryOperation' | 'undoOperation' | 'listDrafts' | 'getDraft' | 'createDraft' | 'saveDraft' | 'deleteDraft' | 'subscribeDrafts' | 'subscribeAppClose' | 'completeAppClose' | 'cancelAppClose'> {
+): Pick<MailClient, 'getSavedSplit' | 'saveSavedSplit' | 'listCachedDone' | 'getAccountStatus' | 'connectAccount' | 'disconnectAccount' | 'requestSync' | 'enableMailboxActions' | 'cancelMailboxActionUpgrade' | 'setRead' | 'retryOperation' | 'undoOperation' | 'listDrafts' | 'getDraft' | 'createDraft' | 'saveDraft' | 'deleteDraft' | 'subscribeDrafts' | 'subscribeAppClose' | 'completeAppClose' | 'cancelAppClose'> {
   return {
+    getSavedSplit: (accountId) => inner.getSavedSplit(accountId),
+    saveSavedSplit: (accountId, split) => inner.saveSavedSplit(accountId, split),
     listCachedDone: (request) => inner.listCachedDone(request),
     listDrafts: () => inner.listDrafts(),
     getDraft: (ref) => inner.getDraft(ref),
@@ -325,6 +327,8 @@ export function createSixConversationClient(): SixConversationClient {
   const notify = (): void => { listeners.forEach((listener) => listener()); };
 
   const client: MailClient = {
+    getSavedSplit: async () => null,
+    saveSavedSplit: async () => { throw { kind: 'storage_unavailable' }; },
     ...groupStub(),
     listCachedDone: async () => ({ conversations: conversations.filter((c) => !inbox.includes(c.ref.conversationId)).map(summaryOf), nextCursor: null, coverage: 'local_cache', exactTotal: null, lastSyncedAt: SIX_NOW }),
     listConversations: () => {

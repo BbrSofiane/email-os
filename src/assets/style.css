@@ -80,6 +80,10 @@ textarea {
 .app-title {
   font-size: 0.95rem;
   margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .preview-banner {
@@ -878,6 +882,20 @@ textarea {
 .action-overlay kbd { flex-shrink: 0; padding: .15rem .4rem; border-radius: .25rem; background: #66615b; color: #fff; font: inherit; font-size: .8rem; }
 .action-hint, .action-overlay > [role='status'] { margin: 0; padding: .8rem 1.5rem; color: #c9c4bc; font-size: .8rem; }
 .action-hint { border-top: 1px solid var(--divider); }
+
+/* UX-06: compact overlapping Inbox views, no folder or classifier metaphor. */
+.split-nav { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem; padding-top: .4rem; font-size: .85rem; }
+.split-nav button { max-width: 100%; overflow-wrap: anywhere; cursor: pointer; }
+.split-nav [aria-current="page"], .split-nav [aria-pressed="true"] { color: var(--focus-accent); background: var(--focus-fill); border-color: var(--focus-accent); }
+.split-count { margin-inline-start: .3rem; font-variant-numeric: tabular-nums; }
+.split-editor { max-height: 38vh; overflow: auto; padding: .5rem 0; font-size: .85rem; }
+.split-editor p { max-width: 75ch; margin: .35rem 0 .6rem; }
+.split-editor fieldset { border: 0; padding: 0; margin: 0 0 .6rem; display: flex; flex-wrap: wrap; gap: .6rem 1rem; align-items: center; }
+.split-editor label { display: flex; align-items: center; gap: .4rem; max-width: 100%; }
+.split-editor input:not([type="checkbox"]) { min-width: 0; width: 15rem; max-width: 100%; padding: .3rem; font: inherit; }
+.split-editor select { background: var(--surface-raised); color: var(--text-primary); border: 1px solid var(--divider); padding: .3rem; font: inherit; }
+.split-editor :is(input, select):focus-visible { outline: 2px solid var(--focus-accent); outline-offset: 1px; }
+.split-editor input::placeholder { color: var(--text-secondary); opacity: 1; }
 
 /* UX-05 selection action bar: compact, in normal flow above the list. */
 .selection-bar {

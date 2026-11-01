@@ -43,7 +43,7 @@ const props = defineProps<{
    * offers explicit count-labelled desired-state controls instead of the open
    * conversation's single-state toggles (mixed selections included). */
   selectionCount?: number;
-  selectionContext?: 'inbox' | 'done' | 'starred';
+  selectionContext?: 'inbox' | 'saved' | 'done' | 'starred';
 }>();
 
 const emit = defineEmits<{
@@ -627,7 +627,7 @@ defineExpose({
       <!-- Selected scope: explicit count-labelled desired-state controls, never
            a toggle derived from the OPEN conversation's state (§3.3). -->
       <button
-        v-if="!props.readOnly && props.state === 'ready' && bulkScope && bulkScope.context === 'inbox'"
+        v-if="!props.readOnly && props.state === 'ready' && bulkScope && bulkScope.context !== 'done'"
         type="button"
         data-test="reader-selection-archive"
         :disabled="props.commandInFlight || props.navigationUnavailable"

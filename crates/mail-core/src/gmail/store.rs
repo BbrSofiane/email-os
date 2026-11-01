@@ -307,6 +307,26 @@ impl GmailStore {
             .map_err(|_| MailError::StorageUnavailable)?;
         }
 
+        // Legacy caches retained only renderable messages; never backfill their sender.
+        let has_newest_sender = {
+            let mut stmt = tx
+                .prepare("PRAGMA table_info(gmail_conversations)")
+                .map_err(|_| MailError::StorageUnavailable)?;
+            let columns = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|_| MailError::StorageUnavailable)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| MailError::StorageUnavailable)?;
+            columns.iter().any(|column| column == "newest_sender_json")
+        };
+        if !has_newest_sender {
+            tx.execute(
+                "ALTER TABLE gmail_conversations ADD COLUMN newest_sender_json TEXT",
+                [],
+            )
+            .map_err(|_| MailError::StorageUnavailable)?;
+        }
+
         let has_snapshot_sort_column = {
             let mut stmt = tx
                 .prepare("PRAGMA table_info(gmail_operation_snapshots)")
@@ -449,6 +469,31 @@ impl GmailStore {
     pub(crate) fn set_test_persistence_failure(&self, on: bool) {
         self.injected_persistence_failure
             .store(on, Ordering::SeqCst);
+    }
+
+    pub(crate) fn get_saved_split(
+        &self,
+        account: &str,
+    ) -> Result<Option<crate::splits::SavedSplit>, MailError> {
+        self.persistence_gate()?;
+        let conn = self.lock_conn()?;
+        if meta_get(&conn, "account_id")?.as_deref() != Some(account) {
+            return Err(MailError::NotFound);
+        }
+        crate::splits::get(&conn, account)
+    }
+
+    pub(crate) fn save_saved_split(
+        &self,
+        account: &str,
+        split: &crate::splits::SavedSplit,
+    ) -> Result<crate::splits::SavedSplit, MailError> {
+        self.persistence_gate()?;
+        let conn = self.lock_conn()?;
+        if meta_get(&conn, "account_id")?.as_deref() != Some(account) {
+            return Err(MailError::NotFound);
+        }
+        crate::splits::save(&conn, account, split)
     }
 
     fn lock_conn(&self) -> Result<MutexGuard<'_, Connection>, MailError> {
@@ -616,7 +661,7 @@ impl GmailStore {
                 conversation_ref: built.conversation_ref,
                 subject: built.subject,
                 participants: participants_of(&built.messages),
-                primary_correspondent: built.messages.last().map(|m| m.from.clone()),
+                primary_correspondent: built.newest_sender,
                 is_read,
                 preview: preview_of(&built.messages),
                 last_message_at: built
@@ -702,12 +747,29 @@ impl GmailStore {
             if conversation.stars.as_ref().and_then(|s| s.is_starred()) != Some(true) {
                 continue;
             }
+            // Sender identity belongs to the newest provider message, not the
+            // last renderable body. Legacy and recovery-only rows stay unknown.
+            let newest_sender_json: Option<String> = self
+                .lock_conn()?
+                .query_row(
+                    "SELECT newest_sender_json FROM gmail_conversations
+                     WHERE account_id = ?1 AND conversation_id = ?2",
+                    params![request.account_id, id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|_| MailError::StorageUnavailable)?
+                .flatten();
+            let primary_correspondent = newest_sender_json
+                .map(|json| serde_json::from_str(&json))
+                .transpose()
+                .map_err(|_| MailError::StorageUnavailable)?;
             summaries.push(ConversationSummary {
                 stars: conversation.stars,
                 conversation_ref: conversation.conversation_ref,
                 subject: conversation.subject,
                 participants: participants_of(&conversation.messages),
-                primary_correspondent: conversation.messages.last().map(|m| m.from.clone()),
+                primary_correspondent,
                 preview: preview_of(&conversation.messages),
                 last_message_at: conversation
                     .messages
@@ -793,6 +855,7 @@ impl GmailStore {
                     context_complete: snapshot.context_complete,
                     unsupported_reason: snapshot.unsupported_reason,
                     reply_context: snapshot.reply_context,
+                    newest_sender: None,
                 }
             };
             summaries.push(ConversationSummary {
@@ -800,7 +863,7 @@ impl GmailStore {
                 conversation_ref: built.conversation_ref,
                 subject: built.subject,
                 participants: participants_of(&built.messages),
-                primary_correspondent: built.messages.last().map(|m| m.from.clone()),
+                primary_correspondent: built.newest_sender,
                 is_read,
                 preview: preview_of(&built.messages),
                 last_message_at: built
@@ -2110,6 +2173,8 @@ impl GmailStore {
             .map_err(|_| MailError::StorageUnavailable)?;
         let next = generation_of(&tx)?.saturating_add(1);
         meta_set(&tx, "generation", &next.to_string())?;
+        tx.execute("DELETE FROM meta WHERE key LIKE 'saved_split:%'", [])
+            .map_err(|_| MailError::StorageUnavailable)?;
         tx.execute("DELETE FROM gmail_conversations", [])
             .map_err(|_| MailError::StorageUnavailable)?;
         tx.execute("DELETE FROM gmail_messages", [])
@@ -3866,13 +3931,14 @@ fn upsert_thread(
     conn.execute(
         "INSERT INTO gmail_conversations
             (account_id, conversation_id, subject, context_complete, unsupported_reason,
-             reply_context_json)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             reply_context_json, newest_sender_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT(account_id, conversation_id) DO UPDATE SET
             subject = excluded.subject,
             context_complete = excluded.context_complete,
             unsupported_reason = excluded.unsupported_reason,
-            reply_context_json = excluded.reply_context_json",
+            reply_context_json = excluded.reply_context_json,
+            newest_sender_json = excluded.newest_sender_json",
         params![
             account_id,
             conversation_id,
@@ -3882,6 +3948,12 @@ fn upsert_thread(
             thread
                 .conversation
                 .reply_context
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()
+                .map_err(|_| MailError::StorageUnavailable)?,
+            thread
+                .newest_sender
                 .as_ref()
                 .map(serde_json::to_string)
                 .transpose()
@@ -4097,6 +4169,7 @@ struct BuiltConversation {
     context_complete: Option<bool>,
     unsupported_reason: Option<String>,
     reply_context: Option<ReplyContext>,
+    newest_sender: Option<Address>,
 }
 
 fn build_conversation(
@@ -4106,7 +4179,7 @@ fn build_conversation(
 ) -> Result<Option<BuiltConversation>, MailError> {
     let row = conn
         .query_row(
-            "SELECT subject, context_complete, unsupported_reason, reply_context_json
+            "SELECT subject, context_complete, unsupported_reason, reply_context_json, newest_sender_json
              FROM gmail_conversations WHERE account_id = ?1 AND conversation_id = ?2",
             params![account_id, conversation_id],
             |row| {
@@ -4115,12 +4188,15 @@ fn build_conversation(
                     row.get::<_, i64>(1)?,
                     row.get::<_, Option<String>>(2)?,
                     row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
                 ))
             },
         )
         .optional()
         .map_err(|_| MailError::StorageUnavailable)?;
-    let Some((subject, context_flag, unsupported_reason, reply_context_json)) = row else {
+    let Some((subject, context_flag, unsupported_reason, reply_context_json, newest_sender_json)) =
+        row
+    else {
         return Ok(None);
     };
     let mut stmt = conn
@@ -4165,6 +4241,10 @@ fn build_conversation(
         },
         subject,
         messages: messages.into_iter().map(|(message, _)| message).collect(),
+        newest_sender: newest_sender_json
+            .map(|json| serde_json::from_str(&json))
+            .transpose()
+            .map_err(|_| MailError::StorageUnavailable)?,
         context_complete: Some(context_flag != 0),
         unsupported_reason,
         reply_context: reply_context_json
@@ -4211,6 +4291,10 @@ fn preview_of(messages: &[Message]) -> String {
         })
         .unwrap_or_default()
 }
+
+#[cfg(test)]
+#[path = "newest_sender_tests.rs"]
+mod newest_sender_tests;
 
 #[cfg(test)]
 mod tests {
@@ -4268,6 +4352,10 @@ mod tests {
             .any(|inbox_id| msgs.iter().any(|m| m.id == **inbox_id));
         GmailThread {
             star_facts: None,
+            newest_sender: msgs
+                .iter()
+                .max_by(|a, b| (&a.sent_at, &a.id).cmp(&(&b.sent_at, &b.id)))
+                .map(|m| m.from.clone()),
             conversation: Conversation {
                 stars: None,
                 conversation_ref: ConversationRef {
@@ -4958,6 +5046,45 @@ mod tests {
         );
         assert_eq!(store.cached_count().expect("count"), 1);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn saved_split_is_durable_account_scoped_and_removed_on_disconnect() {
+        use crate::splits::{SavedSplit, SplitCriterion};
+        let (store, dir) = open_store("saved-split");
+        store
+            .begin_account(&profile("acct", "a@example.test", "h1"), 0)
+            .unwrap();
+        let split = SavedSplit {
+            name: "Clients".into(),
+            criterion: SplitCriterion::Sender,
+            value: "Alice@Example.TEST".into(),
+            enabled: true,
+            hide_when_empty: false,
+        };
+        let saved = store.save_saved_split("acct", &split).unwrap();
+        assert_eq!(saved.value, "alice@example.test");
+        assert_eq!(store.get_saved_split("other"), Err(MailError::NotFound));
+        assert_eq!(
+            store.save_saved_split("other", &split),
+            Err(MailError::NotFound)
+        );
+        drop(store);
+        let store = GmailStore::open(&dir, Arc::new(SystemClock)).unwrap();
+        assert_eq!(store.get_saved_split("acct").unwrap(), Some(saved));
+        store.set_test_persistence_failure(true);
+        assert_eq!(
+            store.save_saved_split("acct", &split),
+            Err(MailError::StorageUnavailable)
+        );
+        store.set_test_persistence_failure(false);
+        store.clear_account().unwrap();
+        store
+            .begin_account(&profile("acct", "a@example.test", "h2"), 1)
+            .unwrap();
+        assert_eq!(store.get_saved_split("acct").unwrap(), None);
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

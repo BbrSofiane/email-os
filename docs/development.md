@@ -16,6 +16,10 @@ Star/Unstar singles/groups, durable Undo/reconciliation, cache-only Starred and 
 single cached starred filter; see [its contract and validation ledger](ux-08-stars.md).
 The legacy native fixture remains archive-only; unsupported star controls are
 absent there. No real provider writes are authorized by implementation tests.
+UX-06 adds one durable local
+sender/domain split over Inbox, exact cached-count badges, and a single unread
+filter. See [the saved-split contract](ux-06-saved-split.md) for matching,
+keyboard navigation, cache coverage, and persistence boundaries.
 
 ## Layout
 
