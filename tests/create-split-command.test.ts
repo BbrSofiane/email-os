@@ -36,7 +36,7 @@ it('creates only through Commands, focuses the editor and returns Cancel to Comm
   expect(archive).not.toHaveBeenCalled();
 });
 
-it('saves one split, returns focus to Commands, and preserves the Edit split button', async () => {
+it('saves one split, switches to the Edit Split command, and returns focus to Commands', async () => {
   const fake = createBrowserFakeMailClient();
   wrapper = mount(App, { props: { client: fake, mode: 'browser-preview' }, attachTo: document.body });
   await flushPromises();
@@ -47,15 +47,47 @@ it('saves one split, returns focus to Commands, and preserves the Edit split but
   await flushPromises();
   expect(wrapper.get('[data-test="split-saved"]').text()).toContain('Ada');
   expect(document.activeElement).toBe(wrapper.get('[data-test="palette-trigger"]').element);
-  expect(wrapper.get('[data-test="split-settings"]').text()).toBe('Edit split');
+  expect(wrapper.find('[data-test="split-settings"]').exists()).toBe(false);
+  expect(wrapper.findAll('button').some((button) => /edit split/i.test(button.text()))).toBe(false);
   await wrapper.get('[data-test="palette-trigger"]').trigger('click');
   expect(wrapper.find('#action-create-split').exists()).toBe(false);
-  await wrapper.get('[data-test="action-query"]').trigger('keydown', { key: 'Escape' });
-  await wrapper.get('[data-test="split-settings"]').trigger('click');
+  expect(wrapper.get('#action-edit-split').text()).toBe('Edit Split');
+  await wrapper.get('[data-test="action-query"]').setValue('edit split');
+  await wrapper.get('[data-test="action-query"]').trigger('keydown', { key: 'Enter' });
+  await flushPromises();
   expect((wrapper.get('[data-test="split-name"]').element as HTMLInputElement).value).toBe('Ada');
   await wrapper.get('[data-test="split-name"]').trigger('keydown', { key: 'Escape' });
   await flushPromises();
-  expect(document.activeElement).toBe(wrapper.get('[data-test="split-settings"]').element);
+  expect(document.activeElement).toBe(wrapper.get('[data-test="palette-trigger"]').element);
+});
+
+it.each(['disabled', 'hidden'] as const)('edits a %s existing split through Commands without creating another definition', async (state) => {
+  const fake = createBrowserFakeMailClient();
+  const account = (await fake.getAccountStatus()).account!.accountId;
+  await fake.saveSavedSplit(account, {
+    name: 'Existing', criterion: 'sender', value: 'nobody@absent.test',
+    enabled: state !== 'disabled', hideWhenEmpty: true,
+  });
+  const archive = vi.spyOn(fake, 'setArchived');
+  wrapper = mount(App, { props: { client: fake, mode: 'browser-preview' }, attachTo: document.body });
+  await flushPromises();
+  expect(wrapper.find('[data-test="split-saved"]').exists()).toBe(false);
+  expect(wrapper.find('[data-test="split-settings"]').exists()).toBe(false);
+  await wrapper.get('[data-test="navigator-trigger"]').trigger('click');
+  expect(wrapper.find('#action-edit-split').exists()).toBe(false);
+  await wrapper.get('[data-test="action-query"]').trigger('keydown', { key: 'Escape' });
+  await wrapper.get('[data-test="palette-trigger"]').trigger('click');
+  expect(wrapper.find('#action-create-split').exists()).toBe(false);
+  await wrapper.get('#action-edit-split').trigger('click');
+  await flushPromises();
+  expect(document.activeElement).toBe(wrapper.get('[data-test="split-name"]').element);
+  expect((wrapper.get('[data-test="split-name"]').element as HTMLInputElement).value).toBe('Existing');
+  await wrapper.get('[data-test="split-name"]').setValue('Updated');
+  await wrapper.get('form.split-editor').trigger('submit');
+  await flushPromises();
+  expect(await fake.getSavedSplit(account)).toMatchObject({ name: 'Updated', enabled: state !== 'disabled' });
+  expect(document.activeElement).toBe(wrapper.get('[data-test="palette-trigger"]').element);
+  expect(archive).not.toHaveBeenCalled();
 });
 
 it.each(['reader', 'activity', 'done'] as const)('opens creation from %s without retaining a covered editor or stealing its input focus', async (surface) => {

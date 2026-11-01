@@ -34,7 +34,8 @@ it.each(['matching', 'nonmatching', 'unread-filtered', 'unavailable'] as const)(
     await flushPromises();
     if (projection === 'unread-filtered') {
       // Restoring Inbox membership must not change this known-read target.
-      await wrapper.get('[data-test="unread-filter"]').trigger('click');
+      await wrapper.get('[data-test="palette-trigger"]').trigger('click');
+      await wrapper.get('#action-toggle-unread-filter').trigger('click');
       await flushPromises();
     }
     await wrapper.get('[data-test="split-saved"]').trigger('click');

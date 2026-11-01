@@ -86,20 +86,13 @@ const mailbox = useMailbox(props.client);
 const inboxList = ref<InstanceType<typeof InboxList> | null>(null);
 const editingSplit = ref(false);
 const splitEditor = ref<InstanceType<typeof SplitEditor> | null>(null);
-const splitSettingsButton = ref<HTMLButtonElement | null>(null);
-let splitEditorOrigin: HTMLElement | null = null;
-function openSplitEditor(trigger: HTMLElement | null): void {
-  splitEditorOrigin = trigger;
-  editingSplit.value = true;
-}
 const contextTitle = computed(() => mailbox.context.value === 'done' ? 'Cached Done' : mailbox.context.value === 'saved' ? mailbox.savedSplit.value?.name ?? 'Saved split' : 'Inbox');
 const savedTabVisible = computed(() => mailbox.savedSplit.value?.enabled && !mailbox.splitError.value && (!mailbox.savedSplit.value.hideWhenEmpty || mailbox.savedTotal.value !== 0));
 async function closeSplitEditor(restoreFocus = true): Promise<void> {
-  const trigger = splitEditorOrigin;
   editingSplit.value = false;
   await nextTick();
   if (restoreFocus && !editingSplit.value && !overlay.value && !readerOpen.value && !drawer.value && !contactDisclosure.value) {
-    (trigger?.isConnected ? trigger : paletteButton.value)?.focus();
+    paletteButton.value?.focus();
   }
 }
 async function saveSplit(split: SavedSplit): Promise<void> {
@@ -1031,6 +1024,8 @@ function actionTarget(explicit?: ConversationRef): ConversationRef | null {
 function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): boolean {
   if (!accountReady.value) return false;
   if (id === 'create-split') return !!accountId.value && !mailbox.savedSplit.value && !editingSplit.value;
+  if (id === 'edit-split') return !!accountId.value && !!mailbox.savedSplit.value && !editingSplit.value;
+  if (id === 'toggle-unread-filter') return !!accountId.value && !editingSplit.value && !drawer.value && !contactDisclosure.value;
   if (id === 'saved') return !!mailbox.savedSplit.value?.enabled && !mailbox.splitError.value;
   if (['inbox', 'done', 'activity'].includes(id)) return !!accountId.value;
   if (id === 'account') return gmailMode.value;
@@ -1067,18 +1062,30 @@ const availableActions = computed(() => browsingActions
     // Selected-scope actions are labelled with the count (§3.3).
     label: selectedCount.value > 0 && ['archive', 'unarchive', 'read', 'unread'].includes(action.id)
       ? `${action.label} — ${selectedCount.value} selected`
+      : action.id === 'toggle-unread-filter' ? (mailbox.unreadOnly.value ? 'Show All Conversations' : 'Show Unread Only')
       : action.id === 'saved' ? `Go to ${mailbox.savedSplit.value?.name ?? 'saved split'}` : action.label,
   })));
 async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): Promise<void> {
   if (!actionAvailable(id, explicit)) return;
   switch (id) {
-    case 'create-split':
+    case 'toggle-unread-filter': {
+      const token = ++navigationToken;
+      const account = accountId.value;
+      await mailbox.setUnreadOnly(!mailbox.unreadOnly.value);
+      if (token === navigationToken && account === accountId.value && accountReady.value
+        && !overlay.value && !drawer.value && !contactDisclosure.value && !readerOpen.value && !editingSplit.value) {
+        if (mailbox.listState.value === 'ready') await focusFocusedRow(true);
+        else paletteButton.value?.focus();
+      }
+      return;
+    }
+    case 'create-split': case 'edit-split':
       if (readerOpen.value || drawer.value || contactDisclosure.value || mailbox.context.value !== 'inbox') {
         if (!(await navigateContext('inbox'))) return;
       }
       // Let reader/list restoration finish before the editor claims focus.
       await nextTick();
-      if (actionAvailable(id) && !overlay.value) openSplitEditor(paletteButton.value);
+      if (actionAvailable(id) && !overlay.value) editingSplit.value = true;
       return;
     case 'inbox': await navigateToInbox(); return;
     case 'saved': await navigateContext('saved'); return;
@@ -1454,8 +1461,6 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
       <nav v-if="accountReady && accountId && !readerOpen && !drawer" class="split-nav" aria-label="Inbox splits">
         <button type="button" data-test="split-inbox" :aria-current="mailbox.context.value === 'inbox' ? 'page' : undefined" @click="navigateContext('inbox')">Inbox <span v-if="splitBadge(mailbox.inboxTotal.value)" class="split-count">{{ splitBadge(mailbox.inboxTotal.value) }}</span></button>
         <button v-if="savedTabVisible" type="button" data-test="split-saved" :aria-current="mailbox.context.value === 'saved' ? 'page' : undefined" @click="navigateContext('saved')">{{ mailbox.savedSplit.value?.name }} <span v-if="splitBadge(mailbox.savedTotal.value)" class="split-count">{{ splitBadge(mailbox.savedTotal.value) }}</span></button>
-        <button type="button" data-test="unread-filter" :aria-pressed="mailbox.unreadOnly.value" @click="mailbox.setUnreadOnly(!mailbox.unreadOnly.value)">Unread only</button>
-        <button v-if="mailbox.savedSplit.value" ref="splitSettingsButton" type="button" data-test="split-settings" :aria-expanded="editingSplit" @click="editingSplit ? closeSplitEditor() : openSplitEditor(splitSettingsButton)">Edit split</button>
       </nav>
       <SplitEditor ref="splitEditor" v-if="editingSplit && accountReady && !readerOpen && !drawer" :split="mailbox.savedSplit.value" :busy="mailbox.splitBusy.value" :error="!!mailbox.splitError.value" @save="saveSplit" @cancel="closeSplitEditor" />
       <p v-if="mailbox.splitError.value && !editingSplit" role="alert">Saved split unavailable. <button type="button" @click="mailbox.refresh()">Retry split</button></p>
@@ -1465,6 +1470,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
       </p>
       <p class="status-line" data-test="status-line">
         <span data-test="inbox-count">{{ mailbox.conversations.value.length }} {{ mailbox.context.value === 'done' ? 'loaded in cached Done' : mailbox.context.value === 'saved' ? 'in saved split' : 'in inbox' }}</span>
+        <span v-if="accountReady && mailbox.unreadOnly.value" role="status" data-test="unread-filter-status">Unread only</span>
         <span v-if="selectedCount > 0" role="status" data-test="selection-live">{{ selectedCount }} selected</span>
         <span v-if="pendingCount > 0" data-test="pending-count">{{ pendingCount }} pending operation(s)</span>
         <span v-if="gmailActionsEnabled" data-test="read-shortcut-note">Shift+U marks the focused or open conversation unread.</span>
@@ -1592,7 +1598,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               ref="emptyState"
               tabindex="-1"
             >
-              {{ mailbox.unreadOnly.value ? 'No known unread conversations in this view. Turn off Unread only to see all conversations; unknown read states are not included.' : mailbox.context.value === 'saved' ? 'No Inbox conversations match this saved split. Edit the sender or domain criteria, or return to Inbox.' : mailbox.context.value === 'inbox' ? 'No conversations are currently in the inbox. Archived conversations stay recoverable from Activity.' : mailbox.nextCursor.value ? 'No conversations on this cache page; more cached candidates are available.' : 'No known archived conversations in this local cache.' }}
+              {{ mailbox.unreadOnly.value ? 'No known unread conversations in this view. Use Commands → Show All Conversations to turn off the filter; unknown read states are not included.' : mailbox.context.value === 'saved' ? 'No Inbox conversations match this saved split. Edit the sender or domain criteria, or return to Inbox.' : mailbox.context.value === 'inbox' ? 'No conversations are currently in the inbox. Archived conversations stay recoverable from Activity.' : mailbox.nextCursor.value ? 'No conversations on this cache page; more cached candidates are available.' : 'No known archived conversations in this local cache.' }}
             </p>
             <InboxList
               v-else

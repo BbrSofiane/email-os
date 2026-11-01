@@ -302,8 +302,9 @@ describe.skipIf(chromePath === '')('UX-03 discovery (real Chrome, opt-in)', () =
     await press('Tab', { shift: true }); // Inbox boundary → preceding toolbar.
     expect(await cdp!.js(`document.activeElement.matches('button, input, select, a')`)).toBe(true);
     expect(await cdp!.js(`document.querySelector('[data-test="inbox-title"]').textContent`)).toBe('Inbox');
-    for (let i = 0; i < 15 && await activeTest() !== 'split-settings'; i++) await press('Tab', { shift: true });
-    expect(await activeTest()).toBe('split-settings'); // Edit split is keyboard reachable too.
+    for (let i = 0; i < 15 && await activeTest() !== 'palette-trigger'; i++) await press('Tab', { shift: true });
+    expect(await activeTest()).toBe('palette-trigger');
+    expect(await cdp!.js(`!!document.querySelector('[data-test="split-settings"]')`)).toBe(false);
     await cdp!.js(`document.querySelector('.inbox-row').focus()`);
     await press('Tab');
     await cdp!.js('window.__h.wait(100)');
@@ -317,12 +318,44 @@ describe.skipIf(chromePath === '')('UX-03 discovery (real Chrome, opt-in)', () =
     await cdp!.js('window.__h.wait(100)');
     expect(await cdp!.js(`document.querySelector('[data-test="inbox-title"]').textContent`)).toBe('Inbox');
     expect(await cdp!.js(`document.activeElement.matches('.inbox-row')`)).toBe(true);
-    await click('[data-test="split-settings"]');
+    await click('[data-test="palette-trigger"]');
+    await cdp!.cmd('Input.insertText', { text: 'Edit Split' });
+    await press('Enter');
     expect(await activeTest()).toBe('split-name');
     await press('Tab');
     expect(await activeTest()).toBe('split-criterion');
     await press('Escape');
-    expect(await activeTest()).toBe('split-settings');
+    expect(await activeTest()).toBe('palette-trigger');
+  });
+
+  it('toggles unread filtering through Commands, keeps total badges and restores list focus', async () => {
+    await mountSplit({ saved: true });
+    const inboxTotal = await cdp!.js<string>(`document.querySelector('[data-test="split-inbox"]').textContent`);
+    const savedTotal = await cdp!.js<string>(`document.querySelector('[data-test="split-saved"]').textContent`);
+    const all = await cdp!.js<number>(`document.querySelectorAll('.inbox-row').length`);
+    expect(await cdp!.js(`!!document.querySelector('[data-test="unread-filter"]')`)).toBe(false);
+    await click('[data-test="palette-trigger"]');
+    await cdp!.cmd('Input.insertText', { text: 'Show Unread Only' });
+    await press('Enter');
+    await cdp!.js('window.__h.wait(120)');
+    const unread = await cdp!.js<number>(`document.querySelectorAll('.inbox-row').length`);
+    expect(unread).toBeGreaterThan(0);
+    expect(unread).toBeLessThan(all);
+    expect(await cdp!.js(`document.activeElement.matches('.inbox-row')`)).toBe(true);
+    expect(await activeTest()).not.toBe('unread-filter-status'); // Status, not another control.
+    expect(await cdp!.js(`document.querySelector('[data-test="unread-filter-status"]').textContent`)).toBe('Unread only');
+    expect(await cdp!.js(`document.querySelector('[data-test="split-inbox"]').textContent`)).toBe(inboxTotal);
+    expect(await cdp!.js(`document.querySelector('[data-test="split-saved"]').textContent`)).toBe(savedTotal);
+    await click('[data-test="split-saved"]');
+    await cdp!.js('window.__h.wait(100)');
+    await click('[data-test="palette-trigger"]');
+    await cdp!.cmd('Input.insertText', { text: 'Show All Conversations' });
+    await press('Enter');
+    await cdp!.js('window.__h.wait(120)');
+    expect(await cdp!.js(`document.querySelector('[data-test="inbox-title"]').textContent`)).toBe('Clients');
+    expect(await cdp!.js(`!!document.querySelector('[data-test="unread-filter-status"]')`)).toBe(false);
+    expect(await cdp!.js(`document.activeElement.matches('.inbox-row')`)).toBe(true);
+    expect(await cdp!.js('window.__splitControl.mutations')).toBe(0);
   });
 
   it('recovers actual field focus after delayed rejection, owns displaced Escape, and never triages beneath the editor', async () => {

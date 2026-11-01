@@ -12,6 +12,8 @@ export const browsingActions = [
   { id: 'inbox', label: 'Go to Inbox', shortcut: '' },
   { id: 'saved', label: 'Go to saved split', shortcut: '' },
   { id: 'create-split', label: 'Create Split', shortcut: '' },
+  { id: 'edit-split', label: 'Edit Split', shortcut: '' },
+  { id: 'toggle-unread-filter', label: 'Show Unread Only', shortcut: '' },
   { id: 'done', label: 'Go to cached Done', shortcut: 'G then E (within 1 second)' },
   { id: 'account', label: 'Go to Account', shortcut: '' },
   { id: 'activity', label: 'Go to Activity', shortcut: '' },

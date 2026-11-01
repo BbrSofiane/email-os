@@ -55,12 +55,14 @@ The synthetic browser preview remains explicitly in-memory only.
 ## Navigation and interaction
 
 Create the split through **Commands → Create Split** (or Cmd+K in the native
-app); there is no standalone creation button. The command is available only
-before a definition exists, including from an empty or unavailable list, and
-returns to Inbox before opening the editor from a reader or utility drawer.
-Existing definitions retain the **Edit split** button. Inputs receive focus
-on opening; Cancel/Escape returns focus to Commands or the Edit split trigger. Invalid input or storage
-failure is visible and leaves the definition/mail unchanged. Save is single-flight.
+app). Once a definition exists, use **Commands → Edit Split**, including for a
+disabled or hidden split. There are no standalone Create/Edit buttons. Creation
+is available only before a definition exists, including from an empty or
+unavailable list. Both commands return to Inbox before opening the editor from
+a reader or utility drawer. Inputs receive focus on opening; Cancel/Escape and
+successful save return focus to Commands while that editor owns focus.
+Invalid input or storage failure is visible and leaves the definition/mail
+unchanged. Save is single-flight.
 After failure, focus displaced by disabled save controls returns to the prior
 field/control, unless focus has moved outside the editor or to another view/overlay.
 The visible editor owns Escape even when focus was displaced outside its form;
@@ -91,11 +93,15 @@ is **nonwrapping**: at either boundary, native Tab traversal proceeds to control
 rather than swallowing the key. Body/initial focus, absent/loading/error lists,
 form fields, checkboxes, toolbar buttons, reader, drawers/disclosures and palette
 retain ordinary focus ownership. Hidden empty views are skipped unless currently
-open. Users can reach row checkboxes, toolbars, Commands → Create Split and
-Edit split by keyboard.
+open. Users can reach row checkboxes, toolbars, and both split configuration
+commands by keyboard.
 
-One session-local Unread only toggle applies to the current browsing context
-(and persists across view switches). Only `isRead === false` qualifies; missing
+The session-local unread filter is controlled through **Commands → Show Unread
+Only**; while active, that command becomes **Show All Conversations**. There is
+no standalone filter button. A noninteractive “Unread only” status identifies
+an active filter, and empty states point to the command for turning it off.
+It applies to the current browsing context and persists across view switches.
+Only `isRead === false` qualifies; missing
 or unknown facts are never interpreted as unread. Changing the filter closes
 the reader, clears selection, and refreshes focus. It does not alter membership,
 counts, saved rules, or read state. Empty filtered results explain the filter
@@ -112,7 +118,11 @@ rather than claiming Inbox zero. The filter resets on account disconnect/change.
 - `tests/app.saved-split-activity.test.ts`: archived Activity recovery from a saved
   split, restore actions, and the Activity-origin reader return path.
 - `tests/create-split-command.test.ts`: command-only creation, context transitions,
-  native Cmd+K, editor focus, save/cancel return focus, and existing-split editing.
+  native Cmd+K, editor focus, save/cancel return focus, and command-only editing
+  of existing, disabled and hidden definitions.
+- `tests/unread-filter-command.test.ts`: command-only filtering and reverse label,
+  unknown/read exclusion, total badges, context/account lifecycle, reader closure,
+  empty-state recovery, read-only access and delayed-refresh focus ownership.
 - `tests/split-editor.component.test.ts`: failure focus restoration and ownership,
   in-flight submission/cancel fencing, and successful-save focus behavior.
 - `crates/mail-core/tests/saved_split.rs`: save/reopen, account scoping, rejected
