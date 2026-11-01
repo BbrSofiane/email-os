@@ -29,6 +29,8 @@ const props = defineProps<{
   actionsEnabled?: boolean;
   showReadState?: boolean;
   showReadControls?: boolean;
+  /** UX-05: selected references (account-scoped); selection ≠ focus. */
+  selectedRefs?: ConversationRef[];
 }>();
 
 const emit = defineEmits<{
@@ -37,7 +39,30 @@ const emit = defineEmits<{
   archive: [ref: ConversationRef];
   unarchive: [ref: ConversationRef];
   setRead: [ref: ConversationRef, read: boolean];
+  /** X / checkbox / Cmd-click: toggle one row (the parent moves focus/anchor). */
+  selectToggle: [ref: ConversationRef];
+  /** Shift-click / Cmd+Shift-click: additive anchor→row range. */
+  selectRange: [ref: ConversationRef];
 }>();
+
+const selectedKeys = computed(() => new Set((props.selectedRefs ?? []).map((ref) => `${ref.accountId}:${ref.conversationId}`)));
+
+function isSelected(row: ConversationSummaryLike): boolean {
+  return selectedKeys.value.has(`${row.ref.accountId}:${row.ref.conversationId}`);
+}
+
+/** Pointer click on a row: Cmd/Ctrl toggles, Shift/Cmd+Shift ranges, plain opens. */
+function onRowClick(event: MouseEvent, row: ConversationSummaryLike): void {
+  if (event.shiftKey) {
+    emit('selectRange', row.ref);
+    return;
+  }
+  if (event.metaKey || event.ctrlKey) {
+    emit('selectToggle', row.ref);
+    return;
+  }
+  emit('open', row.ref);
+}
 
 /** A surviving list row plus the geometry needed to restore it. */
 export interface RowAnchor {
@@ -417,6 +442,7 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
         class="inbox-row"
         :class="{
           focused: isFocused(item.row),
+          selected: isSelected(item.row),
           'meta-compact': isCompactRow(item.row),
           'actions-open': isActionsOpen(item.row),
           'actions-up': isPanelUpward(item.row),
@@ -428,8 +454,21 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
         @focusin="onFocusIn($event, item.row)"
         @focusout="onFocusOut"
         @keydown.escape="onRowKeydown($event, item.row)"
-        @click="emit('open', item.row.ref)"
+        @click="onRowClick($event, item.row)"
       >
+        <!-- UX-05 selection control: a native labelled checkbox inside the
+             listitem; it stops propagation and never opens the row. No
+             aria-selected on listitem (invalid for role=listitem); aria-current
+             stays the focus cue and the selected class is not color-only. -->
+        <input
+          type="checkbox"
+          class="row-select"
+          :data-test="`row-select-${item.row.ref.conversationId}`"
+          :checked="isSelected(item.row)"
+          :aria-label="`Select ${item.row.subject}`"
+          @click.stop
+          @change="emit('selectToggle', item.row.ref)"
+        />
         <span class="row-sender" :class="{ unread: item.row.isRead === false }">{{ senderLabel(item.row) }}</span>
         <span class="row-subject-snippet">
           <span class="row-subject">{{ item.row.subject }}</span>

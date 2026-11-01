@@ -11,8 +11,13 @@ import {
   LIST_CONVERSATIONS_COMMAND,
   LIST_CACHED_DONE_COMMAND,
   LIST_DRAFTS_COMMAND,
+  LIST_OPERATION_GROUPS_COMMAND,
+  GET_OPERATION_GROUP_COMMAND,
   SAVE_DRAFT_COMMAND,
+  SET_ARCHIVED_GROUP_COMMAND,
+  SET_READ_GROUP_COMMAND,
   UNDO_OPERATION_COMMAND,
+  UNDO_OPERATION_GROUP_COMMAND,
   isMailErrorShape,
 } from '../src/lib/ipc/client';
 
@@ -126,6 +131,94 @@ describe('Tauri draft and close protocol adapter', () => {
     await expect(client.undoOperation(command)).rejects.toEqual({
       kind: 'undo_unavailable',
       reason: 'expired',
+    });
+  });
+
+  it('maps the five UX-05 group commands to exact generated names and argument envelopes', async () => {
+    const client = createTauriMailClient();
+    const refs = [
+      { accountId: 'fixture-account', conversationId: 'conv-01' },
+      { accountId: 'fixture-account', conversationId: 'conv-03' },
+    ];
+    const groupCommand = { accountId: 'fixture-account', members: refs, archived: true, requestId: 'group-req-1' };
+    const groupReceipt = {
+      groupId: 'group-1',
+      requestId: 'group-req-1',
+      accountId: 'fixture-account',
+      kind: 'archive',
+      requestedArchived: true,
+      acceptedAt: '2026-01-01T00:00:00Z',
+      members: [
+        { ordinal: 0, conversation: refs[0], operationId: 'op-1', rejection: null },
+        { ordinal: 1, conversation: refs[1], operationId: null, rejection: 'conversation_missing' },
+      ],
+    };
+    mocks.invoke.mockResolvedValue(groupReceipt);
+    const accepted = await client.setArchivedGroup(groupCommand);
+    expect(accepted).toBe(groupReceipt);
+    expect(mocks.invoke).toHaveBeenLastCalledWith(SET_ARCHIVED_GROUP_COMMAND, { command: groupCommand });
+
+    const readCommand = { accountId: 'fixture-account', members: refs, read: true, requestId: 'group-req-2' };
+    mocks.invoke.mockResolvedValue({ ...groupReceipt, kind: 'read', requestedArchived: undefined, requestedRead: true });
+    await client.setReadGroup(readCommand);
+    expect(mocks.invoke).toHaveBeenLastCalledWith(SET_READ_GROUP_COMMAND, { command: readCommand });
+
+    const listRequest = { accountId: 'fixture-account', limit: 25, cursor: null };
+    const page = { groups: [], nextCursor: 'next' };
+    mocks.invoke.mockResolvedValue(page);
+    await expect(client.listOperationGroups(listRequest)).resolves.toBe(page);
+    expect(mocks.invoke).toHaveBeenLastCalledWith(LIST_OPERATION_GROUPS_COMMAND, { request: listRequest });
+  });
+
+  it('resolves a lost group acceptance as null without inventing a fresh request', async () => {
+    const client = createTauriMailClient();
+    const lookup = { accountId: 'fixture-account', requestId: 'lost-req-1' };
+    mocks.invoke.mockResolvedValue(null);
+    await expect(client.getOperationGroup(lookup)).resolves.toBeNull();
+    expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith(GET_OPERATION_GROUP_COMMAND, { request: lookup });
+    // Transport faults and validation errors stay typed rejections, never nulls.
+    mocks.invoke.mockRejectedValue(new Error('native bridge fault'));
+    await expect(client.getOperationGroup(lookup)).rejects.toEqual({ kind: 'storage_unavailable' });
+    mocks.invoke.mockRejectedValue({ kind: 'invalid_request', field: 'accountId' });
+    await expect(client.getOperationGroup(lookup)).rejects.toEqual({ kind: 'invalid_request', field: 'accountId' });
+  });
+
+  it('transports undoOperationGroup with durable per-member decisions and typed unavailability', async () => {
+    const client = createTauriMailClient();
+    const command = { groupId: 'group-1', requestId: 'undo-group-req-1' };
+    const receipt = {
+      groupId: 'group-1',
+      requestId: 'undo-group-req-1',
+      acceptedAt: '2026-01-01T00:00:00Z',
+      members: [
+        {
+          ordinal: 0,
+          conversation: { accountId: 'fixture-account', conversationId: 'conv-01' },
+          decision: { kind: 'cancelled' },
+          operationIds: [],
+        },
+        {
+          ordinal: 1,
+          conversation: { accountId: 'fixture-account', conversationId: 'conv-02' },
+          decision: { kind: 'compensating' },
+          operationIds: ['op-9'],
+        },
+        {
+          ordinal: 2,
+          conversation: { accountId: 'fixture-account', conversationId: 'conv-03' },
+          decision: { kind: 'skipped', reason: 'outcome_unknown' },
+          operationIds: [],
+        },
+      ],
+    };
+    mocks.invoke.mockResolvedValue(receipt);
+    const result = await client.undoOperationGroup(command);
+    expect(result).toBe(receipt);
+    expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith(UNDO_OPERATION_GROUP_COMMAND, { command });
+    mocks.invoke.mockRejectedValue({ kind: 'undo_unavailable', reason: 'superseded' });
+    await expect(client.undoOperationGroup(command)).rejects.toEqual({
+      kind: 'undo_unavailable',
+      reason: 'superseded',
     });
   });
 

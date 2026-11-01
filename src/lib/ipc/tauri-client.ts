@@ -24,6 +24,11 @@ import {
   GET_CONVERSATION_COMMAND,
   LIST_CONVERSATIONS_COMMAND,
   LIST_CACHED_DONE_COMMAND,
+  LIST_OPERATION_GROUPS_COMMAND,
+  GET_OPERATION_GROUP_COMMAND,
+  SET_ARCHIVED_GROUP_COMMAND,
+  SET_READ_GROUP_COMMAND,
+  UNDO_OPERATION_GROUP_COMMAND,
   type CachedDoneRequest,
   type CachedDoneSnapshot,
   LIST_DRAFTS_COMMAND,
@@ -47,14 +52,23 @@ import {
   type Conversation,
   type ConversationRef,
   type InboxSnapshot,
+  type GetOperationGroupRequest,
+  type GroupUndoReceipt,
+  type ListOperationGroupsRequest,
   type MailClient,
+  type OperationGroupPage,
+  type OperationGroupReceipt,
+  type OperationGroupStatus,
   type OperationReceipt,
   type RetryOperation,
   type UndoOperation,
+  type UndoOperationGroup,
   type UndoReceipt,
   type SaveDraft,
   type SetArchived,
+  type SetArchivedGroup,
   type SetRead,
+  type SetReadGroup,
 } from './client';
 import { toMailError } from './client';
 
@@ -90,6 +104,21 @@ export function createTauriMailClient(): MailClient {
     },
     undoOperation(command: UndoOperation): Promise<UndoReceipt> {
       return call<UndoReceipt>(UNDO_OPERATION_COMMAND, { command });
+    },
+    setArchivedGroup(command: SetArchivedGroup): Promise<OperationGroupReceipt> {
+      return call<OperationGroupReceipt>(SET_ARCHIVED_GROUP_COMMAND, { command });
+    },
+    setReadGroup(command: SetReadGroup): Promise<OperationGroupReceipt> {
+      return call<OperationGroupReceipt>(SET_READ_GROUP_COMMAND, { command });
+    },
+    getOperationGroup(request: GetOperationGroupRequest): Promise<OperationGroupStatus | null> {
+      return call<OperationGroupStatus | null>(GET_OPERATION_GROUP_COMMAND, { request });
+    },
+    listOperationGroups(request: ListOperationGroupsRequest): Promise<OperationGroupPage> {
+      return call<OperationGroupPage>(LIST_OPERATION_GROUPS_COMMAND, { request });
+    },
+    undoOperationGroup(command: UndoOperationGroup): Promise<GroupUndoReceipt> {
+      return call<GroupUndoReceipt>(UNDO_OPERATION_GROUP_COMMAND, { command });
     },
     async subscribe(listener: () => void): Promise<() => void> {
       const unlisten = await listen(MAILBOX_CHANGED_EVENT, () => listener());

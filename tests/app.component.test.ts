@@ -4,6 +4,7 @@ import App from '../src/App.vue';
 import type { AccountStatus, MailClient } from '../src/lib/ipc/client';
 import {
   accountMethods,
+  groupMethods,
   closeUtilityDrawer,
   conversationRows,
   countingClient,
@@ -293,6 +294,7 @@ describe('App (Slice 01 shell)', () => {
     let resolveList!: (value: Awaited<ReturnType<MailClient['listConversations']>>) => void;
     const client: MailClient = {
       ...accountMethods(fake),
+      ...groupMethods(fake),
       listConversations: () =>
         new Promise((resolve) => {
           resolveList = resolve;
@@ -313,6 +315,7 @@ describe('App (Slice 01 shell)', () => {
     let fail = true;
     const client: MailClient = {
       ...accountMethods(fake),
+      ...groupMethods(fake),
       listConversations: () =>
         fail ? Promise.reject({ kind: 'storage_unavailable' }) : fake.listConversations(),
       getConversation: fake.getConversation.bind(fake),

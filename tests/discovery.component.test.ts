@@ -28,11 +28,11 @@ describe('UX-03 discovery and context history', () => {
     const row = w.get('[data-test="conversation-row-read-02"]').element as HTMLElement;
     row.focus();
     await palette(w);
-    expect(document.activeElement).toBe(w.get('input').element);
-    await w.get('input').setValue('e/s/h');
+    expect(document.activeElement).toBe(w.get('[data-test="action-query"]').element);
+    await w.get('[data-test="action-query"]').setValue('e/s/h');
     for (const value of ['e', 's', 'h', 'ArrowLeft', 'Enter']) key(value);
     await flushPromises();
-    expect(w.get('input').element).toBe(document.activeElement);
+    expect(w.get('[data-test="action-query"]').element).toBe(document.activeElement);
     expect(fixture.controls.archiveCommands).toEqual([]);
     expect(fixture.controls.readCommands).toEqual([]);
     expect(w.get('.app-main').attributes('inert')).toBeDefined();
@@ -86,7 +86,9 @@ describe('UX-03 discovery and context history', () => {
     const { fixture, w } = await setup();
     const focus = () => (w.get('[data-test="conversation-row-read-02"]').element as HTMLElement).focus();
     focus();
-    for (const cancel of [() => key('h'), () => key('x'), () => key('Control', { ctrlKey: true }), () => key('Process', { isComposing: true }), () => window.dispatchEvent(new Event('blur'))]) {
+    // 'x' is now the UX-05 selection toggle; use a non-shortcut key as the
+    // plain-typing cancel scenario.
+    for (const cancel of [() => key('h'), () => key('m'), () => key('Control', { ctrlKey: true }), () => key('Process', { isComposing: true }), () => window.dispatchEvent(new Event('blur'))]) {
       key('g'); cancel(); key('e', { ctrlKey: true }); key('h');
     }
     key('g'); await palette(w); key('Escape'); await flushPromises();
@@ -196,11 +198,11 @@ describe('UX-03 query and lifecycle guarantees', () => {
     await palette(w);
     expect(w.find('#action-archive').exists()).toBe(false);
     expect(w.find('#action-unread').exists()).toBe(false);
-    await w.get('input').setValue('e/s/h'); key('e'); key('Enter'); await flushPromises();
+    await w.get('[data-test="action-query"]').setValue('e/s/h'); key('e'); key('Enter'); await flushPromises();
     expect(fixture.controls.archiveCommands).toEqual([]);
     expect(fixture.controls.readCommands).toEqual([]);
     await new Promise((resolve) => setTimeout(resolve, 60)); await flushPromises();
-    await w.get('input').setValue('Mark Done'); key('Enter'); await flushPromises();
+    await w.get('[data-test="action-query"]').setValue('Mark Done'); key('Enter'); await flushPromises();
     expect(fixture.controls.archiveCommands.map((command) => command.conversation.conversationId)).toEqual(['read-03']);
   });
 
@@ -353,7 +355,7 @@ describe('UX-03 query and lifecycle guarantees', () => {
     row.scrollIntoView = () => { reveals += 1; };
     row.focus(); reveals = 0;
     key('k', { metaKey: true }); await flushPromises();
-    expect(document.activeElement).toBe(w.get('input').element);
+    expect(document.activeElement).toBe(w.get('[data-test="action-query"]').element);
     key('Escape'); await flushPromises();
     expect(document.activeElement).toBe(row);
     expect(reveals).toBe(0);
@@ -366,7 +368,7 @@ describe('UX-03 query and lifecycle guarantees', () => {
     expect(w.find('[role="dialog"]').exists()).toBe(false);
     await w.setProps({ mode: 'native' });
     key('k', { metaKey: true }); await flushPromises();
-    expect(document.activeElement).toBe(w.get('input').element);
+    expect(document.activeElement).toBe(w.get('[data-test="action-query"]').element);
     key('Escape'); await flushPromises(); expect(document.activeElement).toBe(row);
     await w.get('[data-test="conversation-row-read-02"]').trigger('click'); await flushPromises();
     key('k', { metaKey: true }); await flushPromises(); key('Escape'); await flushPromises();

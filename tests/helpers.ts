@@ -53,6 +53,7 @@ export function countingClient(inner: MailClient): CountingClient {
   const retryCommands: import('../src/lib/ipc/client').RetryOperation[] = [];
   const client: MailClient = {
     ...accountMethods(inner),
+    ...groupMethods(inner),
     listConversations: () => {
       list += 1;
       return inner.listConversations();
@@ -109,6 +110,33 @@ export function accountMethods(
 
 export function fixtureRef(conversationId: string): ConversationRef {
   return { accountId: 'fixture-account', conversationId };
+}
+
+/** Delegates the five UX-05 group methods to a full client (e.g. the fake). */
+export function groupMethods(
+  inner: MailClient,
+): Pick<MailClient, 'setArchivedGroup' | 'setReadGroup' | 'getOperationGroup' | 'listOperationGroups' | 'undoOperationGroup'> {
+  return {
+    setArchivedGroup: (command) => inner.setArchivedGroup(command),
+    setReadGroup: (command) => inner.setReadGroup(command),
+    getOperationGroup: (request) => inner.getOperationGroup(request),
+    listOperationGroups: (request) => inner.listOperationGroups(request),
+    undoOperationGroup: (command) => inner.undoOperationGroup(command),
+  };
+}
+
+/**
+ * UX-05 group seam stub for hand-written partial clients that do not exercise
+ * groups: queries resolve empty, mutations reject (never fake success).
+ */
+export function groupStub(): Pick<MailClient, 'setArchivedGroup' | 'setReadGroup' | 'getOperationGroup' | 'listOperationGroups' | 'undoOperationGroup'> {
+  return {
+    setArchivedGroup: () => Promise.reject({ kind: 'invalid_request', field: 'members' }),
+    setReadGroup: () => Promise.reject({ kind: 'invalid_request', field: 'members' }),
+    getOperationGroup: () => Promise.resolve(null),
+    listOperationGroups: () => Promise.resolve({ groups: [], nextCursor: null }),
+    undoOperationGroup: () => Promise.reject({ kind: 'undo_unavailable', reason: 'not_applicable' }),
+  };
 }
 
 export function inboxIds(snap: InboxSnapshot): string[] {
@@ -291,6 +319,7 @@ export function createSixConversationClient(): SixConversationClient {
   const notify = (): void => { listeners.forEach((listener) => listener()); };
 
   const client: MailClient = {
+    ...groupStub(),
     listCachedDone: async () => ({ conversations: conversations.filter((c) => !inbox.includes(c.ref.conversationId)).map(summaryOf), nextCursor: null, coverage: 'local_cache', exactTotal: null, lastSyncedAt: SIX_NOW }),
     listConversations: () => {
       if (listFailure) {

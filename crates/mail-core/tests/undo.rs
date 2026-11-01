@@ -1883,7 +1883,9 @@ fn fixture_migration_one_to_two_preserves_rows_and_request_keys_and_fails_closed
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, "2");
+        // UX-05 migrates the profile to v3 (group tables + action ordering)
+        // in the same reopen.
+        assert_eq!(version, "3");
     }
     core.stop_worker();
     drop(core);

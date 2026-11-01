@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-undo-operation-group"
+description = "Enables the undo_operation_group command without any pre-configured scope."
+commands.allow = ["undo_operation_group"]
+
+[[permission]]
+identifier = "deny-undo-operation-group"
+description = "Denies the undo_operation_group command without any pre-configured scope."
+commands.deny = ["undo_operation_group"]

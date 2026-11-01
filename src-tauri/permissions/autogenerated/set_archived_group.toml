@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-archived-group"
+description = "Enables the set_archived_group command without any pre-configured scope."
+commands.allow = ["set_archived_group"]
+
+[[permission]]
+identifier = "deny-set-archived-group"
+description = "Denies the set_archived_group command without any pre-configured scope."
+commands.deny = ["set_archived_group"]
