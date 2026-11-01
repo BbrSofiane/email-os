@@ -449,9 +449,8 @@ async function openReminders(picker: boolean) {
   if (picker) reminderDestination.value = 'pending';
   await openDrawer('reminders');
 }
-async function openReminderConversation(target: ConversationRef) {
-  await openFromActivity(target);
-  if (origin.value) origin.value = { ...origin.value, surface: 'reminders' };
+function openReminderConversation(target: ConversationRef): Promise<void> {
+  return openFromUtility(target, 'reminders');
 }
 
 async function closeDrawer(): Promise<void> {
@@ -798,7 +797,7 @@ const contactOverride = ref<
   { ref: ConversationRef; messageId: string; displayName: string | null; mailbox: string } | null
 >(null);
 
-function captureListOrigin(surface: BrowseContext | 'activity'): void {
+function captureListOrigin(surface: ReaderOrigin['surface']): void {
   // Only the mounted list supplies an anchor; J/K and Activity opens inside the
   // reader never recapture (they would erase the entry context with nulls).
   origin.value = {
@@ -908,15 +907,19 @@ async function openRowFromList(target: ConversationRef): Promise<void> {
   await openFocusedFromList();
 }
 
-async function openFromActivity(target: ConversationRef): Promise<void> {
-  // The saved Inbox anchor/entry context is captured only at the initial
-  // list-to-reader entry. An Activity open while the reader is already open
-  // never recaptures from the (unmounted) list — it only re-points the return
-  // surface at Activity.
+function openFromActivity(target: ConversationRef): Promise<void> {
+  return openFromUtility(target, 'activity');
+}
+
+async function openFromUtility(target: ConversationRef, surface: 'activity' | 'reminders'): Promise<void> {
+  // Capture the return surface synchronously, before loading: Back can happen
+  // while the detail is pending, and a late response must never rewrite the
+  // origin of a newer reader. Keep the saved list anchor/entry context when
+  // opening from a utility over an existing reader (the list is unmounted).
   if (readerOpen.value) {
-    if (origin.value) origin.value = { ...origin.value, surface: 'activity' };
+    if (origin.value) origin.value = { ...origin.value, surface };
   } else {
-    captureListOrigin('activity');
+    captureListOrigin(surface);
   }
   drawer.value = null;
   await mailbox.openConversationByRef(target, 'activity');

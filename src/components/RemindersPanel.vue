@@ -6,6 +6,8 @@ const props = defineProps<{ client: MailClient; target: ConversationRef | null; 
 const emit = defineEmits<{ open: [target: ConversationRef]; destinationChange: [destination: 'pending' | 'returned' | 'history'] }>();
 const rows = ref<Reminder[]>([]);
 const error = ref('');
+const preparationError = ref('');
+const preparationTarget = ref<ConversationRef | null>(null);
 const busy = ref(false);
 const loading = ref(true);
 const source = ref<{ conversation: ConversationRef; sourceMessageId: string; revision: number | null } | null>(null);
@@ -14,9 +16,10 @@ const someday = ref(false);
 const condition = ref<ReminderCondition>('if_no_reply');
 const destination = ref<'pending' | 'returned' | 'history'>(props.initialDestination ?? 'pending');
 watch(destination, value => emit('destinationChange', value));
-let retry: (() => Promise<unknown>) | null = null;
+let retry: { action: () => Promise<unknown>; command?: PutReminder } | null = null;
 let alive = true;
 let generation = 0;
+let editorGeneration = 0;
 let unsubscribe: (() => void) | undefined;
 const displayed = computed(() => rows.value.filter(r => destination.value === 'returned' ? r.phase === 'returned' : destination.value === 'history' ? ['suppressed', 'cancelled'].includes(r.phase) : !['returned', 'suppressed', 'cancelled'].includes(r.phase)));
 async function refresh() {
@@ -26,16 +29,22 @@ async function refresh() {
     if (alive && token === generation) { rows.value = result; loading.value = false; }
   } catch { if (alive && token === generation) { error.value = 'Could not load local reminders. Retry refresh.'; loading.value = false; } }
 }
-async function run(action: () => Promise<unknown>) {
+async function run(action: () => Promise<unknown>, command?: PutReminder) {
   if (busy.value) return;
-  busy.value = true; error.value = ''; retry = action;
-  try { await action(); retry = null; if (alive) { source.value = null; await refresh(); } }
+  const token = editorGeneration;
+  // Retain both the exact payload and its validation context after a lost ACK.
+  busy.value = true; error.value = ''; retry = { action, command };
+  try { await action(); if (alive && token === editorGeneration) { retry = null; source.value = null; await refresh(); } }
   catch (raw) {
-    if (alive) {
+    if (alive && token === editorGeneration) {
       const failure = toMailError(raw);
       if (failure.kind === 'invalid_request' && failure.field === 'dueAt') {
         retry = null;
         error.value = 'Choose a future RFC3339 time with seconds and Z or a numeric timezone offset. Local times and leap seconds are not supported.';
+      } else if (failure.kind === 'invalid_request' && failure.field === 'sourceMessageId' && command?.expectedRevision === null) {
+        retry = null; source.value = null;
+        preparationTarget.value = { ...command.conversation };
+        preparationError.value = 'This conversation has a newer message. Refresh the source, review it, then schedule again.';
       } else if (failure.kind === 'invalid_request' || failure.kind === 'not_found') {
         retry = null; source.value = null;
         error.value = 'This target or revision is no longer actionable. Refresh and choose the current reminder before editing.';
@@ -45,43 +54,67 @@ async function run(action: () => Promise<unknown>) {
       }
     }
   }
-  finally { if (alive) busy.value = false; }
+  finally { if (alive && token === editorGeneration) busy.value = false; }
 }
 async function prepare(target: ConversationRef) {
+  if (busy.value || retry) return;
+  const token = ++editorGeneration;
+  const requested = { ...target };
+  preparationTarget.value = requested;
+  source.value = null;
   busy.value = true;
   try {
-    const conversation = await props.client.getConversation(target);
-    if (!alive) return;
+    const conversation = await props.client.getConversation(requested);
+    if (!alive || token !== editorGeneration) return;
     const latest = conversation.messages.at(-1);
-    if (!latest) throw new Error('missing source');
-    source.value = { conversation: { ...target }, sourceMessageId: latest.id, revision: null };
-  } catch { if (alive) error.value = 'Could not prepare this conversation. Refresh and try again.'; }
-  finally { if (alive) busy.value = false; }
+    if (conversation.ref.accountId !== requested.accountId || conversation.ref.conversationId !== requested.conversationId || !latest) {
+      preparationError.value = 'No current source message is available for this conversation. Retry preparation after it is available.';
+      return;
+    }
+    if (conversation.retainedSnapshotAt || conversation.contextComplete === false) {
+      preparationError.value = 'This conversation is retained or incomplete. A current conversation is required; retry preparation after it is available.';
+      return;
+    }
+    source.value = { conversation: requested, sourceMessageId: latest.id, revision: null };
+    preparationTarget.value = null;
+    preparationError.value = '';
+  } catch { if (alive && token === editorGeneration) preparationError.value = 'Could not load the current source message. Retry preparation for this conversation.'; }
+  finally { if (alive && token === editorGeneration) busy.value = false; }
 }
+function dismissPicker() {
+  editorGeneration++;
+  busy.value = false; retry = null; source.value = null;
+  preparationTarget.value = null; preparationError.value = '';
+}
+watch(() => [props.client, props.target?.accountId, props.target?.conversationId], () => {
+  dismissPicker();
+  if (props.target) void prepare(props.target);
+});
 function reschedule(r: Reminder) {
-  retry = null; error.value = '';
+  dismissPicker(); error.value = '';
   source.value = { conversation: r.conversation, sourceMessageId: r.sourceMessageId, revision: r.revision };
   due.value = r.dueAt ?? ''; someday.value = r.dueAt === null; condition.value = r.condition;
 }
 function submit() {
   if (!source.value || retry) return;
   const command: PutReminder = { conversation: source.value.conversation, sourceMessageId: source.value.sourceMessageId, expectedRevision: source.value.revision, dueAt: someday.value ? null : due.value, condition: condition.value, requestId: crypto.randomUUID() };
-  void run(() => props.client.reminders!.put(command));
+  void run(() => props.client.reminders!.put(command), command);
 }
 function cancel(r: Reminder) {
   const command: CancelReminder = { conversation: r.conversation, expectedRevision: r.revision, requestId: crypto.randomUUID() };
   void run(() => props.client.reminders!.cancel(command));
 }
 onMounted(async () => {
+  const token = editorGeneration;
   try {
     const stop = await props.client.subscribe(() => { void refresh(); });
     if (!alive) { stop(); return; }
     unsubscribe = stop;
   } catch { if (alive) error.value = 'Live updates unavailable. Refresh to inspect progress.'; }
   await refresh();
-  if (alive && props.target) await prepare(props.target);
+  if (alive && token === editorGeneration && props.target) await prepare(props.target);
 });
-onBeforeUnmount(() => { alive = false; generation++; unsubscribe?.(); });
+onBeforeUnmount(() => { alive = false; generation++; editorGeneration++; unsubscribe?.(); });
 </script>
 
 <template>
@@ -89,8 +122,10 @@ onBeforeUnmount(() => { alive = false; generation++; unsubscribe?.(); });
     <p role="note">Synthetic fixture only · This device, while running. Overdue work reconciles on launch. No execution while fully quit or on other devices.</p>
     <p>New incoming mail stays in Inbox. Return and Cancel restore only the original inbox messages; neither marks mail read.</p>
     <p v-if="error" role="alert">{{ error }}</p>
-    <button type="button" :disabled="busy" @click="retry ? run(retry) : refresh()">{{ retry ? 'Retry exact request' : 'Refresh reminders' }}</button>
-    <button v-if="retry" type="button" :disabled="busy" @click="retry = null; source = null; error = ''; refresh()">Inspect durable state</button>
+    <p v-if="preparationError" role="alert">{{ preparationError }}</p>
+    <button v-if="preparationTarget" type="button" :disabled="busy || !!retry" @click="prepare(preparationTarget)">{{ busy ? 'Preparing current source…' : 'Retry preparation / refresh source' }}</button>
+    <button type="button" :disabled="busy" @click="retry ? run(retry.action, retry.command) : refresh()">{{ retry ? 'Retry exact request' : 'Refresh reminders' }}</button>
+    <button v-if="retry" type="button" :disabled="busy" @click="dismissPicker(); error = ''; refresh()">Inspect durable state</button>
     <form v-if="source" @submit.prevent="submit">
       <h3>{{ source.revision === null ? 'Remind me' : 'Reschedule' }}</h3>
       <p>{{ source.conversation.conversationId }} · source {{ source.sourceMessageId }}</p>
@@ -104,7 +139,7 @@ onBeforeUnmount(() => { alive = false; generation++; unsubscribe?.(); });
           <select v-model="condition"><option value="if_no_reply">If no reply (default)</option><option value="regardless">Regardless of reply</option></select>
         </label>
         <button type="submit">{{ source.revision === null ? 'Schedule and remove from Inbox' : 'Save new time' }}</button>
-        <button type="button" @click="source = null">Dismiss picker</button>
+        <button type="button" @click="dismissPicker">Dismiss picker</button>
       </fieldset>
     </form>
     <nav aria-label="Reminder membership">

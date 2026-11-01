@@ -86,9 +86,9 @@ Browser preview may disclose this boundary but must not pretend persistence.
 - `mise run gen:ts` generated Reminder/condition/phase/put/cancel types and named
   command constants from Rust; `check:contract` detects drift.
 - `mise run check`: core synthetic tests, contract check, fmt/clippy, Vitest and
-  typecheck pass (237 core tests; 445 UI tests passed, 20 opt-in rendered tests
+  typecheck pass (238 core tests; 462 UI tests passed, 20 opt-in rendered tests
   skipped). The final tree includes seven reminder storage/race tests,
-  one fake-provider/worker/restart integration test, five reminder UI tests and
+  two fake-provider/worker integration tests, 22 reminder UI tests and
   one new exact-envelope transport test. Existing bulk/Undo/draft/close tests
   remain in the full suite. The opt-in rendered-browser suites are skipped by
   the ordinary check, not claimed as browser evidence.
@@ -101,6 +101,12 @@ Browser preview may disclose this boundary but must not pretend persistence.
   `archive_read_ordering_idempotency_and_unknown_after_apply` timeout; subsequent
   full checks pass without a Gmail implementation change. No provider network
   or credentials were used by those synthetic tests.
+- The accepted-fixes combined check initially hit the unchanged draft test
+  `retains the frozen retry across an account change during delayed save
+  verification`: its transient `Saving locally` assertion observed an already
+  completed saved status. That test passed in isolation and the subsequent full
+  check passed without draft-code or draft-test changes. The first run is not
+  counted as passing; the timing-sensitive result remains a validation caveat.
 
 Storage evidence covers durable command replay across newer revisions/restart,
 conflicting keys, per-message mixed original inbox facts, due-time commit
@@ -110,17 +116,47 @@ regardless, someday, in-flight removal/cancel ordering, return failure recovery,
 newer triage supersession, unchanged ordinary Undo slot and exact incoming-ID
 exclusion. Worker integration interrupts a paused synthetic provider, restarts
 overdue, and confirms exactly two archive/restore calls; a later restart makes
-zero calls. This is idempotent **fixture setter** recovery, not exactly-once
+zero calls. A second integration test keeps the worker alive across a future
+fake-clock deadline, confirms removal then return without direct reconciliation
+or restart, verifies original target IDs and incoming-mail preservation, and
+observes further worker polls/time advances without additional provider calls or
+operations. This is idempotent **fixture setter** recovery, not exactly-once
 remote execution certification.
 
 UI evidence is Vitest/jsdom with an injected memory-only reminder capability:
-H and shared palette/navigation actions respect capability/selection/editor/IME
-boundaries; a lost ACK retries the same key; invalid times remain editable;
-Someday/Regardless submit explicit fields; returned membership is separate; a
-returned conversation opens and Back restores that tab without auto-read;
-plain-text subject markup stays literal. The ordinary browser-preview fake does
-not implement reminders and exposes no dead controls. No real-browser reminder
-rendering or native interactive session was performed.
+H opens the supported fixture picker and is gated for bulk selection, text input,
+IME composition and Gmail; a lost ACK retries the same key; invalid times remain
+editable; Someday/Regardless submit explicit fields; returned membership is
+separate. The pointer journey clicks Reminders, the Returned tab and a returned
+conversation; Escape/Back restores that tab without auto-read. Plain-text subject
+markup stays literal. Shared registry routes for palette, navigator and G then H
+are implemented, but these reminder tests do not exercise those routes or assert
+their capability/selection/editor/IME boundaries. The ordinary browser-preview
+fake does not implement reminders and exposes no dead controls. No real-browser
+reminder rendering or native interactive session was performed.
+
+## Accepted adversarial-review fixes
+
+The accepted fix pass covers these four findings only:
+
+- Capture the Activity/Reminders reader origin synchronously before detail
+  loading. Deferred-transport regressions cover Back during loading and a late
+  reminder response after a newer Inbox reader opens; origin, J/K, focus and
+  no-auto-read behavior remain owned by the current visit.
+- Offer explicit in-panel source-preparation retry after transient read failure
+  or stale-source rejection. Preserve time/condition choices, require explicit
+  resubmission with the latest same-account/conversation source and a new key,
+  retain exact retries after ambiguous ACKs, and never convert revision conflicts
+  into a new schedule. Tests also fence stale/changed-target/unmounted responses.
+- Test a future deadline crossed while the worker remains running, as described
+  above; the restart test remains separate.
+- Narrow shortcut evidence to the actual H and pointer assertions, not untested
+  palette/navigator/G-H dispatch boundaries.
+
+Deferred P2 notes were not included in this pass: Escape from reminder form
+controls, clearing obsolete list-load errors after successful refresh, and
+additional palette/navigator/G-H or failed-draft-flush coverage. These remain
+non-blocking review notes, not verified fixes.
 
 ## Remaining gates / needed decision
 
