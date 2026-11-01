@@ -48,13 +48,20 @@ impl Backend {
         }
     }
 
-    fn get_saved_split(&self, account: &str) -> Result<Option<mail_core::splits::SavedSplit>, MailError> {
+    fn get_saved_split(
+        &self,
+        account: &str,
+    ) -> Result<Option<mail_core::splits::SavedSplit>, MailError> {
         match self {
             Self::Fixture(core) => core.get_saved_split(account),
             Self::Gmail(core) => core.get_saved_split(account),
         }
     }
-    fn save_saved_split(&self, account: &str, split: &mail_core::splits::SavedSplit) -> Result<mail_core::splits::SavedSplit, MailError> {
+    fn save_saved_split(
+        &self,
+        account: &str,
+        split: &mail_core::splits::SavedSplit,
+    ) -> Result<mail_core::splits::SavedSplit, MailError> {
         match self {
             Self::Fixture(core) => core.save_saved_split(account, split),
             Self::Gmail(core) => core.save_saved_split(account, split),
@@ -169,6 +176,34 @@ impl Backend {
         match self {
             Self::Fixture(core) => core.set_archived(command),
             Self::Gmail(core) => core.set_archived(command),
+        }
+    }
+
+    fn set_starred(
+        &self,
+        command: &mail_core::stars::SetStarred,
+    ) -> Result<OperationReceipt, MailError> {
+        match self {
+            Self::Fixture(_) => Err(MailError::ReadOnly),
+            Self::Gmail(core) => core.set_starred(command),
+        }
+    }
+    fn set_starred_group(
+        &self,
+        command: &mail_core::stars::SetStarredGroup,
+    ) -> Result<OperationGroupReceipt, MailError> {
+        match self {
+            Self::Fixture(_) => Err(MailError::ReadOnly),
+            Self::Gmail(core) => core.set_starred_group(command),
+        }
+    }
+    fn list_cached_starred(
+        &self,
+        request: &CachedDoneRequest,
+    ) -> Result<CachedDoneSnapshot, MailError> {
+        match self {
+            Self::Fixture(_) => Err(MailError::ReadOnly),
+            Self::Gmail(core) => core.list_cached_starred(request),
         }
     }
 
@@ -361,15 +396,52 @@ where
 }
 
 #[tauri::command]
-async fn get_saved_split(state: State<'_, AppState>, account_id: String) -> Result<Option<mail_core::splits::SavedSplit>, MailError> {
+async fn list_cached_starred(
+    state: State<'_, AppState>,
+    request: CachedDoneRequest,
+) -> Result<CachedDoneSnapshot, MailError> {
+    let backend = state.backend.clone();
+    run_blocking(backend, move |backend| {
+        backend.list_cached_starred(&request)
+    })
+    .await
+}
+#[tauri::command]
+async fn set_starred(
+    state: State<'_, AppState>,
+    command: mail_core::stars::SetStarred,
+) -> Result<OperationReceipt, MailError> {
+    let backend = state.backend.clone();
+    run_blocking(backend, move |backend| backend.set_starred(&command)).await
+}
+#[tauri::command]
+async fn set_starred_group(
+    state: State<'_, AppState>,
+    command: mail_core::stars::SetStarredGroup,
+) -> Result<OperationGroupReceipt, MailError> {
+    let backend = state.backend.clone();
+    run_blocking(backend, move |backend| backend.set_starred_group(&command)).await
+}
+#[tauri::command]
+async fn get_saved_split(
+    state: State<'_, AppState>,
+    account_id: String,
+) -> Result<Option<mail_core::splits::SavedSplit>, MailError> {
     let backend = state.backend.clone();
     run_blocking(backend, move |backend| backend.get_saved_split(&account_id)).await
 }
 
 #[tauri::command]
-async fn save_saved_split(state: State<'_, AppState>, account_id: String, split: mail_core::splits::SavedSplit) -> Result<mail_core::splits::SavedSplit, MailError> {
+async fn save_saved_split(
+    state: State<'_, AppState>,
+    account_id: String,
+    split: mail_core::splits::SavedSplit,
+) -> Result<mail_core::splits::SavedSplit, MailError> {
     let backend = state.backend.clone();
-    run_blocking(backend, move |backend| backend.save_saved_split(&account_id, &split)).await
+    run_blocking(backend, move |backend| {
+        backend.save_saved_split(&account_id, &split)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -744,6 +816,9 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             list_conversations,
             list_cached_done,
+            list_cached_starred,
+            set_starred,
+            set_starred_group,
             get_saved_split,
             save_saved_split,
             get_conversation,
@@ -983,9 +1058,47 @@ mod tests {
 
     #[test]
     fn fixture_rejects_gmail_only_mailbox_commands() {
+        // UX-08 stays fail-closed on the legacy archive-only fixture backend.
+        let source = include_str!("main.rs");
+        for command in ["list_cached_starred", "set_starred", "set_starred_group"] {
+            assert!(source.contains(&format!("async fn {command}(")));
+            assert!(include_str!("../build.rs").contains(&format!("\"{command}\"")));
+            assert!(include_str!("../capabilities/main-window.json")
+                .contains(&command.replace('_', "-")));
+        }
+
         let dir = temp_dir("fixture-gmail-actions");
         let core = MailCore::open(&dir).unwrap();
         let backend = Backend::Fixture(core);
+        let target = ConversationRef {
+            account_id: ACCOUNT_ID.into(),
+            conversation_id: "conv-01".into(),
+        };
+        assert_eq!(
+            backend.set_starred(&mail_core::stars::SetStarred {
+                conversation: target.clone(),
+                starred: true,
+                request_id: "star-disabled".into()
+            }),
+            Err(MailError::ReadOnly)
+        );
+        assert_eq!(
+            backend.set_starred_group(&mail_core::stars::SetStarredGroup {
+                account_id: ACCOUNT_ID.into(),
+                members: vec![target],
+                starred: true,
+                request_id: "group-star-disabled".into()
+            }),
+            Err(MailError::ReadOnly)
+        );
+        assert_eq!(
+            backend.list_cached_starred(&CachedDoneRequest {
+                account_id: ACCOUNT_ID.into(),
+                limit: 100,
+                cursor: None
+            }),
+            Err(MailError::ReadOnly)
+        );
         let mode_error = MailError::InvalidRequest {
             field: "mode".to_owned(),
         };
@@ -1024,6 +1137,49 @@ mod tests {
         );
         backend.stop();
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn saved_split_bridge_coexists_with_gmail_only_star_surface() {
+        for command in [
+            "get_saved_split",
+            "save_saved_split",
+            "list_cached_starred",
+            "set_starred",
+            "set_starred_group",
+        ] {
+            assert!(include_str!("main.rs").contains(&format!("async fn {command}(")));
+            assert!(include_str!("../build.rs").contains(&format!("\"{command}\"")));
+            assert!(include_str!("../capabilities/main-window.json")
+                .contains(&command.replace('_', "-")));
+        }
+        let dir = temp_dir("split-stars");
+        let backend = Backend::Fixture(MailCore::open(&dir).unwrap());
+        let split = mail_core::splits::SavedSplit {
+            name: "Clients".into(),
+            criterion: mail_core::splits::SplitCriterion::Domain,
+            value: "example.test".into(),
+            enabled: true,
+            hide_when_empty: false,
+        };
+        assert_eq!(backend.get_saved_split(ACCOUNT_ID).unwrap(), None);
+        assert_eq!(backend.save_saved_split(ACCOUNT_ID, &split).unwrap(), split);
+        assert_eq!(backend.get_saved_split(ACCOUNT_ID).unwrap(), Some(split));
+        assert_eq!(backend.get_saved_split("foreign"), Err(MailError::NotFound));
+        assert_eq!(
+            backend.set_starred(&mail_core::stars::SetStarred {
+                conversation: ConversationRef {
+                    account_id: ACCOUNT_ID.into(),
+                    conversation_id: "conv-01".into()
+                },
+                starred: true,
+                request_id: "split-star-unsupported".into(),
+            }),
+            Err(MailError::ReadOnly)
+        );
+        backend.stop();
+        drop(backend);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

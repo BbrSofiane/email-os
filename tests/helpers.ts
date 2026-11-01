@@ -117,8 +117,11 @@ export function fixtureRef(conversationId: string): ConversationRef {
 /** Delegates the five UX-05 group methods to a full client (e.g. the fake). */
 export function groupMethods(
   inner: MailClient,
-): Pick<MailClient, 'setArchivedGroup' | 'setReadGroup' | 'getOperationGroup' | 'listOperationGroups' | 'undoOperationGroup'> {
+): Pick<MailClient, 'listCachedStarred' | 'setStarred' | 'setStarredGroup' | 'setArchivedGroup' | 'setReadGroup' | 'getOperationGroup' | 'listOperationGroups' | 'undoOperationGroup'> {
   return {
+    listCachedStarred: (request) => inner.listCachedStarred(request),
+    setStarred: (command) => inner.setStarred(command),
+    setStarredGroup: (command) => inner.setStarredGroup(command),
     setArchivedGroup: (command) => inner.setArchivedGroup(command),
     setReadGroup: (command) => inner.setReadGroup(command),
     getOperationGroup: (request) => inner.getOperationGroup(request),
@@ -131,8 +134,11 @@ export function groupMethods(
  * UX-05 group seam stub for hand-written partial clients that do not exercise
  * groups: queries resolve empty, mutations reject (never fake success).
  */
-export function groupStub(): Pick<MailClient, 'setArchivedGroup' | 'setReadGroup' | 'getOperationGroup' | 'listOperationGroups' | 'undoOperationGroup'> {
+export function groupStub(): Pick<MailClient, 'listCachedStarred' | 'setStarred' | 'setStarredGroup' | 'setArchivedGroup' | 'setReadGroup' | 'getOperationGroup' | 'listOperationGroups' | 'undoOperationGroup'> {
   return {
+    listCachedStarred: () => Promise.reject({ kind:'read_only' }),
+    setStarred: () => Promise.reject({kind:'read_only'}),
+    setStarredGroup: () => Promise.reject({kind:'read_only'}),
     setArchivedGroup: () => Promise.reject({ kind: 'invalid_request', field: 'members' }),
     setReadGroup: () => Promise.reject({ kind: 'invalid_request', field: 'members' }),
     getOperationGroup: () => Promise.resolve(null),

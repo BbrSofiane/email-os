@@ -143,7 +143,7 @@ const showConnect = (): boolean =>
     <template v-if="(props.status.mutationAccess ?? 'read_only') === 'read_only' && props.status.connection === 'connected'">
       <p class="account-upgrade-disclosure" data-test="action-upgrade-disclosure" role="note">
         Enable mailbox actions requests Google's broad Gmail modify permission, which can also allow sending and deleting mail.
-        Email OS currently implements only archive/unarchive and explicit read/unread; it does not send or delete mail.
+        Email OS currently implements only archive/unarchive, explicit read/unread and Star/Unstar; it does not send or delete mail.
       </p>
       <button
         type="button"

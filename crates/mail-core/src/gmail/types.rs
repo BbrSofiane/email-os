@@ -82,6 +82,9 @@ pub struct InboxPage {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct GmailThread {
+    /// Observed STARRED values keyed by message ID, including unsupported bodies.
+    /// Absent map/entries are unknown, not false (legacy/partial label coverage).
+    pub star_facts: Option<std::collections::HashMap<String, bool>>,
     pub conversation: Conversation,
     /// From of the newest observed provider message, independent of body support.
     /// None is explicitly unknown; never derive it from the renderable stack.
@@ -126,6 +129,14 @@ pub trait GmailReadProvider: Send + Sync {
         &self,
         _message_ids: &[String],
         _archived: bool,
+        _cancel: &CancelToken,
+    ) -> Result<(), MailError> {
+        Err(MailError::PermissionRequired)
+    }
+    fn apply_star(
+        &self,
+        _message_ids: &[String],
+        _starred: bool,
         _cancel: &CancelToken,
     ) -> Result<(), MailError> {
         Err(MailError::PermissionRequired)

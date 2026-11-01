@@ -289,11 +289,25 @@ impl GmailCore {
         self.inner.store.list_snapshot()
     }
 
-    pub fn get_saved_split(&self, account: &str) -> Result<Option<crate::splits::SavedSplit>, MailError> {
+    pub fn list_cached_starred(
+        &self,
+        request: &crate::dto::CachedDoneRequest,
+    ) -> Result<crate::dto::CachedDoneSnapshot, MailError> {
+        self.inner.store.list_cached_starred(request)
+    }
+
+    pub fn get_saved_split(
+        &self,
+        account: &str,
+    ) -> Result<Option<crate::splits::SavedSplit>, MailError> {
         self.inner.store.get_saved_split(account)
     }
 
-    pub fn save_saved_split(&self, account: &str, split: &crate::splits::SavedSplit) -> Result<crate::splits::SavedSplit, MailError> {
+    pub fn save_saved_split(
+        &self,
+        account: &str,
+        split: &crate::splits::SavedSplit,
+    ) -> Result<crate::splits::SavedSplit, MailError> {
         let saved = self.inner.store.save_saved_split(account, split)?;
         self.inner.hub.dispatch();
         Ok(saved)
@@ -541,6 +555,18 @@ impl GmailCore {
         self.accept_operation(|store| store.accept_archived(command))
     }
 
+    pub fn set_starred(
+        &self,
+        command: &crate::stars::SetStarred,
+    ) -> Result<OperationReceipt, MailError> {
+        self.accept_operation(|store| store.accept_starred(command))
+    }
+    pub fn set_starred_group(
+        &self,
+        command: &crate::stars::SetStarredGroup,
+    ) -> Result<crate::groups::OperationGroupReceipt, MailError> {
+        self.accept_operation(|store| store.accept_starred_group(command))
+    }
     pub fn set_read(&self, command: &SetRead) -> Result<OperationReceipt, MailError> {
         self.accept_operation(|store| store.accept_read(command))
     }
@@ -1850,8 +1876,10 @@ mod worker_halt_tests {
 
     fn test_thread() -> GmailThread {
         GmailThread {
+            star_facts: None,
             newest_sender: None,
             conversation: Conversation {
+                stars: None,
                 conversation_ref: ConversationRef {
                     account_id: TEST_ACCOUNT.to_string(),
                     conversation_id: TEST_THREAD.to_string(),

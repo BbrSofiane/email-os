@@ -229,6 +229,7 @@ impl FakeProvider {
                 continue;
             }
             match kind {
+                MailboxOperationKind::Star => panic!("star not used in this legacy scenario"),
                 MailboxOperationKind::Archive => {
                     thread.inbox_message_ids.retain(|id| !ids.contains(id));
                     if !value {
@@ -389,8 +390,13 @@ fn thread(id: &str, msgs: Vec<Message>, inbox: &[&str], unread: &[&str]) -> Gmai
     let is_in_inbox = !inbox.is_empty();
     let message_ids: Vec<String> = msgs.iter().map(|m| m.id.clone()).collect();
     GmailThread {
-        newest_sender: msgs.iter().max_by(|a, b| (&a.sent_at, &a.id).cmp(&(&b.sent_at, &b.id))).map(|m| m.from.clone()),
+        star_facts: None,
+        newest_sender: msgs
+            .iter()
+            .max_by(|a, b| (&a.sent_at, &a.id).cmp(&(&b.sent_at, &b.id)))
+            .map(|m| m.from.clone()),
         conversation: Conversation {
+            stars: None,
             conversation_ref: conversation_ref(id),
             subject: format!("subject {id}"),
             messages: msgs,

@@ -272,6 +272,22 @@ impl GmailStore {
         )
         .map_err(|_| MailError::StorageUnavailable)?;
 
+        let has_star_column = {
+            let mut stmt = tx
+                .prepare("PRAGMA table_info(gmail_message_facts)")
+                .map_err(|_| MailError::StorageUnavailable)?;
+            let columns = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|_| MailError::StorageUnavailable)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| MailError::StorageUnavailable)?;
+            columns.iter().any(|column| column == "is_starred")
+        };
+        if !has_star_column {
+            tx.execute("ALTER TABLE gmail_message_facts ADD COLUMN is_starred INTEGER CHECK (is_starred IN (0,1))", [])
+                .map_err(|_| MailError::StorageUnavailable)?;
+        }
+
         let has_reply_context_column = {
             let mut stmt = tx
                 .prepare("PRAGMA table_info(gmail_conversations)")
@@ -293,17 +309,22 @@ impl GmailStore {
 
         // Legacy caches retained only renderable messages; never backfill their sender.
         let has_newest_sender = {
-            let mut stmt = tx.prepare("PRAGMA table_info(gmail_conversations)")
+            let mut stmt = tx
+                .prepare("PRAGMA table_info(gmail_conversations)")
                 .map_err(|_| MailError::StorageUnavailable)?;
-            let columns = stmt.query_map([], |row| row.get::<_, String>(1))
+            let columns = stmt
+                .query_map([], |row| row.get::<_, String>(1))
                 .map_err(|_| MailError::StorageUnavailable)?
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|_| MailError::StorageUnavailable)?;
             columns.iter().any(|column| column == "newest_sender_json")
         };
         if !has_newest_sender {
-            tx.execute("ALTER TABLE gmail_conversations ADD COLUMN newest_sender_json TEXT", [])
-                .map_err(|_| MailError::StorageUnavailable)?;
+            tx.execute(
+                "ALTER TABLE gmail_conversations ADD COLUMN newest_sender_json TEXT",
+                [],
+            )
+            .map_err(|_| MailError::StorageUnavailable)?;
         }
 
         let has_snapshot_sort_column = {
@@ -450,17 +471,28 @@ impl GmailStore {
             .store(on, Ordering::SeqCst);
     }
 
-    pub(crate) fn get_saved_split(&self, account: &str) -> Result<Option<crate::splits::SavedSplit>, MailError> {
+    pub(crate) fn get_saved_split(
+        &self,
+        account: &str,
+    ) -> Result<Option<crate::splits::SavedSplit>, MailError> {
         self.persistence_gate()?;
         let conn = self.lock_conn()?;
-        if meta_get(&conn, "account_id")?.as_deref() != Some(account) { return Err(MailError::NotFound); }
+        if meta_get(&conn, "account_id")?.as_deref() != Some(account) {
+            return Err(MailError::NotFound);
+        }
         crate::splits::get(&conn, account)
     }
 
-    pub(crate) fn save_saved_split(&self, account: &str, split: &crate::splits::SavedSplit) -> Result<crate::splits::SavedSplit, MailError> {
+    pub(crate) fn save_saved_split(
+        &self,
+        account: &str,
+        split: &crate::splits::SavedSplit,
+    ) -> Result<crate::splits::SavedSplit, MailError> {
         self.persistence_gate()?;
         let conn = self.lock_conn()?;
-        if meta_get(&conn, "account_id")?.as_deref() != Some(account) { return Err(MailError::NotFound); }
+        if meta_get(&conn, "account_id")?.as_deref() != Some(account) {
+            return Err(MailError::NotFound);
+        }
         crate::splits::save(&conn, account, split)
     }
 
@@ -625,6 +657,7 @@ impl GmailStore {
                 continue;
             }
             summaries.push(ConversationSummary {
+                stars: Some(star_state(&conn, &account_id, &conversation_id)?),
                 conversation_ref: built.conversation_ref,
                 subject: built.subject,
                 participants: participants_of(&built.messages),
@@ -651,6 +684,107 @@ impl GmailStore {
             conversations: summaries,
             activity,
         })
+    }
+
+    /// Bounded local evidence only; pagination scans cache candidates and may
+    /// return a short page with a continuation. No provider discovery is implied.
+    pub(crate) fn list_cached_starred(
+        &self,
+        request: &crate::dto::CachedDoneRequest,
+    ) -> Result<crate::dto::CachedDoneSnapshot, MailError> {
+        self.persistence_gate()?;
+        let (candidates, synced_at) = {
+            let conn = self.lock_conn()?;
+            let account = account_id_of(&conn)?;
+            let mut paging = request.clone();
+            paging.cursor = request
+                .cursor
+                .as_ref()
+                .map(|cursor| {
+                    cursor
+                        .strip_prefix("cached-starred-v1:")
+                        .map(|body| format!("cached-done-v1:{body}"))
+                        .ok_or(MailError::InvalidRequest {
+                            field: "cursor".into(),
+                        })
+                })
+                .transpose()?;
+            let position = crate::cached_done::validate(&paging, &account)?;
+            let mut stmt = conn.prepare(
+                "WITH candidates AS (
+                    SELECT c.conversation_id, COALESCE((SELECT MAX(m.sent_at) FROM gmail_messages m
+                        WHERE m.account_id = c.account_id AND m.conversation_id = c.conversation_id), '') AS date
+                    FROM gmail_conversations c WHERE c.account_id = ?1
+                    UNION
+                    SELECT s.conversation_id, s.last_message_at AS date FROM gmail_operation_snapshots s
+                    WHERE s.account_id = ?1 AND NOT EXISTS (SELECT 1 FROM gmail_conversations c
+                        WHERE c.account_id = s.account_id AND c.conversation_id = s.conversation_id))
+                SELECT date, conversation_id FROM candidates
+                WHERE ?2 IS NULL OR date < ?2 OR (date = ?2 AND conversation_id > ?3)
+                ORDER BY date DESC, conversation_id ASC LIMIT ?4"
+            ).map_err(|_| MailError::StorageUnavailable)?;
+            let rows = stmt
+                .query_map(
+                    params![
+                        account,
+                        position.as_ref().map(|p| &p.0),
+                        position.as_ref().map(|p| &p.1),
+                        request.limit + 1
+                    ],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .map_err(|_| MailError::StorageUnavailable)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| MailError::StorageUnavailable)?;
+            (rows, meta_get(&conn, "last_synced_at")?)
+        };
+        let mut summaries = Vec::new();
+        for (_, id) in candidates.iter().take(request.limit as usize) {
+            let conversation = self.get_conversation(&ConversationRef {
+                account_id: request.account_id.clone(),
+                conversation_id: id.clone(),
+            })?;
+            if conversation.stars.as_ref().and_then(|s| s.is_starred()) != Some(true) {
+                continue;
+            }
+            // Sender identity belongs to the newest provider message, not the
+            // last renderable body. Legacy and recovery-only rows stay unknown.
+            let newest_sender_json: Option<String> = self
+                .lock_conn()?
+                .query_row(
+                    "SELECT newest_sender_json FROM gmail_conversations
+                     WHERE account_id = ?1 AND conversation_id = ?2",
+                    params![request.account_id, id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|_| MailError::StorageUnavailable)?
+                .flatten();
+            let primary_correspondent = newest_sender_json
+                .map(|json| serde_json::from_str(&json))
+                .transpose()
+                .map_err(|_| MailError::StorageUnavailable)?;
+            summaries.push(ConversationSummary {
+                stars: conversation.stars,
+                conversation_ref: conversation.conversation_ref,
+                subject: conversation.subject,
+                participants: participants_of(&conversation.messages),
+                primary_correspondent,
+                preview: preview_of(&conversation.messages),
+                last_message_at: conversation
+                    .messages
+                    .last()
+                    .map(|m| m.sent_at.clone())
+                    .unwrap_or_default(),
+                is_read: conversation.is_read,
+                pending_operation_id: conversation.pending_operation_id,
+            });
+        }
+        let mut result = crate::cached_done::finish(request, &candidates, summaries, synced_at);
+        result.next_cursor = result
+            .next_cursor
+            .map(|cursor| cursor.replacen("cached-done-v1:", "cached-starred-v1:", 1));
+        Ok(result)
     }
 
     pub(crate) fn list_cached_done(
@@ -725,6 +859,7 @@ impl GmailStore {
                 }
             };
             summaries.push(ConversationSummary {
+                stars: Some(star_state(&conn, &account, id)?),
                 conversation_ref: built.conversation_ref,
                 subject: built.subject,
                 participants: participants_of(&built.messages),
@@ -781,12 +916,14 @@ impl GmailStore {
                 effective_conversation_state(&conn, &account_id, &r#ref.conversation_id)?;
             snapshot.is_in_inbox = is_in_inbox;
             snapshot.is_read = is_read;
+            snapshot.stars = Some(star_state(&conn, &account_id, &r#ref.conversation_id)?);
             snapshot.pending_operation_id = pending_operation_id;
             return Ok(snapshot);
         };
         let (is_in_inbox, is_read, pending_operation_id) =
             effective_conversation_state(&conn, &account_id, &r#ref.conversation_id)?;
         Ok(Conversation {
+            stars: Some(star_state(&conn, &account_id, &r#ref.conversation_id)?),
             conversation_ref: recovered.conversation_ref,
             subject: recovered.subject,
             messages: recovered.messages,
@@ -874,6 +1011,30 @@ impl GmailStore {
                 "value": command.archived,
             })
             .to_string(),
+        )
+    }
+
+    pub(crate) fn accept_starred(
+        &self,
+        command: &crate::stars::SetStarred,
+    ) -> Result<OperationReceipt, MailError> {
+        self.accept_new_operation(&command.conversation, MailboxOperationKind::Star, command.starred,
+            &command.request_id, serde_json::json!({
+                "accountId": command.conversation.account_id, "conversationId": command.conversation.conversation_id,
+                "kind": "star", "value": command.starred
+            }).to_string())
+    }
+
+    pub(crate) fn accept_starred_group(
+        &self,
+        command: &crate::stars::SetStarredGroup,
+    ) -> Result<OperationGroupReceipt, MailError> {
+        self.accept_group(
+            &command.account_id,
+            MailboxOperationKind::Star,
+            command.starred,
+            &command.request_id,
+            &command.members,
         )
     }
 
@@ -1338,6 +1499,7 @@ impl GmailStore {
             let kind = parse_kind(&kind)?;
             let members = load_group_member_refs(&conn, &account_id, &group_id)?;
             summaries.push(crate::groups::OperationGroupSummary {
+                requested_starred: (kind == MailboxOperationKind::Star).then_some(value != 0),
                 group_id,
                 request_id: group_request_id,
                 kind,
@@ -1639,6 +1801,13 @@ impl GmailStore {
         if apply_facts {
             for message_id in &record.message_ids {
                 match record.kind {
+                    MailboxOperationKind::Star => {
+                        tx.execute("INSERT INTO gmail_message_facts (account_id, conversation_id, message_id, is_starred)
+                            VALUES (?1, ?2, ?3, ?4)
+                            ON CONFLICT(account_id, conversation_id, message_id) DO UPDATE SET is_starred = excluded.is_starred",
+                            params![account_id, record.conversation_id, message_id, i64::from(record.value)])
+                            .map_err(|_| MailError::StorageUnavailable)?;
+                    }
                     MailboxOperationKind::Archive => {
                         let inbox = (!record.value) as i64;
                         tx.execute(
@@ -1790,6 +1959,10 @@ impl GmailStore {
                     "DELETE FROM gmail_message_facts
                      WHERE account_id = ?1 AND conversation_id NOT IN
                          (SELECT conversation_id FROM gmail_discovery_seen)
+                       AND NOT EXISTS (
+                         SELECT 1 FROM gmail_operation_snapshots s
+                         WHERE s.account_id = gmail_message_facts.account_id
+                           AND s.conversation_id = gmail_message_facts.conversation_id)
                        AND NOT EXISTS (
                          SELECT 1 FROM gmail_operation_targets t
                          WHERE t.account_id = gmail_message_facts.account_id
@@ -2469,6 +2642,9 @@ fn accept_operation_tx(
             &targets,
         )?;
         let current = Conversation {
+            stars: Some(crate::stars::StarState::from_facts(
+                effective.facts.values().map(|fact| fact.2),
+            )),
             conversation_ref: built.conversation_ref,
             subject: built.subject,
             messages: built.messages,
@@ -2586,16 +2762,17 @@ fn capture_preimages(
     account_id: &str,
     operation_id: &str,
     kind: MailboxOperationKind,
-    facts: &HashMap<String, (Option<bool>, Option<bool>)>,
+    facts: &HashMap<String, MessageFacts>,
     targets: &[String],
 ) -> Result<(), MailError> {
     for message_id in targets {
-        let Some((in_inbox, unread)) = facts.get(message_id) else {
+        let Some((in_inbox, unread, starred)) = facts.get(message_id) else {
             continue;
         };
         let prior_value = match kind {
             MailboxOperationKind::Archive => in_inbox.map(|v| !v),
             MailboxOperationKind::Read => unread.map(|v| !v),
+            MailboxOperationKind::Star => *starred,
         };
         tx.execute(
             "INSERT INTO gmail_operation_preimages
@@ -2617,6 +2794,7 @@ fn kind_name(kind: MailboxOperationKind) -> &'static str {
     match kind {
         MailboxOperationKind::Archive => "archive",
         MailboxOperationKind::Read => "read",
+        MailboxOperationKind::Star => "star",
     }
 }
 
@@ -2624,6 +2802,7 @@ fn parse_kind(kind: &str) -> Result<MailboxOperationKind, MailError> {
     match kind {
         "archive" => Ok(MailboxOperationKind::Archive),
         "read" => Ok(MailboxOperationKind::Read),
+        "star" => Ok(MailboxOperationKind::Star),
         _ => Err(MailError::StorageUnavailable),
     }
 }
@@ -2698,6 +2877,17 @@ fn load_operation(
     }))
 }
 
+fn star_state(
+    conn: &Connection,
+    account_id: &str,
+    conversation_id: &str,
+) -> Result<crate::stars::StarState, MailError> {
+    let effective = effective_conversation_state_with_coverage(conn, account_id, conversation_id)?;
+    Ok(crate::stars::StarState::from_facts(
+        effective.facts.values().map(|fact| fact.2),
+    ))
+}
+
 fn effective_conversation_state(
     conn: &Connection,
     account_id: &str,
@@ -2709,13 +2899,14 @@ fn effective_conversation_state(
 
 /// Effective aggregates plus the per-message fact map the overlay is built
 /// from (docs/ux-04-trustworthy-undo.md §2). `facts` maps message id to
-/// `(in_inbox, is_unread)`; `None` marks an unknown fact.
+/// `(in_inbox, is_unread, is_starred)`; `None` marks an unknown fact.
+type MessageFacts = (Option<bool>, Option<bool>, Option<bool>);
 pub(crate) struct EffectiveState {
     pub(crate) inbox: bool,
     pub(crate) is_read: Option<bool>,
     pub(crate) pending_operation_id: Option<String>,
     pub(crate) coverage_known: bool,
-    pub(crate) facts: HashMap<String, (Option<bool>, Option<bool>)>,
+    pub(crate) facts: HashMap<String, MessageFacts>,
 }
 
 fn effective_conversation_state_with_coverage(
@@ -2723,10 +2914,10 @@ fn effective_conversation_state_with_coverage(
     account_id: &str,
     conversation_id: &str,
 ) -> Result<EffectiveState, MailError> {
-    let mut facts = HashMap::<String, (Option<bool>, Option<bool>)>::new();
+    let mut facts = HashMap::<String, MessageFacts>::new();
     let mut stmt = conn
         .prepare(
-            "SELECT message_id, in_inbox, is_unread FROM gmail_message_facts
+            "SELECT message_id, in_inbox, is_unread, is_starred FROM gmail_message_facts
          WHERE account_id = ?1 AND conversation_id = ?2",
         )
         .map_err(|_| MailError::StorageUnavailable)?;
@@ -2736,12 +2927,20 @@ fn effective_conversation_state_with_coverage(
                 row.get::<_, String>(0)?,
                 row.get::<_, Option<i64>>(1)?,
                 row.get::<_, Option<i64>>(2)?,
+                row.get::<_, Option<i64>>(3)?,
             ))
         })
         .map_err(|_| MailError::StorageUnavailable)?
     {
-        let (id, inbox, unread) = row.map_err(|_| MailError::StorageUnavailable)?;
-        facts.insert(id, (inbox.map(|v| v != 0), unread.map(|v| v != 0)));
+        let (id, inbox, unread, starred) = row.map_err(|_| MailError::StorageUnavailable)?;
+        facts.insert(
+            id,
+            (
+                inbox.map(|v| v != 0),
+                unread.map(|v| v != 0),
+                starred.map(|v| v != 0),
+            ),
+        );
     }
     let mut operations: Vec<(i64, OperationRecord)> = Vec::new();
     let mut stmt = conn
@@ -2788,24 +2987,25 @@ fn effective_conversation_state_with_coverage(
             {
                 continue;
             }
-            let entry = facts.entry(id.clone()).or_insert((None, None));
+            let entry = facts.entry(id.clone()).or_insert((None, None, None));
             match op.kind {
                 MailboxOperationKind::Archive => entry.0 = Some(!op.value),
                 MailboxOperationKind::Read => entry.1 = Some(!op.value),
+                MailboxOperationKind::Star => entry.2 = Some(op.value),
             }
         }
     }
-    let inbox = facts.values().any(|(inbox, _)| *inbox == Some(true));
-    let is_read = if facts.is_empty() || facts.values().any(|(_, unread)| unread.is_none()) {
+    let inbox = facts.values().any(|(inbox, _, _)| *inbox == Some(true));
+    let is_read = if facts.is_empty() || facts.values().any(|(_, unread, _)| unread.is_none()) {
         None
     } else {
-        Some(!facts.values().any(|(_, unread)| *unread == Some(true)))
+        Some(!facts.values().any(|(_, unread, _)| *unread == Some(true)))
     };
     Ok(EffectiveState {
         inbox,
         is_read,
         pending_operation_id: active.map(|(_, id)| id),
-        coverage_known: !facts.is_empty() && facts.values().all(|(inbox, _)| inbox.is_some()),
+        coverage_known: !facts.is_empty() && facts.values().all(|(inbox, _, _)| inbox.is_some()),
         facts,
     })
 }
@@ -2891,6 +3091,7 @@ fn load_activity(
             None
         };
         activity.push(OperationSummary {
+            requested_starred: (kind == MailboxOperationKind::Star).then_some(value != 0),
             id,
             conversation: ConversationRef {
                 account_id: account_id.to_string(),
@@ -2997,6 +3198,9 @@ fn group_receipt(
     members: &[GroupMemberInsert],
 ) -> OperationGroupReceipt {
     OperationGroupReceipt {
+        requested_starred: (kind == MailboxOperationKind::Star)
+            .then_some(requested_value)
+            .flatten(),
         group_id: group_id.to_string(),
         request_id: request_id.to_string(),
         account_id: account_id.to_string(),
@@ -3748,8 +3952,12 @@ fn upsert_thread(
                 .map(serde_json::to_string)
                 .transpose()
                 .map_err(|_| MailError::StorageUnavailable)?,
-            thread.newest_sender.as_ref().map(serde_json::to_string)
-                .transpose().map_err(|_| MailError::StorageUnavailable)?,
+            thread
+                .newest_sender
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()
+                .map_err(|_| MailError::StorageUnavailable)?,
         ],
     )
     .map_err(|_| MailError::StorageUnavailable)?;
@@ -3835,6 +4043,9 @@ fn upsert_message_facts(
             params![account_id, conversation_id, message_id, inbox, unread],
         )
         .map_err(|_| MailError::StorageUnavailable)?;
+        conn.execute("UPDATE gmail_message_facts SET is_starred = ?4 WHERE account_id = ?1 AND conversation_id = ?2 AND message_id = ?3",
+            params![account_id, conversation_id, message_id, thread.star_facts.as_ref().and_then(|facts| facts.get(message_id).copied()).map(i64::from)])
+            .map_err(|_| MailError::StorageUnavailable)?;
     }
     Ok(())
 }
@@ -3849,6 +4060,9 @@ fn trim_discovery_cache(conn: &Connection, account_id: &str) -> Result<(), MailE
 
 /// Evicts excess conversations in one transaction. During rediscovery, ids
 /// observed in the current pass are retained ahead of old cache entries.
+/// Recovery snapshots retain the whole observed inventory/label facts, not just
+/// immutable operation targets: later arrivals must survive body eviction too.
+/// Conversations without recovery context still lose their non-target facts.
 fn evict_over_cap(
     conn: &Connection,
     account_id: &str,
@@ -3894,6 +4108,10 @@ fn evict_over_cap(
         conn.execute(
             "DELETE FROM gmail_message_facts
              WHERE account_id = ?1 AND conversation_id = ?2
+               AND NOT EXISTS (
+                 SELECT 1 FROM gmail_operation_snapshots s
+                 WHERE s.account_id = gmail_message_facts.account_id
+                   AND s.conversation_id = gmail_message_facts.conversation_id)
                AND NOT EXISTS (
                  SELECT 1 FROM gmail_operation_targets t
                  WHERE t.account_id = gmail_message_facts.account_id
@@ -3976,7 +4194,9 @@ fn build_conversation(
         )
         .optional()
         .map_err(|_| MailError::StorageUnavailable)?;
-    let Some((subject, context_flag, unsupported_reason, reply_context_json, newest_sender_json)) = row else {
+    let Some((subject, context_flag, unsupported_reason, reply_context_json, newest_sender_json)) =
+        row
+    else {
         return Ok(None);
     };
     let mut stmt = conn
@@ -4021,8 +4241,10 @@ fn build_conversation(
         },
         subject,
         messages: messages.into_iter().map(|(message, _)| message).collect(),
-        newest_sender: newest_sender_json.map(|json| serde_json::from_str(&json))
-            .transpose().map_err(|_| MailError::StorageUnavailable)?,
+        newest_sender: newest_sender_json
+            .map(|json| serde_json::from_str(&json))
+            .transpose()
+            .map_err(|_| MailError::StorageUnavailable)?,
         context_complete: Some(context_flag != 0),
         unsupported_reason,
         reply_context: reply_context_json
@@ -4129,8 +4351,13 @@ mod tests {
             .iter()
             .any(|inbox_id| msgs.iter().any(|m| m.id == **inbox_id));
         GmailThread {
-            newest_sender: msgs.iter().max_by(|a, b| (&a.sent_at, &a.id).cmp(&(&b.sent_at, &b.id))).map(|m| m.from.clone()),
+            star_facts: None,
+            newest_sender: msgs
+                .iter()
+                .max_by(|a, b| (&a.sent_at, &a.id).cmp(&(&b.sent_at, &b.id)))
+                .map(|m| m.from.clone()),
             conversation: Conversation {
+                stars: None,
                 conversation_ref: ConversationRef {
                     account_id: account_id.to_string(),
                     conversation_id: id.to_string(),
@@ -4825,21 +5052,36 @@ mod tests {
     fn saved_split_is_durable_account_scoped_and_removed_on_disconnect() {
         use crate::splits::{SavedSplit, SplitCriterion};
         let (store, dir) = open_store("saved-split");
-        store.begin_account(&profile("acct", "a@example.test", "h1"), 0).unwrap();
-        let split = SavedSplit { name: "Clients".into(), criterion: SplitCriterion::Sender,
-            value: "Alice@Example.TEST".into(), enabled: true, hide_when_empty: false };
+        store
+            .begin_account(&profile("acct", "a@example.test", "h1"), 0)
+            .unwrap();
+        let split = SavedSplit {
+            name: "Clients".into(),
+            criterion: SplitCriterion::Sender,
+            value: "Alice@Example.TEST".into(),
+            enabled: true,
+            hide_when_empty: false,
+        };
         let saved = store.save_saved_split("acct", &split).unwrap();
         assert_eq!(saved.value, "alice@example.test");
         assert_eq!(store.get_saved_split("other"), Err(MailError::NotFound));
-        assert_eq!(store.save_saved_split("other", &split), Err(MailError::NotFound));
+        assert_eq!(
+            store.save_saved_split("other", &split),
+            Err(MailError::NotFound)
+        );
         drop(store);
         let store = GmailStore::open(&dir, Arc::new(SystemClock)).unwrap();
         assert_eq!(store.get_saved_split("acct").unwrap(), Some(saved));
         store.set_test_persistence_failure(true);
-        assert_eq!(store.save_saved_split("acct", &split), Err(MailError::StorageUnavailable));
+        assert_eq!(
+            store.save_saved_split("acct", &split),
+            Err(MailError::StorageUnavailable)
+        );
         store.set_test_persistence_failure(false);
         store.clear_account().unwrap();
-        store.begin_account(&profile("acct", "a@example.test", "h2"), 1).unwrap();
+        store
+            .begin_account(&profile("acct", "a@example.test", "h2"), 1)
+            .unwrap();
         assert_eq!(store.get_saved_split("acct").unwrap(), None);
         drop(store);
         std::fs::remove_dir_all(dir).unwrap();
@@ -5000,6 +5242,118 @@ mod tests {
     }
 
     #[test]
+    fn capped_rediscovery_retains_full_recovery_inventory_not_unretained_facts() {
+        let (store, dir) = open_store("rediscovery-inventory");
+        store
+            .begin_account(&profile("acct", "a@example.test", "h1"), 0)
+            .unwrap();
+        let original = thread(
+            "acct",
+            "retained",
+            "h1",
+            vec![message("original", "2026-01-01T00:00:00Z")],
+            &["original"],
+        );
+        store
+            .apply_discovery_page(
+                &[
+                    cached(original.clone()),
+                    cached(thread(
+                        "acct",
+                        "unretained",
+                        "h1",
+                        vec![message("orphan", "2026-01-01T00:00:00Z")],
+                        &["orphan"],
+                    )),
+                ],
+                None,
+                true,
+                false,
+                0,
+            )
+            .unwrap();
+        let target = original.conversation.conversation_ref.clone();
+        let receipt = store
+            .accept_starred(&crate::stars::SetStarred {
+                conversation: target.clone(),
+                starred: false,
+                request_id: "original-unstar".into(),
+            })
+            .unwrap();
+        let mut updated = original;
+        updated.message_ids = Some(vec![
+            "original".into(),
+            "arrival".into(),
+            "unknown-arrival".into(),
+        ]);
+        updated.inbox_message_ids.push("arrival".into());
+        updated.unread_message_ids = Some(vec!["arrival".into()]);
+        updated.star_facts = Some(HashMap::from([
+            ("original".into(), false),
+            ("arrival".into(), true),
+        ]));
+        store
+            .apply_discovery_page(&[cached(updated)], None, false, false, 0)
+            .unwrap();
+        store.begin_rediscovery("h2", 0).unwrap();
+        // A capped replacement excludes both old conversations. Only the one
+        // with a durable recovery snapshot keeps its whole observed inventory.
+        store
+            .apply_discovery_page(&[], None, true, true, 0)
+            .unwrap();
+        let retained = store.get_conversation(&target).unwrap();
+        assert!(retained.retained_snapshot_at.is_some());
+        let stars = retained.stars.unwrap();
+        assert_eq!(stars.total_messages, 3);
+        assert_eq!(stars.known_messages, 2);
+        assert_eq!(stars.starred_messages, 1);
+        assert!(retained.is_in_inbox);
+        assert_eq!(retained.is_read, Some(false));
+        let conn = store.lock_conn().unwrap();
+        let operation = load_operation(&conn, "acct", &receipt.operation_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(operation.message_ids, vec!["original"]);
+        let orphan_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM gmail_message_facts WHERE conversation_id = 'unretained'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(orphan_count, 0);
+        drop(conn);
+        store
+            .apply_history_page(
+                &HistoryPage {
+                    changed_thread_ids: Vec::new(),
+                    deleted_message_ids: vec!["arrival".into()],
+                    next_page_token: None,
+                    history_id: "h3".into(),
+                },
+                &[],
+                "h2",
+                0,
+            )
+            .unwrap();
+        let remaining = store.get_conversation(&target).unwrap().stars.unwrap();
+        assert_eq!(remaining.total_messages, 2);
+        assert_eq!(remaining.known_messages, 1);
+        assert_eq!(remaining.is_starred(), None, "unknown arrival is not false");
+        store.clear_account().unwrap();
+        let conn = store.lock_conn().unwrap();
+        let fact_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM gmail_message_facts", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(fact_count, 0, "disconnect also clears retained inventory");
+        drop(conn);
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn persistence_failure_is_surfaced_not_ignored() {
         let (store, dir) = open_store("failure");
         assert!(store.has_account().is_ok());
@@ -5075,7 +5429,7 @@ mod tests {
             )
             .unwrap();
             conn.execute(
-                "INSERT INTO gmail_message_facts VALUES ('acct', 'incoming', 'new-arrival', 1, 0)",
+                "INSERT INTO gmail_message_facts (account_id, conversation_id, message_id, in_inbox, is_unread) VALUES ('acct', 'incoming', 'new-arrival', 1, 0)",
                 [],
             )
             .unwrap();

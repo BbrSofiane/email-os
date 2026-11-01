@@ -7,7 +7,6 @@
 //! beyond the synthetic fixture account. See `docs/vertical-slice-01.md`.
 
 mod cached_done;
-pub mod splits;
 pub mod clock;
 pub mod drafts;
 pub mod dto;
@@ -17,6 +16,8 @@ pub mod groups;
 mod lock;
 pub mod provider;
 mod seed;
+pub mod splits;
+pub mod stars;
 mod store;
 mod worker;
 
@@ -133,11 +134,18 @@ impl MailCore {
         self.inner.store.list_snapshot()
     }
 
-    pub fn get_saved_split(&self, account: &str) -> Result<Option<crate::splits::SavedSplit>, MailError> {
+    pub fn get_saved_split(
+        &self,
+        account: &str,
+    ) -> Result<Option<crate::splits::SavedSplit>, MailError> {
         self.inner.store.get_saved_split(account)
     }
 
-    pub fn save_saved_split(&self, account: &str, split: &crate::splits::SavedSplit) -> Result<crate::splits::SavedSplit, MailError> {
+    pub fn save_saved_split(
+        &self,
+        account: &str,
+        split: &crate::splits::SavedSplit,
+    ) -> Result<crate::splits::SavedSplit, MailError> {
         let saved = self.inner.store.save_saved_split(account, split)?;
         self.dispatch();
         Ok(saved)

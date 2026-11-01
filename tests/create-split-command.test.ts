@@ -51,7 +51,7 @@ it('saves one split, switches to the Edit Split command, and returns focus to Co
   expect(wrapper.findAll('button').some((button) => /edit split/i.test(button.text()))).toBe(false);
   await wrapper.get('[data-test="palette-trigger"]').trigger('click');
   expect(wrapper.find('#action-create-split').exists()).toBe(false);
-  expect(wrapper.get('#action-edit-split').text()).toBe('Edit Split');
+  expect(wrapper.get('#action-edit-split .action-copy > span').text()).toBe('Edit Split');
   await wrapper.get('[data-test="action-query"]').setValue('edit split');
   await wrapper.get('[data-test="action-query"]').trigger('keydown', { key: 'Enter' });
   await flushPromises();

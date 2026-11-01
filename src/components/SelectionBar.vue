@@ -11,7 +11,7 @@
 const props = defineProps<{
   count: number;
   loadedCount: number;
-  context: 'inbox' | 'saved' | 'done';
+  context: 'inbox' | 'saved' | 'done' | 'starred';
   /** Archive/unarchive groups need the same capability gates as singles. */
   actionsEnabled?: boolean;
   /** Read groups are Gmail-only like the single setter. */

@@ -110,17 +110,28 @@ impl Store {
             .store(on, Ordering::SeqCst);
     }
 
-    pub(crate) fn get_saved_split(&self, account: &str) -> Result<Option<crate::splits::SavedSplit>, MailError> {
+    pub(crate) fn get_saved_split(
+        &self,
+        account: &str,
+    ) -> Result<Option<crate::splits::SavedSplit>, MailError> {
         self.persistence_gate()?;
         let conn = self.lock_conn()?;
-        if account != ACCOUNT_ID { return Err(MailError::NotFound); }
+        if account != ACCOUNT_ID {
+            return Err(MailError::NotFound);
+        }
         crate::splits::get(&conn, account)
     }
 
-    pub(crate) fn save_saved_split(&self, account: &str, split: &crate::splits::SavedSplit) -> Result<crate::splits::SavedSplit, MailError> {
+    pub(crate) fn save_saved_split(
+        &self,
+        account: &str,
+        split: &crate::splits::SavedSplit,
+    ) -> Result<crate::splits::SavedSplit, MailError> {
         self.persistence_gate()?;
         let conn = self.lock_conn()?;
-        if account != ACCOUNT_ID { return Err(MailError::NotFound); }
+        if account != ACCOUNT_ID {
+            return Err(MailError::NotFound);
+        }
         crate::splits::save(&conn, account, split)
     }
 
@@ -787,6 +798,7 @@ impl Store {
             let kind = parse_group_kind(&kind)?;
             let members = load_group_member_refs(&conn, ACCOUNT_ID, &group_id)?;
             summaries.push(OperationGroupSummary {
+                requested_starred: None,
                 group_id,
                 request_id,
                 kind,
@@ -936,6 +948,7 @@ impl Store {
             let built = build_conversation_view(&conn, ACCOUNT_ID, conversation_id)?;
             if built.is_in_inbox {
                 summaries.push(ConversationSummary {
+                    stars: None,
                     conversation_ref: built.conversation_ref,
                     subject: built.subject,
                     participants: participants_of(&built.messages),
@@ -1013,6 +1026,7 @@ impl Store {
                 continue;
             }
             summaries.push(ConversationSummary {
+                stars: None,
                 conversation_ref: built.conversation_ref,
                 subject: built.subject,
                 participants: participants_of(&built.messages),
@@ -1051,6 +1065,7 @@ impl Store {
         }
         let reply_context = fixture_reply_context(&built.conversation_ref, &built.messages);
         Ok(Conversation {
+            stars: None,
             conversation_ref: built.conversation_ref,
             subject: built.subject,
             is_in_inbox: built.is_in_inbox,
@@ -1120,6 +1135,7 @@ impl Store {
                     None
                 };
                 Ok(OperationSummary {
+                    requested_starred: None,
                     id: row.operation_id,
                     conversation: ConversationRef {
                         account_id: row.account_id,
@@ -1681,6 +1697,7 @@ fn group_receipt(
     members: &[GroupMemberInsert],
 ) -> OperationGroupReceipt {
     OperationGroupReceipt {
+        requested_starred: None,
         group_id: group_id.to_string(),
         request_id: request_id.to_string(),
         account_id: account_id.to_string(),
@@ -1862,6 +1879,7 @@ fn load_group_receipt(
         load_group_header(conn, account_id, group_id)?.ok_or(MailError::StorageUnavailable)?;
     let members = load_group_undo_rows(conn, account_id, group_id)?;
     Ok(OperationGroupReceipt {
+        requested_starred: None,
         group_id: header.group_id,
         request_id: header.request_id,
         account_id: account_id.to_string(),

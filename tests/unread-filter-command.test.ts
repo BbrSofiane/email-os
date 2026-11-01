@@ -82,7 +82,7 @@ it('is available in read-only Gmail and resets on account change', async () => {
   await flushPromises();
   expect(wrapper.find('[data-test="unread-filter-status"]').exists()).toBe(false);
   await wrapper.get('[data-test="palette-trigger"]').trigger('click');
-  expect(wrapper.get('#action-toggle-unread-filter').text()).toBe('Show Unread Only');
+  expect(wrapper.get('#action-toggle-unread-filter .action-copy > span').text()).toBe('Show Unread Only');
 });
 
 it('closes the reader when filtering without marking or archiving mail', async () => {

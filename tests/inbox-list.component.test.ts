@@ -77,6 +77,33 @@ describe('InboxList (UX-01 compact rows)', () => {
     expect((rows[1]!.element as HTMLElement).tabIndex).toBe(-1);
   });
 
+  it('removes the star indicator entirely when a starred row becomes known unstarred', async () => {
+    const sample = row('star', {
+      lastMessageAt: '2026-01-15T09:00:00Z',
+      stars: { starredMessages: 1, knownMessages: 1, totalMessages: 2 },
+    });
+    const w = mountList([sample]);
+    expect(w.get('[data-test="row-stars"]').text()).toBe('★ (partial)');
+    expect(w.get('[data-test="row-stars"]').attributes('aria-label')).toContain('Starred');
+    await w.setProps({ rows: [{ ...sample, stars: { starredMessages: 0, knownMessages: 2, totalMessages: 2 } }] });
+    expect(w.find('[data-test="row-stars"]').exists()).toBe(false);
+    expect(w.text()).not.toContain('☆');
+  });
+
+  it('keeps unknown star coverage visible rather than treating it as unstarred', async () => {
+    const sample = row('unknown-star', { lastMessageAt: '2026-01-15T09:00:00Z' });
+    const w = mountList([sample]);
+    for (const stars of [
+      { starredMessages: 0, knownMessages: 0, totalMessages: 1 },
+      { starredMessages: 0, knownMessages: 1, totalMessages: 2 },
+      { starredMessages: 0, knownMessages: 0, totalMessages: 0 },
+    ]) {
+      await w.setProps({ rows: [{ ...sample, stars }] });
+      expect(w.get('[data-test="row-stars"]').text()).toContain('Star unknown');
+      expect(w.get('[data-test="row-stars"]').attributes('aria-label')).toContain('Star state unknown');
+    }
+  });
+
   it('never guesses a sender when primaryCorrespondent is absent', async () => {
     const w = mountList(defaultRows());
     await flushPromises();

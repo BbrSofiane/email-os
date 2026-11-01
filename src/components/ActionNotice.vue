@@ -143,6 +143,8 @@ const UNDO_EXPIRED_RECOVERY: Record<LastActionId, string> = {
   unarchive: 'Mark Done archives the whole conversation',
   read: 'use the opposite read control',
   unread: 'use the opposite read control',
+  star: 'use Unstar',
+  unstar: 'use Star',
 };
 
 const statusText = computed(() => {

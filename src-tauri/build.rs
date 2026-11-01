@@ -2,6 +2,9 @@ fn main() {
     let manifest = tauri_build::AppManifest::new().commands(&[
         "list_conversations",
         "list_cached_done",
+        "list_cached_starred",
+        "set_starred",
+        "set_starred_group",
         "get_saved_split",
         "save_saved_split",
         "get_conversation",

@@ -339,6 +339,9 @@ export function createReaderFixtureClient(): ReaderFixture {
   };
 
   const client: MailClient = {
+    listCachedStarred: () => Promise.reject({kind:'read_only'} satisfies MailError),
+    setStarred: () => Promise.reject({kind:'read_only'} satisfies MailError),
+    setStarredGroup: () => Promise.reject({kind:'read_only'} satisfies MailError),
     getSavedSplit: async () => null,
     saveSavedSplit: async () => { throw { kind: 'storage_unavailable' }; },
     // UX-05 group seam stub: reader fixture journeys never exercise groups;

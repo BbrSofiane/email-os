@@ -1,8 +1,207 @@
 //! Real provider parser -> durable cache -> wire summary contract for saved splits.
+
+#[test]
+fn saved_definition_and_newest_sender_survive_exact_star_group_and_reopen() {
+    let dir = std::env::temp_dir().join(format!("split-stars-{}", uuid::Uuid::new_v4()));
+    let store = GmailStore::open(&dir, Arc::new(SystemClock)).unwrap();
+    store
+        .begin_account(
+            &GmailProfile {
+                account_id: "acct".into(),
+                email_address: "me@example.test".into(),
+                history_id: "h1".into(),
+            },
+            0,
+        )
+        .unwrap();
+    let definition = crate::splits::SavedSplit {
+        name: "Newest".into(),
+        criterion: crate::splits::SplitCriterion::Domain,
+        value: "new.test".into(),
+        enabled: true,
+        hide_when_empty: false,
+    };
+    store.save_saved_split("acct", &definition).unwrap();
+    let mut json: Value = serde_json::from_str(&body(Some("Bob <bob@new.test>"), true)).unwrap();
+    json["messages"][0]["labelIds"] = json!(["INBOX", "STARRED"]);
+    store
+        .apply_discovery_page(
+            &[ThreadFetch::Cached(Box::new(
+                parse_thread("acct", "thread", &json.to_string()).unwrap(),
+            ))],
+            None,
+            true,
+            false,
+            0,
+        )
+        .unwrap();
+    let before = summary(&store);
+    assert_eq!(
+        before.primary_correspondent.as_ref().unwrap().mailbox,
+        "bob@new.test"
+    );
+    assert_eq!(before.stars.as_ref().unwrap().starred_messages, 1);
+    let receipt = store
+        .accept_starred_group(&crate::stars::SetStarredGroup {
+            account_id: "acct".into(),
+            members: vec![before.conversation_ref.clone()],
+            starred: false,
+            request_id: "split-unstar".into(),
+        })
+        .unwrap();
+    let after = summary(&store);
+    assert_eq!(after.primary_correspondent, before.primary_correspondent);
+    assert_eq!(after.is_read, before.is_read);
+    assert_eq!(after.stars.unwrap().starred_messages, 0);
+    let conn = store.lock_conn().unwrap();
+    let mut stmt = conn.prepare("SELECT message_id FROM gmail_operation_targets WHERE account_id = 'acct' ORDER BY message_id").unwrap();
+    let ids = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(
+        ids,
+        vec!["a", "m", "z"],
+        "HTML-only messages remain exact setter targets"
+    );
+    drop(stmt);
+    drop(conn);
+    drop(store);
+    let store = GmailStore::open(&dir, Arc::new(SystemClock)).unwrap();
+    assert_eq!(store.get_saved_split("acct").unwrap(), Some(definition));
+    assert_eq!(
+        summary(&store).primary_correspondent,
+        before.primary_correspondent
+    );
+    assert_eq!(summary(&store).stars.unwrap().starred_messages, 0);
+    assert!(!receipt.group_id.is_empty());
+    assert_eq!(store.get_saved_split("foreign"), Err(MailError::NotFound));
+    store.clear_account().unwrap();
+    assert_eq!(store.get_saved_split("acct"), Err(MailError::NotFound));
+    drop(store);
+    std::fs::remove_dir_all(dir).unwrap();
+}
 use super::*;
 use crate::clock::SystemClock;
 use crate::gmail::provider::parse_thread;
 use serde_json::{json, Value};
+
+#[test]
+fn starred_summary_uses_newest_sender_and_never_falls_back_to_snapshot_bodies() {
+    let dir = std::env::temp_dir().join(format!("starred-sender-{}", uuid::Uuid::new_v4()));
+    let store = GmailStore::open(&dir, Arc::new(SystemClock)).unwrap();
+    store
+        .begin_account(
+            &GmailProfile {
+                account_id: "acct".into(),
+                email_address: "me@example.test".into(),
+                history_id: "h1".into(),
+            },
+            0,
+        )
+        .unwrap();
+    let observed = |from| {
+        let mut json: Value = serde_json::from_str(&body(from, true)).unwrap();
+        // The newest provider message is HTML-only; the older renderable body
+        // has Alice's sender. Star membership must include the unsupported body.
+        json["messages"][0]["labelIds"] = json!(["INBOX", "STARRED"]);
+        parse_thread("acct", "thread", &json.to_string()).unwrap()
+    };
+    let request = crate::dto::CachedDoneRequest {
+        account_id: "acct".into(),
+        limit: 100,
+        cursor: None,
+    };
+    let starred = |store: &GmailStore| {
+        let rows = store.list_cached_starred(&request).unwrap().conversations;
+        assert_eq!(rows.len(), 1);
+        rows.into_iter().next().unwrap()
+    };
+    store
+        .apply_discovery_page(
+            &[ThreadFetch::Cached(Box::new(observed(Some(
+                "Bob <bob@new.test>",
+            ))))],
+            None,
+            true,
+            false,
+            0,
+        )
+        .unwrap();
+    assert_eq!(
+        starred(&store).primary_correspondent,
+        summary(&store).primary_correspondent
+    );
+    assert_eq!(
+        starred(&store).primary_correspondent.unwrap().mailbox,
+        "bob@new.test"
+    );
+    drop(store);
+    let store = GmailStore::open(&dir, Arc::new(SystemClock)).unwrap();
+    assert_eq!(
+        starred(&store).primary_correspondent,
+        summary(&store).primary_correspondent
+    );
+    for from in [None, Some("not a mailbox")] {
+        refresh(&store, observed(from));
+        assert_eq!(starred(&store).primary_correspondent, None);
+        assert_eq!(summary(&store).primary_correspondent, None);
+    }
+    refresh(&store, observed(Some("Bob <bob@new.test>")));
+    store.lock_conn().unwrap().execute("UPDATE gmail_conversations SET newest_sender_json = NULL WHERE account_id = 'acct' AND conversation_id = 'thread'", []).unwrap();
+    assert_eq!(
+        starred(&store).primary_correspondent,
+        None,
+        "legacy metadata must not fall back to Alice"
+    );
+    refresh(&store, observed(Some("Bob <bob@new.test>")));
+    let target = summary(&store).conversation_ref;
+    store
+        .accept_archived(&crate::dto::SetArchived {
+            conversation: target.clone(),
+            archived: true,
+            request_id: "sender-recovery".into(),
+        })
+        .unwrap();
+    assert_eq!(
+        store.list_cached_done(&request).unwrap().conversations[0].primary_correspondent,
+        starred(&store).primary_correspondent
+    );
+    let conn = store.lock_conn().unwrap();
+    // Isolate recovery-only rendering. Production cache trimming is exercised
+    // separately by cache_trim_preserves_starred_arrival_outside_original_operation_targets.
+    for table in [
+        "gmail_messages",
+        "gmail_conversations",
+        "gmail_inbox_membership",
+    ] {
+        conn.execute(
+            &format!(
+                "DELETE FROM {table} WHERE account_id = 'acct' AND conversation_id = 'thread'"
+            ),
+            [],
+        )
+        .unwrap();
+    }
+    drop(conn);
+    assert!(store
+        .get_conversation(&target)
+        .unwrap()
+        .retained_snapshot_at
+        .is_some());
+    assert_eq!(
+        starred(&store).primary_correspondent,
+        None,
+        "recovery bodies cannot prove newest sender"
+    );
+    assert_eq!(
+        store.list_cached_done(&request).unwrap().conversations[0].primary_correspondent,
+        None
+    );
+    drop(store);
+    std::fs::remove_dir_all(dir).unwrap();
+}
 
 fn body(from: Option<&str>, reversed: bool) -> String {
     let mut headers = vec![json!({"name": "Subject", "value": "Sender metadata"})];

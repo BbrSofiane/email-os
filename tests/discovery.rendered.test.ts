@@ -208,6 +208,35 @@ describe.skipIf(chromePath === '')('UX-03 discovery (real Chrome, opt-in)', () =
     await cdp!.js('window.__h.wait(60)');
   }
 
+  it('UX-08: trusted S, archived Starred, unstar removal and Back (synthetic memory only)', async () => {
+    await cdp!.js(`(async () => {
+      const vueUrl = performance.getEntriesByType('resource').map(x=>x.name).find(n=>n.includes('/node_modules/.vite/deps/vue.js'));
+      const {createApp} = await import(vueUrl);
+      const {default:App} = await import('/src/App.vue');
+      const {createBrowserFakeMailClient} = await import('/src/lib/ipc/browser-fake.ts');
+      const root = document.querySelector('#app'); root.__vue_app__?.unmount();
+      const fake = createBrowserFakeMailClient();
+      fake.controls.setAccount({mode:'gmail',connection:'connected',mutationAccess:'enabled'});
+      window.__stars = fake;
+      createApp(App,{client:fake,mode:'browser-preview'}).mount(root);
+    })()`);
+    await cdp!.js('window.__h.wait(250)');
+    await click('[data-test="conversation-row-conv-01"]');
+    await press('Escape'); await cdp!.js('window.__h.wait(60)');
+    await press('s'); await cdp!.js('window.__h.wait(100)');
+    expect(await cdp!.js(`document.querySelector('[data-test="conversation-row-conv-01"] [data-test="row-stars"]').textContent`)).toContain('★');
+    await cdp!.js(`window.__stars.setArchived({conversation:{accountId:'gmail-account',conversationId:'conv-01'},archived:true,requestId:'rendered-archive'})`);
+    await cdp!.js('window.__h.wait(100)');
+    await click('[data-test="rail-starred"]'); await cdp!.js('window.__h.wait(100)');
+    expect(await cdp!.js(`document.querySelector('[data-test="starred-coverage"]').textContent`)).toContain('not provider-complete');
+    await click('[data-test="palette-trigger"]'); await cdp!.js('window.__h.wait(60)');
+    await cdp!.cmd('Input.insertText', { text: 'unstar' });
+    await press('Enter'); await cdp!.js('window.__h.wait(100)');
+    expect(await cdp!.js(`document.querySelector('[data-test="inbox-empty"]').textContent`)).toContain('No known starred');
+    await click('[data-test="context-back"]'); await cdp!.js('window.__h.wait(100)');
+    expect(await cdp!.js(`document.querySelector('[data-test="inbox-title"]').textContent`)).toBe('Inbox');
+  });
+
   /** Isolated in-memory client with manually settled IO; never touches a provider. */
   async function mountSplit(options: { saved?: boolean; delayedList?: boolean } = {}): Promise<void> {
     await setViewport(1200);

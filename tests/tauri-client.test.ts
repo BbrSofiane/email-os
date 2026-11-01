@@ -48,6 +48,25 @@ describe('Tauri draft and close protocol adapter', () => {
     });
   });
 
+  it('transports stars with exact named commands, stable identities and typed errors', async () => {
+    const client = createTauriMailClient();
+    const command = {conversation:{accountId:'a',conversationId:'t'},starred:false,requestId:'s'};
+    const receipt = {operationId:'op',acceptedAt:'now'};
+    mocks.invoke.mockResolvedValue(receipt);
+    expect(await client.setStarred(command)).toBe(receipt);
+    expect(mocks.invoke).toHaveBeenLastCalledWith('set_starred',{command});
+    const group = {accountId:'a',members:[command.conversation],starred:true,requestId:'g'};
+    await client.setStarredGroup(group);
+    expect(mocks.invoke).toHaveBeenLastCalledWith('set_starred_group',{command:group});
+    const request = {accountId:'a',limit:25,cursor:null};
+    await client.listCachedStarred(request);
+    expect(mocks.invoke).toHaveBeenLastCalledWith('list_cached_starred',{request});
+    mocks.invoke.mockRejectedValue({kind:'permission_required'});
+    await expect(client.setStarred(command)).rejects.toEqual({kind:'permission_required'});
+    mocks.invoke.mockRejectedValue(new Error('lost bridge'));
+    await expect(client.listCachedStarred(request)).rejects.toEqual({kind:'storage_unavailable'});
+  });
+
   it('transports the account-scoped local split without invoking mailbox mutations', async () => {
     const client = createTauriMailClient();
     const split = { name: 'Clients', criterion: 'domain' as const, value: 'example.com', enabled: true, hideWhenEmpty: true };

@@ -13,6 +13,8 @@ use mail_core::gmail::types::{
     GmailHistoryError, GmailProfile, GmailReadProvider, GmailThread, HistoryPage, InboxPage,
 };
 use mail_core::CancelToken;
+#[path = "support/stars.rs"]
+mod stars;
 
 const ACCOUNT: &str = "acct-operations";
 const THREAD: &str = "thread-operations";
@@ -39,8 +41,10 @@ fn profile() -> GmailProfile {
 
 fn sample_thread() -> GmailThread {
     GmailThread {
+        star_facts: None,
         newest_sender: None,
         conversation: Conversation {
+            stars: None,
             conversation_ref: ConversationRef {
                 account_id: ACCOUNT.to_string(),
                 conversation_id: THREAD.to_string(),
@@ -341,6 +345,12 @@ impl FakeProvider {
     fn apply_remote(&self, kind: MailboxOperationKind, ids: &[String], value: bool) {
         let mut state = self.state.lock().unwrap();
         match kind {
+            MailboxOperationKind::Star => {
+                let stars = state.thread.star_facts.get_or_insert_with(Default::default);
+                for id in ids {
+                    stars.insert(id.clone(), value);
+                }
+            }
             MailboxOperationKind::Archive => {
                 state
                     .thread
@@ -425,6 +435,14 @@ impl GmailReadProvider for FakeProvider {
         self.apply(MailboxOperationKind::Archive, ids, archived, cancel)
     }
 
+    fn apply_star(
+        &self,
+        ids: &[String],
+        starred: bool,
+        cancel: &CancelToken,
+    ) -> Result<(), MailError> {
+        self.apply(MailboxOperationKind::Star, ids, starred, cancel)
+    }
     fn apply_read(
         &self,
         ids: &[String],

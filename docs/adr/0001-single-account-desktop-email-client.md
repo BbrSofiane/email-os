@@ -64,6 +64,20 @@ Drafts may initially be application-local. The interface must make that limitati
 - Basic search sufficient to find an older conversation. Provider-backed search is acceptable; a complete local full-text index is not required.
 - Search results must disclose whether they cover the provider mailbox or only cached data.
 
+### UX-08 bounded star decision
+
+UX-08 explicitly adds observed per-message STARRED facts and narrow Star/Unstar
+setters over the immutable inventory observed at acceptance. This is a bounded
+addition to the original archive/read action set, not arbitrary label authority:
+INBOX and UNREAD remain independent, and the existing durable groups, preimages,
+Undo and uncertain-outcome reconciliation are reused. Legacy/partial facts stay
+unknown. Cached Starred includes archived/recovery mail but never promises
+provider-complete coverage. No new OAuth scope is requested; actual writes still
+require the verified modify grant, explicit user action and operator-approved
+disposable-account validation. The legacy archive-only fixture profile does not
+gain star controls. Native macOS/provider convergence remains a separate gate.
+Saved splits/search are not prerequisites and are not reimplemented here.
+
 ### 4. One configurable view
 
 Provide one additional saved queue defined by a bounded, declarative filter over sender, domain, or existing provider labels, with a stable default order. It must reuse the ordinary reader, composer, and mailbox commands.
