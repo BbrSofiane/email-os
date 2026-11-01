@@ -149,7 +149,10 @@ it('edits a split, switches by pointer and nonwrapping Tab, restores reader cont
   const first = (await fake.listConversations()).conversations[0]!;
   wrapper = mount(App, { props: { client: fake, mode: 'browser-preview' }, attachTo: document.body });
   await flushPromises();
-  await wrapper.get('[data-test="split-settings"]').trigger('click');
+  await wrapper.get('[data-test="palette-trigger"]').trigger('click');
+  await wrapper.get('[data-test="action-query"]').setValue('Create Split');
+  await wrapper.get('[data-test="action-query"]').trigger('keydown', { key: 'Enter' });
+  await flushPromises();
   await wrapper.get('[data-test="split-name"]').setValue('Clients');
   await wrapper.get('[data-test="split-value"]').setValue(first.primaryCorrespondent!.mailbox);
   await wrapper.get('[data-test="split-save"]').trigger('submit');

@@ -87,13 +87,19 @@ const inboxList = ref<InstanceType<typeof InboxList> | null>(null);
 const editingSplit = ref(false);
 const splitEditor = ref<InstanceType<typeof SplitEditor> | null>(null);
 const splitSettingsButton = ref<HTMLButtonElement | null>(null);
+let splitEditorOrigin: HTMLElement | null = null;
+function openSplitEditor(trigger: HTMLElement | null): void {
+  splitEditorOrigin = trigger;
+  editingSplit.value = true;
+}
 const contextTitle = computed(() => mailbox.context.value === 'done' ? 'Cached Done' : mailbox.context.value === 'saved' ? mailbox.savedSplit.value?.name ?? 'Saved split' : 'Inbox');
 const savedTabVisible = computed(() => mailbox.savedSplit.value?.enabled && !mailbox.splitError.value && (!mailbox.savedSplit.value.hideWhenEmpty || mailbox.savedTotal.value !== 0));
 async function closeSplitEditor(restoreFocus = true): Promise<void> {
+  const trigger = splitEditorOrigin;
   editingSplit.value = false;
   await nextTick();
   if (restoreFocus && !editingSplit.value && !overlay.value && !readerOpen.value && !drawer.value && !contactDisclosure.value) {
-    splitSettingsButton.value?.focus();
+    (trigger?.isConnected ? trigger : paletteButton.value)?.focus();
   }
 }
 async function saveSplit(split: SavedSplit): Promise<void> {
@@ -673,8 +679,8 @@ async function navigateContext(context: BrowseContext, saved?: ContextEntry): Pr
   drawer.value = null;
   contactDisclosure.value = false;
   if (readerOpen.value && context === mailbox.context.value && !saved) {
-    closeReader(true);
-    return true;
+    await closeReader(true);
+    return token === navigationToken && account === accountId.value;
   }
   if (readerOpen.value) mailbox.closeReader();
   await mailbox.setContext(context, saved?.loadedDonePages, saved?.doneBoundary);
@@ -775,12 +781,12 @@ function resolveOriginFocus(originState: ReaderOrigin): ConversationRef | null {
  * explicit Inbox navigation (rail) keeps the list's own current focus instead.
  * An Activity-origin Back reopens Activity with the saved Inbox anchor.
  */
-function closeReader(explicitInbox = false): void {
+function closeReader(explicitInbox = false): Promise<void> {
   const originState = origin.value;
   const token = navigationToken;
   const account = accountId.value;
   mailbox.closeReader();
-  void (async () => {
+  return (async () => {
     // An active draft editor owns attention: keep it visible rather than
     // leaving it hidden behind another disclosure or off-screen entirely.
     if (drafts.isVisible.value) {
@@ -1024,6 +1030,7 @@ function actionTarget(explicit?: ConversationRef): ConversationRef | null {
 }
 function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): boolean {
   if (!accountReady.value) return false;
+  if (id === 'create-split') return !!accountId.value && !mailbox.savedSplit.value && !editingSplit.value;
   if (id === 'saved') return !!mailbox.savedSplit.value?.enabled && !mailbox.splitError.value;
   if (['inbox', 'done', 'activity'].includes(id)) return !!accountId.value;
   if (id === 'account') return gmailMode.value;
@@ -1065,6 +1072,14 @@ const availableActions = computed(() => browsingActions
 async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): Promise<void> {
   if (!actionAvailable(id, explicit)) return;
   switch (id) {
+    case 'create-split':
+      if (readerOpen.value || drawer.value || contactDisclosure.value || mailbox.context.value !== 'inbox') {
+        if (!(await navigateContext('inbox'))) return;
+      }
+      // Let reader/list restoration finish before the editor claims focus.
+      await nextTick();
+      if (actionAvailable(id) && !overlay.value) openSplitEditor(paletteButton.value);
+      return;
     case 'inbox': await navigateToInbox(); return;
     case 'saved': await navigateContext('saved'); return;
     case 'done': await navigateContext('done'); return;
@@ -1440,7 +1455,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
         <button type="button" data-test="split-inbox" :aria-current="mailbox.context.value === 'inbox' ? 'page' : undefined" @click="navigateContext('inbox')">Inbox <span v-if="splitBadge(mailbox.inboxTotal.value)" class="split-count">{{ splitBadge(mailbox.inboxTotal.value) }}</span></button>
         <button v-if="savedTabVisible" type="button" data-test="split-saved" :aria-current="mailbox.context.value === 'saved' ? 'page' : undefined" @click="navigateContext('saved')">{{ mailbox.savedSplit.value?.name }} <span v-if="splitBadge(mailbox.savedTotal.value)" class="split-count">{{ splitBadge(mailbox.savedTotal.value) }}</span></button>
         <button type="button" data-test="unread-filter" :aria-pressed="mailbox.unreadOnly.value" @click="mailbox.setUnreadOnly(!mailbox.unreadOnly.value)">Unread only</button>
-        <button ref="splitSettingsButton" type="button" data-test="split-settings" :aria-expanded="editingSplit" @click="editingSplit = !editingSplit">{{ mailbox.savedSplit.value ? 'Edit split' : 'Create split' }}</button>
+        <button v-if="mailbox.savedSplit.value" ref="splitSettingsButton" type="button" data-test="split-settings" :aria-expanded="editingSplit" @click="editingSplit ? closeSplitEditor() : openSplitEditor(splitSettingsButton)">Edit split</button>
       </nav>
       <SplitEditor ref="splitEditor" v-if="editingSplit && accountReady && !readerOpen && !drawer" :split="mailbox.savedSplit.value" :busy="mailbox.splitBusy.value" :error="!!mailbox.splitError.value" @save="saveSplit" @cancel="closeSplitEditor" />
       <p v-if="mailbox.splitError.value && !editingSplit" role="alert">Saved split unavailable. <button type="button" @click="mailbox.refresh()">Retry split</button></p>

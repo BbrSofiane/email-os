@@ -54,8 +54,12 @@ The synthetic browser preview remains explicitly in-memory only.
 
 ## Navigation and interaction
 
-The small inline editor is reached from Create/Edit split. Inputs receive focus
-on opening; Cancel/Escape returns focus to its trigger. Invalid input or storage
+Create the split through **Commands → Create Split** (or Cmd+K in the native
+app); there is no standalone creation button. The command is available only
+before a definition exists, including from an empty or unavailable list, and
+returns to Inbox before opening the editor from a reader or utility drawer.
+Existing definitions retain the **Edit split** button. Inputs receive focus
+on opening; Cancel/Escape returns focus to Commands or the Edit split trigger. Invalid input or storage
 failure is visible and leaves the definition/mail unchanged. Save is single-flight.
 After failure, focus displaced by disabled save controls returns to the prior
 field/control, unless focus has moved outside the editor or to another view/overlay.
@@ -87,7 +91,8 @@ is **nonwrapping**: at either boundary, native Tab traversal proceeds to control
 rather than swallowing the key. Body/initial focus, absent/loading/error lists,
 form fields, checkboxes, toolbar buttons, reader, drawers/disclosures and palette
 retain ordinary focus ownership. Hidden empty views are skipped unless currently
-open. Users can reach row checkboxes, toolbars and Create/Edit split by keyboard.
+open. Users can reach row checkboxes, toolbars, Commands → Create Split and
+Edit split by keyboard.
 
 One session-local Unread only toggle applies to the current browsing context
 (and persists across view switches). Only `isRead === false` qualifies; missing
@@ -106,6 +111,8 @@ rather than claiming Inbox zero. The filter resets on account disconnect/change.
   and independent Activity/Done ownership.
 - `tests/app.saved-split-activity.test.ts`: archived Activity recovery from a saved
   split, restore actions, and the Activity-origin reader return path.
+- `tests/create-split-command.test.ts`: command-only creation, context transitions,
+  native Cmd+K, editor focus, save/cancel return focus, and existing-split editing.
 - `tests/split-editor.component.test.ts`: failure focus restoration and ownership,
   in-flight submission/cancel fencing, and successful-save focus behavior.
 - `crates/mail-core/tests/saved_split.rs`: save/reopen, account scoping, rejected

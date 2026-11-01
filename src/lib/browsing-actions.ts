@@ -11,6 +11,7 @@ export const browsingActions = [
   { id: 'clear-selection', label: 'Clear selection', shortcut: 'Escape' },
   { id: 'inbox', label: 'Go to Inbox', shortcut: '' },
   { id: 'saved', label: 'Go to saved split', shortcut: '' },
+  { id: 'create-split', label: 'Create Split', shortcut: '' },
   { id: 'done', label: 'Go to cached Done', shortcut: 'G then E (within 1 second)' },
   { id: 'account', label: 'Go to Account', shortcut: '' },
   { id: 'activity', label: 'Go to Activity', shortcut: '' },

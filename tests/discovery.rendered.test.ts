@@ -241,8 +241,15 @@ describe.skipIf(chromePath === '')('UX-03 discovery (real Chrome, opt-in)', () =
     await cdp!.cmd('Page.bringToFront');
   }
 
+  async function openCreateSplit(): Promise<void> {
+    await click('[data-test="palette-trigger"]');
+    await cdp!.cmd('Input.insertText', { text: 'Create Split' });
+    await press('Enter');
+    await cdp!.js('window.__h.wait(60)');
+  }
+
   async function submitSplit(): Promise<void> {
-    await click('[data-test="split-settings"]');
+    await openCreateSplit();
     await cdp!.js('window.__h.wait(40)');
     await cdp!.cmd('Input.insertText', { text: 'Clients' });
     await click('[data-test="split-value"]');
@@ -253,24 +260,34 @@ describe.skipIf(chromePath === '')('UX-03 discovery (real Chrome, opt-in)', () =
     await cdp!.js('window.__h.wait(60)');
   }
 
-  it('lets initial/body and unavailable-list Tab traverse controls, never trapping Create split', async () => {
+  it('lets initial/body and unavailable-list Tab reach Commands and create a split', async () => {
     for (const delayedList of [false, true]) {
       await mountSplit({ delayedList });
       expect(await cdp!.js('document.activeElement === document.body')).toBe(true);
       await press('Tab');
       expect(await cdp!.js('document.activeElement === document.body')).toBe(false);
       const reached = new Set<string | null>();
-      for (let i = 0; i < 15 && !reached.has('split-settings'); i++) {
+      for (let i = 0; i < 15 && !reached.has('palette-trigger'); i++) {
         reached.add(await activeTest());
-        if (!reached.has('split-settings')) await press('Tab');
+        if (!reached.has('palette-trigger')) await press('Tab');
       }
-      expect(reached.has('split-settings')).toBe(true);
+      expect(reached.has('palette-trigger')).toBe(true);
+      expect(await cdp!.js(`!!document.querySelector('[data-test="split-settings"]')`)).toBe(false);
+      await press('Enter');
+      await cdp!.cmd('Input.insertText', { text: 'Create Split' });
+      await press('Enter');
+      await cdp!.js('window.__h.wait(60)');
+      expect(await activeTest()).toBe('split-name');
+      await press('Escape');
+      expect(await activeTest()).toBe('palette-trigger');
       if (delayedList) {
         await cdp!.js('window.__splitControl.rejectList(); window.__h.wait(80)');
         expect(await cdp!.js(`!!document.querySelector('[data-test="inbox-error"]')`)).toBe(true);
         await cdp!.js('document.activeElement.blur()');
-        await press('Tab', { shift: true });
-        expect(await cdp!.js('document.activeElement === document.body')).toBe(false);
+        // Commands is now the first tab stop. Shift+Tab may correctly leave the
+        // page for browser chrome; forward Tab must still reach Destinations.
+        await press('Tab');
+        expect(await activeTest()).toBe('navigator-trigger');
       } else {
         await cdp!.js(`document.querySelector('.inbox-row').focus()`);
         await press('Tab'); // No saved split: ordinary traversal to checkbox.
@@ -326,7 +343,7 @@ describe.skipIf(chromePath === '')('UX-03 discovery (real Chrome, opt-in)', () =
     expect(await cdp!.js(`!!document.querySelector('[data-test="selection-live"]')`)).toBe(false);
     await press('Escape');
     expect(await cdp!.js(`!!document.querySelector('.split-editor')`)).toBe(false);
-    expect(await activeTest()).toBe('split-settings');
+    expect(await activeTest()).toBe('palette-trigger');
   });
 
   it('does not restore rejected-save focus over a palette or after navigating away', async () => {
@@ -338,7 +355,7 @@ describe.skipIf(chromePath === '')('UX-03 discovery (real Chrome, opt-in)', () =
     expect(await activeTest()).toBe('action-query');
     await press('Escape');
     await press('Escape'); // visible editor can close from the palette trigger
-    expect(await activeTest()).toBe('split-settings');
+    expect(await activeTest()).toBe('palette-trigger');
     await mountSplit();
     await submitSplit();
     await click('[data-test="rail-activity"]');
@@ -355,11 +372,11 @@ describe.skipIf(chromePath === '')('UX-03 discovery (real Chrome, opt-in)', () =
     await submitSplit();
     await cdp!.js('window.__splitControl.resolve(); window.__h.wait(150)');
     expect(await cdp!.js(`!!document.querySelector('.split-editor')`)).toBe(false);
-    expect(await activeTest()).toBe('split-settings');
+    expect(await activeTest()).toBe('palette-trigger');
     await mountSplit();
     await submitSplit();
-    await click('[data-test="split-settings"]'); // dismiss pending instance
-    await click('[data-test="split-settings"]'); // a different editor instance
+    await click('[data-test="rail-activity"]'); // dismiss pending instance
+    await openCreateSplit(); // a different editor instance
     const newEditorFocus = await activeTest();
     await cdp!.js('window.__splitControl.resolve(); window.__h.wait(150)');
     expect(await cdp!.js(`!!document.querySelector('.split-editor')`)).toBe(true);
@@ -394,8 +411,7 @@ describe.skipIf(chromePath === '')('UX-03 discovery (real Chrome, opt-in)', () =
       createApp(App, { client: window.__splitFake, mode: 'browser-preview' }).mount(root);
       await window.__h.wait(150);
     })()`);
-    await click('[data-test="split-settings"]');
-    await cdp!.js('window.__h.wait(60)');
+    await openCreateSplit();
     expect(await activeTest()).toBe('split-name');
     await cdp!.cmd('Input.insertText', { text: 'Clients' });
     await click('[data-test="split-value"]');
