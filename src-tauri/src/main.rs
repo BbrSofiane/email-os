@@ -48,6 +48,18 @@ impl Backend {
         }
     }
 
+    fn get_saved_split(&self, account: &str) -> Result<Option<mail_core::splits::SavedSplit>, MailError> {
+        match self {
+            Self::Fixture(core) => core.get_saved_split(account),
+            Self::Gmail(core) => core.get_saved_split(account),
+        }
+    }
+    fn save_saved_split(&self, account: &str, split: &mail_core::splits::SavedSplit) -> Result<mail_core::splits::SavedSplit, MailError> {
+        match self {
+            Self::Fixture(core) => core.save_saved_split(account, split),
+            Self::Gmail(core) => core.save_saved_split(account, split),
+        }
+    }
     fn list_cached_done(
         &self,
         request: &CachedDoneRequest,
@@ -346,6 +358,18 @@ where
     tauri::async_runtime::spawn_blocking(move || f(&backend))
         .await
         .map_err(|_| MailError::StorageUnavailable)?
+}
+
+#[tauri::command]
+async fn get_saved_split(state: State<'_, AppState>, account_id: String) -> Result<Option<mail_core::splits::SavedSplit>, MailError> {
+    let backend = state.backend.clone();
+    run_blocking(backend, move |backend| backend.get_saved_split(&account_id)).await
+}
+
+#[tauri::command]
+async fn save_saved_split(state: State<'_, AppState>, account_id: String, split: mail_core::splits::SavedSplit) -> Result<mail_core::splits::SavedSplit, MailError> {
+    let backend = state.backend.clone();
+    run_blocking(backend, move |backend| backend.save_saved_split(&account_id, &split)).await
 }
 
 #[tauri::command]
@@ -720,6 +744,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             list_conversations,
             list_cached_done,
+            get_saved_split,
+            save_saved_split,
             get_conversation,
             set_archived,
             enable_mailbox_actions,

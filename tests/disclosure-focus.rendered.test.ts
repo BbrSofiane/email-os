@@ -205,6 +205,9 @@ describe.skipIf(chromePath === '')('App covered central surface focus safety (re
 })()`;
 
   async function resize(width: number): Promise<void> {
+    // Headless background pages can suspend the animation frames used by tick.
+    // Activate this isolated test page before waiting for real layout/focus.
+    await cdp!.cmd('Page.bringToFront');
     await cdp!.cmd('Emulation.setDeviceMetricsOverride', { width, height: 720, screenWidth: width, screenHeight: 720, deviceScaleFactor: 1, mobile: false });
     await tick();
   }

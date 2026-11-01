@@ -70,7 +70,8 @@ import {
   type SetRead,
   type SetReadGroup,
 } from './client';
-import { toMailError } from './client';
+import { toMailError, type SavedSplit } from './client';
+import { GET_SAVED_SPLIT_COMMAND, SAVE_SAVED_SPLIT_COMMAND } from './generated';
 
 function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   return invoke<T>(command, args).catch((raw: unknown) => Promise.reject(toMailError(raw)));
@@ -78,6 +79,8 @@ function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
 
 export function createTauriMailClient(): MailClient {
   return {
+    getSavedSplit(accountId: string): Promise<SavedSplit | null> { return call(GET_SAVED_SPLIT_COMMAND, { accountId }); },
+    saveSavedSplit(accountId: string, split: SavedSplit): Promise<SavedSplit> { return call(SAVE_SAVED_SPLIT_COMMAND, { accountId, split }); },
     listConversations(): Promise<InboxSnapshot> {
       return call<InboxSnapshot>(LIST_CONVERSATIONS_COMMAND);
     },

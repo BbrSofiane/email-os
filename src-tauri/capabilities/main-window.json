@@ -8,6 +8,8 @@
     "core:event:allow-unlisten",
     "allow-list-conversations",
     "allow-list-cached-done",
+    "allow-get-saved-split",
+    "allow-save-saved-split",
     "allow-get-conversation",
     "allow-set-archived",
     "allow-enable-mailbox-actions",

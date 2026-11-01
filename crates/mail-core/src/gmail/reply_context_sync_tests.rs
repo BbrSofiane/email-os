@@ -160,6 +160,7 @@ fn thread(context: Option<ReplyContext>, complete: bool) -> GmailThread {
         },
     ];
     GmailThread {
+        newest_sender: messages.iter().max_by(|a, b| (&a.sent_at, &a.id).cmp(&(&b.sent_at, &b.id))).map(|m| m.from.clone()),
         conversation: Conversation {
             conversation_ref: ConversationRef {
                 account_id: "acct-reply".to_string(),
@@ -240,6 +241,17 @@ fn close(core: GmailCore, dir: std::path::PathBuf) {
     core.stop();
     drop(core);
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn retained_thread_bytes_include_newest_sender_allocations() {
+    let mut observed = thread(None, true);
+    let sender = observed.newest_sender.take().unwrap();
+    let without = retained_thread_bytes(&observed);
+    let expected = sender.mailbox.capacity()
+        + sender.display_name.as_ref().map_or(0, String::capacity);
+    observed.newest_sender = Some(sender);
+    assert_eq!(retained_thread_bytes(&observed), without + expected);
 }
 
 #[test]

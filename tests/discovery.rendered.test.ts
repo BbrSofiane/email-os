@@ -208,6 +208,227 @@ describe.skipIf(chromePath === '')('UX-03 discovery (real Chrome, opt-in)', () =
     await cdp!.js('window.__h.wait(60)');
   }
 
+  /** Isolated in-memory client with manually settled IO; never touches a provider. */
+  async function mountSplit(options: { saved?: boolean; delayedList?: boolean } = {}): Promise<void> {
+    await setViewport(1200);
+    await cdp!.js(`(async () => {
+      const vueUrl = performance.getEntriesByType('resource').map((x) => x.name).find((n) => n.includes('/node_modules/.vite/deps/vue.js'));
+      const { createApp } = await import(vueUrl);
+      const { default: App } = await import('/src/App.vue');
+      const { createBrowserFakeMailClient } = await import('/src/lib/ipc/browser-fake.ts');
+      const root = document.querySelector('#app'); root.__vue_app__?.unmount();
+      const fake = createBrowserFakeMailClient();
+      const row = (await fake.listConversations()).conversations[0];
+      window.__splitDefinition = { name: 'Clients', criterion: 'sender', value: row.primaryCorrespondent.mailbox, enabled: true, hideWhenEmpty: false };
+      if (${!!options.saved}) await fake.saveSavedSplit(row.ref.accountId, window.__splitDefinition);
+      const control = window.__splitControl = { saves: 0, mutations: 0 };
+      const client = { ...fake, saveSavedSplit: (...args) => {
+        control.saves++;
+        return new Promise((resolve, reject) => {
+          control.reject = () => reject({ kind: 'storage_unavailable' });
+          control.resolve = async () => { await fake.saveSavedSplit(...args); resolve(); };
+        });
+      } };
+      for (const name of ['setArchived', 'setRead', 'undoOperation', 'setArchivedGroup', 'setReadGroup', 'undoOperationGroup']) {
+        if (fake[name]) client[name] = (...args) => { control.mutations++; return fake[name](...args); };
+      }
+      if (${!!options.delayedList}) client.listConversations = () => new Promise((resolve, reject) => {
+        control.rejectList = () => reject({ kind: 'storage_unavailable' });
+      });
+      createApp(App, { client, mode: 'browser-preview' }).mount(root);
+      await window.__h.wait(150);
+    })()`);
+    await cdp!.cmd('Page.bringToFront');
+  }
+
+  async function submitSplit(): Promise<void> {
+    await click('[data-test="split-settings"]');
+    await cdp!.js('window.__h.wait(40)');
+    await cdp!.cmd('Input.insertText', { text: 'Clients' });
+    await click('[data-test="split-value"]');
+    await cdp!.cmd('Input.insertText', { text: await cdp!.js<string>('window.__splitDefinition.value') });
+    // Submit from the value field so failure must restore that field, not just
+    // repeat mount-time focus. Enter is trusted and exercises native submit.
+    await press('Enter');
+    await cdp!.js('window.__h.wait(60)');
+  }
+
+  it('lets initial/body and unavailable-list Tab traverse controls, never trapping Create split', async () => {
+    for (const delayedList of [false, true]) {
+      await mountSplit({ delayedList });
+      expect(await cdp!.js('document.activeElement === document.body')).toBe(true);
+      await press('Tab');
+      expect(await cdp!.js('document.activeElement === document.body')).toBe(false);
+      const reached = new Set<string | null>();
+      for (let i = 0; i < 15 && !reached.has('split-settings'); i++) {
+        reached.add(await activeTest());
+        if (!reached.has('split-settings')) await press('Tab');
+      }
+      expect(reached.has('split-settings')).toBe(true);
+      if (delayedList) {
+        await cdp!.js('window.__splitControl.rejectList(); window.__h.wait(80)');
+        expect(await cdp!.js(`!!document.querySelector('[data-test="inbox-error"]')`)).toBe(true);
+        await cdp!.js('document.activeElement.blur()');
+        await press('Tab', { shift: true });
+        expect(await cdp!.js('document.activeElement === document.body')).toBe(false);
+      } else {
+        await cdp!.js(`document.querySelector('.inbox-row').focus()`);
+        await press('Tab'); // No saved split: ordinary traversal to checkbox.
+        expect(await cdp!.js(`document.activeElement.matches('.row-select')`)).toBe(true);
+      }
+    }
+  });
+
+  it('switches only from focused list state and releases both nonwrapping boundaries to native focus', async () => {
+    await mountSplit({ saved: true });
+    await cdp!.js(`document.querySelector('.inbox-row').focus()`);
+    await press('Tab', { shift: true }); // Inbox boundary → preceding toolbar.
+    expect(await cdp!.js(`document.activeElement.matches('button, input, select, a')`)).toBe(true);
+    expect(await cdp!.js(`document.querySelector('[data-test="inbox-title"]').textContent`)).toBe('Inbox');
+    for (let i = 0; i < 15 && await activeTest() !== 'split-settings'; i++) await press('Tab', { shift: true });
+    expect(await activeTest()).toBe('split-settings'); // Edit split is keyboard reachable too.
+    await cdp!.js(`document.querySelector('.inbox-row').focus()`);
+    await press('Tab');
+    await cdp!.js('window.__h.wait(100)');
+    expect(await cdp!.js(`document.querySelector('[data-test="inbox-title"]').textContent`)).toBe('Clients');
+    expect(await cdp!.js(`document.activeElement.matches('.inbox-row')`)).toBe(true);
+    await press('Tab'); // Saved boundary → checkbox, not swallowed.
+    expect(await cdp!.js(`document.activeElement.matches('.row-select')`)).toBe(true);
+    await press('Tab', { shift: true }); // Checkbox retains native ownership.
+    expect(await cdp!.js(`document.activeElement.matches('.inbox-row')`)).toBe(true);
+    await press('Tab', { shift: true });
+    await cdp!.js('window.__h.wait(100)');
+    expect(await cdp!.js(`document.querySelector('[data-test="inbox-title"]').textContent`)).toBe('Inbox');
+    expect(await cdp!.js(`document.activeElement.matches('.inbox-row')`)).toBe(true);
+    await click('[data-test="split-settings"]');
+    expect(await activeTest()).toBe('split-name');
+    await press('Tab');
+    expect(await activeTest()).toBe('split-criterion');
+    await press('Escape');
+    expect(await activeTest()).toBe('split-settings');
+  });
+
+  it('recovers actual field focus after delayed rejection, owns displaced Escape, and never triages beneath the editor', async () => {
+    await mountSplit();
+    await submitSplit();
+    expect(await cdp!.js('window.__splitControl.saves')).toBe(1);
+    expect(await cdp!.js('document.activeElement === document.body')).toBe(true);
+    for (const key of ['Escape', 'Enter', 'e', 'x', 'z']) await press(key);
+    expect(await cdp!.js(`!!document.querySelector('.split-editor')`)).toBe(true);
+    expect(await cdp!.js('window.__splitControl.saves')).toBe(1);
+    await cdp!.js('window.__splitControl.reject(); window.__h.wait(100)');
+    expect(await activeTest()).toBe('split-value');
+    expect(await cdp!.js('window.__splitControl.saves')).toBe(1);
+    expect(await cdp!.js(`!!document.querySelector('.split-editor [role="alert"]')`)).toBe(true);
+    await cdp!.js('document.activeElement.blur()');
+    for (const key of ['e', 'x', 'z']) await press(key);
+    expect(await cdp!.js('window.__splitControl.mutations')).toBe(0);
+    expect(await cdp!.js(`!!document.querySelector('[data-test="selection-live"]')`)).toBe(false);
+    await press('Escape');
+    expect(await cdp!.js(`!!document.querySelector('.split-editor')`)).toBe(false);
+    expect(await activeTest()).toBe('split-settings');
+  });
+
+  it('does not restore rejected-save focus over a palette or after navigating away', async () => {
+    await mountSplit();
+    await submitSplit();
+    await click('[data-test="palette-trigger"]');
+    expect(await activeTest()).toBe('action-query');
+    await cdp!.js('window.__splitControl.reject(); window.__h.wait(100)');
+    expect(await activeTest()).toBe('action-query');
+    await press('Escape');
+    await press('Escape'); // visible editor can close from the palette trigger
+    expect(await activeTest()).toBe('split-settings');
+    await mountSplit();
+    await submitSplit();
+    await click('[data-test="rail-activity"]');
+    await cdp!.js('window.__h.wait(80)');
+    const focus = await activeTest();
+    await cdp!.js('window.__splitControl.reject(); window.__h.wait(100)');
+    expect(await cdp!.js(`!!document.querySelector('.split-editor')`)).toBe(false);
+    expect(await activeTest()).toBe(focus);
+    expect(await cdp!.js('window.__splitControl.mutations')).toBe(0);
+  });
+
+  it('returns successful save focus to its trigger without dismissing a newer editor', async () => {
+    await mountSplit();
+    await submitSplit();
+    await cdp!.js('window.__splitControl.resolve(); window.__h.wait(150)');
+    expect(await cdp!.js(`!!document.querySelector('.split-editor')`)).toBe(false);
+    expect(await activeTest()).toBe('split-settings');
+    await mountSplit();
+    await submitSplit();
+    await click('[data-test="split-settings"]'); // dismiss pending instance
+    await click('[data-test="split-settings"]'); // a different editor instance
+    const newEditorFocus = await activeTest();
+    await cdp!.js('window.__splitControl.resolve(); window.__h.wait(150)');
+    expect(await cdp!.js(`!!document.querySelector('.split-editor')`)).toBe(true);
+    expect(await activeTest()).toBe(newEditorFocus);
+    expect(await cdp!.js('window.__splitControl.saves')).toBe(1);
+    expect(await cdp!.js('window.__splitControl.mutations')).toBe(0);
+    await mountSplit();
+    await submitSplit();
+    await click('[data-test="palette-trigger"]');
+    await cdp!.js('window.__splitControl.resolve(); window.__h.wait(150)');
+    expect(await activeTest()).toBe('action-query');
+    await mountSplit();
+    await submitSplit();
+    await click('[data-test="rail-activity"]');
+    await cdp!.js('window.__h.wait(80)');
+    const navigatedFocus = await activeTest();
+    await cdp!.js('window.__splitControl.resolve(); window.__h.wait(150)');
+    expect(await activeTest()).toBe(navigatedFocus);
+    expect(await cdp!.js(`!!document.querySelector('.split-editor')`)).toBe(false);
+  });
+
+  it('saves and browses one overlapping split with trusted input, archive and Undo (UX-06)', async () => {
+    await cdp!.js(`(async () => {
+      const vueUrl = performance.getEntriesByType('resource').map((x) => x.name).find((n) => n.includes('/node_modules/.vite/deps/vue.js'));
+      const { createApp } = await import(vueUrl);
+      const { default: App } = await import('/src/App.vue');
+      const { createBrowserFakeMailClient } = await import('/src/lib/ipc/browser-fake.ts');
+      const root = document.querySelector('#app'); root.__vue_app__?.unmount();
+      window.__splitFake = createBrowserFakeMailClient();
+      const row = (await window.__splitFake.listConversations()).conversations[0];
+      window.__splitSender = row.primaryCorrespondent.mailbox;
+      createApp(App, { client: window.__splitFake, mode: 'browser-preview' }).mount(root);
+      await window.__h.wait(150);
+    })()`);
+    await click('[data-test="split-settings"]');
+    await cdp!.js('window.__h.wait(60)');
+    expect(await activeTest()).toBe('split-name');
+    await cdp!.cmd('Input.insertText', { text: 'Clients' });
+    await click('[data-test="split-value"]');
+    await cdp!.cmd('Input.insertText', { text: await cdp!.js<string>('window.__splitSender') });
+    await click('[data-test="split-save"]');
+    await cdp!.js('window.__h.wait(150)');
+    expect(await cdp!.js(`document.querySelector('[data-test="split-saved"]').textContent`)).toContain('Clients');
+    await click('[data-test="split-saved"]');
+    await cdp!.js('window.__h.wait(100)');
+    const count = await cdp!.js<number>(`document.querySelectorAll('.inbox-row').length`);
+    expect(count).toBeGreaterThan(0);
+    await press('Tab');
+    expect(await cdp!.js(`document.querySelector('[data-test="inbox-title"]').textContent`)).toBe('Clients');
+    expect(await cdp!.js(`document.activeElement.matches('.row-select')`)).toBe(true);
+    await cdp!.js(`document.querySelector('.inbox-row').focus()`);
+    await press('Enter');
+    await cdp!.js('window.__h.wait(100)');
+    expect(await cdp!.js(`!!document.querySelector('[data-test="reader"]')`)).toBe(true);
+    await click('[data-test="reader-archive-toggle"]');
+    await cdp!.js('window.__h.wait(150)');
+    await click('[data-test="reader-close"]');
+    await cdp!.js('window.__h.wait(80)');
+    expect(await cdp!.js(`document.querySelectorAll('.inbox-row').length`)).toBe(count - 1);
+    await click('[data-test="action-notice-undo"]');
+    await cdp!.js('window.__h.wait(150)');
+    expect(await cdp!.js(`document.querySelectorAll('.inbox-row').length`)).toBe(count);
+    await cdp!.js(`document.querySelector('.inbox-row').focus()`);
+    await press('Tab', { shift: true });
+    await cdp!.js('window.__h.wait(100)');
+    expect(await cdp!.js(`document.querySelector('[data-test="inbox-title"]').textContent`)).toBe('Inbox');
+    expect(await cdp!.js(`document.querySelectorAll('.inbox-row').length`)).toBe(18);
+  });
+
   it('types in the focused palette with zero mutations, highlights, contains Tab and restores focus', async () => {
     await freshMount();
     await cdp!.js(`document.querySelector('[data-test="conversation-row-read-03"]').focus()`);
@@ -216,7 +437,7 @@ describe.skipIf(chromePath === '')('UX-03 discovery (real Chrome, opt-in)', () =
     expect(await activeTest()).toBe('action-query');
     await cdp!.cmd('Input.insertText', { text: 'e/s/h' });
     for (const key of ['e', 's', 'h', 'ArrowLeft']) await press(key);
-    expect(await cdp!.js(`document.querySelector('input').value`)).toContain('e/s/h');
+    expect(await cdp!.js(`document.querySelector('[data-test="action-query"]').value`)).toContain('e/s/h');
     expect(await cdp!.js(`window.__fixture.controls.archiveCommands.length + window.__fixture.controls.readCommands.length`)).toBe(0);
     await press('Tab'); expect(await activeTest()).toBe('action-query');
     await press('Tab', { shift: true }); expect(await activeTest()).toBe('action-query');

@@ -39,6 +39,7 @@ fn profile() -> GmailProfile {
 
 fn sample_thread() -> GmailThread {
     GmailThread {
+        newest_sender: None,
         conversation: Conversation {
             conversation_ref: ConversationRef {
                 account_id: ACCOUNT.to_string(),
