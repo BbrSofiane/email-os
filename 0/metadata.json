@@ -1,0 +1,52 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6W1Q4YAM6XAKS4TEJK44ZWZ",
+  "session_id": "c76d33d1-bfb7-485b-a7f9-1da77be42a31",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-07T22:23:00.228393Z",
+  "branch": "rebase-tmp",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/App.vue",
+    "src/assets/style.css",
+    "src/components/HeaderGlyph.vue",
+    "src/components/ReaderView.vue",
+    "src/lib/message-body-format.ts",
+    "src/lib/message-snippet.ts",
+    "tests/app.component.test.ts",
+    "tests/app.search-intent.test.ts",
+    "tests/contact-pane.component.test.ts",
+    "tests/drafts.component.test.ts",
+    "tests/message-body-format.test.ts",
+    "tests/message-snippet.test.ts",
+    "tests/reader.component.test.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "385c5490a7b5",
+  "checkpoint_transcript_start": 1167,
+  "transcript_lines_at_start": 1167,
+  "compact_transcript_start": 187,
+  "token_usage": {
+    "input_tokens": 6,
+    "cache_creation_tokens": 4236,
+    "cache_read_tokens": 933003,
+    "output_tokens": 1471,
+    "api_call_count": 3
+  },
+  "session_metrics": {
+    "turn_count": 1
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-07T22:22:59.992628Z",
+    "agent_lines": 483,
+    "agent_removed": 182,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 483,
+    "total_lines_changed": 665,
+    "agent_percentage": 100,
+    "metric_version": 2
+  }
+}
