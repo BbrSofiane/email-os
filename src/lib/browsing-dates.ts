@@ -18,7 +18,10 @@ export interface BrowsingDateOptions {
   now?: number;
   /** IANA time zone for calendar-day computation; defaults to the viewer's zone. */
   timeZone?: string;
-  /** BCP-47 locale for captions and labels; defaults to the environment locale. */
+  /**
+   * BCP-47 locale for named month+year group captions; defaults to the
+   * environment locale. Row and reader dates use a fixed format (see below).
+   */
   locale?: string;
 }
 
@@ -113,32 +116,79 @@ export function dateGroupCaption(key: DateGroupKey, locale?: string): string {
   }
 }
 
-/** Compact trailing date for a row: time today, short date this month, dated otherwise. */
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+
+interface WallClock {
+  year: number;
+  /** 0-based month index. */
+  month: number;
+  day: number;
+  weekday: number;
+  hour: number;
+  minute: number;
+}
+
+/** Wall-clock fields for an instant in the viewer's (or an explicit) zone. */
+function wallClockOf(instant: number, timeZone: string | undefined): WallClock {
+  const naive = new Date(instant + zoneOffsetMs(instant, timeZone));
+  return {
+    year: naive.getUTCFullYear(),
+    month: naive.getUTCMonth(),
+    day: naive.getUTCDate(),
+    weekday: naive.getUTCDay(),
+    hour: naive.getUTCHours(),
+    minute: naive.getUTCMinutes(),
+  };
+}
+
+/** `8:00 AM`, `12:05 PM`, `12:30 AM`: 12-hour clock, no leading zero. */
+function clockLabel({ hour, minute }: WallClock): string {
+  const twelve = hour % 12 === 0 ? 12 : hour % 12;
+  return `${twelve}:${pad(minute)} ${hour < 12 ? 'AM' : 'PM'}`;
+}
+
+/*
+ * Row and reader dates are a fixed product format (DESIGN.md "Label"), not a
+ * locale format: the output depends only on the instant, "now" and the viewer
+ * time zone, so the default runtime locale never changes a row's width or
+ * text. Month and weekday names are English abbreviations; the row date is
+ * rendered uppercase by CSS (`.row-time`), so assistive technology reads the
+ * month as a word ("6 Nov"), not as letters.
+ */
+
+/**
+ * Compact trailing date for a row, in the viewer's calendar:
+ * - today: the time (`8:00 AM`);
+ * - earlier this calendar year: day and month (`6 Nov`);
+ * - any other year, past or future: day, month and year (`9 Jan 2025`);
+ * - missing or unparsable: `Unknown`.
+ * The `locale` option is ignored here (it only affects month captions).
+ */
 export function compactDateLabel(timestamp: string, options: BrowsingDateOptions = {}): string {
   const instant = Date.parse(timestamp);
   if (!Number.isFinite(instant)) return 'Unknown';
-  const { locale, timeZone } = options;
-  const key = dateGroupFor(timestamp, options);
-  if (key === 'today') {
-    return new Intl.DateTimeFormat(locale, {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-      timeZone,
-    }).format(new Date(instant));
-  }
-  if (key === 'yesterday' || key === 'earlier-this-month') {
-    return new Intl.DateTimeFormat(locale, {
-      month: 'short',
-      day: 'numeric',
-      timeZone,
-    }).format(new Date(instant));
-  }
-  if (key === 'unknown') return 'Unknown';
-  return new Intl.DateTimeFormat(locale, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    timeZone,
-  }).format(new Date(instant));
+  const { timeZone } = options;
+  const at = wallClockOf(instant, timeZone);
+  if (dateGroupFor(timestamp, options) === 'today') return clockLabel(at);
+  const dayMonth = `${at.day} ${MONTHS[at.month]}`;
+  const nowYear = wallClockOf(options.now ?? Date.now(), timeZone).year;
+  return at.year === nowYear ? dayMonth : `${dayMonth} ${at.year}`;
+}
+
+/**
+ * Full, precise viewer-local date and time (`Thu 9 Jan 2025, 6:29 PM`) for the
+ * reader and for row date titles; `Unknown date` when missing or unparsable.
+ */
+export function fullDateLabel(timestamp: string, options: Pick<BrowsingDateOptions, 'timeZone'> = {}): string {
+  const instant = Date.parse(timestamp);
+  if (!Number.isFinite(instant)) return 'Unknown date';
+  const at = wallClockOf(instant, options.timeZone);
+  return `${WEEKDAYS[at.weekday]} ${at.day} ${MONTHS[at.month]} ${at.year}, ${clockLabel(at)}`;
+}
+
+/** Normalized machine-readable value for `<time datetime>`, or undefined when unparsable. */
+export function machineDateTime(timestamp: string): string | undefined {
+  const instant = Date.parse(timestamp);
+  return Number.isFinite(instant) ? new Date(instant).toISOString() : undefined;
 }

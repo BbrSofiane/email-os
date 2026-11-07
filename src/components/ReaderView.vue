@@ -24,6 +24,7 @@
  * own window listener.
  */
 import { actionLabel } from '../lib/browsing-actions';
+import { fullDateLabel, machineDateTime } from '../lib/browsing-dates';
 import { computed, nextTick, reactive, ref, watch } from 'vue';
 import type { Address, Conversation, ConversationRef, DraftSource, MailError, Message } from '../lib/ipc/client';
 import type { DetailState } from '../composables/useMailbox';
@@ -728,7 +729,7 @@ defineExpose({
             >
               <span class="message-from">{{ message.from.displayName ?? message.from.mailbox }}</span>
               <span class="message-to">to {{ message.to.map((t) => t.displayName ?? t.mailbox).join(', ') }}</span>
-              <time class="message-time">{{ message.sentAt }}</time>
+              <time class="message-time" :datetime="machineDateTime(message.sentAt)">{{ fullDateLabel(message.sentAt) }}</time>
             </button>
             <div class="message-body" :id="bodyId(message)" :hidden="!isExpanded(message)" data-test="message-body">{{ message.bodyText }}</div>
             <details
@@ -769,7 +770,7 @@ defineExpose({
                 </div>
                 <div class="message-field">
                   <span class="message-field-label">Sent</span>
-                  <time :data-test="`message-sent-${message.id}`">{{ message.sentAt }}</time>
+                  <time :data-test="`message-sent-${message.id}`" :datetime="machineDateTime(message.sentAt)">{{ fullDateLabel(message.sentAt) }}</time>
                 </div>
               </div>
             </details>

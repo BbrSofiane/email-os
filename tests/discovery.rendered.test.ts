@@ -313,9 +313,10 @@ describe.skipIf(chromePath === '')('UX-03 discovery / UX-13 workspaces (real Chr
         await cdp!.js('window.__splitControl.rejectList(); window.__h.wait(80)');
         expect(await cdp!.js(`!!document.querySelector('[data-test="inbox-error"]')`)).toBe(true);
         await cdp!.js('document.activeElement.blur()');
-        // Commands is now the first tab stop. Shift+Tab may correctly leave the
-        // page for browser chrome; forward Tab must still reach Destinations.
-        await press('Tab');
+        // Split header order follows the visual order: the Destinations
+        // hamburger is the first header stop, Commands sits in the right-hand
+        // glyphs. Backward Tab from Commands must still reach Destinations.
+        for (let i = 0; i < 8 && await activeTest() !== 'navigator-trigger'; i++) await press('Tab', { shift: true });
         expect(await activeTest()).toBe('navigator-trigger');
       } else {
         await cdp!.js(`document.querySelector('.inbox-row').focus()`);

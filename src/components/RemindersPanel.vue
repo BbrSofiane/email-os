@@ -162,7 +162,7 @@ onBeforeUnmount(() => { alive = false; generation++; editorGeneration++; unsubsc
 <style scoped>
 .reminders-panel { display: grid; gap: 1rem; overflow-wrap: anywhere; }
 form, fieldset, label { display: grid; gap: .65rem; }
-fieldset { border: 1px solid var(--border, #666); padding: 1rem; }
+fieldset { border: 1px solid var(--divider); padding: 1rem; }
 input[type="text"], select { width: 100%; min-width: 0; }
 nav { display: flex; flex-wrap: wrap; gap: .5rem; }
 li { margin-block: 1rem; }

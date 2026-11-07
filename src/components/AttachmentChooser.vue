@@ -108,7 +108,7 @@ onBeforeUnmount(() => { live = false; if (pending.value) void props.client.cance
 <style scoped>
 .attachment-chooser { max-height: 80vh; overflow-y: auto; overflow-wrap: anywhere; }
 header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
-h2 { font-size: 1.1rem; }
+h2 { font-size: var(--type-headline); font-weight: var(--weight-regular); }
 li { border: 0; cursor: default; padding-block: .5rem; display: flex; gap: .5rem; flex-wrap: wrap; }
 p { line-height: 1.5; }
 </style>

@@ -10,7 +10,7 @@
  *
  * The second P1 guard covers larger user text: at 1000px with the long old
  * date label, a 20px root font still fits inline (the sender column gives up
- * width first); at a 23px root font the sender is at its floor and the full
+ * width first); at a 25px root font the sender is at its floor and the full
  * inline metadata overflows the row, so the adaptive compact presentation
  * collapses the actions behind a named, keyboard- and pointer-operable
  * disclosure instead of trading subject collapse for horizontal overflow.
@@ -445,7 +445,7 @@ describe.skipIf(chromePath === '')('InboxList rendered layout (real Chrome, opt-
       await setupScenario(16);
       const at16 = await measure();
       assertCompactRowLayout(at16, { minVisibleChars: 10, expectPending: true });
-      expect(at16.date).toBe('30 Sept 2001');
+      expect(at16.date).toBe('30 Sep 2001');
       expect(at16.buttons.filter((b) => b.visible).map((b) => b.test)).toEqual([
         'row-mark-read-conv-01',
         'row-mark-unread-conv-01',
@@ -460,27 +460,29 @@ describe.skipIf(chromePath === '')('InboxList rendered layout (real Chrome, opt-
       await tick();
       const at20 = await measure();
       assertCompactRowLayout(at20, { minVisibleChars: 10, expectPending: true });
-      expect(at20.date).toBe('30 Sept 2001');
+      expect(at20.date).toBe('30 Sep 2001');
       expect(at20.toggle!.visible).toBe(false);
       expect(at20.sender.width).toBeLessThan(at16.sender.width);
 
-      // 1000px / 23px root font: the sender is at its floor and the expanded
+      // 1000px / 25px root font: the sender is at its floor and the expanded
       // presentation overflows the row, so the adaptive compact presentation
       // engages — subject stays readable, nothing clips or overflows, and
-      // every action moves behind the named disclosure control.
-      await setRootFont(23);
+      // every action moves behind the named disclosure control. (Since the
+      // typeset pass the rail labels use the 12px Body step, so the list is
+      // wider and the collapse point moved from a 23px to a 25px root font.)
+      await setRootFont(25);
       await tick();
-      const at23 = await measure();
-      assertCompactRowLayout(at23, { minVisibleChars: 10, expectPending: true, expectCompact: true });
-      expect(at23.date).toBe('30 Sept 2001');
+      const at25 = await measure();
+      assertCompactRowLayout(at25, { minVisibleChars: 10, expectPending: true, expectCompact: true });
+      expect(at25.date).toBe('30 Sep 2001');
       // The sender gave up width before the actions collapsed (it may regain
       // a little of the width the collapse frees).
-      expect(at23.sender.width).toBeLessThan(at20.sender.width);
-      expect(at23.sender.width).toBeLessThan(80);
+      expect(at25.sender.width).toBeLessThan(at20.sender.width);
+      expect(at25.sender.width).toBeLessThan(80);
 
       // Pointer access: a real CDP mouse click on the disclosure toggle opens
       // the row action panel.
-      await realClick(at23.toggle!);
+      await realClick(at25.toggle!);
       const openByPointer = await measure();
       expect(openByPointer.toggle!.ariaExpanded).toBe('true');
       expect(openByPointer.actionsPanel!.visibility).toBe('visible');

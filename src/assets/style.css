@@ -7,15 +7,42 @@
  */
 :root {
   color-scheme: dark;
-  font-family: system-ui, sans-serif;
+  font-family: var(--font-ui);
+  /*
+   * Type scale (DESIGN.md "Typography"): one local system sans, a fixed rem
+   * scale, two weights. Hierarchy comes from weight (600 vs 400) and tone
+   * (Paper White vs Ash), not from extra sizes.
+   */
+  --font-ui: system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, monospace;
+  /* 16px: split tabs, context title, contact name, drawer and reader headings. */
+  --type-headline: 1rem;
+  /* 12px: everything else in the app shell (rows, rail, panes, drawers, reader chrome). */
+  --type-body: 0.75rem;
+  /* 11px: split-tab counts only. */
+  --type-count: 0.6875rem;
+  /* Plain-text message bodies in the reader (monospace runs visually larger). */
+  --type-mono: 0.85rem;
+  --weight-regular: 400;
+  --weight-strong: 600;
+  --leading-headline: 1.25;
+  --leading-ui: 1.35;
+  --leading-mono: 1.45;
   --surface: #292826;
   --surface-contact: #1f1e1c;
   --surface-raised: #33312e;
   --focus-fill: #474644;
   --focus-accent: #bba5ed;
-  --text-primary: #ece9e2;
+  /* DESIGN.md Paper White: 14.7:1 on Warm Charcoal, 9.4:1 on Focus Stone. */
+  --text-primary: #ffffff;
   /* DESIGN.md Ash: >=4.5:1 on Focus Stone (4.99:1; the old #a8a29a was 3.73:1). */
   --text-secondary: #c0bcb6;
+  /* DESIGN.md Smoke (inactive split tabs, on Warm Charcoal only: 5.4:1) and
+     Graphite (resting glyphs). */
+  --text-tertiary: #a09c9a;
+  --icon-muted: #8e8a87;
+  /* DESIGN.md split-header height: content top to the first row. */
+  --split-header-height: 78px;
   --unread-marker: #ce9ece;
   --divider: #3b3936;
   --warning: #e4c465;
@@ -44,8 +71,13 @@ button:focus-visible {
   outline-offset: 1px;
 }
 
+select {
+  font: inherit;
+}
+
 input,
 textarea {
+  font: inherit;
   background: var(--surface-raised);
   color: var(--text-primary);
   border: 1px solid var(--divider);
@@ -71,7 +103,7 @@ textarea {
 .workspace-header {
   padding: 0.4rem 0.75rem;
   border-bottom: 1px solid var(--divider);
-  font-size: 0.8rem;
+  font-size: var(--type-body);
 }
 .workspace-header p { margin: 0 0 0.35rem; }
 .workspace-header nav { display: flex; flex-wrap: wrap; gap: 0.4rem; }
@@ -79,56 +111,226 @@ textarea {
 .workspace-panel { flex: 1; min-height: 0; }
 .workspace-panel > .app { height: 100%; }
 
-/* Compact Inbox navigation/status header. */
-.app-header {
-  border-bottom: 1px solid var(--divider);
-  padding: 0.35rem 0.75rem;
-}
-
-.app-title-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.6rem;
-}
-
-.rail-brand {
-  font-weight: 600;
-  color: var(--text-secondary);
-  font-size: 0.85rem;
-}
-
-.app-title {
-  font-size: 0.95rem;
-  margin: 0;
-  min-width: 0;
+/* Shared: in the accessibility tree, not on screen. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
   overflow: hidden;
-  text-overflow: ellipsis;
+  clip-path: inset(50%);
   white-space: nowrap;
 }
 
-.preview-banner {
-  background: #3a3116;
-  color: #ead48a;
-  border: 1px solid #6b5a1e;
-  border-radius: 4px;
-  padding: 0.25rem 0.5rem;
-  margin: 0.25rem 0 0;
-  font-size: 0.85rem;
+/*
+ * Heading defaults inside the shell (zero specificity, so component classes
+ * win): h2 is a Headline, h3/h4 are Title labels. No default 700 weight.
+ */
+:where(.app-main) h2 {
+  font-size: var(--type-headline);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-headline);
 }
 
-.status-line {
-  display: flex;
-  gap: 1rem;
-  font-size: 0.8rem;
-  margin: 0.25rem 0 0;
-  color: var(--text-secondary);
-  flex-wrap: wrap;
+:where(.app-main) :is(h3, h4) {
+  font-size: var(--type-body);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-ui);
 }
 
-.status-line [role='alert'] {
+:where(.app-main) :is(strong, b) {
+  font-weight: var(--weight-strong);
+}
+
+/*
+ * Split header (DESIGN.md "Split Tabs"): one borderless 78px strip in the list
+ * column. Hamburger centered 23px into the pane, tabs on the 50px content
+ * inset and vertically centered ~42px down, right glyphs on the 32px action
+ * pitch with the last glyph centered 32px from the pane edge. Extra rows
+ * (split editor, split error) wrap below the tab line.
+ */
+.app-header {
+  display: grid;
+  grid-template-columns: 50px minmax(0, 1fr) minmax(0, auto);
+  grid-template-rows: minmax(calc(var(--split-header-height) - 6px), auto);
+  align-items: center;
+  padding: 6px 16px 0 0;
+  background: var(--surface);
+}
+
+.app-header > .header-row {
+  grid-column: 1 / -1;
+  padding-left: 50px;
+}
+
+.header-alert {
+  margin: 0 0 0.5rem;
+  font-size: var(--type-body);
   color: var(--danger);
-  font-weight: 600;
+}
+
+/* Ghost glyph button: Graphite at rest, Paper White on hover/focus. */
+.header-glyph {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: var(--icon-muted);
+  cursor: pointer;
+}
+
+.header-glyph:hover:not(:disabled),
+.header-glyph:focus-visible,
+.header-glyph[aria-pressed='true'] {
+  color: var(--text-primary);
+}
+
+.header-glyph:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.header-glyph-icon {
+  width: 1rem;
+  height: 1rem;
+}
+
+.header-menu {
+  justify-self: start;
+  margin-left: 7px;
+}
+
+.header-tabs {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  min-width: 0;
+  overflow: hidden;
+  /* Room for the focus ring of the first tab inside the clipped line. */
+  padding: 4px 4px 4px 0;
+  margin: -4px 0;
+}
+
+.app-title,
+.split-tab {
+  font-size: var(--type-headline);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-headline);
+}
+
+.app-title {
+  margin: 0;
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.app-title-account {
+  font-size: var(--type-body);
+  color: var(--text-secondary);
+}
+
+.split-nav {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  min-width: 0;
+}
+
+.split-tab {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 2px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.split-tab:hover,
+.split-tab[aria-current='page'] {
+  color: var(--text-primary);
+}
+
+.split-tab:focus-visible {
+  outline-offset: 2px;
+}
+
+.split-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.split-count {
+  flex: 0 0 auto;
+  font-size: var(--type-count);
+  line-height: 1;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Active list filter, in words beside the tabs. */
+.header-filter {
+  flex: 0 0 auto;
+  font-size: var(--type-body);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.header-trail {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+/* Compact one-line notes; they give up width before the glyphs do. */
+.header-note {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0 12px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--type-body);
+  color: var(--text-secondary);
+}
+
+.preview-tag {
+  color: var(--warning);
+}
+
+.header-link {
+  padding: 0 2px;
+  background: transparent;
+  border: 0;
+  color: var(--text-primary);
+  font-size: inherit;
+  cursor: pointer;
+}
+
+.header-link:hover {
+  text-decoration: underline;
+}
+
+.command-error {
+  margin: 0;
+  padding: 0.4rem 1rem 0.4rem 50px;
+  color: var(--danger);
+  font-size: var(--type-body);
+  font-weight: var(--weight-strong);
 }
 
 .draft-close-recovery {
@@ -151,10 +353,41 @@ textarea {
  * keyboard-operable Contact disclosure instead.
  */
 .app-main {
+  /* Shell body type: everything not on another step of the scale is 12px. */
+  font-size: var(--type-body);
+  line-height: var(--leading-ui);
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
+  /* Header, in-flow notices, then the list-or-reader surface; the rail and
+     contact pane span all three so the header lives in the list column. */
+  grid-template-rows: auto auto minmax(0, 1fr);
   flex: 1;
   min-height: 0;
+  position: relative;
+}
+
+.app-main > .rail {
+  grid-column: 1;
+  grid-row: 1 / -1;
+}
+
+.app-main > .app-header,
+.app-main > .list-notices {
+  grid-column: 2;
+}
+
+.app-main > .app-header { grid-row: 1; }
+.app-main > .list-notices { grid-row: 2; min-width: 0; }
+
+.app-main > .central,
+.app-main > .account-gate {
+  grid-column: 2;
+  grid-row: 3;
+}
+
+.app-main > .contact-column {
+  grid-column: 3;
+  grid-row: 1 / -1;
 }
 
 @media (min-width: 1000px) {
@@ -178,6 +411,8 @@ textarea {
   border-color: transparent;
   color: var(--text-secondary);
   padding: 0.2rem 0.5rem;
+  /* Body type in Ash; the current destination steps up to Paper White. */
+  font-weight: var(--weight-regular);
 }
 
 /* Keep the new local destination from widening the compact browsing rail. */
@@ -218,10 +453,11 @@ textarea {
   min-height: 0;
 }
 
+/* Sentence-case Body caption in Ash: no uppercase tracking (No-Caps-Caption Rule). */
 .contact-title {
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-size: var(--type-body);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-ui);
   color: var(--text-secondary);
   margin: 0 0 0.4rem;
 }
@@ -234,8 +470,12 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+/* Headline: the contact name is the pane's one large line. */
 .contact-name {
-  font-weight: 600;
+  font-size: var(--type-headline);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-headline);
+  color: var(--text-primary);
 }
 
 .contact-search {
@@ -248,30 +488,36 @@ textarea {
 }
 .contact-search:hover { text-decoration: underline; }
 .contact-recent { margin-top: 2rem; }
-.contact-recent h3 { font-size: 0.85rem; font-weight: 500; color: var(--text-secondary); }
+.contact-recent h3 { font-size: var(--type-body); font-weight: var(--weight-strong); color: var(--text-primary); }
 .contact-recent ul { list-style: none; padding: 0; }
 .contact-recent li { margin: 0.65rem 0; }
 .contact-recent button { text-align: left; overflow-wrap: anywhere; }
 .mail-search { padding: 1rem; border-bottom: 1px solid var(--divider); }
 .mail-search-entry { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0; }
 .mail-search-entry input { flex: 1 1 16rem; min-width: 0; }
-.mail-search p { max-width: 75ch; font-size: 0.85rem; color: var(--text-secondary); }
-.search-cache-toggle { font-size: 0.85rem; }
+.mail-search p { max-width: 75ch; color: var(--text-secondary); }
+/* Title: the email is Paper White semibold (DESIGN.md contact-pane). */
 .contact-mailbox {
-  color: var(--text-secondary);
-  font-size: 0.8rem;
+  color: var(--text-primary);
+  font-size: var(--type-body);
+  font-weight: var(--weight-strong);
 }
 
 .contact-unknown {
   color: var(--text-secondary);
-  font-size: 0.8rem;
+  font-size: var(--type-body);
   margin: 0;
 }
 
-/* Utility disclosures overlay the central surface; they are never columns. */
+/*
+ * Utility disclosures overlay the central surface; they are never columns.
+ * They start below the split header (positioned against .app-main), so the
+ * header's right-hand glyphs (Commands, Search, filters) are never covered
+ * by an open drawer.
+ */
 .utility-drawer {
-  position: fixed;
-  top: 0;
+  position: absolute;
+  top: var(--split-header-height);
   right: 0;
   bottom: 0;
   width: min(460px, 92vw);
@@ -296,7 +542,8 @@ textarea {
 }
 
 .drawer-header h2 {
-  font-size: 0.95rem;
+  font-size: var(--type-headline);
+  font-weight: var(--weight-regular);
   margin: 0;
 }
 
@@ -333,8 +580,8 @@ textarea {
   min-height: 36px;
   margin: 0 6px;
   padding: 0 18px 0 44px;
-  font-size: 0.75rem;
-  line-height: 1.35;
+  font-size: var(--type-body);
+  line-height: var(--leading-ui);
   color: var(--text-primary);
   cursor: pointer;
   /* Anchors the gutter controls and the row action disclosure panel. */
@@ -429,7 +676,7 @@ textarea {
 .row-sender {
   flex: 0 1 clamp(96px, 22cqi - 22px, 132px);
   min-width: 72px;
-  font-weight: 600;
+  font-weight: var(--weight-strong);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -437,7 +684,7 @@ textarea {
 
 /* Known-read rows step down a weight; unread and unknown keep the Title weight. */
 .inbox-row.read-disclosed.is-read .row-sender {
-  font-weight: 400;
+  font-weight: var(--weight-regular);
 }
 
 .row-subject-snippet {
@@ -495,8 +742,11 @@ textarea {
   grid-area: 1 / 1;
 }
 
+/* Label: the month of a compact date is uppercase on screen only ("6 NOV");
+   the DOM text stays "6 Nov" so assistive technology reads a word. */
 .row-time {
   text-align: right;
+  text-transform: uppercase;
 }
 
 .row-actions {
@@ -645,8 +895,8 @@ textarea {
   align-items: flex-end;
   min-height: 48px;
   padding: 0 0 10px 50px;
-  font-size: 0.75rem;
-  line-height: 1.35;
+  font-size: var(--type-body);
+  line-height: var(--leading-ui);
   color: var(--text-secondary);
 }
 
@@ -687,7 +937,7 @@ textarea {
 
 .reply-source-label {
   color: var(--text-secondary);
-  font-size: 0.75rem;
+  font-size: var(--type-body);
 }
 
 .reader-scroll {
@@ -696,8 +946,11 @@ textarea {
   overflow-y: auto;
 }
 
+/* Headline at the strong weight: the subject leads the reader without a third size. */
 .reader-subject {
-  font-size: 1.1rem;
+  font-size: var(--type-headline);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-headline);
   overflow-wrap: anywhere;
 }
 
@@ -729,7 +982,7 @@ textarea {
 
 .message.message-active .message-from {
   color: var(--text-primary);
-  font-weight: 600;
+  font-weight: var(--weight-strong);
 }
 
 /* Collapsed headers stay compact: the recipient line appears only when expanded. */
@@ -739,7 +992,7 @@ textarea {
   gap: 0.75rem;
   width: 100%;
   text-align: left;
-  font-size: 0.8rem;
+  font-size: var(--type-body);
   color: var(--text-secondary);
   background: transparent;
   border: 0;
@@ -751,17 +1004,23 @@ textarea {
   display: none;
 }
 
+.message-time {
+  font-variant-numeric: tabular-nums;
+}
+
 .message-body {
   white-space: pre-wrap;
-  font-family: ui-monospace, monospace;
-  font-size: 0.85rem;
+  font-family: var(--font-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+  color: var(--text-primary);
   overflow-wrap: anywhere;
   margin: 0.4rem 0;
 }
 
 /* Per-message participant details disclosure (native details/summary). */
 .message-details {
-  font-size: 0.8rem;
+  font-size: var(--type-body);
   margin-top: 0.4rem;
 }
 
@@ -810,7 +1069,7 @@ textarea {
 .contact-copy {
   opacity: 0;
   padding: 0 0.3rem;
-  font-size: 0.75rem;
+  font-size: var(--type-body);
 }
 
 .contact-identity:hover .contact-copy,
@@ -821,13 +1080,15 @@ textarea {
 
 .contact-copy-status {
   margin: 0.3rem 0 0;
-  font-size: 0.8rem;
+  font-size: var(--type-body);
   color: var(--text-secondary);
 }
 
 /* Activity (inside its utility disclosure). */
+/* In-panel headings are Title labels under the drawer's Headline. */
 .activity-title {
-  font-size: 0.9rem;
+  font-size: var(--type-body);
+  font-weight: var(--weight-strong);
   margin: 0 0 0.5rem;
 }
 
@@ -840,7 +1101,7 @@ textarea {
 .activity-row {
   border-bottom: 1px solid var(--divider);
   padding: 0.4rem 0;
-  font-size: 0.8rem;
+  font-size: var(--type-body);
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
@@ -865,7 +1126,7 @@ textarea {
 
 .status-failed {
   color: var(--danger);
-  font-weight: 600;
+  font-weight: var(--weight-strong);
 }
 
 .activity-buttons {
@@ -899,7 +1160,8 @@ textarea {
 
 .draft-list-heading h2,
 .composer-heading h2 {
-  font-size: 0.95rem;
+  font-size: var(--type-body);
+  font-weight: var(--weight-strong);
   margin: 0.25rem 0;
 }
 
@@ -907,7 +1169,7 @@ textarea {
 .reply-source,
 .draft-status {
   margin: 0.3rem 0;
-  font-size: 0.8rem;
+  font-size: var(--type-body);
   color: var(--warning);
 }
 
@@ -942,7 +1204,7 @@ textarea {
   flex-direction: column;
   min-width: 0;
   gap: 0.2rem;
-  font-size: 0.85rem;
+  font-size: var(--type-body);
 }
 
 .composer-fields input,
@@ -982,7 +1244,7 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
-  font-size: 0.85rem;
+  font-size: var(--type-body);
 }
 
 .account-row {
@@ -992,7 +1254,7 @@ textarea {
 }
 
 .account-mode {
-  font-weight: 600;
+  font-weight: var(--weight-strong);
 }
 
 .account-connection {
@@ -1011,7 +1273,7 @@ textarea {
 .account-sync-error {
   margin: 0;
   color: var(--danger);
-  font-weight: 600;
+  font-weight: var(--weight-strong);
 }
 
 .account-coverage,
@@ -1033,11 +1295,12 @@ textarea {
 .reader-recovery-snapshot {
   margin: 0.2rem 0;
   color: var(--warning);
-  font-size: 0.85rem;
+  font-size: var(--type-body);
 }
 
 /* UX-03 discovery overlays: input owns keyboard focus; covered shell is inert. */
-.cached-coverage { margin: 0; padding: .4rem 1rem; color: var(--text-muted, #bbb); font-size: .85rem; }
+/* Coverage notes in Ash (was the undefined --text-muted with a #bbb fallback). */
+.cached-coverage { margin: 0; padding: .4rem 1rem; color: var(--text-secondary); font-size: var(--type-body); }
 
 /* UX-04 single-slot action notice: in-flow, never covers rows or reader controls. */
 .action-notice {
@@ -1053,12 +1316,12 @@ textarea {
    a hidden live region is removed from the accessibility tree and inserted
    content at the moment it becomes rendered may not be announced. */
 .action-notice-empty { min-height: 0; padding: 0; border-bottom: none; }
-.action-notice-text { margin: 0; font-size: .85rem; display: flex; gap: .5rem; flex-wrap: wrap; align-items: baseline; }
-.action-notice-label { color: var(--text-primary); font-weight: 600; }
+.action-notice-text { margin: 0; font-size: var(--type-body); display: flex; gap: .5rem; flex-wrap: wrap; align-items: baseline; }
+.action-notice-label { color: var(--text-primary); font-weight: var(--weight-strong); }
 .action-notice-status { color: var(--text-secondary); }
 .action-notice-expired { color: var(--warning); }
 .action-notice-undo { display: flex; gap: .4rem; align-items: center; }
-.action-notice-undo kbd { font-size: .75rem; color: var(--text-secondary); }
+.action-notice-undo kbd { font: inherit; color: var(--text-secondary); }
 .action-backdrop { position: fixed; inset: 0; z-index: 100; background: #0008; display: flex; align-items: flex-start; justify-content: center; padding: min(15vh, 6rem) 1rem 1rem; }
 .action-overlay { width: min(46rem, 100%); max-height: 75vh; overflow: auto; background: var(--surface-raised); color: var(--text-primary); border: 1px solid #56534e; border-radius: .85rem; padding: 0; box-shadow: 0 1rem 4rem #0008; }
 .action-overlay .action-heading { display: flex; align-items: center; gap: .8rem; margin: 0 1.5rem; padding: 1.2rem 0; border-bottom: 1px solid #56534e; color: #c9c4bc; font-size: .9rem; }
@@ -1078,11 +1341,7 @@ textarea {
 .action-hint { border-top: 1px solid var(--divider); }
 
 /* UX-06: compact overlapping Inbox views, no folder or classifier metaphor. */
-.split-nav { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem; padding-top: .4rem; font-size: .85rem; }
-.split-nav button { max-width: 100%; overflow-wrap: anywhere; cursor: pointer; }
-.split-nav [aria-current="page"], .split-nav [aria-pressed="true"] { color: var(--focus-accent); background: var(--focus-fill); border-color: var(--focus-accent); }
-.split-count { margin-inline-start: .3rem; font-variant-numeric: tabular-nums; }
-.split-editor { max-height: 38vh; overflow: auto; padding: .5rem 0; font-size: .85rem; }
+.split-editor { max-height: 38vh; overflow: auto; padding: .5rem 0; font-size: var(--type-body); }
 .split-editor p { max-width: 75ch; margin: .35rem 0 .6rem; }
 .split-editor fieldset { border: 0; padding: 0; margin: 0 0 .6rem; display: flex; flex-wrap: wrap; gap: .6rem 1rem; align-items: center; }
 .split-editor label { display: flex; align-items: center; gap: .4rem; max-width: 100%; }
@@ -1099,7 +1358,7 @@ textarea {
   gap: .5rem 1rem;
   padding: .4rem .6rem;
   border-bottom: 1px solid var(--divider);
-  font-size: .85rem;
+  font-size: var(--type-body);
 }
 .selection-scope { margin: 0; }
 .selection-loaded-scope { color: var(--text-secondary); }
@@ -1110,15 +1369,15 @@ textarea {
   padding: .4rem .6rem;
   border-bottom: 1px solid var(--divider);
   color: var(--text-secondary);
-  font-size: .85rem;
+  font-size: var(--type-body);
 }
 
 /* UX-05 Activity group sections. */
 .activity-groups { margin-bottom: 1rem; }
-.activity-groups-title { margin: .2rem 0 .4rem; font-size: .9rem; }
+.activity-groups-title { margin: .2rem 0 .4rem; font-size: var(--type-body); font-weight: var(--weight-strong); }
 .activity-group-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .35rem; }
 .activity-group-toggle { width: 100%; text-align: left; cursor: pointer; }
 .activity-group-detail { margin-top: .4rem; padding: .5rem; border: 1px solid var(--divider); border-radius: .3rem; }
-.activity-group-request { margin: 0 0 .4rem; color: var(--text-secondary); font-size: .8rem; overflow-wrap: anywhere; }
+.activity-group-request { margin: 0 0 .4rem; color: var(--text-secondary); font-size: var(--type-body); overflow-wrap: anywhere; }
 .activity-group-members { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .35rem; }
 .activity-group-member { display: flex; flex-wrap: wrap; align-items: baseline; gap: .4rem; }

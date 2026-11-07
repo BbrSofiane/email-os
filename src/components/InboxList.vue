@@ -24,7 +24,7 @@ import type { ConversationRef } from '../lib/ipc/client';
 import type { ConversationSummaryLike } from '../composables/useMailbox';
 import { sameConversation } from '../composables/useMailbox';
 import { actionLabel } from '../lib/browsing-actions';
-import { compactDateLabel, dateGroupCaption, dateGroupFor } from '../lib/browsing-dates';
+import { compactDateLabel, dateGroupCaption, dateGroupFor, fullDateLabel, machineDateTime } from '../lib/browsing-dates';
 import RowGlyph from './RowGlyph.vue';
 
 const props = defineProps<{
@@ -532,7 +532,7 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
                row the action glyphs (or, when they do not fit, the disclosure
                control) take its place without changing the row's width. -->
           <span class="row-trailing">
-            <span class="row-time">{{ compactDateLabel(item.row.lastMessageAt) }}</span>
+            <time class="row-time" :datetime="machineDateTime(item.row.lastMessageAt)" :title="fullDateLabel(item.row.lastMessageAt)">{{ compactDateLabel(item.row.lastMessageAt) }}</time>
             <button
               v-if="hasRowActions()"
               type="button"
