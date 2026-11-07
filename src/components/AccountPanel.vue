@@ -13,6 +13,7 @@
  */
 import type { AccountStatus, ConnectionState, MailError, MutationAccess } from '../lib/ipc/client';
 import type { AccountAction } from '../composables/useMailbox';
+import FullDate from './FullDate.vue';
 
 const props = defineProps<{
   status: AccountStatus;
@@ -101,11 +102,6 @@ function describeError(error: MailError): string {
   }
 }
 
-function formatLastSynced(at: string | null): string {
-  if (!at) return 'Never synced';
-  return `Last synced ${at}`;
-}
-
 function coverageText(): string {
   const sync = props.status.sync;
   if (!sync.initialSyncComplete) {
@@ -180,7 +176,7 @@ const showConnect = (): boolean =>
     </p>
     <div class="account-row">
       <span class="account-sync" data-test="account-sync-state">{{ SYNC_LABELS[props.status.sync.state] }}</span>
-      <span class="account-last-synced" data-test="account-last-synced">{{ formatLastSynced(props.status.sync.lastSyncedAt) }}</span>
+      <span class="account-last-synced" data-test="account-last-synced"><template v-if="props.status.sync.lastSyncedAt">Last synced <FullDate :at="props.status.sync.lastSyncedAt" /></template><template v-else>Never synced</template></span>
     </div>
     <p
       v-if="props.status.sync.state === 'error' && props.status.sync.error"

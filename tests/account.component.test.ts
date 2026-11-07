@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import App from '../src/App.vue';
+import { fullDateLabel } from '../src/lib/browsing-dates';
 import type { Conversation, InboxSnapshot, MailClient } from '../src/lib/ipc/client';
 import {
   closeUtilityDrawer,
@@ -243,9 +244,11 @@ describe('App (Slice 02 Gmail account states)', () => {
     await openUtilityDrawer(w, 'activity');
     await w.find(`[data-test="activity-open-${archive!.id}"]`).trigger('click');
     await settle();
+    // Full viewer-local form (DESIGN.md "Dates"), never the raw provider timestamp.
     expect(w.find('[data-test="retained-snapshot-notice"]').text()).toBe(
-      'Local recovery snapshot saved at 2025-02-03T04:05:06Z; Gmail may have newer messages or mailbox changes.',
+      `Local recovery snapshot saved ${fullDateLabel('2025-02-03T04:05:06Z')}; Gmail may have newer messages or mailbox changes.`,
     );
+    expect(w.find('[data-test="retained-snapshot-notice"] time').attributes('datetime')).toBe('2025-02-03T04:05:06.000Z');
     expect(w.find('[data-test="reader-archive-toggle"]').text()).toContain('Unarchive');
     await w.find('[data-test="reader-archive-toggle"]').trigger('click');
     await settle();
@@ -408,7 +411,9 @@ describe('App (Slice 02 Gmail account states)', () => {
     expect(w.find('[data-test="account-sync-state"]').text()).toContain('Syncing');
     await settle();
     expect(w.find('[data-test="account-sync-state"]').text()).toContain('Idle');
-    expect(w.find('[data-test="account-last-synced"]').text()).toContain('2025-01-01');
+    const lastSynced = fake.controls.accountState().lastSyncedAt!;
+    expect(w.find('[data-test="account-last-synced"]').text()).toBe(`Last synced ${fullDateLabel(lastSynced)}`);
+    expect(w.find('[data-test="account-last-synced"] time').attributes('datetime')).toBe(new Date(lastSynced).toISOString());
 
     fake.controls.failNextSync({ kind: 'network_unavailable' });
     await w.find('[data-test="account-sync"]').trigger('click');

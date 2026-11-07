@@ -7,8 +7,8 @@
  * is loading or failed, the UI renders no mailbox content at all — it never falls
  * back silently to fixture mode.
  *
- * Layout contract: a persistent narrow email rail, a compact Inbox
- * navigation/status header, one central surface that is either the list or the
+ * Layout contract: a persistent narrow email rail, a 78px split header in the
+ * list column (no status line), one central surface that is either the list or the
  * reader (never both), and contact context. Account/Activity/Drafts live in
  * explicit labelled utility disclosures instead of permanent competing columns;
  * the contact pane shows only exact known fields.
@@ -42,6 +42,8 @@ import ActionOverlay from './components/ActionOverlay.vue';
 import RemindersPanel from './components/RemindersPanel.vue';
 import ActionNotice, { type GroupNoticeView } from './components/ActionNotice.vue';
 import SelectionBar from './components/SelectionBar.vue';
+import HeaderGlyph from './components/HeaderGlyph.vue';
+import PaneGlyph from './components/PaneGlyph.vue';
 import { browsingActions, actionLabel, type BrowsingActionId } from './lib/browsing-actions';
 import InboxList from './components/InboxList.vue';
 import SplitEditor from './components/SplitEditor.vue';
@@ -54,6 +56,7 @@ import AccountPanel from './components/AccountPanel.vue';
 import DraftsPanel from './components/DraftsPanel.vue';
 import ProviderDestinations from './components/ProviderDestinations.vue';
 import ContactPane from './components/ContactPane.vue';
+import FullDate from './components/FullDate.vue';
 import { BROWSER_PREVIEW_DISCLOSURE } from './lib/ipc/browser-fake';
 import type { ClientMode } from './lib/ipc';
 import type { ConversationRef, DraftRef, DraftSource, MailClient } from './lib/ipc/client';
@@ -409,6 +412,19 @@ watch(workspaceActive, () => { cancelGo(); });
 
 const drawer = ref<UtilityDrawer | null>(null);
 watch(drawer, (next) => { if (next) editingSplit.value = false; });
+
+// Split header (DESIGN.md "Split Tabs"). The tabs render only for a ready
+// account's list; the context heading is shown on screen only when no rendered
+// tab is active, so Cached Done / Starred / Search / the reader stay named.
+const splitNavShown = computed(() => accountReady.value && !!accountId.value && !readerOpen.value && !drawer.value);
+const activeTabShown = computed(() => splitNavShown.value
+  && (mailbox.context.value === 'inbox' || (mailbox.context.value === 'saved' && !!savedTabVisible.value)));
+const SPLIT_COVERAGE = 'Local Inbox cache only — counts are exact for cached conversations, not mailbox-wide totals. Split membership uses the latest message’s sender.';
+const splitCoverageShown = computed(() => splitNavShown.value && gmailMode.value
+  && (mailbox.context.value === 'inbox' || mailbox.context.value === 'saved'));
+const starredFilterShown = computed(() => gmailMode.value && !readerOpen.value && mailbox.context.value !== 'starred');
+/** Per-workspace DOM id prefix: two fixture workspaces mount two Apps at once. */
+const domIdPrefix = computed(() => props.switchAccountLabel ? accountId.value ?? '' : '');
 const drawerEl = ref<HTMLElement | null>(null);
 const drawerToggles = new Map<UtilityDrawer, HTMLElement>();
 
@@ -1593,12 +1609,31 @@ function onKeydown(event: KeyboardEvent): void {
   }
 }
 
-const pendingCount = computed(
-  () => mailbox.activity.value.filter((op) => op.status === 'queued' || op.status === 'applying' || op.status === 'outcome_unknown').length,
+/**
+ * Unresolved operations for the Activity rail badge, derived from the same
+ * activity rows the Activity drawer lists (no extra read): queued/applying
+ * are pending, outcome_unknown needs the user's attention. Both are counted,
+ * as the removed header status line did, and named separately in words.
+ */
+const unresolvedPending = computed(
+  () => mailbox.activity.value.filter((op) => op.status === 'queued' || op.status === 'applying').length,
 );
+const unresolvedUnknown = computed(
+  () => mailbox.activity.value.filter((op) => op.status === 'outcome_unknown').length,
+);
+const unresolvedCount = computed(() => unresolvedPending.value + unresolvedUnknown.value);
+const unresolvedSummary = computed(() => {
+  const pending = unresolvedPending.value;
+  const unknown = unresolvedUnknown.value;
+  const ops = (n: number) => `${n} ${n === 1 ? 'operation' : 'operations'}`;
+  if (pending > 0 && unknown > 0) return `${ops(pending + unknown)} unresolved: ${pending} pending, ${unknown} outcome unknown`;
+  if (pending > 0) return `${ops(pending)} pending`;
+  if (unknown > 0) return `${ops(unknown)} with outcome unknown`;
+  return '';
+});
 
 /**
- * Alert text for the status line. An expired undo window is already announced
+ * Alert text for the in-flow command-error line beside the action notice. An expired undo window is already announced
  * by the polite action notice (expired wording); repeating it as a role=alert
  * would double-announce. Every other failure keeps its alert.
  */
@@ -1669,72 +1704,75 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
 
 <template>
   <div ref="appRoot" class="app" :data-client-mode="props.mode">
-    <header class="app-header" :inert="!!overlay || !!attachmentConversation || undefined">
-      <div class="app-title-row">
-        <span class="rail-brand">Email</span>
-        <h1 class="app-title" data-test="inbox-title">{{ contextTitle }}<template v-if="switchAccountLabel"> — {{ accountStatus?.account?.emailAddress }}</template></h1>
-        <button v-if="accountId" type="button" :disabled="!actionAvailable('search')" data-test="search-trigger" :title="actionLabel('search')" @click="executeAction('search')">Search</button>
-        <button type="button" data-test="palette-trigger" ref="paletteButton" title="Commands (Cmd+K in native app)" @click="openOverlay('palette')">Commands</button>
-        <button v-if="gmailMode && !readerOpen && mailbox.context.value !== 'starred'" type="button" data-test="starred-filter" :aria-pressed="mailbox.starredOnly.value" :disabled="mailbox.listState.value !== 'ready'" @click="toggleStarFilter()">Starred only (cached)</button>
-        <button v-if="remindersSupported" type="button" :ref="setToggleRef('reminders')" @click="executeAction('reminders')">Reminders</button>
-        <button v-if="remindersSupported" type="button" :disabled="!actionAvailable('remind')" title="Remind me (H); single conversation only" @click="executeAction('remind')">Remind me</button>
-        <button type="button" data-test="navigator-trigger" title="Destinations (Left from list)" @click="openOverlay('navigator')">Destinations</button>
-        <button v-if="history.length && !readerOpen" type="button" data-test="context-back" @click="executeAction('back')">Back to previous context</button>
-      </div>
-      <nav v-if="accountReady && accountId && !readerOpen && !drawer" class="split-nav" aria-label="Inbox splits">
-        <button type="button" data-test="split-inbox" :aria-current="mailbox.context.value === 'inbox' ? 'page' : undefined" @click="navigateContext('inbox')">Inbox <span v-if="splitBadge(mailbox.inboxTotal.value)" class="split-count">{{ splitBadge(mailbox.inboxTotal.value) }}</span></button>
-        <button v-if="savedTabVisible" type="button" data-test="split-saved" :aria-current="mailbox.context.value === 'saved' ? 'page' : undefined" @click="navigateContext('saved')">{{ mailbox.savedSplit.value?.name }} <span v-if="splitBadge(mailbox.savedTotal.value)" class="split-count">{{ splitBadge(mailbox.savedTotal.value) }}</span></button>
-      </nav>
-      <SplitEditor ref="splitEditor" v-if="editingSplit && accountReady && !readerOpen && !drawer" :split="mailbox.savedSplit.value" :busy="mailbox.splitBusy.value" :error="!!mailbox.splitError.value" @save="saveSplit" @cancel="closeSplitEditor" />
-      <p v-if="mailbox.splitError.value && !editingSplit" role="alert">Saved split unavailable. <button type="button" @click="mailbox.refresh()">Retry split</button></p>
-      <p v-if="gmailMode && (mailbox.context.value === 'inbox' || mailbox.context.value === 'saved')" class="cached-coverage" role="note">Local Inbox cache only — counts are exact for cached conversations, not mailbox-wide totals. Split membership uses the latest message’s sender.</p>
-      <p v-if="props.mode === 'browser-preview'" class="preview-banner" data-test="preview-banner" role="note">
-        {{ BROWSER_PREVIEW_DISCLOSURE }}
-      </p>
-      <p class="status-line" data-test="status-line">
-        <span data-test="inbox-count">{{ mailbox.conversations.value.length }} {{ mailbox.context.value === 'inbox' ? 'in inbox' : mailbox.context.value === 'search' ? 'search results loaded · total unknown' : `loaded in ${contextTitle}` }}</span>
-        <span v-if="gmailMode && !mailboxActionsEnabled" data-test="mailbox-access-hint">
-          {{ accountStatus?.mutationAccess === 'upgrading' ? 'Mailbox permission pending.' : 'Gmail is read-only.' }}
-          <button type="button" @click="openDrawer('account')">Review access in Account</button>
-        </span>
-        <span v-if="accountReady && mailbox.unreadOnly.value" role="status" data-test="unread-filter-status">Unread only</span>
-        <span v-if="selectedCount > 0" role="status" data-test="selection-live">{{ selectedCount }} selected</span>
-        <span v-if="pendingCount > 0" data-test="pending-count">{{ pendingCount }} pending operation(s)</span>
-        <span v-if="gmailActionsEnabled" data-test="read-shortcut-note">Shift+U marks the focused or open conversation unread.</span>
-        <span v-if="commandError" role="alert" data-test="command-error">
-          last command failed: {{ errorText(commandError) }}
-        </span>
-      </p>
-    </header>
-
-    <div
-      v-if="drawer !== 'drafts' && (drafts.closeSetupError.value || drafts.closeRetryAvailable.value || (drafts.isVisible.value && drafts.error.value))"
-      role="alert"
-      class="draft-close-recovery"
-    >
-      <p v-if="drafts.closeSetupError.value">Close protection could not be initialized: {{ drafts.closeSetupError.value }}</p>
-      <p v-else-if="drafts.closeRetryAvailable.value">{{ drafts.closeError.value }}</p>
-      <p v-else>The local draft editor needs attention.</p>
-      <button v-if="drafts.closeSetupError.value" type="button" data-test="retry-close-setup" @click="drafts.retryCloseSetup()">Retry close protection</button>
-      <button v-if="drafts.closeRetryAvailable.value" type="button" data-test="retry-close" @click="drafts.retryClose()">Retry close request</button>
-      <button v-if="drafts.isVisible.value && drafts.error.value" type="button" data-test="draft-attention-open" @click="openDrawer('drafts')">Open drafts</button>
-    </div>
-
-    <p v-if="mailbox.context.value === 'starred'" class="cached-coverage" role="note" data-test="starred-coverage">Local cache only — not provider-complete Starred. Total unknown. Unknown star facts are not treated as unstarred.</p>
-    <p v-if="mailbox.context.value === 'done'" class="cached-coverage" role="note" data-test="done-coverage">Local cache only — not provider-complete Done or All Mail. {{ mailbox.exactTotal.value === null ? 'Total unknown.' : `${mailbox.exactTotal.value} known locally.` }} {{ mailbox.lastSyncedAt.value ? `Last synced: ${mailbox.lastSyncedAt.value}` : 'Last sync unknown.' }}</p>
-    <!-- In normal flow above the central surface: never covers the focused row,
-         the reader back path, and stays visible in the empty-Inbox state. Inert
-         under a palette/navigator overlay exactly like header/main, so its Undo
-         button cannot be reached while covered; drawer/disclosure guards apply
-         through executeAction. -->
-    <ActionNotice v-if="!trashReader && drawer !== 'trash'" ref="actionNoticeComponent" :notice="actionNotice" :now="nowMs" :inert="!!overlay || !!attachmentConversation || undefined" @undo="executeAction('undo')" @undo-group="onNoticeGroupAction" @dismiss-group="mailbox.dismissGroupNotice()" />
     <main class="app-main" :inert="!!overlay || !!attachmentConversation || undefined">
+      <!-- Split header (DESIGN.md "Split Tabs"): one borderless 78px strip in
+           the list column. Destinations hamburger on the left, split tabs on
+           the 50px content inset, quiet notes and glyphs on the right. It sits
+           inside <main> so it shares main's overlay inertness and the list
+           column's grid track; the rail and contact pane span its height. -->
+      <header class="app-header">
+        <button type="button" class="header-glyph header-menu" data-test="navigator-trigger" title="Destinations (Left from list)" @click="openOverlay('navigator')"><HeaderGlyph name="menu" /><span class="visually-hidden">Destinations</span></button>
+        <div class="header-tabs">
+          <!-- The context heading stays in the accessibility tree; on screen the
+               active split tab already names it, so it is shown only when no
+               rendered tab is active (Cached Done, Starred, Search, reader). -->
+          <h1 class="app-title" :class="{ 'visually-hidden': activeTabShown }" data-test="inbox-title">{{ contextTitle }}<template v-if="switchAccountLabel"><span class="app-title-account"> — {{ accountStatus?.account?.emailAddress }}</span></template></h1>
+          <nav v-if="splitNavShown" class="split-nav" aria-label="Inbox splits" :title="splitCoverageShown ? SPLIT_COVERAGE : undefined">
+            <button type="button" class="split-tab" data-test="split-inbox" :aria-current="mailbox.context.value === 'inbox' ? 'page' : undefined" :aria-describedby="splitCoverageShown ? `${domIdPrefix}split-coverage` : undefined" @click="navigateContext('inbox')"><span class="split-label">Inbox</span> <span v-if="splitBadge(mailbox.inboxTotal.value)" class="split-count">{{ splitBadge(mailbox.inboxTotal.value) }}</span></button>
+            <button v-if="savedTabVisible" type="button" class="split-tab" data-test="split-saved" :aria-current="mailbox.context.value === 'saved' ? 'page' : undefined" :aria-describedby="splitCoverageShown ? `${domIdPrefix}split-coverage` : undefined" @click="navigateContext('saved')"><span class="split-label">{{ mailbox.savedSplit.value?.name }}</span> <span v-if="splitBadge(mailbox.savedTotal.value)" class="split-count">{{ splitBadge(mailbox.savedTotal.value) }}</span></button>
+          </nav>
+          <!-- Coverage qualifies the counts, so it lives on them: the tabs'
+               accessible description and the nav's hover title. -->
+          <p v-if="splitCoverageShown" :id="`${domIdPrefix}split-coverage`" class="visually-hidden" role="note" data-test="split-coverage">{{ SPLIT_COVERAGE }}</p>
+          <!-- Active list filters stay visible in words, never only as a pressed glyph. -->
+          <span v-if="accountReady && mailbox.unreadOnly.value" class="header-filter" role="status" data-test="unread-filter-status">Unread only</span>
+          <span v-if="starredFilterShown && mailbox.starredOnly.value" class="header-filter" data-test="starred-filter-status">Starred only</span>
+        </div>
+        <div class="header-trail">
+          <p v-if="props.mode === 'browser-preview'" class="header-note preview-tag" data-test="preview-banner" role="note" :title="BROWSER_PREVIEW_DISCLOSURE"><span aria-hidden="true">Preview · in-memory</span><span class="visually-hidden">{{ BROWSER_PREVIEW_DISCLOSURE }}</span></p>
+          <p v-if="gmailMode && !mailboxActionsEnabled" class="header-note" data-test="mailbox-access-hint">
+            {{ accountStatus?.mutationAccess === 'upgrading' ? 'Mailbox permission pending' : 'Gmail is read-only' }}
+            <button type="button" class="header-link" @click="openDrawer('account')">Review access<span class="visually-hidden"> in Account</span></button>
+          </p>
+          <button v-if="history.length && !readerOpen" type="button" class="header-glyph" data-test="context-back" title="Back to previous context" @click="executeAction('back')"><HeaderGlyph name="back" /><span class="visually-hidden">Back to previous context</span></button>
+          <button v-if="remindersSupported" type="button" class="header-glyph" :ref="setToggleRef('reminders')" title="Reminders (G then H)" @click="executeAction('reminders')"><HeaderGlyph name="reminders" /><span class="visually-hidden">Reminders</span></button>
+          <button v-if="starredFilterShown" type="button" class="header-glyph" data-test="starred-filter" title="Starred only (cached)" :aria-pressed="mailbox.starredOnly.value" :disabled="mailbox.listState.value !== 'ready'" @click="toggleStarFilter()"><HeaderGlyph name="star" :filled="mailbox.starredOnly.value" /><span class="visually-hidden">Starred only (cached)</span></button>
+          <button type="button" class="header-glyph" data-test="palette-trigger" ref="paletteButton" title="Commands (Cmd+K in native app)" @click="openOverlay('palette')"><HeaderGlyph name="commands" /><span class="visually-hidden">Commands</span></button>
+          <button v-if="accountId" type="button" class="header-glyph" :disabled="!actionAvailable('search')" data-test="search-trigger" :title="actionLabel('search')" @click="executeAction('search')"><HeaderGlyph name="search" /><span class="visually-hidden">Search</span></button>
+        </div>
+        <SplitEditor ref="splitEditor" v-if="editingSplit && accountReady && !readerOpen && !drawer" class="header-row" :split="mailbox.savedSplit.value" :busy="mailbox.splitBusy.value" :error="!!mailbox.splitError.value" @save="saveSplit" @cancel="closeSplitEditor" />
+        <p v-if="mailbox.splitError.value && !editingSplit" class="header-row header-alert" role="alert">Saved split unavailable. <button type="button" @click="mailbox.refresh()">Retry split</button></p>
+        <!-- Selection count announcement: the visible count lives in the
+             SelectionBar; this keeps the existing polite announcement. -->
+        <p v-if="selectedCount > 0" class="visually-hidden" role="status" data-test="selection-live">{{ selectedCount }} selected</p>
+      </header>
+
+      <!-- Static in-flow notices between the header and the list (list column
+           only): context coverage and draft recovery. Lines that come and go
+           with triage keys live in the bottom dock instead (.list-dock). -->
+      <div class="list-notices">
+        <div
+          v-if="drawer !== 'drafts' && (drafts.closeSetupError.value || drafts.closeRetryAvailable.value || (drafts.isVisible.value && drafts.error.value))"
+          role="alert"
+          class="recovery-banner draft-close-recovery"
+        >
+          <p v-if="drafts.closeSetupError.value">Close protection could not be initialized: {{ drafts.closeSetupError.value }}</p>
+          <p v-else-if="drafts.closeRetryAvailable.value">{{ drafts.closeError.value }}</p>
+          <p v-else>The local draft editor needs attention.</p>
+          <button v-if="drafts.closeSetupError.value" type="button" data-test="retry-close-setup" @click="drafts.retryCloseSetup()">Retry close protection</button>
+          <button v-if="drafts.closeRetryAvailable.value" type="button" data-test="retry-close" @click="drafts.retryClose()">Retry close request</button>
+          <button v-if="drafts.isVisible.value && drafts.error.value" type="button" data-test="draft-attention-open" @click="openDrawer('drafts')">Open drafts</button>
+        </div>
+
+        <p v-if="mailbox.context.value === 'starred'" class="cached-coverage" role="note" data-test="starred-coverage">Local cache only — not provider-complete Starred. Total unknown. Unknown star facts are not treated as unstarred.</p>
+        <p v-if="mailbox.context.value === 'done'" class="cached-coverage" role="note" data-test="done-coverage">Local cache only — not provider-complete Done or All Mail. {{ mailbox.exactTotal.value === null ? 'Total unknown.' : `${mailbox.exactTotal.value} known locally.` }} <template v-if="mailbox.lastSyncedAt.value">Last synced <FullDate :at="mailbox.lastSyncedAt.value" />.</template><template v-else>Last sync unknown.</template></p>
+      </div>
       <section v-if="!accountReady" class="account-gate" aria-label="Account">
         <p
           v-if="mailbox.accountState.value === 'loading' && mailbox.listState.value !== 'error'"
           data-test="account-loading"
         >Determining account mode…</p>
-        <div v-else data-test="account-error">
+        <div v-else class="recovery-banner" data-test="account-error">
           <p v-if="mailbox.accountState.value === 'error'" role="alert">
             Could not determine the account status:
             {{ mailbox.accountError.value ? errorText(mailbox.accountError.value) : 'unknown error' }}.
@@ -1747,57 +1785,73 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
         </div>
       </section>
       <template v-else>
+        <!-- Icon rail (DESIGN.md "Rail"): 40px. Inbox is the 28px home circle on
+             the split-tab line; the other mail destinations sit in the Inkwell
+             pill from the header's bottom edge, its first glyph on the first
+             list line; utilities sit at the bottom. Labels stay in the
+             accessibility tree, as the hover title, and as a keyboard
+             tooltip (.rail-label, shown on :focus-visible). -->
         <nav class="rail" aria-label="Mail navigation">
           <button
             type="button"
-            class="rail-item rail-inbox"
+            class="rail-item rail-home rail-inbox"
             data-test="rail-inbox"
             :aria-current="!readerOpen && drawer === null && mailbox.context.value === 'inbox' ? 'page' : undefined"
             :title="actionLabel('inbox')" @click="executeAction('inbox')"
-          >Inbox</button>
-          <button v-if="accountId && gmailMode" type="button" class="rail-item" data-test="rail-starred" :aria-current="mailbox.context.value === 'starred' && !readerOpen ? 'page' : undefined" @click="executeAction('starred')">Starred</button>
-          <button v-if="accountId" type="button" class="rail-item rail-done" data-test="rail-done" :title="actionLabel('done')" :aria-current="mailbox.context.value === 'done' && !readerOpen ? 'page' : undefined" @click="executeAction('done')">Cached Done</button>
-          <button v-if="gmailMode || props.mode === 'browser-preview'" type="button" class="rail-item" data-test="rail-destinations" :ref="setToggleRef('destinations')" :aria-expanded="drawer === 'destinations'" @click="toggleDrawer('destinations')">Provider mail</button>
-          <button v-if="gmailMode && accountId" type="button" class="rail-item rail-done" data-test="rail-trash" :ref="setToggleRef('trash')" :title="actionLabel('trash')" :aria-expanded="drawer === 'trash'" @click="toggleDrawer('trash')">Cached Trash</button>
+          ><PaneGlyph name="inbox" /><span class="rail-label">Inbox</span></button>
+          <div v-if="accountId || gmailMode || props.mode === 'browser-preview'" class="rail-well" data-test="rail-well">
+            <button v-if="accountId && gmailMode" type="button" class="rail-item" data-test="rail-starred" :title="actionLabel('starred')" :aria-current="mailbox.context.value === 'starred' && !readerOpen ? 'page' : undefined" @click="executeAction('starred')"><HeaderGlyph name="star" /><span class="rail-label">Starred</span></button>
+            <button v-if="accountId" type="button" class="rail-item" data-test="rail-done" :title="actionLabel('done')" :aria-current="mailbox.context.value === 'done' && !readerOpen ? 'page' : undefined" @click="executeAction('done')"><PaneGlyph name="done" /><span class="rail-label">Cached Done</span></button>
+            <button v-if="gmailMode || props.mode === 'browser-preview'" type="button" class="rail-item" data-test="rail-destinations" :ref="setToggleRef('destinations')" title="Provider mail (read only)" :aria-expanded="drawer === 'destinations'" @click="toggleDrawer('destinations')"><PaneGlyph name="provider" /><span class="rail-label">Provider mail</span></button>
+            <button v-if="gmailMode && accountId" type="button" class="rail-item" data-test="rail-trash" :ref="setToggleRef('trash')" :title="actionLabel('trash')" :aria-expanded="drawer === 'trash'" @click="toggleDrawer('trash')"><PaneGlyph name="trash" /><span class="rail-label">Cached Trash</span></button>
+          </div>
           <span class="rail-spacer" aria-hidden="true"></span>
-          <button
-            v-if="gmailMode && accountStatus"
-            type="button"
-            class="rail-item"
-            data-test="rail-account"
-            :title="actionLabel('account')"
-            :ref="setToggleRef('account')"
-            :aria-expanded="drawer === 'account'"
-            @click="toggleDrawer('account')"
-          >Account</button>
-          <button
-            type="button"
-            class="rail-item"
-            data-test="rail-activity"
-            :title="actionLabel('activity')"
-            :ref="setToggleRef('activity')"
-            :aria-expanded="drawer === 'activity'"
-            @click="toggleDrawer('activity')"
-          >Activity</button>
-          <button
-            v-if="accountId"
-            type="button"
-            class="rail-item"
-            data-test="rail-drafts"
-            :title="actionLabel('drafts')"
-            :ref="setToggleRef('drafts')"
-            :aria-expanded="drawer === 'drafts'"
-            @click="toggleDrawer('drafts')"
-          >Drafts</button>
-          <button
-            v-if="!wideViewport"
-            type="button"
-            class="rail-item"
-            data-test="contact-disclosure"
-            ref="contactDisclosureButton"
-            :aria-expanded="contactDisclosure"
-            @click="toggleContactDisclosure()"
-          >Contact</button>
+          <div class="rail-utilities">
+            <button
+              v-if="gmailMode && accountStatus"
+              type="button"
+              class="rail-item"
+              data-test="rail-account"
+              :title="actionLabel('account')"
+              :ref="setToggleRef('account')"
+              :aria-expanded="drawer === 'account'"
+              @click="toggleDrawer('account')"
+            ><PaneGlyph name="account" /><span class="rail-label">Account</span></button>
+            <!-- Unresolved operations (pending or outcome unknown) have no other
+                 glanceable home since the header status line was removed: a
+                 count badge on Activity, described in words for AT and hover. -->
+            <button
+              type="button"
+              class="rail-item"
+              data-test="rail-activity"
+              :title="unresolvedSummary ? `${actionLabel('activity')} — ${unresolvedSummary}` : actionLabel('activity')"
+              :ref="setToggleRef('activity')"
+              :aria-expanded="drawer === 'activity'"
+              :aria-describedby="unresolvedSummary ? `${domIdPrefix}rail-activity-unresolved` : undefined"
+              @click="toggleDrawer('activity')"
+            ><PaneGlyph name="activity" /><span class="rail-label">Activity</span><span v-if="unresolvedCount > 0" class="rail-badge" aria-hidden="true" data-test="rail-activity-badge">{{ unresolvedCount > 99 ? '99+' : unresolvedCount }}</span></button>
+            <span v-if="unresolvedSummary" :id="`${domIdPrefix}rail-activity-unresolved`" class="visually-hidden" data-test="pending-count">{{ unresolvedSummary }}</span>
+            <button
+              v-if="accountId"
+              type="button"
+              class="rail-item"
+              data-test="rail-drafts"
+              :title="actionLabel('drafts')"
+              :ref="setToggleRef('drafts')"
+              :aria-expanded="drawer === 'drafts'"
+              @click="toggleDrawer('drafts')"
+            ><PaneGlyph name="drafts" /><span class="rail-label">Drafts</span></button>
+            <button
+              v-if="!wideViewport"
+              type="button"
+              class="rail-item"
+              data-test="contact-disclosure"
+              ref="contactDisclosureButton"
+              title="Contact context"
+              :aria-expanded="contactDisclosure"
+              @click="toggleContactDisclosure()"
+            ><PaneGlyph name="contact" /><span class="rail-label">Contact</span></button>
+          </div>
         </nav>
 
         <section class="central" :aria-label="readerOpen ? 'Reader' : 'Conversation list'" :inert="centralCovered || undefined" data-test="central-surface">
@@ -1814,29 +1868,14 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             <p v-if="mailbox.listError.value && mailbox.listState.value === 'ready'" role="alert">{{ errorText(mailbox.listError.value) }}</p>
           </form>
           <template v-if="!readerOpen">
-            <SelectionBar
-              v-if="selectedCount > 0 && mailbox.listState.value === 'ready'"
-              ref="selectionBarRef"
-              :count="selectedCount"
-              :loaded-count="mailbox.conversations.value.length"
-              :context="mailbox.context.value"
-              :actions-enabled="mailboxActionsEnabled && !mailbox.bulkUnresolved.value && !mailbox.commandInFlight.value"
-              :read-available="gmailActionsEnabled && !mailbox.bulkUnresolved.value && !mailbox.commandInFlight.value"
-              :limit-message="mailbox.selectionNotice.value"
-              @archive="bulkArchiveSelection()"
-              @unarchive="bulkRestoreSelection()"
-              @mark-read="bulkSetReadSelection(true)"
-              @mark-unread="bulkSetReadSelection(false)"
-              @select-all="mailbox.selectAllLoaded()"
-              @clear="clearSelectionFromBar()"
-            />
-            <p v-if="mailbox.listState.value === 'loading'" data-test="inbox-loading">Loading {{ contextTitle }}…</p>
-            <div v-else-if="mailbox.listState.value === 'error'" data-test="inbox-error">
+            <p v-if="mailbox.listState.value === 'loading'" class="list-state" data-test="inbox-loading">Loading {{ contextTitle }}…</p>
+            <div v-else-if="mailbox.listState.value === 'error'" class="recovery-banner" data-test="inbox-error">
               <p role="alert">Could not load {{ contextTitle }}: {{ mailbox.listError.value ? errorText(mailbox.listError.value) : 'unknown error' }}.</p>
               <button type="button" data-test="inbox-retry" @click="mailbox.refresh()">Retry</button>
             </div>
             <p
               v-else-if="mailbox.conversations.value.length === 0"
+              class="list-state"
               data-test="inbox-empty"
               ref="emptyState"
               tabindex="-1"
@@ -1861,7 +1900,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               @select-toggle="toggleRowSelection"
               @select-range="rangeSelectRow"
             />
-            <button v-if="mailbox.nextCursor.value" type="button" :disabled="mailbox.loadingMore.value || mailbox.listState.value !== 'ready'" data-test="done-more" @click="mailbox.loadMore()">{{ mailbox.context.value === 'search' ? 'Continue searching older mail' : `Load more ${contextTitle}` }}</button>
+            <button v-if="mailbox.nextCursor.value" type="button" class="list-more" :disabled="mailbox.loadingMore.value || mailbox.listState.value !== 'ready'" data-test="done-more" @click="mailbox.loadMore()">{{ mailbox.context.value === 'search' ? 'Continue searching older mail' : `Load more ${contextTitle}` }}</button>
           </template>
           <section v-else class="reader-pane" aria-label="Reader">
             <p
@@ -1870,7 +1909,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               role="note"
               data-test="reader-selection-scope"
             >{{ selectedCount }} selected — bulk actions apply to the selection, not only this conversation.</p>
-            <div v-if="mailbox.listState.value === 'error'" role="alert" data-test="reader-navigation-error">
+            <div v-if="mailbox.listState.value === 'error'" role="alert" class="recovery-banner" data-test="reader-navigation-error">
               Could not refresh the originating list: {{ mailbox.listError.value ? errorText(mailbox.listError.value) : 'unknown error' }}.
               Conversation navigation is paused. <button type="button" @click="mailbox.refresh()">Retry list</button>
             </div>
@@ -2030,6 +2069,41 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
           <ContactPane :contact="contact" :context="contactContext" :recent="recentMail" @search-sender="senderSearch" @open-recent="openRecent" />
         </div>
       </template>
+      <!-- Bottom dock of the list column (DESIGN.md "In-flow Notices"): the
+           selection bar, the single-slot action notice and the last command
+           failure. In normal flow below the central surface, so showing or
+           hiding them (x, e, z) never moves a row and never covers the focused
+           row, the reader back path or the empty-Inbox state; it grows upward
+           into the list viewport only. One 36px line stays reserved so the
+           first notice does not resize the list. -->
+      <div class="list-dock" data-test="list-dock">
+        <!-- Covered by a drawer or disclosure exactly like the list it acts on. -->
+        <SelectionBar
+          v-if="!readerOpen && accountReady && selectedCount > 0 && mailbox.listState.value === 'ready'"
+          ref="selectionBarRef"
+          :inert="centralCovered || undefined"
+          :count="selectedCount"
+          :loaded-count="mailbox.conversations.value.length"
+          :context="mailbox.context.value"
+          :actions-enabled="mailboxActionsEnabled && !mailbox.bulkUnresolved.value && !mailbox.commandInFlight.value"
+          :read-available="gmailActionsEnabled && !mailbox.bulkUnresolved.value && !mailbox.commandInFlight.value"
+          :limit-message="mailbox.selectionNotice.value"
+          @archive="bulkArchiveSelection()"
+          @unarchive="bulkRestoreSelection()"
+          @mark-read="bulkSetReadSelection(true)"
+          @mark-unread="bulkSetReadSelection(false)"
+          @select-all="mailbox.selectAllLoaded()"
+          @clear="clearSelectionFromBar()"
+        />
+        <!-- Inert under a palette/navigator overlay exactly like header/main, so
+             its Undo button cannot be reached while covered; drawer/disclosure
+             guards apply through executeAction. -->
+        <ActionNotice v-if="!trashReader && drawer !== 'trash'" ref="actionNoticeComponent" :notice="actionNotice" :now="nowMs" :inert="!!overlay || !!attachmentConversation || undefined" @undo="executeAction('undo')" @undo-group="onNoticeGroupAction" @dismiss-group="mailbox.dismissGroupNotice()" />
+        <!-- The last command failure is an outcome the user must see: it sits
+             in the same outcome slot as the action notice, as its own alert
+             (not nested in the polite notice region, so it is announced once). -->
+        <p v-if="commandError" class="command-error" role="alert" data-test="command-error">Last command failed: {{ errorText(commandError) }}</p>
+      </div>
     </main>
     <AttachmentChooser v-if="attachmentConversation" :client="props.client" :conversation="attachmentConversation" :preview="props.mode === 'browser-preview'" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" @close="closeAttachments" />
     <ActionOverlay v-if="overlay" v-model:query="overlayQuery" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" :kind="overlay" :actions="availableActions" @close="closeOverlay()" @execute="executeOverlay" />

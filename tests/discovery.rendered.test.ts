@@ -313,9 +313,10 @@ describe.skipIf(chromePath === '')('UX-03 discovery / UX-13 workspaces (real Chr
         await cdp!.js('window.__splitControl.rejectList(); window.__h.wait(80)');
         expect(await cdp!.js(`!!document.querySelector('[data-test="inbox-error"]')`)).toBe(true);
         await cdp!.js('document.activeElement.blur()');
-        // Commands is now the first tab stop. Shift+Tab may correctly leave the
-        // page for browser chrome; forward Tab must still reach Destinations.
-        await press('Tab');
+        // Split header order follows the visual order: the Destinations
+        // hamburger is the first header stop, Commands sits in the right-hand
+        // glyphs. Backward Tab from Commands must still reach Destinations.
+        for (let i = 0; i < 8 && await activeTest() !== 'navigator-trigger'; i++) await press('Tab', { shift: true });
         expect(await activeTest()).toBe('navigator-trigger');
       } else {
         await cdp!.js(`document.querySelector('.inbox-row').focus()`);
@@ -723,7 +724,9 @@ describe.skipIf(chromePath === '')('UX-03 discovery / UX-13 workspaces (real Chr
       panel.querySelector('[data-test="conversation-row-conv-03"]').focus();
     })()`);
     await press('x'); await cdp!.js('window.__h.wait(80)');
-    await cdp!.js(`document.querySelector('${a} .inbox-list').scrollTop = 50`);
+    // Scrolled, with the focused conv-03 still fully inside the 100px list
+    // (48px date caption + 36px rows put it at 120-156px).
+    await cdp!.js(`document.querySelector('${a} .inbox-list').scrollTop = 60`);
     const scroll = await cdp!.js<number>(`document.querySelector('${a} .inbox-list').scrollTop`);
     expect(scroll).toBeGreaterThan(0);
     await click('[data-test="switch-fixture-account-two"]'); await cdp!.js('window.__h.wait(100)');

@@ -1,0 +1,133 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-07T13:45:00Z",
+  "title": "Design System: Email OS",
+  "extensions": {
+    "colorMeta": {
+      "focus-accent": { "role": "primary", "displayName": "Dusk Lavender", "canonical": "#bba5ed", "tonalRamp": ["#2a2140", "#3d3160", "#544480", "#6c58a2", "#8770c1", "#a18ad8", "#bba5ed", "#ddd2f8"] },
+      "unread-marker": { "role": "secondary", "displayName": "Orchid Dot", "canonical": "#ce9ece", "tonalRamp": ["#33203a", "#4b2f52", "#653f6c", "#805387", "#9c6ba3", "#b685bc", "#ce9ece", "#ead3ea"] },
+      "surface": { "role": "neutral", "displayName": "Warm Charcoal", "canonical": "#292826", "tonalRamp": ["#141413", "#1f1e1c", "#292826", "#33312e", "#474644", "#6b6865", "#a09c9a", "#ece9e2"] },
+      "surface-contact": { "role": "neutral", "displayName": "Deep Umber", "canonical": "#1f1e1c" },
+      "surface-raised": { "role": "neutral", "displayName": "Lifted Charcoal", "canonical": "#33312e" },
+      "focus-fill": { "role": "neutral", "displayName": "Focus Stone", "canonical": "#474644" },
+      "rail-well": { "role": "neutral", "displayName": "Inkwell", "canonical": "#141413" },
+      "rail-button": { "role": "neutral", "displayName": "Rail Pebble", "canonical": "#383735" },
+      "text-primary": { "role": "neutral", "displayName": "Paper White", "canonical": "#ffffff" },
+      "text-secondary": { "role": "neutral", "displayName": "Ash", "canonical": "#c0bcb6" },
+      "text-tertiary": { "role": "neutral", "displayName": "Smoke", "canonical": "#a09c9a" },
+      "icon-muted": { "role": "neutral", "displayName": "Graphite", "canonical": "#8e8a87" },
+      "divider": { "role": "neutral", "displayName": "Seam", "canonical": "#474543" },
+      "warning": { "role": "status", "displayName": "Amber Notice", "canonical": "#e4c465" },
+      "danger": { "role": "status", "displayName": "Coral Fault", "canonical": "#f1a9a5" }
+    },
+    "typographyMeta": {
+      "headline": { "displayName": "Headline", "purpose": "Split tabs and contact name; the only large text in the shell." },
+      "title": { "displayName": "Title", "purpose": "Sender, contact email, section and footer labels." },
+      "body": { "displayName": "Body", "purpose": "Subject, snippet, threads, date-group captions." },
+      "label": { "displayName": "Label", "purpose": "Compact dates and status counts, tabular numerals." },
+      "count": { "displayName": "Count", "purpose": "Split-tab counts." },
+      "mono": { "displayName": "Mono", "purpose": "Plain-text message body in the reader." }
+    },
+    "shadows": [
+      { "name": "drawer-cast", "value": "-8px 0 24px rgba(0, 0, 0, 0.35)", "purpose": "Right-edge utility drawer." },
+      { "name": "popover-lift", "value": "0 6px 16px rgba(0, 0, 0, 0.35)", "purpose": "Compact row-actions disclosure panel." },
+      { "name": "overlay-lift", "value": "0 16px 64px rgba(0, 0, 0, 0.53)", "purpose": "Command palette and navigator over a #00000088 backdrop." }
+    ],
+    "motion": [],
+    "breakpoints": [
+      { "name": "contact-column", "value": "1000px" },
+      { "name": "drafts-stack", "value": "760px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Conversation Row",
+      "kind": "custom",
+      "refersTo": "list-row",
+      "description": "36px single-line row; focused variant shows Focus Stone fill, 4px lavender bar and action glyphs in place of the date.",
+      "html": "<ul class=\"ds-list\"><li class=\"ds-row ds-row-focused\"><span class=\"ds-dot\"></span><span class=\"ds-sender\">The Google Workspace Team</span><span class=\"ds-subject\">[Action Required] Mark AI agent OAuth clients</span><span class=\"ds-snippet\">A new agent setting is available…</span><span class=\"ds-actions\"><button class=\"ds-glyph\" aria-label=\"Done\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><path d=\"M3 8.5l3 3 7-7\"/></svg></button><button class=\"ds-glyph\" aria-label=\"Snooze\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><circle cx=\"8\" cy=\"8\" r=\"6\"/><path d=\"M8 4.5V8l2.5 1.5\"/></svg></button></span></li><li class=\"ds-row\"><span class=\"ds-dot ds-dot-read\"></span><span class=\"ds-sender\">Alex Stokoe</span><span class=\"ds-subject\">Dwelly, Fonoa</span><span class=\"ds-snippet\">Hi Sofiane, good to hear from you…</span><span class=\"ds-date\">8:00 AM</span></li><li class=\"ds-group\">Yesterday</li><li class=\"ds-row\"><span class=\"ds-dot ds-dot-read\"></span><span class=\"ds-sender\">Tom Clements</span><span class=\"ds-subject\">Access to CurieOS</span><span class=\"ds-snippet\">Yep all good, I was able to play around…</span><span class=\"ds-date\">6 NOV</span></li></ul>",
+      "css": ".ds-list { list-style: none; margin: 0; padding: 0; background: #292826; font-family: system-ui, -apple-system, sans-serif; font-size: 0.75rem; width: 640px; } .ds-row { display: flex; align-items: center; gap: 12px; height: 36px; margin: 0 6px; padding: 0 18px 0 0; color: #ffffff; position: relative; cursor: pointer; } .ds-row:hover { background: rgba(255,255,255,0.03); } .ds-row-focused, .ds-row-focused:hover { background: #474644; box-shadow: inset 4px 0 0 #bba5ed; } .ds-dot { flex: 0 0 44px; display: flex; justify-content: flex-end; padding-right: 7px; } .ds-dot::after { content: ''; width: 5px; height: 5px; border-radius: 9999px; background: #ce9ece; } .ds-dot-read::after { background: transparent; } .ds-sender { flex: 0 0 132px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-left: -12px; } .ds-subject { white-space: nowrap; } .ds-snippet { flex: 1; min-width: 0; color: #c0bcb6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .ds-date { color: #c0bcb6; font-variant-numeric: tabular-nums; } .ds-actions { display: flex; } .ds-glyph { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: 0; color: #8e8a87; border-radius: 4px; cursor: pointer; } .ds-glyph:hover, .ds-glyph:focus-visible { color: #ffffff; } .ds-glyph:focus-visible { outline: 2px solid #bba5ed; outline-offset: 1px; } .ds-group { height: 48px; display: flex; align-items: center; padding-left: 50px; color: #c0bcb6; }"
+    },
+    {
+      "name": "Split Tabs",
+      "kind": "nav",
+      "refersTo": "split-tab",
+      "description": "78px header: hamburger, split tabs with counts, compose and search glyphs; no bottom border.",
+      "html": "<header class=\"ds-split\"><button class=\"ds-glyph ds-menu\" aria-label=\"Menu\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><path d=\"M2 4h12M2 8h12M2 12h12\"/></svg></button><nav class=\"ds-tabs\"><a class=\"ds-tab ds-tab-active\" href=\"#\" aria-current=\"page\">Important<span class=\"ds-count\">4</span></a><a class=\"ds-tab\" href=\"#\">News<span class=\"ds-count\">21</span></a><a class=\"ds-tab\" href=\"#\">Other<span class=\"ds-count\">7</span></a></nav><button class=\"ds-glyph\" aria-label=\"Search\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><circle cx=\"7\" cy=\"7\" r=\"5\"/><path d=\"M11 11l3 3\"/></svg></button></header>",
+      "css": ".ds-split { display: flex; align-items: center; height: 78px; padding: 0 16px 0 7px; background: #292826; font-family: system-ui, -apple-system, sans-serif; width: 640px; } .ds-menu { margin-right: 11px; } .ds-tabs { display: flex; gap: 18px; flex: 1; } .ds-tab { font-size: 1rem; line-height: 1.25; color: #a09c9a; text-decoration: none; } .ds-tab:hover { color: #ffffff; } .ds-tab:focus-visible { outline: 2px solid #bba5ed; outline-offset: 2px; border-radius: 4px; } .ds-tab-active { color: #ffffff; } .ds-count { font-size: 0.6875rem; color: #c0bcb6; margin-left: 4px; } .ds-glyph { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: 0; color: #8e8a87; border-radius: 4px; cursor: pointer; } .ds-glyph:hover, .ds-glyph:focus-visible { color: #ffffff; } .ds-glyph:focus-visible { outline: 2px solid #bba5ed; outline-offset: 1px; }"
+    },
+    {
+      "name": "Icon Rail",
+      "kind": "nav",
+      "refersTo": "app-rail",
+      "description": "40px rail: Rail Pebble action circle, Inkwell pill of destination glyphs.",
+      "html": "<nav class=\"ds-rail\" aria-label=\"Mail navigation\"><button class=\"ds-rail-btn\" aria-label=\"Commands\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><path d=\"M8 2v12M2 8h12\"/></svg></button><div class=\"ds-rail-well\"><button class=\"ds-rail-item ds-rail-active\" aria-label=\"Inbox\" aria-current=\"page\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><rect x=\"2\" y=\"3.5\" width=\"12\" height=\"9\" rx=\"1.5\"/><path d=\"M2.5 4.5L8 9l5.5-4.5\"/></svg></button><button class=\"ds-rail-item\" aria-label=\"Activity\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><rect x=\"2.5\" y=\"3\" width=\"11\" height=\"10.5\" rx=\"1.5\"/><path d=\"M2.5 6.5h11M5.5 1.5v3M10.5 1.5v3\"/></svg></button></div></nav>",
+      "css": ".ds-rail { width: 40px; height: 220px; display: flex; flex-direction: column; align-items: center; gap: 12px; padding-top: 25px; background: #292826; border-right: 1px solid #474543; } .ds-rail-btn { width: 28px; height: 28px; border-radius: 9999px; border: 0; background: #383735; color: #ffffff; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; } .ds-rail-well { width: 28px; padding: 2px 0; border-radius: 9999px; background: #141413; display: flex; flex-direction: column; align-items: center; } .ds-rail-item { width: 28px; height: 28px; border: 0; background: transparent; color: #8e8a87; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 9999px; } .ds-rail-item:hover, .ds-rail-active { color: #ffffff; } .ds-rail-btn:focus-visible, .ds-rail-item:focus-visible { outline: 2px solid #bba5ed; outline-offset: 1px; }"
+    },
+    {
+      "name": "Contact Pane",
+      "kind": "card",
+      "refersTo": "contact-pane",
+      "description": "272px Deep Umber context pane: name on the tab line, email on the first-row line, recent threads, footer utilities.",
+      "html": "<aside class=\"ds-contact\"><h2 class=\"ds-contact-name\">The Google Workspace Team</h2><p class=\"ds-contact-email\">workspace-noreply@google.com</p><p class=\"ds-contact-section\">Mail</p><ul class=\"ds-threads\"><li>Thank you for activating your subscription</li><li>ACTION REQUIRED: Update billing to resume</li><li>Payment failure: Google Workspace Business</li></ul><footer class=\"ds-contact-footer\"><button class=\"ds-ghost\">Activity</button><button class=\"ds-ghost\">Drafts</button></footer></aside>",
+      "css": ".ds-contact { width: 272px; height: 360px; box-sizing: border-box; padding: 0 24px 24px; background: #1f1e1c; border-left: 1px solid #474543; color: #ffffff; font-family: system-ui, -apple-system, sans-serif; display: flex; flex-direction: column; } .ds-contact-name { font-size: 1rem; font-weight: 400; line-height: 1.25; margin: 30px 0 0; } .ds-contact-email { font-size: 0.75rem; font-weight: 600; margin: 32px 0 0; } .ds-contact-section { font-size: 0.75rem; font-weight: 600; margin: 20px 0 4px; } .ds-threads { list-style: none; margin: 0; padding: 0; } .ds-threads li { height: 24px; line-height: 24px; font-size: 0.75rem; color: #c0bcb6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .ds-contact-footer { margin-top: auto; display: flex; gap: 8px; } .ds-ghost { background: transparent; border: 0; color: #ffffff; font: inherit; font-size: 0.75rem; font-weight: 600; padding: 2px 8px; border-radius: 4px; cursor: pointer; } .ds-ghost:hover { background: #33312e; } .ds-ghost:focus-visible { outline: 2px solid #bba5ed; outline-offset: 1px; }"
+    },
+    {
+      "name": "Utility Button",
+      "kind": "button",
+      "refersTo": "button-utility",
+      "description": "The only bordered button; drawers and recovery banners.",
+      "html": "<button class=\"ds-btn-utility\">Retry close request</button>",
+      "css": ".ds-btn-utility { background: #33312e; color: #ffffff; border: 1px solid #474543; border-radius: 4px; padding: 2px 8px; font-family: system-ui, -apple-system, sans-serif; font-size: 0.75rem; cursor: pointer; } .ds-btn-utility:hover { background: #474644; } .ds-btn-utility:focus-visible { outline: 2px solid #bba5ed; outline-offset: 1px; }"
+    },
+    {
+      "name": "Command Overlay",
+      "kind": "custom",
+      "refersTo": "command-overlay",
+      "description": "Palette/navigator on the system palette: Lifted Charcoal panel, lavender-bordered input, Focus Stone highlight.",
+      "html": "<div class=\"ds-overlay\"><input class=\"ds-overlay-input\" value=\"arch\" aria-label=\"Command\"/><ul class=\"ds-overlay-list\"><li class=\"ds-overlay-item ds-overlay-hl\">Archive<kbd>E</kbd></li><li class=\"ds-overlay-item\">Mark unread<kbd>Shift+U</kbd></li></ul></div>",
+      "css": ".ds-overlay { width: 420px; background: #33312e; color: #ffffff; border-radius: 10px; padding: 16px; box-shadow: 0 16px 64px rgba(0,0,0,0.53); font-family: system-ui, -apple-system, sans-serif; font-size: 0.75rem; } .ds-overlay-input { box-sizing: border-box; width: 100%; padding: 10px; background: #1f1e1c; color: #ffffff; border: 1px solid #bba5ed; border-radius: 4px; font: inherit; } .ds-overlay-input:focus { outline: none; } .ds-overlay-list { list-style: none; margin: 10px 0 0; padding: 0; } .ds-overlay-item { display: flex; justify-content: space-between; padding: 10px; box-shadow: inset 3px 0 0 transparent; cursor: pointer; } .ds-overlay-item:hover { background: rgba(255,255,255,0.03); } .ds-overlay-hl, .ds-overlay-hl:hover { background: #474644; box-shadow: inset 3px 0 0 #bba5ed; } .ds-overlay-item kbd { color: #c0bcb6; font-family: inherit; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Quiet Instrument",
+    "overview": "A precision tool used in long, focused sessions. The surface is a single warm charcoal plane. The interface recedes until only the list, the open conversation and the next decision are on screen. Density is high but calm: 36px rows, small type, no dividers, no cards. One violet signal marks where you are. Everything else is a tonal step on the same warm gray ramp.\n\nThe system follows Superhuman's browsing look closely, and that parity is an explicit goal. It covers geometry, density, type scale, tonal layering and the focused-row treatment. Features and workflows stay our own. The one place we deliberately go our own way is state: pending, failed, partial and outcome-unknown states are always visible in their own form. A quiet surface must never hide what happened.",
+    "keyCharacteristics": [
+      "Three fixed panes: a 40px icon rail, a fluid list or reader, and a 272px darker contact pane. Each is separated by a single 1px divider.",
+      "One content inset (50px from the list pane's left edge). It aligns split tabs, sender names, date-group captions and banners.",
+      "36px rows on 12px type. Hierarchy comes from weight and tone, not size.",
+      "Pane-edge alignment: the contact name sits on the split-tab line, and the contact email sits on the first-row line.",
+      "Flat tonal layering. No shadows in the browsing shell.",
+      "The violet accent appears once per screen: on the focused row or the active message."
+    ],
+    "rules": [
+      { "name": "The One Signal Rule", "body": "Dusk Lavender appears at most once per screen, on the current row or message. If two violet things are visible, one of them is wrong.", "section": "colors" },
+      { "name": "The Seams-Only Rule", "body": "Dividers separate panes, never rows. Rows are separated by rhythm alone.", "section": "colors" },
+      { "name": "The Status-Is-Sacred Rule", "body": "Amber and coral are never used decoratively, and a status is never shown only as a tint: every status carries words.", "section": "colors" },
+      { "name": "The Two-Size Rule", "body": "The browsing shell uses 16px and 12px only (11px for counts). A third size in the list needs a written reason.", "section": "typography" },
+      { "name": "The No-Caps-Caption Rule", "body": "No uppercase letter-spaced captions in the browsing shell. Date groups and pane headings are title case. Uppercase is allowed only for the month in compact dates.", "section": "typography" },
+      { "name": "The Flat-Shell Rule", "body": "If something in the rail, header, list or contact pane casts a shadow, remove it. Shadows mean \"this covers the shell\", nothing else.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do keep rows at exactly 36px with 12px type, and separate them by rhythm alone.",
+      "Do align split tabs, sender names, date captions and notices to the single 50px content inset.",
+      "Do use Dusk Lavender (#bba5ed) only for the current row or message, and the focus ring.",
+      "Do show every pending, partial, failed and outcome-unknown state in words, in Amber Notice or Coral Fault, where the user is already looking.",
+      "Do align the contact pane to the list: the name on the tab line, the email on the first-row line.",
+      "Do ship glyphs as local inline SVG with an accessible name. No icon fonts and no CDN.",
+      "Do treat Superhuman's browsing look as the visual and interaction reference. Close look parity is the goal (PRODUCT.md)."
+    ],
+    "donts": [
+      "Don't draw dividers between rows or under the header. Seams separate panes only.",
+      "Don't use uppercase letter-spaced captions in the browsing shell.",
+      "Don't add Gmail-web clutter: toolbars of rarely-used icons, or chrome competing with content.",
+      "Don't add \"AI magic\" chrome: sparkle icons, or generated summaries presented as fact.",
+      "Don't build a Superhuman feature-parity clone. Copy the browsing look, not Superhuman's product scope.",
+      "Don't use generic SaaS dashboard aesthetics: card grids, gradient heroes, oversized rounded panels, decorative illustration.",
+      "Don't show optimistic UI that lies: no \"Done\" toast before the provider confirms, and no silent retry of an ambiguous send.",
+      "Don't put shadows on anything in the rail, header, list or contact pane.",
+      "Don't introduce a third type size in the list, or use off-palette hex values (the old command-overlay violets are the cautionary example).",
+      "Don't load remote fonts, images or CDN assets."
+    ]
+  }
+}

@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import type { Conversation, DestinationCatalog, DestinationPage, MailClient, ProviderDestination } from '../lib/ipc/client';
 import { toMailError } from '../lib/ipc/client';
+import FullDate from './FullDate.vue';
 
 const props = defineProps<{ client: MailClient; accountId: string }>();
 const catalog = ref<DestinationCatalog | null>(null);
@@ -87,7 +88,7 @@ onMounted(() => { void loadCatalog(); });
         <button :disabled="busy" @click="loadCatalog()">Refresh catalog</button>
         <button :disabled="busy" @click="loadCatalog(true)">Use saved catalog</button>
       </div>
-      <p v-if="catalog">{{ cached ? 'Saved' : 'Provider' }} catalog · {{ catalog.fetchedAt }}</p>
+      <p v-if="catalog">{{ cached ? 'Saved' : 'Provider' }} catalog · <FullDate :at="catalog.fetchedAt" /></p>
       <ul class="destination-catalog">
         <li v-for="item in visible" :key="item.id"><button :disabled="busy" @click="loadPage(item)">{{ item.name }}</button></li>
       </ul>
@@ -104,7 +105,7 @@ onMounted(() => { void loadCatalog(); });
           <button :disabled="busy" @click="loadPage(destination)">Refresh first page</button>
           <button :disabled="busy" @click="loadPage(destination, null, true)">Use latest saved page</button>
         </div>
-        <p v-if="page" role="status">{{ cached ? 'Saved local snapshot' : 'Provider page snapshot' }} · {{ page.fetchedAt }} · {{ page.conversations.length }} loaded on this page. Mailbox total unknown.</p>
+        <p v-if="page" role="status">{{ cached ? 'Saved local snapshot' : 'Provider page snapshot' }} · <FullDate :at="page.fetchedAt" /> · {{ page.conversations.length }} loaded on this page. Mailbox total unknown.</p>
         <div ref="list" class="destination-list" tabindex="-1" aria-label="Destination conversations">
           <button v-for="conversation in page?.conversations ?? []" :key="conversation.ref.accountId + ':' + conversation.ref.conversationId" class="destination-row" :disabled="busy" @click="open(conversation, $event)">{{ conversation.subject || '(No subject)' }}</button>
           <p v-if="page && !page.conversations.length">No conversations on this page. This is not a mailbox-completeness claim.</p>
@@ -116,11 +117,11 @@ onMounted(() => { void loadCatalog(); });
         <button ref="readerBack" data-test="destination-back" @click="backToList()">Back to {{ destination.name }}</button>
         <h3>{{ opened.subject }}</h3>
         <p>Snapshot only — provider state may have changed since the page was fetched.</p>
-        <p v-if="opened.retainedSnapshotAt">Retained local recovery snapshot · {{ opened.retainedSnapshotAt }}</p>
+        <p v-if="opened.retainedSnapshotAt">Retained local recovery snapshot · <FullDate :at="opened.retainedSnapshotAt" /></p>
         <p v-if="opened.contextComplete === false || opened.unsupportedReason">Incomplete or unsupported content: {{ opened.unsupportedReason ?? 'Some messages unavailable' }}</p>
         <section v-for="message in opened.messages" :key="message.id">
           <h4>{{ message.from.displayName || message.from.mailbox }}</h4>
-          <p>{{ message.from.mailbox }} · {{ message.sentAt }}</p>
+          <p>{{ message.from.mailbox }} · <FullDate :at="message.sentAt" /></p>
           <p v-if="message.to.length" class="message-to">To {{ message.to.map((t) => t.displayName ?? t.mailbox).join(', ') }}</p>
           <pre>{{ message.bodyText }}</pre>
         </section>

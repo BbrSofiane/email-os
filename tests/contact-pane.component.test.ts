@@ -146,3 +146,40 @@ describe('ContactPane clipboard outcome fencing (P2-08)', () => {
     expect(writes).toEqual(['ada@example.test', 'ravi@example.test']);
   });
 });
+
+describe('ContactPane layout markup (rail/contact layout pass)', () => {
+  let wrapper: VueWrapper | null = null;
+  afterEach(() => { wrapper?.unmount(); wrapper = null; delete (navigator as { clipboard?: unknown }).clipboard; });
+
+  it('keeps the context heading for AT, names copy glyphs, and puts each copy on its own field line', () => {
+    wrapper = mount(ContactPane, { props: { contact: ADA, context: 'focused' } });
+    const heading = wrapper.get('h2.contact-title');
+    expect(heading.text()).toBe('Focused conversation');
+    expect(heading.classes()).toContain('visually-hidden');
+    const nameLine = wrapper.get('.contact-line-name');
+    expect(nameLine.find('[data-test="contact-name"]').exists()).toBe(true);
+    expect(nameLine.get('[data-test="copy-name"]').text()).toBe('Copy name');
+    const mailboxLine = wrapper.get('.contact-line-mailbox');
+    expect(mailboxLine.get('[data-test="contact-mailbox"]').text()).toBe('ada@example.test');
+    expect(mailboxLine.get('[data-test="copy-email"]').text()).toBe('Copy email');
+  });
+
+  it('copies the address from the name line when no display name is known', () => {
+    wrapper = mount(ContactPane, { props: { contact: { displayName: null, mailbox: 'anon@example.test' }, context: 'open' } });
+    expect(wrapper.get('h2.contact-title').text()).toBe('Open conversation');
+    expect(wrapper.find('[data-test="copy-name"]').exists()).toBe(false);
+    expect(wrapper.find('.contact-line-mailbox').exists()).toBe(false);
+    expect(wrapper.find('.contact-line-name [data-test="copy-email"]').exists()).toBe(true);
+    expect(wrapper.findAll('[data-test="copy-email"]')).toHaveLength(1);
+  });
+
+  it('lists recent cached mail as plain activatable text rows with the full subject as title', async () => {
+    const ref = { accountId: 'acct', conversationId: 'conv-01' };
+    wrapper = mount(ContactPane, { props: { contact: ADA, context: 'focused', recent: [{ ref, subject: 'A long fixture subject' }, { ref: { ...ref, conversationId: 'conv-02' }, subject: '' }] } });
+    const buttons = wrapper.findAll('.contact-recent button');
+    expect(buttons.map((b) => b.text())).toEqual(['A long fixture subject', '(No subject)']);
+    expect(buttons[0]!.attributes('title')).toBe('A long fixture subject');
+    await buttons[0]!.trigger('click');
+    expect(wrapper.emitted('openRecent')).toEqual([[ref]]);
+  });
+});

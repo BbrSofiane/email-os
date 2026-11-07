@@ -45,8 +45,7 @@ const selectAllTitle = computed(() =>
 <template>
   <div class="selection-bar" role="group" aria-label="Selected conversations" data-test="selection-bar">
     <p class="selection-scope" data-test="selection-scope">
-      <strong data-test="selection-count">{{ count }} selected</strong>
-      <span class="selection-loaded-scope">of {{ loadedCount }} loaded — later arrivals and unseen pages are not included</span>
+      <strong data-test="selection-count">{{ count }} selected</strong>{{ ' ' }}<span class="selection-loaded-scope">of {{ loadedCount }} loaded — later arrivals and unseen pages are not included</span>
     </p>
     <span class="selection-actions">
       <button

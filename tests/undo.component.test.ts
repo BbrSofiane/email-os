@@ -561,3 +561,39 @@ describe('UX-04 action notice and undo', () => {
     }
   });
 });
+
+describe('Activity rail badge (unresolved operations)', () => {
+  it('counts pending and outcome-unknown operations in a badge described in words', async () => {
+    const fake = createBrowserFakeMailClient();
+    const w = await mountApp(fake);
+    const activity = () => w.get('[data-test="rail-activity"]');
+    expect(w.find('[data-test="rail-activity-badge"]').exists()).toBe(false);
+    expect(activity().attributes('aria-describedby')).toBeUndefined();
+    expect(activity().attributes('title')).toBe('Go to Activity');
+
+    fake.controls.behavior.hold = true;
+    await archiveViaKey(w, 'conv-01');
+    await archiveViaKey(w, 'conv-02');
+    expect(w.get('[data-test="rail-activity-badge"]').text()).toBe('2');
+    // The visible digit is decorative; the name stays "Activity" and the words
+    // arrive as the description and the hover title.
+    expect(w.get('[data-test="rail-activity-badge"]').attributes('aria-hidden')).toBe('true');
+    const describedBy = activity().attributes('aria-describedby')!;
+    expect(document.getElementById(describedBy)?.textContent).toBe('2 operations pending');
+    expect(activity().attributes('title')).toBe('Go to Activity — 2 operations pending');
+
+    fake.controls.release();
+    await flushPromises();
+    fake.controls.behavior.hold = false;
+    expect(w.find('[data-test="rail-activity-badge"]').exists()).toBe(false);
+    expect(activity().attributes('aria-describedby')).toBeUndefined();
+
+    // An ambiguous provider result stays counted until it is resolved.
+    fake.controls.behavior.failNext = 1;
+    fake.controls.behavior.failureKind = 'outcome_unknown';
+    await archiveViaKey(w, 'conv-03');
+    await flushPromises();
+    expect(w.get('[data-test="rail-activity-badge"]').text()).toBe('1');
+    expect(document.getElementById(activity().attributes('aria-describedby')!)?.textContent).toBe('1 operation with outcome unknown');
+  });
+});

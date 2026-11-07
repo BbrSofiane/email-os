@@ -11,6 +11,7 @@
  */
 import type { MailError, OperationGroupStatus, OperationGroupSummary } from '../lib/ipc/client';
 import type { OperationSummaryLike } from '../composables/useMailbox';
+import FullDate from './FullDate.vue';
 
 /** Skip-reason wording for persisted group-Undo decisions (§5). */
 const SKIP_REASON_LABELS: Record<string, string> = {
@@ -100,10 +101,6 @@ function groupActionLabel(group: OperationGroupSummary): string {
   return group.requestedArchived ? 'Mark Done (archive)' : 'Mark Not Done (restore)';
 }
 
-function groupDateLabel(group: OperationGroupSummary): string {
-  return group.acceptedAt.replace('T', ' ').replace(/\.\d+Z$/, ' UTC').replace(/Z$/, ' UTC');
-}
-
 function memberStatusLabel(status: string, failure: { kind: string } | null, rejection: string | null): string {
   if (rejection === 'conversation_missing') return 'rejected — conversation unavailable';
   if (rejection === 'target_bound_exceeded') return 'rejected — too many messages';
@@ -159,7 +156,7 @@ function undoStatusLabel(status: string, failure: { kind: string } | null): stri
             :aria-expanded="expandedRequestId === group.requestId ? 'true' : 'false'"
             @click="emit('openGroup', group.requestId)"
           >
-            {{ groupActionLabel(group) }} · {{ group.members.length }} conversations · {{ groupDateLabel(group) }}
+            {{ groupActionLabel(group) }} · {{ group.members.length }} conversations · <FullDate :at="group.acceptedAt" />
             <template v-if="group.undone"> · undo accepted</template>
           </button>
           <div

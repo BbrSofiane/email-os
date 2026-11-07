@@ -50,7 +50,7 @@ function keydown(event: KeyboardEvent): void {
 </script>
 <template>
   <div class="action-backdrop" @click.self="emit('close')">
-    <section class="action-overlay" role="dialog" aria-modal="true" :aria-label="kind === 'palette' ? 'Command palette' : 'Destination navigator'" @keydown="keydown">
+    <section class="action-overlay command-overlay" role="dialog" aria-modal="true" :aria-label="kind === 'palette' ? 'Command palette' : 'Destination navigator'" @keydown="keydown">
       <label :for="queryId" class="action-heading"><span aria-hidden="true">{{ kind === 'palette' ? 'ϟ' : '↗' }}</span>{{ kind === 'palette' ? 'Email Command' : 'Destinations' }}</label>
       <input :id="queryId" :placeholder="kind === 'palette' ? 'Type a command…' : 'Go to…'" ref="input" v-model="query" data-test="action-query" role="combobox" aria-autocomplete="list" aria-expanded="true" :aria-controls="resultsId" :aria-activedescendant="results[highlighted] ? actionId(results[highlighted]!.id) : undefined" autocomplete="off" />
       <ul :id="resultsId" role="listbox" aria-label="Available actions">

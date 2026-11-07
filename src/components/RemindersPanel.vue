@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { CancelReminder, ConversationRef, MailClient, PutReminder, Reminder, ReminderCondition } from '../lib/ipc/client';
 import { toMailError } from '../lib/ipc/client';
+import FullDate from './FullDate.vue';
 const props = defineProps<{ client: MailClient; target: ConversationRef | null; initialDestination?: 'pending' | 'returned' | 'history' }>();
 const emit = defineEmits<{ open: [target: ConversationRef]; destinationChange: [destination: 'pending' | 'returned' | 'history'] }>();
 const rows = ref<Reminder[]>([]);
@@ -150,7 +151,7 @@ onBeforeUnmount(() => { alive = false; generation++; editorGeneration++; unsubsc
     <ul>
       <li v-for="r in displayed" :key="r.conversation.conversationId">
         <button type="button" @click="emit('open', r.conversation)">Open {{ r.subject || '(No subject)' }}</button>
-        <p>{{ r.dueAt ?? 'Someday (unscheduled)' }} · {{ r.condition === 'if_no_reply' ? 'If no reply' : 'Regardless' }} · {{ r.phase }} · revision {{ r.revision }}</p>
+        <p><FullDate v-if="r.dueAt" :at="r.dueAt" /><template v-else>Someday (unscheduled)</template> · {{ r.condition === 'if_no_reply' ? 'If no reply' : 'Regardless' }} · {{ r.phase }} · revision {{ r.revision }}</p>
         <button v-if="r.phase === 'pending'" type="button" :disabled="busy || !!retry" @click="reschedule(r)">Reschedule</button>
         <button v-if="['removing', 'pending', 'returning', 'failed'].includes(r.phase)" type="button" :disabled="busy || !!retry" @click="cancel(r)">{{ r.phase === 'failed' ? 'Cancel / recover original inbox messages' : 'Cancel and restore original inbox messages' }}</button>
         <p v-if="r.phase === 'failed'">Removal or return failed, or a later mailbox action superseded this reminder. Cancel does not override newer triage.</p>
@@ -162,7 +163,7 @@ onBeforeUnmount(() => { alive = false; generation++; editorGeneration++; unsubsc
 <style scoped>
 .reminders-panel { display: grid; gap: 1rem; overflow-wrap: anywhere; }
 form, fieldset, label { display: grid; gap: .65rem; }
-fieldset { border: 1px solid var(--border, #666); padding: 1rem; }
+fieldset { border: 1px solid var(--rule); border-radius: 4px; padding: 1rem; }
 input[type="text"], select { width: 100%; min-width: 0; }
 nav { display: flex; flex-wrap: wrap; gap: .5rem; }
 li { margin-block: 1rem; }

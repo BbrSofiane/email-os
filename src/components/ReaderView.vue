@@ -24,6 +24,7 @@
  * own window listener.
  */
 import { actionLabel } from '../lib/browsing-actions';
+import { fullDateLabel, machineDateTime } from '../lib/browsing-dates';
 import { computed, nextTick, reactive, ref, watch } from 'vue';
 import type { Address, Conversation, ConversationRef, DraftSource, MailError, Message } from '../lib/ipc/client';
 import type { DetailState } from '../composables/useMailbox';
@@ -679,7 +680,7 @@ defineExpose({
           {{ replyBlockedReason }}
         </p>
         <p v-if="props.conversation.retainedSnapshotAt" class="reader-recovery-snapshot" data-test="retained-snapshot-notice" role="note">
-          Local recovery snapshot saved at {{ props.conversation.retainedSnapshotAt }}; Gmail may have newer messages or mailbox changes.
+          Local recovery snapshot saved <time :datetime="machineDateTime(props.conversation.retainedSnapshotAt)">{{ fullDateLabel(props.conversation.retainedSnapshotAt) }}</time>; Gmail may have newer messages or mailbox changes.
         </p>
         <p v-if="props.browsingOnly" class="reader-readonly" role="note">Cached Trash — read only. Recovery is not available here; use your provider client. Opening does not change read state.</p>
         <p v-else-if="props.readOnly" class="reader-readonly" data-test="reader-readonly" role="note">
@@ -728,7 +729,7 @@ defineExpose({
             >
               <span class="message-from">{{ message.from.displayName ?? message.from.mailbox }}</span>
               <span class="message-to">to {{ message.to.map((t) => t.displayName ?? t.mailbox).join(', ') }}</span>
-              <time class="message-time">{{ message.sentAt }}</time>
+              <time class="message-time" :datetime="machineDateTime(message.sentAt)">{{ fullDateLabel(message.sentAt) }}</time>
             </button>
             <div class="message-body" :id="bodyId(message)" :hidden="!isExpanded(message)" data-test="message-body">{{ message.bodyText }}</div>
             <details
@@ -769,7 +770,7 @@ defineExpose({
                 </div>
                 <div class="message-field">
                   <span class="message-field-label">Sent</span>
-                  <time :data-test="`message-sent-${message.id}`">{{ message.sentAt }}</time>
+                  <time :data-test="`message-sent-${message.id}`" :datetime="machineDateTime(message.sentAt)">{{ fullDateLabel(message.sentAt) }}</time>
                 </div>
               </div>
             </details>

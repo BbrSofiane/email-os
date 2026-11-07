@@ -1,6 +1,7 @@
 import { mount, flushPromises } from '@vue/test-utils';
 import { describe, expect, it, vi } from 'vitest';
 import RemindersPanel from '../src/components/RemindersPanel.vue';
+import { fullDateLabel } from '../src/lib/browsing-dates';
 import App from '../src/App.vue';
 import { createBrowserFakeMailClient } from '../src/lib/ipc/browser-fake';
 import type { PutReminder, Reminder } from '../src/lib/ipc/client';
@@ -79,7 +80,9 @@ describe('bounded local reminder journey', () => {
     const setRead = vi.spyOn(fake, 'setRead');
     const app = mount(App, { props: { client: fake, mode: 'native' }, attachTo: document.body }); await flushPromises();
     await app.findAll('button').find(b => b.text() === 'Reminders')!.trigger('click'); await flushPromises();
-    await app.findComponent(RemindersPanel).findAll('nav button')[1]!.trigger('click');
+    await app.findComponent(RemindersPanel).findAll('nav button')[1]!.trigger('click'); await flushPromises();
+    // Due times are the full viewer-local form with a machine-readable datetime.
+    expect(app.findComponent(RemindersPanel).get('time[datetime="2030-01-01T00:00:00.000Z"]').text()).toBe(fullDateLabel('2030-01-01T00:00:00Z'));
     await app.findComponent(RemindersPanel).findAll('li button')[0]!.trigger('click'); await flushPromises();
     expect(app.findComponent(RemindersPanel).exists()).toBe(false);
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); await flushPromises();
