@@ -1,0 +1,17 @@
+A few of the pictures and the video is blurred try again
+
+---
+
+Alright validate by recording the native app using `mise dev:gmail`
+
+---
+
+When opening an email and using j and k navigate through the inbox, the transition is a bit abrupt, use impeccable to review it and describe how we could improve it
+
+---
+
+/implement steps 1-5
+
+---
+
+Continue where you left off.

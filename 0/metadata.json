@@ -1,0 +1,73 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6W1PR585N3JNH93V5AXR8CY",
+  "session_id": "c76d33d1-bfb7-485b-a7f9-1da77be42a31",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-07T22:22:45.691505Z",
+  "branch": "review-thread-view-ui",
+  "checkpoints_count": 1,
+  "save_step_count": 1,
+  "files_touched": [
+    "src/App.vue",
+    "src/assets/style.css",
+    "src/components/ContactPane.vue",
+    "src/components/ReaderView.vue",
+    "src/composables/useMailbox.ts",
+    "tests/app.component.test.ts",
+    "tests/discovery.component.test.ts",
+    "tests/reader-navigation.smooth.test.ts",
+    "tests/reader.rendered.test.ts",
+    "tests/reminders.navigation.test.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "385c5490a7b5",
+  "checkpoint_transcript_start": 1034,
+  "transcript_lines_at_start": 1034,
+  "compact_transcript_start": 167,
+  "token_usage": {
+    "input_tokens": 32,
+    "cache_creation_tokens": 37825,
+    "cache_read_tokens": 3800022,
+    "output_tokens": 11807,
+    "api_call_count": 13,
+    "subagent_tokens": {
+      "input_tokens": 154,
+      "cache_creation_tokens": 263761,
+      "cache_read_tokens": 13008009,
+      "output_tokens": 93100,
+      "api_call_count": 74
+    }
+  },
+  "session_metrics": {
+    "turn_count": 1
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-07T22:22:45.42817Z",
+    "agent_lines": 927,
+    "agent_removed": 63,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 927,
+    "total_lines_changed": 990,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 927,
+      "agent_lines_removed": 63
+    }
+  ]
+}
