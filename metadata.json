@@ -1,0 +1,28 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6VR27406DZ2GJ7JRG67BVXG",
+  "strategy": "manual-commit",
+  "branch": "hide-no-news-star-status",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/assets/style.css",
+    "src/components/ReaderView.vue",
+    "tests/reader.component.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 86,
+    "cache_creation_tokens": 54200,
+    "cache_read_tokens": 2647204,
+    "output_tokens": 13699,
+    "api_call_count": 42
+  }
+}

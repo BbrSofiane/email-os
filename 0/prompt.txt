@@ -1,0 +1,21 @@
+Act as the implementation sub-agent for this task.
+
+You are implementing ONE issue in the Email OS Vue/Tauri client (repo = your worktree). Read first: PRODUCT.md (honest-state principle: pending/failed/partial/unknown must be visible and distinct), DESIGN.md (star/coverage notes, reader notes), src/components/ReaderView.vue (`starSummary`, `starCoverageDetail`, `data-test="reader-stars"`), and grep src/ + tests/ for `reader-stars` and the star summary helpers to see tests that pin the current behaviour.
+
+## Shared rules (all reader-review tasks)
+- Context: we compared our conversation reader against a Superhuman screenshot. Under the subject Superhuman shows only a useful one-liner; ours always shows a status line "Not starred — Effective star values known for 3 of 3 cached messages. Pending intent is not provider confirmation." even when the result is the unremarkable one, adding noise right under the subject.
+- Stay on-brand per PRODUCT.md/DESIGN.md: terse, honest, precise. Do NOT hide truth: partial / unknown / pending star coverage must remain visible with precise wording. Message content text-interpolated only.
+- Keep every existing `data-test` attribute and aria-label; update tests in tests/ and src that your change legitimately affects (explain each in the report). Do NOT edit DESIGN.md or PRODUCT.md — put design-doc notes in your final report.
+- Other agents are changing the same files in parallel on separate branches (toolbar→header, collapsed snippets, body type/measure, Details/focus-ring dedupe, active-card style, recent-mail filter). Keep your diff MINIMAL and localized; no reformatting.
+- Setup: `pnpm install --frozen-lockfile`. Verify with `pnpm typecheck` and `pnpm test` (full suite; report honestly incl. pre-existing failures).
+- Preview: `pnpm dev --port <PORT> --strictPort` (in-memory fixture workspace). Use mcp__t3-code__preview_* tools (load via ToolSearch), resize 1280x800, press Enter on the focused first row to open "Fixture thread 1: weekly status". Stop dev server and close preview tab when done.
+- Evidence: save PNGs under the evidence dir below (mkdir -p). BEFORE (base commit) and AFTER at 1280x800 via preview_snapshot save=true (copy screenshotPath to named files). If blurry, retry.
+- Commit on your worktree's branch (no push, no PR). End the commit message with: `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`.
+- Final report (brief): branch + head SHA, files changed, what you did, tests run/results, evidence absolute paths, DESIGN.md notes, anything you couldn't do.
+
+## Your issue: P2 – The status line shows no news
+- Show the star line under the subject ONLY when there is something to report: (a) the conversation IS starred (show a quiet "Starred" with the coverage qualifier only if coverage is incomplete), (b) coverage is partial/unknown for any message, or (c) a star change is pending/unconfirmed. When all values are known and the conversation is not starred and nothing is pending: render nothing visible (but you may keep a visually-hidden status for AT if tests/ARIA rely on it — decide by reading the code and say why).
+- When starred and fully known: keep it as short as possible (e.g. "Starred"); do not append the full coverage sentence — leave the full coverage text in the title/visually-hidden detail as today.
+- Partial/unknown/pending wording stays exactly as precise as today (reuse existing helper strings; only the visibility rules change). Make the visible line use the existing quiet style (`.reader-context-note`) and cap its measure (it is currently uncapped, e.g. `max-width: 80ch`).
+- Test all branches: not starred+complete (hidden), starred+complete, partial coverage, pending. The fixtures may only cover some; for the others temporarily tweak the fixture/browser-fake in a scratch edit, screenshot, and REVERT the fixture change before committing (commit must contain only real changes + tests).
+- Evidence dir: /private/tmp/claude-501/-Users-sofianebebert-workspace-worktrees-email-os-t3-8289bc5f/c76d33d1-bfb7-485b-a7f9-1da77be42a31/scratchpad/evidence/p2-star-line . PORT: 5205. Required: before/after at 1280x800 for default fixture (line hidden), plus after screenshots for starred, partial-coverage and pending states.
