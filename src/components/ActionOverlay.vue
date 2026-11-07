@@ -18,7 +18,7 @@ const query = computed({
 });
 const highlighted = ref(0);
 const input = ref<HTMLInputElement | null>(null);
-const results = computed(() => props.actions.filter((action) => action.label.toLowerCase().includes(query.value.toLowerCase())));
+const results = computed(() => props.actions.filter((action) => [action.label, ...(action.aliases ?? [])].some((text) => text.toLowerCase().includes(query.value.toLowerCase()))));
 watch(results, () => { highlighted.value = 0; });
 watch(highlighted, async () => {
   await nextTick();

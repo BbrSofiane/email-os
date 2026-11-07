@@ -2,9 +2,9 @@
 /**
  * Operation activity and explicit recovery controls.
  *
- * Shows every operation with its status and failure. Archived conversations remain
+ * Shows every operation with its status and failure. Done conversations remain
  * recoverable: rows expose Open (loads the referenced conversation even when it is
- * no longer in the inbox) and Unarchive (explicit user action with a fresh request
+ * no longer in the inbox) and Mark not done (explicit user action with a fresh request
  * ID). Failures stay visible; they are never auto-replayed.
  *
  * Gmail recovery controls are gated by the authoritative mailbox-action capability.
@@ -72,9 +72,9 @@ function statusLabel(status: string, failure: { kind: string } | null): string {
 }
 
 function actionLabel(op: OperationSummaryLike): string {
-  if (op.kind === 'star') return op.requestedStarred ? 'star' : 'unstar';
-  if (op.kind === 'read') return op.requestedRead === true ? 'mark read' : op.requestedRead === false ? 'mark unread' : 'read state change';
-  return op.requestedArchived ? 'archive' : 'unarchive';
+  if (op.kind === 'star') return op.requestedStarred ? 'Star' : 'Unstar';
+  if (op.kind === 'read') return op.requestedRead === true ? 'Mark read' : op.requestedRead === false ? 'Mark unread' : 'Read state change';
+  return op.requestedArchived ? 'Mark done' : 'Mark not done';
 }
 
 function errorLabel(kind: string): string {
@@ -98,7 +98,7 @@ function canRetry(status: string): boolean {
 function groupActionLabel(group: OperationGroupSummary): string {
   if (group.kind === 'star') return group.requestedStarred ? 'Star' : 'Unstar';
   if (group.kind === 'read') return group.requestedRead ? 'Mark read' : 'Mark unread';
-  return group.requestedArchived ? 'Mark Done (archive)' : 'Mark Not Done (restore)';
+  return group.requestedArchived ? 'Mark done' : 'Mark not done';
 }
 
 function memberStatusLabel(status: string, failure: { kind: string } | null, rejection: string | null): string {
@@ -286,7 +286,7 @@ function undoStatusLabel(status: string, failure: { kind: string } | null): stri
             :data-test="`activity-unarchive-${op.id}`"
             @click="emit('unarchive', op.conversation)"
           >
-            Unarchive
+            Mark not done
           </button>
           <button
             v-if="gmailMode && actionsEnabled && canRetry(op.status)"

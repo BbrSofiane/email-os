@@ -364,6 +364,7 @@ The core of the product: dense, quiet and exact.
 - **Do** show every pending, partial, failed and outcome-unknown state in words, in Amber Notice or Coral Fault, where the user is already looking.
 - **Do** align the contact pane to the list: the name on the tab line, the email on the first-row line.
 - **Do** ship glyphs as local inline SVG with an accessible name. No icon fonts and no CDN.
+- **Do** name each action once, in sentence case, on every surface (row glyph, selection bar, reader, Activity, action notice, palette): "Mark done" / "Mark not done" (E / Shift+E), "Mark read" / "Mark unread", "Star" / "Unstar". Counted forms keep the verb: "Mark 3 done". Destinations keep their proper names (Inbox, Done, Starred, Trash, Provider mail, Activity) after "Go to". "Archive" is the provider-side effect, never a label; it survives only as a palette search alias.
 - **Do** treat Superhuman's browsing look as the visual and interaction reference. Close look parity is the goal (PRODUCT.md).
 
 ### Don't:

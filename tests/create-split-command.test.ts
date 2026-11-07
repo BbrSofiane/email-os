@@ -36,7 +36,7 @@ it('creates only through Commands, focuses the editor and returns Cancel to Comm
   expect(archive).not.toHaveBeenCalled();
 });
 
-it('saves one split, switches to the Edit Split command, and returns focus to Commands', async () => {
+it('saves one split, switches to the Edit split command, and returns focus to Commands', async () => {
   const fake = createBrowserFakeMailClient();
   wrapper = mount(App, { props: { client: fake, mode: 'browser-preview' }, attachTo: document.body });
   await flushPromises();
@@ -51,7 +51,7 @@ it('saves one split, switches to the Edit Split command, and returns focus to Co
   expect(wrapper.findAll('button').some((button) => /edit split/i.test(button.text()))).toBe(false);
   await wrapper.get('[data-test="palette-trigger"]').trigger('click');
   expect(wrapper.find('#action-create-split').exists()).toBe(false);
-  expect(wrapper.get('#action-edit-split .action-copy > span').text()).toBe('Edit Split');
+  expect(wrapper.get('#action-edit-split .action-copy > span').text()).toBe('Edit split');
   await wrapper.get('[data-test="action-query"]').setValue('edit split');
   await wrapper.get('[data-test="action-query"]').trigger('keydown', { key: 'Enter' });
   await flushPromises();
@@ -105,13 +105,13 @@ it.each(['reader', 'activity', 'done'] as const)('opens creation from %s without
   expect(document.activeElement).toBe(wrapper.get('[data-test="split-name"]').element);
 });
 
-it('supports native Cmd+K followed by typed Create Split and Enter', async () => {
+it('supports native Cmd+K followed by typed Create split and Enter', async () => {
   const fake = createBrowserFakeMailClient();
   wrapper = mount(App, { props: { client: fake, mode: 'native' }, attachTo: document.body });
   await flushPromises();
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true, cancelable: true }));
   await flushPromises();
-  await wrapper.get('[data-test="action-query"]').setValue('Create Split');
+  await wrapper.get('[data-test="action-query"]').setValue('Create split');
   await wrapper.get('[data-test="action-query"]').trigger('keydown', { key: 'Enter' });
   await flushPromises();
   expect(document.activeElement).toBe(wrapper.get('[data-test="split-name"]').element);
