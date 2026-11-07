@@ -1,0 +1,77 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6VQ0C70GZHMDRS39AEJ05FG",
+  "session_id": "dddd994b-5f18-4427-9c78-cdbf1f8fbdcb",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-07T19:15:47.890907Z",
+  "branch": "impeccable/p2-command-palette",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "DESIGN.md",
+    "docs/development.md",
+    "src/App.vue",
+    "src/assets/style.css",
+    "src/components/AccountPanel.vue",
+    "src/components/ActionNotice.vue",
+    "src/components/ActionOverlay.vue",
+    "src/components/ActivityPanel.vue",
+    "src/components/CommandGlyph.vue",
+    "src/components/InboxList.vue",
+    "src/components/ReaderView.vue",
+    "src/components/SelectionBar.vue",
+    "src/composables/useMailbox.ts",
+    "src/lib/action-palette.ts",
+    "src/lib/browsing-actions.ts",
+    "tests/account.component.test.ts",
+    "tests/action-notice.component.test.ts",
+    "tests/activity-panel.test.ts",
+    "tests/app.selection.test.ts",
+    "tests/create-split-command.test.ts",
+    "tests/discovery.component.test.ts",
+    "tests/discovery.rendered.test.ts",
+    "tests/g-chord.component.test.ts",
+    "tests/inbox-list.component.test.ts",
+    "tests/inbox-list.rendered-layout.test.ts",
+    "tests/reader.component.test.ts",
+    "tests/saved-split.test.ts",
+    "tests/undo.component.test.ts",
+    "tests/unread-filter-command.test.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "547b9c1eaf69",
+  "checkpoint_transcript_start": 374,
+  "transcript_lines_at_start": 374,
+  "compact_transcript_start": 48,
+  "token_usage": {
+    "input_tokens": 16,
+    "cache_creation_tokens": 7345,
+    "cache_read_tokens": 1135128,
+    "output_tokens": 2631,
+    "api_call_count": 7
+  },
+  "session_metrics": {
+    "turn_count": 1
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-07T19:15:47.825383Z",
+    "agent_lines": 551,
+    "agent_removed": 129,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 551,
+    "total_lines_changed": 680,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}
