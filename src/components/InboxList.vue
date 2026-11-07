@@ -268,13 +268,27 @@ function evaluateRowLayout(el: HTMLElement, key: string): void {
   else compactRows.add(key);
 }
 
+/**
+ * Observed per row: the row box, and its sender label. With the fixed-px rail
+ * and contact pane, a root-font (text size) change no longer resizes the row
+ * box, but it always resizes the sender's line box, so the row is re-measured
+ * when its content grows inside an unchanged box.
+ */
+const rowKeyByProbe = new Map<Element, string>();
+
 function observeRowLayouts(): void {
   if (!rowLayoutObserver) return;
   rowLayoutObserver.disconnect();
   rowKeyByEl.clear();
+  rowKeyByProbe.clear();
   for (const [key, el] of rowEls) {
     rowKeyByEl.set(el, key);
     rowLayoutObserver.observe(el);
+    const sender = el.querySelector('.row-sender');
+    if (sender) {
+      rowKeyByProbe.set(sender, key);
+      rowLayoutObserver.observe(sender);
+    }
   }
 }
 
@@ -284,10 +298,10 @@ onMounted(() => {
   if (typeof ResizeObserver !== 'function') return;
   rowLayoutObserver = new ResizeObserver((entries) => {
     for (const entry of entries) {
-      const el = entry.target;
-      if (!(el instanceof HTMLElement)) continue;
-      const key = rowKeyByEl.get(el);
-      if (key) evaluateRowLayout(el, key);
+      const target = entry.target;
+      const key = target instanceof HTMLElement ? rowKeyByEl.get(target) ?? rowKeyByProbe.get(target) : rowKeyByProbe.get(target);
+      const el = key ? rowEls.get(key) : undefined;
+      if (key && el) evaluateRowLayout(el, key);
     }
   });
   observeRowLayouts();

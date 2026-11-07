@@ -43,6 +43,7 @@ import RemindersPanel from './components/RemindersPanel.vue';
 import ActionNotice, { type GroupNoticeView } from './components/ActionNotice.vue';
 import SelectionBar from './components/SelectionBar.vue';
 import HeaderGlyph from './components/HeaderGlyph.vue';
+import PaneGlyph from './components/PaneGlyph.vue';
 import { browsingActions, actionLabel, type BrowsingActionId } from './lib/browsing-actions';
 import InboxList from './components/InboxList.vue';
 import SplitEditor from './components/SplitEditor.vue';
@@ -1608,6 +1609,29 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 /**
+ * Unresolved operations for the Activity rail badge, derived from the same
+ * activity rows the Activity drawer lists (no extra read): queued/applying
+ * are pending, outcome_unknown needs the user's attention. Both are counted,
+ * as the removed header status line did, and named separately in words.
+ */
+const unresolvedPending = computed(
+  () => mailbox.activity.value.filter((op) => op.status === 'queued' || op.status === 'applying').length,
+);
+const unresolvedUnknown = computed(
+  () => mailbox.activity.value.filter((op) => op.status === 'outcome_unknown').length,
+);
+const unresolvedCount = computed(() => unresolvedPending.value + unresolvedUnknown.value);
+const unresolvedSummary = computed(() => {
+  const pending = unresolvedPending.value;
+  const unknown = unresolvedUnknown.value;
+  const ops = (n: number) => `${n} ${n === 1 ? 'operation' : 'operations'}`;
+  if (pending > 0 && unknown > 0) return `${ops(pending + unknown)} unresolved: ${pending} pending, ${unknown} outcome unknown`;
+  if (pending > 0) return `${ops(pending)} pending`;
+  if (unknown > 0) return `${ops(unknown)} with outcome unknown`;
+  return '';
+});
+
+/**
  * Alert text for the in-flow command-error line beside the action notice. An expired undo window is already announced
  * by the polite action notice (expired wording); repeating it as a role=alert
  * would double-announce. Every other failure keeps its alert.
@@ -1769,57 +1793,73 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
         </div>
       </section>
       <template v-else>
+        <!-- Icon rail (DESIGN.md "Rail"): 40px. Inbox is the 28px home circle on
+             the split-tab line; the other mail destinations sit in the Inkwell
+             pill from the header's bottom edge, its first glyph on the first
+             list line; utilities sit at the bottom. Labels stay in the
+             accessibility tree, as the hover title, and as a keyboard
+             tooltip (.rail-label, shown on :focus-visible). -->
         <nav class="rail" aria-label="Mail navigation">
           <button
             type="button"
-            class="rail-item rail-inbox"
+            class="rail-item rail-home rail-inbox"
             data-test="rail-inbox"
             :aria-current="!readerOpen && drawer === null && mailbox.context.value === 'inbox' ? 'page' : undefined"
             :title="actionLabel('inbox')" @click="executeAction('inbox')"
-          >Inbox</button>
-          <button v-if="accountId && gmailMode" type="button" class="rail-item" data-test="rail-starred" :aria-current="mailbox.context.value === 'starred' && !readerOpen ? 'page' : undefined" @click="executeAction('starred')">Starred</button>
-          <button v-if="accountId" type="button" class="rail-item rail-done" data-test="rail-done" :title="actionLabel('done')" :aria-current="mailbox.context.value === 'done' && !readerOpen ? 'page' : undefined" @click="executeAction('done')">Cached Done</button>
-          <button v-if="gmailMode || props.mode === 'browser-preview'" type="button" class="rail-item" data-test="rail-destinations" :ref="setToggleRef('destinations')" :aria-expanded="drawer === 'destinations'" @click="toggleDrawer('destinations')">Provider mail</button>
-          <button v-if="gmailMode && accountId" type="button" class="rail-item rail-done" data-test="rail-trash" :ref="setToggleRef('trash')" :title="actionLabel('trash')" :aria-expanded="drawer === 'trash'" @click="toggleDrawer('trash')">Cached Trash</button>
+          ><PaneGlyph name="inbox" /><span class="rail-label">Inbox</span></button>
+          <div v-if="accountId || gmailMode || props.mode === 'browser-preview'" class="rail-well" data-test="rail-well">
+            <button v-if="accountId && gmailMode" type="button" class="rail-item" data-test="rail-starred" :title="actionLabel('starred')" :aria-current="mailbox.context.value === 'starred' && !readerOpen ? 'page' : undefined" @click="executeAction('starred')"><HeaderGlyph name="star" /><span class="rail-label">Starred</span></button>
+            <button v-if="accountId" type="button" class="rail-item" data-test="rail-done" :title="actionLabel('done')" :aria-current="mailbox.context.value === 'done' && !readerOpen ? 'page' : undefined" @click="executeAction('done')"><PaneGlyph name="done" /><span class="rail-label">Cached Done</span></button>
+            <button v-if="gmailMode || props.mode === 'browser-preview'" type="button" class="rail-item" data-test="rail-destinations" :ref="setToggleRef('destinations')" title="Provider mail (read only)" :aria-expanded="drawer === 'destinations'" @click="toggleDrawer('destinations')"><PaneGlyph name="provider" /><span class="rail-label">Provider mail</span></button>
+            <button v-if="gmailMode && accountId" type="button" class="rail-item" data-test="rail-trash" :ref="setToggleRef('trash')" :title="actionLabel('trash')" :aria-expanded="drawer === 'trash'" @click="toggleDrawer('trash')"><PaneGlyph name="trash" /><span class="rail-label">Cached Trash</span></button>
+          </div>
           <span class="rail-spacer" aria-hidden="true"></span>
-          <button
-            v-if="gmailMode && accountStatus"
-            type="button"
-            class="rail-item"
-            data-test="rail-account"
-            :title="actionLabel('account')"
-            :ref="setToggleRef('account')"
-            :aria-expanded="drawer === 'account'"
-            @click="toggleDrawer('account')"
-          >Account</button>
-          <button
-            type="button"
-            class="rail-item"
-            data-test="rail-activity"
-            :title="actionLabel('activity')"
-            :ref="setToggleRef('activity')"
-            :aria-expanded="drawer === 'activity'"
-            @click="toggleDrawer('activity')"
-          >Activity</button>
-          <button
-            v-if="accountId"
-            type="button"
-            class="rail-item"
-            data-test="rail-drafts"
-            :title="actionLabel('drafts')"
-            :ref="setToggleRef('drafts')"
-            :aria-expanded="drawer === 'drafts'"
-            @click="toggleDrawer('drafts')"
-          >Drafts</button>
-          <button
-            v-if="!wideViewport"
-            type="button"
-            class="rail-item"
-            data-test="contact-disclosure"
-            ref="contactDisclosureButton"
-            :aria-expanded="contactDisclosure"
-            @click="toggleContactDisclosure()"
-          >Contact</button>
+          <div class="rail-utilities">
+            <button
+              v-if="gmailMode && accountStatus"
+              type="button"
+              class="rail-item"
+              data-test="rail-account"
+              :title="actionLabel('account')"
+              :ref="setToggleRef('account')"
+              :aria-expanded="drawer === 'account'"
+              @click="toggleDrawer('account')"
+            ><PaneGlyph name="account" /><span class="rail-label">Account</span></button>
+            <!-- Unresolved operations (pending or outcome unknown) have no other
+                 glanceable home since the header status line was removed: a
+                 count badge on Activity, described in words for AT and hover. -->
+            <button
+              type="button"
+              class="rail-item"
+              data-test="rail-activity"
+              :title="unresolvedSummary ? `${actionLabel('activity')} — ${unresolvedSummary}` : actionLabel('activity')"
+              :ref="setToggleRef('activity')"
+              :aria-expanded="drawer === 'activity'"
+              :aria-describedby="unresolvedSummary ? `${domIdPrefix}rail-activity-unresolved` : undefined"
+              @click="toggleDrawer('activity')"
+            ><PaneGlyph name="activity" /><span class="rail-label">Activity</span><span v-if="unresolvedCount > 0" class="rail-badge" aria-hidden="true" data-test="rail-activity-badge">{{ unresolvedCount > 99 ? '99+' : unresolvedCount }}</span></button>
+            <span v-if="unresolvedSummary" :id="`${domIdPrefix}rail-activity-unresolved`" class="visually-hidden" data-test="pending-count">{{ unresolvedSummary }}</span>
+            <button
+              v-if="accountId"
+              type="button"
+              class="rail-item"
+              data-test="rail-drafts"
+              :title="actionLabel('drafts')"
+              :ref="setToggleRef('drafts')"
+              :aria-expanded="drawer === 'drafts'"
+              @click="toggleDrawer('drafts')"
+            ><PaneGlyph name="drafts" /><span class="rail-label">Drafts</span></button>
+            <button
+              v-if="!wideViewport"
+              type="button"
+              class="rail-item"
+              data-test="contact-disclosure"
+              ref="contactDisclosureButton"
+              title="Contact context"
+              :aria-expanded="contactDisclosure"
+              @click="toggleContactDisclosure()"
+            ><PaneGlyph name="contact" /><span class="rail-label">Contact</span></button>
+          </div>
         </nav>
 
         <section class="central" :aria-label="readerOpen ? 'Reader' : 'Conversation list'" :inert="centralCovered || undefined" data-test="central-surface">

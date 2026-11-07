@@ -9,8 +9,8 @@
  * these assertions only mean something against real rendered CSS.
  *
  * The second P1 guard covers larger user text: at 1000px with the long old
- * date label, a 20px root font still fits inline (the sender column gives up
- * width first); at a 25px root font the sender is at its floor and the full
+ * date label, a 30px root font still fits inline (the sender column gives up
+ * width first); at a 34.5px root font the sender is near its floor and the full
  * inline metadata overflows the row, so the adaptive compact presentation
  * collapses the actions behind a named, keyboard- and pointer-operable
  * disclosure instead of trading subject collapse for horizontal overflow.
@@ -453,36 +453,41 @@ describe.skipIf(chromePath === '')('InboxList rendered layout (real Chrome, opt-
       ]);
       expect(at16.toggle!.visible).toBe(false);
 
-      // 1000px / 20px root font, same scenario: the sender column gives up
+      // 1000px / 30px root font, same scenario: the sender column gives up
       // width first, so the expanded presentation still fits without any
-      // collapse, overflow, or unreadable subject.
-      await setRootFont(20);
+      // collapse, overflow, or unreadable subject. (Since the rail/contact
+      // layout pass the rail is a fixed 40px and the contact pane a fixed
+      // 272px, so larger text no longer widens the rail: the sender starts
+      // shrinking at a ~29px root font instead of below 20px.)
+      await setRootFont(30);
       await tick();
-      const at20 = await measure();
-      assertCompactRowLayout(at20, { minVisibleChars: 10, expectPending: true });
-      expect(at20.date).toBe('30 Sep 2001');
-      expect(at20.toggle!.visible).toBe(false);
-      expect(at20.sender.width).toBeLessThan(at16.sender.width);
+      const at30 = await measure();
+      assertCompactRowLayout(at30, { minVisibleChars: 10, expectPending: true });
+      expect(at30.date).toBe('30 Sep 2001');
+      expect(at30.toggle!.visible).toBe(false);
+      expect(at30.sender.width).toBeLessThan(at16.sender.width);
 
-      // 1000px / 25px root font: the sender is at its floor and the expanded
+      // 1000px / 34.5px root font: the sender is near its floor and the expanded
       // presentation overflows the row, so the adaptive compact presentation
       // engages — subject stays readable, nothing clips or overflows, and
-      // every action moves behind the named disclosure control. (Since the
-      // typeset pass the rail labels use the 12px Body step, so the list is
-      // wider and the collapse point moved from a 23px to a 25px root font.)
-      await setRootFont(25);
+      // every action moves behind the named disclosure control. (The collapse
+      // point moved 23px → 25px in the typeset pass and 25px → ~33px in the
+      // rail/contact layout pass, as the fixed-px rail leaves the list wider.
+      // Above ~35.5px even the compact row overflows, as it did from ~28px
+      // before this pass.)
+      await setRootFont(34.5);
       await tick();
-      const at25 = await measure();
-      assertCompactRowLayout(at25, { minVisibleChars: 10, expectPending: true, expectCompact: true });
-      expect(at25.date).toBe('30 Sep 2001');
+      const at345 = await measure();
+      assertCompactRowLayout(at345, { minVisibleChars: 10, expectPending: true, expectCompact: true });
+      expect(at345.date).toBe('30 Sep 2001');
       // The sender gave up width before the actions collapsed (it may regain
       // a little of the width the collapse frees).
-      expect(at25.sender.width).toBeLessThan(at20.sender.width);
-      expect(at25.sender.width).toBeLessThan(80);
+      expect(at345.sender.width).toBeLessThan(at30.sender.width);
+      expect(at345.sender.width).toBeLessThan(80);
 
       // Pointer access: a real CDP mouse click on the disclosure toggle opens
       // the row action panel.
-      await realClick(at25.toggle!);
+      await realClick(at345.toggle!);
       const openByPointer = await measure();
       expect(openByPointer.toggle!.ariaExpanded).toBe('true');
       expect(openByPointer.actionsPanel!.visibility).toBe('visible');
