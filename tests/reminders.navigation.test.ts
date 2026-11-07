@@ -66,7 +66,7 @@ describe('reminder reader navigation ownership', () => {
     const { reminded, detail, pending, getConversation, setRead } = await fixture();
     try {
       await openReturnedReminder();
-      expect(getConversation).toHaveBeenCalledExactlyOnceWith(reminded);
+      expect(getConversation).toHaveBeenCalledExactlyOnceWith(reminded, false);
       await key('j');
       await key('k');
       expect(getConversation).toHaveBeenCalledTimes(1);
@@ -111,11 +111,11 @@ describe('reminder reader navigation ownership', () => {
       expect(app!.findComponent(RemindersPanel).exists()).toBe(false);
       await key('j');
       expect(getConversation).toHaveBeenCalledTimes(3);
-      expect(getConversation).toHaveBeenLastCalledWith(neighbor);
+      expect(getConversation).toHaveBeenLastCalledWith(neighbor, false);
       expect(app!.getComponent(ReaderView).props('conversation')?.ref).toEqual(neighbor);
       await key('k');
       expect(getConversation).toHaveBeenCalledTimes(4);
-      expect(getConversation).toHaveBeenLastCalledWith(entry);
+      expect(getConversation).toHaveBeenLastCalledWith(entry, false);
       expect(app!.getComponent(ReaderView).props('conversation')?.ref).toEqual(entry);
 
       await key('Escape');
