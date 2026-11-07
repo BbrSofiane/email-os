@@ -5,7 +5,7 @@
  * carries the accessible name in visually hidden text.
  */
 defineProps<{
-  name: 'menu' | 'search' | 'commands' | 'star' | 'back' | 'reminders' | 'compose';
+  name: 'menu' | 'search' | 'commands' | 'star' | 'back' | 'reminders' | 'compose' | 'done' | 'files' | 'reply' | 'read' | 'unread' | 'prev' | 'next';
   /** Star only: a filled star for the pressed (filter on) state. */
   filled?: boolean;
 }>();
@@ -53,6 +53,26 @@ defineProps<{
       <path d="M10.6 2.9l2.5 2.5-6.9 6.9-3.2.75.75-3.2z" />
       <path d="M9.1 4.4l2.5 2.5" />
     </template>
+    <!-- Reader actions. Done: the same check as the row Done action. -->
+    <path v-else-if="name === 'done'" d="M3.25 8.5l3.1 3.1 6.4-7.2" />
+    <!-- Files and links: a paperclip. -->
+    <path v-else-if="name === 'files'" d="M12.4 7.3l-4.6 4.6a2.6 2.6 0 01-3.7-3.7l5-5a1.75 1.75 0 012.5 2.5L6.9 10.5a.9.9 0 01-1.3-1.3L9.8 5" />
+    <!-- Prepare reply: a reply arrow. -->
+    <path v-else-if="name === 'reply'" d="M6.75 3.5L2.75 7.5l4 4M2.75 7.5h5.5a5 5 0 015 5" />
+    <!-- Mark read: an opened envelope. -->
+    <template v-else-if="name === 'read'">
+      <path d="M2.5 6.75L8 2.75l5.5 4V12a1 1 0 01-1 1h-9a1 1 0 01-1-1z" />
+      <path d="M2.75 7.25L8 10.5l5.25-3.25" />
+    </template>
+    <!-- Mark unread: a closed envelope with a dot. -->
+    <template v-else-if="name === 'unread'">
+      <path d="M2.25 5.5v6.25a1 1 0 001 1h9.5a1 1 0 001-1V8" />
+      <path d="M2.75 5.5l4.6 3.4a1 1 0 001.2 0" />
+      <circle cx="12" cy="4" r="1.75" fill="currentColor" />
+    </template>
+    <!-- Previous / next conversation: chevrons. -->
+    <path v-else-if="name === 'prev'" d="M3.75 10l4.25-4.25L12.25 10" />
+    <path v-else-if="name === 'next'" d="M3.75 6l4.25 4.25L12.25 6" />
     <!-- Local reminders: a clock. -->
     <template v-else>
       <circle cx="8" cy="8" r="5.25" />

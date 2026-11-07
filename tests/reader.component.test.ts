@@ -71,7 +71,6 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
   });
 
   it.each([
-    [{ starredMessages: 0, knownMessages: 3, totalMessages: 3 }, 'Not starred'],
     [{ starredMessages: 1, knownMessages: 3, totalMessages: 3 }, 'Starred'],
     [{ starredMessages: 1, knownMessages: 2, totalMessages: 3 }, 'Starred (partial)'],
     [{ starredMessages: 0, knownMessages: 1, totalMessages: 3 }, 'Star state unknown'],
@@ -88,6 +87,46 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
       expect(caveat).toContain(`known for ${stars.knownMessages} of ${stars.totalMessages} cached messages`);
       expect(caveat).toContain('Pending intent is not provider confirmation');
     }
+  });
+
+  it('renders no star line when the conversation is not starred, fully known and nothing is pending', async () => {
+    wrapper = mountReader(conversationOf(ACCOUNT_A, ['read-m1'], { stars: { starredMessages: 0, knownMessages: 3, totalMessages: 3 } }));
+    await settle(wrapper!);
+    expect(wrapper!.find('[data-test="reader-stars"]').exists()).toBe(false);
+    expect(wrapper!.find('[data-test="reader-stars-detail"]').exists()).toBe(false);
+  });
+
+  it.each([
+    [{ starredMessages: 0, knownMessages: 3, totalMessages: 3 }, 'Not starred (unconfirmed)'],
+    [{ starredMessages: 1, knownMessages: 3, totalMessages: 3 }, 'Starred (unconfirmed)'],
+  ])('keeps the star line visible while a mailbox action is pending (%j)', async (stars, visible) => {
+    wrapper = mountReader(conversationOf(ACCOUNT_A, ['read-m1'], { stars, pendingOperationId: 'op-1' }));
+    await settle(wrapper!);
+    const line = wrapper!.get('[data-test="reader-stars"]');
+    const detail = wrapper!.get('[data-test="reader-stars-detail"]');
+    expect(line.text().replace(detail.text(), '').trim()).toBe(visible);
+    expect(line.attributes('data-attention')).toBeDefined();
+    expect(detail.text()).toContain('Pending intent is not provider confirmation');
+  });
+
+  it('shows a quiet reply glyph only on the active latest message and emits the same prepareReply', async () => {
+    const conversation = conversationOf(ACCOUNT_A, ['m1', 'm2', 'm3']);
+    const wrapper = mountReader(conversation);
+    await settle(wrapper);
+    const reply = wrapper.find('[data-test="message-reply-m3"]');
+    expect(reply.exists()).toBe(true);
+    expect(reply.attributes('aria-label')).toBe('Prepare reply');
+    expect(reply.element.closest('.message-toggle')).toBeNull();
+    expect(wrapper.findAll('.message-reply')).toHaveLength(1);
+    await reply.trigger('click');
+    expect(wrapper.emitted('prepareReply')?.[0]).toEqual([
+      { kind: 'reply', conversation: conversation.ref, sourceMessageId: 'm3' },
+    ]);
+    // Focusing an earlier message hides the glyph; reply still targets the latest.
+    await toggleFor(wrapper, 'm1').trigger('focusin');
+    await settle(wrapper);
+    expect(wrapper.find('.message-reply').exists()).toBe(false);
+    wrapper.unmount();
   });
 
   it('opens focused on the newest message toggle with only the newest message expanded', async () => {
@@ -158,6 +197,35 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
       .toEqual(['true', 'true', 'true']);
   });
 
+  it('shows sender, a one-line snippet and a short date on a collapsed message, never repeating the snippet when expanded', async () => {
+    const conversation = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2'], {
+      messages: [
+        message('read-m1', '  First line\n\n<b>not markup</b>   second   line  '),
+        message('read-m2', '   \n '),
+      ],
+    });
+    wrapper = mountReader(conversation);
+    await settle(wrapper!);
+    const first = toggleFor(wrapper!, 'read-m1');
+    expect(first.attributes('aria-expanded')).toBe('false');
+    const snippet = first.find('.message-snippet');
+    expect(snippet.text()).toBe('First line <b>not markup</b> second line');
+    expect(first.find('.message-snippet b').exists()).toBe(false);
+    // Short date on screen, full date in title and in the accessible name.
+    const time = first.find('time.message-time');
+    expect(time.attributes('datetime')).toBe('2026-02-02T09:00:00.000Z');
+    expect(time.attributes('title')).toMatch(/^Mon 2 Feb 2026, \d+:\d{2} [AP]M$/);
+    expect(time.find('[aria-hidden="true"]').text()).toMatch(/^(\d+ Feb( 2026)?|\d+:\d{2} [AP]M)$/);
+    expect(first.text()).toContain(time.attributes('title'));
+    // An empty body shows no snippet rather than invented text.
+    expect(toggleFor(wrapper!, 'read-m2').find('.message-snippet').exists()).toBe(false);
+    await first.trigger('click');
+    await settle(wrapper!);
+    expect(toggleFor(wrapper!, 'read-m1').attributes('aria-expanded')).toBe('true');
+    expect(toggleFor(wrapper!, 'read-m1').find('.message-snippet').exists()).toBe(false);
+    expect(toggleFor(wrapper!, 'read-m1').find('time.message-time').exists()).toBe(true);
+  });
+
   it('updates message identity when any message control receives focus', async () => {
     const conversation = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2', 'read-m3']);
     wrapper = mountReader(conversation);
@@ -201,6 +269,25 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
     expect((wrapper!.find('[data-test="message-details-read-m3"]').element as HTMLDetailsElement).open).toBe(false);
     // Focus returned to that message's toggle for continued N/P movement.
     expect(document.activeElement?.getAttribute('data-test')).toBe('message-toggle-read-m3');
+  });
+
+  it('shows Details only in expanded messages and closes it when the message collapses', async () => {
+    const conversation = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2', 'read-m3']);
+    wrapper = mountReader(conversation);
+    await settle(wrapper!);
+    const hiddenOf = (id: string) => (wrapper!.find(`[data-test="message-details-${id}"]`).element as HTMLElement).hidden;
+    expect(hiddenOf('read-m1')).toBe(true);
+    expect(hiddenOf('read-m3')).toBe(false);
+    const vm = wrapper!.vm as unknown as { hasOpenDetails: () => boolean };
+    const details = wrapper!.find('[data-test="message-details-read-m3"]');
+    (details.element as HTMLDetailsElement).open = true;
+    details.element.dispatchEvent(new Event('toggle'));
+    await nextTick();
+    expect(vm.hasOpenDetails()).toBe(true);
+    await toggleFor(wrapper!, 'read-m3').trigger('click');
+    await nextTick();
+    expect(hiddenOf('read-m3')).toBe(true);
+    expect(vm.hasOpenDetails()).toBe(false);
   });
 
   it('preserves per-conversation state across J/K round trips and same-reference replacements', async () => {

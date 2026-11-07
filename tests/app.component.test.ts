@@ -81,6 +81,30 @@ describe('App (Slice 01 shell)', () => {
     expect(conversationRows(w)).toHaveLength(18);
   });
 
+  it('offers quiet icon-only reader actions in the header, with previous/next wired like J/K', async () => {
+    const w = mountApp();
+    await settle();
+    await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
+    await settle();
+    const header = w.find('.app-header');
+    // No toolbar row: every reader action is an icon button in the header with a hidden text name and a shortcut title.
+    expect(w.find('.reader .reader-toolbar').exists()).toBe(false);
+    expect(header.find('[data-test="reader-close"]').text()).toBe('Close (Esc)');
+    expect(header.find('[data-test="reader-archive-toggle"]').attributes('title')).toContain('E');
+    expect(header.find('[data-test="files-links"]').attributes('title')).toContain('⌘O');
+    expect(header.find('[data-test="prepare-reply"]').attributes('title')).toContain('Reply targets the latest message from');
+    expect(header.find('[data-test="reply-source-label"]').classes()).toContain('visually-hidden');
+    expect(header.find('[data-test="reader-prev"]').attributes('disabled')).toBeDefined();
+    const subject = (): string => w.find('.reader-subject').text();
+    expect(subject()).toContain('Fixture thread 1');
+    await header.find('[data-test="reader-next"]').trigger('click');
+    await settle();
+    expect(subject()).toContain('Fixture thread 2');
+    await header.find('[data-test="reader-prev"]').trigger('click');
+    await settle();
+    expect(subject()).toContain('Fixture thread 1');
+  });
+
   it('navigates with j/k and arrow keys, moving DOM focus with conversation focus', async () => {
     const w = mountApp();
     await settle();

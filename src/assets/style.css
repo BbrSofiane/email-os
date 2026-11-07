@@ -23,11 +23,14 @@
   --type-count: 0.6875rem;
   /* Plain-text message bodies in the reader (monospace runs visually larger). */
   --type-mono: 0.85rem;
+  /* 15px: prose message bodies in the reader (proportional face). */
+  --type-reading: 0.9375rem;
   --weight-regular: 400;
   --weight-strong: 600;
   --leading-headline: 1.25;
   --leading-ui: 1.35;
   --leading-mono: 1.45;
+  --leading-reading: 1.6;
   --surface: #292826;
   --surface-contact: #1f1e1c;
   --surface-raised: #33312e;
@@ -1268,20 +1271,38 @@ button:focus-visible {
   outline: none;
 }
 
-.reader-toolbar {
-  flex: 0 0 auto;
-  display: flex;
-  gap: 0.5rem;
-  align-items: baseline;
-  flex-wrap: wrap;
-  padding-bottom: 0.4rem;
-  border-bottom: 1px solid var(--rule);
-  margin-bottom: 0.5rem;
+/* Quiet icon actions teleported into the app header: the hosts take no box of
+   their own so the glyphs sit on the header's 32px pitch. Standalone (no
+   host) they flow inline. */
+.reader-back-host,
+.reader-actions-host {
+  display: contents;
 }
 
-.reply-source-label {
+.reader-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+/* Back arrow leads the context title; its glyph sits on the 50px inset. */
+.header-tabs > .reader-back-host > .reader-back {
+  align-self: center;
+  margin-left: -8px;
+  margin-right: -10px;
+}
+
+.header-tabs:has(> .reader-back-host > .reader-back) {
+  align-items: center;
+}
+
+/* Honest-state text controls under the subject: one quiet line, only when present. */
+.reader-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
   color: var(--text-secondary);
-  font-size: var(--type-body);
 }
 
 .reader-scroll {
@@ -1298,6 +1319,18 @@ button:focus-visible {
   overflow-wrap: anywhere;
 }
 
+.reader-context-note {
+  max-width: 80ch;
+  margin: 0.2rem 0;
+  color: var(--text-secondary);
+  font-size: var(--type-body);
+}
+
+/* Partial, unknown and unconfirmed star state read as Amber Notice. */
+.reader-context-note[data-attention] {
+  color: var(--warning);
+}
+
 .reader-pending {
   font-style: italic;
 }
@@ -1309,6 +1342,7 @@ button:focus-visible {
 }
 
 .message {
+  position: relative;
   border-top: 1px solid var(--rule);
   padding: 0.4rem 0.4rem 0.6rem;
   margin-bottom: 0.5rem;
@@ -1316,12 +1350,18 @@ button:focus-visible {
 
 /*
  * Current-message treatment: an accent-purple bar (color) plus a non-color
- * indication (soft warm fill and a primary-color sender) so the focused
+ * indication (a flat raised fill and a primary-color sender) so the focused
  * message never relies on color alone.
  */
 .message.message-active {
-  background: var(--focus-fill);
+  background: var(--surface-raised);
   box-shadow: inset 3px 0 0 var(--focus-accent);
+}
+
+/* The active bar is the focus indicator for the message toggle: no second ring.
+   The fill, bold sender and bar remain; other controls keep the global ring. */
+.message.message-active .message-toggle:focus-visible {
+  outline: none;
 }
 
 .message.message-active .message-from {
@@ -1329,49 +1369,151 @@ button:focus-visible {
   font-weight: var(--weight-strong);
 }
 
-/* Collapsed headers stay compact: the recipient line appears only when expanded. */
-.message-toggle {
+.message-header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+/* Quiet per-message reply glyph (latest, active message only). */
+.message-reply {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--icon-muted);
+  background: transparent;
+}
+
+.message-reply:hover:not(:disabled),
+.message-reply:focus-visible {
+  color: var(--text-primary);
+  background: transparent;
+}
+
+.message-reply-glyph {
+  width: 1rem;
+  height: 1rem;
+}
+
+/*
+ * One line per message: sender, then (collapsed) a clipped body snippet or
+ * (expanded) the recipients, then the compact date right-aligned. The full
+ * date stays in the title, the screen-reader text and the Details disclosure.
+ */
+.message-toggle {
+  position: relative;
+  display: flex;
+  align-items: center;
   gap: 0.75rem;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
+  min-height: 2em;
   text-align: left;
   font-size: var(--type-body);
   color: var(--text-secondary);
   background: transparent;
   border: 0;
   padding: 0.1rem 0.2rem;
-  flex-wrap: wrap;
+}
+
+.message-from,
+.message-to {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Collapsed senders share one 132px column so the snippets line up. */
+.message-toggle[aria-expanded='false'] .message-from {
+  flex: 0 0 11em;
 }
 
 .message-toggle[aria-expanded='false'] .message-to {
   display: none;
 }
 
+.message-snippet {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .message-time {
+  flex: none;
+  margin-left: auto;
+  text-align: right;
+  text-transform: uppercase;
+  white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 
+/*
+ * Prose reads in the proportional face at the reading size. 65ch (width of "0")
+ * is about 90 average proportional characters per line, short enough to follow.
+ * Bodies that rely on column alignment (quotes, indented blocks, tables) keep
+ * the raw monospace.
+ */
 .message-body {
   white-space: pre-wrap;
-  font-family: var(--font-mono);
-  font-size: var(--type-mono);
-  line-height: var(--leading-mono);
+  font-family: var(--font-ui);
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+  max-width: 65ch;
   color: var(--text-primary);
   overflow-wrap: anywhere;
   margin: 0.4rem 0;
 }
 
-/* Per-message participant details disclosure (native details/summary). */
+.message-body.message-body-mono {
+  font-family: var(--font-mono);
+  font-size: var(--type-mono);
+  line-height: var(--leading-mono);
+  /* Hard-wrapped plain text is 72-78 columns; do not soft-wrap it a second time. */
+  max-width: 88ch;
+}
+
+/* Per-message participant details disclosure (native details/summary). Only
+   rendered visible inside an expanded message: the summary is a quiet line
+   under the header (in flow, so it can never collide with the date or the reply
+   glyph); the fields open below it. */
 .message-details {
   font-size: var(--type-body);
-  margin-top: 0.4rem;
 }
 
 .message-details summary {
-  cursor: pointer;
-  color: var(--text-secondary);
   width: max-content;
+  margin-left: 0.2rem;
+  cursor: pointer;
+  color: var(--icon-muted);
+  list-style: none;
+}
+
+.message-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.message-details summary::before {
+  content: '▸ ';
+}
+
+.message-details[open] summary::before {
+  content: '▾ ';
+}
+
+.message-details summary:hover {
+  color: var(--text-primary);
+}
+
+.message-details summary:focus-visible {
+  outline: 2px solid var(--focus-accent);
+  outline-offset: 1px;
 }
 
 .message-fields {

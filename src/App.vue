@@ -853,15 +853,21 @@ async function submitSearch(query = searchDraft.value): Promise<void> {
 async function senderSearch(address: string): Promise<void> {
   await submitSearch('from:"' + address + '"');
 }
-const recentMail = ref<{ ref: ConversationRef; subject: string }[]>([]);
+const recentFetched = ref<{ ref: ConversationRef; subject: string }[]>([]);
+// The open (or focused) conversation is where the user already is: exclude it
+// by ref identity, then cap, so the pane still lists up to four other threads.
+const recentMail = computed(() => {
+  const here = readerOpen.value ? mailbox.openRef.value : mailbox.focusedRef.value;
+  return recentFetched.value.filter((item) => !sameConversation(item.ref, here)).slice(0, 4);
+});
 let recentToken = 0;
 watch([contact, accountId], async ([person, account]) => {
   const token = ++recentToken;
-  recentMail.value = [];
+  recentFetched.value = [];
   if (!person || !account) return;
   try {
     const page = await props.client.searchMail({ accountId: account, query: 'from:"' + person.mailbox + '"', cursor: null, cachedOnly: true });
-    if (token === recentToken) recentMail.value = page.conversations.slice(0, 4).map((c) => ({ ref: c.ref, subject: c.subject }));
+    if (token === recentToken) recentFetched.value = page.conversations.map((c) => ({ ref: c.ref, subject: c.subject }));
   } catch { /* Optional cached history: never invent links on failure. */ }
 });
 async function openRecent(target: ConversationRef): Promise<void> {
@@ -1038,6 +1044,9 @@ watch([drawer, contactDisclosure, readerOpen], cancelGo);
 
 const origin = ref<ReaderOrigin | null>(null);
 const readerView = ref<InstanceType<typeof ReaderView> | null>(null);
+/** Header slots the open reader teleports its quiet icon actions into. */
+const readerBackHost = ref<HTMLElement | null>(null);
+const readerActionsHost = ref<HTMLElement | null>(null);
 /** Message identity that currently owns reader focus (for the contact baseline). */
 const readerActiveMessageId = ref<string | null>(null);
 /** Temporary participant hover/focus context from the reader. */
@@ -1229,6 +1238,12 @@ async function moveReaderConversation(delta: number): Promise<void> {
   // Hidden list focus must not move; the open reference is the reader cursor.
   await mailbox.openConversationByRef(target);
 }
+
+/** Reader previous/next chevrons: the same neighbor rule as J/K. Hidden (undefined)
+ * where J/K are no-ops (Activity/Reminders/Trash readers); disabled at the ends. */
+const readerNavigates = computed(() => readerOpen.value && origin.value?.surface !== 'activity' && origin.value?.surface !== 'reminders' && !trashReader.value);
+const canMoveReaderPrev = computed(() => readerNavigates.value ? mailbox.listState.value === 'ready' && resolveReaderNeighbor(-1) !== null : undefined);
+const canMoveReaderNext = computed(() => readerNavigates.value ? mailbox.listState.value === 'ready' && resolveReaderNeighbor(1) !== null : undefined);
 
 function onReaderActiveMessage(messageId: string | null): void {
   readerActiveMessageId.value = messageId;
@@ -1956,6 +1971,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
           <!-- The context heading stays in the accessibility tree; on screen the
                active split tab already names it, so it is shown only when no
                rendered tab is active (Cached Done, Starred, Search, reader). -->
+          <span ref="readerBackHost" class="reader-back-host"></span>
           <h1 class="app-title" :class="{ 'visually-hidden': activeTabShown }" data-test="inbox-title">{{ contextTitle }}<template v-if="switchAccountLabel"><span class="app-title-account"> — {{ accountStatus?.account?.emailAddress }}</span></template></h1>
           <nav v-if="splitNavShown" class="split-nav" aria-label="Inbox splits" :title="splitCoverageShown ? SPLIT_COVERAGE : undefined">
             <button type="button" class="split-tab" data-test="split-inbox" :aria-current="mailbox.context.value === 'inbox' ? 'page' : undefined" :aria-describedby="splitCoverageShown ? `${domIdPrefix}split-coverage` : undefined" @click="navigateContext('inbox')"><span class="split-label">Inbox</span> <span v-if="splitBadge(mailbox.inboxTotal.value)" class="split-count">{{ splitBadge(mailbox.inboxTotal.value) }}</span></button>
@@ -1978,6 +1994,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             {{ accountStatus?.mutationAccess === 'upgrading' ? 'Mailbox permission pending' : 'Gmail is read-only' }}
             <button type="button" class="header-link" @click="openDrawer('account')">Review access<span class="visually-hidden"> in Account</span></button>
           </p>
+          <span ref="readerActionsHost" class="reader-actions-host"></span>
           <button v-if="history.length && !readerOpen" type="button" class="header-glyph" data-test="context-back" title="Back to previous context" @click="executeAction('back')"><HeaderGlyph name="back" /><span class="visually-hidden">Back to previous context</span></button>
           <button v-if="remindersSupported" type="button" class="header-glyph" :ref="setToggleRef('reminders')" title="Reminders (G then H)" @click="executeAction('reminders')"><HeaderGlyph name="reminders" /><span class="visually-hidden">Reminders</span></button>
           <button v-if="starredFilterShown" type="button" class="header-glyph" data-test="starred-filter" title="Starred only (cached)" :aria-pressed="mailbox.starredOnly.value" :disabled="mailbox.listState.value !== 'ready'" @click="toggleStarFilter()"><HeaderGlyph name="star" :filled="mailbox.starredOnly.value" /><span class="visually-hidden">Starred only (cached)</span></button>
@@ -2210,7 +2227,12 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               :show-read-controls="gmailActionsEnabled && !trashReader"
               :selection-count="selectedCount"
               :selection-context="mailbox.context.value"
+              :back-host="readerBackHost"
+              :actions-host="readerActionsHost"
+              :can-move-prev="canMoveReaderPrev"
+              :can-move-next="canMoveReaderNext"
               @close="executeAction('back')"
+              @move="moveReaderConversation"
               @archive="executeAction('archive')"
               @unarchive="executeAction('unarchive')"
               @set-read="executeAction($event ? 'read' : 'unread')"

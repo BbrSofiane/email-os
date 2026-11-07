@@ -74,10 +74,10 @@ describe('local plain-text drafts UI', () => {
     if (w.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
-    const reader = w.find('[data-test="reader"]');
+    // Reader actions are teleported into the app header, outside the article.
     const latest = (await fake.getConversation(fixtureRef('conv-01'))).messages.at(-1)!;
-    expect(reader.find('[data-test="prepare-reply"]').attributes('disabled')).toBeUndefined();
-    await reader.find('[data-test="prepare-reply"]').trigger('click');
+    expect(w.find('[data-test="prepare-reply"]').attributes('disabled')).toBeUndefined();
+    await w.find('[data-test="prepare-reply"]').trigger('click');
     await flushPromises();
     expect(w.find('[data-test="composer"]').exists()).toBe(true);
     expect(w.find('[data-test="reply-source"]').text()).toContain(latest.id);
