@@ -156,6 +156,22 @@ Before primary-mailbox dogfooding, use synthetic fixtures and a disposable accou
 
 Do not put mailbox content or credentials into routine diagnostic logs. Any reused code implicated by the [email](../../security/email-review.md) or [Pebble](../../security/pebble-review.md) reviews must be fixed and tested, or demonstrated to be outside reachable paths. Those static reviews are not runtime safety certifications.
 
+## UX-12 attachment decision (bounded download-only)
+
+The [UX-12 contract](../ux-12-safe-attachments.md) implements the existing basic
+download scope, not preview. Authenticated readonly fetch, bounded cached
+descriptors, cancellation and explicit inert Downloads saves are permitted.
+Unsupported Office/HTML files are download-only; files never execute or load
+remote resources in the app. External HTTP(S) links require explicit choice and
+protocol validation; email/draft exits stay separate. No new Gmail scopes.
+
+Attachment preview remains deferred: no macOS restricted-renderer sandbox and
+compatibility spike evidence exists for this slice. A new webview alone is not
+isolation. Preview requires documented enforcement of no privileged IPC and no
+automatic remote-resource loading plus platform return-path testing and a new
+reviewed decision. This preserves the download-only boundary rather than
+silently relaxing it to claim BROWSE-14 complete.
+
 ## Explicit non-goals
 
 - Superhuman feature parity or a polished public launch.

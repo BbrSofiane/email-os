@@ -278,6 +278,30 @@ describe.skipIf(chromePath === '')('Reader journey (real Chrome, opt-in)', () =>
     await cdp!.js('window.__h.wait(250)');
   }
 
+  it('UX-12 download chooser restores exact reader state without rendering attachments or loading resources', async () => {
+    await freshMount();
+    await cdp!.js(`window.__fixture.client.listAttachments = async () => [{ messageId: 'read-01-m3', attachmentId: 'file', filename: '../hostile.html', mimeType: 'text/html', size: 29 }];
+      window.__attachmentRequests = [];
+      window.__fixture.client.saveAttachment = async (request) => { window.__attachmentRequests.push(request); return {filename:'synthetic.download'}; };`);
+    await click('[data-test="conversation-row-read-01"]'); await press('Enter');
+    await cdp!.js('window.__h.wait(200)');
+    await press('O', { shift: true });
+    await cdp!.js(`document.querySelector('.reader-scroll').scrollTop = 317`);
+    const before = await cdp!.js<{scroll:number; expanded:string[] }>(`({scroll:document.querySelector('.reader-scroll').scrollTop, expanded:[...document.querySelectorAll('.message-toggle')].map(x=>x.getAttribute('aria-expanded'))})`);
+    await click('[data-test="files-links"]'); await cdp!.js('window.__h.wait(150)');
+    expect(await cdp!.js('window.__attachmentRequests.length')).toBe(0);
+    expect(await cdp!.js(`document.querySelectorAll('iframe,object,embed,img').length`)).toBe(0);
+    expect(await cdp!.js(`document.querySelector('[role="dialog"]').textContent.includes('PDF preview is unavailable')`)).toBe(true);
+    await click('.attachment-chooser [aria-label="Known files"] button');
+    await cdp!.js('window.__h.wait(100)');
+    expect(await cdp!.js('window.__attachmentRequests.length')).toBe(1);
+    await press('Escape'); await cdp!.js('window.__h.wait(100)');
+    expect(await cdp!.js(`({scroll:document.querySelector('.reader-scroll').scrollTop, expanded:[...document.querySelectorAll('.message-toggle')].map(x=>x.getAttribute('aria-expanded'))})`)).toEqual(before);
+    expect(await cdp!.js(`document.querySelector('.attachment-chooser') === null && document.querySelector('main').inert === false`)).toBe(true);
+    expect(await cdp!.js('window.__h.active()')).toBe('files-links');
+    expect(await cdp!.js('window.__fixture.controls.archiveCommands.length')).toBe(0);
+  }, 30_000);
+
   it('runs the open → N/P → O/Shift+O → details → participant → copy journey with no unintended writes', async () => {
     // Fresh fixture: no dependency on any other case's expansion or navigation.
     await freshMount();

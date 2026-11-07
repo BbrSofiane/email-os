@@ -1214,6 +1214,27 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       });
     },
 
+    async listAttachments(target) {
+      const conv = byId(target.conversationId);
+      if (!conv || conv.ref.accountId !== target.accountId) throw failNotShown();
+      return conv.messages.slice(0, 1).map(m => ({ messageId: m.id, attachmentId: 'fixture-text',
+        filename: 'example.txt', mimeType: 'text/plain', size: 27 }));
+    },
+    async saveAttachment(request) {
+      const conv = byId(request.conversation.conversationId);
+      if (!conv || conv.ref.accountId !== request.conversation.accountId || !conv.messages.some(m => m.id === request.messageId)
+        || request.attachmentId !== 'fixture-text') throw failNotShown();
+      // Memory-only model: never downloads or claims an OS file was written.
+      return { filename: 'preview-memory-example.txt.download' };
+    },
+    async cancelAttachment() {},
+    async openExternalLink(raw) {
+      let url: URL;
+      try { url = new URL(raw); } catch { throw { kind: 'invalid_request', field: 'url' }; }
+      if (raw.length > 2048 || /[\u0000-\u0020]/.test(raw) || !['https:', 'http:'].includes(url.protocol)
+        || !url.hostname || url.username || url.password) throw { kind: 'invalid_request', field: 'url' };
+      // Explicit synthetic boundary: no browser/system dispatch.
+    },
     async getConversation(ref: ConversationRef): Promise<Conversation> {
       const conv = byId(ref.conversationId);
       if (!conv || conv.ref.accountId !== ref.accountId) throw failNotShown();

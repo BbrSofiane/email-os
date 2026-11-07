@@ -85,6 +85,7 @@ pub struct GmailThread {
     /// Observed STARRED values keyed by message ID, including unsupported bodies.
     /// Absent map/entries are unknown, not false (legacy/partial label coverage).
     pub star_facts: Option<std::collections::HashMap<String, bool>>,
+    pub attachments: Vec<crate::attachments::AttachmentDescriptor>,
     pub conversation: Conversation,
     /// From of the newest observed provider message, independent of body support.
     /// None is explicitly unknown; never derive it from the renderable stack.
@@ -158,6 +159,15 @@ pub trait GmailReadProvider: Send + Sync {
         _cancel: &CancelToken,
     ) -> Result<Option<GmailThread>, MailError> {
         Err(MailError::AuthFailed)
+    }
+    fn fetch_attachment(
+        &self,
+        _account_id: &str,
+        _message_id: &str,
+        _attachment_id: &str,
+        _cancel: &CancelToken,
+    ) -> Result<Vec<u8>, MailError> {
+        Err(MailError::NotFound)
     }
     fn mutation_access(&self) -> Result<bool, MailError> {
         Ok(false)

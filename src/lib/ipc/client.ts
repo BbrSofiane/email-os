@@ -194,6 +194,14 @@ export interface MailClient {
     put(command: PutReminder): Promise<Reminder>;
     cancel(command: CancelReminder): Promise<Reminder>;
   };
+  /** Cached bounded metadata only; retained/legacy cache may have no files. */
+  listAttachments(target: ConversationRef): Promise<import('./generated').AttachmentDescriptor[]>;
+  /** Rust-only readonly fetch to a new inert file in OS Downloads; no caller path. */
+  saveAttachment(request: import('./generated').SaveAttachment): Promise<import('./generated').AttachmentSaved>;
+  /** Best effort cancellation; an already-completed save may remain. */
+  cancelAttachment(requestId: string): Promise<void>;
+  /** Explicit HTTP(S) system-browser handoff; no file/mailto/custom protocols. */
+  openExternalLink(url: string): Promise<void>;
   listConversations(): Promise<InboxSnapshot>;
   /** Local archive evidence only; short/empty pages can still have a continuation. */
   listCachedDone(request: CachedDoneRequest): Promise<CachedDoneSnapshot>;

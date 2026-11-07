@@ -36,6 +36,25 @@ impl ReplyReadProvider {
 }
 
 impl GmailReadProvider for ReplyReadProvider {
+    fn fetch_attachment(
+        &self,
+        _account_id: &str,
+        _message: &str,
+        _attachment: &str,
+        cancel: &CancelToken,
+    ) -> Result<Vec<u8>, MailError> {
+        self.active_provider_reads.fetch_add(1, Ordering::SeqCst);
+        if let Some(hook) = self.on_get_thread_cancel.lock().unwrap().clone() {
+            hook(cancel);
+        }
+        self.active_provider_reads.fetch_sub(1, Ordering::SeqCst);
+        crate::attachments::check_cancel(cancel)?;
+        if let Some(error) = self.error.lock().unwrap().clone() {
+            return Err(error);
+        }
+        Ok(b"%PDF-1.7\n".to_vec())
+    }
+
     fn is_configured(&self) -> bool {
         self.configured.load(Ordering::SeqCst)
     }
@@ -165,6 +184,7 @@ fn thread(context: Option<ReplyContext>, complete: bool) -> GmailThread {
             .iter()
             .max_by(|a, b| (&a.sent_at, &a.id).cmp(&(&b.sent_at, &b.id)))
             .map(|m| m.from.clone()),
+        attachments: Vec::new(),
         conversation: Conversation {
             stars: None,
             conversation_ref: ConversationRef {
@@ -259,6 +279,133 @@ fn retained_thread_bytes_include_newest_sender_allocations() {
         sender.mailbox.capacity() + sender.display_name.as_ref().map_or(0, String::capacity);
     observed.newest_sender = Some(sender);
     assert_eq!(retained_thread_bytes(&observed), without + expected);
+}
+
+#[test]
+fn attachment_download_checks_identity_offline_size_and_cancellation() {
+    use crate::attachments::*;
+    let (core, provider, dir, target) = setup("attachments", None, None, false, false);
+    let mut cached = thread(None, false);
+    cached.attachments = vec![AttachmentDescriptor {
+        message_id: "m-latest".into(),
+        attachment_id: "a1".into(),
+        filename: "../../x.pdf".into(),
+        mime_type: "application/pdf".into(),
+        size: 9,
+    }];
+    core.inner
+        .store
+        .apply_discovery_page(
+            &[ThreadFetch::Cached(Box::new(cached.clone()))],
+            None,
+            true,
+            false,
+            0,
+        )
+        .unwrap();
+    let downloads = test_directory();
+    let mut request = SaveAttachment {
+        conversation: target.clone(),
+        message_id: "m-latest".into(),
+        attachment_id: "a1".into(),
+        request_id: "r1".into(),
+    };
+    let before = core.get_conversation(&target).unwrap();
+    let saved = core
+        .download_attachment(&request, &CancelToken::default(), downloads.path())
+        .unwrap();
+    assert_eq!(
+        std::fs::read(downloads.path().join(saved.filename)).unwrap(),
+        b"%PDF-1.7\n"
+    );
+    assert_eq!(core.get_conversation(&target).unwrap(), before);
+    request.conversation.account_id = "foreign".into();
+    assert!(core
+        .download_attachment(&request, &CancelToken::default(), downloads.path())
+        .is_err());
+    request.conversation = target;
+    request.attachment_id = "missing".into();
+    assert_eq!(
+        core.download_attachment(&request, &CancelToken::default(), downloads.path()),
+        Err(MailError::NotFound)
+    );
+    request.attachment_id = "a1".into();
+    *provider.error.lock().unwrap() = Some(MailError::NetworkUnavailable);
+    assert_eq!(
+        core.download_attachment(&request, &CancelToken::default(), downloads.path()),
+        Err(MailError::NetworkUnavailable)
+    );
+    *provider.error.lock().unwrap() = None;
+    let cancel = CancelToken::default();
+    cancel.cancel();
+    assert_eq!(
+        core.download_attachment(&request, &cancel, downloads.path()),
+        Err(MailError::AuthCancelled)
+    );
+    cached.attachments[0].size = (MAX_ATTACHMENT_BYTES + 1) as u32;
+    core.inner
+        .store
+        .apply_discovery_page(
+            &[ThreadFetch::Cached(Box::new(cached))],
+            None,
+            true,
+            false,
+            0,
+        )
+        .unwrap();
+    assert!(core
+        .download_attachment(&request, &CancelToken::default(), downloads.path())
+        .is_err());
+    assert_eq!(std::fs::read_dir(downloads.path()).unwrap().count(), 1);
+    close(core, dir);
+}
+
+#[test]
+fn attachment_disconnect_drains_and_cancels_without_publishing_file() {
+    use crate::attachments::*;
+    let (core, provider, dir, target) = setup("attachment-disconnect", None, None, false, false);
+    let mut cached = thread(None, false);
+    cached.attachments = vec![AttachmentDescriptor {
+        message_id: "m-latest".into(),
+        attachment_id: "a1".into(),
+        filename: "x.pdf".into(),
+        mime_type: "application/pdf".into(),
+        size: 9,
+    }];
+    core.inner
+        .store
+        .apply_discovery_page(
+            &[ThreadFetch::Cached(Box::new(cached))],
+            None,
+            true,
+            false,
+            0,
+        )
+        .unwrap();
+    let request = SaveAttachment {
+        conversation: target,
+        message_id: "m-latest".into(),
+        attachment_id: "a1".into(),
+        request_id: "r1".into(),
+    };
+    let downloads = test_directory();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    *provider.on_get_thread_cancel.lock().unwrap() = Some(Arc::new(move |cancel| {
+        entered_tx.send(()).unwrap();
+        assert!(cancel.wait_until_cancelled(Duration::from_secs(4)));
+    }));
+    provider.configured.store(true, Ordering::SeqCst);
+    let reader = core.clone();
+    let destination = downloads.path().to_path_buf();
+    let transfer = std::thread::spawn(move || {
+        reader.download_attachment(&request, &CancelToken::default(), &destination)
+    });
+    entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    core.disconnect_account().unwrap();
+    assert_eq!(transfer.join().unwrap(), Err(MailError::AuthCancelled));
+    assert!(!provider.premature_disconnect.load(Ordering::SeqCst));
+    assert_eq!(std::fs::read_dir(downloads.path()).unwrap().count(), 0);
+    close(core, dir);
 }
 
 #[test]

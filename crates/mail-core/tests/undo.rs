@@ -395,6 +395,7 @@ fn thread(id: &str, msgs: Vec<Message>, inbox: &[&str], unread: &[&str]) -> Gmai
             .iter()
             .max_by(|a, b| (&a.sent_at, &a.id).cmp(&(&b.sent_at, &b.id)))
             .map(|m| m.from.clone()),
+        attachments: Vec::new(),
         conversation: Conversation {
             stars: None,
             conversation_ref: conversation_ref(id),

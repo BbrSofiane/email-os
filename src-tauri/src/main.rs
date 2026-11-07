@@ -7,6 +7,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod close_gate;
+use mail_core::attachments::{AttachmentDescriptor, AttachmentSaved, SaveAttachment};
+use mail_core::CancelToken;
+use std::collections::{HashMap, VecDeque};
 
 use close_gate::CloseGate;
 use mail_core::drafts::types::{
@@ -36,6 +39,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
+
+const FIXTURE_ATTACHMENT: &[u8] = b"Synthetic attachment only.\n";
 
 #[derive(Clone)]
 enum Backend {
@@ -134,6 +139,57 @@ impl Backend {
         match self {
             Self::Fixture(core) => core.get_conversation(r#ref),
             Self::Gmail(core) => core.get_conversation(r#ref),
+        }
+    }
+
+    fn list_attachments(
+        &self,
+        target: &ConversationRef,
+    ) -> Result<Vec<AttachmentDescriptor>, MailError> {
+        match self {
+            Self::Gmail(core) => core.list_attachments(target),
+            Self::Fixture(core) => {
+                let conversation = core.get_conversation(target)?;
+                Ok(conversation
+                    .messages
+                    .first()
+                    .map(|m| AttachmentDescriptor {
+                        message_id: m.id.clone(),
+                        attachment_id: "fixture-text".into(),
+                        filename: "example.txt".into(),
+                        mime_type: "text/plain".into(),
+                        size: FIXTURE_ATTACHMENT.len() as u32,
+                    })
+                    .into_iter()
+                    .collect())
+            }
+        }
+    }
+
+    fn download_attachment(
+        &self,
+        request: &SaveAttachment,
+        cancel: &CancelToken,
+        directory: &std::path::Path,
+    ) -> Result<AttachmentSaved, MailError> {
+        match self {
+            Self::Gmail(core) => core.download_attachment(request, cancel, directory),
+            Self::Fixture(_) => {
+                let descriptor = self
+                    .list_attachments(&request.conversation)?
+                    .into_iter()
+                    .find(|d| {
+                        d.message_id == request.message_id
+                            && d.attachment_id == request.attachment_id
+                    })
+                    .ok_or(MailError::NotFound)?;
+                mail_core::attachments::save_download(
+                    directory,
+                    &descriptor,
+                    FIXTURE_ATTACHMENT,
+                    cancel,
+                )
+            }
         }
     }
 
@@ -363,10 +419,42 @@ enum Subscription {
 }
 
 /// Managed app state retains its change-listener guard for the full app life.
+#[derive(Default)]
+struct AttachmentTransfers {
+    active: HashMap<String, CancelToken>,
+    cancelled: VecDeque<String>,
+}
+impl AttachmentTransfers {
+    fn begin(&mut self, id: &str) -> Result<CancelToken, MailError> {
+        if !mail_core::attachments::valid_id(id) {
+            return Err(mail_core::attachments::invalid("requestId"));
+        }
+        if !self.active.is_empty() {
+            return Err(MailError::Busy);
+        }
+        if self.cancelled.iter().any(|v| v == id) {
+            return Err(MailError::AuthCancelled);
+        }
+        let token = CancelToken::default();
+        self.active.insert(id.into(), token.clone());
+        Ok(token)
+    }
+    fn cancel(&mut self, id: &str) {
+        if let Some(token) = self.active.get(id) {
+            token.cancel();
+        }
+        self.cancelled.push_back(id.into());
+        while self.cancelled.len() > 64 {
+            self.cancelled.pop_front();
+        }
+    }
+}
+
 struct AppState {
     backend: Backend,
     drafts: DraftCore,
     draft_lifecycle: Arc<Mutex<DraftLifecycle>>,
+    attachment_transfers: Arc<Mutex<AttachmentTransfers>>,
     close_gate: Arc<Mutex<CloseGate>>,
     _subscription: Subscription,
 }
@@ -397,6 +485,7 @@ impl AppState {
             backend,
             drafts,
             draft_lifecycle: Arc::new(Mutex::new(DraftLifecycle::default())),
+            attachment_transfers: Arc::new(Mutex::new(AttachmentTransfers::default())),
             close_gate: Arc::new(Mutex::new(CloseGate::default())),
             _subscription: subscription,
         }
@@ -604,6 +693,90 @@ async fn get_conversation(
         backend.get_conversation(&r#ref)
     })
     .await
+}
+
+#[tauri::command]
+async fn list_attachments(
+    state: State<'_, AppState>,
+    target: ConversationRef,
+) -> Result<Vec<AttachmentDescriptor>, MailError> {
+    run_blocking(state.backend.clone(), move |backend| {
+        backend.list_attachments(&target)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn save_attachment(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: SaveAttachment,
+) -> Result<AttachmentSaved, MailError> {
+    let directory = app
+        .path()
+        .download_dir()
+        .map_err(|_| MailError::StorageUnavailable)?;
+    let transfers = Arc::clone(&state.attachment_transfers);
+    let cancel = transfers
+        .lock()
+        .map_err(|_| MailError::StorageUnavailable)?
+        .begin(&request.request_id)?;
+    let id = request.request_id.clone();
+    let result = run_blocking(state.backend.clone(), move |backend| {
+        backend.download_attachment(&request, &cancel, &directory)
+    })
+    .await;
+    transfers
+        .lock()
+        .map_err(|_| MailError::StorageUnavailable)?
+        .active
+        .remove(&id);
+    result
+}
+
+#[tauri::command]
+fn cancel_attachment(state: State<'_, AppState>, request_id: String) -> Result<(), MailError> {
+    if !mail_core::attachments::valid_id(&request_id) {
+        return Err(mail_core::attachments::invalid("requestId"));
+    }
+    state
+        .attachment_transfers
+        .lock()
+        .map_err(|_| MailError::StorageUnavailable)?
+        .cancel(&request_id);
+    Ok(())
+}
+
+#[tauri::command]
+async fn open_external_link(url: String) -> Result<(), MailError> {
+    let url = mail_core::attachments::validated_external_url(&url)?;
+    #[cfg(target_os = "macos")]
+    {
+        tauri::async_runtime::spawn_blocking(move || {
+            std::process::Command::new("/usr/bin/open")
+                .arg("--")
+                .arg(url)
+                // OS errors must not echo a mailbox URL into application logs.
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map_err(|_| MailError::ProviderUnavailable)
+                .and_then(|status| {
+                    if status.success() {
+                        Ok(())
+                    } else {
+                        Err(MailError::ProviderUnavailable)
+                    }
+                })
+        })
+        .await
+        .map_err(|_| MailError::ProviderUnavailable)?
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = url;
+        Err(MailError::ProviderUnavailable)
+    }
 }
 
 #[tauri::command]
@@ -949,6 +1122,63 @@ fn begin_native_close(app: &AppHandle) {
     };
 }
 
+#[cfg(test)]
+mod attachment_transfer_tests {
+    use super::*;
+    #[test]
+    fn cancellation_before_or_during_admission_and_single_transfer_bound() {
+        let mut transfers = AttachmentTransfers::default();
+        transfers.cancel("early");
+        assert!(matches!(
+            transfers.begin("early"),
+            Err(MailError::AuthCancelled)
+        ));
+        let token = transfers.begin("active").unwrap();
+        assert!(matches!(transfers.begin("other"), Err(MailError::Busy)));
+        transfers.cancel("active");
+        assert!(token.is_cancelled());
+        transfers.active.remove("active");
+        for i in 0..100 {
+            transfers.cancel(&format!("r{i}"));
+        }
+        assert_eq!(transfers.cancelled.len(), 64);
+    }
+    #[test]
+    fn fixture_download_revalidates_exact_targets_and_never_opens_documents() {
+        let dir = std::env::temp_dir().join(format!(
+            "email-os-attachment-shell-{}",
+            fresh_close_request_id()
+        ));
+        let core = MailCore::open(dir.join("profile")).unwrap();
+        let backend = Backend::Fixture(core);
+        let target = backend.list_conversations().unwrap().conversations[0]
+            .conversation_ref
+            .clone();
+        let descriptor = backend.list_attachments(&target).unwrap().remove(0);
+        let request = SaveAttachment {
+            conversation: target,
+            message_id: descriptor.message_id,
+            attachment_id: descriptor.attachment_id,
+            request_id: "r1".into(),
+        };
+        let saved = backend
+            .download_attachment(&request, &CancelToken::default(), &dir)
+            .unwrap();
+        assert_eq!(
+            std::fs::read(dir.join(saved.filename)).unwrap(),
+            b"Synthetic attachment only.\n"
+        );
+        let mut wrong = request.clone();
+        wrong.message_id = "another-message".into();
+        assert_eq!(
+            backend.download_attachment(&wrong, &CancelToken::default(), &dir),
+            Err(MailError::NotFound)
+        );
+        drop(backend);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
 fn main() {
     let app = tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -968,6 +1198,10 @@ fn main() {
             cancel_search_mail,
             list_cached_trash,
             get_conversation,
+            list_attachments,
+            save_attachment,
+            cancel_attachment,
+            open_external_link,
             set_archived,
             enable_mailbox_actions,
             cancel_mailbox_action_upgrade,

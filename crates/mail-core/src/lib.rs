@@ -6,6 +6,7 @@
 //! lock, and change subscription. No Tauri, no OAuth, no network, no mail
 //! beyond the synthetic fixture account. See `docs/vertical-slice-01.md`.
 
+pub mod attachments;
 mod cached_done;
 pub mod clock;
 pub mod drafts;

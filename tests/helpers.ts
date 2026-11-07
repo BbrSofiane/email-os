@@ -84,7 +84,7 @@ export function countingClient(inner: MailClient): CountingClient {
  */
 export function accountMethods(
   inner: MailClient,
-): Pick<MailClient, 'getSavedSplit' | 'saveSavedSplit' | 'searchMail' | 'cancelSearchMail' | 'listProviderDestinations' | 'browseProviderDestination' | 'listCachedTrash' | 'listCachedDone' | 'getAccountStatus' | 'connectAccount' | 'disconnectAccount' | 'requestSync' | 'enableMailboxActions' | 'cancelMailboxActionUpgrade' | 'setRead' | 'retryOperation' | 'undoOperation' | 'listDrafts' | 'getDraft' | 'createDraft' | 'saveDraft' | 'deleteDraft' | 'subscribeDrafts' | 'subscribeAppClose' | 'completeAppClose' | 'cancelAppClose'> {
+): Pick<MailClient, 'listAttachments' | 'saveAttachment' | 'cancelAttachment' | 'openExternalLink' | 'getSavedSplit' | 'saveSavedSplit' | 'searchMail' | 'cancelSearchMail' | 'listProviderDestinations' | 'browseProviderDestination' | 'listCachedTrash' | 'listCachedDone' | 'getAccountStatus' | 'connectAccount' | 'disconnectAccount' | 'requestSync' | 'enableMailboxActions' | 'cancelMailboxActionUpgrade' | 'setRead' | 'retryOperation' | 'undoOperation' | 'listDrafts' | 'getDraft' | 'createDraft' | 'saveDraft' | 'deleteDraft' | 'subscribeDrafts' | 'subscribeAppClose' | 'completeAppClose' | 'cancelAppClose'> {
   return {
     getSavedSplit: (accountId) => inner.getSavedSplit(accountId),
     saveSavedSplit: (accountId, split) => inner.saveSavedSplit(accountId, split),
@@ -92,6 +92,10 @@ export function accountMethods(
     cancelSearchMail: () => inner.cancelSearchMail(),
     listProviderDestinations: (accountId, cached) => inner.listProviderDestinations(accountId, cached),
     browseProviderDestination: (request) => inner.browseProviderDestination(request),
+    listAttachments: (target) => inner.listAttachments(target),
+    saveAttachment: (request) => inner.saveAttachment(request),
+    cancelAttachment: (id) => inner.cancelAttachment(id),
+    openExternalLink: (url) => inner.openExternalLink(url),
     listCachedDone: (request) => inner.listCachedDone(request),
     listCachedTrash: (request) => inner.listCachedTrash(request),
     listDrafts: () => inner.listDrafts(),
@@ -340,6 +344,10 @@ export function createSixConversationClient(): SixConversationClient {
     searchMail: async () => ({ conversations: [], nextCursor: null, coverage: 'cached_incomplete' }),
     cancelSearchMail: async () => {},
     listCachedTrash: async () => { throw { kind: 'read_only' }; },
+    listAttachments: async () => [],
+    saveAttachment: async () => { throw { kind: 'not_found' }; },
+    cancelAttachment: async () => {},
+    openExternalLink: async () => { throw { kind: 'provider_unavailable' }; },
     listCachedDone: async () => ({ conversations: conversations.filter((c) => !inbox.includes(c.ref.conversationId)).map(summaryOf), nextCursor: null, coverage: 'local_cache', exactTotal: null, lastSyncedAt: SIX_NOW }),
     listConversations: () => {
       if (listFailure) {

@@ -383,6 +383,33 @@ writes and Undo await a recovery-effects decision and a new durable dimension;
 mute/spam writes, Important/Other, rules, Block and Unsubscribe are not enabled.
 There is no permanent-delete/empty-Trash, arbitrary URL opener or send command.
 Synthetic checks do not establish native WKWebView or remote Gmail convergence.
+## UX-12 attachment capability and validation
+
+See [UX-12 contract and evidence](ux-12-safe-attachments.md). The reader's Files
+and links button (native Cmd+O) offers up to 32 cached descriptors and 32 literal
+HTTP(S) links. No automatic read, file opening or URL dispatch occurs. Gmail
+uses its existing readonly grant; only explicit Save issues attachment-endpoint
+reads and decodes file bytes in Rust. Inline body-only parts without a fetchable
+attachment ID are omitted; existing bounded full-thread reads can contain inline
+payload fields, which are not decoded as attachments.
+Missing/legacy descriptors need a sync; retained snapshots do not acquire new
+provider authority. No attachment uploads, provider drafts or sending.
+
+Saves create a unique file directly in OS Downloads with a `.download` suffix;
+the frontend cannot supply a destination. Files never execute and must be
+inspected/renamed outside the app. Cancel/dismiss discards an unfinished
+transfer (a blocked HTTP call can take its existing 30-second timeout to return);
+a completed save or process crash may leave an inert file. A lost save response
+may leave a completed download; retries can create another unique file. Browser
+preview only models a memory-only save and external handoff, not filesystem or
+provider effects. External HTTP(S) dispatch currently targets macOS only.
+
+PDF preview is **not implemented**: the restricted macOS platform sandbox and
+compatibility spike has not passed. No PDF/HTML/Office document enters a webview,
+trusted DOM or third-party viewer. Native build/bridge tests do not satisfy
+WKWebView key handling, VoiceOver, Downloads permissions, OS browser dispatch,
+or the PDF security spike. Disposable provider validation remains separately
+operator-gated, not authorized by implementation work.
 
 ## Desktop-local reminder increment (UX-11, fixture only)
 
