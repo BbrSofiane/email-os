@@ -1,0 +1,37 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6W1SB8G1N7J3HD49FKVCQ22",
+  "strategy": "manual-commit",
+  "branch": "rebase-tmp",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/App.vue",
+    "src/assets/style.css",
+    "src/components/ContactPane.vue",
+    "src/components/ReaderView.vue",
+    "src/composables/useMailbox.ts",
+    "tests/app.component.test.ts",
+    "tests/discovery.component.test.ts",
+    "tests/draft-recipient-label.component.test.ts",
+    "tests/reader-navigation.smooth.test.ts",
+    "tests/reader.rendered.test.ts",
+    "tests/reminders.navigation.test.ts",
+    "tests/reply-composer.component.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 18,
+    "cache_creation_tokens": 8760,
+    "cache_read_tokens": 2861237,
+    "output_tokens": 3385,
+    "api_call_count": 9
+  }
+}
