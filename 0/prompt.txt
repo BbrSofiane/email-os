@@ -1,0 +1,12 @@
+Run `/impeccable harden` for ONE critique issue in this Email OS repo (Vue 3 + Tauri). You're in your own worktree on branch impeccable/p1-dock-status-colours, based on main (which just merged PR #18, the Superhuman-parity browsing shell).
+
+Issue [P1]: Dock status words are never coloured. `.action-notice-status` (src/assets/style.css ~line 1661; src/components/ActionNotice.vue ~217, 239) is always Ash (--text-secondary). "Failed — restored", "Outcome unknown — see Activity", "Accepted locally, not yet confirmed" look identical to "Confirmed". This breaks PRODUCT.md's "honest state" principle (pending/success/partial/failed/unknown must be visible and distinct) and DESIGN.md's status rules.
+Fix direction: add a `data-status` (or similar) on the status element, map failed → danger token (Coral Fault), pending/unknown/acceptance-unknown → warning token (Amber Notice), confirmed/restored → Ash. Don't rely on colour alone: keep the explicit words. Check every outcome kind ActionNotice can render (read the component + src/lib/browsing-actions.ts + docs/ux-04-trustworthy-undo.md, docs/ux-05-safe-bulk-processing.md). Verify contrast ≥4.5:1 for each colour on the dock background and report ratios.
+
+How to run the impeccable skill (it isn't installed as a Claude skill here): read /Users/sofianebebert/.pi/skills/impeccable/SKILL.md, then reference/harden.md and reference/product.md in that folder, and follow them. Skip `context.mjs`; read PRODUCT.md and DESIGN.md at the repo root instead. Scripts written as `.pi/skills/impeccable/scripts/...` live at /Users/sofianebebert/.pi/skills/impeccable/scripts/. Full critique: .impeccable/critique/2026-11-07T17-54-20Z__src-components-inboxlist-vue.md.
+
+Scope: only this issue. Another parallel thread fixes the g-chord fall-through (App.vue key handling) and others handle copy/vocabulary/palette — avoid touching those areas and avoid rewording copy, to keep merges clean.
+
+Verify: `pnpm install` if needed, `pnpm typecheck`, `pnpm test` (baseline on main: 646 passed, 32 skipped). Add component tests asserting each outcome's status attribute/class. Optionally screenshot via `pnpm exec vite --port <free port>` + headless Chromium; stop servers after.
+
+Finish: commit with a conventional message ending with `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`, push the branch, open a PR to main with `gh pr create` (body ends with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`). Do NOT merge. Report the PR URL, test counts, and contrast ratios.

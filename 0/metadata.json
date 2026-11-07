@@ -1,0 +1,45 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6VP9CJVWRGC4S2A10F609Z4",
+  "session_id": "93947138-a873-4c83-b79f-a7b484ff4510",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-07T19:03:14.673132Z",
+  "branch": "impeccable/p1-dock-status-colours",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/assets/style.css",
+    "tests/action-notice.component.test.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "f909e6ccb193",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 50,
+    "cache_creation_tokens": 55024,
+    "cache_read_tokens": 1626846,
+    "output_tokens": 14108,
+    "api_call_count": 25
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-07T19:03:14.65538Z",
+    "agent_lines": 93,
+    "agent_removed": 0,
+    "human_added": 61,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 154,
+    "total_lines_changed": 156,
+    "agent_percentage": 59.61538461538461,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}
