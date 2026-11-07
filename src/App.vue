@@ -753,8 +753,37 @@ const overlayQuery = computed({
 const paletteButton = ref<HTMLElement | null>(null);
 let overlayOrigin: HTMLElement | null = null;
 let overlayRowOrigin: ConversationRef | null = null;
+// G-chord (g then e/h). The chord window is long enough for a hesitant second
+// key; when it lapses the hint disappears and a short grace window swallows a
+// late e/h, so a slow "g e" can never fall through to the plain-key meaning of
+// e (Archive). Any other key, focus change or explicit cancel ends the grace.
+const GO_CHORD_WINDOW_MS = 1500;
+const GO_CHORD_GRACE_MS = 600;
 let goTimer: ReturnType<typeof setTimeout> | null = null;
-function cancelGo(): void { if (goTimer) clearTimeout(goTimer); goTimer = null; }
+let goGraceTimer: ReturnType<typeof setTimeout> | null = null;
+const goPending = ref(false);
+function endGoGrace(): void { if (goGraceTimer) clearTimeout(goGraceTimer); goGraceTimer = null; }
+function cancelGo(): void {
+  if (goTimer) clearTimeout(goTimer);
+  goTimer = null;
+  goPending.value = false;
+  endGoGrace();
+}
+function armGo(): void {
+  cancelGo();
+  goPending.value = true;
+  goTimer = setTimeout(() => {
+    goTimer = null;
+    goPending.value = false;
+    goGraceTimer = setTimeout(endGoGrace, GO_CHORD_GRACE_MS);
+  }, GO_CHORD_WINDOW_MS);
+}
+/** Keys whose chorded meaning (Done / Reminders) differs from the plain key. */
+function isGoSecondKey(event: KeyboardEvent): boolean {
+  return (event.key === 'e' || (event.key === 'h' && remindersSupported.value))
+    && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey && !event.isComposing;
+}
+const goHintLabel = computed(() => `g pressed. Press E for Done${remindersSupported.value ? ' or H for Reminders' : ''}, Escape to cancel.`);
 function openOverlay(kind: 'palette' | 'navigator'): void {
   cancelGo();
   if (!accountReady.value) return;
@@ -1408,9 +1437,16 @@ function onKeydown(event: KeyboardEvent): void {
   }
   if (goTimer) {
     cancelGo();
-    if ((event.key === 'e' || (event.key === 'h' && remindersSupported.value)) && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey && !event.isComposing && !isEditableTarget(event.target) && !drawer.value && !contactDisclosure.value && !readerOpen.value) {
+    // Escape cancels the armed chord and is consumed: one Escape, one dismissal.
+    if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); return; }
+    if (isGoSecondKey(event) && !isEditableTarget(event.target) && !drawer.value && !contactDisclosure.value && !readerOpen.value) {
       event.preventDefault(); void executeAction(event.key === 'h' ? 'reminders' : 'done'); return;
     }
+  } else if (goGraceTimer) {
+    // The window just lapsed: a late second key was almost certainly meant for
+    // the chord, so it is swallowed instead of running the plain-key action.
+    endGoGrace();
+    if (isGoSecondKey(event) && !isEditableTarget(event.target)) { event.preventDefault(); return; }
   }
   // Only a visible composer owns all keys; a suspended editor behind another
   // disclosure must not silently keep keyboard ownership from the inbox.
@@ -1489,7 +1525,7 @@ function onKeydown(event: KeyboardEvent): void {
     event.preventDefault(); openOverlay('navigator'); return;
   }
   if (browsingOwns && !event.shiftKey && key === 'g') {
-    event.preventDefault(); goTimer = setTimeout(cancelGo, 1000); return;
+    event.preventDefault(); armGo(); return;
   }
   if (key === 's' && !event.shiftKey && !event.repeat && (browsingOwns || readerIsOpen) && !actionShortcutBlocked(event.target)) {
     const stars = readerIsOpen ? mailbox.conversation.value?.stars : mailbox.focusedSummary.value?.stars;
@@ -1731,6 +1767,10 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
           <span v-if="starredFilterShown && mailbox.starredOnly.value" class="header-filter" data-test="starred-filter-status">Starred only</span>
         </div>
         <div class="header-trail">
+          <!-- Armed g-chord hint: always-present polite status so the change is
+               announced; empty (display: none) when idle. It grows leftward in
+               the trail, so the glyphs never move. -->
+          <span class="chord-hint" role="status" data-test="chord-hint"><template v-if="goPending"><span aria-hidden="true">g…</span><span class="visually-hidden">{{ goHintLabel }}</span></template></span>
           <p v-if="props.mode === 'browser-preview'" class="header-note preview-tag" data-test="preview-banner" role="note" :title="BROWSER_PREVIEW_DISCLOSURE"><span aria-hidden="true">Preview · in-memory</span><span class="visually-hidden">{{ BROWSER_PREVIEW_DISCLOSURE }}</span></p>
           <p v-if="gmailMode && !mailboxActionsEnabled" class="header-note" data-test="mailbox-access-hint">
             {{ accountStatus?.mutationAccess === 'upgrading' ? 'Mailbox permission pending' : 'Gmail is read-only' }}
