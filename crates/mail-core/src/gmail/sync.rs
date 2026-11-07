@@ -129,13 +129,20 @@ struct CtrlState {
     disconnecting: bool,
     pass_cancel: CancelToken,
     reply_enrichments: HashMap<u64, CancelToken>,
+    /// Cancel token of the single admitted live destination/catalog read.
+    /// `None` means no live destination job is active; overlaps are typed
+    /// `Busy` instead of accumulating unbounded provider reads.
+    destination_read: Option<CancelToken>,
     connection: ConnectionState,
     error: Option<MailError>,
     backoff: u32,
 }
 
-fn cancel_reply_enrichments(st: &mut CtrlState) {
+fn cancel_independent_reads(st: &mut CtrlState) {
     for cancel in st.reply_enrichments.values() {
+        cancel.cancel();
+    }
+    if let Some(cancel) = &st.destination_read {
         cancel.cancel();
     }
 }
@@ -156,6 +163,50 @@ impl Drop for ReplyEnrichment {
     }
 }
 
+/// Admission for one live destination/catalog read. At most one such job is
+/// active at a time; an overlapping request is typed `Busy` instead of
+/// accumulating abandoned navigation jobs that each consume provider reads.
+/// The guard releases admission — and wakes disconnect/shutdown waiters — on
+/// success, provider error, cancellation and shutdown alike.
+struct DestinationRead {
+    ctrl: Arc<Ctrl>,
+    cancel: CancelToken,
+}
+
+impl DestinationRead {
+    fn begin(ctrl: &Arc<Ctrl>) -> Result<Self, MailError> {
+        let mut st = ctrl
+            .state
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        if st.stop || st.halted {
+            return Err(MailError::StorageUnavailable);
+        }
+        if st.disconnecting {
+            return Err(MailError::Busy);
+        }
+        if st.destination_read.is_some() {
+            return Err(MailError::Busy);
+        }
+        let cancel = CancelToken::default();
+        st.destination_read = Some(cancel.clone());
+        Ok(Self {
+            ctrl: Arc::clone(ctrl),
+            cancel,
+        })
+    }
+}
+
+impl Drop for DestinationRead {
+    fn drop(&mut self) {
+        // Admission is exclusive: the slot can only hold this guard's token
+        // while the guard is alive, so clearing unconditionally is exact.
+        let mut st = self.ctrl.state.lock().expect("gmail ctrl poisoned");
+        st.destination_read = None;
+        self.ctrl.wake.notify_all();
+    }
+}
+
 /// Latches persistence failures found before a mutation reaches its durable
 /// acceptance transaction, so already-queued work cannot run after recovery.
 fn latch_admission_storage_error(st: &mut CtrlState, ctrl: &Ctrl, error: &MailError) -> bool {
@@ -165,7 +216,7 @@ fn latch_admission_storage_error(st: &mut CtrlState, ctrl: &Ctrl, error: &MailEr
     st.halted = true;
     st.error = Some(error.clone());
     st.pass_cancel.cancel();
-    cancel_reply_enrichments(st);
+    cancel_independent_reads(st);
     ctrl.wake.notify_all();
     true
 }
@@ -253,6 +304,7 @@ impl GmailCore {
                 disconnecting: false,
                 pass_cancel: CancelToken::default(),
                 reply_enrichments: HashMap::new(),
+                destination_read: None,
                 connection,
                 error,
                 backoff: 0,
@@ -473,6 +525,183 @@ impl GmailCore {
             }
             result => result,
         }
+    }
+
+    /// Explicit saved catalog read (network-free, stays available offline),
+    /// or one live catalog read admitted against the expected authenticated
+    /// account. Live reads are bounded to one active job; overlaps are typed
+    /// `Busy` instead of accumulating abandoned navigation jobs.
+    pub fn list_provider_destinations(
+        &self,
+        account_id: &str,
+        cached: bool,
+    ) -> Result<super::browsing::DestinationCatalog, MailError> {
+        use super::browsing::*;
+        if cached {
+            let saved = self.inner.store.destination_snapshot(account_id, "")?;
+            return serde_json::from_str(&saved.ok_or(MailError::NotFound)?)
+                .map_err(|_| MailError::StorageUnavailable);
+        }
+        let job = DestinationRead::begin(&self.inner.ctrl)?;
+        let generation = self.inner.store.generation()?;
+        // Stored-account preflight: no provider dispatch for a missing or
+        // mismatched stored account, even if credentials name the caller.
+        self.inner.store.require_destination_account(account_id)?;
+        let destinations = self
+            .inner
+            .provider
+            .list_destinations_for_account(account_id, &job.cancel)?;
+        validate_catalog(&destinations)?;
+        let result = DestinationCatalog {
+            account_id: account_id.into(),
+            destinations,
+            fetched_at: chrono::Utc::now().to_rfc3339(),
+        };
+        if job.cancel.is_cancelled() {
+            return Err(MailError::AuthCancelled);
+        }
+        let json = serde_json::to_string(&result).map_err(|_| MailError::StorageUnavailable)?;
+        self.inner
+            .store
+            .save_destination_snapshot(account_id, "", &json, generation)?;
+        Ok(result)
+    }
+
+    /// Explicit saved page read (network-free, stays available offline), or
+    /// one live page read admitted against the expected authenticated
+    /// account. Live reads are bounded to one active job; overlaps are typed
+    /// `Busy` instead of accumulating abandoned navigation jobs. The SQLite
+    /// and control locks are never held across provider network work.
+    pub fn browse_provider_destination(
+        &self,
+        request: &super::browsing::DestinationRequest,
+    ) -> Result<super::browsing::DestinationPage, MailError> {
+        use super::browsing::*;
+        if !valid_id(&request.destination_id)
+            || request
+                .cursor
+                .as_ref()
+                .is_some_and(|c| c.is_empty() || c.len() > 8192)
+        {
+            return Err(invalid());
+        }
+        if request.cached {
+            if request.cursor.is_some() {
+                return Err(invalid());
+            }
+            let json = self
+                .inner
+                .store
+                .destination_snapshot(&request.account_id, &request.destination_id)?
+                .ok_or(MailError::NotFound)?;
+            let page: DestinationPage =
+                serde_json::from_str(&json).map_err(|_| MailError::StorageUnavailable)?;
+            if page.account_id != request.account_id
+                || page.destination_id != request.destination_id
+            {
+                return Err(invalid());
+            }
+            return Ok(page);
+        }
+        let job = DestinationRead::begin(&self.inner.ctrl)?;
+        let generation = self.inner.store.generation()?;
+        let catalog: DestinationCatalog = serde_json::from_str(
+            &self
+                .inner
+                .store
+                .destination_snapshot(&request.account_id, "")?
+                .ok_or(MailError::NotFound)?,
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+        if catalog.account_id != request.account_id
+            || !catalog
+                .destinations
+                .iter()
+                .any(|d| d.id == request.destination_id)
+        {
+            return Err(invalid());
+        }
+        let provider_cursor = request
+            .cursor
+            .as_ref()
+            .map(|cursor| {
+                let parts: (String, String, String) =
+                    serde_json::from_str(cursor).map_err(|_| invalid())?;
+                if parts.0 != request.account_id
+                    || parts.1 != request.destination_id
+                    || parts.2.is_empty()
+                    || parts.2.len() > 4096
+                {
+                    return Err(invalid());
+                }
+                Ok(parts.2)
+            })
+            .transpose()?;
+        let page = self.inner.provider.list_destination_for_account(
+            &request.account_id,
+            &request.destination_id,
+            provider_cursor.as_deref(),
+            &job.cancel,
+        )?;
+        if page.thread_ids.len() > 25
+            || page.next_page_token.as_ref().is_some_and(|c| {
+                c.is_empty() || c.len() > 4096 || Some(c) == provider_cursor.as_ref()
+            })
+        {
+            return Err(MailError::InvalidProviderResponse);
+        }
+        let mut conversations = vec![];
+        let mut seen = HashSet::new();
+        let mut bytes = 0usize;
+        for id in page.thread_ids {
+            if !valid_id(&id) || !seen.insert(id.clone()) {
+                return Err(MailError::InvalidProviderResponse);
+            }
+            if let Some(thread) =
+                self.inner
+                    .provider
+                    .get_thread_for_account(&request.account_id, &id, &job.cancel)?
+            {
+                if thread.conversation.conversation_ref.account_id != request.account_id
+                    || thread.conversation.conversation_ref.conversation_id != id
+                {
+                    return Err(MailError::InvalidProviderResponse);
+                }
+                bytes = bytes.saturating_add(
+                    serde_json::to_vec(&thread.conversation)
+                        .map_err(|_| MailError::InvalidProviderResponse)?
+                        .len(),
+                );
+                if bytes > MAX_RETAINED_THREAD_BYTES_PER_PAGE {
+                    return Err(MailError::InvalidProviderResponse);
+                }
+                conversations.push(thread.conversation);
+            }
+        }
+        if job.cancel.is_cancelled() {
+            return Err(MailError::AuthCancelled);
+        }
+        let result = DestinationPage {
+            account_id: request.account_id.clone(),
+            destination_id: request.destination_id.clone(),
+            conversations,
+            next_cursor: page
+                .next_page_token
+                .map(|token| {
+                    serde_json::to_string(&(&request.account_id, &request.destination_id, token))
+                })
+                .transpose()
+                .map_err(|_| MailError::StorageUnavailable)?,
+            fetched_at: chrono::Utc::now().to_rfc3339(),
+        };
+        let json = serde_json::to_string(&result).map_err(|_| MailError::StorageUnavailable)?;
+        self.inner.store.save_destination_snapshot(
+            &request.account_id,
+            &request.destination_id,
+            &json,
+            generation,
+        )?;
+        Ok(result)
     }
 
     fn begin_reply_enrichment(&self) -> Result<ReplyEnrichment, MailError> {
@@ -816,7 +1045,7 @@ impl GmailCore {
                     st.halted = true;
                     st.error = Some(error.clone());
                     st.pass_cancel.cancel();
-                    cancel_reply_enrichments(&mut st);
+                    cancel_independent_reads(&mut st);
                     inner.ctrl.wake.notify_all();
                 }
                 return Err(error);
@@ -869,7 +1098,7 @@ impl GmailCore {
                     st.halted = true;
                     st.error = Some(error.clone());
                     st.pass_cancel.cancel();
-                    cancel_reply_enrichments(&mut st);
+                    cancel_independent_reads(&mut st);
                     inner.ctrl.wake.notify_all();
                 }
                 return Err(error);
@@ -1007,7 +1236,7 @@ impl GmailCore {
                     st.halted = true;
                     st.error = Some(error.clone());
                     st.pass_cancel.cancel();
-                    cancel_reply_enrichments(&mut st);
+                    cancel_independent_reads(&mut st);
                     inner.ctrl.wake.notify_all();
                 }
                 return Err(error);
@@ -1079,7 +1308,7 @@ impl GmailCore {
             st.operations_requested = false;
             st.upgrade_requested = false;
             st.pass_cancel.cancel();
-            cancel_reply_enrichments(&mut st);
+            cancel_independent_reads(&mut st);
             inner.ctrl.wake.notify_all();
         }
         let cleanup = (|| {
@@ -1123,7 +1352,7 @@ impl GmailCore {
                             st.halted = true;
                             st.error = Some(storage_error.clone());
                             st.pass_cancel.cancel();
-                            cancel_reply_enrichments(&mut st);
+                            cancel_independent_reads(&mut st);
                         }
                     }
                 }
@@ -1246,7 +1475,7 @@ impl Ctrl {
         let mut st = self.state.lock().expect("gmail ctrl poisoned");
         st.stop = true;
         st.pass_cancel.cancel();
-        cancel_reply_enrichments(&mut st);
+        cancel_independent_reads(&mut st);
         self.wake.notify_all();
     }
 
@@ -1259,11 +1488,13 @@ impl Ctrl {
             .cancel();
     }
 
-    /// Blocks until no pass is in flight or the timeout elapses (`busy`).
+    /// Blocks until no pass or independent read (reply enrichment, live
+    /// destination read) is in flight, or the timeout elapses (`busy`).
     fn wait_until_idle(&self, timeout: Duration) -> Result<(), MailError> {
         let deadline = Instant::now() + timeout;
         let mut st = self.state.lock().expect("gmail ctrl poisoned");
-        while st.pass_in_flight || !st.reply_enrichments.is_empty() {
+        while st.pass_in_flight || !st.reply_enrichments.is_empty() || st.destination_read.is_some()
+        {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return Err(MailError::Busy);
@@ -1540,7 +1771,7 @@ fn run(
                     PassOutcome::Halt(error) => {
                         st.error = Some(error);
                         st.halted = true;
-                        cancel_reply_enrichments(&mut st);
+                        cancel_independent_reads(&mut st);
                         halted = true;
                     }
                     PassOutcome::Cancelled => {

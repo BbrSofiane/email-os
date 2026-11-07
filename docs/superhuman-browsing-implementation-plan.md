@@ -210,6 +210,8 @@ Delivered contract and verification notes: [UX-07 historical search](ux-07-histo
 
 ### UX-09 — Browse labels/folders, then Label versus Move
 
+Increment A contract and evidence: [bounded read-only provider destinations](ux-09-provider-destinations.md). Label/Move remains a separate unimplemented increment.
+
 **Journey:** Left → label → open → L applies a tag without archiving → V moves by applying the destination and Done → recover.
 
 - First add provider label metadata and paginated read destinations: Sent, provider Drafts, All Mail, Spam, Trash and user labels, alongside Inbox/Done/Starred. Distinguish provider Drafts from app-local drafts. Never imply the 100-row cache covers these folders.

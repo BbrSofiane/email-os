@@ -84,12 +84,14 @@ export function countingClient(inner: MailClient): CountingClient {
  */
 export function accountMethods(
   inner: MailClient,
-): Pick<MailClient, 'getSavedSplit' | 'saveSavedSplit' | 'searchMail' | 'cancelSearchMail' | 'listCachedDone' | 'getAccountStatus' | 'connectAccount' | 'disconnectAccount' | 'requestSync' | 'enableMailboxActions' | 'cancelMailboxActionUpgrade' | 'setRead' | 'retryOperation' | 'undoOperation' | 'listDrafts' | 'getDraft' | 'createDraft' | 'saveDraft' | 'deleteDraft' | 'subscribeDrafts' | 'subscribeAppClose' | 'completeAppClose' | 'cancelAppClose'> {
+): Pick<MailClient, 'getSavedSplit' | 'saveSavedSplit' | 'searchMail' | 'cancelSearchMail' | 'listProviderDestinations' | 'browseProviderDestination' | 'listCachedDone' | 'getAccountStatus' | 'connectAccount' | 'disconnectAccount' | 'requestSync' | 'enableMailboxActions' | 'cancelMailboxActionUpgrade' | 'setRead' | 'retryOperation' | 'undoOperation' | 'listDrafts' | 'getDraft' | 'createDraft' | 'saveDraft' | 'deleteDraft' | 'subscribeDrafts' | 'subscribeAppClose' | 'completeAppClose' | 'cancelAppClose'> {
   return {
     getSavedSplit: (accountId) => inner.getSavedSplit(accountId),
     saveSavedSplit: (accountId, split) => inner.saveSavedSplit(accountId, split),
     searchMail: (request) => inner.searchMail(request),
     cancelSearchMail: () => inner.cancelSearchMail(),
+    listProviderDestinations: (accountId, cached) => inner.listProviderDestinations(accountId, cached),
+    browseProviderDestination: (request) => inner.browseProviderDestination(request),
     listCachedDone: (request) => inner.listCachedDone(request),
     listDrafts: () => inner.listDrafts(),
     getDraft: (ref) => inner.getDraft(ref),
@@ -331,6 +333,8 @@ export function createSixConversationClient(): SixConversationClient {
   const client: MailClient = {
     getSavedSplit: async () => null,
     saveSavedSplit: async () => { throw { kind: 'storage_unavailable' }; },
+    listProviderDestinations: () => Promise.reject({ kind: 'read_only' }),
+    browseProviderDestination: () => Promise.reject({ kind: 'read_only' }),
     ...groupStub(),
     searchMail: async () => ({ conversations: [], nextCursor: null, coverage: 'cached_incomplete' }),
     cancelSearchMail: async () => {},

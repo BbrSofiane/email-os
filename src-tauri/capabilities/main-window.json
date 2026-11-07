@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
-  "description": "Main window only: approved named mail/search commands, UX-08 star commands, UX-05 operation-group commands, local-draft commands, close-protocol commands, and the core event listener. No plugins, no shell, no broad capability grants.",
+  "description": "Main window only: approved named mail/search commands, UX-08 star commands, two UX-09 read-only provider-destination commands, UX-05 operation-group commands, local-draft commands, close-protocol commands, and the core event listener. No plugins, no shell, no broad capability grants.",
   "windows": ["main"],
   "permissions": [
     "core:event:allow-listen",
@@ -15,6 +15,8 @@
     "allow-save-saved-split",
     "allow-search-mail",
     "allow-cancel-search-mail",
+    "allow-list-provider-destinations",
+    "allow-browse-provider-destination",
     "allow-get-conversation",
     "allow-set-archived",
     "allow-enable-mailbox-actions",

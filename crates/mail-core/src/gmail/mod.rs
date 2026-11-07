@@ -1,5 +1,6 @@
 //! Gmail integration and mailbox operations, kept separate from fixture storage.
 pub mod auth;
+pub mod browsing;
 pub mod operations;
 pub mod provider;
 pub mod secrets;

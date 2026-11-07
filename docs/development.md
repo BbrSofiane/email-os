@@ -31,6 +31,35 @@ keyboard navigation, cache coverage, and persistence boundaries.
 | `src-tauri/` | Thin Tauri 2 shell: typed mail/draft/close commands, `mailbox_changed` and `drafts_changed` hints, fixture/Gmail profile selection and lifecycle |
 | `mise.toml` | Project tasks (see below) |
 
+## UX-09 increment A: read-only provider mail
+
+The **Provider mail** rail entry (Gmail native or labelled browser preview) opens
+a bounded destination browser for Sent, provider Drafts, All Mail, Spam, Trash
+and user labels. Search covers the loaded catalog; Show more expands it. It is
+not mailbox search. All Mail excludes Spam/Trash. Every page contains at most
+25 conversations, at most 16 MiB of serialized thread DTOs, and no exact total.
+The read-only drawer intentionally has no triage/reply controls. Its page remains
+mounted during a reader visit; closing the drawer returns to the prior inbox
+context. This is not yet the roadmap's integrated main-list destination context.
+
+Native commands `list_provider_destinations(accountId, cached)` and
+`browse_provider_destination(request)` run off the UI thread, require the active
+account, and use readonly Gmail APIs. Page cursors carry account+destination
+identity and a bounded opaque provider token; they grant no authority.
+A separate SQLite table retains one catalog and up to 20 destination snapshots
+(latest successful page per retained destination), independent of inbox discovery,
+history and operation recovery. **Use saved catalog/page** is explicit and
+timestamped; provider failures are never silently converted to saved success or
+an empty list. Restart retains these snapshots; disconnect clears them.
+
+Provider Drafts are read-only snapshots, **not** the app's local editable drafts.
+The native fixture rejects both provider commands; browser preview models them
+in memory only. Label/Move, label badges on ordinary inbox rows, palette integration,
+and saved-view/search criteria are not implemented here. After rebasing onto
+`b4972ee`, the UX-06/07/08 contracts are preserved but not extended by this
+increment. See [the increment contract](ux-09-provider-destinations.md)
+for evidence and remaining gates.
+
 ## Tooling
 
 All commands run through [mise](https://mise.jdx.dev) (pinned: node 24.4.1,

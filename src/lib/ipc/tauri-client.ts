@@ -18,6 +18,8 @@ import {
   CANCEL_SEARCH_MAIL_COMMAND,
   type SearchRequest,
   type SearchPage,
+  LIST_PROVIDER_DESTINATIONS_COMMAND, BROWSE_PROVIDER_DESTINATION_COMMAND,
+  type DestinationCatalog, type DestinationRequest, type DestinationPage,
   CANCEL_MAILBOX_ACTION_UPGRADE_COMMAND,
   CANCEL_APP_CLOSE_COMMAND,
   CONNECT_ACCOUNT_COMMAND,
@@ -102,6 +104,12 @@ export function createTauriMailClient(): MailClient {
     saveSavedSplit(accountId: string, split: SavedSplit): Promise<SavedSplit> { return call(SAVE_SAVED_SPLIT_COMMAND, { accountId, split }); },
     searchMail(request: SearchRequest): Promise<SearchPage> { return call(SEARCH_MAIL_COMMAND, { request }); },
     cancelSearchMail(): Promise<void> { return call(CANCEL_SEARCH_MAIL_COMMAND); },
+    listProviderDestinations(accountId: string, cached: boolean): Promise<DestinationCatalog> {
+      return call(LIST_PROVIDER_DESTINATIONS_COMMAND, { accountId, cached });
+    },
+    browseProviderDestination(request: DestinationRequest): Promise<DestinationPage> {
+      return call(BROWSE_PROVIDER_DESTINATION_COMMAND, { request });
+    },
     listConversations(): Promise<InboxSnapshot> {
       return call<InboxSnapshot>(LIST_CONVERSATIONS_COMMAND);
     },

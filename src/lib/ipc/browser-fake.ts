@@ -444,6 +444,8 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
   };
   // Core clears local cache data on disconnect; the fake mirrors that with a flag.
   let cacheCleared = false;
+  const destinationCatalogs = new Map<string, import('./client').DestinationCatalog>();
+  const destinationPages = new Map<string, import('./client').DestinationPage>();
   let heldStatusCalls = 0;
   const statusHoldWaiters: Array<() => void> = [];
   let failStatus: MailError | null = null;
@@ -1053,6 +1055,50 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       notify();
       return { ...savedSplit };
     },
+    async listProviderDestinations(accountId, cached) {
+      if (accountStatus().account?.accountId !== accountId || cacheCleared) throw failNotShown();
+      if (cached) {
+        const saved = destinationCatalogs.get(accountId);
+        if (!saved) throw failNotShown();
+        return snapshotCopy(saved);
+      }
+      const catalog = { accountId, fetchedAt: now(), destinations: [
+        ...[['SENT', 'Sent'], ['DRAFT', 'Provider Drafts'], ['ALL_MAIL', 'All Mail'], ['SPAM', 'Spam'], ['TRASH', 'Trash']].map(([id, name]) => ({ id: id!, name: name!, userLabel: false })),
+        ...Array.from({ length: 12 }, (_, i) => ({ id: 'Label_' + i, name: i === 11 ? '<img src=x> Research' : 'Project ' + (i + 1), userLabel: true })),
+      ] };
+      destinationCatalogs.set(accountId, catalog);
+      return snapshotCopy(catalog);
+    },
+
+    async browseProviderDestination(request) {
+      const catalog = await this.listProviderDestinations(request.accountId, true);
+      const key = JSON.stringify([request.accountId, request.destinationId]);
+      if (request.cached) {
+        const saved = destinationPages.get(key);
+        if (!saved || request.cursor !== null) throw failNotShown();
+        return snapshotCopy(saved);
+      }
+      if (!catalog.destinations.some((d) => d.id === request.destinationId)) throw { kind: 'invalid_request', field: 'destination' };
+      const cursor = JSON.stringify([request.accountId, request.destinationId, 'fixture-page-2']);
+      if (request.cursor !== null && request.cursor !== cursor) throw { kind: 'invalid_request', field: 'cursor' };
+      // Deliberately uncached: absent from the fixture Inbox and operation inventory.
+      const second = request.cursor !== null;
+      // Hostile/nonempty To recipients exercise plain-text recipient rendering;
+      // page 2 covers a displayName-less mailbox-only recipient.
+      const to = second ? [{ displayName: null, mailbox: 'sent-to@example.test' }]
+        : [{ displayName: '<img src=x> Recipient', mailbox: 'recipient@example.test' }];
+      const page = { accountId: request.accountId, destinationId: request.destinationId,
+        fetchedAt: now(), nextCursor: second ? null : cursor,
+        conversations: [{
+          ref: { accountId: request.accountId, conversationId: second ? 'destination-only-2' : 'destination-only-1' },
+          subject: second ? 'Older synthetic mail' : 'Uncached synthetic destination mail',
+          messages: [{ id: second ? 'destination-message-2' : 'destination-message-1', from: { displayName: 'Research', mailbox: 'research@example.test' }, to, sentAt: '2025-01-01T00:00:00Z', bodyText: '<script>literal text only</script>' }],
+          isInInbox: true, isRead: false, pendingOperationId: null,
+        }] };
+      destinationPages.set(key, page);
+      return snapshotCopy(page);
+    },
+
     async listConversations(): Promise<InboxSnapshot> {
       return snapshot();
     },
@@ -1651,6 +1697,8 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       account.lastSyncedAt = null;
       account.initialSyncComplete = false;
       cacheCleared = true;
+      destinationCatalogs.clear();
+      destinationPages.clear();
       account.mutationAccess = 'read_only';
       ++upgradeGeneration;
       upgradeReleased = true;

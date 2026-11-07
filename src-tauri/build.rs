@@ -1,5 +1,7 @@
 fn main() {
     let manifest = tauri_build::AppManifest::new().commands(&[
+        "list_provider_destinations",
+        "browse_provider_destination",
         "list_conversations",
         "list_cached_done",
         "list_cached_starred",
