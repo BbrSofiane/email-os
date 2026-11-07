@@ -103,6 +103,23 @@ Provide one additional saved queue defined by a bounded, declarative filter over
 
 This is a small test of the composable direction, not a general rules engine. Do not add new provider permissions or mutation capabilities merely to support view configuration.
 
+### UX-10 bounded triage decision
+
+[UX-10 A](../ux-10-bounded-triage.md) adds read-only **known cached Trash**
+browsing and observed per-message TRASH/SPAM facts. This is an explicit narrow
+extension of browsing, not a complete UX-09 folder catalog or broader mutation
+authority. Current observed Trash/Spam excludes a conversation from local Done
+even when it has old archive evidence. Legacy absence remains unknown.
+
+Trash/recover writes and their Undo remain deferred: archive is not trash, and
+the current archive/read preimages cannot restore a multi-dimension trash side
+effect. The recovery destination decision is recorded in the UX-10 contract.
+Mute requires actual future-message semantics, not INBOX removal; Spam/recover
+needs validated provider effects. Important/Other requires independent local view
+membership and explicit scope. Sender/domain rules, Block and Unsubscribe remain
+deferred pending separate bounded execution/authority contracts. No send,
+arbitrary URL opener, permanent deletion or empty-Trash is introduced.
+
 ## Architecture constraints
 
 Preserve a few internal boundaries without committing to a public SDK:

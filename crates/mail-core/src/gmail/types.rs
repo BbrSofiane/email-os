@@ -94,6 +94,9 @@ pub struct GmailThread {
     pub message_ids: Option<Vec<String>>,
     /// IDs with UNREAD. None means the read facts are unknown.
     pub unread_message_ids: Option<Vec<String>>,
+    /// Exact observed TRASH/SPAM membership. None means legacy/unknown.
+    pub trash_message_ids: Option<Vec<String>>,
+    pub spam_message_ids: Option<Vec<String>>,
     pub history_id: String,
 }
 

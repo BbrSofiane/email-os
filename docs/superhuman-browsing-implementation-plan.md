@@ -225,6 +225,10 @@ Increment A contract and evidence: [bounded read-only provider destinations](ux-
 
 ### UX-10 — Broader triage, one explicit scope at a time
 
+Partial implementation: [bounded optional contracts](ux-10-bounded-triage.md).
+Increment A is read-only cached Trash and membership safety; write increments
+remain gated rather than silently substituted with archive/unarchive.
+
 This is a sequence of small optional contracts, **not one large mutation PR**:
 
 1. **Trash/recover:** move to Trash → browse Trash → restore; no permanent-delete or empty-Trash command. Distinguish from Done everywhere, including search membership and Undo.

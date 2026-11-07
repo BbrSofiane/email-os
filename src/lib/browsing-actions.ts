@@ -19,6 +19,7 @@ export const browsingActions = [
   { id: 'toggle-unread-filter', label: 'Show Unread Only', shortcut: '' },
   { id: 'done', label: 'Go to cached Done', shortcut: 'G then E (within 1 second)' },
   { id: 'starred', label: 'Go to cached Starred', shortcut: '' },
+  { id: 'trash', label: 'Go to cached Trash (read only)', shortcut: '' },
   { id: 'account', label: 'Go to Account', shortcut: '' },
   { id: 'activity', label: 'Go to Activity', shortcut: '' },
   { id: 'drafts', label: 'Go to local Drafts', shortcut: '' },

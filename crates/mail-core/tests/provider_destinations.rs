@@ -211,6 +211,8 @@ impl Provider {
             },
             inbox_message_ids: vec![format!("m-{id}")],
             unread_message_ids: Some(vec![format!("m-{id}")]),
+            trash_message_ids: None,
+            spam_message_ids: None,
             message_ids: Some(vec![format!("m-{id}")]),
             history_id: "1".into(),
         }

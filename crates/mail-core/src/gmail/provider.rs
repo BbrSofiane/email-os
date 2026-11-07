@@ -1286,6 +1286,8 @@ pub(super) fn parse_thread(
     let mut message_ids = Vec::with_capacity(messages.len());
     let mut unread_message_ids = Vec::new();
     let mut star_facts = std::collections::HashMap::new();
+    let mut trash_message_ids = Vec::new();
+    let mut spam_message_ids = Vec::new();
     let mut no_plain_text = 0usize;
     let mut attachments = false;
     let mut omitted_inline_content = false;
@@ -1308,6 +1310,12 @@ pub(super) fn parse_thread(
         }
         if labels.contains(&"UNREAD") {
             unread_message_ids.push(id.clone());
+        }
+        if labels.contains(&"TRASH") {
+            trash_message_ids.push(id.clone());
+        }
+        if labels.contains(&"SPAM") {
+            spam_message_ids.push(id.clone());
         }
         message_ids.push(id.clone());
         let payload = message
@@ -1386,8 +1394,28 @@ pub(super) fn parse_thread(
         inbox_message_ids,
         message_ids: Some(message_ids),
         unread_message_ids: Some(unread_message_ids),
+        trash_message_ids: Some(trash_message_ids),
+        spam_message_ids: Some(spam_message_ids),
         history_id,
     })
+}
+
+#[cfg(test)]
+mod ux10_tests {
+    use super::*;
+    #[test]
+    fn triage_membership_includes_ids_without_safe_bodies() {
+        let body = serde_json::json!({"historyId":"h1", "messages":[
+            {"id":"trash-id", "labelIds":["TRASH","UNREAD"], "payload":{"mimeType":"text/html","body":{"data":"PGI-aGk8L2I-"}}},
+            {"id":"spam-id", "labelIds":["SPAM"], "payload":{"mimeType":"application/octet-stream","body":{}}},
+            {"id":"independent", "labelIds":["INBOX"], "payload":{"mimeType":"text/plain","body":{"data":"aGVsbG8"}}}
+        ]}).to_string();
+        let parsed = parse_thread("acct", "thread", &body).unwrap();
+        assert_eq!(parsed.trash_message_ids, Some(vec!["trash-id".into()]));
+        assert_eq!(parsed.spam_message_ids, Some(vec!["spam-id".into()]));
+        assert_eq!(parsed.message_ids.unwrap().len(), 3);
+        assert_eq!(parsed.inbox_message_ids, vec!["independent"]);
+    }
 }
 
 fn message_sent_at(message: &Value) -> String {
