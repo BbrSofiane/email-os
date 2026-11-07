@@ -44,3 +44,6 @@ test-results/
 .email-os/
 /src-tauri/gen/
 /mise.local.toml
+
+# impeccable live-mode local recovery state
+.impeccable/live/sessions/
