@@ -272,7 +272,7 @@ describe.skipIf(chromePath === '')('UX-03 discovery / UX-13 workspaces (real Chr
 
   async function openCreateSplit(): Promise<void> {
     await click('[data-test="palette-trigger"]');
-    await cdp!.cmd('Input.insertText', { text: 'Create Split' });
+    await cdp!.cmd('Input.insertText', { text: 'Create split' });
     await press('Enter');
     await cdp!.js('window.__h.wait(60)');
   }
@@ -303,7 +303,7 @@ describe.skipIf(chromePath === '')('UX-03 discovery / UX-13 workspaces (real Chr
       expect(reached.has('palette-trigger')).toBe(true);
       expect(await cdp!.js(`!!document.querySelector('[data-test="split-settings"]')`)).toBe(false);
       await press('Enter');
-      await cdp!.cmd('Input.insertText', { text: 'Create Split' });
+      await cdp!.cmd('Input.insertText', { text: 'Create split' });
       await press('Enter');
       await cdp!.js('window.__h.wait(60)');
       expect(await activeTest()).toBe('split-name');
@@ -349,7 +349,7 @@ describe.skipIf(chromePath === '')('UX-03 discovery / UX-13 workspaces (real Chr
     expect(await cdp!.js(`document.querySelector('[data-test="inbox-title"]').textContent`)).toBe('Inbox');
     expect(await cdp!.js(`document.activeElement.matches('.inbox-row')`)).toBe(true);
     await click('[data-test="palette-trigger"]');
-    await cdp!.cmd('Input.insertText', { text: 'Edit Split' });
+    await cdp!.cmd('Input.insertText', { text: 'Edit split' });
     await press('Enter');
     expect(await activeTest()).toBe('split-name');
     await press('Tab');
@@ -365,7 +365,7 @@ describe.skipIf(chromePath === '')('UX-03 discovery / UX-13 workspaces (real Chr
     const all = await cdp!.js<number>(`document.querySelectorAll('.inbox-row').length`);
     expect(await cdp!.js(`!!document.querySelector('[data-test="unread-filter"]')`)).toBe(false);
     await click('[data-test="palette-trigger"]');
-    await cdp!.cmd('Input.insertText', { text: 'Show Unread Only' });
+    await cdp!.cmd('Input.insertText', { text: 'Show unread only' });
     await press('Enter');
     await cdp!.js('window.__h.wait(120)');
     const unread = await cdp!.js<number>(`document.querySelectorAll('.inbox-row').length`);
@@ -379,7 +379,7 @@ describe.skipIf(chromePath === '')('UX-03 discovery / UX-13 workspaces (real Chr
     await click('[data-test="split-saved"]');
     await cdp!.js('window.__h.wait(100)');
     await click('[data-test="palette-trigger"]');
-    await cdp!.cmd('Input.insertText', { text: 'Show All Conversations' });
+    await cdp!.cmd('Input.insertText', { text: 'Show all conversations' });
     await press('Enter');
     await cdp!.js('window.__h.wait(120)');
     expect(await cdp!.js(`document.querySelector('[data-test="inbox-title"]').textContent`)).toBe('Clients');
@@ -563,7 +563,7 @@ describe.skipIf(chromePath === '')('UX-03 discovery / UX-13 workspaces (real Chr
     expect(await activeTest()).toBe('palette-trigger');
     await click('[data-test="palette-trigger"]'); await cdp!.js('window.__h.wait(60)');
     await press('ArrowDown');
-    expect(await cdp!.js(`document.querySelector('[aria-selected="true"]').textContent`)).toContain('Mark Done');
+    expect(await cdp!.js(`document.querySelector('[aria-selected="true"]').textContent`)).toContain('Mark done');
     expect(await cdp!.js(`getComputedStyle(document.querySelector('[aria-selected="true"]')).borderLeftColor`)).not.toBe('rgba(0, 0, 0, 0)');
     // The active result must remain visible even in a short scrolling palette.
     await cdp!.js(`document.querySelector('.action-overlay').style.maxHeight = '180px'`);
@@ -643,7 +643,7 @@ describe.skipIf(chromePath === '')('UX-03 discovery / UX-13 workspaces (real Chr
     expect(await cdp!.js(`document.querySelector('#action-archive') !== null`)).toBe(true);
     await cdp!.js('window.__fixture.setEnabled(false); window.__h.wait(80)');
     expect(await cdp!.js(`document.querySelector('#action-archive') !== null`)).toBe(false);
-    await cdp!.cmd('Input.insertText', { text: 'Mark Done' }); await press('Enter');
+    await cdp!.cmd('Input.insertText', { text: 'Mark done' }); await press('Enter');
     expect(await activeTest()).toBe('action-query');
     expect(await cdp!.js('window.__fixture.controls.archiveCommands.length')).toBe(0);
     await press('Escape');

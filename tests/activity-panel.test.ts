@@ -49,7 +49,7 @@ describe('ActivityPanel', () => {
       props: { activity: [cancelled], actionsEnabled: true, gmailMode: false },
     });
     expect(wrapper.get('[data-test="activity-cancelled"] .activity-status').text()).toBe('Cancelled by Undo');
-    // A cancelled archive was never applied: Unarchive must not be offered.
+    // A cancelled archive was never applied: Mark not done must not be offered.
     expect(wrapper.find('[data-test="activity-unarchive-operation-cancelled"]').exists()).toBe(false);
     wrapper.unmount();
   });

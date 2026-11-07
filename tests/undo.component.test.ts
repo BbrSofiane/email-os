@@ -87,7 +87,7 @@ describe('UX-04 action notice and undo', () => {
 
     fake.controls.behavior.hold = true;
     await archiveViaKey(w, 'conv-01');
-    expect(w.get('[data-test="action-notice-label"]').text()).toContain('Mark Done (Archive)');
+    expect(w.get('[data-test="action-notice-label"]').text()).toContain('Mark done');
     expect(w.get('[data-test="action-notice-label"]').text()).toContain('Fixture thread 1');
     expect(w.get('[data-test="action-notice-status"]').text()).toBe('Accepted locally, not yet confirmed');
     expect(w.find('[data-test="action-notice-undo"]').exists()).toBe(true);
@@ -290,11 +290,11 @@ describe('UX-04 action notice and undo', () => {
     held.releaseWith(await fake.listConversations());
     await flushPromises();
     expect(w.get('[data-test="action-notice-expired"]').text())
-      .toBe('Undo expired — Mark Not Done restores the whole conversation to Inbox');
+      .toBe('Undo expired — Mark not done restores the whole conversation to Inbox');
     expect(w.find('[data-test="action-notice-undo"]').exists()).toBe(false);
     // The polite notice already announces the expiry; no double role=alert.
     expect(w.find('[data-test="command-error"]').exists()).toBe(false);
-    // Activity (and from there Mark Not Done) stays reachable.
+    // Activity (and from there Mark not done) stays reachable.
     await w.get('[data-test="rail-activity"]').trigger('click');
     await flushPromises();
     expect(w.find('[data-test="utility-drawer"]').exists()).toBe(true);
@@ -460,7 +460,7 @@ describe('UX-04 action notice and undo', () => {
     expect(w.find('[data-test="action-notice-expired"]').exists()).toBe(false);
   });
 
-  it('expires an unarchive with the Mark Done recovery clause', async () => {
+  it('expires an unarchive with the Mark done recovery clause', async () => {
     let offsetMs = 0;
     const fake = createBrowserFakeMailClient(() => new Date(Date.now() + offsetMs).toISOString());
     const w = await mountApp(fake);
@@ -475,7 +475,7 @@ describe('UX-04 action notice and undo', () => {
     window.dispatchEvent(new Event('focus'));
     await flushPromises();
     expect(w.get('[data-test="action-notice-expired"]').text())
-      .toBe('Undo expired — Mark Done archives the whole conversation');
+      .toBe('Undo expired — Mark done archives the whole conversation');
     expect(w.find('[data-test="action-notice-undo"]').exists()).toBe(false);
   });
 
