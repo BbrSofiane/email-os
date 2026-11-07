@@ -13,6 +13,7 @@ import {
   CANCEL_SEARCH_MAIL_COMMAND,
   LIST_CONVERSATIONS_COMMAND,
   LIST_CACHED_DONE_COMMAND,
+  LIST_CACHED_TRASH_COMMAND,
   LIST_DRAFTS_COMMAND,
   LIST_OPERATION_GROUPS_COMMAND,
   GET_OPERATION_GROUP_COMMAND,
@@ -129,6 +130,17 @@ describe('Tauri draft and close protocol adapter', () => {
     mocks.invoke.mockRejectedValue({ kind: 'invalid_request', field: 'revision' });
     await expect(client.reminders!.cancel(cancel)).rejects.toEqual({ kind: 'invalid_request', field: 'revision' });
     expect(mocks.invoke).toHaveBeenLastCalledWith('cancel_reminder', { command: cancel });
+  });
+
+  it('transports cached Trash only through the named read command and propagates rejection', async () => {
+    const client = createTauriMailClient();
+    const request = { accountId: 'account', limit: 1, cursor: null };
+    const page = { conversations: [], nextCursor: null, coverage: 'local_cache', exactTotal: null, lastSyncedAt: null };
+    mocks.invoke.mockResolvedValue(page);
+    expect(await client.listCachedTrash(request)).toBe(page);
+    expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith(LIST_CACHED_TRASH_COMMAND, { request });
+    mocks.invoke.mockRejectedValue({ kind: 'read_only' });
+    await expect(client.listCachedTrash(request)).rejects.toEqual({ kind: 'read_only' });
   });
 
   it('transports cached Done using only the named read query and exact request envelope', async () => {

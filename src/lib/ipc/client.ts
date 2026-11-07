@@ -21,6 +21,8 @@ import type {
   DestinationCatalog, DestinationRequest, DestinationPage,
   CachedDoneRequest,
   CachedDoneSnapshot,
+  CachedTrashRequest,
+  CachedTrashSnapshot,
   AccountStatus,
   AppCloseRequest,
   Conversation,
@@ -65,6 +67,8 @@ export type {
   CachedDoneCoverage,
   CachedDoneRequest,
   CachedDoneSnapshot,
+  CachedTrashRequest,
+  CachedTrashSnapshot,
   AccountStatus,
   AppCloseRequest,
   GetOperationGroupRequest,
@@ -140,6 +144,7 @@ export {
   GET_CONVERSATION_COMMAND,
   LIST_CONVERSATIONS_COMMAND,
   LIST_CACHED_DONE_COMMAND,
+  LIST_CACHED_TRASH_COMMAND,
   MAILBOX_CHANGED_EVENT,
   REQUEST_SYNC_COMMAND,
   SET_ARCHIVED_COMMAND,
@@ -192,6 +197,8 @@ export interface MailClient {
   listConversations(): Promise<InboxSnapshot>;
   /** Local archive evidence only; short/empty pages can still have a continuation. */
   listCachedDone(request: CachedDoneRequest): Promise<CachedDoneSnapshot>;
+  /** Known local Gmail Trash only. Never mutates or discovers remote folders. */
+  listCachedTrash(request: CachedTrashRequest): Promise<CachedTrashSnapshot>;
   getConversation(ref: ConversationRef, loadMissingSearchResult?: boolean): Promise<Conversation>;
   setArchived(command: SetArchived): Promise<OperationReceipt>;
   enableMailboxActions(): Promise<void>;

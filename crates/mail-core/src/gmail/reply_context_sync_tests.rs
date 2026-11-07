@@ -184,6 +184,8 @@ fn thread(context: Option<ReplyContext>, complete: bool) -> GmailThread {
         inbox_message_ids: vec!["m-latest".to_string()],
         message_ids: Some(vec!["m-earlier".to_string(), "m-latest".to_string()]),
         unread_message_ids: Some(Vec::new()),
+        trash_message_ids: None,
+        spam_message_ids: None,
         history_id: "history-2".to_string(),
     }
 }

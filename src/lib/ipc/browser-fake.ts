@@ -23,6 +23,8 @@ import { parseSearch, matchesSearch } from '../search';
 import type {
   SearchRequest,
   SearchPage,
+  CachedTrashRequest,
+  CachedTrashSnapshot,
   CachedDoneRequest,
   CachedDoneSnapshot,
   AccountStatus,
@@ -154,6 +156,8 @@ export interface FakeControls {
   markReadUnknown(conversationId: string): void;
   /** Marks an Activity-openable local recovery copy with a synthetic save time. */
   markRetainedSnapshot(conversationId: string, savedAt: string): void;
+  /** Synthetic conversation-level aggregate only; not provider mutation or per-message storage. */
+  markTriage(conversationId: string, membership: 'trash' | 'spam' | null): void;
   /** Flags a seeded conversation with Gmail plain-text limitations. */
   markUnsupported(conversationId: string, unsupportedReason: string, contextComplete?: boolean): void;
 }
@@ -180,6 +184,7 @@ interface SeedMessage {
 }
 
 interface FakeConversation {
+  triage?: 'trash' | 'spam';
   ref: ConversationRef;
   subject: string;
   messages: SeedMessage[];
@@ -807,7 +812,7 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       ? []
       : conversations
           .map((c) => ({ c, flags: effectiveInInbox(c) }))
-          .filter((entry) => entry.flags.some((f) => f))
+          .filter((entry) => !entry.c.triage && entry.flags.some((f) => f))
           .map((entry) => summarize(entry.c, pendingOperationId(entry.c)))
           .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
     return snapshotCopy({ conversations: rows, activity });
@@ -1036,6 +1041,12 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
         conv.retainedSnapshotAt = savedAt;
         notify();
       },
+      markTriage(conversationId: string, membership: 'trash' | 'spam' | null): void {
+        const conv = byId(conversationId);
+        if (!conv) throw new Error('Unknown synthetic conversation');
+        conv.triage = membership ?? undefined;
+        notify();
+      },
       markUnsupported(conversationId: string, unsupportedReason: string, contextComplete = false): void {
         const conv = byId(conversationId);
         if (!conv) throw new Error(`markUnsupported: unknown conversation ${conversationId}`);
@@ -1159,9 +1170,46 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       const page = candidates.slice(0, request.limit);
       const last = page[page.length - 1];
       return snapshotCopy({
-        conversations: page.filter(({ conv }) => !effectiveInInbox(conv).some(Boolean)).map(({ row }) => row),
+        conversations: page.filter(({ conv }) => !conv.triage && !effectiveInInbox(conv).some(Boolean)).map(({ row }) => row),
         nextCursor: candidates.length > request.limit && last
           ? `cached-done-v1:${JSON.stringify([request.accountId, last.row.lastMessageAt, last.row.ref.conversationId])}` : null,
+        coverage: 'local_cache', exactTotal: null, lastSyncedAt: account.lastSyncedAt,
+      });
+    },
+
+    async listCachedTrash(request: CachedTrashRequest): Promise<CachedTrashSnapshot> {
+      if (account.mode !== 'gmail') throw { kind: 'invalid_request', field: 'mode' } satisfies MailError;
+      const active = accountStatus().account;
+      if (!active || request.accountId !== active.accountId || cacheCleared) throw failNotShown();
+      if (!Number.isInteger(request.limit) || request.limit < 1 || request.limit > 100) {
+        throw { kind: 'invalid_request', field: 'limit' } satisfies MailError;
+      }
+      let position: [string, string] | null = null;
+      if (request.cursor !== null) {
+        try {
+          if (request.cursor.length > 8192 || !request.cursor.startsWith('cached-trash-v1:')) throw new Error();
+          const value: unknown = JSON.parse(request.cursor.slice('cached-trash-v1:'.length));
+          if (!Array.isArray(value) || value.length !== 3 || value[0] !== request.accountId ||
+              typeof value[1] !== 'string' || value[1].length > 128 ||
+              typeof value[2] !== 'string' || !value[2] || value[2].length > 1024) throw new Error();
+          position = [value[1], value[2]];
+        } catch { throw { kind: 'invalid_request', field: 'cursor' } satisfies MailError; }
+      }
+      const compare = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
+      // Aggregate synthetic TRASH membership, independent of archive evidence.
+      const qualifies = (conv: FakeConversation): boolean => conv.triage === 'trash';
+      const candidates = conversations.filter(qualifies)
+        .map((conv) => ({ conv, row: summarize(conv, pendingOperationId(conv)) }))
+        .sort((a, b) => compare(b.row.lastMessageAt, a.row.lastMessageAt) || compare(a.row.ref.conversationId, b.row.ref.conversationId))
+        .filter(({ row }) => !position || row.lastMessageAt < position[0] ||
+          (row.lastMessageAt === position[0] && row.ref.conversationId > position[1]))
+        .slice(0, request.limit + 1);
+      const page = candidates.slice(0, request.limit);
+      const last = page[page.length - 1];
+      return snapshotCopy({
+        conversations: page.map(({ row }) => row),
+        nextCursor: candidates.length > request.limit && last
+          ? `cached-trash-v1:${JSON.stringify([request.accountId, last.row.lastMessageAt, last.row.ref.conversationId])}` : null,
         coverage: 'local_cache', exactTotal: null, lastSyncedAt: account.lastSyncedAt,
       });
     },

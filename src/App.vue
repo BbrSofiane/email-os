@@ -36,6 +36,8 @@
  *   rendered only as ordinary text.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import CachedTrashPanel from './components/CachedTrashPanel.vue';
+import { emptyCachedTrash } from './lib/cached-trash';
 import ActionOverlay from './components/ActionOverlay.vue';
 import RemindersPanel from './components/RemindersPanel.vue';
 import ActionNotice, { type GroupNoticeView } from './components/ActionNotice.vue';
@@ -65,7 +67,8 @@ const props = defineProps<{
 /** Contact context breakpoint (supervisor-approved strict value). */
 const CONTACT_BREAKPOINT_PX = 1000;
 
-type UtilityDrawer = 'account' | 'activity' | 'drafts' | 'destinations' | 'reminders';
+type UtilityDrawer = 'account' | 'activity' | 'drafts' | 'destinations' | 'reminders' | 'trash';
+const trashState = ref(emptyCachedTrash());
 type ContactContext = 'focused' | 'open';
 interface ContactInfo { displayName: string | null; mailbox: string }
 /** Visible-row anchor for the reader round trip. */
@@ -76,7 +79,7 @@ interface ListAnchor { ref: ConversationRef; offsetTop: number; scrollTop: numbe
  * recapture from an unmounted list.
  */
 interface ReaderOrigin {
-  surface: BrowseContext | 'activity' | 'reminders';
+  surface: BrowseContext | 'activity' | 'reminders' | 'trash';
   /** Original entry focus reference; Back restores it (with fallbacks). */
   focusedRef: ConversationRef | null;
   /** Entry-time Inbox ordering, used to resolve a removed cursor. */
@@ -407,6 +410,7 @@ const drawerTitles: Record<UtilityDrawer, string> = {
   activity: 'Operation activity',
   drafts: 'Local drafts',
   reminders: 'Desktop-local reminders',
+  trash: 'Cached Trash — read only',
 };
 
 /**
@@ -431,7 +435,7 @@ async function openDrawer(name: UtilityDrawer, entry: 'drawer' | 'toggle' = 'dra
   // Disclosures are mutually exclusive: opening a utility surface dismisses
   // the contact disclosure so both fixed regions never coexist.
   contactDisclosure.value = false;
-  if (name === 'destinations') mailbox.clearSelection();
+  if (name === 'destinations' || name === 'trash') mailbox.clearSelection();
   drawer.value = name;
   await nextTick();
   if (entry === 'drawer') drawerEl.value?.focus();
@@ -480,6 +484,8 @@ watch(drafts.isVisible, (visible) => {
 
 // Local drafts are account-scoped: with no account there is no drafts surface.
 watch(accountId, (id) => {
+  trashState.value = emptyCachedTrash();
+  if (drawer.value === 'trash') drawer.value = null;
   if (id === null && drawer.value === 'drafts') drawer.value = null;
 });
 
@@ -877,12 +883,12 @@ function closeReader(explicitInbox = false): Promise<void> {
     if (token !== navigationToken || account !== accountId.value || readerOpen.value) return;
     const anchor = originState?.anchor ?? null;
     if (anchor && inboxList.value) await inboxList.value.restoreAnchor(anchor);
-    if (originState && originState.surface !== 'activity' && originState.surface !== 'reminders' && !explicitInbox) {
+    if (originState && originState.surface !== 'activity' && originState.surface !== 'reminders' && originState.surface !== 'trash' && !explicitInbox) {
       const resolved = resolveOriginFocus(originState);
       if (resolved) mailbox.focusConversation(resolved);
     }
     await focusFocusedRow(true);
-    if (!explicitInbox && (originState?.surface === 'activity' || originState?.surface === 'reminders')) await openDrawer(originState.surface);
+    if (!explicitInbox && (originState?.surface === 'activity' || originState?.surface === 'reminders' || originState?.surface === 'trash')) await openDrawer(originState.surface);
   })();
 }
 
@@ -906,6 +912,15 @@ async function openRowFromList(target: ConversationRef): Promise<void> {
   if (!sameConversation(target, mailbox.focusedRef.value)) mailbox.focusConversation(target);
   await openFocusedFromList();
 }
+
+async function openFromTrash(target: ConversationRef): Promise<void> {
+  if (target.accountId !== accountId.value) return;
+  mailbox.clearSelection();
+  captureListOrigin('trash');
+  drawer.value = null;
+  await mailbox.openConversationByRef(target);
+}
+const trashReader = computed(() => readerOpen.value && origin.value?.surface === 'trash');
 
 function openFromActivity(target: ConversationRef): Promise<void> {
   return openFromUtility(target, 'activity');
@@ -955,7 +970,7 @@ function resolveReaderNeighbor(delta: number): ConversationRef | null {
 async function moveReaderConversation(delta: number): Promise<void> {
   // Activity-origin readers never navigate and never issue getConversation
   // calls — including when Activity history duplicates the reference.
-  if (!readerOpen.value || origin.value?.surface === 'activity' || origin.value?.surface === 'reminders') return;
+  if (!readerOpen.value || origin.value?.surface === 'activity' || origin.value?.surface === 'reminders' || trashReader.value) return;
   if (mailbox.listState.value !== 'ready') return;
   const target = resolveReaderNeighbor(delta);
   if (!target) return;
@@ -1095,6 +1110,7 @@ async function connectAccount(): Promise<void> {
 }
 
 async function prepareReply(source: DraftSource): Promise<void> {
+  if (trashReader.value) return;
   if (await drafts.openNew(source)) closeReader();
 }
 
@@ -1124,12 +1140,13 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   if (['inbox', 'done', 'activity'].includes(id)) return !!accountId.value;
   if (id === 'search') return !!accountId.value && !drawer.value && !contactDisclosure.value;
   if (id === 'account') return gmailMode.value;
+  if (id === 'trash') return gmailMode.value && !!accountId.value;
   if (id === 'drafts') return !!accountId.value;
   if (id === 'reminders') return remindersSupported.value;
   if (id === 'back') return readerOpen.value || history.value.length > 0;
   if (id === 'select-all-loaded') return !drafts.activeRef.value && !drawer.value && !contactDisclosure.value && !readerOpen.value && mailbox.listState.value === 'ready' && mailbox.conversations.value.length > 0;
   if (id === 'clear-selection') return !drafts.activeRef.value && !drawer.value && !contactDisclosure.value && selectedCount.value > 0;
-  if (drafts.activeRef.value || drawer.value || contactDisclosure.value) return false;
+  if (drafts.activeRef.value || drawer.value || contactDisclosure.value || trashReader.value) return false;
   if (id === 'undo') {
     // Same guards as the key: no in-flight undo (a second dispatch would race
     // into a false already_undone), and no open reader message-details disclosure.
@@ -1163,7 +1180,7 @@ function starPermissionReason(id: BrowsingActionId): string | undefined {
 }
 const availableActions = computed(() => browsingActions
   .filter((action) => (actionAvailable(action.id) || starPermissionReason(action.id))
-    && (overlay.value !== 'navigator' || ['inbox', 'saved', 'done', 'starred', 'account', 'activity', 'drafts', 'reminders'].includes(action.id)))
+    && (overlay.value !== 'navigator' || ['inbox', 'saved', 'done', 'trash', 'starred', 'account', 'activity', 'drafts', 'reminders'].includes(action.id)))
   .map((action) => ({
     id: action.id,
     shortcut: action.shortcut,
@@ -1216,7 +1233,7 @@ async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): 
       else { await mailbox.setStarred(target, id === 'star'); if (!readerOpen.value) await focusFocusedRow(); }
       return;
     }
-    case 'account': case 'activity': case 'drafts': await openDrawer(id); return;
+    case 'trash': case 'account': case 'activity': case 'drafts': await openDrawer(id); return;
     case 'back': if (readerOpen.value) closeReader(); else await contextBack(); return;
     case 'open': if (explicit) await openRowFromList(explicit); else await openFocusedFromList(); return;
     case 'archive':
@@ -1646,7 +1663,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
          under a palette/navigator overlay exactly like header/main, so its Undo
          button cannot be reached while covered; drawer/disclosure guards apply
          through executeAction. -->
-    <ActionNotice ref="actionNoticeComponent" :notice="actionNotice" :now="nowMs" :inert="!!overlay || undefined" @undo="executeAction('undo')" @undo-group="onNoticeGroupAction" @dismiss-group="mailbox.dismissGroupNotice()" />
+    <ActionNotice v-if="!trashReader && drawer !== 'trash'" ref="actionNoticeComponent" :notice="actionNotice" :now="nowMs" :inert="!!overlay || undefined" @undo="executeAction('undo')" @undo-group="onNoticeGroupAction" @dismiss-group="mailbox.dismissGroupNotice()" />
     <main class="app-main" :inert="!!overlay || undefined">
       <section v-if="!accountReady" class="account-gate" aria-label="Account">
         <p
@@ -1677,6 +1694,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
           <button v-if="accountId && gmailMode" type="button" class="rail-item" data-test="rail-starred" :aria-current="mailbox.context.value === 'starred' && !readerOpen ? 'page' : undefined" @click="executeAction('starred')">Starred</button>
           <button v-if="accountId" type="button" class="rail-item rail-done" data-test="rail-done" :title="actionLabel('done')" :aria-current="mailbox.context.value === 'done' && !readerOpen ? 'page' : undefined" @click="executeAction('done')">Cached Done</button>
           <button v-if="gmailMode || props.mode === 'browser-preview'" type="button" class="rail-item" data-test="rail-destinations" :ref="setToggleRef('destinations')" :aria-expanded="drawer === 'destinations'" @click="toggleDrawer('destinations')">Provider mail</button>
+          <button v-if="gmailMode && accountId" type="button" class="rail-item rail-done" data-test="rail-trash" :ref="setToggleRef('trash')" :title="actionLabel('trash')" :aria-expanded="drawer === 'trash'" @click="toggleDrawer('trash')">Cached Trash</button>
           <span class="rail-spacer" aria-hidden="true"></span>
           <button
             v-if="gmailMode && accountStatus"
@@ -1800,8 +1818,9 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               :command-in-flight="mailbox.commandInFlight.value || mailbox.bulkUnresolved.value"
               :open-ref="mailbox.openRef.value"
               :navigation-unavailable="mailbox.context.value !== 'inbox' && mailbox.listState.value === 'error'"
-              :read-only="gmailMode && !mailboxActionsEnabled"
-              :show-read-controls="gmailActionsEnabled"
+              :read-only="trashReader || (gmailMode && !mailboxActionsEnabled)"
+              :browsing-only="trashReader"
+              :show-read-controls="gmailActionsEnabled && !trashReader"
               :selection-count="selectedCount"
               :selection-context="mailbox.context.value"
               @close="executeAction('back')"
@@ -1847,6 +1866,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
                render an explicit account-required state instead of an empty drawer. -->
           <p v-else-if="drawer === 'destinations'" role="note" data-test="destinations-account-required">Provider mail needs a connected Gmail account. Connect one from Account first.</p>
           <RemindersPanel v-if="drawer === 'reminders' && remindersSupported" :key="reminderTarget ? `${reminderTarget.accountId}:${reminderTarget.conversationId}` : 'destination'" :client="props.client" :target="reminderTarget" :initial-destination="reminderDestination" @destination-change="reminderDestination = $event" @open="openReminderConversation" />
+          <CachedTrashPanel v-if="drawer === 'trash' && accountId && gmailMode" :key="accountId" :client="client" :account-id="accountId" :state="trashState" @open="openFromTrash" />
           <AccountPanel
             v-if="drawer === 'account' && accountStatus"
             :status="accountStatus"

@@ -41,6 +41,9 @@ import {
   SET_ARCHIVED_GROUP_COMMAND,
   SET_READ_GROUP_COMMAND,
   UNDO_OPERATION_GROUP_COMMAND,
+  LIST_CACHED_TRASH_COMMAND,
+  type CachedTrashRequest,
+  type CachedTrashSnapshot,
   type CachedDoneRequest,
   type CachedDoneSnapshot,
   LIST_DRAFTS_COMMAND,
@@ -118,6 +121,9 @@ export function createTauriMailClient(): MailClient {
     },
     listConversations(): Promise<InboxSnapshot> {
       return call<InboxSnapshot>(LIST_CONVERSATIONS_COMMAND);
+    },
+    listCachedTrash(request: CachedTrashRequest): Promise<CachedTrashSnapshot> {
+      return call<CachedTrashSnapshot>(LIST_CACHED_TRASH_COMMAND, { request });
     },
     listCachedDone(request: CachedDoneRequest): Promise<CachedDoneSnapshot> {
       return call<CachedDoneSnapshot>(LIST_CACHED_DONE_COMMAND, { request });

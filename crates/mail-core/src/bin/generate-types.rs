@@ -14,10 +14,11 @@ use mail_core::drafts::types::{
     DraftReceipt, DraftRef, DraftReplyLink, DraftSource, DraftSummary, ReplyContext, SaveDraft,
 };
 use mail_core::dto::{
-    Address, CachedDoneCoverage, CachedDoneRequest, CachedDoneSnapshot, Conversation,
-    ConversationRef, ConversationSummary, InboxSnapshot, MailboxOperationKind, Message,
-    OperationFailure, OperationReceipt, OperationStatus, OperationSummary, RetryOperation,
-    SetArchived, SetRead, UndoOperation, UndoOutcome, UndoReceipt, UndoUnavailableReason,
+    Address, CachedDoneCoverage, CachedDoneRequest, CachedDoneSnapshot, CachedTrashCoverage,
+    CachedTrashRequest, CachedTrashSnapshot, Conversation, ConversationRef, ConversationSummary,
+    InboxSnapshot, MailboxOperationKind, Message, OperationFailure, OperationReceipt,
+    OperationStatus, OperationSummary, RetryOperation, SetArchived, SetRead, UndoOperation,
+    UndoOutcome, UndoReceipt, UndoUnavailableReason,
 };
 use mail_core::error::MailError;
 use mail_core::gmail::browsing::{
@@ -105,6 +106,9 @@ fn declarations() -> Vec<String> {
         CachedDoneRequest::decl(),
         CachedDoneCoverage::decl(),
         CachedDoneSnapshot::decl(),
+        CachedTrashRequest::decl(),
+        CachedTrashCoverage::decl(),
+        CachedTrashSnapshot::decl(),
         MailMode::decl(),
         ConnectionState::decl(),
         SyncState::decl(),
@@ -154,6 +158,7 @@ const IPC_NAMES: &[(&str, &str)] = &[
     ("SAVE_SAVED_SPLIT_COMMAND", "save_saved_split"),
     ("SEARCH_MAIL_COMMAND", "search_mail"),
     ("CANCEL_SEARCH_MAIL_COMMAND", "cancel_search_mail"),
+    ("LIST_CACHED_TRASH_COMMAND", "list_cached_trash"),
     ("GET_CONVERSATION_COMMAND", "get_conversation"),
     ("SET_ARCHIVED_COMMAND", "set_archived"),
     ("MAILBOX_CHANGED_EVENT", "mailbox_changed"),

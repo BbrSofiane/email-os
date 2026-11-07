@@ -72,6 +72,8 @@ fn sample_thread() -> GmailThread {
         // m-2 has no renderable body, but it is still part of the immutable target set.
         message_ids: Some(vec!["m-1".to_string(), "m-2".to_string()]),
         unread_message_ids: Some(vec!["m-2".to_string()]),
+        trash_message_ids: None,
+        spam_message_ids: None,
         history_id: "history-1".to_string(),
     }
 }

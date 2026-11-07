@@ -411,6 +411,8 @@ fn thread(id: &str, msgs: Vec<Message>, inbox: &[&str], unread: &[&str]) -> Gmai
         inbox_message_ids: inbox.iter().map(|s| s.to_string()).collect(),
         message_ids: Some(message_ids),
         unread_message_ids: Some(unread.iter().map(|s| s.to_string()).collect()),
+        trash_message_ids: None,
+        spam_message_ids: None,
         history_id: "history-1".to_string(),
     }
 }
