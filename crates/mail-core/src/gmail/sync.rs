@@ -64,6 +64,7 @@ pub struct GmailCore {
 }
 
 struct GmailInner {
+    search_cancel: Mutex<Option<CancelToken>>,
     store: Arc<GmailStore>,
     provider: Arc<dyn GmailReadProvider>,
     /// Profile lock is owned for the full core lifetime and additionally
@@ -270,6 +271,7 @@ impl GmailCore {
         )?;
         Ok(GmailCore {
             inner: Arc::new(GmailInner {
+                search_cancel: Mutex::new(None),
                 store,
                 provider,
                 profile,
@@ -313,6 +315,118 @@ impl GmailCore {
         Ok(saved)
     }
 
+    pub fn cancel_search_mail(&self) {
+        if let Ok(mut slot) = self.inner.search_cancel.lock() {
+            if let Some(cancel) = slot.take() {
+                cancel.cancel();
+            }
+        }
+    }
+
+    pub fn search_mail(
+        &self,
+        request: &crate::search::SearchRequest,
+    ) -> Result<crate::search::SearchPage, MailError> {
+        let query = crate::search::parse(&request.query)?;
+        let generation = self.inner.store.generation()?;
+        if self.inner.store.account()?.as_ref().map(|a| &a.account_id) != Some(&request.account_id)
+        {
+            return Err(MailError::NotFound);
+        }
+        let status = self.account_status()?;
+        if !request.cached_only
+            && (status.connection == ConnectionState::AuthRequired
+                || matches!(
+                    status.sync.error,
+                    Some(
+                        MailError::AuthRequired
+                            | MailError::AuthFailed
+                            | MailError::SecretsUnavailable
+                    )
+                ))
+        {
+            return Err(MailError::AuthRequired);
+        }
+        if request.cached_only
+            || status.connection != ConnectionState::Connected
+            || matches!(status.sync.error, Some(MailError::NetworkUnavailable))
+        {
+            return self.inner.store.search_mail(request);
+        }
+        let page_token = match &request.cursor {
+            None => None,
+            Some(cursor) => {
+                let (account, q, token): (String, String, String) = serde_json::from_str(cursor)
+                    .map_err(|_| MailError::InvalidRequest {
+                        field: "searchCursor".into(),
+                    })?;
+                if account != request.account_id || q != request.query || cursor.len() > 8192 {
+                    return Err(MailError::InvalidRequest {
+                        field: "searchCursor".into(),
+                    });
+                }
+                Some(token)
+            }
+        };
+        let work = self.begin_reply_enrichment()?;
+        {
+            let mut slot = self
+                .inner
+                .search_cancel
+                .lock()
+                .map_err(|_| MailError::StorageUnavailable)?;
+            if let Some(old) = slot.replace(work.cancel.clone()) {
+                old.cancel();
+            }
+        }
+        let revision = self.inner.store.observation_revision()?;
+        let page = self
+            .inner
+            .provider
+            .search_threads(page_token.as_deref(), &work.cancel)?;
+        if page.thread_ids.len() > 20
+            || page
+                .next_page_token
+                .as_ref()
+                .is_some_and(|p| Some(p) == page_token.as_ref())
+        {
+            return Err(MailError::InvalidProviderResponse);
+        }
+        // Reuse sync's identity checks, deduplication and 16 MiB aggregate
+        // retained-data budget; search must not bypass provider read bounds.
+        let threads: Vec<_> =
+            fetch_changed_threads(self.inner.provider.as_ref(), &page.thread_ids, &work.cancel)?
+                .into_iter()
+                .filter_map(|fetch| match fetch {
+                    ThreadFetch::Cached(thread) => Some(*thread),
+                    ThreadFetch::Missing(_) => None,
+                })
+                .collect();
+        if work.cancel.is_cancelled() {
+            return Err(MailError::NotFound);
+        }
+        self.inner
+            .store
+            .save_search(&threads, generation, revision, &request.account_id)?;
+        let mut conversations = Vec::new();
+        for thread in threads {
+            let c = self
+                .inner
+                .store
+                .get_conversation(&thread.conversation.conversation_ref)?;
+            if query.matches(&c) {
+                conversations.push(crate::search::summary(c));
+            }
+        }
+        Ok(crate::search::SearchPage {
+            conversations,
+            next_cursor: page
+                .next_page_token
+                .map(|p| serde_json::to_string(&(&request.account_id, &request.query, p)).unwrap()),
+            coverage: crate::search::SearchCoverage::ProviderCandidates,
+        })
+    }
+
     pub fn list_cached_done(
         &self,
         request: &crate::dto::CachedDoneRequest,
@@ -323,6 +437,42 @@ impl GmailCore {
     /// Cached reader view of one conversation, scoped by the connected account.
     pub fn get_conversation(&self, r#ref: &ConversationRef) -> Result<Conversation, MailError> {
         self.inner.store.get_conversation(r#ref)
+    }
+
+    /// Explicit search-result load only. Ordinary cached reads never import
+    /// arbitrary historical/deleted rows as a side effect of a cache miss.
+    pub fn load_search_conversation(
+        &self,
+        r#ref: &ConversationRef,
+    ) -> Result<Conversation, MailError> {
+        match self.inner.store.get_conversation(r#ref) {
+            Err(MailError::NotFound) => {
+                let generation = self.inner.store.generation()?;
+                if self.inner.store.account()?.as_ref().map(|a| &a.account_id)
+                    != Some(&r#ref.account_id)
+                {
+                    return Err(MailError::NotFound);
+                }
+                if self.account_status()?.connection != ConnectionState::Connected {
+                    return Err(MailError::NotFound);
+                }
+                let work = self.begin_reply_enrichment()?;
+                let revision = self.inner.store.observation_revision()?;
+                let thread = self
+                    .inner
+                    .provider
+                    .get_thread(&r#ref.conversation_id, &work.cancel)?
+                    .ok_or(MailError::NotFound)?;
+                if thread.conversation.conversation_ref != *r#ref || work.cancel.is_cancelled() {
+                    return Err(MailError::NotFound);
+                }
+                self.inner
+                    .store
+                    .save_search(&[thread], generation, revision, &r#ref.account_id)?;
+                self.inner.store.get_conversation(r#ref)
+            }
+            result => result,
+        }
     }
 
     fn begin_reply_enrichment(&self) -> Result<ReplyEnrichment, MailError> {
@@ -552,7 +702,12 @@ impl GmailCore {
     }
 
     pub fn set_archived(&self, command: &SetArchived) -> Result<OperationReceipt, MailError> {
-        self.accept_operation(|store| store.accept_archived(command))
+        self.accept_action(
+            &command.conversation.account_id,
+            &command.request_id,
+            std::slice::from_ref(&command.conversation),
+            |store, observation| store.accept_archived_observed(command, observation),
+        )
     }
 
     pub fn set_starred(
@@ -568,7 +723,12 @@ impl GmailCore {
         self.accept_operation(|store| store.accept_starred_group(command))
     }
     pub fn set_read(&self, command: &SetRead) -> Result<OperationReceipt, MailError> {
-        self.accept_operation(|store| store.accept_read(command))
+        self.accept_action(
+            &command.conversation.account_id,
+            &command.request_id,
+            std::slice::from_ref(&command.conversation),
+            |store, observation| store.accept_read_observed(command, observation),
+        )
     }
 
     /// Group setters pass the same admission gates as singles (verified
@@ -578,14 +738,24 @@ impl GmailCore {
         &self,
         command: &crate::groups::SetArchivedGroup,
     ) -> Result<crate::groups::OperationGroupReceipt, MailError> {
-        self.accept_operation(|store| store.accept_archived_group(command))
+        self.accept_action(
+            &command.account_id,
+            &command.request_id,
+            &command.members,
+            |store, observation| store.accept_archived_group_observed(command, observation),
+        )
     }
 
     pub fn set_read_group(
         &self,
         command: &crate::groups::SetReadGroup,
     ) -> Result<crate::groups::OperationGroupReceipt, MailError> {
-        self.accept_operation(|store| store.accept_read_group(command))
+        self.accept_action(
+            &command.account_id,
+            &command.request_id,
+            &command.members,
+            |store, observation| store.accept_read_group_observed(command, observation),
+        )
     }
 
     /// Cached group lookup by original acceptance request ID; served from
@@ -712,6 +882,82 @@ impl GmailCore {
         drop(st);
         inner.hub.dispatch();
         Ok(receipt)
+    }
+
+    /// Cached acceptance keeps its single capability check. Only missing exact
+    /// references leave the locks for a provider read and then repeat admission.
+    fn accept_action<T>(
+        &self,
+        account: &str,
+        request: &str,
+        members: &[ConversationRef],
+        accept: impl Fn(&GmailStore, Option<&super::store::SearchObservation>) -> Result<T, MailError>,
+    ) -> Result<T, MailError> {
+        crate::groups::validate_group_request_id(request)?;
+        crate::groups::validate_group_members(account, members)?;
+        let (ready, missing, generation) = self.accept_operation(|store| {
+            let generation = store.generation()?;
+            let observation = super::store::SearchObservation::Cached {
+                generation,
+                members: members.to_vec(),
+            };
+            let missing = store.missing_action_context(account, request, members)?;
+            if missing.is_empty() {
+                // Fence concurrent eviction between the context check and the
+                // acceptance transaction, even when no provider read is needed.
+                Ok((
+                    Some(accept(store, Some(&observation))?),
+                    missing,
+                    generation,
+                ))
+            } else {
+                Ok((None, missing, generation))
+            }
+        })?;
+        if let Some(receipt) = ready {
+            return Ok(receipt);
+        }
+        // Keep offline and per-member missing semantics; no inferred targets.
+        if self
+            .inner
+            .ctrl
+            .state
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?
+            .connection
+            != ConnectionState::Connected
+        {
+            // Missing members must keep their ordinary per-member rejection,
+            // but the deferred command still belongs to its original lifecycle.
+            let observation = super::store::SearchObservation::Cached {
+                generation,
+                members: vec![],
+            };
+            return self.accept_operation(|store| accept(store, Some(&observation)));
+        }
+        let work = self.begin_reply_enrichment()?;
+        // Register lifecycle cancellation before checking the ORIGINAL generation:
+        // a disconnect in the preflight/registration gap must not revive this setter.
+        if self.inner.store.generation()? != generation || work.cancel.is_cancelled() {
+            return Err(MailError::NotFound);
+        }
+        let revision = self.inner.store.observation_revision()?;
+        let threads = fetch_changed_threads(self.inner.provider.as_ref(), &missing, &work.cancel)?
+            .into_iter()
+            .filter_map(|fetch| match fetch {
+                ThreadFetch::Cached(thread) => Some(*thread),
+                ThreadFetch::Missing(_) => None,
+            })
+            .collect();
+        if work.cancel.is_cancelled() {
+            return Err(MailError::NotFound);
+        }
+        let observation = super::store::SearchObservation::Fetched {
+            generation,
+            revision,
+            threads,
+        };
+        self.accept_operation(|store| accept(store, Some(&observation)))
     }
 
     fn accept_operation<T>(
@@ -1797,9 +2043,14 @@ mod worker_halt_tests {
         history_started: bool,
         writes: usize,
         mutation_granted: bool,
+        auth_expired: bool,
     }
 
     struct HaltTestProvider {
+        mutation_hook: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+        search_error: Mutex<Option<MailError>>,
+        search_hook: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+        search_reads: std::sync::atomic::AtomicUsize,
         state: Mutex<ProviderState>,
         wake: Condvar,
     }
@@ -1807,11 +2058,16 @@ mod worker_halt_tests {
     impl HaltTestProvider {
         fn new() -> Arc<Self> {
             Arc::new(Self {
+                mutation_hook: Mutex::new(None),
+                search_error: Mutex::new(None),
+                search_hook: Mutex::new(None),
+                search_reads: std::sync::atomic::AtomicUsize::new(0),
                 state: Mutex::new(ProviderState {
                     block_history: false,
                     history_started: false,
                     writes: 0,
                     mutation_granted: true,
+                    auth_expired: false,
                 }),
                 wake: Condvar::new(),
             })
@@ -1912,6 +2168,10 @@ mod worker_halt_tests {
 
     impl GmailReadProvider for HaltTestProvider {
         fn mutation_access(&self) -> Result<bool, MailError> {
+            let hook = self.mutation_hook.lock().unwrap().take();
+            if let Some(hook) = hook {
+                hook();
+            }
             Ok(self.state.lock().unwrap().mutation_granted)
         }
 
@@ -1966,12 +2226,41 @@ mod worker_halt_tests {
             })
         }
 
+        fn search_threads(
+            &self,
+            page: Option<&str>,
+            _cancel: &CancelToken,
+        ) -> Result<InboxPage, MailError> {
+            let page: usize = page.unwrap_or("0").parse().unwrap();
+            Ok(InboxPage {
+                thread_ids: (page * 20..page * 20 + 20)
+                    .map(|n| format!("search-{n:03}"))
+                    .collect(),
+                next_page_token: (page < 5).then(|| (page + 1).to_string()),
+            })
+        }
+
         fn get_thread(
             &self,
-            _thread_id: &str,
+            thread_id: &str,
             _cancel: &CancelToken,
         ) -> Result<Option<GmailThread>, MailError> {
-            Ok(Some(test_thread()))
+            if thread_id == TEST_THREAD {
+                return Ok(Some(test_thread()));
+            }
+            self.search_reads
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if let Some(error) = self.search_error.lock().unwrap().clone() {
+                return Err(error);
+            }
+            let thread = thread_id
+                .starts_with("search-")
+                .then(|| search_test_thread(thread_id));
+            let hook = self.search_hook.lock().unwrap().take();
+            if let Some(hook) = hook {
+                hook();
+            }
+            Ok(thread)
         }
 
         fn history(
@@ -1981,6 +2270,9 @@ mod worker_halt_tests {
             cancel: &CancelToken,
         ) -> Result<HistoryPage, GmailHistoryError> {
             let mut state = self.state.lock().unwrap();
+            if state.auth_expired {
+                return Err(GmailHistoryError::Mail(MailError::AuthRequired));
+            }
             if state.block_history {
                 state.history_started = true;
                 self.wake.notify_all();
@@ -2089,6 +2381,8 @@ mod worker_halt_tests {
         drop(core);
         let _ = std::fs::remove_dir_all(dir);
     }
+
+    include!("search_sync_tests.rs");
 
     /// Core-level group path (docs/ux-05-safe-bulk-processing.md §4.2): the
     /// capability gate rejects before acceptance; an accepted group's members

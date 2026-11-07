@@ -183,6 +183,8 @@ Detailed proposed scope: [UX-05 implementation contract](ux-05-safe-bulk-process
 
 ### UX-07 — Find older mail and return without losing the query
 
+Delivered contract and verification notes: [UX-07 historical search](ux-07-historical-search.md).
+
 **Journey:** / → enter query → Enter → result → reader → Back to query/results/focus → Back to previous split.
 
 - Add search input/operator guidance and reuse the normal list/reader/action surfaces. Contact-name click becomes sender search; add up to four real recent-email links from a bounded query, not invented history.

@@ -14,6 +14,10 @@ import {
   SET_STARRED_GROUP_COMMAND,
   type SetStarred,
   type SetStarredGroup,
+  SEARCH_MAIL_COMMAND,
+  CANCEL_SEARCH_MAIL_COMMAND,
+  type SearchRequest,
+  type SearchPage,
   CANCEL_MAILBOX_ACTION_UPGRADE_COMMAND,
   CANCEL_APP_CLOSE_COMMAND,
   CONNECT_ACCOUNT_COMMAND,
@@ -96,14 +100,16 @@ export function createTauriMailClient(): MailClient {
 
     getSavedSplit(accountId: string): Promise<SavedSplit | null> { return call(GET_SAVED_SPLIT_COMMAND, { accountId }); },
     saveSavedSplit(accountId: string, split: SavedSplit): Promise<SavedSplit> { return call(SAVE_SAVED_SPLIT_COMMAND, { accountId, split }); },
+    searchMail(request: SearchRequest): Promise<SearchPage> { return call(SEARCH_MAIL_COMMAND, { request }); },
+    cancelSearchMail(): Promise<void> { return call(CANCEL_SEARCH_MAIL_COMMAND); },
     listConversations(): Promise<InboxSnapshot> {
       return call<InboxSnapshot>(LIST_CONVERSATIONS_COMMAND);
     },
     listCachedDone(request: CachedDoneRequest): Promise<CachedDoneSnapshot> {
       return call<CachedDoneSnapshot>(LIST_CACHED_DONE_COMMAND, { request });
     },
-    getConversation(ref: ConversationRef): Promise<Conversation> {
-      return call<Conversation>(GET_CONVERSATION_COMMAND, { ref });
+    getConversation(ref: ConversationRef, loadMissingSearchResult = false): Promise<Conversation> {
+      return call<Conversation>(GET_CONVERSATION_COMMAND, loadMissingSearchResult ? { ref, loadMissingSearchResult: true } : { ref });
     },
     setArchived(command: SetArchived): Promise<OperationReceipt> {
       return call<OperationReceipt>(SET_ARCHIVED_COMMAND, { command });

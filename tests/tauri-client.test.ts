@@ -8,6 +8,8 @@ import {
   DRAFTS_CHANGED_EVENT,
   GET_APP_CLOSE_REQUEST_COMMAND,
   GET_DRAFT_COMMAND,
+  SEARCH_MAIL_COMMAND,
+  CANCEL_SEARCH_MAIL_COMMAND,
   LIST_CONVERSATIONS_COMMAND,
   LIST_CACHED_DONE_COMMAND,
   LIST_DRAFTS_COMMAND,
@@ -79,6 +81,22 @@ describe('Tauri draft and close protocol adapter', () => {
     mocks.invoke.mockRejectedValue({ kind: 'storage_unavailable' });
     await expect(client.saveSavedSplit('account', split)).rejects.toEqual({ kind: 'storage_unavailable' });
     expect(mocks.listen).not.toHaveBeenCalled();
+  });
+
+  it('transports search/cancellation without converting native failures into empty results', async () => {
+    const client = createTauriMailClient();
+    const request = { accountId: 'account', query: 'from:alice OR subject:"old mail"', cursor: null, cachedOnly: false };
+    const page = { conversations: [], nextCursor: 'next', coverage: 'provider_candidates' };
+    mocks.invoke.mockResolvedValue(page);
+    expect(await client.searchMail(request)).toBe(page);
+    expect(mocks.invoke).toHaveBeenLastCalledWith(SEARCH_MAIL_COMMAND, { request });
+    const ref = { accountId: 'account', conversationId: 'exact-search-result' };
+    await client.getConversation(ref, true);
+    expect(mocks.invoke).toHaveBeenLastCalledWith('get_conversation', { ref, loadMissingSearchResult: true });
+    await client.cancelSearchMail();
+    expect(mocks.invoke).toHaveBeenLastCalledWith(CANCEL_SEARCH_MAIL_COMMAND, undefined);
+    mocks.invoke.mockRejectedValue({ kind: 'auth_required' });
+    await expect(client.searchMail(request)).rejects.toEqual({ kind: 'auth_required' });
   });
 
   it('transports cached Done using only the named read query and exact request envelope', async () => {

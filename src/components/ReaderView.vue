@@ -43,7 +43,7 @@ const props = defineProps<{
    * offers explicit count-labelled desired-state controls instead of the open
    * conversation's single-state toggles (mixed selections included). */
   selectionCount?: number;
-  selectionContext?: 'inbox' | 'saved' | 'done' | 'starred';
+  selectionContext?: 'inbox' | 'saved' | 'done' | 'starred' | 'search';
 }>();
 
 const emit = defineEmits<{
@@ -634,7 +634,7 @@ defineExpose({
         @click="emit('archive')"
       >Mark {{ bulkScope.count }} Done (archive)</button>
       <button
-        v-if="!props.readOnly && props.state === 'ready' && bulkScope && bulkScope.context === 'done'"
+        v-if="!props.readOnly && props.state === 'ready' && bulkScope && bulkScope.context !== 'inbox'"
         type="button"
         data-test="reader-selection-unarchive"
         :disabled="props.commandInFlight || props.navigationUnavailable"

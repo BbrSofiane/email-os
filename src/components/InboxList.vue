@@ -24,7 +24,7 @@ import { compactDateLabel, dateGroupCaption, dateGroupFor } from '../lib/browsin
 
 const props = defineProps<{
   rows: ConversationSummaryLike[];
-  context?: 'inbox' | 'saved' | 'done' | 'starred';
+  context?: 'inbox' | 'saved' | 'done' | 'starred' | 'search';
   focusedRef: ConversationRef | null;
   actionsEnabled?: boolean;
   showReadState?: boolean;
@@ -429,7 +429,7 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
 </script>
 
 <template>
-  <ul class="inbox-list inbox-scroll" role="list" :aria-label="context === 'starred' ? 'Cached Starred conversations' : context === 'done' ? 'Cached Done conversations' : context === 'saved' ? 'Saved split conversations' : 'Inbox conversations'" ref="listEl">
+  <ul class="inbox-list inbox-scroll" role="list" :aria-label="context === 'search' ? 'Search results' : context === 'starred' ? 'Cached Starred conversations' : context === 'done' ? 'Cached Done conversations' : context === 'saved' ? 'Saved split conversations' : 'Inbox conversations'" ref="listEl">
     <template v-for="item in items" :key="item.kind === 'group' ? `group-${item.id}` : rowKey(item.row.ref)">
       <li
         v-if="item.kind === 'group'"

@@ -14,6 +14,8 @@
  */
 import type {
   SavedSplit,
+  SearchRequest,
+  SearchPage,
   CachedDoneRequest,
   CachedDoneSnapshot,
   AccountStatus,
@@ -53,6 +55,8 @@ export type {
   SetStarredGroup,
   SavedSplit,
   SplitCriterion,
+  SearchRequest,
+  SearchPage,
   AccountInfo,
   CachedDoneCoverage,
   CachedDoneRequest,
@@ -122,6 +126,8 @@ export {
   LIST_CACHED_STARRED_COMMAND,
   SET_STARRED_COMMAND,
   SET_STARRED_GROUP_COMMAND,
+  SEARCH_MAIL_COMMAND,
+  CANCEL_SEARCH_MAIL_COMMAND,
   CANCEL_MAILBOX_ACTION_UPGRADE_COMMAND,
   CONNECT_ACCOUNT_COMMAND,
   DISCONNECT_ACCOUNT_COMMAND,
@@ -168,10 +174,12 @@ export interface MailClient {
   setStarredGroup(command: import('./generated').SetStarredGroup): Promise<OperationGroupReceipt>;
   getSavedSplit(accountId: string): Promise<SavedSplit | null>;
   saveSavedSplit(accountId: string, split: SavedSplit): Promise<SavedSplit>;
+  searchMail(request: SearchRequest): Promise<SearchPage>;
+  cancelSearchMail(): Promise<void>;
   listConversations(): Promise<InboxSnapshot>;
   /** Local archive evidence only; short/empty pages can still have a continuation. */
   listCachedDone(request: CachedDoneRequest): Promise<CachedDoneSnapshot>;
-  getConversation(ref: ConversationRef): Promise<Conversation>;
+  getConversation(ref: ConversationRef, loadMissingSearchResult?: boolean): Promise<Conversation>;
   setArchived(command: SetArchived): Promise<OperationReceipt>;
   enableMailboxActions(): Promise<void>;
   cancelMailboxActionUpgrade(): Promise<void>;

@@ -217,6 +217,25 @@ textarea {
   font-weight: 600;
 }
 
+.contact-search {
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.contact-search:hover { text-decoration: underline; }
+.contact-recent { margin-top: 2rem; }
+.contact-recent h3 { font-size: 0.85rem; font-weight: 500; color: var(--text-secondary); }
+.contact-recent ul { list-style: none; padding: 0; }
+.contact-recent li { margin: 0.65rem 0; }
+.contact-recent button { text-align: left; overflow-wrap: anywhere; }
+.mail-search { padding: 1rem; border-bottom: 1px solid var(--divider); }
+.mail-search-entry { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0; }
+.mail-search-entry input { flex: 1 1 16rem; min-width: 0; }
+.mail-search p { max-width: 75ch; font-size: 0.85rem; color: var(--text-secondary); }
+.search-cache-toggle { font-size: 0.85rem; }
 .contact-mailbox {
   color: var(--text-secondary);
   font-size: 0.8rem;

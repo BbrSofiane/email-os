@@ -351,6 +351,8 @@ export function createReaderFixtureClient(): ReaderFixture {
     getOperationGroup: () => Promise.resolve(null),
     listOperationGroups: () => Promise.resolve({ groups: [], nextCursor: null }),
     undoOperationGroup: () => Promise.reject({ kind: 'undo_unavailable', reason: 'not_applicable' } satisfies MailError),
+    searchMail: async () => ({ conversations: [], nextCursor: null, coverage: 'cached_incomplete' }),
+    cancelSearchMail: async () => {},
     listCachedDone: async () => ({ conversations: [...conversations.values()].filter((c) => !inboxIds.includes(c.ref.conversationId) && archiveCommands.some((command) => command.archived && command.conversation.conversationId === c.ref.conversationId)).map((c) => toSummary(c, inboxIds)), nextCursor: null, coverage: 'local_cache', exactTotal: null, lastSyncedAt: READ_NOW }),
     listConversations: () => {
       const rows = inboxIds

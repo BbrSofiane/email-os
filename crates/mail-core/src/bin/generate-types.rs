@@ -31,6 +31,7 @@ use mail_core::groups::{
     OperationGroupStatus, OperationGroupSummary, SetArchivedGroup, SetReadGroup,
     UndoOperationGroup,
 };
+use mail_core::search::{SearchCoverage, SearchPage, SearchRequest};
 use mail_core::splits::{SavedSplit, SplitCriterion};
 use ts_rs::TS;
 
@@ -43,6 +44,9 @@ fn declarations() -> Vec<String> {
         mail_core::stars::SetStarredGroup::decl(),
         SplitCriterion::decl(),
         SavedSplit::decl(),
+        SearchRequest::decl(),
+        SearchPage::decl(),
+        SearchCoverage::decl(),
         ConversationRef::decl(),
         Address::decl(),
         OperationStatus::decl(),
@@ -122,6 +126,8 @@ const IPC_NAMES: &[(&str, &str)] = &[
     ("SET_STARRED_GROUP_COMMAND", "set_starred_group"),
     ("GET_SAVED_SPLIT_COMMAND", "get_saved_split"),
     ("SAVE_SAVED_SPLIT_COMMAND", "save_saved_split"),
+    ("SEARCH_MAIL_COMMAND", "search_mail"),
+    ("CANCEL_SEARCH_MAIL_COMMAND", "cancel_search_mail"),
     ("GET_CONVERSATION_COMMAND", "get_conversation"),
     ("SET_ARCHIVED_COMMAND", "set_archived"),
     ("MAILBOX_CHANGED_EVENT", "mailbox_changed"),

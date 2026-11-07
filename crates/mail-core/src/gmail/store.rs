@@ -44,6 +44,22 @@ pub(crate) enum Commit {
     Discarded,
 }
 
+/// In-process observation fence. All profile writes use the store's one SQLite
+/// connection; total_changes includes deletions and even rolled-back writes.
+/// Rejecting *any* intervening write is intentionally conservative (Busy/retry),
+/// and avoids a tombstone growing for every historically deleted message.
+pub(crate) enum SearchObservation {
+    Cached {
+        generation: u64,
+        members: Vec<ConversationRef>,
+    },
+    Fetched {
+        generation: u64,
+        revision: u64,
+        threads: Vec<GmailThread>,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct OperationRecord {
     pub account_id: String,
@@ -439,6 +455,12 @@ impl GmailStore {
             [],
         )
         .map_err(|_| MailError::StorageUnavailable)?;
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS gmail_search_cache (
+            account_id TEXT NOT NULL, conversation_id TEXT NOT NULL, seq INTEGER NOT NULL,
+            PRIMARY KEY(account_id, conversation_id));",
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
         // A process crash after claiming a setter is uncertain, never a safe
         // reason to replay it. Reconciliation precedes any explicit retry.
         tx.execute(
@@ -625,7 +647,12 @@ impl GmailStore {
         let mut stmt = conn
             .prepare(
                 "SELECT c.conversation_id FROM gmail_conversations c
-                 WHERE c.account_id = ?1 AND (EXISTS (
+                 WHERE c.account_id = ?1 AND (NOT EXISTS (
+                     SELECT 1 FROM gmail_search_cache sc WHERE sc.account_id = c.account_id AND sc.conversation_id = c.conversation_id)
+                     OR EXISTS (SELECT 1 FROM gmail_operations restored WHERE restored.account_id = c.account_id
+                         AND restored.conversation_id = c.conversation_id AND restored.kind = 'archive'
+                         AND restored.requested_value = 0 AND restored.status IN ('queued','applying','confirmed','outcome_unknown')))
+                 AND (EXISTS (
                      SELECT 1 FROM gmail_message_facts f
                      WHERE f.account_id = c.account_id
                        AND f.conversation_id = c.conversation_id
@@ -785,6 +812,93 @@ impl GmailStore {
             .next_cursor
             .map(|cursor| cursor.replacen("cached-done-v1:", "cached-starred-v1:", 1));
         Ok(result)
+    }
+
+    pub(crate) fn search_mail(
+        &self,
+        request: &crate::search::SearchRequest,
+    ) -> Result<crate::search::SearchPage, MailError> {
+        if self.account()?.as_ref().map(|a| &a.account_id) != Some(&request.account_id) {
+            return Err(MailError::NotFound);
+        }
+        let ids = {
+            let conn = self.lock_conn()?;
+            let mut stmt = conn.prepare("SELECT conversation_id FROM (SELECT c.conversation_id, COALESCE(MAX(m.sent_at),'') AS date FROM gmail_conversations c LEFT JOIN gmail_messages m ON m.account_id=c.account_id AND m.conversation_id=c.conversation_id WHERE c.account_id=?1 GROUP BY c.conversation_id UNION ALL SELECT conversation_id, last_message_at AS date FROM gmail_operation_snapshots WHERE account_id=?1) GROUP BY conversation_id ORDER BY MAX(date) DESC, conversation_id LIMIT 1000").map_err(|_| MailError::StorageUnavailable)?;
+            let ids = stmt
+                .query_map([&request.account_id], |row| row.get::<_, String>(0))
+                .map_err(|_| MailError::StorageUnavailable)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| MailError::StorageUnavailable)?;
+            ids
+        };
+        let rows = ids
+            .into_iter()
+            .map(|id| {
+                self.get_conversation(&ConversationRef {
+                    account_id: request.account_id.clone(),
+                    conversation_id: id,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        crate::search::cached_page(request, rows)
+    }
+
+    /// Search owns an independent 100-row retention budget, never discovery
+    /// checkpoints. Operation snapshots and immutable target facts survive eviction.
+    pub(crate) fn observation_revision(&self) -> Result<u64, MailError> {
+        Ok(self.lock_conn()?.total_changes())
+    }
+
+    /// Only missing exact action references need provider revalidation. Replays
+    /// must reach the durable idempotency check without requiring the network.
+    pub(crate) fn missing_action_context(
+        &self,
+        account: &str,
+        request: &str,
+        members: &[ConversationRef],
+    ) -> Result<Vec<String>, MailError> {
+        let conn = self.lock_conn()?;
+        if account_id_of(&conn)? != account {
+            return Err(MailError::NotFound);
+        }
+        let replay: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM gmail_operation_requests WHERE account_id=?1 AND request_id=?2)",
+            params![account, request], |r| r.get(0)).map_err(|_| MailError::StorageUnavailable)?;
+        if replay {
+            return Ok(vec![]);
+        }
+        let mut missing = Vec::new();
+        for member in members {
+            if !has_action_context(&conn, account, &member.conversation_id)? {
+                missing.push(member.conversation_id.clone());
+            }
+        }
+        Ok(missing)
+    }
+
+    pub(crate) fn save_search(
+        &self,
+        threads: &[GmailThread],
+        expected: u64,
+        revision: u64,
+        account: &str,
+    ) -> Result<(), MailError> {
+        self.persistence_gate()?;
+        let mut conn = self.lock_conn()?;
+        let tx = conn
+            .transaction()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        if !generation_matches(&tx, expected)?
+            || meta_get(&tx, "account_id")?.as_deref() != Some(account)
+        {
+            return Err(MailError::NotFound);
+        }
+        if tx.total_changes() != revision {
+            return Err(MailError::Busy);
+        }
+        admit_search_rows(&tx, threads, account)?;
+        evict_search(&tx, account)?;
+        tx.commit().map_err(|_| MailError::StorageUnavailable)
     }
 
     pub(crate) fn list_cached_done(
@@ -995,9 +1109,18 @@ impl GmailStore {
 
     // --------------------------------------------------------------- writes
 
+    #[cfg(test)]
     pub(crate) fn accept_archived(
         &self,
         command: &SetArchived,
+    ) -> Result<OperationReceipt, MailError> {
+        self.accept_archived_observed(command, None)
+    }
+
+    pub(crate) fn accept_archived_observed(
+        &self,
+        command: &SetArchived,
+        observation: Option<&SearchObservation>,
     ) -> Result<OperationReceipt, MailError> {
         self.accept_new_operation(
             &command.conversation,
@@ -1011,6 +1134,7 @@ impl GmailStore {
                 "value": command.archived,
             })
             .to_string(),
+            observation,
         )
     }
 
@@ -1022,7 +1146,7 @@ impl GmailStore {
             &command.request_id, serde_json::json!({
                 "accountId": command.conversation.account_id, "conversationId": command.conversation.conversation_id,
                 "kind": "star", "value": command.starred
-            }).to_string())
+            }).to_string(), None)
     }
 
     pub(crate) fn accept_starred_group(
@@ -1035,10 +1159,20 @@ impl GmailStore {
             command.starred,
             &command.request_id,
             &command.members,
+            None,
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn accept_read(&self, command: &SetRead) -> Result<OperationReceipt, MailError> {
+        self.accept_read_observed(command, None)
+    }
+
+    pub(crate) fn accept_read_observed(
+        &self,
+        command: &SetRead,
+        observation: Option<&SearchObservation>,
+    ) -> Result<OperationReceipt, MailError> {
         self.accept_new_operation(
             &command.conversation,
             MailboxOperationKind::Read,
@@ -1051,6 +1185,7 @@ impl GmailStore {
                 "value": command.read,
             })
             .to_string(),
+            observation,
         )
     }
 
@@ -1061,6 +1196,7 @@ impl GmailStore {
         value: bool,
         request_id: &str,
         payload: String,
+        observation: Option<&SearchObservation>,
     ) -> Result<OperationReceipt, MailError> {
         validate_request_id(request_id)?;
         self.persistence_gate()?;
@@ -1076,6 +1212,7 @@ impl GmailStore {
             tx.commit().map_err(|_| MailError::StorageUnavailable)?;
             return Ok(receipt);
         }
+        admit_action_observation(&tx, observation, &account_id)?;
         let accepted_at = self.clock.now_iso();
         let receipt = accept_operation_tx(
             &tx,
@@ -1094,6 +1231,7 @@ impl GmailStore {
                 accepted_at: &accepted_at,
             },
         )?;
+        evict_search(&tx, &account_id)?;
         tx.commit().map_err(|_| MailError::StorageUnavailable)?;
         Ok(receipt)
     }
@@ -1246,6 +1384,7 @@ impl GmailStore {
         value: bool,
         request_id: &str,
         members: &[ConversationRef],
+        observation: Option<&SearchObservation>,
     ) -> Result<OperationGroupReceipt, MailError> {
         crate::groups::validate_group_request_id(request_id)?;
         crate::groups::validate_group_members(account_id_command, members)?;
@@ -1271,6 +1410,7 @@ impl GmailStore {
             return Ok(receipt);
         }
 
+        admit_action_observation(&tx, observation, &account_id)?;
         let accepted_at = self.clock.now_iso();
         let group_id = uuid::Uuid::new_v4().to_string();
         let group_seq: i64 = tx
@@ -1379,6 +1519,7 @@ impl GmailStore {
             params![account_id, request_id, payload, group_id, accepted_at],
         )
         .map_err(|_| MailError::StorageUnavailable)?;
+        evict_search(&tx, &account_id)?;
         tx.commit().map_err(|_| MailError::StorageUnavailable)?;
         Ok(group_receipt(
             &group_id,
@@ -1391,9 +1532,18 @@ impl GmailStore {
         ))
     }
 
+    #[cfg(test)]
     pub(crate) fn accept_archived_group(
         &self,
         command: &crate::groups::SetArchivedGroup,
+    ) -> Result<OperationGroupReceipt, MailError> {
+        self.accept_archived_group_observed(command, None)
+    }
+
+    pub(crate) fn accept_archived_group_observed(
+        &self,
+        command: &crate::groups::SetArchivedGroup,
+        observation: Option<&SearchObservation>,
     ) -> Result<OperationGroupReceipt, MailError> {
         self.accept_group(
             &command.account_id,
@@ -1401,12 +1551,22 @@ impl GmailStore {
             command.archived,
             &command.request_id,
             &command.members,
+            observation,
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn accept_read_group(
         &self,
         command: &crate::groups::SetReadGroup,
+    ) -> Result<OperationGroupReceipt, MailError> {
+        self.accept_read_group_observed(command, None)
+    }
+
+    pub(crate) fn accept_read_group_observed(
+        &self,
+        command: &crate::groups::SetReadGroup,
+        observation: Option<&SearchObservation>,
     ) -> Result<OperationGroupReceipt, MailError> {
         self.accept_group(
             &command.account_id,
@@ -1414,6 +1574,7 @@ impl GmailStore {
             command.read,
             &command.request_id,
             &command.members,
+            observation,
         )
     }
 
@@ -1944,7 +2105,7 @@ impl GmailStore {
                 tx.execute(
                     "DELETE FROM gmail_messages
                      WHERE account_id = ?1 AND conversation_id NOT IN
-                         (SELECT conversation_id FROM gmail_discovery_seen)",
+                         (SELECT conversation_id FROM gmail_discovery_seen UNION SELECT conversation_id FROM gmail_search_cache WHERE account_id=?1)",
                     params![account_id],
                 )
                 .map_err(|_| MailError::StorageUnavailable)?;
@@ -1958,7 +2119,7 @@ impl GmailStore {
                 tx.execute(
                     "DELETE FROM gmail_message_facts
                      WHERE account_id = ?1 AND conversation_id NOT IN
-                         (SELECT conversation_id FROM gmail_discovery_seen)
+                         (SELECT conversation_id FROM gmail_discovery_seen UNION SELECT conversation_id FROM gmail_search_cache WHERE account_id=?1)
                        AND NOT EXISTS (
                          SELECT 1 FROM gmail_operation_snapshots s
                          WHERE s.account_id = gmail_message_facts.account_id
@@ -1974,7 +2135,7 @@ impl GmailStore {
                 tx.execute(
                     "DELETE FROM gmail_conversations
                      WHERE account_id = ?1 AND conversation_id NOT IN
-                         (SELECT conversation_id FROM gmail_discovery_seen)",
+                         (SELECT conversation_id FROM gmail_discovery_seen UNION SELECT conversation_id FROM gmail_search_cache WHERE account_id=?1)",
                     params![account_id],
                 )
                 .map_err(|_| MailError::StorageUnavailable)?;
@@ -2175,6 +2336,8 @@ impl GmailStore {
         meta_set(&tx, "generation", &next.to_string())?;
         tx.execute("DELETE FROM meta WHERE key LIKE 'saved_split:%'", [])
             .map_err(|_| MailError::StorageUnavailable)?;
+        tx.execute("DELETE FROM gmail_search_cache", [])
+            .map_err(|_| MailError::StorageUnavailable)?;
         tx.execute("DELETE FROM gmail_conversations", [])
             .map_err(|_| MailError::StorageUnavailable)?;
         tx.execute("DELETE FROM gmail_messages", [])
@@ -2218,6 +2381,127 @@ impl GmailStore {
 }
 
 // ------------------------------------------------------------------ helpers
+
+fn admit_action_observation(
+    tx: &Connection,
+    observation: Option<&SearchObservation>,
+    account: &str,
+) -> Result<(), MailError> {
+    match observation {
+        Some(SearchObservation::Cached {
+            generation,
+            members,
+        }) => {
+            if !generation_matches(tx, *generation)? {
+                return Err(MailError::NotFound);
+            }
+            for member in members {
+                // Normal concurrent setters/history are safe: acceptance uses
+                // current transactional facts. Only concurrent eviction needs
+                // a retry through the missing-context/provider path.
+                if !has_action_context(tx, account, &member.conversation_id)? {
+                    return Err(MailError::Busy);
+                }
+            }
+        }
+        Some(SearchObservation::Fetched {
+            generation,
+            revision,
+            threads,
+        }) => {
+            if !generation_matches(tx, *generation)? {
+                return Err(MailError::NotFound);
+            }
+            if tx.total_changes() != *revision {
+                return Err(MailError::Busy);
+            }
+            admit_search_rows(tx, threads, account)?;
+        }
+        None => {}
+    }
+    Ok(())
+}
+
+fn has_action_context(conn: &Connection, account: &str, id: &str) -> Result<bool, MailError> {
+    conn.query_row(
+        // Eviction removes live bodies, not operation-pinned facts/snapshots.
+        // accept_operation_tx can capture fresh preimages from those same facts
+        // and reuse the recovery snapshot without reading or widening targets.
+        "SELECT EXISTS(SELECT 1 FROM gmail_message_facts WHERE account_id=?1 AND conversation_id=?2) AND (EXISTS(SELECT 1 FROM gmail_conversations WHERE account_id=?1 AND conversation_id=?2) OR EXISTS(SELECT 1 FROM gmail_operation_snapshots WHERE account_id=?1 AND conversation_id=?2))",
+        params![account, id], |r| r.get(0)).map_err(|_| MailError::StorageUnavailable)
+}
+
+fn admit_search_rows(
+    tx: &Connection,
+    threads: &[GmailThread],
+    account: &str,
+) -> Result<(), MailError> {
+    let seq: i64 = tx
+        .query_row(
+            "SELECT COALESCE(MAX(seq),0)+1 FROM gmail_search_cache",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+    for thread in threads {
+        if thread.conversation.conversation_ref.account_id != account {
+            return Err(MailError::NotFound);
+        }
+        let id = &thread.conversation.conversation_ref.conversation_id;
+        let ordinary: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM gmail_conversations c WHERE account_id = ?1 AND conversation_id = ?2 AND NOT EXISTS(SELECT 1 FROM gmail_search_cache s WHERE s.account_id = c.account_id AND s.conversation_id = c.conversation_id))", params![account,id], |r| r.get(0)).map_err(|_| MailError::StorageUnavailable)?;
+        // Search may admit archived threads that discovery/history omit.
+        tx.execute("INSERT OR IGNORE INTO gmail_conversations (account_id, conversation_id, subject, context_complete) VALUES (?1,?2,'',0)", params![account,id]).map_err(|_| MailError::StorageUnavailable)?;
+        upsert_thread(tx, account, thread)?;
+        if !ordinary {
+            tx.execute(
+                "INSERT OR REPLACE INTO gmail_search_cache VALUES (?1,?2,?3)",
+                params![account, id, seq],
+            )
+            .map_err(|_| MailError::StorageUnavailable)?;
+        }
+    }
+    Ok(())
+}
+
+/// Defer action eviction until *all* selected members have immutable targets
+/// and recovery snapshots, including already-cached members near the LRU tail.
+fn evict_search(tx: &Connection, account: &str) -> Result<(), MailError> {
+    let ids = {
+        let mut stmt = tx.prepare("SELECT conversation_id FROM gmail_search_cache WHERE account_id = ?1 ORDER BY seq DESC, conversation_id LIMIT -1 OFFSET 100").map_err(|_| MailError::StorageUnavailable)?;
+        let ids = stmt
+            .query_map([account], |r| r.get::<_, String>(0))
+            .map_err(|_| MailError::StorageUnavailable)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        ids
+    };
+    for id in ids {
+        // Same preservation rule as discovery eviction: only unpinned facts go.
+        tx.execute(
+            "DELETE FROM gmail_messages WHERE account_id=?1 AND conversation_id=?2",
+            params![account, id],
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+        tx.execute(
+            "DELETE FROM gmail_inbox_membership WHERE account_id=?1 AND conversation_id=?2",
+            params![account, id],
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+        tx.execute("DELETE FROM gmail_message_facts WHERE account_id=?1 AND conversation_id=?2 AND NOT EXISTS (SELECT 1 FROM gmail_operation_targets t WHERE t.account_id=gmail_message_facts.account_id AND t.message_id=gmail_message_facts.message_id)", params![account,id]).map_err(|_| MailError::StorageUnavailable)?;
+        tx.execute(
+            "DELETE FROM gmail_conversations WHERE account_id=?1 AND conversation_id=?2",
+            params![account, id],
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+        tx.execute(
+            "DELETE FROM gmail_search_cache WHERE account_id=?1 AND conversation_id=?2",
+            params![account, id],
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+    }
+
+    Ok(())
+}
 
 fn validate_request_id(request_id: &str) -> Result<(), MailError> {
     if request_id.trim().is_empty() || request_id.len() > 200 {
@@ -3901,6 +4185,13 @@ fn upsert_thread(
     if conversation_id.is_empty() {
         return Err(MailError::InvalidProviderResponse);
     }
+    if !thread.inbox_message_ids.is_empty() {
+        conn.execute(
+            "DELETE FROM gmail_search_cache WHERE account_id=?1 AND conversation_id=?2",
+            params![account_id, conversation_id],
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+    }
     if thread.inbox_message_ids.is_empty() {
         let exists: bool = conn
             .query_row(
@@ -4081,7 +4372,7 @@ fn evict_over_cap(
          LEFT JOIN gmail_messages m
            ON m.account_id = c.account_id
           AND m.conversation_id = c.conversation_id
-         WHERE c.account_id = ?1
+         WHERE c.account_id = ?1 AND NOT EXISTS (SELECT 1 FROM gmail_search_cache sc WHERE sc.account_id=c.account_id AND sc.conversation_id=c.conversation_id)
          GROUP BY c.conversation_id
          ORDER BY {seen_order} MAX(m.sent_at) DESC, c.conversation_id ASC
          LIMIT -1 OFFSET ?2"
@@ -4381,6 +4672,170 @@ mod tests {
 
     fn cached(thread: GmailThread) -> ThreadFetch {
         ThreadFetch::Cached(Box::new(thread))
+    }
+
+    #[test]
+    fn search_observations_cannot_overwrite_confirmed_archive_or_read() {
+        let (store, dir) = open_store("search-authoritative-fence");
+        store
+            .begin_account(&profile("acct", "test@example.test", "h1"), 0)
+            .unwrap();
+        let mut old = thread(
+            "acct",
+            "observed",
+            "h2",
+            vec![message("m1", "2020-01-01T00:00:00Z")],
+            &["m1"],
+        );
+        old.message_ids = Some(vec!["m1".into()]);
+        old.unread_message_ids = Some(vec!["m1".into()]);
+        store
+            .apply_discovery_page(&[cached(old.clone())], None, true, false, 0)
+            .unwrap();
+        let target = old.conversation.conversation_ref.clone();
+        let revision = store.observation_revision().unwrap(); // fetch completed before archive
+        store
+            .accept_archived(&SetArchived {
+                conversation: target.clone(),
+                archived: true,
+                request_id: "archive".into(),
+            })
+            .unwrap();
+        let record = store.claim_next_operation().unwrap().unwrap();
+        store.confirm_operation(&record).unwrap();
+        assert_eq!(
+            store.save_search(&[old.clone()], 0, revision, "acct"),
+            Err(MailError::Busy)
+        );
+        assert!(!store.get_conversation(&target).unwrap().is_in_inbox);
+        let revision = store.observation_revision().unwrap(); // independently fetched stale unread facts
+        store
+            .accept_read(&SetRead {
+                conversation: target.clone(),
+                read: true,
+                request_id: "read".into(),
+            })
+            .unwrap();
+        let record = store.claim_next_operation().unwrap().unwrap();
+        store.confirm_operation(&record).unwrap();
+        assert_eq!(
+            store.save_search(&[old], 0, revision, "acct"),
+            Err(MailError::Busy)
+        );
+        let current = store.get_conversation(&target).unwrap();
+        assert!(!current.is_in_inbox);
+        assert_eq!(current.is_read, Some(true));
+        drop(store);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn search_admits_older_archived_mail_without_touching_discovery_and_fences_accounts() {
+        let (store, dir) = open_store("search-archived");
+        store
+            .begin_account(&profile("acct", "test@example.test", "h1"), 0)
+            .unwrap();
+        let older = thread(
+            "acct",
+            "older",
+            "h2",
+            vec![message("m1", "2020-01-01T00:00:00Z")],
+            &[],
+        );
+        let cursor = store.cursor().unwrap();
+        store
+            .save_search(
+                &[older.clone()],
+                0,
+                store.observation_revision().unwrap(),
+                "acct",
+            )
+            .unwrap();
+        assert_eq!(store.cursor().unwrap(), cursor);
+        assert!(store.list_snapshot().unwrap().conversations.is_empty());
+        let request = crate::search::SearchRequest {
+            account_id: "acct".into(),
+            query: "from:sender subject:older".into(),
+            cursor: None,
+            cached_only: true,
+        };
+        assert_eq!(store.search_mail(&request).unwrap().conversations.len(), 1);
+        assert!(
+            !store
+                .get_conversation(&older.conversation.conversation_ref)
+                .unwrap()
+                .is_in_inbox
+        );
+        let wrong = crate::search::SearchRequest {
+            account_id: "other".into(),
+            ..request
+        };
+        assert!(matches!(
+            store.search_mail(&wrong),
+            Err(MailError::NotFound)
+        ));
+        assert!(matches!(
+            store.save_search(&[older], 999, store.observation_revision().unwrap(), "acct"),
+            Err(MailError::NotFound)
+        ));
+        drop(store);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn search_cache_is_bounded_and_eviction_preserves_operation_recovery() {
+        let (store, dir) = open_store("search-retention");
+        store
+            .begin_account(&profile("acct", "test@example.test", "h1"), 0)
+            .unwrap();
+        let older = thread(
+            "acct",
+            "older",
+            "h2",
+            vec![message("m1", "2020-01-01T00:00:00Z")],
+            &[],
+        );
+        store
+            .save_search(
+                &[older.clone()],
+                0,
+                store.observation_revision().unwrap(),
+                "acct",
+            )
+            .unwrap();
+        store
+            .accept_archived(&SetArchived {
+                conversation: older.conversation.conversation_ref.clone(),
+                archived: false,
+                request_id: "restore".into(),
+            })
+            .unwrap();
+        assert_eq!(store.list_snapshot().unwrap().conversations.len(), 1);
+        for n in 0..101 {
+            let t = thread(
+                "acct",
+                &format!("new-{n:03}"),
+                "h3",
+                vec![message(&format!("msg-{n}"), "2026-01-01T00:00:00Z")],
+                &[],
+            );
+            store
+                .save_search(&[t], 0, store.observation_revision().unwrap(), "acct")
+                .unwrap();
+        }
+        let conn = store.lock_conn().unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM gmail_search_cache", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 100);
+        drop(conn);
+        let recovered = store
+            .get_conversation(&older.conversation.conversation_ref)
+            .unwrap();
+        assert!(recovered.retained_snapshot_at.is_some());
+        assert!(recovered.is_in_inbox);
+        drop(store);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

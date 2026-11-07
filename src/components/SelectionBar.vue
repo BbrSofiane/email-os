@@ -11,7 +11,7 @@
 const props = defineProps<{
   count: number;
   loadedCount: number;
-  context: 'inbox' | 'saved' | 'done' | 'starred';
+  context: 'inbox' | 'saved' | 'done' | 'starred' | 'search';
   /** Archive/unarchive groups need the same capability gates as singles. */
   actionsEnabled?: boolean;
   /** Read groups are Gmail-only like the single setter. */
@@ -57,7 +57,7 @@ const selectAllTitle = computed(() =>
         @click="emit('archive')"
       >Mark {{ count }} Done</button>
       <button
-        v-if="context === 'done'"
+        v-if="context !== 'inbox'"
         type="button"
         data-test="selection-unarchive"
         :disabled="!actionsEnabled"

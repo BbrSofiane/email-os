@@ -67,6 +67,16 @@ impl Backend {
             Self::Gmail(core) => core.save_saved_split(account, split),
         }
     }
+
+    fn search_mail(
+        &self,
+        request: &mail_core::search::SearchRequest,
+    ) -> Result<mail_core::search::SearchPage, MailError> {
+        match self {
+            Self::Fixture(core) => core.search_mail(request),
+            Self::Gmail(core) => core.search_mail(request),
+        }
+    }
     fn list_cached_done(
         &self,
         request: &CachedDoneRequest,
@@ -445,6 +455,23 @@ async fn save_saved_split(
 }
 
 #[tauri::command]
+async fn search_mail(
+    state: State<'_, AppState>,
+    request: mail_core::search::SearchRequest,
+) -> Result<mail_core::search::SearchPage, MailError> {
+    let backend = state.backend.clone();
+    run_blocking(backend, move |backend| backend.search_mail(&request)).await
+}
+
+#[tauri::command]
+async fn cancel_search_mail(state: State<'_, AppState>) -> Result<(), MailError> {
+    if let Backend::Gmail(core) = &state.backend {
+        core.cancel_search_mail();
+    }
+    Ok(())
+}
+
+#[tauri::command]
 async fn list_cached_done(
     state: State<'_, AppState>,
     request: CachedDoneRequest,
@@ -463,9 +490,18 @@ async fn list_conversations(state: State<'_, AppState>) -> Result<InboxSnapshot,
 async fn get_conversation(
     state: State<'_, AppState>,
     r#ref: ConversationRef,
+    load_missing_search_result: Option<bool>,
 ) -> Result<Conversation, MailError> {
     let backend = state.backend.clone();
-    run_blocking(backend, move |backend| backend.get_conversation(&r#ref)).await
+    run_blocking(backend, move |backend| {
+        if load_missing_search_result == Some(true) {
+            if let Backend::Gmail(core) = &backend {
+                return core.load_search_conversation(&r#ref);
+            }
+        }
+        backend.get_conversation(&r#ref)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -821,6 +857,8 @@ fn main() {
             set_starred_group,
             get_saved_split,
             save_saved_split,
+            search_mail,
+            cancel_search_mail,
             get_conversation,
             set_archived,
             enable_mailbox_actions,

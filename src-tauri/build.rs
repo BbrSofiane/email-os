@@ -7,6 +7,8 @@ fn main() {
         "set_starred_group",
         "get_saved_split",
         "save_saved_split",
+        "search_mail",
+        "cancel_search_mail",
         "get_conversation",
         "set_archived",
         "enable_mailbox_actions",

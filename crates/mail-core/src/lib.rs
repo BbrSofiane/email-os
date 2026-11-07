@@ -15,6 +15,7 @@ pub mod gmail;
 pub mod groups;
 mod lock;
 pub mod provider;
+pub mod search;
 mod seed;
 pub mod splits;
 pub mod stars;
@@ -149,6 +150,14 @@ impl MailCore {
         let saved = self.inner.store.save_saved_split(account, split)?;
         self.dispatch();
         Ok(saved)
+    }
+
+    pub fn search_mail(
+        &self,
+        request: &crate::search::SearchRequest,
+    ) -> Result<crate::search::SearchPage, MailError> {
+        self.ensure_worker_healthy()?;
+        self.inner.store.search_mail(request)
     }
 
     pub fn list_cached_done(

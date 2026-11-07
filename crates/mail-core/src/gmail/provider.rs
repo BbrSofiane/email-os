@@ -957,6 +957,37 @@ impl GmailReadProvider for GmailProvider {
         })
     }
 
+    fn search_threads(
+        &self,
+        page_token: Option<&str>,
+        cancel: &CancelToken,
+    ) -> Result<InboxPage, MailError> {
+        let token = self.access_token(cancel)?;
+        // Enumerate bounded candidates, then evaluate our AST locally. Never give
+        // Gmail's stemming/operator grammar different semantics from cached mode.
+        let mut query = "maxResults=20&includeSpamTrash=false".to_string();
+        if let Some(page) = page_token {
+            query.push_str(&format!("&pageToken={}", url_encode(page)));
+        }
+        let body = self
+            .api_get("/gmail/v1/users/me/threads", &query, &token, cancel)?
+            .ok_or(MailError::InvalidProviderResponse)?;
+        let json: Value = parse_json(&body)?;
+        let mut thread_ids = Vec::new();
+        if let Some(threads) = optional_array(&json, "threads")? {
+            if threads.len() > 20 {
+                return Err(MailError::InvalidProviderResponse);
+            }
+            for thread in threads {
+                thread_ids.push(str_field(thread, "id")?);
+            }
+        }
+        Ok(InboxPage {
+            thread_ids,
+            next_page_token: optional_string(&json, "nextPageToken")?,
+        })
+    }
+
     fn get_thread(
         &self,
         thread_id: &str,
@@ -2921,6 +2952,28 @@ pub(crate) mod tests {
         assert!(!facts.contains_key("unknown"));
         assert!(thread.conversation.messages.is_empty());
         assert_eq!(thread.message_ids.unwrap().len(), 3);
+    }
+
+    #[test]
+    fn search_pages_are_paced_bounded_and_not_inbox_filtered() {
+        let (base, api) = FakeApi::start(vec![(
+            "/gmail/v1/users/me/threads",
+            200,
+            r#"{"threads":[{"id":"old"}],"nextPageToken":"older"}"#,
+        )]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        secrets.store(&future_token()).unwrap();
+        let provider = test_provider(&base, secrets);
+        let page = provider
+            .search_threads(Some("previous"), &CancelToken::default())
+            .unwrap();
+        assert_eq!(page.thread_ids, vec!["old"]);
+        assert_eq!(page.next_page_token.as_deref(), Some("older"));
+        let requests = api.requests();
+        assert!(requests[0].contains("maxResults=20"));
+        assert!(requests[0].contains("includeSpamTrash=false"));
+        assert!(requests[0].contains("pageToken=previous"));
+        assert!(!requests[0].contains("labelIds=INBOX"));
     }
 
     #[test]
