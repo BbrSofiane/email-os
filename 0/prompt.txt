@@ -1,5 +1,1 @@
-Initialise entire.io for claude and codex in this repository in addition of the existing pi
-
----
-
 Commit, push the changes and settle this thread
