@@ -1,0 +1,12 @@
+{
+  "$schema": "https://t3.codes/schema/t3.json",
+  "scripts": [
+    {
+      "name": "Copy mise.local.toml",
+      "icon": "configure",
+      "runOnWorktreeCreate": true,
+      "async": false,
+      "command": "src=\"$T3CODE_PROJECT_ROOT/mise.local.toml\"; if [ ! -f \"$src\" ]; then echo \"no mise.local.toml at $src; skipping\"; elif [ -e mise.local.toml ]; then echo \"mise.local.toml already present; leaving it alone\"; else cp \"$src\" mise.local.toml && echo \"copied mise.local.toml from $T3CODE_PROJECT_ROOT\"; fi"
+    }
+  ]
+}
