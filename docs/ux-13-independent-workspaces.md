@@ -204,6 +204,32 @@ launch, native-tab feasibility/validation spike, GUI draft-close validation,
 Keychain access, OAuth, real multi-account activation or remote convergence.
 No mailbox, credentials, external sends, provider writes or OS package installs.
 
+### Interactive native macOS launch (fixture mode, rebased on main 3a2f613)
+
+`pnpm tauri dev` (default **fixture** mode, no `EMAIL_OS_MODE=gmail`, no
+credentials; dev URL overridden to a private port so another worktree's server
+could not be loaded) built and launched the real Tauri/WKWebView window
+(1100×760, one `main` window) on macOS. Window-only screenshots (not full-screen)
+were taken of that app:
+
+1. Launch: single-account Inbox, header `Inbox` with **no** workspace header,
+   account buttons or "Synthetic workspace" title — the in-app workspaces are
+   correctly absent from the native shell.
+2. Cmd+K opens the native command palette (browser-preview's palette trigger
+   hint is native-only).
+3. Typing `switch` yields **"No available commands"** — no switch-account command
+   is offered natively.
+4. Drafts panel shows the local-only notice ("No drafts are sent to a mail
+   provider").
+
+The app then quit cleanly with Cmd+Q (no dirty draft). Observations are limited:
+this used the shared synthetic fixture profile under the app data dir (it already
+held earlier dev data: a saved split, four local drafts, two inbox rows); the run
+performed no archive/read/draft write. It did **not** validate: native tabs or a
+tab spike, Cmd+T/Cmd+number handling in WKWebView, the dirty-draft close gate via
+the GUI, VoiceOver, multi-window/profile-lock rejection through a second launch,
+Keychain, OAuth, Gmail mode, or any provider/remote behavior.
+
 ### Still gated / requested decision
 
 - [x] Mail search (present on the rebased main) is account-local: each workspace's
