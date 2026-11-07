@@ -1,0 +1,61 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6W12BH4BJ4BBWE4H9J2XAAA",
+  "session_id": "c76d33d1-bfb7-485b-a7f9-1da77be42a31",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-07T22:11:36.816149Z",
+  "branch": "compare-compose-experience",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "DESIGN.md",
+    "src/App.vue",
+    "src/assets/style.css",
+    "src/components/CommandGlyph.vue",
+    "src/components/ComposeCard.vue",
+    "src/components/ContactPane.vue",
+    "src/components/DraftEditorCore.vue",
+    "src/components/DraftsPanel.vue",
+    "src/components/HeaderGlyph.vue",
+    "src/components/ReplyComposer.vue",
+    "src/lib/action-palette.ts",
+    "src/lib/browsing-actions.ts",
+    "src/lib/draft-errors.ts",
+    "tests/compose-card.component.test.ts",
+    "tests/draft-recipient-label.component.test.ts",
+    "tests/drafts.component.test.ts",
+    "tests/reader.rendered.test.ts",
+    "tests/reply-composer.component.test.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "14caa82dd52b",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 272,
+    "cache_creation_tokens": 483554,
+    "cache_read_tokens": 18835448,
+    "output_tokens": 85799,
+    "api_call_count": 119
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-07T22:11:36.617042Z",
+    "agent_lines": 1951,
+    "agent_removed": 319,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 1951,
+    "total_lines_changed": 2270,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}

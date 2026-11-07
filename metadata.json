@@ -1,0 +1,43 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6W12BH4BJ4BBWE4H9J2XAAA",
+  "strategy": "manual-commit",
+  "branch": "compare-compose-experience",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "DESIGN.md",
+    "src/App.vue",
+    "src/assets/style.css",
+    "src/components/CommandGlyph.vue",
+    "src/components/ComposeCard.vue",
+    "src/components/ContactPane.vue",
+    "src/components/DraftEditorCore.vue",
+    "src/components/DraftsPanel.vue",
+    "src/components/HeaderGlyph.vue",
+    "src/components/ReplyComposer.vue",
+    "src/lib/action-palette.ts",
+    "src/lib/browsing-actions.ts",
+    "src/lib/draft-errors.ts",
+    "tests/compose-card.component.test.ts",
+    "tests/draft-recipient-label.component.test.ts",
+    "tests/drafts.component.test.ts",
+    "tests/reader.rendered.test.ts",
+    "tests/reply-composer.component.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 272,
+    "cache_creation_tokens": 483554,
+    "cache_read_tokens": 18835448,
+    "output_tokens": 85799,
+    "api_call_count": 119
+  }
+}
