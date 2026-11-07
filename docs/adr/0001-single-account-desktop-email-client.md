@@ -175,7 +175,8 @@ silently relaxing it to claim BROWSE-14 complete.
 ## Explicit non-goals
 
 - Superhuman feature parity or a polished public launch.
-- Multiple accounts, multiple providers, or a custom mobile client.
+- Real multiple-account activation, multiple providers, or a custom mobile client.
+  UX-13A permits only the synthetic in-app workspace proof described below.
 - AI classification, generated replies, or agent-authored configuration.
 - Public plugins, arbitrary extension code, a marketplace, or stable external APIs.
 - Follow-up automation, scheduled send, sophisticated snooze, or background execution while quit.
@@ -192,6 +193,28 @@ silently relaxing it to claim BROWSE-14 complete.
 - Application-owned state replication across devices.
 - Complete offline mailbox search, advanced rich-text editing, attachment previews, or inline attachment composition.
 - Recruitment, billing, or the customization pilot described in Experiment 1.
+
+## UX-13 bounded decision: synthetic workspaces, native/runtime deferred
+
+The first-build single connected account boundary remains. UX-13A explicitly
+permits **two browser-only synthetic account sessions** with independent browsing
+and local-only draft state. This tests account+ID isolation without activating
+real accounts, extending credentials, or implying remote convergence. Existing
+Inbox/cached Done capabilities are reused; absent UX-06/07 search is not silently
+implemented. See [the UX-13A contract](../ux-13-independent-workspaces.md).
+
+Choose disclosed **in-app workspaces** for this proof, not native tabs. Genuine
+macOS tabs require a real Tauri feasibility/lifecycle/focus validation spike;
+none is claimed from browser fixtures. Native remains one window/selected core.
+Same-profile competing writers continue to be deliberately rejected by OS locks.
+
+Do not extend native account/profile/credential ownership yet: current Gmail
+credentials have an account-independent Keychain key, and the shell's close gate
+assumes one editor/window. Additional profile directories alone would permit
+credential leakage. A backend-owned registry, credential namespace/migration,
+account-bound profile leases and app-wide close coordination need a separately
+approved runtime design before real activation. No unified inbox, cross-account
+search, new OAuth authority or provider writes are authorized by this exception.
 
 ## Acceptance and evaluation
 

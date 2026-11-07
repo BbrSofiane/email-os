@@ -25,6 +25,7 @@ export const browsingActions = [
   { id: 'account', label: 'Go to Account', shortcut: '' },
   { id: 'activity', label: 'Go to Activity', shortcut: '' },
   { id: 'drafts', label: 'Go to local Drafts', shortcut: '' },
+  { id: 'switch-account', label: 'Switch account', shortcut: '' },
 ] as const;
 export type BrowsingActionId = typeof browsingActions[number]['id'];
 export interface AvailableAction { id: BrowsingActionId; label: string; shortcut: string; disabledReason?: string }

@@ -501,7 +501,7 @@ function isDetailsOpen(message: Message): boolean {
 }
 
 function bodyId(message: Message): string {
-  return `reader-body-${message.id}`.replace(/[^A-Za-z0-9_-]/g, '-');
+  return `reader-body-${props.conversation?.ref.accountId}-${message.id}`.replace(/[^A-Za-z0-9_-]/g, '-');
 }
 
 function setActive(messageId: string): void {

@@ -16,7 +16,7 @@ interface CdpSession {
   close(): void;
 }
 
-describe.skipIf(chromePath === '')('UX-03 discovery (real Chrome, opt-in)', () => {
+describe.skipIf(chromePath === '')('UX-03 discovery / UX-13 workspaces (real Chromium, opt-in)', () => {
   let server: ViteDevServer | null = null;
   let appUrl = '';
   let chrome: ReturnType<typeof spawn> | null = null;
@@ -646,6 +646,122 @@ describe.skipIf(chromePath === '')('UX-03 discovery (real Chrome, opt-in)', () =
     expect(await activeTest()).toBe('action-query');
     expect(await cdp!.js('window.__fixture.controls.archiveCommands.length')).toBe(0);
     await press('Escape');
+  });
+
+  async function freshWorkspaceMount(): Promise<void> {
+    await setViewport(1200);
+    await cdp!.js(`(async () => {
+      const vueUrl = performance.getEntriesByType('resource').map((x) => x.name).find((n) => n.includes('/node_modules/.vite/deps/vue.js'));
+      const { createApp } = await import(vueUrl);
+      const { default: Workspaces } = await import('/src/FixtureWorkspaces.vue');
+      const { createFixtureWorkspaces } = await import('/src/lib/fixture-workspaces.ts');
+      const root = document.querySelector('#app'); root.__vue_app__?.unmount();
+      window.__sessions = createFixtureWorkspaces();
+      createApp(Workspaces, { sessions: window.__sessions }).mount(root);
+    })()`);
+    await cdp!.js('window.__h.wait(200)');
+    await cdp!.cmd('Page.bringToFront');
+  }
+
+  it('UX-13: command queries survive trusted dismissal, account switches and palette execution independently', async () => {
+    await freshWorkspaceMount();
+    const a = '[data-workspace="fixture-account"]';
+    const b = '[data-workspace="fixture-account-two"]';
+    const query = (panel: string) => cdp!.js<string>(`document.querySelector('${panel} [data-test="action-query"]').value`);
+    await click(`${a} [data-test="palette-trigger"]`); await cdp!.js('window.__h.wait(60)');
+    await cdp!.cmd('Input.insertText', { text: 'cached' });
+    await press('Escape'); await cdp!.js('window.__h.wait(60)');
+    expect(await cdp!.js(`document.querySelector('${a} [role="dialog"]') === null`)).toBe(true);
+    await click('[data-test="switch-fixture-account-two"]'); await cdp!.js('window.__h.wait(80)');
+    await click(`${b} [data-test="palette-trigger"]`); await cdp!.js('window.__h.wait(60)');
+    expect(await query(b)).toBe('');
+    await cdp!.cmd('Input.insertText', { text: 'Switch account' });
+    await press('Enter'); await cdp!.js('window.__h.wait(100)');
+    expect(await cdp!.js(`document.querySelector('${b}').inert`)).toBe(true);
+    await click(`${a} [data-test="palette-trigger"]`); await cdp!.js('window.__h.wait(60)');
+    expect(await query(a)).toBe('cached');
+    // Dismiss through the actual backdrop, not a click on a covered workspace control.
+    const point = await cdp!.js<{ x: number; y: number }>(`(() => {
+      const backdrop = document.querySelector('${a} .action-backdrop');
+      const r = backdrop.getBoundingClientRect(); const x = r.right - 8, y = r.bottom - 8;
+      if (document.elementFromPoint(x, y) !== backdrop) throw new Error('Backdrop point is covered');
+      return { x, y };
+    })()`);
+    for (const type of ['mousePressed', 'mouseReleased']) {
+      await cdp!.cmd('Input.dispatchMouseEvent', { type, ...point, button: 'left', clickCount: 1 });
+    }
+    await cdp!.js('window.__h.wait(60)');
+    expect(await cdp!.js(`document.querySelector('${a} [role="dialog"]') === null`)).toBe(true);
+    await click(`${a} [data-test="navigator-trigger"]`); await cdp!.js('window.__h.wait(60)');
+    expect(await query(a)).toBe('');
+    await cdp!.cmd('Input.insertText', { text: 'Inbox' });
+    await press('Escape'); await cdp!.js('window.__h.wait(60)');
+    await click('[data-test="switch-fixture-account-two"]'); await cdp!.js('window.__h.wait(80)');
+    await click(`${b} [data-test="palette-trigger"]`); await cdp!.js('window.__h.wait(60)');
+    expect(await query(b)).toBe('Switch account');
+    await press('Escape'); await cdp!.js('window.__h.wait(60)');
+    await click('[data-test="switch-fixture-account"]'); await cdp!.js('window.__h.wait(80)');
+    await click(`${a} [data-test="palette-trigger"]`); await cdp!.js('window.__h.wait(60)');
+    expect(await query(a)).toBe('cached');
+    expect(await cdp!.js(`window.__sessions.map(s => s.client.controls.activity().length)`)).toEqual([0, 0]);
+    await press('Escape');
+  });
+
+  it('UX-13: pointer switches retain account-local focus/selection/scroll; inactive identical IDs stay inert', async () => {
+    await freshWorkspaceMount();
+    const a = '[data-workspace="fixture-account"]';
+    const b = '[data-workspace="fixture-account-two"]';
+    const beforeLists = await cdp!.js<Array<Array<{ ref: { accountId: string; conversationId: string } }>>>(
+      `Promise.all(window.__sessions.map(async s => (await s.client.listConversations()).conversations))`,
+    );
+    expect(beforeLists.map(rows => rows.length)).toEqual([18, 18]);
+    const expectedA = beforeLists[0]!.filter(row => row.ref.conversationId !== 'conv-03').map(row => row.ref);
+    await click(`${a} [data-test="rail-inbox"]`);
+    await cdp!.js(`(() => {
+      const panel = document.querySelector('${a}');
+      const list = panel.querySelector('.inbox-list'); list.style.height='100px'; list.style.flex='none';
+      panel.querySelector('[data-test="conversation-row-conv-03"]').focus();
+    })()`);
+    await press('x'); await cdp!.js('window.__h.wait(80)');
+    await cdp!.js(`document.querySelector('${a} .inbox-list').scrollTop = 50`);
+    const scroll = await cdp!.js<number>(`document.querySelector('${a} .inbox-list').scrollTop`);
+    expect(scroll).toBeGreaterThan(0);
+    await click('[data-test="switch-fixture-account-two"]'); await cdp!.js('window.__h.wait(100)');
+    expect(await cdp!.js(`document.querySelector('${a}').inert`)).toBe(true);
+    // Browser itself rejects a programmatic attempt to focus an inert old row.
+    await cdp!.js(`document.querySelector('${a} [data-test="conversation-row-conv-03"]').focus()`);
+    expect(await cdp!.js(`document.activeElement.closest('${a}') !== null`)).toBe(false);
+    await cdp!.js(`document.querySelector('${b} [data-test="conversation-row-conv-01"]').focus()`);
+    await press('j'); await cdp!.js('window.__h.wait(60)');
+    expect(await activeTest()).toBe('conversation-row-conv-02');
+    await press('Enter'); await cdp!.js('window.__h.wait(80)');
+    expect(await cdp!.js(`document.querySelector('${b} [data-test="reader"]') !== null`)).toBe(true);
+    await click('[data-test="switch-fixture-account"]'); await cdp!.js('window.__h.wait(80)');
+    expect(await activeTest()).toBe('conversation-row-conv-03');
+    expect(await cdp!.js(`document.querySelector('${a} .inbox-list').scrollTop`)).toBe(scroll);
+    expect(await cdp!.js(`document.querySelector('${a} [data-test="row-select-conv-03"]').checked`)).toBe(true);
+    await press('e'); await cdp!.js('window.__h.wait(150)');
+    // OperationSummary.conversation is account+ID; exact equality is non-vacuous
+    // and also rejects a wrong conversation or an extra accidental operation.
+    expect(await cdp!.js(`window.__sessions[0].client.controls.activity().map(op => ({
+      conversation: op.conversation, kind: op.kind, requestedArchived: op.requestedArchived,
+    }))`)).toEqual([{
+      conversation: { accountId: 'fixture-account', conversationId: 'conv-03' },
+      kind: 'archive', requestedArchived: true,
+    }]);
+    expect(await cdp!.js(`window.__sessions[1].client.controls.activity().length`)).toBe(0);
+    // listConversations returns an InboxSnapshot, not an array; detail owns isInInbox.
+    expect(await cdp!.js(`(async () => (await window.__sessions[0].client.getConversation({ accountId: 'fixture-account', conversationId: 'conv-03' })).isInInbox)()`)).toBe(false);
+    expect(await cdp!.js(`(async () => (await window.__sessions[0].client.listConversations()).conversations.map(row => row.ref))()`)).toEqual(expectedA);
+    expect(await cdp!.js(`Array.from(document.querySelectorAll('${a} [data-test^="conversation-row-"]'), row => row.dataset.test)`))
+      .toEqual(expectedA.map(ref => `conversation-row-${ref.conversationId}`));
+    expect(await cdp!.js(`(async () => (await window.__sessions[1].client.listConversations()).conversations)()`)).toEqual(beforeLists[1]);
+    await click('[data-test="switch-fixture-account-two"]'); await cdp!.js('window.__h.wait(80)');
+    await press('Escape'); await cdp!.js('window.__h.wait(80)');
+    expect(await activeTest()).toBe('conversation-row-conv-02');
+    expect(await cdp!.js(`Array.from(document.querySelectorAll('${b} [data-test^="conversation-row-"]'), row => row.dataset.test)`))
+      .toEqual(beforeLists[1]!.map(row => `conversation-row-${row.ref.conversationId}`));
+    expect(await cdp!.js(`document.title`)).toContain('you@second.example.test');
   });
 
 });

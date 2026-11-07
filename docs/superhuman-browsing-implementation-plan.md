@@ -280,6 +280,10 @@ full BROWSE-14 completion.
 
 ### UX-13 — Independent workspaces/accounts, then genuine native tabs
 
+Narrow fixture-only increment: [UX-13A contract and gates](ux-13-independent-workspaces.md).
+This does not depend on assuming UX-06/07 is present and does not activate native
+multi-account credentials or claim native tabs.
+
 **Scope gate:** Explicit multi-account and native-shell decision; do not make this a prerequisite for the single-account browsing milestone.
 
 **Journey:** Open two workspaces on different accounts → navigate/search/select independently → switch → no state, credentials or actions leak between accounts.

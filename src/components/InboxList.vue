@@ -332,7 +332,7 @@ function onRowKeydown(event: KeyboardEvent, row: ConversationSummaryLike): void 
 
 function focusRef(target: ConversationRef, options: { preventScroll?: boolean } = {}): void {
   const el = rowEls.get(rowKey(target));
-  if (!el) return;
+  if (!el || el.closest('[inert]')) return;
   if (options.preventScroll) preventScrollReveal = true;
   el.focus({ preventScroll: options.preventScroll ?? false });
   preventScrollReveal = false;
