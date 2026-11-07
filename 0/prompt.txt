@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>b4g240cf8</task-id>
+<tool-use-id>toolu_01YJ6TEiQoH2vjw8yJroY7gf</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-sofianebebert-workspace-worktrees-email-os-feat-ux-13-implementation/45f4b9c4-c33a-4241-b735-70d748a307eb/tasks/b4g240cf8.output</output-file>
+<status>failed</status>
+<summary>Background command "mise exec -- pnpm exec vite --port 5391 --strictPort" failed with exit code 143</summary>
+</task-notification>

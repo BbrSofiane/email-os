@@ -1,0 +1,60 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6V6WQP43EM72SR5Y4G02ZD5",
+  "session_id": "45f4b9c4-c33a-4241-b735-70d748a307eb",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-07T14:34:11.691339Z",
+  "branch": "feat/ux-13-implementation",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/FixtureWorkspaces.vue"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "f1daf00cd1c9",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 138,
+    "cache_creation_tokens": 146076,
+    "cache_read_tokens": 6595521,
+    "output_tokens": 27924,
+    "api_call_count": 64,
+    "subagent_tokens": {
+      "input_tokens": 104,
+      "cache_creation_tokens": 227576,
+      "cache_read_tokens": 3357260,
+      "output_tokens": 46986,
+      "api_call_count": 52
+    }
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-07T14:34:11.609583Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 3,
+    "total_committed": 0,
+    "total_lines_changed": 5,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 24,
+      "user_lines_removed": 3,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "docs/ux-13-independent-workspaces.md": 4,
+        "src/FixtureWorkspaces.vue": 1,
+        "tests/workspaces.component.test.ts": 19
+      },
+      "user_removed_per_file": {
+        "docs/ux-13-independent-workspaces.md": 2,
+        "src/FixtureWorkspaces.vue": 1
+      }
+    }
+  ]
+}
