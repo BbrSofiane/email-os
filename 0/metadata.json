@@ -1,0 +1,50 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6V5VTCK08NFXD2FS9Z2Z3Q6",
+  "session_id": "e3c5c693-c6a3-400d-9f57-2efd52e91eb8",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-07T14:16:12.842488Z",
+  "branch": "feat/ux-11-implementation",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "tests/reminders.navigation.test.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "12877cf556db",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 12,
+    "cache_creation_tokens": 33253,
+    "cache_read_tokens": 283131,
+    "output_tokens": 1468,
+    "api_call_count": 6
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-07T14:16:12.816192Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 3,
+    "total_committed": 0,
+    "total_lines_changed": 3,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 3,
+      "user_lines_removed": 3,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "tests/reminders.navigation.test.ts": 3
+      },
+      "user_removed_per_file": {
+        "tests/reminders.navigation.test.ts": 3
+      }
+    }
+  ]
+}

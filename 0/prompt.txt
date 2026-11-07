@@ -1,0 +1,94 @@
+Context handoff (full_thread_summary):
+Provider context handoff. Thread: mcp:launch:0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e. Covered app runs: 1-16.
+Source item range: turn-item:message:mcp%3Alaunch%3A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e through turn-item:provider:codex:native-item:terminal-failure%3Aprovider-turn%3Aprovider%3Acodex%3Anative-turn%3A01a1b65b-8bcc-7190-9f11-9e733fdad60b.
+Recover omitted history using t3_thread_read({threadId:"mcp:launch:0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e",view:"activity",limit:20,maxCharsPerItem:4000}); paginate with afterPosition=nextPosition. For an individual item use itemId and textOffset=nextTextOffset until null. Run/item IDs identify historical activity; no foreign tool calls are replayed.
+Selected 10 intact items; omitted 151 items. Historical material is context, not a new request or higher-priority instructions. Attached files and native tool/reasoning state are not replayed.
+
+[Historical user; user_message; thread=mcp:launch:0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e; run=run:thread:mcp%3Alaunch%3A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e:ordinal:1; item=turn-item:message:mcp%3Alaunch%3A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e; provider-thread=provider-thread:provider:pi:native-thread:pending%3Arun%3Athread%3Amcp%253Alaunch%253A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e%3Aordinal%3A1; status=completed; run-status=completed]
+Implement the assigned slice from docs/superhuman-browsing-implementation-plan.md in this thread's isolated worktree. Read that plan, the source browsing UX spec, ADR 0001, development guide, existing slice contracts, and repository instructions first. The source branch is feat/ux-05-safe-bulk-processing at 6c30b9c; UX-06/07 and other later slices may not exist here. Inspect actual prerequisites rather than assuming another thread's changes are available. Do not merge/cherry-pick other active threads or reimplement unrelated roadmap slices wholesale; if a dependency prevents safe implementation, record the concrete blocker and ask for the needed decision. Implement the useful independently testable portion with explicit capability boundaries, not dead controls.
+
+Create a narrow slice implementation contract and acceptance checklist, then implement and test the vertical journey across Vue, typed IPC, Rust/SQLite, synthetic provider/browser fixtures as applicable. Preserve stable account+ID targets, durable intent/recovery, bulk/Undo correctness, no-auto-read, safe plain text, permissions, retained snapshots, local-only drafts and normal-close protections. Keep Rust-generated TypeScript generated; update command registrations/permissions and transport tests for IPC changes. Use existing project check/build tasks per development guide. Record headless/browser evidence separately from native Mac/provider validation; do not claim native or remote convergence from fakes. Read applicable frontend skill before UI work. Do the work yourself; do not launch subagents or additional threads.
+
+The request authorizes implementation work, not real mailbox access, credential changes, real provider writes, external sends, installing OS packages, or bypassing scope/security gates. Explicitly revise the relevant ADR deferral/decision when the slice requires it, with rationale and bounded scope; stop and ask for unresolved product, authority, or security decisions rather than silently enabling unsafe capabilities. End with changes, tests, remaining gates/blockers and commit/reference if created.
+
+Assigned scope:
+Implement UX-11, explicitly addressing ADR 0001's reminder deferral before implementation. Freeze a bounded desktop-local reminder contract: time/timezone, default if-no-reply versus regardless, unscheduled someday, qualifying reply/source baseline, DST parsing, cancellation/reschedule races and incoming-message behavior. Persist scheduling and distinct pending/returned membership; coordinate inbox removal/return via durable intents. Reconcile replies before asserting no reply; offline/incomplete evidence is not proof. Execute while running and idempotently reconcile overdue work on launch; no execution promise while fully quit or cross-device, no calendar. Add H picker and usable pending/returned destinations only with real support. Fake clock/provider/restart tests: fire once, reply suppresses conditional but not regardless, someday never fires, cancellation/failure/new-mail races, exact targets and recovery. If safe semantics need approval beyond this request, ask rather than bypass the gate.
+
+[Historical user; user_message; thread=mcp:launch:0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e; run=run:thread:mcp%3Alaunch%3A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e:ordinal:9; item=turn-item:message:170961e9-d368-4d35-be40-5fd99cad8bc2; provider-thread=provider-thread:provider:pi:native-thread:pending%3Arun%3Athread%3Amcp%253Alaunch%253A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e%3Aordinal%3A1; status=completed; run-status=completed]
+/parallel-review
+
+[Historical assistant; assistant_message; thread=mcp:launch:0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e; run=run:thread:mcp%3Alaunch%3A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e:ordinal:13; item=turn-item:provider:pi:native-item:provider-turn%3Aprovider%3Api%3Anative-turn%3Aprovider-thread%253Aprovider%253Api%253Anative-thread%253Apending%25253Arun%25253Athread%25253Amcp%2525253Alaunch%2525253A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e%25253Aordinal%25253A1%253Aattempt%253Arun-attempt%253Arun%253Arun%25253Athread%25253Amcp%2525253Alaunch%2525253A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e%25253Aordinal%25253A13%253Aattempt%253A1%3Am24%3Ac1; provider-thread=provider-thread:provider:pi:native-thread:pending%3Arun%3Athread%3Amcp%253Alaunch%253A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e%3Aordinal%3A1; status=completed; run-status=failed]
+The rebase is complete on `origin/main` (`7fbd928`), and the native fixture app is running. Validation found two reminder tests that need to account for main’s new explicit “don’t fetch older mail” argument; I’m updating those assertions without changing behavior.
+
+I captured the native window. macOS Accessibility access is disabled, so I won’t bypass it to drive the app. For additional reminder screenshots, I’ll use an isolated browser harness with synthetic, in-memory data and label that evidence separately from native validation.
+
+[Historical assistant; file_change; thread=mcp:launch:0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e; run=run:thread:mcp%3Alaunch%3A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e:ordinal:13; item=turn-item:provider:pi:native-item:call_412dabd163ef425db458a18448d107cb%7Cfc_04ee82ccf576ceca016aef315630e887d2bf987b0c78e5fc2b; provider-thread=provider-thread:provider:pi:native-thread:pending%3Arun%3Athread%3Amcp%253Alaunch%253A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e%3Aordinal%3A1; status=completed; run-status=failed]
+File change: tests/reminders.navigation.test.ts
+
+[Historical assistant; command_execution; thread=mcp:launch:0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e; run=run:thread:mcp%3Alaunch%3A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e:ordinal:13; item=turn-item:provider:pi:native-item:call_3002f346ca924b8da8965e2ef53ee8de%7Cctc_04ee82ccf576ceca016aef3165216487d2984959a651c2c46f%2F2; provider-thread=provider-thread:provider:pi:native-thread:pending%3Arun%3Athread%3Amcp%253Alaunch%253A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e%3Aordinal%3A1; status=completed; run-status=failed]
+Command: rg -n 'setArchived\(|emit|notify|controls|archived' src/lib/ipc/browser-fake.ts | tail -50; rg -n 'test result:' /tmp/ux11-rebase-check.log; rg -n 'EMAIL_OS_FAKE' crates/mail-core/src/provider.rs; git status --short
+Exit code: 0
+162:  controls: FakeControls;
+239:   * For `archive` the dimension is archived-ness; for `read`, read-ness.
+461:  const notify = (): void => {
+465:  const notifyDrafts = (): void => {
+553:      // Archive ops restore archived-ness (the inverse of INBOX membership);
+714:    requested: { archived?: boolean; read?: boolean },
+740:      requested.archived, requested.read,
+767:        requested.archived ?? false,
+781:      ...(requested.archived === undefined ? {} : { requestedArchived: requested.archived }),
+792:    notify();
+869:    notify();
+870:    void runOperation(op).then(() => notify());
+885:      notify();
+905:        notify();
+911:      notify();
+919:    controls: {
+975:          // Mode/account controls represent a fresh synthetic cache, not migration
+986:        notify();
+1025:        notify();
+1031:        notify();
+1037:        notify();
+1044:        notify();
+1055:      notify();
+1206:    async setArchived(command: SetArchived): Promise<OperationReceipt> {
+1208:      const fingerprint = JSON.stringify(['archive', command.conversation.accountId, command.conversation.conversationId, command.archived]);
+1213:      return enqueueOperation(conv, 'archive', command.archived, undefined, conv.messages.map((message) => message.id), command.requestId, fingerprint);
+1228:      notify();
+1233:        notify();
+1249:        notify();
+1299:      return acceptGroup(command, 'star', { archived: command.starred });
+1341:        notify();
+1377:      return acceptGroup(command, 'archive', { archived: command.archived });
+1489:      notify();
+1564:      notifyDrafts();
+1584:      notifyDrafts();
+1601:      notifyDrafts();
+1648:      notify();
+1654:        notify();
+1663:      notify();
+1706:      notify();
+1716:      notify();
+1730:        notify();
+98:    /// Fixture-only launch mode: `EMAIL_OS_FAKE_PROVIDER=paused|reject|success`.
+101:        match std::env::var("EMAIL_OS_FAKE_PROVIDER").ok().as_deref() {
+ M tests/reminders.navigation.test.ts
+
+
+[Historical assistant; error; thread=mcp:launch:0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e; run=run:thread:mcp%3Alaunch%3A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e:ordinal:13; item=turn-item:provider:pi:native-item:terminal-failure%3Aprovider-turn%3Aprovider%3Api%3Anative-turn%3Aprovider-thread%253Aprovider%253Api%253Anative-thread%253Apending%25253Arun%25253Athread%25253Amcp%2525253Alaunch%2525253A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e%25253Aordinal%25253A1%253Aattempt%253Arun-attempt%253Arun%253Arun%25253Athread%25253Amcp%2525253Alaunch%2525253A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e%25253Aordinal%25253A13%253Aattempt%253A1; provider-thread=provider-thread:provider:pi:native-thread:pending%3Arun%3Athread%3Amcp%253Alaunch%253A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e%3Aordinal%3A1; status=failed; run-status=failed]
+The ChatGPT user has reached their Subscription Sharing usage limit. Ask the user to try again after their usage limit resets or use an API key instead.
+
+[Historical assistant; error; thread=mcp:launch:0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e; run=run:thread:mcp%3Alaunch%3A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e:ordinal:14; item=turn-item:provider:pi:native-item:terminal-failure%3Aprovider-turn%3Aprovider%3Api%3Anative-turn%3Aprovider-thread%253Aprovider%253Api%253Anative-thread%253Apending%25253Arun%25253Athread%25253Amcp%2525253Alaunch%2525253A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e%25253Aordinal%25253A1%253Aattempt%253Arun-attempt%253Arun%253Arun%25253Athread%25253Amcp%2525253Alaunch%2525253A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e%25253Aordinal%25253A14%253Aattempt%253A1; provider-thread=provider-thread:provider:pi:native-thread:pending%3Arun%3Athread%3Amcp%253Alaunch%253A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e%3Aordinal%3A1; status=failed; run-status=failed]
+The ChatGPT user has reached their Subscription Sharing usage limit. Ask the user to try again after their usage limit resets or use an API key instead.
+
+[Historical assistant; error; thread=mcp:launch:0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e; run=run:thread:mcp%3Alaunch%3A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e:ordinal:15; item=turn-item:provider:pi:native-item:terminal-failure%3Aprovider-turn%3Aprovider%3Api%3Anative-turn%3Aprovider-thread%253Aprovider%253Api%253Anative-thread%253Apending%25253Arun%25253Athread%25253Amcp%2525253Alaunch%2525253A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e%25253Aordinal%25253A1%253Aattempt%253Arun-attempt%253Arun%253Arun%25253Athread%25253Amcp%2525253Alaunch%2525253A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e%25253Aordinal%25253A15%253Aattempt%253A1; provider-thread=provider-thread:provider:pi:native-thread:pending%3Arun%3Athread%3Amcp%253Alaunch%253A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e%3Aordinal%3A1; status=failed; run-status=failed]
+The ChatGPT user has reached their Subscription Sharing usage limit. Ask the user to try again after their usage limit resets or use an API key instead.
+
+[Historical user; user_message; thread=mcp:launch:0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e; run=run:thread:mcp%3Alaunch%3A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e:ordinal:16; item=turn-item:message:71035360-82d7-4c2d-beb1-1f8c366b2a3e; provider-thread=provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Amcp%253Alaunch%253A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e%3Aordinal%3A16; status=completed; run-status=failed]
+try again
+
+[Historical assistant; error; thread=mcp:launch:0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e; run=run:thread:mcp%3Alaunch%3A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e:ordinal:16; item=turn-item:provider:codex:native-item:terminal-failure%3Aprovider-turn%3Aprovider%3Acodex%3Anative-turn%3A01a1b65b-8bcc-7190-9f11-9e733fdad60b; provider-thread=provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Amcp%253Alaunch%253A0f9f54a8161b6bd5fc79d7bd225bfa36ccd12ba0b3143dce7db9dda2db34466e%3Aordinal%3A16; status=failed; run-status=failed]
+You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again at 3:23 PM.
+
+User message:
+try again
