@@ -1,0 +1,12 @@
+Run `/impeccable clarify` for ONE critique issue in this Email OS repo (Vue 3 + Tauri). You're in your own worktree on branch impeccable/p2-dock-copy, based on main (which just merged PR #18, the Superhuman-parity browsing shell).
+
+Issue [P2]: Dock and selection copy reads like engine output. Examples: src/components/SelectionBar.vue ~48 "2 selected of 18 loaded — later arrivals and unseen pages are not included"; src/components/ActionNotice.vue ~99 "Undo accepted for 2 of 2; 0 skipped; restored (2)"; the reader's "effective star values known for 3 of 3 cached messages. Pending intent is not provider confirmation."
+Fix direction: short visible lines ("2 selected · 18 loaded", "Restored 2"), mention skips only when > 0, and move precise scope/coverage caveats into a title + accessible description rather than deleting them — PRODUCT.md requires honest, precise state, so precision moves, it doesn't vanish. Voice: terse, factual, plain verbs, no exclamation marks. Read docs/ux-04-trustworthy-undo.md and docs/ux-05-safe-bulk-processing.md for wording guarantees the copy must keep (e.g. partial success, outcome unknown).
+
+How to run the impeccable skill (it isn't installed as a Claude skill here): read /Users/sofianebebert/.pi/skills/impeccable/SKILL.md, then reference/clarify.md and reference/product.md in that folder, and follow them. Skip `context.mjs`; read PRODUCT.md and DESIGN.md at the repo root instead. Scripts written as `.pi/skills/impeccable/scripts/...` live at /Users/sofianebebert/.pi/skills/impeccable/scripts/. Full critique: .impeccable/critique/2026-11-07T17-54-20Z__src-components-inboxlist-vue.md.
+
+Scope: only outcome/selection/coverage sentences. Do NOT rename actions (Archive/Done/Mark Done) — a parallel thread owns action vocabulary. Parallel threads also own dock status colours and g-chord handling; don't touch styling or key handling.
+
+Verify: `pnpm install` if needed, `pnpm typecheck`, `pnpm test` (baseline on main: 646 passed, 32 skipped). Update exact-text assertions intentionally; add assertions that caveats remain in accessible descriptions/titles.
+
+Finish: commit with a conventional message ending with `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`, push the branch, open a PR to main with `gh pr create` (body ends with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`) including a before → after copy table. Do NOT merge. Report the PR URL and test counts.
