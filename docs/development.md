@@ -74,6 +74,66 @@ mise run install:ui   # locked frontend dependencies (pnpm install --frozen-lock
 Rust dependencies resolve via the committed `Cargo.lock` on first `cargo`/`mise` use;
 no global configuration is needed.
 
+### Local-only `mise.local.toml`
+
+`mise.local.toml` is **gitignored and machine-local** (`/mise.local.toml` in `.gitignore`):
+it holds no secrets and must never be committed. Create it in every checkout/worktree you
+use, with this canonical content:
+
+```toml
+# Local-only launcher; OAuth credentials live outside this repository.
+[tools]
+# Hermetic Python provider for the dev:gmail shim (no system python3 needed).
+uv = "0.13.7"
+
+[env]
+# Stable local code-signing identity for the tauri dev binary. Without this,
+# every rebuild is ad-hoc signed and the macOS keychain "Always Allow" grant
+# for the mail-core-gmail item no longer matches, re-triggering the prompt.
+APPLE_SIGNING_IDENTITY = "email-os-dev"
+
+[tasks."dev:gmail"]
+description = "Run native Gmail mode using the private local Desktop OAuth client"
+run = 'uv run --no-project "$HOME/.config/email-os/dev-gmail.py"'
+```
+
+Why each piece:
+
+- **`[tools] uv`** — pins uv (installed by `mise install`). The `dev:gmail` task runs its
+  shim via `uv run --no-project`, so no system `python3` is needed, no project venv is
+  created, and the stdlib-only shim runs on a uv-managed CPython. Bump the pin when you
+  want a newer uv (`0.13.7` is the current latest).
+- **`[tasks."dev:gmail"]`** — runs `~/.config/email-os/dev-gmail.py`, which loads the
+  Desktop OAuth client from `~/.config/email-os/google-desktop-client.json` (outside the
+  repo), validates the expected `project_id`, exports `EMAIL_OS_MODE=gmail` plus the
+  client env vars, and execs `mise run dev:native`. It never prints the client secret.
+  Validate the config without launching the app or making any Google request:
+  `mise x -- uv run --no-project "$HOME/.config/email-os/dev-gmail.py" --check`
+- **`[env] APPLE_SIGNING_IDENTITY`** (macOS only) — without this, the tauri dev binary is
+  ad-hoc signed and every `cargo` rebuild changes its signature; keychain "Always Allow"
+  grants are tied to the code signature, so the `mail-core-gmail` keychain prompt reappears
+  on every `mise run dev:gmail`. Signing the dev binary with a stable local certificate
+  keeps a single grant across rebuilds.
+
+One-time macOS keychain setup:
+
+1. **Keychain Access → Certificate Assistant → Create a Certificate**: name it
+   `email-os-dev`, identity type *Self Signed Root*, certificate type **Code Signing**
+   (default validity 1 year; recreate with the same name when it expires, then re-allow
+   once).
+2. Run `mise run dev:gmail` once and click **Always Allow** on the "email-os wants to use
+   your confidential information stored in `mail-core-gmail`" prompt. The grant is pinned
+   to the `email-os-dev` identity, so rebuilds no longer prompt.
+3. Do **not** set the keychain item's Access Control to "Allow all applications to access
+   this item" — that silences the prompt forever but lets *any* app running as you read
+   the Gmail tokens silently. Keep the per-app grant.
+
+The stored token is one keychain generic-password entry (service `mail-core-gmail`,
+account `single-profile`, `WhenUnlockedThisDeviceOnly` — local, not synced to iCloud).
+To rotate/disconnect, delete it (`security delete-generic-password -s mail-core-gmail -a
+single-profile`) or use the app's disconnect action; the next `mise run dev:gmail` starts
+a fresh OAuth flow. Never paste credentials into the app, logs, screenshots, or reports.
+
 ## Validation gates
 
 Core and frontend gates run independently of native GTK/WebKit prerequisites:
