@@ -31,6 +31,8 @@ const own = ['open', 'undo', 'select-all-loaded', 'clear-selection', 'create-spl
     <PaneGlyph v-else-if="id === 'destinations'" name="provider" />
     <PaneGlyph v-else-if="id === 'trash'" name="trash" />
     <PaneGlyph v-else-if="id === 'drafts'" name="drafts" />
+    <!-- Compose: the local-draft pencil. -->
+    <PaneGlyph v-else-if="id === 'compose'" name="drafts" />
     <PaneGlyph v-else-if="id === 'activity'" name="activity" />
     <PaneGlyph v-else-if="id === 'account'" name="account" />
     <svg

@@ -114,8 +114,11 @@ describe('local plain-text drafts UI', () => {
     await w.find('[data-test="cancel-reply-preparation"]').trigger('click');
     await flushPromises();
     expect(w.find('[data-test="composer"]').exists()).toBe(false);
-    await w.find('[data-test="new-draft"]').trigger('click');
+    // The reply flow keeps the reader open; a new local draft comes from the
+    // compose entry (C), which opens the inline compose card.
+    window.dispatchEvent(keydown('c'));
     await flushPromises();
+    await waitFor(() => w.find('[data-test="compose-card"]').exists());
     await waitFor(() => w.find('[data-test="draft-status"]').text().includes('preview memory'));
     expect(replyAttempts).toBe(1);
     expect((await fake.listDrafts()).map((draft) => draft.source)).toEqual([{ kind: 'new_message' }]);
@@ -148,6 +151,9 @@ describe('local plain-text drafts UI', () => {
     const receipt = await fake.createDraft(replyCommand!);
     pendingCreate.resolve(receipt);
     await flushPromises();
+    // The reply flow keeps the reader open and never auto-opens the drawer; the
+    // late receipt must stay recoverable in the drafts list, not in an editor.
+    await openUtilityDrawer(w, 'drafts');
     await waitFor(() => w.text().includes('Re: Fixture thread 1: weekly status'));
     expect(w.find('[data-test="composer"]').exists()).toBe(false);
     expect(await fake.getDraft(receipt.ref)).toMatchObject({ source: { kind: 'reply' } });

@@ -508,7 +508,7 @@ describe.skipIf(chromePath === '')('Reader journey (real Chrome, opt-in)', () =>
     expect(await cdp!.js(`window.__h.exists('[data-test="contact-column"]')`)).toBe(true);
   });
 
-  it('exits through Prepare reply into the drafts editor and leaves no mailbox writes', async () => {
+  it('exits through Prepare reply into the inline reply composer and leaves no mailbox writes', async () => {
     // Fresh fixture; open read-03 explicitly.
     await freshMount();
     await click('[data-test="conversation-row-read-03"]');
@@ -516,22 +516,49 @@ describe.skipIf(chromePath === '')('Reader journey (real Chrome, opt-in)', () =>
     expect(await cdp!.js(`window.__h.exists('[data-test="prepare-reply"]')`)).toBe(true);
     await click('[data-test="prepare-reply"]');
     await cdp!.js('window.__h.wait(300)');
-    // The reader closed; the drafts editor owns the surface.
+    // The reader stays open; the inline reply composer docks at its bottom and
+    // owns the surface (no drafts drawer).
+    expect(await cdp!.js(`window.__h.exists('[data-test="reader"]')`)).toBe(true);
+    expect(await cdp!.js(`window.__h.exists('[data-test="reply-composer"]')`)).toBe(true);
     expect(await cdp!.js(`window.__h.exists('[data-test="draft-body"]')`)).toBe(true);
-    expect(await cdp!.js(`window.__h.exists('[data-test="reader"]')`)).toBe(false);
+    expect(await cdp!.js(`window.__h.exists('[data-test="utility-drawer"]')`)).toBe(false);
     const source = await cdp!.js(`window.__fixture.controls.draftCreations[0]?.source ?? null`);
     expect(source).toEqual({
       kind: 'reply',
       conversation: { accountId: 'reader-account', conversationId: 'read-03' },
       sourceMessageId: 'read-03-m1',
     });
-    // A visible drafts editor owns all keys (including Escape); leave through
-    // its explicit Close control, then prove the mailbox was untouched.
-    await click('[data-test="drawer-close"]');
+    // A visible composer owns all keys (including Escape); leave through its
+    // explicit Close control, then prove the mailbox was untouched.
+    await click('[data-test="close-composer"]');
     await cdp!.js('window.__h.wait(400)');
-    expect(await cdp!.js(`window.__h.exists('[data-test="utility-drawer"]')`)).toBe(false);
+    expect(await cdp!.js(`window.__h.exists('[data-test="reply-composer"]')`)).toBe(false);
+    expect(await cdp!.js(`window.__h.exists('[data-test="reader"]')`)).toBe(true);
     expect(await cdp!.js('window.__fixture.controls.archiveCommands.length')).toBe(0);
     expect(await cdp!.js('window.__fixture.controls.readCommands.length')).toBe(0);
+  });
+
+  it('opens the inline compose card in the central pane with real C, keeps chrome visible, closes on Escape', async () => {
+    await freshMount();
+    await press('c');
+    await cdp!.js('window.__h.wait(300)');
+    // In-flow card in the central pane: no backdrop, no drawer, list replaced.
+    expect(await cdp!.js(`window.__h.exists('[data-test="compose-card"]')`)).toBe(true);
+    expect(await cdp!.js(`window.__h.exists('[data-test="compose-backdrop"]')`)).toBe(false);
+    expect(await cdp!.js(`window.__h.exists('[data-test="utility-drawer"]')`)).toBe(false);
+    expect(await cdp!.js(`window.__h.exists('[data-test="rail-inbox"]')`)).toBe(true);
+    expect(await cdp!.js(`window.__h.exists('[data-test="contact-column"]')`)).toBe(true);
+    expect(await cdp!.js(`document.querySelector('[data-test="central-surface"]').children.length`)).toBe(1);
+    expect(await cdp!.js(`window.__h.exists('[data-test="draft-to"]')`)).toBe(true);
+    // No Send control anywhere on the card.
+    expect(await cdp!.js(`[...document.querySelectorAll('[data-test="compose-card"] button')].every((b) => !/send/i.test(b.textContent ?? ''))`)).toBe(true);
+    // Escape closes through the protected flush and the list returns.
+    await press('Escape');
+    await cdp!.js('window.__h.wait(400)');
+    expect(await cdp!.js(`window.__h.exists('[data-test="compose-card"]')`)).toBe(false);
+    expect(await cdp!.js(`window.__h.exists('[data-test="conversation-row-read-01"]')`)).toBe(true);
+    expect(await cdp!.js('window.__fixture.controls.draftCreations.length')).toBe(1);
+    expect(await cdp!.js('window.__fixture.controls.archiveCommands.length')).toBe(0);
   });
 
   it('archives with real E from message-toggle focus and keeps native Enter as expansion, toolbar guard intact', async () => {

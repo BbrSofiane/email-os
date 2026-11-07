@@ -2,6 +2,7 @@
 export const browsingActions = [
   { id: 'open', label: 'Open conversation', shortcut: 'Enter' },
   { id: 'back', label: 'Back', shortcut: 'Escape' },
+  { id: 'compose', label: 'Compose new local draft', shortcut: 'C' },
   { id: 'archive', label: 'Mark done', shortcut: 'E', aliases: ['archive'] },
   { id: 'unarchive', label: 'Mark not done', shortcut: 'Shift+E', aliases: ['unarchive', 'restore to inbox'] },
   { id: 'remind', label: 'Remind me (this device)', shortcut: 'H' },

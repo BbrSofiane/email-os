@@ -5,7 +5,7 @@
  * carries the accessible name in visually hidden text.
  */
 defineProps<{
-  name: 'menu' | 'search' | 'commands' | 'star' | 'back' | 'reminders';
+  name: 'menu' | 'search' | 'commands' | 'star' | 'back' | 'reminders' | 'compose';
   /** Star only: a filled star for the pressed (filter on) state. */
   filled?: boolean;
 }>();
@@ -47,6 +47,11 @@ defineProps<{
     <template v-else-if="name === 'back'">
       <path d="M7 3.75L2.75 8 7 12.25" />
       <path d="M3 8h10.25" />
+    </template>
+    <!-- Compose: the pencil (local drafts). -->
+    <template v-else-if="name === 'compose'">
+      <path d="M10.6 2.9l2.5 2.5-6.9 6.9-3.2.75.75-3.2z" />
+      <path d="M9.1 4.4l2.5 2.5" />
     </template>
     <!-- Local reminders: a clock. -->
     <template v-else>
