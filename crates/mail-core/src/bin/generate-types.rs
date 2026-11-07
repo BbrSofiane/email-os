@@ -35,6 +35,9 @@ use mail_core::groups::{
     OperationGroupStatus, OperationGroupSummary, SetArchivedGroup, SetReadGroup,
     UndoOperationGroup,
 };
+use mail_core::reminders::{
+    CancelReminder, PutReminder, Reminder, ReminderCondition, ReminderPhase,
+};
 use mail_core::search::{SearchCoverage, SearchPage, SearchRequest};
 use mail_core::splits::{SavedSplit, SplitCriterion};
 use ts_rs::TS;
@@ -56,6 +59,11 @@ fn declarations() -> Vec<String> {
         DestinationRequest::decl(),
         DestinationPage::decl(),
         ConversationRef::decl(),
+        ReminderCondition::decl(),
+        ReminderPhase::decl(),
+        Reminder::decl(),
+        PutReminder::decl(),
+        CancelReminder::decl(),
         Address::decl(),
         OperationStatus::decl(),
         OperationFailure::decl(),
@@ -138,6 +146,9 @@ const IPC_NAMES: &[(&str, &str)] = &[
         "BROWSE_PROVIDER_DESTINATION_COMMAND",
         "browse_provider_destination",
     ),
+    ("LIST_REMINDERS_COMMAND", "list_reminders"),
+    ("PUT_REMINDER_COMMAND", "put_reminder"),
+    ("CANCEL_REMINDER_COMMAND", "cancel_reminder"),
     ("LIST_CONVERSATIONS_COMMAND", "list_conversations"),
     ("LIST_CACHED_DONE_COMMAND", "list_cached_done"),
     ("LIST_CACHED_STARRED_COMMAND", "list_cached_starred"),

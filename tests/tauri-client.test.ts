@@ -116,6 +116,22 @@ describe('Tauri draft and close protocol adapter', () => {
     await expect(client.browseProviderDestination(request)).rejects.toEqual({ kind: 'network_unavailable' });
   });
 
+  it('transports local reminders with exact named command envelopes and propagates failures', async () => {
+    const client = createTauriMailClient();
+    const command = { conversation: { accountId: 'fixture-account', conversationId: 'conv-01' }, sourceMessageId: 'message-1', dueAt: '2030-11-03T01:30:00-05:00', condition: 'if_no_reply' as const, expectedRevision: null, requestId: 'reminder-key' };
+    mocks.invoke.mockResolvedValue([]);
+    await client.reminders!.list();
+    expect(mocks.invoke).toHaveBeenLastCalledWith('list_reminders', undefined);
+    const receipt = { ...command, revision: 1, phase: 'removing' };
+    mocks.invoke.mockResolvedValue(receipt);
+    expect(await client.reminders!.put(command)).toBe(receipt);
+    expect(mocks.invoke).toHaveBeenLastCalledWith('put_reminder', { command });
+    const cancel = { conversation: command.conversation, expectedRevision: 1, requestId: 'cancel-key' };
+    mocks.invoke.mockRejectedValue({ kind: 'invalid_request', field: 'revision' });
+    await expect(client.reminders!.cancel(cancel)).rejects.toEqual({ kind: 'invalid_request', field: 'revision' });
+    expect(mocks.invoke).toHaveBeenLastCalledWith('cancel_reminder', { command: cancel });
+  });
+
   it('transports cached Trash only through the named read command and propagates rejection', async () => {
     const client = createTauriMailClient();
     const request = { accountId: 'account', limit: 1, cursor: null };

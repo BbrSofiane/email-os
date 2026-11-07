@@ -12,6 +12,8 @@
  * Account lifecycle, mailbox actions, local drafts, and close requests cross only this
  * typed client seam; results never stand in for OAuth, sync, or provider-send success.
  */
+import type { Reminder, PutReminder, CancelReminder } from './generated';
+export type { Reminder, ReminderCondition, ReminderPhase, PutReminder, CancelReminder } from './generated';
 import type {
   SavedSplit,
   SearchRequest,
@@ -186,6 +188,12 @@ export interface MailClient {
   cancelSearchMail(): Promise<void>;
   listProviderDestinations(accountId: string, cached: boolean): Promise<DestinationCatalog>;
   browseProviderDestination(request: DestinationRequest): Promise<DestinationPage>;
+  /** Optional transport capability; currently native fixture only, never Gmail. */
+  reminders?: {
+    list(): Promise<Reminder[]>;
+    put(command: PutReminder): Promise<Reminder>;
+    cancel(command: CancelReminder): Promise<Reminder>;
+  };
   listConversations(): Promise<InboxSnapshot>;
   /** Local archive evidence only; short/empty pages can still have a continuation. */
   listCachedDone(request: CachedDoneRequest): Promise<CachedDoneSnapshot>;

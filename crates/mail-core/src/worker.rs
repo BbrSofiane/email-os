@@ -92,6 +92,14 @@ fn run(
         if signal_is_stopped(&signal) {
             return;
         }
+        match store.reconcile_reminders() {
+            Ok(true) => notify(),
+            Ok(false) => {}
+            Err(err) => {
+                halt(err);
+                return;
+            }
+        }
         match store.claim_next_queued() {
             Err(err) => {
                 // Fail closed: halt on persistence failure and surface it.

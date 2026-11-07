@@ -39,6 +39,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import CachedTrashPanel from './components/CachedTrashPanel.vue';
 import { emptyCachedTrash } from './lib/cached-trash';
 import ActionOverlay from './components/ActionOverlay.vue';
+import RemindersPanel from './components/RemindersPanel.vue';
 import ActionNotice, { type GroupNoticeView } from './components/ActionNotice.vue';
 import SelectionBar from './components/SelectionBar.vue';
 import { browsingActions, actionLabel, type BrowsingActionId } from './lib/browsing-actions';
@@ -66,7 +67,7 @@ const props = defineProps<{
 /** Contact context breakpoint (supervisor-approved strict value). */
 const CONTACT_BREAKPOINT_PX = 1000;
 
-type UtilityDrawer = 'account' | 'activity' | 'drafts' | 'destinations' | 'trash';
+type UtilityDrawer = 'account' | 'activity' | 'drafts' | 'destinations' | 'reminders' | 'trash';
 const trashState = ref(emptyCachedTrash());
 type ContactContext = 'focused' | 'open';
 interface ContactInfo { displayName: string | null; mailbox: string }
@@ -78,7 +79,7 @@ interface ListAnchor { ref: ConversationRef; offsetTop: number; scrollTop: numbe
  * recapture from an unmounted list.
  */
 interface ReaderOrigin {
-  surface: BrowseContext | 'activity' | 'trash';
+  surface: BrowseContext | 'activity' | 'reminders' | 'trash';
   /** Original entry focus reference; Back restores it (with fallbacks). */
   focusedRef: ConversationRef | null;
   /** Entry-time Inbox ordering, used to resolve a removed cursor. */
@@ -408,6 +409,7 @@ const drawerTitles: Record<UtilityDrawer, string> = {
   destinations: 'Provider mail — read only',
   activity: 'Operation activity',
   drafts: 'Local drafts',
+  reminders: 'Desktop-local reminders',
   trash: 'Cached Trash — read only',
 };
 
@@ -438,6 +440,21 @@ async function openDrawer(name: UtilityDrawer, entry: 'drawer' | 'toggle' = 'dra
   await nextTick();
   if (entry === 'drawer') drawerEl.value?.focus();
   else drawerToggles.get(name)?.focus();
+}
+
+const reminderTarget = ref<ConversationRef | null>(null);
+const reminderDestination = ref<'pending' | 'returned' | 'history'>('pending');
+const remindersSupported = computed(() => !!props.client.reminders && accountStatus.value?.mode === 'fixture');
+async function openReminders(picker: boolean) {
+  if (!remindersSupported.value || (picker && (selectedCount.value > 0 || mailbox.commandInFlight.value || mailbox.bulkUnresolved.value))) return;
+  const target = actionTarget();
+  if (picker && !target) return;
+  reminderTarget.value = picker && target ? { ...target } : null;
+  if (picker) reminderDestination.value = 'pending';
+  await openDrawer('reminders');
+}
+function openReminderConversation(target: ConversationRef): Promise<void> {
+  return openFromUtility(target, 'reminders');
 }
 
 async function closeDrawer(): Promise<void> {
@@ -786,7 +803,7 @@ const contactOverride = ref<
   { ref: ConversationRef; messageId: string; displayName: string | null; mailbox: string } | null
 >(null);
 
-function captureListOrigin(surface: BrowseContext | 'activity' | 'trash'): void {
+function captureListOrigin(surface: ReaderOrigin['surface']): void {
   // Only the mounted list supplies an anchor; J/K and Activity opens inside the
   // reader never recapture (they would erase the entry context with nulls).
   origin.value = {
@@ -866,12 +883,12 @@ function closeReader(explicitInbox = false): Promise<void> {
     if (token !== navigationToken || account !== accountId.value || readerOpen.value) return;
     const anchor = originState?.anchor ?? null;
     if (anchor && inboxList.value) await inboxList.value.restoreAnchor(anchor);
-    if (originState && originState.surface !== 'activity' && originState.surface !== 'trash' && !explicitInbox) {
+    if (originState && originState.surface !== 'activity' && originState.surface !== 'reminders' && originState.surface !== 'trash' && !explicitInbox) {
       const resolved = resolveOriginFocus(originState);
       if (resolved) mailbox.focusConversation(resolved);
     }
     await focusFocusedRow(true);
-    if (!explicitInbox && (originState?.surface === 'activity' || originState?.surface === 'trash')) await openDrawer(originState.surface);
+    if (!explicitInbox && (originState?.surface === 'activity' || originState?.surface === 'reminders' || originState?.surface === 'trash')) await openDrawer(originState.surface);
   })();
 }
 
@@ -905,15 +922,19 @@ async function openFromTrash(target: ConversationRef): Promise<void> {
 }
 const trashReader = computed(() => readerOpen.value && origin.value?.surface === 'trash');
 
-async function openFromActivity(target: ConversationRef): Promise<void> {
-  // The saved Inbox anchor/entry context is captured only at the initial
-  // list-to-reader entry. An Activity open while the reader is already open
-  // never recaptures from the (unmounted) list — it only re-points the return
-  // surface at Activity.
+function openFromActivity(target: ConversationRef): Promise<void> {
+  return openFromUtility(target, 'activity');
+}
+
+async function openFromUtility(target: ConversationRef, surface: 'activity' | 'reminders'): Promise<void> {
+  // Capture the return surface synchronously, before loading: Back can happen
+  // while the detail is pending, and a late response must never rewrite the
+  // origin of a newer reader. Keep the saved list anchor/entry context when
+  // opening from a utility over an existing reader (the list is unmounted).
   if (readerOpen.value) {
-    if (origin.value) origin.value = { ...origin.value, surface: 'activity' };
+    if (origin.value) origin.value = { ...origin.value, surface };
   } else {
-    captureListOrigin('activity');
+    captureListOrigin(surface);
   }
   drawer.value = null;
   await mailbox.openConversationByRef(target, 'activity');
@@ -949,7 +970,7 @@ function resolveReaderNeighbor(delta: number): ConversationRef | null {
 async function moveReaderConversation(delta: number): Promise<void> {
   // Activity-origin readers never navigate and never issue getConversation
   // calls — including when Activity history duplicates the reference.
-  if (!readerOpen.value || origin.value?.surface === 'activity' || trashReader.value) return;
+  if (!readerOpen.value || origin.value?.surface === 'activity' || origin.value?.surface === 'reminders' || trashReader.value) return;
   if (mailbox.listState.value !== 'ready') return;
   const target = resolveReaderNeighbor(delta);
   if (!target) return;
@@ -1030,7 +1051,7 @@ async function archiveFromReader(starred?: boolean): Promise<void> {
   const op = mailbox.activity.value.find((item) => item.id === receipt.operationId);
   if (op?.status === 'failed') return;
   // An Activity-origin reader must not advance into unrelated Inbox mail.
-  if (origin.value?.surface === 'activity') {
+  if (origin.value?.surface === 'activity' || origin.value?.surface === 'reminders') {
     closeReader();
     return;
   }
@@ -1121,6 +1142,7 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   if (id === 'account') return gmailMode.value;
   if (id === 'trash') return gmailMode.value && !!accountId.value;
   if (id === 'drafts') return !!accountId.value;
+  if (id === 'reminders') return remindersSupported.value;
   if (id === 'back') return readerOpen.value || history.value.length > 0;
   if (id === 'select-all-loaded') return !drafts.activeRef.value && !drawer.value && !contactDisclosure.value && !readerOpen.value && mailbox.listState.value === 'ready' && mailbox.conversations.value.length > 0;
   if (id === 'clear-selection') return !drafts.activeRef.value && !drawer.value && !contactDisclosure.value && selectedCount.value > 0;
@@ -1139,6 +1161,7 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   const target = actionTarget(explicit);
   if (!target) return false;
   if (id === 'open') return !readerOpen.value;
+  if (id === 'remind') return remindersSupported.value && selectedCount.value === 0 && !mailbox.bulkUnresolved.value && (readerOpen.value ? mailbox.conversation.value?.isInInbox === true : mailbox.context.value === 'inbox');
   if (id === 'read' || id === 'unread' || id === 'star' || id === 'unstar') return gmailActionsEnabled.value;
   if (mailbox.context.value === 'starred' && !readerOpen.value) return false;
   if (!mailboxActionsEnabled.value) return false;
@@ -1157,7 +1180,7 @@ function starPermissionReason(id: BrowsingActionId): string | undefined {
 }
 const availableActions = computed(() => browsingActions
   .filter((action) => (actionAvailable(action.id) || starPermissionReason(action.id))
-    && (overlay.value !== 'navigator' || ['inbox', 'saved', 'done', 'trash', 'starred', 'account', 'activity', 'drafts'].includes(action.id)))
+    && (overlay.value !== 'navigator' || ['inbox', 'saved', 'done', 'trash', 'starred', 'account', 'activity', 'drafts', 'reminders'].includes(action.id)))
   .map((action) => ({
     id: action.id,
     shortcut: action.shortcut,
@@ -1195,6 +1218,8 @@ async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): 
       if (actionAvailable(id) && !overlay.value) editingSplit.value = true;
       return;
     case 'search': await revealSearch(); return;
+    case 'remind': await openReminders(true); return;
+    case 'reminders': await openReminders(false); return;
     case 'inbox': await navigateToInbox(); return;
     case 'saved': await navigateContext('saved'); return;
     case 'done': await navigateContext('done'); return;
@@ -1301,8 +1326,8 @@ function onKeydown(event: KeyboardEvent): void {
   }
   if (goTimer) {
     cancelGo();
-    if (event.key === 'e' && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey && !event.isComposing && !isEditableTarget(event.target) && !drawer.value && !contactDisclosure.value && !readerOpen.value) {
-      event.preventDefault(); void executeAction('done'); return;
+    if ((event.key === 'e' || (event.key === 'h' && remindersSupported.value)) && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey && !event.isComposing && !isEditableTarget(event.target) && !drawer.value && !contactDisclosure.value && !readerOpen.value) {
+      event.preventDefault(); void executeAction(event.key === 'h' ? 'reminders' : 'done'); return;
     }
   }
   // Only a visible composer owns all keys; a suspended editor behind another
@@ -1355,6 +1380,10 @@ function onKeydown(event: KeyboardEvent): void {
     return;
   }
   if (drawer.value || (!wideViewport.value && contactDisclosure.value)) return;
+  if (key === 'h' && !event.shiftKey && !event.repeat && !actionShortcutBlocked(event.target)) {
+    if (actionAvailable('remind')) { event.preventDefault(); void executeAction('remind'); }
+    return;
+  }
 
   const browsingOwns = !readerIsOpen && !buttonOwns(event.target) && (event.target === document.body || (event.target instanceof Node && !!inboxList.value?.$el?.contains(event.target)) || event.target === emptyState.value);
   // Split navigation is deliberately nonwrapping and owns only the list,
@@ -1583,6 +1612,8 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
         <button v-if="accountId" type="button" :disabled="!actionAvailable('search')" data-test="search-trigger" :title="actionLabel('search')" @click="executeAction('search')">Search</button>
         <button type="button" data-test="palette-trigger" ref="paletteButton" title="Commands (Cmd+K in native app)" @click="openOverlay('palette')">Commands</button>
         <button v-if="gmailMode && !readerOpen && mailbox.context.value !== 'starred'" type="button" data-test="starred-filter" :aria-pressed="mailbox.starredOnly.value" :disabled="mailbox.listState.value !== 'ready'" @click="toggleStarFilter()">Starred only (cached)</button>
+        <button v-if="remindersSupported" type="button" :ref="setToggleRef('reminders')" @click="executeAction('reminders')">Reminders</button>
+        <button v-if="remindersSupported" type="button" :disabled="!actionAvailable('remind')" title="Remind me (H); single conversation only" @click="executeAction('remind')">Remind me</button>
         <button type="button" data-test="navigator-trigger" title="Destinations (Left from list)" @click="openOverlay('navigator')">Destinations</button>
         <button v-if="history.length && !readerOpen" type="button" data-test="context-back" @click="executeAction('back')">Back to previous context</button>
       </div>
@@ -1834,6 +1865,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
                surface was open): the capability needs an account identity, so
                render an explicit account-required state instead of an empty drawer. -->
           <p v-else-if="drawer === 'destinations'" role="note" data-test="destinations-account-required">Provider mail needs a connected Gmail account. Connect one from Account first.</p>
+          <RemindersPanel v-if="drawer === 'reminders' && remindersSupported" :key="reminderTarget ? `${reminderTarget.accountId}:${reminderTarget.conversationId}` : 'destination'" :client="props.client" :target="reminderTarget" :initial-destination="reminderDestination" @destination-change="reminderDestination = $event" @open="openReminderConversation" />
           <CachedTrashPanel v-if="drawer === 'trash' && accountId && gmailMode" :key="accountId" :client="client" :account-id="accountId" :state="trashState" @open="openFromTrash" />
           <AccountPanel
             v-if="drawer === 'account' && accountStatus"

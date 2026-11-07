@@ -4,6 +4,12 @@
 //! surfaced; nothing is logged-and-ignored. No subjects, addresses, or bodies
 //! are ever logged.
 
+mod reminders;
+#[cfg(test)]
+mod reminders_races_tests;
+#[cfg(test)]
+mod reminders_tests;
+
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 #[cfg(test)]
@@ -144,6 +150,7 @@ impl Store {
         let tx = conn
             .transaction()
             .map_err(|_| MailError::StorageUnavailable)?;
+        reminders::migrate(&tx)?;
         tx.execute_batch(
             "CREATE TABLE IF NOT EXISTS meta (
                 key   TEXT PRIMARY KEY,

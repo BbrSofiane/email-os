@@ -15,6 +15,7 @@ pub mod gmail;
 pub mod groups;
 mod lock;
 pub mod provider;
+pub mod reminders;
 pub mod search;
 mod seed;
 pub mod splits;

@@ -30,6 +30,7 @@ use mail_core::groups::{
     OperationGroupReceipt, OperationGroupStatus, SetArchivedGroup, SetReadGroup,
     UndoOperationGroup,
 };
+use mail_core::reminders::{CancelReminder, PutReminder, Reminder};
 use mail_core::{FakeArchiveProvider, MailCore, ACCOUNT_ID};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -43,6 +44,14 @@ enum Backend {
 }
 
 impl Backend {
+    fn reminder_core(&self) -> Result<&MailCore, MailError> {
+        match self {
+            Self::Fixture(core) => Ok(core),
+            Self::Gmail(_) => Err(MailError::InvalidRequest {
+                field: "remindersUnavailable".into(),
+            }),
+        }
+    }
     fn list_provider_destinations(
         &self,
         account_id: &str,
@@ -506,6 +515,34 @@ async fn cancel_search_mail(state: State<'_, AppState>) -> Result<(), MailError>
 }
 
 #[tauri::command]
+async fn list_reminders(state: State<'_, AppState>) -> Result<Vec<Reminder>, MailError> {
+    run_blocking(state.backend.clone(), |backend| {
+        backend.reminder_core()?.list_reminders()
+    })
+    .await
+}
+#[tauri::command]
+async fn put_reminder(
+    state: State<'_, AppState>,
+    command: PutReminder,
+) -> Result<Reminder, MailError> {
+    run_blocking(state.backend.clone(), move |backend| {
+        backend.reminder_core()?.put_reminder(&command)
+    })
+    .await
+}
+#[tauri::command]
+async fn cancel_reminder(
+    state: State<'_, AppState>,
+    command: CancelReminder,
+) -> Result<Reminder, MailError> {
+    run_blocking(state.backend.clone(), move |backend| {
+        backend.reminder_core()?.cancel_reminder(&command)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn list_cached_trash(
     state: State<'_, AppState>,
     request: CachedTrashRequest,
@@ -918,6 +955,9 @@ fn main() {
             list_provider_destinations,
             browse_provider_destination,
             list_conversations,
+            list_reminders,
+            put_reminder,
+            cancel_reminder,
             list_cached_done,
             list_cached_starred,
             set_starred,
@@ -1111,6 +1151,9 @@ mod tests {
         let gmail =
             GmailCore::open(temp_dir("gmail-readonly"), Arc::new(ReadOnlyProvider)).unwrap();
         let gmail = Backend::Gmail(gmail);
+        assert!(
+            matches!(gmail.reminder_core(), Err(MailError::InvalidRequest { field }) if field == "remindersUnavailable")
+        );
         let status = gmail.account_status().unwrap();
         assert_eq!(status.mode, MailMode::Gmail);
         assert_eq!(
@@ -1160,6 +1203,51 @@ mod tests {
         );
         gmail.stop();
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn fixture_reminder_bridge_preserves_exact_source_and_account_gate() {
+        let dir = temp_dir("reminders");
+        let core = MailCore::open(&dir).unwrap();
+        let backend = Backend::Fixture(core);
+        let target = ConversationRef {
+            account_id: ACCOUNT_ID.into(),
+            conversation_id: "conv-01".into(),
+        };
+        let detail = backend.get_conversation(&target).unwrap();
+        let mut command = PutReminder {
+            conversation: target,
+            source_message_id: detail.messages.last().unwrap().id.clone(),
+            due_at: None,
+            condition: mail_core::reminders::ReminderCondition::IfNoReply,
+            expected_revision: None,
+            request_id: "bridge-reminder".into(),
+        };
+        let receipt = backend
+            .reminder_core()
+            .unwrap()
+            .put_reminder(&command)
+            .unwrap();
+        assert_eq!(
+            backend
+                .reminder_core()
+                .unwrap()
+                .put_reminder(&command)
+                .unwrap(),
+            receipt
+        );
+        assert_eq!(
+            backend.reminder_core().unwrap().list_reminders().unwrap(),
+            vec![receipt]
+        );
+        command.conversation.account_id = "foreign".into();
+        assert_eq!(
+            backend.reminder_core().unwrap().put_reminder(&command),
+            Err(MailError::NotFound)
+        );
+        backend.stop();
+        drop(backend);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

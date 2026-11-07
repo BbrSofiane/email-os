@@ -6,6 +6,7 @@
  * MailError object; rejections are normalized through `toMailError` so the UI can
  * never mistake a transport fault for success.
  */
+import { LIST_REMINDERS_COMMAND, PUT_REMINDER_COMMAND, CANCEL_REMINDER_COMMAND } from './generated';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import {
@@ -112,6 +113,11 @@ export function createTauriMailClient(): MailClient {
     },
     browseProviderDestination(request: DestinationRequest): Promise<DestinationPage> {
       return call(BROWSE_PROVIDER_DESTINATION_COMMAND, { request });
+    },
+    reminders: {
+      list: () => call(LIST_REMINDERS_COMMAND),
+      put: (command) => call(PUT_REMINDER_COMMAND, { command }),
+      cancel: (command) => call(CANCEL_REMINDER_COMMAND, { command }),
     },
     listConversations(): Promise<InboxSnapshot> {
       return call<InboxSnapshot>(LIST_CONVERSATIONS_COMMAND);
