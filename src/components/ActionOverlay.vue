@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import type { AvailableAction, BrowsingActionId } from '../lib/browsing-actions';
+import { actionAliases, actionGroupOf, actionGroups, compactShortcut, keyHints, matchesQuery } from '../lib/action-palette';
+import CommandGlyph from './CommandGlyph.vue';
 const props = defineProps<{ kind: 'palette' | 'navigator'; actions: AvailableAction[]; idPrefix?: string; query?: string }>();
 const emit = defineEmits<{ close: []; execute: [id: BrowsingActionId]; 'update:query': [query: string] }>();
 const prefix = props.idPrefix ? `${props.idPrefix}-` : '';
@@ -18,7 +20,19 @@ const query = computed({
 });
 const highlighted = ref(0);
 const input = ref<HTMLInputElement | null>(null);
-const results = computed(() => props.actions.filter((action) => action.label.toLowerCase().includes(query.value.toLowerCase())));
+const groupRank = Object.keys(actionGroupOf);
+const groupLabel = (id: BrowsingActionId) => actionGroups.find((group) => group.id === actionGroupOf[id])!.label;
+// Grouped in a fixed order; a stable sort keeps each group's own order. The navigator is one group, so it stays unlabelled.
+const results = computed(() => props.actions
+  .filter((action) => matchesQuery(query.value, action.label, actionAliases[action.id], [action.shortcut]))
+  .sort((a, b) => actionGroups.findIndex((g) => g.id === actionGroupOf[a.id]) - actionGroups.findIndex((g) => g.id === actionGroupOf[b.id]) || groupRank.indexOf(a.id) - groupRank.indexOf(b.id)));
+const showGroups = computed(() => props.kind === 'palette');
+// Keys with no command behind them: shown for teaching, never highlighted or executed.
+const hints = computed(() => props.kind === 'palette' ? keyHints.filter((hint) => matchesQuery(query.value, hint.label, hint.aliases, hint.keys)) : []);
+const emptyCopy = computed(() => {
+  const noun = props.kind === 'palette' ? 'command' : 'destination';
+  return query.value.trim() ? `No ${noun} matches “${query.value.trim()}”.` : `No ${noun}s available here.`;
+});
 watch(results, () => { highlighted.value = 0; });
 watch(highlighted, async () => {
   await nextTick();
@@ -51,17 +65,24 @@ function keydown(event: KeyboardEvent): void {
 <template>
   <div class="action-backdrop" @click.self="emit('close')">
     <section class="action-overlay command-overlay" role="dialog" aria-modal="true" :aria-label="kind === 'palette' ? 'Command palette' : 'Destination navigator'" @keydown="keydown">
-      <label :for="queryId" class="action-heading"><span aria-hidden="true">{{ kind === 'palette' ? 'ϟ' : '↗' }}</span>{{ kind === 'palette' ? 'Email Command' : 'Destinations' }}</label>
-      <input :id="queryId" :placeholder="kind === 'palette' ? 'Type a command…' : 'Go to…'" ref="input" v-model="query" data-test="action-query" role="combobox" aria-autocomplete="list" aria-expanded="true" :aria-controls="resultsId" :aria-activedescendant="results[highlighted] ? actionId(results[highlighted]!.id) : undefined" autocomplete="off" />
+      <input :id="queryId" :placeholder="kind === 'palette' ? 'Type a command…' : 'Go to…'" :aria-label="kind === 'palette' ? 'Command' : 'Destination'" ref="input" v-model="query" data-test="action-query" role="combobox" aria-autocomplete="list" aria-expanded="true" :aria-controls="resultsId" :aria-activedescendant="results[highlighted] ? actionId(results[highlighted]!.id) : undefined" autocomplete="off" />
       <ul :id="resultsId" role="listbox" aria-label="Available actions">
-        <li v-for="(action, index) in results" :id="actionId(action.id)" :key="action.id" role="option" :aria-selected="index === highlighted" :aria-disabled="action.disabledReason ? true : undefined" :aria-describedby="action.disabledReason ? `${prefix}action-reason-${action.id}` : undefined" :class="{ highlighted: index === highlighted }" @pointermove="highlighted = index" @mousedown.prevent @click="execute(action)">
-          <svg v-if="action.id === 'star' || action.id === 'unstar'" class="action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9Z" /><path v-if="action.id === 'unstar'" d="m4 4 16 16" /></svg>
-          <span v-else class="action-icon" aria-hidden="true">↗</span>
-          <span class="action-copy"><span>{{ action.label }}</span><span v-if="action.disabledReason" :id="`${prefix}action-reason-${action.id}`" class="action-disabled-reason">{{ action.disabledReason }}</span></span>
-          <kbd v-if="action.shortcut">{{ action.shortcut }}</kbd>
-        </li>
+        <template v-for="(action, index) in results" :key="action.id">
+          <li v-if="showGroups && (index === 0 || actionGroupOf[results[index - 1]!.id] !== actionGroupOf[action.id])" class="action-group" role="presentation">{{ groupLabel(action.id) }}</li>
+          <li :id="actionId(action.id)" role="option" :aria-selected="index === highlighted" :aria-disabled="action.disabledReason ? true : undefined" :aria-describedby="action.disabledReason ? `${prefix}action-reason-${action.id}` : undefined" :class="{ highlighted: index === highlighted }" @pointermove="highlighted = index" @mousedown.prevent @click="execute(action)">
+            <CommandGlyph :id="action.id" />
+            <span class="action-copy"><span>{{ action.label }}</span><span v-if="action.disabledReason" :id="`${prefix}action-reason-${action.id}`" class="action-disabled-reason">{{ action.disabledReason }}</span></span>
+            <kbd v-if="action.shortcut" :title="compactShortcut(action.shortcut) !== action.shortcut ? action.shortcut : undefined">{{ compactShortcut(action.shortcut) }}</kbd>
+          </li>
+        </template>
       </ul>
-      <p v-if="!results.length" role="status">No available commands.</p>
+      <section v-if="hints.length" class="action-keys" aria-label="Keys">
+        <p class="action-group">Keys</p>
+        <ul>
+          <li v-for="hint in hints" :key="hint.id"><span class="action-copy">{{ hint.label }}</span><span class="action-keycaps"><kbd v-for="keycap in hint.keys" :key="keycap">{{ keycap }}</kbd></span></li>
+        </ul>
+      </section>
+      <p v-if="!results.length" role="status">{{ emptyCopy }}</p>
       <p class="action-hint">↑ ↓ choose · Enter execute · Escape close</p>
     </section>
   </div>

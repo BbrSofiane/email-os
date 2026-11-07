@@ -8,7 +8,7 @@ export const browsingActions = [
   { id: 'reminders', label: 'Go to local Reminders', shortcut: 'G then H (within 1 second)' },
   { id: 'undo', label: 'Undo last action', shortcut: 'Z' },
   { id: 'star', label: 'Star', shortcut: 'S' },
-  { id: 'unstar', label: 'Unstar', shortcut: '' },
+  { id: 'unstar', label: 'Unstar', shortcut: 'S' },
   { id: 'read', label: 'Mark read', shortcut: '' },
   { id: 'unread', label: 'Mark unread', shortcut: 'Shift+U' },
   { id: 'select-all-loaded', label: 'Select all loaded', shortcut: '' },
