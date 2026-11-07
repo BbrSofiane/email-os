@@ -77,6 +77,18 @@ const bulkScope = computed(() =>
     : null,
 );
 
+type StarCoverage = NonNullable<Conversation['stars']>;
+
+/** Short visible star line; exact coverage moves to the title/description. */
+function starSummary(stars: StarCoverage): string {
+  if (stars.starredMessages > 0) return stars.knownMessages < stars.totalMessages ? 'Starred (partial)' : 'Starred';
+  return stars.knownMessages === stars.totalMessages && stars.totalMessages > 0 ? 'Not starred' : 'Star state unknown';
+}
+
+function starCoverageDetail(stars: StarCoverage): string {
+  return `Effective star values known for ${stars.knownMessages} of ${stars.totalMessages} cached messages. Pending intent is not provider confirmation.`;
+}
+
 const latestMessage = computed(() => props.conversation?.messages.at(-1) ?? null);
 const replyBlockedReason = computed(() => {
   if (!props.conversation || !latestMessage.value) return 'No displayed latest message is available as a reply source.';
@@ -675,7 +687,12 @@ defineExpose({
       </p>
       <template v-else-if="props.conversation">
         <h2 class="reader-subject">{{ props.conversation.subject }}</h2>
-        <p v-if="props.conversation.stars" data-test="reader-stars" class="reader-context-note">{{ props.conversation.stars.starredMessages > 0 ? 'Starred' : props.conversation.stars.knownMessages === props.conversation.stars.totalMessages && props.conversation.stars.totalMessages > 0 ? 'Not starred' : 'Star state unknown' }} — effective star values known for {{ props.conversation.stars.knownMessages }} of {{ props.conversation.stars.totalMessages }} cached messages. Pending intent is not provider confirmation.</p>
+        <p
+          v-if="props.conversation.stars"
+          data-test="reader-stars"
+          class="reader-context-note"
+          :title="starCoverageDetail(props.conversation.stars)"
+        >{{ starSummary(props.conversation.stars) }}<span class="visually-hidden" data-test="reader-stars-detail"> — {{ starCoverageDetail(props.conversation.stars) }}</span></p>
         <p v-if="replyBlockedReason" class="reader-notice" data-test="reply-blocked" role="note">
           {{ replyBlockedReason }}
         </p>

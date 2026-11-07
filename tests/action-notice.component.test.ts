@@ -193,8 +193,25 @@ describe('ActionNotice group undo wording (review fixes)', () => {
     const wrapper = mount(ActionNotice, {
       props: { notice: { ...groupBase, group: { ...groupBase.group!, undone: { ...groupBase.group!.undone!, compensationOutcomes: { confirmed: 0, failed: 0, unknown: 0, pending: 1 } } } }, now: NOW },
     });
-    expect(wrapper.get('[data-test="action-notice-status"]').text())
-      .toContain('Undo accepted for 1 of 2; 1 skipped — unknown prior state; restoring…');
+    const status = wrapper.get('[data-test="action-notice-status"]');
+    expect(status.text()).toBe('Restoring 1… · 1 skipped — unknown prior state');
+    // Coverage stays precise in the title and accessible description.
+    expect(status.attributes('title')).toContain('Undo accepted for 1 of 2');
+    expect(status.attributes('title')).toContain('1 skipped (1 unknown prior state)');
+    expect(status.attributes('aria-description')).toBe(status.attributes('title'));
+  });
+
+  it('names no skips and no coverage fraction when nothing was skipped', () => {
+    const wrapper = mount(ActionNotice, {
+      props: { notice: { ...groupBase, group: { ...groupBase.group!, count: 2, undone: {
+        cancelled: 0, compensating: 2, skipped: 0, skipReasons: {},
+        compensationOutcomes: { confirmed: 2, failed: 0, unknown: 0, pending: 0 },
+      } } }, now: NOW },
+    });
+    const status = wrapper.get('[data-test="action-notice-status"]');
+    expect(status.text()).toBe('Restored 2');
+    expect(status.text()).not.toContain('skipped');
+    expect(status.attributes('title')).toContain('Undo accepted for 2 of 2; 0 skipped');
   });
 
   it('shows restore-failed wording instead of permanent restoring (review U9)', () => {
@@ -202,8 +219,8 @@ describe('ActionNotice group undo wording (review fixes)', () => {
       props: { notice: { ...groupBase, group: { ...groupBase.group!, undone: { ...groupBase.group!.undone!, compensationOutcomes: { confirmed: 0, failed: 1, unknown: 0, pending: 0 } } } }, now: NOW },
     });
     expect(wrapper.get('[data-test="action-notice-status"]').text())
-      .toContain('restore failed for 1 — see Activity');
-    expect(wrapper.get('[data-test="action-notice-status"]').text()).not.toContain('restoring');
+      .toContain('Restore failed for 1 — see Activity');
+    expect(wrapper.get('[data-test="action-notice-status"]').text()).not.toContain('Restoring');
   });
 
   it('reports every mixed compensation category without hiding pending or uncertain siblings', () => {
@@ -213,17 +230,19 @@ describe('ActionNotice group undo wording (review fixes)', () => {
       } } }, now: NOW },
     });
     const text = wrapper.get('[data-test="action-notice-status"]').text();
-    expect(text).toContain('restore failed for 1');
-    expect(text).toContain('restore outcome unknown for 1');
-    expect(text).toContain('restoring… (1 pending)');
-    expect(text).toContain('restored (1)');
+    expect(text).toContain('Restore failed for 1');
+    expect(text).toContain('Restore outcome unknown for 1');
+    expect(text).toContain('Restoring 1…');
+    expect(text).toContain('Restored 1');
+    expect(wrapper.get('[data-test="action-notice-status"]').attributes('title'))
+      .toContain('restored 1, restoring 1, restore failed 1, restore outcome unknown 1');
   });
 
   it('shows restored wording when every compensation confirmed', () => {
     const wrapper = mount(ActionNotice, {
       props: { notice: { ...groupBase, group: { ...groupBase.group!, undone: { ...groupBase.group!.undone!, compensationOutcomes: { confirmed: 1, failed: 0, unknown: 0, pending: 0 } } } }, now: NOW },
     });
-    expect(wrapper.get('[data-test="action-notice-status"]').text()).toContain('restored');
+    expect(wrapper.get('[data-test="action-notice-status"]').text()).toContain('Restored 1');
   });
 
   it('shows a failed status check instead of pretending acceptance is pending (review U8)', () => {

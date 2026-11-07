@@ -90,34 +90,42 @@ const emit = defineEmits<{ undo: []; undoGroup: []; dismissGroup: [] }>();
 
 const isGroup = computed(() => !!props.notice?.group);
 
-/** Group status text: aggregate wording never hides partial failure (§6). */
-const groupStatusText = computed(() => {
+/**
+ * Group status, visible line plus precise ledger. The visible line is terse and
+ * mentions skips only when there are some; the ledger (title + accessible
+ * description) keeps the exact accepted-of-total coverage and per-reason skip
+ * counts so aggregate wording never hides partial failure (§6).
+ */
+const groupStatus = computed<{ text: string; detail: string | null }>(() => {
   const group = props.notice?.group ?? null;
-  if (!group) return '';
-  if (group.acceptanceUnknown) return 'Acceptance not yet known';
-  if (group.statusError && !group.statusKnown) return 'Status check failed — will retry on next refresh';
-  if (!group.statusKnown) return 'Accepting…';
+  if (!group) return { text: '', detail: null };
+  if (group.acceptanceUnknown) return { text: 'Acceptance not yet known', detail: null };
+  if (group.statusError && !group.statusKnown) return { text: 'Status check failed — will retry on next refresh', detail: null };
+  if (!group.statusKnown) return { text: 'Accepting…', detail: null };
   if (group.undone) {
-    const undoneCount = group.undone.cancelled + group.undone.compensating;
-    const reasonEntries = Object.entries(group.undone.skipReasons).filter(([, n]) => n > 0);
-    const skipText = group.undone.skipped === 1 && reasonEntries.length === 1
-      ? `1 skipped — ${SKIP_REASON_LABELS[reasonEntries[0]![0]!] ?? reasonEntries[0]![0]!}`
-      : `${group.undone.skipped} skipped${reasonEntries.length ? ` — ${reasonEntries.map(([reason, n]) => `${n} ${SKIP_REASON_LABELS[reason] ?? reason}`).join(', ')}` : ''}`;
-    const parts = [`Undo accepted for ${undoneCount} of ${group.count}`, skipText];
-    const outcomes = group.undone.compensationOutcomes;
-    if (outcomes.failed > 0) {
-      parts.push(`restore failed for ${outcomes.failed} — see Activity`);
+    const { cancelled, compensating, skipped, skipReasons, compensationOutcomes: outcomes } = group.undone;
+    const undoneCount = cancelled + compensating;
+    const reasonEntries = Object.entries(skipReasons).filter(([, n]) => n > 0);
+    // Compensations accepted but not yet visible in Activity are still restoring.
+    const notLanded = Math.max(0, compensating - outcomes.confirmed - outcomes.failed - outcomes.unknown - outcomes.pending);
+    const restoring = outcomes.pending + notLanded;
+
+    const visible: string[] = [];
+    if (cancelled > 0) visible.push(`Cancelled ${cancelled}`);
+    if (outcomes.confirmed > 0) visible.push(`Restored ${outcomes.confirmed}`);
+    if (restoring > 0) visible.push(`Restoring ${restoring}…`);
+    if (skipped > 0) {
+      visible.push(skipped === 1 && reasonEntries.length === 1
+        ? `1 skipped — ${SKIP_REASON_LABELS[reasonEntries[0]![0]!] ?? reasonEntries[0]![0]!}`
+        : `${skipped} skipped${reasonEntries.length ? ` — ${reasonEntries.map(([reason, n]) => `${n} ${SKIP_REASON_LABELS[reason] ?? reason}`).join(', ')}` : ''}`);
     }
-    if (outcomes.unknown > 0) {
-      parts.push(`restore outcome unknown for ${outcomes.unknown} — see Activity`);
-    }
-    if (outcomes.pending > 0) {
-      parts.push(`restoring… (${outcomes.pending} pending)`);
-    }
-    if (outcomes.confirmed > 0) {
-      parts.push(`restored (${outcomes.confirmed})`);
-    }
-    return parts.join('; ');
+    if (outcomes.failed > 0) visible.push(`Restore failed for ${outcomes.failed} — see Activity`);
+    if (outcomes.unknown > 0) visible.push(`Restore outcome unknown for ${outcomes.unknown} — see Activity`);
+    const text = visible.length > 0 ? visible.join(' · ') : `Undo accepted for ${undoneCount}`;
+
+    const ledger = [`Undo accepted for ${undoneCount} of ${group.count}`, `${skipped} skipped${reasonEntries.length ? ` (${reasonEntries.map(([reason, n]) => `${n} ${SKIP_REASON_LABELS[reason] ?? reason}`).join(', ')})` : ''}`];
+    ledger.push(`restored ${outcomes.confirmed}, restoring ${restoring}, restore failed ${outcomes.failed}, restore outcome unknown ${outcomes.unknown}`);
+    return { text, detail: `${ledger.join('; ')}.` };
   }
   const c = group.counts;
   const parts: string[] = [];
@@ -127,8 +135,9 @@ const groupStatusText = computed(() => {
   if (c.unknown > 0) parts.push(`${c.unknown} outcome unknown`);
   if (c.cancelled > 0) parts.push(`${c.cancelled} cancelled`);
   if (c.rejected > 0) parts.push(`${c.rejected} rejected at acceptance`);
-  return parts.length > 0 ? `Accepted · ${parts.join(', ')}` : 'Accepted';
+  return { text: parts.length > 0 ? `Accepted · ${parts.join(', ')}` : 'Accepted', detail: null };
 });
+const groupStatusText = computed(() => groupStatus.value.text);
 
 /**
  * Worst-first tone for the group status word. A confirmed failure outranks
@@ -273,7 +282,13 @@ const truncatedSubject = computed(() => {
     <template v-if="notice && isGroup">
       <p class="action-notice-text" data-test="action-notice-text">
         <span class="action-notice-label" data-test="action-notice-label">{{ notice.label }} · {{ notice.group!.count }} conversations</span>
-        <span class="action-notice-status" data-test="action-notice-status" :data-status="groupStatusTone">{{ groupStatusText }}</span>
+        <span
+          class="action-notice-status"
+          data-test="action-notice-status"
+          :data-status="groupStatusTone"
+          :title="groupStatus.detail ?? undefined"
+          :aria-description="groupStatus.detail ?? undefined"
+        >{{ groupStatusText }}</span>
         <span v-if="notice.group!.acceptanceUnknown" class="action-notice-expired" data-test="action-notice-acceptance-unknown">
           Nothing is known to have committed; checking again replays this exact request.
         </span>
