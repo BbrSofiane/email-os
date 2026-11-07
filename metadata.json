@@ -1,0 +1,29 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6V7AJZ56AX0H3Y3KRV8E8KP",
+  "strategy": "manual-commit",
+  "branch": "feat/ux-13-implementation",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "docs/ux-13-independent-workspaces.md",
+    "src/App.vue",
+    "src/components/AttachmentChooser.vue",
+    "tests/workspaces.component.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 36,
+    "cache_creation_tokens": 14821,
+    "cache_read_tokens": 3330055,
+    "output_tokens": 6879,
+    "api_call_count": 16
+  }
+}
