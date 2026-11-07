@@ -1,0 +1,44 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6VBB2J6FKYY4EVZG6H9P3HS",
+  "strategy": "manual-commit",
+  "branch": "impeccable-init",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "DESIGN.md",
+    "src/App.vue",
+    "src/assets/style.css",
+    "src/components/AttachmentChooser.vue",
+    "src/components/HeaderGlyph.vue",
+    "src/components/InboxList.vue",
+    "src/components/ReaderView.vue",
+    "src/components/RemindersPanel.vue",
+    "src/lib/browsing-dates.ts",
+    "tests/browsing-dates.test.ts",
+    "tests/discovery.rendered.test.ts",
+    "tests/inbox-list.rendered-layout.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 18,
+    "cache_creation_tokens": 22591,
+    "cache_read_tokens": 852087,
+    "output_tokens": 8255,
+    "api_call_count": 6,
+    "subagent_tokens": {
+      "input_tokens": 306,
+      "cache_creation_tokens": 434965,
+      "cache_read_tokens": 21354941,
+      "output_tokens": 122342,
+      "api_call_count": 139
+    }
+  }
+}
