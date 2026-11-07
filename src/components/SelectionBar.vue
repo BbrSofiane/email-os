@@ -40,12 +40,17 @@ const selectAllTitle = computed(() =>
     ? `Select all loaded is limited to ${OPERATION_GROUP_MAX_MEMBERS} conversations; ${props.loadedCount} rows are loaded.`
     : 'Select every currently loaded row (unseen pages are not included).',
 );
+const scopeCaveat = computed(
+  () => `Selection covers the ${props.loadedCount} loaded conversations only; later arrivals and unseen pages are not included.`,
+);
 </script>
 
 <template>
   <div class="selection-bar" role="group" aria-label="Selected conversations" data-test="selection-bar">
-    <p class="selection-scope" data-test="selection-scope">
-      <strong data-test="selection-count">{{ count }} selected</strong>{{ ' ' }}<span class="selection-loaded-scope">of {{ loadedCount }} loaded — later arrivals and unseen pages are not included</span>
+    <!-- Terse line; the exact scope lives in the title and a visually hidden description. -->
+    <p class="selection-scope" data-test="selection-scope" :title="scopeCaveat">
+      <strong data-test="selection-count">{{ count }} selected</strong>{{ ' ' }}<span class="selection-loaded-scope" data-test="selection-loaded-scope">· {{ loadedCount }} loaded</span>
+      <span class="visually-hidden" data-test="selection-scope-caveat">{{ scopeCaveat }}</span>
     </p>
     <span class="selection-actions">
       <button

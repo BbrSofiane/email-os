@@ -70,6 +70,26 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
     wrapper = null;
   });
 
+  it.each([
+    [{ starredMessages: 0, knownMessages: 3, totalMessages: 3 }, 'Not starred'],
+    [{ starredMessages: 1, knownMessages: 3, totalMessages: 3 }, 'Starred'],
+    [{ starredMessages: 1, knownMessages: 2, totalMessages: 3 }, 'Starred (partial)'],
+    [{ starredMessages: 0, knownMessages: 1, totalMessages: 3 }, 'Star state unknown'],
+  ])('keeps the star line short and moves coverage into the title and description (%j)', async (stars, visible) => {
+    wrapper = mountReader(conversationOf(ACCOUNT_A, ['read-m1'], { stars }));
+    await settle(wrapper!);
+    const line = wrapper!.get('[data-test="reader-stars"]');
+    const detail = wrapper!.get('[data-test="reader-stars-detail"]');
+    // Visible text is the state alone; the precise caveat is title + hidden description.
+    expect(line.text().startsWith(visible)).toBe(true);
+    expect(line.text().replace(detail.text(), '').trim()).toBe(visible);
+    expect(detail.classes()).toContain('visually-hidden');
+    for (const caveat of [line.attributes('title') ?? '', detail.text()]) {
+      expect(caveat).toContain(`known for ${stars.knownMessages} of ${stars.totalMessages} cached messages`);
+      expect(caveat).toContain('Pending intent is not provider confirmation');
+    }
+  });
+
   it('opens focused on the newest message toggle with only the newest message expanded', async () => {
     const conversation = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2', 'read-m3']);
     wrapper = mountReader(conversation);
