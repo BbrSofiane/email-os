@@ -1,0 +1,47 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6VPAANZSXW6A7W62J0FACZG",
+  "strategy": "manual-commit",
+  "branch": "impeccable/p2-action-vocabulary",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "DESIGN.md",
+    "src/App.vue",
+    "src/components/AccountPanel.vue",
+    "src/components/ActionNotice.vue",
+    "src/components/ActionOverlay.vue",
+    "src/components/ActivityPanel.vue",
+    "src/components/InboxList.vue",
+    "src/components/ReaderView.vue",
+    "src/components/SelectionBar.vue",
+    "src/composables/useMailbox.ts",
+    "src/lib/browsing-actions.ts",
+    "tests/account.component.test.ts",
+    "tests/action-notice.component.test.ts",
+    "tests/activity-panel.test.ts",
+    "tests/create-split-command.test.ts",
+    "tests/discovery.component.test.ts",
+    "tests/discovery.rendered.test.ts",
+    "tests/inbox-list.component.test.ts",
+    "tests/inbox-list.rendered-layout.test.ts",
+    "tests/saved-split.test.ts",
+    "tests/undo.component.test.ts",
+    "tests/unread-filter-command.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 46,
+    "cache_creation_tokens": 92279,
+    "cache_read_tokens": 2154263,
+    "output_tokens": 15588,
+    "api_call_count": 23
+  }
+}
