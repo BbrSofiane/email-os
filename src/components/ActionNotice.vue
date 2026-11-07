@@ -12,6 +12,10 @@
  *   parent reports the outcome (cancelled or the compensating rows) through
  *   `undone`, and the notice says Cancelled / Restored / the failure or
  *   uncertainty explicitly.
+ * - The status word carries `data-status` (settled | pending | unknown |
+ *   partial | failed). CSS maps pending/unknown/partial → Amber Notice and
+ *   failed → Coral Fault; settled stays Ash. Colour only reinforces the words,
+ *   it never replaces them (DESIGN.md Status-Is-Sacred Rule).
  * - The Undo button and Z hint are advisory only: they hide after the window
  *   passes, but the backend's typed `undo_unavailable` decision stays the
  *   authority and is surfaced through the same slot.
@@ -55,6 +59,9 @@ export interface GroupNoticeView {
     compensationOutcomes: { confirmed: number; failed: number; unknown: number; pending: number };
   } | null;
 }
+
+/** Honest-state tone of the status word; CSS maps it to a status token. */
+export type NoticeStatusTone = 'settled' | 'pending' | 'unknown' | 'partial' | 'failed';
 
 const props = defineProps<{
   /** Null renders an empty live region so slot replacement stays announceable. */
@@ -123,6 +130,33 @@ const groupStatusText = computed(() => {
   return parts.length > 0 ? `Accepted · ${parts.join(', ')}` : 'Accepted';
 });
 
+/**
+ * Worst-first tone for the group status word. A confirmed failure outranks
+ * uncertainty; uncertainty outranks pending; partial (skipped members) outranks
+ * a clean settle. Mirrors `groupStatusText` branch for branch.
+ */
+const groupStatusTone = computed<NoticeStatusTone>(() => {
+  const group = props.notice?.group ?? null;
+  if (!group) return 'settled';
+  if (group.acceptanceUnknown) return 'unknown';
+  // A failed status READ says nothing about the outcome: unknown, not failed.
+  if (group.statusError && !group.statusKnown) return 'unknown';
+  if (!group.statusKnown) return 'pending';
+  if (group.undone) {
+    const outcomes = group.undone.compensationOutcomes;
+    if (outcomes.failed > 0) return 'failed';
+    if (outcomes.unknown > 0) return 'unknown';
+    if (outcomes.pending > 0) return 'pending';
+    if (group.undone.skipped > 0) return 'partial';
+    return 'settled';
+  }
+  const c = group.counts;
+  if (c.failed > 0 || c.rejected > 0) return 'failed';
+  if (c.unknown > 0) return 'unknown';
+  if (c.pending > 0) return 'pending';
+  return 'settled';
+});
+
 const groupUndoVisible = computed(() => {
   const group = props.notice?.group ?? null;
   if (!group || group.undone || group.acceptanceUnknown) return false;
@@ -177,6 +211,31 @@ const statusText = computed(() => {
   }
 });
 
+/** Tone for the single-action status word; mirrors `statusText` branch for branch. */
+const statusTone = computed<NoticeStatusTone>(() => {
+  const undone = props.notice?.undone ?? null;
+  if (undone) {
+    if (undone.outcome === 'cancelled') return 'settled';
+    const statuses = undone.compensations.map((op) => op.status);
+    if (statuses.includes('failed')) return 'failed';
+    if (statuses.includes('outcome_unknown')) return 'unknown';
+    if (statuses.length > 0 && statuses.every((status) => status === 'confirmed')) return 'settled';
+    return 'pending';
+  }
+  switch (props.notice?.operation?.status) {
+    case 'confirmed':
+    case 'cancelled':
+      return 'settled';
+    case 'failed':
+      return 'failed';
+    case 'outcome_unknown':
+      return 'unknown';
+    default:
+      // queued / applying / activity row not landed yet.
+      return 'pending';
+  }
+});
+
 const undoVisible = computed(() => {
   const until = props.notice?.undoableUntil;
   if (!until || props.notice?.undone) return false;
@@ -214,7 +273,7 @@ const truncatedSubject = computed(() => {
     <template v-if="notice && isGroup">
       <p class="action-notice-text" data-test="action-notice-text">
         <span class="action-notice-label" data-test="action-notice-label">{{ notice.label }} · {{ notice.group!.count }} conversations</span>
-        <span class="action-notice-status" data-test="action-notice-status">{{ groupStatusText }}</span>
+        <span class="action-notice-status" data-test="action-notice-status" :data-status="groupStatusTone">{{ groupStatusText }}</span>
         <span v-if="notice.group!.acceptanceUnknown" class="action-notice-expired" data-test="action-notice-acceptance-unknown">
           Nothing is known to have committed; checking again replays this exact request.
         </span>
@@ -236,7 +295,7 @@ const truncatedSubject = computed(() => {
         <span class="action-notice-label" data-test="action-notice-label">
           {{ notice.label }}<template v-if="notice.subject"> · {{ truncatedSubject }}</template>
         </span>
-        <span class="action-notice-status" data-test="action-notice-status">{{ statusText }}</span>
+        <span class="action-notice-status" data-test="action-notice-status" :data-status="statusTone">{{ statusText }}</span>
         <span v-if="undoExpired" class="action-notice-expired" data-test="action-notice-expired">{{ undoExpiredText }}</span>
       </p>
       <span v-if="undoVisible" class="action-notice-undo">
