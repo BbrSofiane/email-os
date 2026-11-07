@@ -1,0 +1,41 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6VGMZEWQ46MSA0SKJ30YD12",
+  "strategy": "manual-commit",
+  "branch": "impeccable-init",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "DESIGN.md",
+    "src/App.vue",
+    "src/assets/style.css",
+    "src/components/ContactPane.vue",
+    "src/components/InboxList.vue",
+    "src/components/PaneGlyph.vue",
+    "tests/contact-pane.component.test.ts",
+    "tests/inbox-list.rendered-layout.test.ts",
+    "tests/undo.component.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 24,
+    "cache_creation_tokens": 151039,
+    "cache_read_tokens": 1166439,
+    "output_tokens": 5204,
+    "api_call_count": 9,
+    "subagent_tokens": {
+      "input_tokens": 190,
+      "cache_creation_tokens": 443393,
+      "cache_read_tokens": 14506211,
+      "output_tokens": 76975,
+      "api_call_count": 91
+    }
+  }
+}

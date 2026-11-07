@@ -1,0 +1,87 @@
+Continue where you left off.
+
+---
+
+<task-notification>
+<task-id>a858aff622dd8e251</task-id>
+<tool-use-id>toolu_01FiNQmJnGQ92g2kcT1an24A</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-sofianebebert-workspace-worktrees-email-os-t3-7080b790/55d0556b-179f-4a4a-bdc1-c9411cb45f29/tasks/a858aff622dd8e251.output</output-file>
+<status>completed</status>
+<summary>Agent "Layout pass: rail and contact pane" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>The rail and contact pane now match the reference geometry, and every gate passes. One thing went beyond the brief's scope: I made a small fix in `InboxList.vue`, explained below. Nothing is committed or pushed.
+
+**Gates**
+- `pnpm typecheck`: clean.
+- `pnpm test`: 643 passed, 32 skipped, 0 failed (baseline was 639 / 32; I added 4 tests).
+- Opt-in Chrome suites, run one at a time with the local Playwright Chromium: 32/32 pass (layout 2/2, disclosure-focus 1/1, reader 13/13, discovery 16/16).
+- During one earlier run, the reader test "archives with action-time neighbor ordering after a mid-reading list reorder" hit its 5s timeout while vite and Chrome were also running. It passed twice in isolation on both HEAD and this tree, then passed in the full run, so it's a load-timing flake.
+
+**The row overflow you asked me to investigate**
+- **Cause:** my change exposed an existing gap in `InboxList`'s collapse logic. It only re-checks a row when the row's box changes size. At HEAD the old rail was sized in rem, so bigger text resized the list and the check ran. With the fixed 40px rail and 272px pane, bigger text no longer resizes the row, so the check never ran. Rows overflowed from a 32px root font without collapsing their actions.
+- **Pre-existing part:** in a temporary HEAD worktree (now removed), compact rows also overflow from a 28px root font. That capacity limit is not mine.
+- **Fix:** `InboxList` now also watches each row's sender label, whose height changes with text size. Collapse now engages at about 33px with no overflow. The compact limit has moved out to about 35.5px.
+- **Test change:** I moved the larger-text gate's checkpoints from 16/20/25px to 16/30/34.5px. Every assertion is unchanged.
+
+**Before → after**
+
+| | Before | After |
+|---|---|---|
+| Rail width | 5rem text column, grew with font (~93px at 16px root) | 40px fixed |
+| Contact width | 230–280px | 272px fixed |
+| Contact padding | 0.6rem | 0 24px 24px |
+| Contact name | below a caption | centred 42px down, same line as the "Inbox" tab |
+| Contact email | separated by an invisible "Copy name" line | centred 96px down, the first list line |
+| Recent mail | bordered chips | label at 129px, rows at 156 / 180 / 204 / 228 (24px pitch) |
+
+On the rail, the top circle and the tab line are both centred 42px down, and the first glyph in the dark pill is centred at 96px. These numbers hold at both 1030 and 1280px wide.
+
+**Where each rail item went**
+- **Top circle:** Inbox. There's no AI or compose action to put there, and Inbox is better than an empty or dead control.
+- **Dark pill:** Starred (Gmail only), Cached Done, Provider mail, Cached Trash (Gmail only).
+- **Bottom:** Account (Gmail only), Activity, Drafts, and Contact below 1000px.
+- **Unchanged:** every button keeps its visible-label text as its accessible name (now visually hidden), plus `aria-current` / `aria-expanded`, its `data-test` and its handlers. Every button has a hover `title`, and a label tooltip appears beside it on keyboard focus.
+- **Glyphs:** new local SVGs in `PaneGlyph.vue`; Starred reuses the header's star.
+
+**Contact pane**
+- **Caption:** "Focused/Open conversation" is still there for screen readers but hidden on screen.
+- **Copy buttons:** each is a glyph at the end of its own line, shown on hover or focus and always reachable by keyboard. Hidden buttons no longer leave empty lines. Without a display name, Copy email sits on the name line.
+- **Recent mail:** plain one-line text buttons with an ellipsis and the full subject as the title.
+- **No footer:** the contact column doesn't exist below 1000px and is inert while a drawer is open. Utilities there would vanish on narrow windows and couldn't close their own drawer, so they live only in the rail.
+
+**Pending badge**
+- **Count:** queued + applying + outcome unknown, taken from the same rows the Activity drawer lists. There's no new IPC, and the badge shows "99+" past 99.
+- **Visible digit:** amber and hidden from screen readers.
+- **Words:** read out as the button's description and added to its title, e.g. "2 operations pending" or "3 operations unresolved: 2 pending, 1 outcome unknown".
+- **At zero:** it disappears.
+- **Limit:** it counts only what the Activity snapshot carries, not a mailbox-wide total.
+
+**Screenshots** (the two-workspace strip of the browser preview is hidden for framing)
+- `/private/tmp/claude-501/-Users-sofianebebert-workspace-worktrees-email-os-t3-7080b790/55d0556b-179f-4a4a-bdc1-c9411cb45f29/scratchpad/rail-1030.png`
+- `/private/tmp/claude-501/-Users-sofianebebert-workspace-worktrees-email-os-t3-7080b790/55d0556b-179f-4a4a-bdc1-c9411cb45f29/scratchpad/rail-1280.png`
+- `/private/tmp/claude-501/-Users-sofianebebert-workspace-worktrees-email-os-t3-7080b790/55d0556b-179f-4a4a-bdc1-c9411cb45f29/scratchpad/rail-drawer.png` (Activity open, badge showing 2)
+- `/private/tmp/claude-501/-Users-sofianebebert-workspace-worktrees-email-os-t3-7080b790/55d0556b-179f-4a4a-bdc1-c9411cb45f29/scratchpad/rail-breakpoint.png` (999px, Contact glyph in the rail)
+- Extras: `rail-badge.png`, `rail-focus.png` (keyboard tooltip), `contact-hover.png` in the same folder.
+
+Vite is stopped and no Chrome processes are left.
+
+**Remaining gaps (recorded in DESIGN.md)**
+- **Leading caption:** the list opens with a date caption ("Today" or a month), so its first row is centred 144px down rather than on the 96px line the rail and contact pane use. The reference has no leading caption; this is a rows follow-up.
+- **Section label:** it keeps the copy "Recent cached mail" rather than "Mail", since vocabulary was out of scope.
+- **Compact limit:** compact rows still overflow above about a 35.5px root font.
+- **Not touched:** compose slot, divider colour, global buttons, command overlay and in-flow bars.
+
+DESIGN.md is updated for the rail, the contact pane, and rows gaps 3–8, which now say done with their leftovers. Its specs now give the pill as 30px wide, which is what the capture measures.
+
+**Files changed:**
+- `src/App.vue`
+- `src/assets/style.css`
+- `src/components/ContactPane.vue`
+- `src/components/PaneGlyph.vue` (new)
+- `src/components/InboxList.vue`
+- `tests/undo.component.test.ts`
+- `tests/contact-pane.component.test.ts`
+- `tests/inbox-list.rendered-layout.test.ts`
+- `DESIGN.md`</result>
+<usage><subagent_tokens>249828</subagent_tokens><tool_uses>19</tool_uses><duration_ms>333879</duration_ms></usage>
+</task-notification>
