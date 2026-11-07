@@ -1,0 +1,49 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6V74DQQZQ1ADDKD6Z0RVEJP",
+  "session_id": "45f4b9c4-c33a-4241-b735-70d748a307eb",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-07T14:38:23.570947Z",
+  "branch": "feat/ux-13-implementation",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "docs/ux-13-independent-workspaces.md"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "229e86d3761f",
+  "checkpoint_transcript_start": 544,
+  "transcript_lines_at_start": 544,
+  "compact_transcript_start": 77,
+  "token_usage": {
+    "input_tokens": 50,
+    "cache_creation_tokens": 25915,
+    "cache_read_tokens": 3919926,
+    "output_tokens": 9064,
+    "api_call_count": 21
+  },
+  "session_metrics": {
+    "turn_count": 2
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-07T14:38:23.431955Z",
+    "agent_lines": 26,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 26,
+    "total_lines_changed": 26,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}
