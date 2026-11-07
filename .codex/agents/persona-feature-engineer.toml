@@ -1,0 +1,11 @@
+# Thin wrapper around the shared persona definition.
+# Source of truth: .pi/agents/persona-feature-engineer.md (symlinked into
+# .claude/agents/ and read directly here; Codex agents need inline TOML
+# instructions, so this file only points at the document).
+name = "persona-feature-engineer"
+description = "Implement scoped features with focused tests and before-and-after verification evidence. Reads and follows the persona definition at .pi/agents/persona-feature-engineer.md before doing any work."
+developer_instructions = """
+At the start of the task, read the file `.pi/agents/persona-feature-engineer.md` in the repository root and follow it exactly as your operating instructions. It defines your scope, authority, verification requirements, guardrails, and handoff format. Do not start work before you have read it.
+
+When the persona's escalation section refers to supervisor routing, treat the parent agent conversation as the supervisor: ask blocking questions there and wait for the answer before continuing the affected work.
+"""

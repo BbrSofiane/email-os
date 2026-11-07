@@ -9,7 +9,7 @@ Implement the requested change in Email OS. The request can be a task descriptio
 
 Usage: `/skill:implement <task description or document path and item>`
 
-All repository paths below are relative to the repository root. The local persona definition is `../../agents/persona-feature-engineer.md` relative to this skill directory.
+All repository paths below are relative to the repository root. The local persona definition is `.pi/agents/persona-feature-engineer.md` from the repository root. Runtimes that mirror these documents through symlinks keep this path authoritative; follow the target, not the mirror location.
 
 ## 1. Establish the task
 
@@ -42,8 +42,8 @@ Follow existing conventions and any applicable project instructions. Do not inve
 
 Using this skill authorizes one implementation subagent. Do not ask the user to request delegation again.
 
-- Read the `pi-subagents` skill and the local persona definition before launch.
-- Start `persona-feature-engineer` through the `subagent` tool. Inherit the parent model unless the user specifies another one.
+- Read your runtime's subagent guidance and the local persona definition before launch.
+- Start `persona-feature-engineer` through the runtime's native subagent mechanism: the `subagent` tool in pi, the Task tool with subagent type `persona-feature-engineer` in Claude Code, or the custom agent `persona-feature-engineer` in Codex. Inherit the parent model unless the user specifies another one.
 - Give the child a self-contained brief: explicit repository cwd, goal, acceptance criteria, non-goals, relevant files and contracts, pre-existing edits, edit boundary, required checks, verification method, and expected evidence.
 - Tell the child to execute directly. It must not use this skill to delegate again or start other agents.
 - Leave implementation to the child. Do not edit the same checkout while it works. Follow native async completion notifications; do not poll or sleep.

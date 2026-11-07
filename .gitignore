@@ -9,9 +9,11 @@ secrets/
 credentials/
 *credentials*.json
 
-# --- Local pi agent runtime (except shared factory configuration) ---
+# --- Local pi agent runtime (except shareable configuration and documents) ---
 .pi/*
 !.pi/factory.json
+!.pi/skills/
+!.pi/agents/
 
 # --- Entire local/session data (not the shareable project settings) ---
 # Keep .entire/settings.json trackable; ignore only local-only Entire files.
