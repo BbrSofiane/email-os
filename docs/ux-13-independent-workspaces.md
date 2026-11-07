@@ -206,8 +206,10 @@ No mailbox, credentials, external sends, provider writes or OS package installs.
 
 ### Still gated / requested decision
 
-- [ ] UX-06/07 dependency decision for mail-search isolation; no mailbox search
-  exists on this base and no unsupported search control was added.
+- [x] Mail search (present on the rebased main) is account-local: each workspace's
+  Search queries only its own client, queries/results are per-workspace state, and
+  the header discloses "no cross-account search". No unified or cross-account query
+  was added (component test `search stays inside its own account workspace`).
 - [ ] Approve a bounded backend-owned registry/credential namespace/migration,
   profile lease and close-coordinator design before UX-13B implementation.
   Decide controlled shared-core leases versus deliberate same-account rejection.

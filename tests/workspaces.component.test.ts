@@ -72,6 +72,25 @@ describe('UX-13A independent synthetic sessions', () => {
     expect(ids.filter((id, i) => ids.indexOf(id) !== i)).toEqual([]);
   });
 
+  it('search stays inside its own account workspace', async () => {
+    const searchA = vi.fn<MailClient['searchMail']>();
+    const { w, b, pa, pb } = await setup((inner) => {
+      searchA.mockImplementation((request) => inner.searchMail(request));
+      return { ...inner, searchMail: searchA };
+    });
+    const searchB = vi.spyOn(b, 'searchMail');
+    await pa.get('[data-test="search-trigger"]').trigger('click'); await flushPromises();
+    await pa.get('[data-test="search-input"]').setValue('thread');
+    await pa.get('form').trigger('submit'); await flushPromises();
+    expect(searchA).toHaveBeenCalled();
+    expect(searchB).not.toHaveBeenCalled();
+    expect(pa.find('[data-test="search-coverage"]').exists()).toBe(true);
+    await switchTo(w, bId);
+    expect(pb.find('[data-test="search-input"]').exists()).toBe(false);
+    expect(pb.find('[data-test="search-coverage"]').exists()).toBe(false);
+    expect(w.get('#workspace-boundary').text()).toContain('no cross-account search');
+  });
+
   it('late detail and action ACKs stay with their owning client and cannot steal focus', async () => {
     const detail = deferred<Conversation>();
     const action = deferred<OperationReceipt>();
