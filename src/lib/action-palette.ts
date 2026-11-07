@@ -15,6 +15,7 @@ export const actionGroups: ReadonlyArray<{ id: ActionGroup; label: string }> = [
 ];
 
 export const actionGroupOf: Record<BrowsingActionId, ActionGroup> = {
+  compose: 'conversation',
   open: 'conversation', back: 'conversation', archive: 'conversation', unarchive: 'conversation',
   remind: 'conversation', undo: 'conversation', star: 'conversation', unstar: 'conversation',
   read: 'conversation', unread: 'conversation',
@@ -26,6 +27,7 @@ export const actionGroupOf: Record<BrowsingActionId, ActionGroup> = {
 
 /** Extra search words per action; the label and the bound key are always searchable. */
 export const actionAliases: Record<BrowsingActionId, readonly string[]> = {
+  compose: ['new message', 'write', 'new draft', 'mail'],
   open: ['read', 'view', 'enter'],
   back: ['close', 'return', 'previous screen'],
   archive: ['archive', 'done', 'finish', 'clear'],

@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import type { DraftContent, DraftRef, DraftSource, DraftSummary, MailError } from '../lib/ipc/client';
+import { describeDraftError } from '../lib/draft-errors';
+import DraftEditorCore from './DraftEditorCore.vue';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   summaries: DraftSummary[];
   activeRef: DraftRef | null;
   source: DraftSource | null;
@@ -29,7 +31,9 @@ const props = defineProps<{
   closeError: string | null;
   closeRetryAvailable: boolean;
   closeSetupError: string | null;
-}>();
+  /** Human-readable reply target shown as "Draft to {label}"; null hides the line. */
+  recipientLabel?: string | null;
+}>(), { recipientLabel: null });
 
 const emit = defineEmits<{
   newDraft: [];
@@ -50,24 +54,12 @@ const emit = defineEmits<{
   retryCloseSetup: [];
 }>();
 
-function fieldsDisabled(): boolean {
-  const conflictBlocked = props.conflict && !(props.error?.kind === 'invalid_request' && !props.copyPending);
-  const unpreparedReply = props.source?.kind === 'reply' && (!props.activeRef?.draftId || props.creating);
-  return props.closing || props.transitioning || props.deletePending || conflictBlocked || props.deleting || unpreparedReply;
+function describe(error: MailError): string {
+  return describeDraftError(error);
 }
 
-function describe(error: MailError): string {
-  switch (error.kind) {
-    case 'draft_conflict': return `Conflict: another save created revision ${error.currentRevision}. Your text is unchanged.`;
-    case 'invalid_request': return `Invalid ${error.field}; correct the text and retry.`;
-    case 'reply_unavailable': return 'Reply preparation is unavailable: current complete reply headers could not be verified.';
-    case 'not_found': return 'That local draft is no longer available.';
-    case 'auth_required': return 'No active account. Reconnect the same account to access its local drafts.';
-    case 'profile_in_use': return 'The local profile is in use by another window.';
-    case 'request_id_conflict': return 'The request ID conflicted; your text remains in the editor.';
-    case 'storage_unavailable': return 'Local storage did not confirm the save. Retry is safe.';
-    default: return 'The local draft operation was not confirmed. Your text remains in the editor.';
-  }
+function onSetField(field: keyof DraftContent, value: string): void {
+  emit('setField', field, value);
 }
 </script>
 
@@ -113,61 +105,61 @@ function describe(error: MailError): string {
     </div>
 
     <section v-if="props.visible" class="composer" aria-label="Plain-text draft editor" data-test="composer">
-      <header class="composer-heading">
-        <h2>{{ props.source?.kind === 'reply' ? 'Reply draft' : 'New local draft' }}</h2>
-        <div class="composer-actions">
-          <button type="button" data-test="close-composer" :disabled="props.closing || props.transitioning || props.deleting || props.deletePending" @click="emit('closeEditor')">Close editor</button>
-          <button v-if="props.canCancelReplyPreparation" type="button" data-test="cancel-reply-preparation" :disabled="props.closing || props.transitioning" @click="emit('cancelReplyPreparation')">Cancel reply preparation</button>
-          <button type="button" data-test="discard-draft" :disabled="props.closing || props.transitioning || props.discardBusy || props.deleting || props.deletePending || props.creating || props.conflict || !props.activeRef?.draftId" @click="emit('askDiscard')">Discard…</button>
-        </div>
-      </header>
-      <p class="draft-local-note" role="note">
-        Local-only plain text. No Send action exists. Recipient text is stored raw and is not validated or made ready to send.
-        Cc is optional; Bcc, reply-all, quoted text, and rich text are not supported.
-      </p>
-      <p v-if="props.source?.kind === 'reply'" class="reply-source" data-test="reply-source">
-        Reply source is fixed: {{ props.source.conversation.conversationId }} · {{ props.source.sourceMessageId }}
-      </p>
-      <p v-if="props.status" class="draft-status" data-test="draft-status" aria-live="polite">{{ props.status }}</p>
-      <p v-if="props.error" role="alert" data-test="draft-error">{{ describe(props.error) }}</p>
-      <p v-if="props.createError" role="alert" data-test="draft-create-error">{{ describe(props.createError) }}</p>
-      <p v-if="props.closeError" role="alert" data-test="draft-close-error">{{ props.closeError }}</p>
-      <div class="composer-fields" :aria-busy="props.saving || props.creating">
-        <label>To
-          <input data-test="draft-to" type="text" autocomplete="off" :value="props.content.to" :disabled="fieldsDisabled()" @input="emit('setField', 'to', ($event.target as HTMLInputElement).value)">
-        </label>
-        <label>Cc
-          <input data-test="draft-cc" type="text" autocomplete="off" :value="props.content.cc" :disabled="fieldsDisabled()" @input="emit('setField', 'cc', ($event.target as HTMLInputElement).value)">
-        </label>
-        <label>Subject
-          <input data-test="draft-subject" type="text" autocomplete="off" :value="props.content.subject" :disabled="fieldsDisabled()" @input="emit('setField', 'subject', ($event.target as HTMLInputElement).value)">
-        </label>
-        <label>Body
-          <textarea data-test="draft-body" :value="props.content.bodyText" :disabled="fieldsDisabled()" @input="emit('setField', 'bodyText', ($event.target as HTMLTextAreaElement).value)"></textarea>
-        </label>
-      </div>
-      <div class="composer-actions" v-if="(props.error || props.createError) && !props.recoveryRequired">
-        <button type="button" data-test="retry-draft-save" :disabled="props.closing || props.copyPending || props.transitioning" @click="emit('retry')">
-          {{ props.deletePending ? 'Retry discard' : 'Retry save' }}
-        </button>
-      </div>
-      <div v-if="props.conflict || props.recoveryRequired || (props.error?.kind === 'not_found' && !!props.activeRef?.draftId)" class="conflict-actions" data-test="draft-conflict-actions">
-        <div v-if="props.recoveryRequired || (props.error?.kind === 'not_found' && !props.conflict)" role="alert" data-test="deleted-draft-recovery">
-          The saved draft or recovery copy was deleted elsewhere. Your exact buffer is preserved; save it as an independent new message or keep it here.
-        </div>
-        <div v-if="props.confirmReload && props.conflict" role="alertdialog" aria-label="Confirm reload">
-          <p>Reload replaces this exact editor text with the saved version. Continue?</p>
-          <button type="button" data-test="confirm-reload" @click="emit('confirmReload')">Replace with saved version</button>
-          <button type="button" data-test="cancel-reload" @click="emit('cancelReload')">Keep my text</button>
-        </div>
-        <button v-if="props.conflict && !props.confirmReload" type="button" data-test="ask-reload" @click="emit('askReload')">Reload saved version…</button>
-        <button type="button" data-test="save-as-new" :disabled="props.copyPending || props.transitioning" @click="emit('saveAsNew')">{{ props.copyPending ? 'Copying…' : 'Save as new local draft' }}</button>
-      </div>
-      <div v-if="props.confirmDiscard" class="discard-confirm" role="alertdialog" aria-label="Confirm discard">
-        <p>Discard this local draft? This cannot be undone.</p>
-        <button type="button" data-test="confirm-discard" :disabled="props.discardBusy || props.deleting || props.deletePending" @click="emit('confirmDiscard')">Confirm discard</button>
-        <button type="button" data-test="cancel-discard" :disabled="props.deleting || props.deletePending" @click="emit('cancelDiscard')">Keep draft</button>
-      </div>
+      <DraftEditorCore
+        :active-ref="props.activeRef"
+        :source="props.source"
+        :content="props.content"
+        :status="props.status"
+        :creating="props.creating"
+        :saving="props.saving"
+        :conflict="props.conflict"
+        :error="props.error"
+        :create-error="props.createError"
+        :deleting="props.deleting"
+        :closing="props.closing"
+        :transitioning="props.transitioning"
+        :delete-pending="props.deletePending"
+        :confirm-discard="props.confirmDiscard"
+        :discard-busy="props.discardBusy"
+        :confirm-reload="props.confirmReload"
+        :copy-pending="props.copyPending"
+        :recovery-required="props.recoveryRequired"
+        :can-cancel-reply-preparation="props.canCancelReplyPreparation"
+        :close-error="props.closeError"
+        @close-editor="emit('closeEditor')"
+        @set-field="onSetField"
+        @retry="emit('retry')"
+        @ask-discard="emit('askDiscard')"
+        @confirm-discard="emit('confirmDiscard')"
+        @cancel-discard="emit('cancelDiscard')"
+        @ask-reload="emit('askReload')"
+        @confirm-reload="emit('confirmReload')"
+        @cancel-reload="emit('cancelReload')"
+        @save-as-new="emit('saveAsNew')"
+        @cancel-reply-preparation="emit('cancelReplyPreparation')"
+      >
+        <template #header>
+          <header class="composer-heading">
+            <h2>{{ props.source?.kind === 'reply' ? 'Reply draft' : 'New local draft' }}</h2>
+          </header>
+          <p v-if="props.source?.kind === 'reply' && props.recipientLabel" class="draft-recipient" data-test="draft-recipient-label"><strong class="draft-flag">Draft</strong> to {{ props.recipientLabel }}</p>
+        </template>
+        <template #context>
+          <p v-if="props.source?.kind === 'reply'" class="reply-source" data-test="reply-source">
+            Reply source is fixed: {{ props.source.conversation.conversationId }} · {{ props.source.sourceMessageId }}
+          </p>
+        </template>
+      </DraftEditorCore>
     </section>
   </section>
 </template>
+
+<style scoped>
+/* Composer reply-target line (Superhuman-style "Draft to {name}"); the flag
+   word itself uses the global .draft-flag style. */
+.draft-recipient {
+  margin: 0.3rem 0;
+  font-size: var(--type-body);
+  color: var(--text-primary);
+}
+</style>

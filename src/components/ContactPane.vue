@@ -20,13 +20,15 @@ export interface ContactInfo {
   mailbox: string;
 }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   /** Exact known correspondent, or `null` when nothing is known. */
   contact: ContactInfo | null;
   /** Which surface the contact belongs to; disclosed for clarity. */
   context: 'focused' | 'open';
   recent?: { ref: ConversationRef; subject: string }[];
-}>();
+  /** Reply target while a draft editor is active; `null` renders no compose line. */
+  composeTarget?: ContactInfo | null;
+}>(), { composeTarget: null });
 
 const emit = defineEmits<{ searchSender: [mailbox: string]; openRecent: [ref: ConversationRef] }>();
 
@@ -95,6 +97,7 @@ async function copyValue(label: 'name' | 'email', value: string): Promise<void> 
        .contact-column); inside the narrow disclosure they stack compactly. -->
   <aside class="contact-pane" aria-label="Contact context" data-test="contact-pane">
     <h2 class="contact-title visually-hidden">{{ props.context === 'focused' ? 'Focused conversation' : 'Open conversation' }}</h2>
+    <p v-if="props.composeTarget" class="compose-target" data-test="compose-target">Composing to {{ props.composeTarget.displayName ?? props.composeTarget.mailbox }} <span class="compose-target-mail">{{ props.composeTarget.mailbox }}</span></p>
     <div v-if="props.contact" class="contact-identity" data-test="contact-identity">
       <p class="contact-line contact-line-name">
         <button type="button" class="contact-name contact-search" data-test="contact-name" title="Find mail from this sender" @click="emit('searchSender', props.contact.mailbox)">{{ nameLabel(props.contact) }}</button>
@@ -143,3 +146,17 @@ async function copyValue(label: 'name' | 'email', value: string): Promise<void> 
     >{{ copyOutcome.message }}</p>
   </aside>
 </template>
+
+<style scoped>
+/* Compose context line shown while a reply draft editor is active. Plain text
+   interpolation only, on the existing shell text tokens. */
+.compose-target {
+  margin: 0;
+  font-size: var(--type-body);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.compose-target-mail {
+  color: var(--text-tertiary);
+}
+</style>

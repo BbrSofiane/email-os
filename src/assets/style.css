@@ -103,6 +103,12 @@ body {
   background: var(--surface-raised);
 }
 
+/* On the raised composer surfaces the ghost hover fill equals the card
+   background, so it would be invisible; use the stronger fill there. */
+:where(.compose-card, .reply-composer) :where(button:not(:disabled):hover) {
+  background: var(--focus-fill);
+}
+
 :where(button:not(:disabled):active) {
   background: var(--focus-fill);
 }
@@ -1516,14 +1522,61 @@ button:focus-visible {
   font-size: var(--type-body);
   font-weight: var(--weight-strong);
   margin: 0.25rem 0;
+  overflow-wrap: anywhere;
 }
 
-.draft-local-note,
+/* Informational note: secondary text, not a warning. Warnings stay on
+   status/error lines (draft-status, reply-source). */
+.draft-local-note {
+  margin: 0.3rem 0;
+  font-size: var(--type-body);
+  color: var(--text-secondary);
+}
+
 .reply-source,
 .draft-status {
   margin: 0.3rem 0;
   font-size: var(--type-body);
   color: var(--warning);
+}
+
+/* Shared composer body (DraftEditorCore) inside any surface. */
+.composer-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+/* "Draft" state flag: plain strong text, never uppercase/tracked and never a
+   second accent — the reader's active-message bar already owns focus-accent. */
+.draft-flag {
+  color: var(--text-primary);
+  font-weight: var(--weight-strong);
+}
+
+/* Composer footer, shared by the inline compose card, the docked reply
+   composer and the drafts-drawer editor: actions right-aligned above a rule. */
+.composer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--rule);
+}
+
+/* Inline confirm dialog (discard / reload) on any composer surface. */
+.discard-confirm {
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-top: 0.4rem;
 }
 
 .draft-list ul {
@@ -1764,3 +1817,40 @@ button:focus-visible {
 .activity-group-request { margin: 0 0 .4rem; color: var(--text-secondary); font-size: var(--type-body); overflow-wrap: anywhere; }
 .activity-group-members { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .35rem; }
 .activity-group-member { display: flex; flex-wrap: wrap; align-items: baseline; gap: .4rem; }
+
+/*
+ * Inline compose card (new-message editor): an in-flow block in the central
+ * column — the area where the inbox list normally is — or docked at the bottom
+ * of the reader pane. Never a fixed overlay: no backdrop, no dimming, so the
+ * rail, header and contact pane stay visible and interactive while composing.
+ * DESIGN.md tokens: 1px Seam (divider) border, 10px radius, Lifted Charcoal
+ * (surface-raised) fill.
+ */
+.compose-card {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 6px 24px 12px 50px;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  border: 1px solid var(--divider);
+  border-radius: 10px;
+  padding: 12px 16px 16px;
+  font-size: var(--type-body);
+  line-height: var(--leading-ui);
+}
+/* Docked at the bottom of the reader pane (editor active while a reader is
+   open): same raised-surface card, compact. Full 1px border — no accent side
+   stripe, so the reader's active-message bar keeps the single accent signal. */
+.reader-pane > .compose-card {
+  flex: 0 0 auto;
+  max-height: 45%;
+  margin: 0.5rem 0 0;
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+}
+
+/* Docked composers get a shorter body so the thread stays visible above. */
+.reader-pane .composer-fields textarea {
+  min-height: 5rem;
+}
