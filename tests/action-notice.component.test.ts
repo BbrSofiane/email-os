@@ -254,3 +254,88 @@ describe('ActionNotice group undo wording (review fixes)', () => {
     expect(wrapper.find('[data-test="action-notice-dismiss-group"]').exists()).toBe(false);
   });
 });
+
+describe('ActionNotice status tone (data-status → Amber / Coral / Ash)', () => {
+  const tone = (wrapper: ReturnType<typeof mount>) => wrapper.get('[data-test="action-notice-status"]').attributes('data-status');
+  const single = (status: OperationStatus | null) => mount(ActionNotice, {
+    props: { notice: { ...base, undoableUntil: null, operation: status ? operation(status) : null }, now: NOW },
+  });
+
+  it.each([
+    ['queued', 'pending'],
+    ['applying', 'pending'],
+    ['confirmed', 'settled'],
+    ['failed', 'failed'],
+    ['outcome_unknown', 'unknown'],
+    ['cancelled', 'settled'],
+    [null, 'pending'],
+  ] as const)('marks the %s single-action status as %s', (status, expected) => {
+    expect(tone(single(status))).toBe(expected);
+  });
+
+  const comp = (status: OperationStatus): OperationSummary => ({ ...operation(status), id: `comp-${status}` });
+  const undone = (outcome: 'cancelled' | 'compensating', statuses: OperationStatus[]) => mount(ActionNotice, {
+    props: {
+      notice: { ...base, undoableUntil: null, operation: operation('confirmed'), undone: { outcome: outcome as never, compensations: statuses.map(comp) } },
+      now: NOW,
+    },
+  });
+
+  it.each([
+    ['cancelled', [], 'settled'],
+    ['compensating', ['confirmed'], 'settled'],
+    ['compensating', [], 'pending'],
+    ['compensating', ['applying'], 'pending'],
+    ['compensating', ['confirmed', 'outcome_unknown'], 'unknown'],
+    ['compensating', ['outcome_unknown', 'failed'], 'failed'],
+  ] as const)('marks a %s undo with %j compensations as %s', (outcome, statuses, expected) => {
+    expect(tone(undone(outcome, [...statuses]))).toBe(expected);
+  });
+
+  const counts = (over: Partial<Record<'pending' | 'confirmed' | 'failed' | 'rejected' | 'unknown' | 'cancelled', number>>) => ({
+    pending: 0, confirmed: 0, failed: 0, rejected: 0, unknown: 0, cancelled: 0, ...over,
+  });
+  const group = (over: Record<string, unknown>, undoneOver: Record<string, unknown> | null = null) => mount(ActionNotice, {
+    props: {
+      notice: {
+        ...base, subject: null, operation: null, undoableUntil: null,
+        group: {
+          count: 3, counts: counts({ confirmed: 3 }), acceptanceUnknown: false, statusKnown: true, statusError: false,
+          undoableUntil: null, hadWindow: true,
+          undone: undoneOver && {
+            cancelled: 0, compensating: 2, skipped: 0, skipReasons: {},
+            compensationOutcomes: { confirmed: 2, failed: 0, unknown: 0, pending: 0 }, ...undoneOver,
+          },
+          ...over,
+        },
+      },
+      now: NOW,
+    },
+  });
+
+  it.each([
+    ['acceptance unknown', { acceptanceUnknown: true, statusKnown: false }, null, 'unknown'],
+    ['status check failed', { statusKnown: false, statusError: true }, null, 'unknown'],
+    ['accepting', { statusKnown: false }, null, 'pending'],
+    ['all confirmed', {}, null, 'settled'],
+    ['confirmed + cancelled', { counts: counts({ confirmed: 2, cancelled: 1 }) }, null, 'settled'],
+    ['some pending', { counts: counts({ confirmed: 2, pending: 1 }) }, null, 'pending'],
+    ['some unknown', { counts: counts({ confirmed: 2, unknown: 1 }) }, null, 'unknown'],
+    ['unknown outranks pending', { counts: counts({ pending: 1, unknown: 1 }) }, null, 'unknown'],
+    ['some failed', { counts: counts({ confirmed: 2, failed: 1 }) }, null, 'failed'],
+    ['some rejected', { counts: counts({ confirmed: 2, rejected: 1 }) }, null, 'failed'],
+    ['failed outranks unknown', { counts: counts({ failed: 1, unknown: 1, confirmed: 1 }) }, null, 'failed'],
+    ['undo fully restored', {}, {}, 'settled'],
+    ['undo with skipped members', {}, { skipped: 1, skipReasons: { unknown_prior: 1 } }, 'partial'],
+    ['undo restoring', {}, { compensationOutcomes: { confirmed: 1, failed: 0, unknown: 0, pending: 1 } }, 'pending'],
+    ['undo restore unknown', {}, { compensationOutcomes: { confirmed: 1, failed: 0, unknown: 1, pending: 0 } }, 'unknown'],
+    ['undo restore failed', {}, { compensationOutcomes: { confirmed: 0, failed: 1, unknown: 1, pending: 0 } }, 'failed'],
+  ] as const)('marks the group status "%s" as %s', (_name, over, undoneOver, expected) => {
+    expect(tone(group({ ...over }, undoneOver && { ...undoneOver }))).toBe(expected);
+  });
+
+  it('keeps the words alongside the tone (never colour alone)', () => {
+    const wrapper = single('failed');
+    expect(wrapper.get('[data-test="action-notice-status"]').text()).toBe('Failed — restored, see Activity');
+  });
+});
