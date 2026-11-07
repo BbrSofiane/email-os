@@ -1,0 +1,51 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6VP144ZM682KRSWKTB5PTTW",
+  "strategy": "manual-commit",
+  "branch": "impeccable-init",
+  "checkpoints_count": 1,
+  "files_touched": [
+    ".impeccable/critique/2026-11-07T17-54-20Z__src-components-inboxlist-vue.md",
+    "DESIGN.md",
+    "src/App.vue",
+    "src/assets/style.css",
+    "src/components/AccountPanel.vue",
+    "src/components/ActionOverlay.vue",
+    "src/components/ActivityPanel.vue",
+    "src/components/FullDate.vue",
+    "src/components/InboxList.vue",
+    "src/components/ProviderDestinations.vue",
+    "src/components/ReaderView.vue",
+    "src/components/RemindersPanel.vue",
+    "src/components/SelectionBar.vue",
+    "tests/account.component.test.ts",
+    "tests/activity-panel.test.ts",
+    "tests/app.selection.test.ts",
+    "tests/inbox-list.component.test.ts",
+    "tests/provider-destinations.component.test.ts",
+    "tests/reminders.component.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 20,
+    "cache_creation_tokens": 200939,
+    "cache_read_tokens": 1501625,
+    "output_tokens": 10337,
+    "api_call_count": 9,
+    "subagent_tokens": {
+      "input_tokens": 418,
+      "cache_creation_tokens": 514628,
+      "cache_read_tokens": 30893242,
+      "output_tokens": 144510,
+      "api_call_count": 199
+    }
+  }
+}

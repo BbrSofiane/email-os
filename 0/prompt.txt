@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>b5ay66cxb</task-id>
+<tool-use-id>toolu_011YZihRaEmPk9nYcyBcTSvy</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-sofianebebert-workspace-worktrees-email-os-t3-7080b790/55d0556b-179f-4a4a-bdc1-c9411cb45f29/tasks/b5ay66cxb.output</output-file>
+<status>failed</status>
+<summary>Background command "Start Vite dev server for critique" failed with exit code 144</summary>
+</task-notification>
