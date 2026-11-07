@@ -1695,23 +1695,27 @@ button:focus-visible {
 .action-overlay { width: min(576px, 100%); max-height: 70vh; overflow: auto; background: var(--surface-raised); color: var(--text-primary); border: 0; border-radius: 10px; padding: 0; box-shadow: var(--overlay-lift); font-size: var(--type-body); line-height: var(--leading-ui); }
 
 /*
- * Command overlay (DESIGN.md "Command Overlay"): a Title caption, the query on
+ * Command overlay (DESIGN.md "Command Overlay"): the query on
  * Deep Umber with a 1px Dusk Lavender border (it always owns keyboard focus,
- * so the border is its focus indicator), then 36px items on the row pitch.
+ * so the border is its focus indicator), then 36px items on the row pitch under quiet
+ * Ash group labels (palette only), then a Keys list of bound keys that have no
+ * command. Keys rows are text, never options.
  * The highlighted item is Focus Stone plus a 3px Dusk Lavender bar; shortcuts
  * are Ash `kbd` labels. Two sizes only: the 16px query, 12px everything else.
  */
-/* Whole-pixel geometry (36px caption, 38px query, 16px item lines) so a
+/* Whole-pixel geometry (38px query, 16px item lines, 28px group labels) so a
    highlighted item scrolled into view is never clipped by a sub-pixel. */
-.command-overlay .action-heading { display: flex; align-items: center; gap: 8px; min-height: 36px; margin: 0; padding: 0 16px; color: var(--text-secondary); font-weight: var(--weight-strong); }
-.command-overlay .action-heading > span { display: inline-grid; place-items: center; width: 16px; height: 16px; font-size: var(--type-headline); line-height: 1; color: var(--icon-muted); }
-.command-overlay input { display: block; box-sizing: border-box; width: calc(100% - 24px); height: 38px; margin: 0 12px 8px; padding: 0 12px; color: var(--text-primary); background: var(--surface-contact); border: 1px solid var(--focus-accent); border-radius: 6px; font: inherit; font-size: var(--type-headline); line-height: var(--leading-headline); }
+.command-overlay input { display: block; box-sizing: border-box; width: calc(100% - 24px); height: 38px; margin: 12px 12px 4px; padding: 0 12px; color: var(--text-primary); background: var(--surface-contact); border: 1px solid var(--focus-accent); border-radius: 6px; font: inherit; font-size: var(--type-headline); line-height: var(--leading-headline); }
 .command-overlay input:focus-visible { outline: none; }
 .command-overlay ul { list-style: none; padding: 0 0 6px; margin: 0; }
 .command-overlay li { display: flex; align-items: center; gap: 12px; min-height: 36px; padding: 6px 16px; line-height: 16px; cursor: pointer; min-width: 0; }
 .command-overlay li.highlighted { background: var(--focus-fill); box-shadow: inset 3px 0 0 var(--focus-accent); }
 .command-overlay li[aria-disabled='true'] { cursor: default; color: var(--text-tertiary); }
 .command-overlay li[aria-disabled='true'].highlighted { color: var(--text-secondary); }
+.command-overlay .action-group { display: block; min-height: 0; margin: 0; padding: 8px 16px 4px; cursor: default; color: var(--text-secondary); font-size: var(--type-count); line-height: 16px; }
+.command-overlay .action-keys { padding-bottom: 6px; }
+.command-overlay .action-keys li { cursor: default; color: var(--text-secondary); }
+.action-keycaps { display: flex; gap: 4px; flex-shrink: 0; }
 .action-icon { display: inline-grid; place-items: center; width: 16px; height: 16px; flex-shrink: 0; color: var(--icon-muted); }
 .command-overlay li.highlighted .action-icon { color: var(--text-primary); }
 .action-copy { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
