@@ -711,7 +711,73 @@ impl GmailCore {
         Ok(result)
     }
 
+    pub fn list_attachments(
+        &self,
+        target: &ConversationRef,
+    ) -> Result<Vec<crate::attachments::AttachmentDescriptor>, MailError> {
+        self.inner.store.list_attachments(target)
+    }
+
+    /// Independent readonly fetch registered with the same disconnect/stop barrier
+    /// as reply metadata. Its bytes never cross IPC.
+    pub fn download_attachment(
+        &self,
+        request: &crate::attachments::SaveAttachment,
+        cancel: &CancelToken,
+        directory: &Path,
+    ) -> Result<crate::attachments::AttachmentSaved, MailError> {
+        let generation = self.inner.store.generation()?;
+        let descriptor = self
+            .list_attachments(&request.conversation)?
+            .into_iter()
+            .find(|d| {
+                d.message_id == request.message_id && d.attachment_id == request.attachment_id
+            })
+            .ok_or(MailError::NotFound)?;
+        if descriptor.size as usize > crate::attachments::MAX_ATTACHMENT_BYTES {
+            return Err(crate::attachments::invalid("attachmentSize"));
+        }
+        let registration = self.begin_read_transfer(cancel.clone())?;
+        crate::attachments::check_cancel(cancel)?;
+        if self.inner.store.generation()? != generation {
+            return Err(MailError::NotFound);
+        }
+        // User cancellation is checked by the provider as well as before publication.
+        let bytes = self.inner.provider.fetch_attachment(
+            &request.conversation.account_id,
+            &request.message_id,
+            &request.attachment_id,
+            cancel,
+        )?;
+        crate::attachments::check_cancel(&registration.cancel)?;
+        crate::attachments::check_cancel(cancel)?;
+        // Hold control across the short local save so disconnect cannot complete
+        // between generation validation and publication.
+        let st = self
+            .inner
+            .ctrl
+            .state
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        if st.disconnecting
+            || st.stop
+            || self.inner.store.generation()? != generation
+            || !self
+                .list_attachments(&request.conversation)?
+                .contains(&descriptor)
+        {
+            return Err(MailError::NotFound);
+        }
+        let result = crate::attachments::save_download(directory, &descriptor, &bytes, cancel);
+        drop(st);
+        result
+    }
+
     fn begin_reply_enrichment(&self) -> Result<ReplyEnrichment, MailError> {
+        self.begin_read_transfer(CancelToken::default())
+    }
+
+    fn begin_read_transfer(&self, cancel: CancelToken) -> Result<ReplyEnrichment, MailError> {
         let mut st = self
             .inner
             .ctrl
@@ -728,7 +794,6 @@ impl GmailCore {
         while st.reply_enrichments.contains_key(&id) {
             id = self.inner.next_enrichment_id.fetch_add(1, Ordering::SeqCst);
         }
-        let cancel = CancelToken::default();
         st.reply_enrichments.insert(id, cancel.clone());
         Ok(ReplyEnrichment {
             ctrl: Arc::clone(&self.inner.ctrl),
@@ -2185,6 +2250,19 @@ fn retained_thread_bytes(thread: &GmailThread) -> usize {
             .saturating_add(sender.mailbox.capacity())
             .saturating_add(sender.display_name.as_ref().map_or(0, String::capacity));
     }
+    bytes = bytes.saturating_add(
+        thread
+            .attachments
+            .capacity()
+            .saturating_mul(std::mem::size_of::<crate::attachments::AttachmentDescriptor>()),
+    );
+    for d in &thread.attachments {
+        bytes = bytes
+            .saturating_add(d.message_id.capacity())
+            .saturating_add(d.attachment_id.capacity())
+            .saturating_add(d.filename.capacity())
+            .saturating_add(d.mime_type.capacity());
+    }
     if let Some(reply_context) = &conversation.reply_context {
         bytes = bytes
             .saturating_add(std::mem::size_of::<crate::drafts::types::ReplyContext>())
@@ -2372,6 +2450,7 @@ mod worker_halt_tests {
         GmailThread {
             star_facts: None,
             newest_sender: None,
+            attachments: Vec::new(),
             conversation: Conversation {
                 stars: None,
                 conversation_ref: ConversationRef {

@@ -313,6 +313,24 @@ impl GmailStore {
             }
         }
 
+        let has_attachments = {
+            let mut stmt = tx
+                .prepare("PRAGMA table_info(gmail_conversations)")
+                .map_err(|_| MailError::StorageUnavailable)?;
+            let columns = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|_| MailError::StorageUnavailable)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| MailError::StorageUnavailable)?;
+            columns.iter().any(|c| c == "attachments_json")
+        };
+        if !has_attachments {
+            tx.execute(
+                "ALTER TABLE gmail_conversations ADD COLUMN attachments_json TEXT",
+                [],
+            )
+            .map_err(|_| MailError::StorageUnavailable)?;
+        }
         let has_reply_context_column = {
             let mut stmt = tx
                 .prepare("PRAGMA table_info(gmail_conversations)")
@@ -602,6 +620,46 @@ impl GmailStore {
         self.persistence_gate()?;
         let conn = self.lock_conn()?;
         Ok(meta_get(&conn, "account_id")?.is_some())
+    }
+
+    pub(crate) fn list_attachments(
+        &self,
+        target: &ConversationRef,
+    ) -> Result<Vec<crate::attachments::AttachmentDescriptor>, MailError> {
+        let conversation = self.get_conversation(target)?;
+        if conversation.retained_snapshot_at.is_some() {
+            return Ok(Vec::new());
+        }
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        if account_id_of(&conn)? != target.account_id {
+            return Err(MailError::NotFound);
+        }
+        let json: Option<String> = conn.query_row("SELECT attachments_json FROM gmail_conversations WHERE account_id = ?1 AND conversation_id = ?2",
+            params![target.account_id, target.conversation_id], |row| row.get(0)).optional().map_err(|_| MailError::StorageUnavailable)?.flatten();
+        let descriptors: Vec<crate::attachments::AttachmentDescriptor> = json
+            .map(|s| serde_json::from_str(&s))
+            .transpose()
+            .map_err(|_| MailError::StorageUnavailable)?
+            .unwrap_or_default();
+        if descriptors.len() > crate::attachments::MAX_ATTACHMENTS {
+            return Err(MailError::StorageUnavailable);
+        }
+        // Tombstone-only history pages can remove a message without replacing
+        // the conversation metadata column. Never retain fetch authority for it.
+        let mut current = Vec::new();
+        for descriptor in descriptors {
+            let present: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM gmail_message_facts WHERE account_id = ?1 AND conversation_id = ?2 AND message_id = ?3)",
+                params![target.account_id, target.conversation_id, descriptor.message_id], |row| row.get(0),
+            ).map_err(|_| MailError::StorageUnavailable)?;
+            if present {
+                current.push(descriptor);
+            }
+        }
+        Ok(current)
     }
 
     pub(crate) fn generation(&self) -> Result<u64, MailError> {
@@ -4388,14 +4446,15 @@ fn upsert_thread(
     conn.execute(
         "INSERT INTO gmail_conversations
             (account_id, conversation_id, subject, context_complete, unsupported_reason,
-             reply_context_json, newest_sender_json)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             reply_context_json, newest_sender_json, attachments_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
          ON CONFLICT(account_id, conversation_id) DO UPDATE SET
             subject = excluded.subject,
             context_complete = excluded.context_complete,
             unsupported_reason = excluded.unsupported_reason,
             reply_context_json = excluded.reply_context_json,
-            newest_sender_json = excluded.newest_sender_json",
+            newest_sender_json = excluded.newest_sender_json,
+            attachments_json = excluded.attachments_json",
         params![
             account_id,
             conversation_id,
@@ -4414,6 +4473,8 @@ fn upsert_thread(
                 .as_ref()
                 .map(serde_json::to_string)
                 .transpose()
+                .map_err(|_| MailError::StorageUnavailable)?,
+            serde_json::to_string(&thread.attachments)
                 .map_err(|_| MailError::StorageUnavailable)?,
         ],
     )
@@ -4819,6 +4880,7 @@ mod tests {
                 .iter()
                 .max_by(|a, b| (&a.sent_at, &a.id).cmp(&(&b.sent_at, &b.id)))
                 .map(|m| m.from.clone()),
+            attachments: Vec::new(),
             conversation: Conversation {
                 stars: None,
                 conversation_ref: ConversationRef {
@@ -5473,6 +5535,60 @@ mod tests {
         assert_eq!(facts, (None, None, 1));
         drop(reopened);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn attachment_descriptors_persist_without_body_or_action_mutation() {
+        let (store, dir) = open_store("attachments");
+        store
+            .begin_account(&profile("acct", "a@example.test", "h1"), 0)
+            .unwrap();
+        let mut source = thread(
+            "acct",
+            "t1",
+            "h2",
+            vec![message("m1", "2026-01-01T00:00:00Z")],
+            &["m1"],
+        );
+        source.attachments = vec![crate::attachments::AttachmentDescriptor {
+            message_id: "m1".into(),
+            attachment_id: "a1".into(),
+            filename: "../evil.html".into(),
+            mime_type: "text/html".into(),
+            size: 12,
+        }];
+        store
+            .apply_discovery_page(&[cached(source.clone())], None, true, false, 0)
+            .unwrap();
+        let target = source.conversation.conversation_ref.clone();
+        assert_eq!(store.list_attachments(&target).unwrap(), source.attachments);
+        assert_eq!(
+            store.get_conversation(&target).unwrap().messages,
+            source.conversation.messages
+        );
+        assert!(store
+            .list_attachments(&ConversationRef {
+                account_id: "other".into(),
+                ..target.clone()
+            })
+            .is_err());
+        drop(store);
+        let store = GmailStore::open(&dir, Arc::new(SystemClock)).unwrap();
+        assert_eq!(store.list_attachments(&target).unwrap(), source.attachments);
+        store
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "DELETE FROM gmail_message_facts WHERE message_id = 'm1'",
+                [],
+            )
+            .unwrap();
+        assert!(store.list_attachments(&target).unwrap().is_empty());
+        store.clear_account().unwrap();
+        assert!(store.list_attachments(&target).is_err());
+        drop(store);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

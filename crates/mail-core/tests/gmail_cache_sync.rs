@@ -576,6 +576,7 @@ fn thread(id: &str, history_id: &str, msgs: Vec<Message>, inbox_ids: &[&str]) ->
             .iter()
             .max_by(|a, b| (&a.sent_at, &a.id).cmp(&(&b.sent_at, &b.id)))
             .map(|m| m.from.clone()),
+        attachments: Vec::new(),
         conversation: mail_core::dto::Conversation {
             stars: None,
             conversation_ref: ConversationRef {

@@ -49,6 +49,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: [];
+  attachments: [origin: HTMLElement];
   archive: [];
   unarchive: [];
   setRead: [read: boolean];
@@ -603,6 +604,7 @@ defineExpose({
   >
     <div class="reader-toolbar" data-test="reader-toolbar">
       <button type="button" :title="actionLabel('back')" data-test="reader-close" @click="emit('close')">Close (Esc)</button>
+      <button v-if="props.state === 'ready' && props.conversation" type="button" data-test="files-links" @click="emit('attachments', $event.currentTarget as HTMLElement)">Files and links (⌘O)</button>
       <button
         v-if="!props.browsingOnly && props.state === 'ready' && props.conversation"
         type="button"

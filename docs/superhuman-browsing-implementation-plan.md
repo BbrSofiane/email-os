@@ -262,6 +262,10 @@ This checkout implements the native synthetic fixture capability, not provider-b
 
 ### UX-12 — Safely inspect an attachment and return to the message
 
+Implementation: [bounded download-only contract](ux-12-safe-attachments.md).
+PDF preview remains blocked by the macOS sandbox/security spike; this is not
+full BROWSE-14 completion.
+
 **Scope gate:** Attachment preview exceeds ADR 0001's initial download-only scope.
 
 **Journey:** Open attachment chip/Cmd+O chooser → preview PDF → Escape restores exact message/expansion/scroll → unsupported file uses explicit download/external path.

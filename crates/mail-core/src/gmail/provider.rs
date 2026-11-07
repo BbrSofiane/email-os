@@ -403,7 +403,30 @@ impl GmailProvider {
             }
             return Err(map_status(status));
         }
-        let bytes = auth::read_bounded(response)?;
+        let mut response = response;
+        if response
+            .content_length()
+            .is_some_and(|n| n > auth::MAX_RESPONSE_BYTES as u64)
+        {
+            return Err(MailError::InvalidProviderResponse);
+        }
+        let mut bytes = Vec::new();
+        loop {
+            use std::io::Read;
+            crate::attachments::check_cancel(cancel)?;
+            let mut chunk = [0; 64 * 1024];
+            let n = response
+                .read(&mut chunk)
+                .map_err(|_| MailError::NetworkUnavailable)?;
+            if n == 0 {
+                break;
+            }
+            if bytes.len().saturating_add(n) > auth::MAX_RESPONSE_BYTES {
+                return Err(MailError::InvalidProviderResponse);
+            }
+            bytes.extend_from_slice(&chunk[..n]);
+        }
+        crate::attachments::check_cancel(cancel)?;
         Ok(Some(
             String::from_utf8(bytes).map_err(|_| MailError::InvalidProviderResponse)?,
         ))
@@ -697,6 +720,58 @@ fn classify_forbidden(body: &str) -> MailError {
 }
 
 impl GmailReadProvider for GmailProvider {
+    fn fetch_attachment(
+        &self,
+        account_id: &str,
+        message_id: &str,
+        attachment_id: &str,
+        cancel: &CancelToken,
+    ) -> Result<Vec<u8>, MailError> {
+        use base64::Engine;
+        if !crate::attachments::valid_id(message_id)
+            || !crate::attachments::valid_attachment_id(attachment_id)
+        {
+            return Err(crate::attachments::invalid("attachmentId"));
+        }
+        // Refresh if needed, then take one coherent account+token snapshot.
+        // Never combine a token from one credential revision with another
+        // revision's cached account identity.
+        self.access_token(cancel)?;
+        let (bundle, _, _) = self.credential_snapshot()?;
+        let bundle = bundle.ok_or(MailError::AuthRequired)?;
+        if bundle.account_id.as_deref().or(bundle.email.as_deref()) != Some(account_id)
+            || bundle.access_token.is_empty()
+            || bundle.expires_at_epoch_ms - EXPIRY_SKEW_MS <= now_ms()
+        {
+            return Err(MailError::AuthRequired);
+        }
+        let token = bundle.access_token;
+        let path = format!(
+            "/gmail/v1/users/me/messages/{}/attachments/{}",
+            url_encode(message_id),
+            url_encode(attachment_id)
+        );
+        let body = self
+            .api_get(&path, "", &token, cancel)?
+            .ok_or(MailError::NotFound)?;
+        crate::attachments::check_cancel(cancel)?;
+        let json: Value = parse_json(&body)?;
+        let data = json["data"]
+            .as_str()
+            .ok_or(MailError::InvalidProviderResponse)?;
+        if data.len() > crate::attachments::MAX_ATTACHMENT_BYTES.div_ceil(3) * 4 {
+            return Err(crate::attachments::invalid("attachmentSize"));
+        }
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(data.trim_end_matches('='))
+            .map_err(|_| MailError::InvalidProviderResponse)?;
+        if json["size"].as_u64() != Some(bytes.len() as u64) {
+            return Err(MailError::InvalidProviderResponse);
+        }
+        crate::attachments::check_cancel(cancel)?;
+        Ok(bytes)
+    }
+
     fn mutation_access(&self) -> Result<bool, MailError> {
         let Some(bundle) = self.secrets.load()? else {
             return Ok(false);
@@ -1290,6 +1365,7 @@ pub(super) fn parse_thread(
     let mut spam_message_ids = Vec::new();
     let mut no_plain_text = 0usize;
     let mut attachments = false;
+    let mut attachment_descriptors = Vec::new();
     let mut omitted_inline_content = false;
     let mut latest_payload: Option<&Value> = None;
     let mut latest_key: Option<(String, String)> = None;
@@ -1321,6 +1397,7 @@ pub(super) fn parse_thread(
         let payload = message
             .get("payload")
             .ok_or(MailError::InvalidProviderResponse)?;
+        crate::attachments::descriptors(&id, payload, &mut attachment_descriptors, 0);
         if payload_has_attachment(payload, 0) {
             attachments = true;
         }
@@ -1389,6 +1466,7 @@ pub(super) fn parse_thread(
         });
     Ok(GmailThread {
         star_facts: Some(star_facts),
+        attachments: attachment_descriptors,
         conversation,
         newest_sender,
         inbox_message_ids,
@@ -2179,6 +2257,7 @@ pub(crate) mod tests {
         requests: Mutex<Vec<String>>,
         bodies: Mutex<Vec<String>>,
         authorization_headers: Mutex<Vec<Option<String>>>,
+        request_heads: Mutex<Vec<String>>,
         on_request: Option<RequestHook>,
     }
 
@@ -2205,6 +2284,7 @@ pub(crate) mod tests {
                 requests: Mutex::new(Vec::new()),
                 bodies: Mutex::new(Vec::new()),
                 authorization_headers: Mutex::new(Vec::new()),
+                request_heads: Mutex::new(Vec::new()),
                 on_request,
             });
             let thread_state = Arc::clone(&state);
@@ -2215,6 +2295,11 @@ pub(crate) mod tests {
                 let mut buf = [0u8; 8192];
                 let len = stream.read(&mut buf).unwrap_or(0);
                 let text = String::from_utf8_lossy(&buf[..len]);
+                thread_state
+                    .request_heads
+                    .lock()
+                    .unwrap()
+                    .push(text.split("\r\n\r\n").next().unwrap_or("").to_string());
                 let target = text
                     .lines()
                     .next()
@@ -3400,6 +3485,321 @@ pub(crate) mod tests {
         assert!(requests[0].contains("includeSpamTrash=false"));
         assert!(requests[0].contains("pageToken=previous"));
         assert!(!requests[0].contains("labelIds=INBOX"));
+    }
+
+    #[test]
+    fn attachment_get_validates_handle_separately_from_message_id() {
+        use crate::attachments::MAX_ATTACHMENT_ID_BYTES;
+        let handles: Vec<_> = [257, 404, MAX_ATTACHMENT_ID_BYTES]
+            .into_iter()
+            .map(|len| "aB0_-".repeat(len.div_ceil(5))[..len].to_string())
+            .collect();
+        let message_id = "m".repeat(256);
+        let paths: Vec<_> = handles
+            .iter()
+            .map(|id| format!("/gmail/v1/users/me/messages/{message_id}/attachments/{id}"))
+            .collect();
+        let (base, api) = FakeApi::start(
+            paths
+                .iter()
+                .map(|path| (path.as_str(), 200, r#"{"size":9,"data":"JVBERi0xLjcK"}"#))
+                .collect(),
+        );
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        secrets.store(&future_token()).unwrap();
+        let provider = test_provider(&base, secrets);
+        for handle in &handles {
+            assert_eq!(
+                provider
+                    .fetch_attachment(
+                        "synthetic@example.test",
+                        &message_id,
+                        handle,
+                        &CancelToken::default()
+                    )
+                    .unwrap(),
+                b"%PDF-1.7\n"
+            );
+        }
+        for handle in [
+            "",
+            ".",
+            "..",
+            "../a",
+            "a/b",
+            "a\\b",
+            "%2e%2e",
+            "a?x",
+            "a#x",
+            "a:b",
+            "a@b",
+            "a=b",
+            "a+b",
+            "a b",
+            "a\0",
+            "a\r\n",
+            "a\u{7f}",
+            "é",
+            "Ａ",
+            &"a".repeat(MAX_ATTACHMENT_ID_BYTES + 1),
+        ] {
+            assert_eq!(
+                provider.fetch_attachment(
+                    "synthetic@example.test",
+                    "m1",
+                    handle,
+                    &CancelToken::default()
+                ),
+                Err(crate::attachments::invalid("attachmentId"))
+            );
+        }
+        assert_eq!(
+            provider.fetch_attachment(
+                "synthetic@example.test",
+                &"m".repeat(257),
+                &handles[1],
+                &CancelToken::default()
+            ),
+            Err(crate::attachments::invalid("attachmentId"))
+        );
+        assert_eq!(
+            api.requests(),
+            paths,
+            "invalid IDs must not issue any HTTP request"
+        );
+        assert!(api
+            .state
+            .request_heads
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|head| head.starts_with("GET ")));
+    }
+
+    #[test]
+    fn long_attachment_handle_survives_full_thread_cache_reopen_and_authenticated_get() {
+        use crate::attachments::{save_download, test_directory, AttachmentDescriptor};
+        use crate::clock::SystemClock;
+        use crate::gmail::store::{GmailStore, ThreadFetch};
+
+        // Synthetic base64url-shaped handle, matching the 404-byte production
+        // example's length, not copied from any real mailbox.
+        let handle = format!("ANGjdJ{}", "aB0_-Zx9".repeat(50));
+        let handle = &handle[..404];
+        let account = "synthetic@example.test";
+        let message_id = "18e0abc123def456";
+        let thread_id = "18e0abc123def450";
+        let bytes = b"%PDF-1.7\n";
+        let body = thread_response(
+            thread_id,
+            "99",
+            vec![gmail_message(
+                message_id,
+                &["INBOX", "UNREAD"],
+                json!({
+                    "mimeType": "multipart/mixed",
+                    "headers": payload_headers(&[("From", "sender@example.test"), ("Subject", "Synthetic file")]),
+                    "parts": [
+                        text_payload("text/plain", &[], Some(b"A synthetic attachment.")),
+                        {"mimeType":"application/pdf", "filename":"report.pdf",
+                         "body":{"size":bytes.len(),"attachmentId":handle}}
+                    ]
+                }),
+            )],
+        );
+        let thread_path = format!("/gmail/v1/users/me/threads/{thread_id}");
+        let attachment_path =
+            format!("/gmail/v1/users/me/messages/{message_id}/attachments/{handle}");
+        let (base, api) = FakeApi::start(vec![
+            (&thread_path, 200, &body),
+            (&attachment_path, 200, r#"{"size":9,"data":"JVBERi0xLjcK"}"#),
+        ]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        let token = future_token();
+        secrets.store(&token).unwrap();
+        let provider = test_provider(&base, secrets.clone());
+        assert!(!provider.mutation_access().unwrap());
+        let thread = provider
+            .get_thread(thread_id, &CancelToken::default())
+            .unwrap()
+            .unwrap();
+        let expected = AttachmentDescriptor {
+            message_id: message_id.into(),
+            attachment_id: handle.into(),
+            filename: "report.pdf".into(),
+            mime_type: "application/pdf".into(),
+            size: 9,
+        };
+        assert_eq!(thread.attachments, vec![expected.clone()]);
+        let target = thread.conversation.conversation_ref.clone();
+        let profile = test_directory();
+        let store = GmailStore::open(profile.path(), Arc::new(SystemClock)).unwrap();
+        store
+            .begin_account(
+                &GmailProfile {
+                    account_id: account.into(),
+                    email_address: account.into(),
+                    history_id: "99".into(),
+                },
+                0,
+            )
+            .unwrap();
+        store
+            .apply_discovery_page(
+                &[ThreadFetch::Cached(Box::new(thread))],
+                None,
+                true,
+                false,
+                0,
+            )
+            .unwrap();
+        let before = store.get_conversation(&target).unwrap();
+        let snapshot = store.list_snapshot().unwrap();
+        let generation = store.generation().unwrap();
+        assert_eq!(before.is_read, Some(false));
+        assert_eq!(store.claimable_operation_count().unwrap(), 0);
+        drop(store);
+
+        let store = GmailStore::open(profile.path(), Arc::new(SystemClock)).unwrap();
+        assert!(store
+            .list_attachments(&crate::dto::ConversationRef {
+                account_id: "foreign".into(),
+                ..target.clone()
+            })
+            .is_err());
+        let descriptors = store.list_attachments(&target).unwrap();
+        assert_eq!(descriptors, vec![expected]);
+        let descriptor = &descriptors[0];
+        assert_eq!(descriptor.attachment_id.len(), 404);
+        assert_eq!(
+            provider.fetch_attachment(
+                "foreign",
+                &descriptor.message_id,
+                &descriptor.attachment_id,
+                &CancelToken::default()
+            ),
+            Err(MailError::AuthRequired)
+        );
+        let fetched = provider
+            .fetch_attachment(
+                &target.account_id,
+                &descriptor.message_id,
+                &descriptor.attachment_id,
+                &CancelToken::default(),
+            )
+            .unwrap();
+        assert_eq!(fetched, bytes);
+        let downloads = test_directory();
+        let saved = save_download(
+            downloads.path(),
+            descriptor,
+            &fetched,
+            &CancelToken::default(),
+        )
+        .unwrap();
+        assert!(saved.filename.ends_with(".pdf.download"));
+        assert_eq!(
+            std::fs::read(downloads.path().join(saved.filename)).unwrap(),
+            bytes
+        );
+        assert_eq!(std::fs::read_dir(downloads.path()).unwrap().count(), 1);
+        assert_eq!(store.get_conversation(&target).unwrap(), before);
+        assert_eq!(store.list_snapshot().unwrap(), snapshot);
+        assert_eq!(store.generation().unwrap(), generation);
+        assert_eq!(store.claimable_operation_count().unwrap(), 0);
+        assert_eq!(secrets.load().unwrap(), Some(token));
+        assert_eq!(
+            api.requests(),
+            vec![format!("{thread_path}?format=full"), attachment_path]
+        );
+        assert_eq!(
+            api.authorization_headers(),
+            vec![Some("Bearer synthetic-access".into()); 2]
+        );
+        assert_eq!(api.bodies(), vec!["", ""]);
+        let authority = url::Url::parse(&base).unwrap().authority().to_string();
+        for head in api.state.request_heads.lock().unwrap().iter() {
+            assert!(head.starts_with("GET "));
+            assert!(head
+                .lines()
+                .any(|line| line.eq_ignore_ascii_case(&format!("host: {authority}"))));
+        }
+        assert!(api.state.script.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn attachment_fetch_is_authenticated_bounded_readonly_and_cancellable() {
+        let body = r#"{"size":9,"data":"JVBERi0xLjcK"}"#;
+        let (base, api) = FakeApi::start(vec![
+            ("/gmail/v1/users/me/messages/m1/attachments/a1", 200, body),
+            (
+                "/gmail/v1/users/me/messages/m1/attachments/missing",
+                404,
+                "",
+            ),
+            (
+                "/gmail/v1/users/me/messages/m1/attachments/corrupt",
+                200,
+                r#"{"size":9,"data":"!"}"#,
+            ),
+        ]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        secrets.store(&future_token()).unwrap();
+        let provider = test_provider(&base, secrets);
+        assert_eq!(
+            provider.fetch_attachment("foreign", "m1", "a1", &CancelToken::default()),
+            Err(MailError::AuthRequired)
+        );
+        assert_eq!(
+            provider
+                .fetch_attachment(
+                    "synthetic@example.test",
+                    "m1",
+                    "a1",
+                    &CancelToken::default()
+                )
+                .unwrap(),
+            b"%PDF-1.7\n"
+        );
+        assert_eq!(
+            provider.fetch_attachment(
+                "synthetic@example.test",
+                "m1",
+                "missing",
+                &CancelToken::default()
+            ),
+            Err(MailError::NotFound)
+        );
+        assert!(provider
+            .fetch_attachment(
+                "synthetic@example.test",
+                "m1",
+                "corrupt",
+                &CancelToken::default()
+            )
+            .is_err());
+        let cancel = CancelToken::default();
+        cancel.cancel();
+        assert_eq!(
+            provider.fetch_attachment("synthetic@example.test", "m1", "a1", &cancel),
+            Err(MailError::AuthCancelled)
+        );
+        assert!(provider
+            .fetch_attachment(
+                "synthetic@example.test",
+                "../m1",
+                "a1",
+                &CancelToken::default()
+            )
+            .is_err());
+        assert_eq!(api.requests().len(), 3);
+        assert!(api
+            .state
+            .authorization_headers
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|h| h.as_deref() == Some("Bearer synthetic-access")));
     }
 
     #[test]

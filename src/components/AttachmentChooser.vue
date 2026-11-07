@@ -1,0 +1,113 @@
+<script setup lang="ts">
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import type { Conversation, MailClient } from '../lib/ipc/client';
+import type { AttachmentDescriptor } from '../lib/ipc/generated';
+const props = defineProps<{ client: MailClient; conversation: Conversation; preview: boolean }>();
+const emit = defineEmits<{ close: [] }>();
+const panel = ref<HTMLElement | null>(null);
+const files = ref<AttachmentDescriptor[]>([]);
+const loading = ref(true);
+const error = ref('');
+const status = ref('');
+const pending = ref<string | null>(null);
+const confirmUrl = ref<string | null>(null);
+let live = true;
+let loadGeneration = 0;
+const links = computed(() => {
+  const links = new Set<string>();
+  for (const message of props.conversation.messages) {
+    // Literal plaintext tokens only: no HTML interpretation, mailto, or remote discovery.
+    for (const match of message.bodyText.matchAll(/https?:\/\/[^\s<>"']{1,2048}/gi)) {
+      try {
+        const url = new URL(match[0]);
+        if (!url.username && !url.password && url.hostname && match[0].length <= 2048) links.add(url.href);
+      } catch { /* not a known safe URL */ }
+      if (links.size === 32) return [...links];
+    }
+  }
+  return [...links];
+});
+async function load() {
+  const generation = ++loadGeneration;
+  loading.value = true; error.value = '';
+  try {
+    const result = await props.client.listAttachments(props.conversation.ref);
+    if (live && generation === loadGeneration) files.value = result;
+  } catch { if (live && generation === loadGeneration) error.value = 'Could not load cached file descriptors. Reading remains available.'; }
+  finally { if (live && generation === loadGeneration) loading.value = false; }
+}
+async function save(file: AttachmentDescriptor) {
+  if (pending.value) return;
+  const id = crypto.randomUUID(); pending.value = id; error.value = ''; status.value = '';
+  try {
+    const saved = await props.client.saveAttachment({ conversation: { ...props.conversation.ref }, messageId: file.messageId,
+      attachmentId: file.attachmentId, requestId: id });
+    if (live) status.value = props.preview ? 'Modelled save in preview memory only; no file was written.' : `Saved to Downloads as ${saved.filename}. No file was opened.`;
+  } catch { if (live) error.value = 'File not saved: unavailable offline, missing, cancelled, too large, or invalid content. Retry explicitly; a lost response may have left a unique file in Downloads.'; }
+  finally { if (live && pending.value === id) pending.value = null; }
+}
+async function cancel() {
+  if (!pending.value) return;
+  try { await props.client.cancelAttachment(pending.value); if (live) status.value = 'Cancellation requested; waiting for transfer to stop.'; }
+  catch { if (live) error.value = 'Could not confirm cancellation. A completed download may remain in Downloads.'; }
+}
+async function openLink() {
+  if (!confirmUrl.value) return;
+  try {
+    await props.client.openExternalLink(confirmUrl.value);
+    if (live) { status.value = props.preview ? 'Modelled external open only; no browser was launched.' : 'Handed link to the system browser.'; confirmUrl.value = null; }
+  } catch { if (live) error.value = 'External browser unavailable or protocol rejected. You can copy the link instead.'; }
+}
+async function copyLink(url: string) {
+  try { await navigator.clipboard.writeText(url); if (live) status.value = 'Link copied.'; }
+  catch { if (live) error.value = 'Clipboard unavailable. The link is shown as plain text.'; }
+}
+function keydown(event: KeyboardEvent) {
+  event.stopPropagation();
+  if (event.isComposing || event.keyCode === 229) return;
+  if (event.key === 'Escape') { event.preventDefault(); emit('close'); }
+  if (event.key === 'Tab') {
+    const controls = [...(panel.value?.querySelectorAll<HTMLElement>('button:not(:disabled), [tabindex="0"]') ?? [])];
+    const first = controls[0]; const last = controls.at(-1);
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+  }
+}
+onMounted(async () => { void load(); await nextTick(); panel.value?.querySelector('button')?.focus(); });
+onBeforeUnmount(() => { live = false; if (pending.value) void props.client.cancelAttachment(pending.value).catch(() => {}); });
+</script>
+<template>
+  <div class="action-backdrop" @click.self="emit('close')">
+    <section ref="panel" class="action-overlay attachment-chooser" role="dialog" aria-modal="true" aria-labelledby="attachment-title" @keydown="keydown">
+      <header><h2 id="attachment-title">Files and links</h2><button type="button" @click="emit('close')">Back to message</button></header>
+      <p>Up to 32 cached files and 32 plain-text links. Download only — PDF preview is unavailable pending a macOS security review. Files are saved inert with a .download suffix; nothing executes or loads remote resources here.</p>
+      <p v-if="conversation.retainedSnapshotAt" role="note">Retained recovery snapshot: attachment fetch is unavailable.</p>
+      <p v-if="loading" role="status">Loading cached files…</p>
+      <p v-if="error" role="alert">{{ error }} <button type="button" :disabled="loading || !!pending" @click="load">Reload file list</button></p>
+      <p v-if="status" role="status">{{ status }}</p>
+      <ul aria-label="Known files">
+        <li v-for="file in files" :key="`${file.messageId}:${file.attachmentId}`">
+          <span>{{ file.filename || 'Unnamed attachment' }} — {{ file.mimeType }}, {{ file.size }} bytes</span>
+          <span v-if="file.size > 5242880">Exceeds 5 MiB limit; cannot download.</span>
+          <button v-else type="button" :disabled="!!pending || !!conversation.retainedSnapshotAt" @click="save(file)">Save to Downloads</button>
+        </li>
+      </ul>
+      <p v-if="!loading && !files.length">No fetchable files in this cache. Legacy or omitted inline attachments require a sync; this is not a complete mailbox inventory.</p>
+      <button v-if="pending" type="button" @click="cancel">Cancel transfer</button>
+      <ul aria-label="Known links"><li v-for="url in links" :key="url"><span>{{ url }}</span> <button type="button" @click="copyLink(url)">Copy link</button> <button type="button" @click="confirmUrl = url">Open link…</button></li></ul>
+      <p v-if="!links.length">No HTTP(S) links found in cached plain text. Email addresses are not browser links.</p>
+      <div v-if="confirmUrl" role="group" aria-label="Confirm external browser">
+        <p>Leave Email OS and open this link in your system browser? {{ confirmUrl }}</p>
+        <button type="button" @click="openLink">Open in browser</button>
+        <button type="button" @click="confirmUrl = null">Keep reading</button>
+      </div>
+    </section>
+  </div>
+</template>
+<style scoped>
+.attachment-chooser { max-height: 80vh; overflow-y: auto; overflow-wrap: anywhere; }
+header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+h2 { font-size: 1.1rem; }
+li { border: 0; cursor: default; padding-block: .5rem; display: flex; gap: .5rem; flex-wrap: wrap; }
+p { line-height: 1.5; }
+</style>

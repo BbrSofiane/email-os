@@ -48,6 +48,7 @@ import SplitEditor from './components/SplitEditor.vue';
 import { splitBadge } from './lib/saved-split';
 import type { SavedSplit } from './lib/ipc/client';
 import ReaderView from './components/ReaderView.vue';
+import AttachmentChooser from './components/AttachmentChooser.vue';
 import ActivityPanel from './components/ActivityPanel.vue';
 import AccountPanel from './components/AccountPanel.vue';
 import DraftsPanel from './components/DraftsPanel.vue';
@@ -513,7 +514,7 @@ const wideViewport = ref(wideQuery ? wideQuery.matches : true);
  * active disclosure itself stay interactive. Reactivity restores normal central
  * interaction as soon as the disclosure is dismissed.
  */
-const centralCovered = computed(() => !!overlay.value || !!drawer.value || (!wideViewport.value && contactDisclosure.value));
+const centralCovered = computed(() => !!overlay.value || !!attachmentConversation.value || !!drawer.value || (!wideViewport.value && contactDisclosure.value));
 
 function onViewportChange(event: MediaQueryListEvent): void {
   const wasWide = wideViewport.value;
@@ -687,6 +688,24 @@ async function openRecent(target: ConversationRef): Promise<void> {
 }
 const history = ref<ContextEntry[]>([]);
 let navigationToken = 0;
+const attachmentConversation = ref<import('./lib/ipc/client').Conversation | null>(null);
+let attachmentOrigin: HTMLElement | null = null;
+let attachmentScroll = 0;
+function openAttachments(origin?: HTMLElement) {
+  if (drawer.value || overlay.value || !readerOpen.value || mailbox.detailState.value !== 'ready' || !mailbox.conversation.value) return;
+  cancelGo();
+  attachmentOrigin = origin ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+  attachmentScroll = document.querySelector('.reader-scroll')?.scrollTop ?? 0;
+  attachmentConversation.value = structuredClone(JSON.parse(JSON.stringify(mailbox.conversation.value)));
+}
+async function closeAttachments() {
+  attachmentConversation.value = null;
+  await nextTick();
+  if (attachmentOrigin?.isConnected && !attachmentOrigin.closest('[inert]')) attachmentOrigin.focus({ preventScroll: true });
+  const scroll = document.querySelector('.reader-scroll');
+  if (scroll) scroll.scrollTop = attachmentScroll;
+}
+watch(accountId, () => { attachmentConversation.value = null; });
 const overlay = ref<'palette' | 'navigator' | null>(null);
 const paletteButton = ref<HTMLElement | null>(null);
 let overlayOrigin: HTMLElement | null = null;
@@ -1304,6 +1323,14 @@ function actionShortcutBlocked(target: EventTarget | null): boolean {
 }
 
 function onKeydown(event: KeyboardEvent): void {
+  if (attachmentConversation.value) {
+    // A focused Save button can become disabled during transfer, leaving native
+    // focus on body. The top surface still owns Escape in that focus vacuum.
+    if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229) {
+      event.preventDefault(); void closeAttachments();
+    }
+    return;
+  }
   if (overlay.value) return;
   if (editingSplit.value && accountReady.value && !readerOpen.value && !drawer.value && !(!wideViewport.value && contactDisclosure.value)) {
     cancelGo();
@@ -1318,6 +1345,11 @@ function onKeydown(event: KeyboardEvent): void {
       if (!mailbox.splitBusy.value) void closeSplitEditor();
     }
     return;
+  }
+  if (props.mode !== 'browser-preview' && event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
+    && event.key.toLowerCase() === 'o' && !event.isComposing && event.keyCode !== 229
+    && !isEditableTarget(event.target) && readerOpen.value && !drawer.value) {
+    event.preventDefault(); openAttachments(); return;
   }
   if (event.isComposing || event.keyCode === 229 || event.altKey || event.ctrlKey || event.metaKey) cancelGo();
   // Cmd+K is the native app binding. Browser preview leaves reserved shortcuts alone.
@@ -1605,7 +1637,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
 
 <template>
   <div class="app" :data-client-mode="props.mode">
-    <header class="app-header" :inert="!!overlay || undefined">
+    <header class="app-header" :inert="!!overlay || !!attachmentConversation || undefined">
       <div class="app-title-row">
         <span class="rail-brand">Email</span>
         <h1 class="app-title" data-test="inbox-title">{{ contextTitle }}</h1>
@@ -1663,8 +1695,8 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
          under a palette/navigator overlay exactly like header/main, so its Undo
          button cannot be reached while covered; drawer/disclosure guards apply
          through executeAction. -->
-    <ActionNotice v-if="!trashReader && drawer !== 'trash'" ref="actionNoticeComponent" :notice="actionNotice" :now="nowMs" :inert="!!overlay || undefined" @undo="executeAction('undo')" @undo-group="onNoticeGroupAction" @dismiss-group="mailbox.dismissGroupNotice()" />
-    <main class="app-main" :inert="!!overlay || undefined">
+    <ActionNotice v-if="!trashReader && drawer !== 'trash'" ref="actionNoticeComponent" :notice="actionNotice" :now="nowMs" :inert="!!overlay || !!attachmentConversation || undefined" @undo="executeAction('undo')" @undo-group="onNoticeGroupAction" @dismiss-group="mailbox.dismissGroupNotice()" />
+    <main class="app-main" :inert="!!overlay || !!attachmentConversation || undefined">
       <section v-if="!accountReady" class="account-gate" aria-label="Account">
         <p
           v-if="mailbox.accountState.value === 'loading' && mailbox.listState.value !== 'error'"
@@ -1828,6 +1860,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               @unarchive="executeAction('unarchive')"
               @set-read="executeAction($event ? 'read' : 'unread')"
               @prepare-reply="prepareReply"
+              @attachments="openAttachments"
               @active-message="onReaderActiveMessage"
               @contact-override="onReaderContactOverride"
             />
@@ -1966,6 +1999,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
         </div>
       </template>
     </main>
+    <AttachmentChooser v-if="attachmentConversation" :client="props.client" :conversation="attachmentConversation" :preview="props.mode === 'browser-preview'" @close="closeAttachments" />
     <ActionOverlay v-if="overlay" :kind="overlay" :actions="availableActions" @close="closeOverlay()" @execute="executeOverlay" />
   </div>
 </template>

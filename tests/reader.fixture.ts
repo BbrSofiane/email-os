@@ -346,6 +346,10 @@ export function createReaderFixtureClient(): ReaderFixture {
     saveSavedSplit: async () => { throw { kind: 'storage_unavailable' }; },
     listProviderDestinations: () => Promise.reject({ kind: 'read_only' }),
     browseProviderDestination: () => Promise.reject({ kind: 'read_only' }),
+    listAttachments: async () => [],
+    saveAttachment: async () => { throw { kind: 'not_found' }; },
+    cancelAttachment: async () => {},
+    openExternalLink: async () => { throw { kind: 'provider_unavailable' }; },
     // UX-05 group seam stub: reader fixture journeys never exercise groups;
     // queries resolve empty, mutations reject (never fake success).
     setArchivedGroup: () => Promise.reject({ kind: 'invalid_request', field: 'members' } satisfies MailError),
