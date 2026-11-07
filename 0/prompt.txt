@@ -1,5 +1,1 @@
-How can I configure scripts on worktree lifecycle in t3 code?
-
----
-
-Ok in email-os I want copy mise.local.toml from main when creating a worktree
+Commit and push those changes
