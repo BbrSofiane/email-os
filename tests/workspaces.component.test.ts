@@ -72,6 +72,27 @@ describe('UX-13A independent synthetic sessions', () => {
     expect(ids.filter((id, i) => ids.indexOf(id) !== i)).toEqual([]);
   });
 
+  it('attachment chooser keeps unique ids and restores its own reader scroll per workspace (UX-12 merge)', async () => {
+    const { w, pa, pb } = await setup();
+    await pa.get('[data-test="conversation-row-conv-02"]').trigger('click'); await flushPromises();
+    const scrollA = pa.get('[data-test="reader-scroll"]').element as HTMLElement;
+    scrollA.scrollTop = 40;
+    await pa.get('[data-test="files-links"]').trigger('click'); await flushPromises();
+    await switchTo(w, bId);
+    await pb.get('[data-test="conversation-row-conv-02"]').trigger('click'); await flushPromises();
+    const scrollB = pb.get('[data-test="reader-scroll"]').element as HTMLElement;
+    scrollB.scrollTop = 77;
+    await pb.get('[data-test="files-links"]').trigger('click'); await flushPromises();
+    const ids = [...document.querySelectorAll('[id]')].map((el) => el.id);
+    expect(ids.filter((id, i) => ids.indexOf(id) !== i)).toEqual([]);
+    expect(pa.get('.attachment-chooser').attributes('aria-labelledby')).not.toBe(pb.get('.attachment-chooser').attributes('aria-labelledby'));
+    // Closing B's chooser must restore B's scroller, never A's (first in the DOM).
+    scrollB.scrollTop = 0; scrollA.scrollTop = 0;
+    await pb.get('.attachment-chooser header button').trigger('click'); await flushPromises();
+    expect(scrollB.scrollTop).toBe(77);
+    expect(scrollA.scrollTop).toBe(0);
+  });
+
   it('search stays inside its own account workspace', async () => {
     const searchA = vi.fn<MailClient['searchMail']>();
     const { w, b, pa, pb } = await setup((inner) => {

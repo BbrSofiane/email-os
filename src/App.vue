@@ -707,18 +707,20 @@ let navigationToken = 0;
 const attachmentConversation = ref<import('./lib/ipc/client').Conversation | null>(null);
 let attachmentOrigin: HTMLElement | null = null;
 let attachmentScroll = 0;
+// Scope DOM lookups to this App: two workspaces each have their own reader scroller.
+const appRoot = ref<HTMLElement | null>(null);
 function openAttachments(origin?: HTMLElement) {
   if (drawer.value || overlay.value || !readerOpen.value || mailbox.detailState.value !== 'ready' || !mailbox.conversation.value) return;
   cancelGo();
   attachmentOrigin = origin ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
-  attachmentScroll = document.querySelector('.reader-scroll')?.scrollTop ?? 0;
+  attachmentScroll = appRoot.value?.querySelector('.reader-scroll')?.scrollTop ?? 0;
   attachmentConversation.value = structuredClone(JSON.parse(JSON.stringify(mailbox.conversation.value)));
 }
 async function closeAttachments() {
   attachmentConversation.value = null;
   await nextTick();
   if (attachmentOrigin?.isConnected && !attachmentOrigin.closest('[inert]')) attachmentOrigin.focus({ preventScroll: true });
-  const scroll = document.querySelector('.reader-scroll');
+  const scroll = appRoot.value?.querySelector('.reader-scroll');
   if (scroll) scroll.scrollTop = attachmentScroll;
 }
 watch(accountId, () => { attachmentConversation.value = null; });
@@ -1666,7 +1668,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
 </script>
 
 <template>
-  <div class="app" :data-client-mode="props.mode">
+  <div ref="appRoot" class="app" :data-client-mode="props.mode">
     <header class="app-header" :inert="!!overlay || !!attachmentConversation || undefined">
       <div class="app-title-row">
         <span class="rail-brand">Email</span>
@@ -2029,7 +2031,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
         </div>
       </template>
     </main>
-    <AttachmentChooser v-if="attachmentConversation" :client="props.client" :conversation="attachmentConversation" :preview="props.mode === 'browser-preview'" @close="closeAttachments" />
+    <AttachmentChooser v-if="attachmentConversation" :client="props.client" :conversation="attachmentConversation" :preview="props.mode === 'browser-preview'" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" @close="closeAttachments" />
     <ActionOverlay v-if="overlay" v-model:query="overlayQuery" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" :kind="overlay" :actions="availableActions" @close="closeOverlay()" @execute="executeOverlay" />
   </div>
 </template>

@@ -204,6 +204,16 @@ launch, native-tab feasibility/validation spike, GUI draft-close validation,
 Keychain access, OAuth, real multi-account activation or remote convergence.
 No mailbox, credentials, external sends, provider writes or OS package installs.
 
+### Rebase onto UX-12 (download-only files and links)
+
+Merging UX-12's attachment chooser exposed two multi-workspace defects, fixed with
+a regression test: `closeAttachments`/`openAttachments` used a document-global
+`.reader-scroll` lookup (would restore the wrong workspace's reader scroll), and
+the chooser's `attachment-title` id was not account-namespaced. Both now scope to
+the owning App/account. `mise run check` (632 UI tests, 32 opt-in skipped) and
+`mise run build:web` pass on the rebased tree. The native screenshots below predate
+the UX-12 rebase; the native run was not repeated on the merged code.
+
 ### Interactive native macOS launch (fixture mode, rebased on main 3a2f613)
 
 `pnpm tauri dev` (default **fixture** mode, no `EMAIL_OS_MODE=gmail`, no

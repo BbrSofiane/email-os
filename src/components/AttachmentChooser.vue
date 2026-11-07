@@ -2,7 +2,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import type { Conversation, MailClient } from '../lib/ipc/client';
 import type { AttachmentDescriptor } from '../lib/ipc/generated';
-const props = defineProps<{ client: MailClient; conversation: Conversation; preview: boolean }>();
+const props = defineProps<{ client: MailClient; conversation: Conversation; preview: boolean; idPrefix?: string }>();
+const titleId = `${props.idPrefix ? `${props.idPrefix}-` : ''}attachment-title`;
 const emit = defineEmits<{ close: [] }>();
 const panel = ref<HTMLElement | null>(null);
 const files = ref<AttachmentDescriptor[]>([]);
@@ -78,8 +79,8 @@ onBeforeUnmount(() => { live = false; if (pending.value) void props.client.cance
 </script>
 <template>
   <div class="action-backdrop" @click.self="emit('close')">
-    <section ref="panel" class="action-overlay attachment-chooser" role="dialog" aria-modal="true" aria-labelledby="attachment-title" @keydown="keydown">
-      <header><h2 id="attachment-title">Files and links</h2><button type="button" @click="emit('close')">Back to message</button></header>
+    <section ref="panel" class="action-overlay attachment-chooser" role="dialog" aria-modal="true" :aria-labelledby="titleId" @keydown="keydown">
+      <header><h2 :id="titleId">Files and links</h2><button type="button" @click="emit('close')">Back to message</button></header>
       <p>Up to 32 cached files and 32 plain-text links. Download only — PDF preview is unavailable pending a macOS security review. Files are saved inert with a .download suffix; nothing executes or loads remote resources here.</p>
       <p v-if="conversation.retainedSnapshotAt" role="note">Retained recovery snapshot: attachment fetch is unavailable.</p>
       <p v-if="loading" role="status">Loading cached files…</p>
