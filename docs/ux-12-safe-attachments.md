@@ -76,7 +76,9 @@ checks. A separate reviewed ADR decision is required before enabling preview.
 - [x] exact expansion/scroll/focus on dismissal; errors permit Back/retry
 - [x] generated contracts, IPC registrations/permissions and transport tests
 - [x] project core/UI/type/build gates (synthetic evidence below)
-- [ ] native Mac fixture/save/browser/VoiceOver checks — pending operator
+- [~] native Mac checks: fixture Cmd+O/keyboard save/Esc return observed (see
+  "Native Mac evidence"); system-browser handoff, VoiceOver, Downloads
+  denied/cancelled paths and window Close/Cmd+Q remain pending operator
 - [ ] approved disposable-provider validation — not authorized/run here
 
 Headless evidence and native evidence must remain separate. No fake establishes
@@ -204,6 +206,30 @@ Temporary focus diagnostics were removed.
 Final full gate logs: background terminal `bt-12` (all gates), followed by
 `bt-13` (core/contract/lint/native rerun after coherent account-token fencing).
 Logs are local harness artifacts, not native runtime/security certification.
+
+## Native Mac evidence (2026-11-07, `pnpm tauri dev`, native fixture profile)
+
+Observed on the real Tauri/WKWebView window with synthetic fixture data, driven by
+real OS key events (System Events) and window screenshots. Not provider evidence.
+
+- Enter on the focused Inbox row opened the reader; the row stayed unread (bold):
+  opening and the chooser never marked it read.
+- Real **Cmd+O** opened the Files and links chooser listing the single synthetic
+  `example.txt` (text/plain, 27 bytes) and "No HTTP(S) links"; focus moved to
+  Back to message and the reader behind was inert.
+- Tab then Space on **Save to Downloads** wrote
+  `~/Downloads/<uuid>-example.txt.download`: 27 bytes, mode `0600`, ASCII text
+  `Synthetic attachment only.`; the UI reported "No file was opened."
+  The file carries `com.apple.provenance`/`macl` attributes but no
+  `com.apple.quarantine` attribute (app-written, not browser-downloaded); it is
+  inert by name only, so Gatekeeper quarantine is not provided by this path.
+- **Escape** returned to the reader with a byte-identical screenshot to the
+  pre-Cmd+O state (same message expanded, same focus ring); a second Escape
+  returned to the Inbox list with the same row selected.
+
+Not exercised: Tab/Shift+Tab trap inspection, long-reader scroll restoration,
+VoiceOver, permission-denied/cancelled Downloads, HTTP(S) handoff to the system
+browser, window Close/Cmd+Q after a draft edit, any real provider fetch.
 
 ## Remaining operator gates / intentionally unsupported capabilities
 
