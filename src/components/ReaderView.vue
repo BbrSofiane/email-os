@@ -37,6 +37,7 @@ const props = defineProps<{
   openRef: ConversationRef | null;
   /** Gmail mode: archive/unarchive controls are hidden, not just disabled. */
   readOnly?: boolean;
+  browsingOnly?: boolean;
   navigationUnavailable?: boolean;
   showReadControls?: boolean;
   /** Nonzero: shared controls dispatch to the SELECTION (§3.3), so the reader
@@ -603,14 +604,14 @@ defineExpose({
     <div class="reader-toolbar" data-test="reader-toolbar">
       <button type="button" :title="actionLabel('back')" data-test="reader-close" @click="emit('close')">Close (Esc)</button>
       <button
-        v-if="props.state === 'ready' && props.conversation"
+        v-if="!props.browsingOnly && props.state === 'ready' && props.conversation"
         type="button"
         data-test="prepare-reply"
         :disabled="!!replyBlockedReason"
         @click="prepareReply"
       >Prepare reply</button>
       <span
-        v-if="props.state === 'ready' && latestMessage"
+        v-if="!props.browsingOnly && props.state === 'ready' && latestMessage"
         class="reply-source-label"
         data-test="reply-source-label"
       >Reply targets the latest message from {{ latestMessage.from.displayName ?? latestMessage.from.mailbox }}</span>
@@ -678,7 +679,8 @@ defineExpose({
         <p v-if="props.conversation.retainedSnapshotAt" class="reader-recovery-snapshot" data-test="retained-snapshot-notice" role="note">
           Local recovery snapshot saved at {{ props.conversation.retainedSnapshotAt }}; Gmail may have newer messages or mailbox changes.
         </p>
-        <p v-if="props.readOnly" class="reader-readonly" data-test="reader-readonly" role="note">
+        <p v-if="props.browsingOnly" class="reader-readonly" role="note">Cached Trash — read only. Recovery is not available here; use your provider client. Opening does not change read state.</p>
+        <p v-else-if="props.readOnly" class="reader-readonly" data-test="reader-readonly" role="note">
           Read-only Gmail view: messages are never marked as read. Opening this conversation does not change read state.
         </p>
         <p v-else-if="props.showReadControls" class="reader-readonly" data-test="reader-no-auto-read" role="note">

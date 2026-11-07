@@ -595,6 +595,8 @@ fn thread(id: &str, history_id: &str, msgs: Vec<Message>, inbox_ids: &[&str]) ->
         inbox_message_ids: inbox_ids.iter().map(|s| s.to_string()).collect(),
         message_ids: None,
         unread_message_ids: None,
+        trash_message_ids: None,
+        spam_message_ids: None,
         history_id: history_id.to_string(),
     }
 }

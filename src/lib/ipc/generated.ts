@@ -13,6 +13,7 @@ export const GET_SAVED_SPLIT_COMMAND = 'get_saved_split';
 export const SAVE_SAVED_SPLIT_COMMAND = 'save_saved_split';
 export const SEARCH_MAIL_COMMAND = 'search_mail';
 export const CANCEL_SEARCH_MAIL_COMMAND = 'cancel_search_mail';
+export const LIST_CACHED_TRASH_COMMAND = 'list_cached_trash';
 export const GET_CONVERSATION_COMMAND = 'get_conversation';
 export const SET_ARCHIVED_COMMAND = 'set_archived';
 export const MAILBOX_CHANGED_EVENT = 'mailbox_changed';
@@ -359,6 +360,12 @@ export type CachedDoneRequest = { accountId: string, limit: number, cursor: stri
 export type CachedDoneCoverage = "local_cache";
 
 export type CachedDoneSnapshot = { conversations: Array<ConversationSummary>, nextCursor: string | null, coverage: CachedDoneCoverage, exactTotal: number | null, lastSyncedAt: string | null, };
+
+export type CachedTrashRequest = { accountId: string, limit: number, cursor: string | null, };
+
+export type CachedTrashCoverage = "local_cache";
+
+export type CachedTrashSnapshot = { conversations: Array<ConversationSummary>, nextCursor: string | null, coverage: CachedTrashCoverage, exactTotal: number | null, lastSyncedAt: string | null, };
 
 export type MailMode = "fixture" | "gmail";
 

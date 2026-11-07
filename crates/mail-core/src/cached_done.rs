@@ -9,6 +9,14 @@ pub(crate) fn validate(
     request: &CachedDoneRequest,
     account: &str,
 ) -> Result<Option<Position>, MailError> {
+    validate_with_prefix(request, account, "cached-done-v1:")
+}
+
+pub(crate) fn validate_with_prefix(
+    request: &CachedDoneRequest,
+    account: &str,
+    prefix: &str,
+) -> Result<Option<Position>, MailError> {
     if request.account_id != account {
         return Err(MailError::NotFound);
     }
@@ -23,7 +31,7 @@ pub(crate) fn validate(
                 return Err(invalid("cursor"));
             }
             let encoded = cursor
-                .strip_prefix("cached-done-v1:")
+                .strip_prefix(prefix)
                 .ok_or_else(|| invalid("cursor"))?;
             let (owner, date, id): (String, String, String) =
                 serde_json::from_str(encoded).map_err(|_| invalid("cursor"))?;

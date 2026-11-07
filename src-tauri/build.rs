@@ -11,6 +11,7 @@ fn main() {
         "save_saved_split",
         "search_mail",
         "cancel_search_mail",
+        "list_cached_trash",
         "get_conversation",
         "set_archived",
         "enable_mailbox_actions",

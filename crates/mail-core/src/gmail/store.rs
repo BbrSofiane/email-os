@@ -294,7 +294,8 @@ impl GmailStore {
         )
         .map_err(|_| MailError::StorageUnavailable)?;
 
-        let has_star_column = {
+        // Additive nullable facts; legacy membership remains unknown.
+        for column in ["is_starred", "in_trash", "in_spam"] {
             let mut stmt = tx
                 .prepare("PRAGMA table_info(gmail_message_facts)")
                 .map_err(|_| MailError::StorageUnavailable)?;
@@ -303,11 +304,13 @@ impl GmailStore {
                 .map_err(|_| MailError::StorageUnavailable)?
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|_| MailError::StorageUnavailable)?;
-            columns.iter().any(|column| column == "is_starred")
-        };
-        if !has_star_column {
-            tx.execute("ALTER TABLE gmail_message_facts ADD COLUMN is_starred INTEGER CHECK (is_starred IN (0,1))", [])
+            if !columns.iter().any(|name| name == column) {
+                tx.execute(
+                    &format!("ALTER TABLE gmail_message_facts ADD COLUMN {column} INTEGER"),
+                    [],
+                )
                 .map_err(|_| MailError::StorageUnavailable)?;
+            }
         }
 
         let has_reply_context_column = {
@@ -738,7 +741,7 @@ impl GmailStore {
             };
             let (is_in_inbox, is_read, pending_operation_id) =
                 effective_conversation_state(&conn, &account_id, &conversation_id)?;
-            if !is_in_inbox {
+            if !is_in_inbox || has_excluded_membership(&conn, &account_id, &conversation_id)? {
                 continue;
             }
             summaries.push(ConversationSummary {
@@ -1011,7 +1014,7 @@ impl GmailStore {
                 effective.pending_operation_id,
                 effective.coverage_known,
             );
-            if inbox || !known {
+            if inbox || !known || has_excluded_membership(&conn, &account, id)? {
                 continue;
             }
             let built = if let Some(built) = build_conversation(&conn, &account, id)? {
@@ -1052,6 +1055,90 @@ impl GmailStore {
             summaries,
             meta_get(&conn, "last_synced_at")?,
         ))
+    }
+
+    /// UX-10 A: read-only known cached Trash, not provider-folder discovery.
+    pub(crate) fn list_cached_trash(
+        &self,
+        request: &crate::dto::CachedTrashRequest,
+    ) -> Result<crate::dto::CachedTrashSnapshot, MailError> {
+        self.persistence_gate()?;
+        let paging = crate::dto::CachedDoneRequest {
+            account_id: request.account_id.clone(),
+            limit: request.limit,
+            cursor: request.cursor.clone(),
+        };
+        let (candidates, last_synced_at) = {
+            let conn = self.lock_conn()?;
+            let account = meta_get(&conn, "account_id")?.ok_or(MailError::NotFound)?;
+            let position =
+                crate::cached_done::validate_with_prefix(&paging, &account, "cached-trash-v1:")?;
+            let mut stmt = conn.prepare(
+                "WITH candidates AS (
+                    SELECT f.conversation_id, COALESCE(
+                        (SELECT MAX(m.sent_at) FROM gmail_messages m WHERE m.account_id = f.account_id AND m.conversation_id = f.conversation_id),
+                        s.last_message_at, '') AS date
+                    FROM gmail_message_facts f LEFT JOIN gmail_operation_snapshots s
+                    ON s.account_id = f.account_id AND s.conversation_id = f.conversation_id
+                    WHERE f.account_id = ?1 AND f.in_trash = 1
+                    AND (s.conversation_id IS NOT NULL OR EXISTS (SELECT 1 FROM gmail_conversations c
+                        WHERE c.account_id = f.account_id AND c.conversation_id = f.conversation_id))
+                    GROUP BY f.conversation_id)
+                 SELECT date, conversation_id FROM candidates
+                 WHERE ?2 IS NULL OR date < ?2 OR (date = ?2 AND conversation_id > ?3)
+                 ORDER BY date DESC, conversation_id ASC LIMIT ?4"
+            ).map_err(|_| MailError::StorageUnavailable)?;
+            let candidates = stmt
+                .query_map(
+                    params![
+                        account,
+                        position.as_ref().map(|p| &p.0),
+                        position.as_ref().map(|p| &p.1),
+                        request.limit + 1
+                    ],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .map_err(|_| MailError::StorageUnavailable)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| MailError::StorageUnavailable)?;
+            (candidates, meta_get(&conn, "last_synced_at")?)
+        };
+        let mut conversations = Vec::new();
+        for (_, id) in candidates.iter().take(request.limit as usize) {
+            let conversation = match self.get_conversation(&ConversationRef {
+                account_id: request.account_id.clone(),
+                conversation_id: id.clone(),
+            }) {
+                Ok(conversation) => conversation,
+                Err(MailError::NotFound) => continue,
+                Err(error) => return Err(error),
+            };
+            conversations.push(ConversationSummary {
+                stars: conversation.stars,
+                conversation_ref: conversation.conversation_ref,
+                subject: conversation.subject,
+                participants: participants_of(&conversation.messages),
+                primary_correspondent: conversation.messages.last().map(|m| m.from.clone()),
+                preview: preview_of(&conversation.messages),
+                last_message_at: conversation
+                    .messages
+                    .last()
+                    .map(|m| m.sent_at.clone())
+                    .unwrap_or_default(),
+                is_read: conversation.is_read,
+                pending_operation_id: conversation.pending_operation_id,
+            });
+        }
+        let page = crate::cached_done::finish(&paging, &candidates, conversations, last_synced_at);
+        Ok(crate::dto::CachedTrashSnapshot {
+            conversations: page.conversations,
+            next_cursor: page
+                .next_cursor
+                .map(|cursor| cursor.replacen("cached-done-v1:", "cached-trash-v1:", 1)),
+            coverage: crate::dto::CachedTrashCoverage::LocalCache,
+            exact_total: None,
+            last_synced_at: page.last_synced_at,
+        })
     }
 
     /// Full reader view of one conversation, scoped by the connected account.
@@ -2174,6 +2261,10 @@ impl GmailStore {
                     params![account_id],
                 )
                 .map_err(|_| MailError::StorageUnavailable)?;
+                // Recovery readers need the current conversation inventory,
+                // including later Trash/Spam messages outside immutable targets.
+                // Retain facts only under existing recovery/operation ownership;
+                // provider replacement and deletion still clear stale facts.
                 tx.execute(
                     "DELETE FROM gmail_message_facts
                      WHERE account_id = ?1 AND conversation_id NOT IN
@@ -2186,7 +2277,11 @@ impl GmailStore {
                          SELECT 1 FROM gmail_operation_targets t
                          WHERE t.account_id = gmail_message_facts.account_id
                            AND t.conversation_id = gmail_message_facts.conversation_id
-                           AND t.message_id = gmail_message_facts.message_id)",
+                           AND t.message_id = gmail_message_facts.message_id)
+                       AND NOT EXISTS (
+                         SELECT 1 FROM gmail_operation_snapshots s
+                         WHERE s.account_id = gmail_message_facts.account_id
+                           AND s.conversation_id = gmail_message_facts.conversation_id)",
                     params![account_id],
                 )
                 .map_err(|_| MailError::StorageUnavailable)?;
@@ -4230,6 +4325,17 @@ fn account_id_of(conn: &Connection) -> Result<String, MailError> {
     meta_get(conn, "account_id")?.ok_or(MailError::StorageUnavailable)
 }
 
+/// Observed Trash/Spam is not Done, even when older archive evidence exists.
+fn has_excluded_membership(conn: &Connection, account: &str, id: &str) -> Result<bool, MailError> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM gmail_message_facts
+        WHERE account_id = ?1 AND conversation_id = ?2 AND (in_trash = 1 OR in_spam = 1))",
+        params![account, id],
+        |row| row.get(0),
+    )
+    .map_err(|_| MailError::StorageUnavailable)
+}
+
 /// Replaces one thread's cached facts atomically. Effective INBOX membership
 /// is derived from `inbox_message_ids`, never trusted from the provider
 /// conversation flags. Pathological provider data (empty ids) fails typed.
@@ -4389,9 +4495,11 @@ fn upsert_message_facts(
             .as_ref()
             .map(|ids| ids.iter().any(|id| id == message_id) as i64);
         conn.execute(
-            "INSERT INTO gmail_message_facts (account_id, conversation_id, message_id, in_inbox, is_unread)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![account_id, conversation_id, message_id, inbox, unread],
+            "INSERT INTO gmail_message_facts (account_id, conversation_id, message_id, in_inbox, is_unread, in_trash, in_spam)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![account_id, conversation_id, message_id, inbox, unread,
+                thread.trash_message_ids.as_ref().map(|ids| ids.contains(message_id) as i64),
+                thread.spam_message_ids.as_ref().map(|ids| ids.contains(message_id) as i64)],
         )
         .map_err(|_| MailError::StorageUnavailable)?;
         conn.execute("UPDATE gmail_message_facts SET is_starred = ?4 WHERE account_id = ?1 AND conversation_id = ?2 AND message_id = ?3",
@@ -4467,7 +4575,11 @@ fn evict_over_cap(
                  SELECT 1 FROM gmail_operation_targets t
                  WHERE t.account_id = gmail_message_facts.account_id
                    AND t.conversation_id = gmail_message_facts.conversation_id
-                   AND t.message_id = gmail_message_facts.message_id)",
+                   AND t.message_id = gmail_message_facts.message_id)
+               AND NOT EXISTS (
+                 SELECT 1 FROM gmail_operation_snapshots s
+                 WHERE s.account_id = gmail_message_facts.account_id
+                   AND s.conversation_id = gmail_message_facts.conversation_id)",
             params![account_id, conversation_id],
         )
         .map_err(|_| MailError::StorageUnavailable)?;
@@ -4726,6 +4838,8 @@ mod tests {
             inbox_message_ids: inbox.iter().map(|s| s.to_string()).collect(),
             message_ids: None,
             unread_message_ids: None,
+            trash_message_ids: None,
+            spam_message_ids: None,
             history_id: history_id.to_string(),
         }
     }
@@ -4805,7 +4919,7 @@ mod tests {
         let cursor = store.cursor().unwrap();
         store
             .save_search(
-                &[older.clone()],
+                std::slice::from_ref(&older),
                 0,
                 store.observation_revision().unwrap(),
                 "acct",
@@ -4857,7 +4971,7 @@ mod tests {
         );
         store
             .save_search(
-                &[older.clone()],
+                std::slice::from_ref(&older),
                 0,
                 store.observation_revision().unwrap(),
                 "acct",
@@ -4896,6 +5010,469 @@ mod tests {
         assert!(recovered.is_in_inbox);
         drop(store);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn cached_trash_is_account_scoped_paged_retained_and_distinct_from_done() {
+        use crate::dto::{CachedDoneRequest, CachedTrashRequest};
+        let (store, dir) = open_store("ux10-trash");
+        store
+            .begin_account(&profile("acct", "a@example.test", "h1"), 0)
+            .unwrap();
+        for id in ["a", "b", "spam", "independent"] {
+            let source = thread(
+                "acct",
+                id,
+                "h1",
+                vec![message(&format!("m-{id}"), "2026-01-01T00:00:00Z")],
+                &[&format!("m-{id}")],
+            );
+            store
+                .apply_discovery_page(&[cached(source)], None, true, false, 0)
+                .unwrap();
+            store
+                .accept_archived(&SetArchived {
+                    conversation: ConversationRef {
+                        account_id: "acct".into(),
+                        conversation_id: id.into(),
+                    },
+                    archived: true,
+                    request_id: format!("archive-{id}"),
+                })
+                .unwrap();
+            let mut observed = thread(
+                "acct",
+                id,
+                "h2",
+                vec![message(&format!("m-{id}"), "2026-01-01T00:00:00Z")],
+                &[],
+            );
+            observed.trash_message_ids = Some(if id == "a" || id == "b" {
+                vec![format!("m-{id}")]
+            } else {
+                vec![]
+            });
+            observed.spam_message_ids = Some(if id == "spam" {
+                vec![format!("m-{id}")]
+            } else {
+                vec![]
+            });
+            upsert_thread(&store.lock_conn().unwrap(), "acct", &observed).unwrap();
+        }
+        let done = store
+            .list_cached_done(&CachedDoneRequest {
+                account_id: "acct".into(),
+                limit: 100,
+                cursor: None,
+            })
+            .unwrap();
+        assert_eq!(
+            done.conversations
+                .iter()
+                .map(|row| row.conversation_ref.conversation_id.as_str())
+                .collect::<Vec<_>>(),
+            ["independent"]
+        );
+        let request = CachedTrashRequest {
+            account_id: "acct".into(),
+            limit: 1,
+            cursor: None,
+        };
+        let first = store.list_cached_trash(&request).unwrap();
+        assert_eq!(first.conversations[0].conversation_ref.conversation_id, "a");
+        assert_eq!(first.exact_total, None);
+        let second = store
+            .list_cached_trash(&CachedTrashRequest {
+                cursor: first.next_cursor.clone(),
+                ..request.clone()
+            })
+            .unwrap();
+        assert_eq!(
+            second.conversations[0].conversation_ref.conversation_id,
+            "b"
+        );
+        assert_eq!(second.next_cursor, None);
+        assert_eq!(
+            store.list_cached_trash(&CachedTrashRequest {
+                account_id: "foreign".into(),
+                ..request.clone()
+            }),
+            Err(MailError::NotFound)
+        );
+        for cursor in [
+            "cached-done-v1:[]",
+            "cached-trash-v1:[\"foreign\",\"\",\"a\"]",
+            "malformed",
+        ] {
+            assert!(matches!(
+                store.list_cached_trash(&CachedTrashRequest {
+                    cursor: Some(cursor.into()),
+                    ..request.clone()
+                }),
+                Err(MailError::InvalidRequest { .. })
+            ));
+        }
+        for limit in [0, 101] {
+            assert!(matches!(
+                store.list_cached_trash(&CachedTrashRequest {
+                    limit,
+                    ..request.clone()
+                }),
+                Err(MailError::InvalidRequest { .. })
+            ));
+        }
+        // Evicted bodies still have durable operation snapshots/facts.
+        {
+            let conn = store.lock_conn().unwrap();
+            conn.execute(
+                "DELETE FROM gmail_conversations WHERE conversation_id = 'a'",
+                [],
+            )
+            .unwrap();
+            conn.execute("DELETE FROM gmail_messages WHERE conversation_id = 'a'", [])
+                .unwrap();
+        }
+        drop(store);
+        let reopened = GmailStore::open(&dir, Arc::new(SystemClock)).unwrap();
+        assert_eq!(reopened.list_cached_trash(&request).unwrap(), first);
+        let target = ConversationRef {
+            account_id: "acct".into(),
+            conversation_id: "a".into(),
+        };
+        assert!(reopened
+            .get_conversation(&target)
+            .unwrap()
+            .retained_snapshot_at
+            .is_some());
+        // Current membership overrides old archive evidence; removing only TRASH does not restore INBOX.
+        let mut recovered = thread(
+            "acct",
+            "a",
+            "h3",
+            vec![message("m-a", "2026-01-01T00:00:00Z")],
+            &[],
+        );
+        recovered.trash_message_ids = Some(vec![]);
+        recovered.spam_message_ids = Some(vec![]);
+        upsert_message_facts(&reopened.lock_conn().unwrap(), "acct", &recovered).unwrap();
+        assert_eq!(
+            reopened.list_cached_trash(&request).unwrap().conversations[0]
+                .conversation_ref
+                .conversation_id,
+            "b"
+        );
+        assert!(!reopened.get_conversation(&target).unwrap().is_in_inbox);
+        drop(reopened);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn triage_facts_survive_real_cache_eviction_and_capped_rediscovery() {
+        use crate::dto::{CachedDoneRequest, CachedTrashRequest};
+
+        // Exercise each pruning query independently: capped rediscovery below
+        // the cap must not rely on evict_over_cap to retain recovery evidence.
+        for capped in [false, true] {
+            let (store, dir) = open_store(if capped {
+                "triage-capped-rediscovery"
+            } else {
+                "triage-cap-eviction"
+            });
+            store
+                .begin_account(&profile("acct", "a@example.test", "h1"), 0)
+                .unwrap();
+            let original = |id: &str| {
+                thread(
+                    "acct",
+                    id,
+                    "h1",
+                    vec![message(&format!("{id}-a"), "2026-01-01T00:00:00Z")],
+                    &[&format!("{id}-a")],
+                )
+            };
+            store
+                .apply_discovery_page(
+                    &["trash", "spam", "independent", "unowned"].map(|id| cached(original(id))),
+                    None,
+                    true,
+                    false,
+                    0,
+                )
+                .unwrap();
+            for id in ["trash", "spam", "independent"] {
+                store
+                    .accept_archived(&SetArchived {
+                        conversation: original(id).conversation.conversation_ref,
+                        archived: true,
+                        request_id: format!("archive-{id}"),
+                    })
+                    .unwrap();
+            }
+            let evidence = |store: &GmailStore| {
+                let conn = store.lock_conn().unwrap();
+                let counts: (i64, i64) = conn.query_row(
+                    "SELECT (SELECT COUNT(*) FROM gmail_operation_targets WHERE account_id = 'acct'),
+                            (SELECT COUNT(*) FROM gmail_operation_preimages WHERE account_id = 'acct')",
+                    [], |row| Ok((row.get(0)?, row.get(1)?)),
+                ).unwrap();
+                assert_eq!(counts, (3, 3), "no unmatched or widened immutable evidence");
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT t.operation_id, t.conversation_id, t.message_id, p.prior_value
+                     FROM gmail_operation_targets t JOIN gmail_operation_preimages p
+                     ON p.account_id = t.account_id AND p.operation_id = t.operation_id
+                        AND p.message_id = t.message_id
+                     WHERE t.account_id = 'acct' ORDER BY t.conversation_id, t.message_id",
+                    )
+                    .unwrap();
+                stmt.query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Option<i64>>(3)?,
+                    ))
+                })
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+            };
+            let accepted = evidence(&store);
+            assert_eq!(accepted.len(), 3);
+            for (_, id, message_id, prior) in &accepted {
+                assert_eq!(message_id, &format!("{id}-a"));
+                assert_eq!(*prior, Some(0));
+            }
+            let history = HistoryPage {
+                changed_thread_ids: Vec::new(),
+                deleted_message_ids: Vec::new(),
+                next_page_token: None,
+                history_id: "h2".into(),
+            };
+            let mut observed = Vec::new();
+            for id in ["trash", "spam", "unowned"] {
+                let mut newer = original(id);
+                newer.inbox_message_ids.clear();
+                newer
+                    .conversation
+                    .messages
+                    .push(message(&format!("{id}-b"), "2026-01-02T00:00:00Z"));
+                // B arrived after acceptance and must never become a target or
+                // preimage of archive A. Unsupported bodies are not required.
+                newer.trash_message_ids = Some(if id != "spam" {
+                    vec![format!("{id}-b")]
+                } else {
+                    vec![]
+                });
+                newer.spam_message_ids = Some(if id == "spam" {
+                    vec![format!("{id}-b")]
+                } else {
+                    vec![]
+                });
+                observed.push(cached(newer));
+            }
+            store
+                .apply_history_page(&history, &observed, "h1", 0)
+                .unwrap();
+            let done_request = CachedDoneRequest {
+                account_id: "acct".into(),
+                limit: 100,
+                cursor: None,
+            };
+            let trash_request = CachedTrashRequest {
+                account_id: "acct".into(),
+                limit: 100,
+                cursor: None,
+            };
+            let ids = |rows: Vec<ConversationSummary>| {
+                rows.into_iter()
+                    .map(|row| row.conversation_ref.conversation_id)
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(
+                ids(store.list_cached_done(&done_request).unwrap().conversations),
+                ["independent"]
+            );
+            assert_eq!(
+                ids(store
+                    .list_cached_trash(&trash_request)
+                    .unwrap()
+                    .conversations),
+                ["trash", "unowned"]
+            );
+
+            // Same conversation ID in another account must not grant retention.
+            store.lock_conn().unwrap().execute(
+                "INSERT INTO gmail_operation_snapshots
+                 (account_id, conversation_id, snapshot_json, snapshot_saved_at, last_message_at)
+                 SELECT 'foreign', 'unowned', snapshot_json, snapshot_saved_at, last_message_at
+                 FROM gmail_operation_snapshots WHERE account_id = 'acct' AND conversation_id = 'trash'",
+                [],
+            ).unwrap();
+            let additions: Vec<_> = (0..if capped { 1 } else { DISCOVERY_CAP })
+                .map(|index| {
+                    let id = format!("new-{index:03}");
+                    cached(thread(
+                        "acct",
+                        &id,
+                        "h3",
+                        vec![message(&format!("{id}-a"), "2026-03-01T00:00:00Z")],
+                        &[&format!("{id}-a")],
+                    ))
+                })
+                .collect();
+            if capped {
+                store.begin_rediscovery("h3", 0).unwrap();
+                store
+                    .apply_discovery_page(&additions, None, true, true, 0)
+                    .unwrap();
+            } else {
+                store
+                    .apply_history_page(&history, &additions, "h2", 0)
+                    .unwrap();
+            }
+            assert_eq!(
+                store.cached_count().unwrap(),
+                if capped { 1 } else { DISCOVERY_CAP }
+            );
+            drop(store);
+            let reopened = GmailStore::open(&dir, Arc::new(SystemClock)).unwrap();
+            assert_eq!(
+                ids(reopened
+                    .list_cached_done(&done_request)
+                    .unwrap()
+                    .conversations),
+                ["independent"]
+            );
+            assert_eq!(
+                ids(reopened
+                    .list_cached_trash(&trash_request)
+                    .unwrap()
+                    .conversations),
+                ["trash"]
+            );
+            assert_eq!(evidence(&reopened), accepted);
+            for id in ["trash", "spam", "independent"] {
+                let retained = reopened
+                    .get_conversation(&original(id).conversation.conversation_ref)
+                    .unwrap();
+                assert!(retained.retained_snapshot_at.is_some());
+                assert_eq!(retained.messages.len(), 1);
+                assert_eq!(retained.messages[0].id, format!("{id}-a"));
+                assert!(!retained.is_in_inbox);
+            }
+            {
+                let conn = reopened.lock_conn().unwrap();
+                let count: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM gmail_message_facts WHERE account_id = 'acct' AND conversation_id = 'unowned'", [], |row| row.get(0),
+                ).unwrap();
+                assert_eq!(
+                    count, 0,
+                    "no facts retained without same-account recovery ownership"
+                );
+                let count: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM gmail_message_facts WHERE account_id = 'acct' AND conversation_id IN ('trash', 'spam')", [], |row| row.get(0),
+                ).unwrap();
+                assert_eq!(
+                    count, 4,
+                    "both current inventories survive, not just targets"
+                );
+            }
+            assert_eq!(
+                reopened
+                    .get_conversation(&ConversationRef {
+                        account_id: "acct".into(),
+                        conversation_id: "new-000".into(),
+                    })
+                    .unwrap()
+                    .messages[0]
+                    .id,
+                "new-000-a"
+            );
+
+            // Full provider replacement removes membership even without body
+            // cache admission. Message deletion and missing-thread paths must
+            // also clear triage facts, while immutable history stays exact.
+            let mut cleared = original("trash");
+            cleared
+                .conversation
+                .messages
+                .push(message("trash-b", "2026-01-02T00:00:00Z"));
+            cleared.inbox_message_ids.clear();
+            cleared.trash_message_ids = Some(vec![]);
+            cleared.spam_message_ids = Some(vec![]);
+            reopened
+                .apply_history_page(&history, &[cached(cleared)], "h2", 0)
+                .unwrap();
+            assert!(reopened
+                .list_cached_trash(&trash_request)
+                .unwrap()
+                .conversations
+                .is_empty());
+            let deleted = HistoryPage {
+                deleted_message_ids: vec!["spam-b".into()],
+                ..history.clone()
+            };
+            reopened.apply_history_page(&deleted, &[], "h2", 0).unwrap();
+            assert_eq!(
+                ids(reopened
+                    .list_cached_done(&done_request)
+                    .unwrap()
+                    .conversations),
+                ["independent", "spam", "trash"]
+            );
+            reopened
+                .apply_history_page(&history, &[ThreadFetch::Missing("spam".into())], "h2", 0)
+                .unwrap();
+            let count: i64 = reopened.lock_conn().unwrap().query_row(
+                "SELECT COUNT(*) FROM gmail_message_facts WHERE account_id = 'acct' AND (message_id = 'spam-b' OR conversation_id = 'spam' OR (message_id = 'trash-b' AND (in_trash = 1 OR in_spam = 1)))", [], |row| row.get(0),
+            ).unwrap();
+            assert_eq!(count, 0);
+            let membership: (i64, i64) = reopened.lock_conn().unwrap().query_row(
+                "SELECT in_trash, in_spam FROM gmail_message_facts WHERE account_id = 'acct' AND message_id = 'trash-b'", [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            ).unwrap();
+            assert_eq!(
+                membership,
+                (0, 0),
+                "provider membership removal replaces retained evidence"
+            );
+            assert_eq!(evidence(&reopened), accepted);
+            reopened.clear_account().unwrap();
+            let count: i64 = reopened.lock_conn().unwrap().query_row(
+                "SELECT (SELECT COUNT(*) FROM gmail_message_facts) + (SELECT COUNT(*) FROM gmail_operation_snapshots)", [], |row| row.get(0),
+            ).unwrap();
+            assert_eq!(
+                count, 0,
+                "disconnect leaves no recovery-owned facts or snapshots"
+            );
+            drop(reopened);
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn triage_fact_migration_keeps_legacy_membership_unknown() {
+        let (store, dir) = open_store("ux10-migration");
+        {
+            let conn = store.lock_conn().unwrap();
+            conn.execute("INSERT INTO gmail_message_facts (account_id, conversation_id, message_id, in_inbox, is_unread) VALUES ('a', 'c', 'm', 0, 1)", []).unwrap();
+            conn.execute_batch("ALTER TABLE gmail_message_facts DROP COLUMN in_trash; ALTER TABLE gmail_message_facts DROP COLUMN in_spam;").unwrap();
+        }
+        drop(store);
+        let reopened = GmailStore::open(&dir, Arc::new(SystemClock)).unwrap();
+        let facts: (Option<i64>, Option<i64>, i64) = reopened
+            .lock_conn()
+            .unwrap()
+            .query_row(
+                "SELECT in_trash, in_spam, is_unread FROM gmail_message_facts",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(facts, (None, None, 1));
+        drop(reopened);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

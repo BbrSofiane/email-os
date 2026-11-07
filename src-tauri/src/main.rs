@@ -15,8 +15,9 @@ use mail_core::drafts::types::{
 };
 use mail_core::drafts::DraftCore;
 use mail_core::dto::{
-    CachedDoneRequest, CachedDoneSnapshot, Conversation, ConversationRef, InboxSnapshot,
-    OperationReceipt, RetryOperation, SetArchived, SetRead, UndoOperation, UndoReceipt,
+    CachedDoneRequest, CachedDoneSnapshot, CachedTrashRequest, CachedTrashSnapshot, Conversation,
+    ConversationRef, InboxSnapshot, OperationReceipt, RetryOperation, SetArchived, SetRead,
+    UndoOperation, UndoReceipt,
 };
 use mail_core::error::MailError;
 use mail_core::gmail::browsing::{DestinationCatalog, DestinationPage, DestinationRequest};
@@ -98,6 +99,18 @@ impl Backend {
             Self::Gmail(core) => core.search_mail(request),
         }
     }
+    fn list_cached_trash(
+        &self,
+        request: &CachedTrashRequest,
+    ) -> Result<CachedTrashSnapshot, MailError> {
+        match self {
+            Self::Fixture(_) => Err(MailError::InvalidRequest {
+                field: "mode".into(),
+            }),
+            Self::Gmail(core) => core.list_cached_trash(request),
+        }
+    }
+
     fn list_cached_done(
         &self,
         request: &CachedDoneRequest,
@@ -490,6 +503,15 @@ async fn cancel_search_mail(state: State<'_, AppState>) -> Result<(), MailError>
         core.cancel_search_mail();
     }
     Ok(())
+}
+
+#[tauri::command]
+async fn list_cached_trash(
+    state: State<'_, AppState>,
+    request: CachedTrashRequest,
+) -> Result<CachedTrashSnapshot, MailError> {
+    let backend = state.backend.clone();
+    run_blocking(backend, move |backend| backend.list_cached_trash(&request)).await
 }
 
 #[tauri::command]
@@ -904,6 +926,7 @@ fn main() {
             save_saved_split,
             search_mail,
             cancel_search_mail,
+            list_cached_trash,
             get_conversation,
             set_archived,
             enable_mailbox_actions,
@@ -1185,6 +1208,14 @@ mod tests {
         let mode_error = MailError::InvalidRequest {
             field: "mode".to_owned(),
         };
+        assert_eq!(
+            backend.list_cached_trash(&CachedTrashRequest {
+                account_id: ACCOUNT_ID.into(),
+                limit: 50,
+                cursor: None,
+            }),
+            Err(mode_error.clone())
+        );
         assert_eq!(backend.enable_mailbox_actions(), Err(mode_error.clone()));
         assert_eq!(
             backend.cancel_mailbox_action_upgrade(),

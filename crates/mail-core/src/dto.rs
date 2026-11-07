@@ -286,3 +286,28 @@ pub struct CachedDoneSnapshot {
     pub exact_total: Option<u32>,
     pub last_synced_at: Option<String>,
 }
+
+/// Bounded, account-scoped access to locally evidenced trashed mail only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct CachedTrashRequest {
+    pub account_id: String,
+    pub limit: u32,
+    pub cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum CachedTrashCoverage {
+    LocalCache,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct CachedTrashSnapshot {
+    pub conversations: Vec<ConversationSummary>,
+    pub next_cursor: Option<String>,
+    pub coverage: CachedTrashCoverage,
+    pub exact_total: Option<u32>,
+    pub last_synced_at: Option<String>,
+}

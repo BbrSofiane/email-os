@@ -362,6 +362,28 @@ and VoiceOver selection/outcome announcements. Native IPC command registration
 is covered only by the bridge tests in this VM; Gmail read-group remote
 convergence (BROWSE-18) additionally requires the approved disposable account.
 
+## UX-10 A — Read-only cached Trash (partial UX-10)
+
+Gmail mode exposes **Go to cached Trash (read only)** in Commands and Destinations.
+This lists known locally cached TRASH conversations, including operation-retained
+snapshots; it does not discover Gmail Trash or claim mailbox-complete coverage.
+Refresh is explicit, pagination is bounded, and Back preserves the loaded local
+browsing state. Trash-origin readers omit mailbox actions and Reply. Opening
+never marks read. The native fixture profile rejects this Gmail-only query;
+browser-preview fixtures can simulate it in memory.
+
+Observed per-message TRASH/SPAM facts now exclude those conversations from Inbox
+and Done. Old profiles migrate with unknown (nullable) triage facts; unknown is
+not asserted to be outside Trash/Spam. No mutation permission or provider write
+was added. Existing archive/read durable intent, groups, Undo, Activity, local
+drafts and close protections remain in place.
+
+See [UX-10 bounded contracts and acceptance](ux-10-bounded-triage.md). Trash/recover
+writes and Undo await a recovery-effects decision and a new durable dimension;
+mute/spam writes, Important/Other, rules, Block and Unsubscribe are not enabled.
+There is no permanent-delete/empty-Trash, arbitrary URL opener or send command.
+Synthetic checks do not establish native WKWebView or remote Gmail convergence.
+
 ## Native prerequisites and platform limits
 
 The Linux Tauri build needs GTK/WebKitGTK development packages and `pkg-config`,

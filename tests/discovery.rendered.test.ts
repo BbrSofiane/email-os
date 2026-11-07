@@ -506,6 +506,44 @@ describe.skipIf(chromePath === '')('UX-03 discovery (real Chrome, opt-in)', () =
     expect(await cdp!.js(`document.querySelector('[data-test="inbox-title"]').textContent`)).toBe('Inbox');
     expect(await cdp!.js(`document.querySelectorAll('.inbox-row').length`)).toBe(18);
   });
+  it('UX-10 A browses synthetic cached Trash with trusted input, literal text and no writes', async () => {
+    for (const width of [1200, 999]) {
+      await setViewport(width);
+      await cdp!.js(`(async () => {
+        const vueUrl = performance.getEntriesByType('resource').map(x => x.name).find(n => n.includes('/node_modules/.vite/deps/vue.js'));
+        const { createApp } = await import(vueUrl);
+        const { default: App } = await import('/src/App.vue');
+        const { createBrowserFakeMailClient } = await import('/src/lib/ipc/browser-fake.ts');
+        const fake = createBrowserFakeMailClient();
+        fake.controls.setAccount({ mode: 'gmail', connection: 'connected', emailAddress: 'synthetic@example.test', mutationAccess: 'enabled' });
+        fake.controls.markTriage('conv-06', 'trash');
+        window.__trashWrites = [];
+        for (const name of ['setArchived', 'setRead', 'setArchivedGroup', 'setReadGroup', 'createDraft']) {
+          const original = fake[name].bind(fake);
+          fake[name] = (...args) => { window.__trashWrites.push([name, args]); return original(...args); };
+        }
+        const root = document.querySelector('#app'); root.__vue_app__?.unmount();
+        createApp(App, { client: fake, mode: 'browser-preview' }).mount(root);
+        await window.__h.wait(200);
+      })()`);
+      await click('[data-test="palette-trigger"]');
+      await cdp!.cmd('Input.insertText', { text: 'Go to cached Trash' });
+      await press('Enter');
+      await cdp!.js('window.__h.wait(200)');
+      expect(await cdp!.js(`document.querySelector('[aria-label="Cached Trash browsing"]').textContent`)).toContain('not your complete Gmail Trash');
+      await click('button[data-id="conv-06"]');
+      await cdp!.js('window.__h.wait(200)');
+      expect(await cdp!.js(`document.querySelector('[data-test="reader"]').textContent`)).toContain('<script>alert("body")</script>');
+      expect(await cdp!.js(`document.querySelectorAll('[data-test="reader"] script, [data-test="reader"] img, [data-test="prepare-reply"]').length`)).toBe(0);
+      for (const key of ['e', 'j', 'k']) await press(key);
+      await press('u', { shift: true });
+      expect(await cdp!.js('window.__trashWrites.length')).toBe(0);
+      await press('Escape');
+      await cdp!.js('window.__h.wait(150)');
+      expect(await cdp!.js('document.activeElement?.getAttribute("data-id")')).toBe('conv-06');
+      expect(await cdp!.js('window.__trashWrites.length')).toBe(0);
+    }
+  }, 30_000);
 
   it('types in the focused palette with zero mutations, highlights, contains Tab and restores focus', async () => {
     await freshMount();
