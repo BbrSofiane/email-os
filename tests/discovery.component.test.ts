@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import App from '../src/App.vue';
 import type { InboxSnapshot } from '../src/lib/ipc/client';
@@ -93,7 +93,9 @@ describe('UX-03 discovery and context history', () => {
     }
     key('g'); await palette(w); key('Escape'); await flushPromises();
     key('e', { ctrlKey: true });
-    focus(); key('g'); await new Promise((resolve) => setTimeout(resolve, 1050)); key('e'); await flushPromises();
+    // Past the chord window AND the swallow grace, a plain e is Archive again.
+    focus(); vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    key('g'); vi.advanceTimersByTime(2200); vi.useRealTimers(); key('e'); await flushPromises();
     expect(fixture.doneCalls()).toBe(0);
     expect(fixture.controls.archiveCommands.map((command) => command.conversation.conversationId)).toEqual(['read-02']);
     key('g'); key('e'); await flushPromises();

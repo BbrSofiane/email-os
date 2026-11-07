@@ -391,6 +391,19 @@ button:focus-visible {
   color: var(--warning);
 }
 
+/* Armed g-chord: a quiet pending hint at the trail's leading edge. */
+.chord-hint {
+  flex: 0 0 auto;
+  margin: 0 12px 0 0;
+  font-size: var(--type-body);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.chord-hint:empty {
+  display: none;
+}
+
 .header-link {
   padding: 0 2px;
   background: transparent;

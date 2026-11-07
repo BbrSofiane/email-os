@@ -621,7 +621,7 @@ describe.skipIf(chromePath === '')('UX-03 discovery / UX-13 workspaces (real Chr
     await press('ArrowLeft'); expect(await activeTest()).toBe('action-query');
     await press('Escape'); await cdp!.js('window.__h.wait(60)');
     expect(await activeTest()).toBe('conversation-row-read-02');
-    await press('g'); await press('h'); await press('g'); await cdp!.js('window.__h.wait(1100)'); await press('e'); await cdp!.js('window.__h.wait(100)');
+    await press('g'); await press('h'); await press('g'); await cdp!.js('window.__h.wait(2300)'); await press('e'); await cdp!.js('window.__h.wait(100)');
     expect(await cdp!.js('window.__fixture.doneCalls()')).toBe(0);
     expect(await cdp!.js('window.__fixture.controls.archiveCommands[0].conversation.conversationId')).toBe('read-02');
     await press('g'); await press('e'); await cdp!.js('window.__h.wait(120)');
