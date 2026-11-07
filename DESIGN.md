@@ -15,6 +15,7 @@ colors:
   text-tertiary: "#a09c9a"
   icon-muted: "#8e8a87"
   divider: "#474543"
+  rule: "#3b3936"
   warning: "#e4c465"
   danger: "#f1a9a5"
 typography:
@@ -133,14 +134,16 @@ components:
   button-ghost:
     backgroundColor: "transparent"
     textColor: "{colors.text-primary}"
-    typography: "{typography.title}"
+    typography: "{typography.body}"
     rounded: "{rounded.sm}"
-    padding: "2px 8px"
+    padding: "4px 8px"
+    height: "24px"
   button-utility:
     backgroundColor: "{colors.surface-raised}"
     textColor: "{colors.text-primary}"
     rounded: "{rounded.sm}"
-    padding: "2px 8px"
+    padding: "3px 8px"
+    height: "24px"
   command-overlay:
     backgroundColor: "{colors.surface-raised}"
     textColor: "{colors.text-primary}"
@@ -149,6 +152,12 @@ components:
   command-item-highlighted:
     backgroundColor: "{colors.focus-fill}"
     textColor: "{colors.text-primary}"
+    height: "36px"
+  list-dock:
+    backgroundColor: "{colors.surface}"
+    typography: "{typography.body}"
+    height: "36px"
+    padding: "0 24px 0 50px"
 ---
 
 # Design System: Email OS
@@ -165,7 +174,7 @@ The system rejects Gmail-web clutter, "AI magic" sparkle chrome, generic SaaS da
 
 **Key Characteristics:**
 - Three fixed panes: a 40px icon rail, a fluid list or reader, and a 272px darker contact pane. Each is separated by a single 1px divider.
-- One content inset (50px from the list pane's left edge). It aligns split tabs, sender names, date-group captions and banners.
+- One content inset (50px from the list pane's left edge). It aligns split tabs, sender names, date-group captions, notices, banners and the bottom dock.
 - 36px rows on 12px type. Hierarchy comes from weight and tone, not size.
 - Pane-edge alignment: the contact name sits on the split-tab line, and the contact email sits on the first-row line.
 - Flat tonal layering. No shadows in the browsing shell.
@@ -184,7 +193,7 @@ This is the backlog for layout, typeset and polish passes. Each gap names what s
 
 1. **Split header.** Done (2026-11-07 header pass). The header is one borderless 78px strip inside the list column (the rail and contact pane span its height). It has a Graphite hamburger (Destinations navigator) centered 23px in, split tabs on the 50px inset (16px, active Paper White, inactive Smoke, 11px Ash count 4px after the label, 18px apart), and right-hand glyphs on the 32px pitch: Back (when there is history), Reminders (fixture only), the Starred-only toggle, Commands and Search. There is no brand text, no visible h1 while a tab is active, and no bordered chips. Glyphs are local inline SVG (`HeaderGlyph.vue`).
    - The context h1 stays in the accessibility tree. It is shown on screen, styled like an active tab, only when no rendered tab is active (Cached Done, Starred, Search, the reader, an open drawer).
-   - The status line is removed. The inbox count is on the active tab; loaded counts were dropped as duplicates of the list. Selection count stays in SelectionBar, plus a visually hidden polite announcement. The pending count is covered by row "Pending…", the action notice and Activity. The Shift+U hint is in the Commands palette. The command error is its own alert line in the in-flow notice slot beside the action notice. The read-only hint and the Unread-only/Starred-only filter states stay visible in words in the header.
+   - The status line is removed. The inbox count is on the active tab; loaded counts were dropped as duplicates of the list. Selection count stays in SelectionBar, plus a visually hidden polite announcement. The pending count is covered by row "Pending…", the action notice and Activity. The Shift+U hint is in the Commands palette. The command error is its own alert line beside the action notice in the list column's bottom dock (gap 13). The read-only hint and the Unread-only/Starred-only filter states stay visible in words in the header.
    - The Inbox coverage sentence is the tabs' accessible description and the tab strip's hover title. The browser-preview banner is a one-line amber "Preview · in-memory" note on the right; the full disclosure is its title and accessible text.
    - Utility drawers now start below the header, so they never cover its glyphs.
    Remaining: a compose glyph was deliberately not added, because there is no compose capability beyond local drafts in the Drafts drawer; decide whether "New local draft" earns a header slot. (The aggregate pending count now lives on the Activity rail badge, and the tab line is calibrated against the rail's home circle: both are centered 42px down; see gap 2.)
@@ -197,12 +206,12 @@ This is the backlog for layout, typeset and polish passes. Each gap names what s
    - **Activity badge:** a small Amber Notice count on the Activity glyph shows unresolved operations, i.e. `queued`/`applying` plus `outcome_unknown`. It is derived from the activity rows the drawer already lists, with no new read. The digit is `aria-hidden`; the words ("2 operations pending", "1 operation with outcome unknown", or "3 operations unresolved: 2 pending, 1 outcome unknown") are the button's `aria-describedby` and are appended to its title. The badge disappears at zero.
    - **Glyphs:** local inline SVG in `PaneGlyph.vue` (Starred reuses HeaderGlyph's star). The rail sits at z-index 20 (above the row popover at 6, below drawers at 30).
    Remaining: the badge counts only what the activity snapshot carries (the same rows Activity shows), not a separate mailbox-wide total. The Contact disclosure stays in the rail below 1000px; it has no Superhuman analogue.
-3. **Row metrics.** Done (2026-11-07 rows pass): 12px type in two weights, a fixed 36px height, no per-row dividers, the 6px pane inset, the 44px left gutter and the 132px sender column. Remaining: the list opens with a date-group caption ("Today" or a month), so the first row is centered 144px down instead of on the 96px first-list line that the reference (no leading caption) and the rail and contact pane use. Decide in a rows follow-up whether to drop the leading group caption.
+3. **Row metrics.** Done (2026-11-07 rows pass): 12px type in two weights, a fixed 36px height, no per-row dividers, the 6px pane inset, the 44px left gutter and the 132px sender column. Leading caption: done (polish pass). When the list opens with Today, that caption is visually hidden (it stays in the accessibility tree), so the first row is centered on the 96px first-list line with the rail's first glyph and the contact email, as in the reference. Today's rows already show a time, so nothing is lost on screen. Any other leading bucket (Yesterday, Earlier this month, a month, Unknown date) stays visible, because a list that starts in the past must say where it starts; in that case the first row is still centered 144px down.
 4. **Focused row.** Done (rows pass): the fill is inset 6px from both pane edges, with a 4px Dusk Lavender bar on its own left edge.
 5. **Read state.** Done (rows pass): a 5px `unread-marker` dot in the gutter, a distinct hollow ring when read state is unknown, and read senders drop to weight 400.
 6. **Selection checkbox.** Done (rows pass): hidden until selection mode, hover or focus, and placed in the 44px gutter.
 7. **Row actions.** Done (rows pass): `icon-muted` inline SVG glyphs (`RowGlyph.vue`) replace the date on the focused or hovered row only. Accessible names, roving tab stops and the `meta-compact` disclosure stay. The disclosure now also re-measures on text-size changes inside an unchanged row box (rail/contact pass: the sender label is observed too). Remaining: Superhuman shows done/snooze/more; we show only our real actions (read/unread, done).
-8. **Date-group caption.** Done (rows pass): title case, 12px `text-secondary`, a 48px block, no rule, on the content inset.
+8. **Date-group caption.** Done (rows pass): title case, 12px `text-secondary`, a 48px block, no rule, on the content inset. A leading Today caption is visually hidden (gap 3).
 9. **Contact pane.** Done (2026-11-07 rail/contact layout pass; type from the typeset pass). A fixed 272px column on Deep Umber with a `0 24px 24px` inset.
    - **No visible caption:** the "Focused conversation" / "Open conversation" h2 stays in the accessibility tree (visually hidden).
    - **Pinned lines:** the name (16px regular Headline) is centered on the tab line at 42px and wraps around that center before it moves anything. The email (12px semibold Title) is centered on the first list line at 96px.
@@ -211,12 +220,12 @@ This is the backlog for layout, typeset and polish passes. Each gap names what s
    - **Narrow disclosure:** inside the Contact disclosure below 1000px, the same content stacks compactly under the drawer header.
    - **No footer toolbar:** Account, Activity and Drafts stay in the rail, their one home. The contact column does not exist below 1000px and is `inert` while a drawer is open, so footer toggles would vanish on narrow viewports and could not close their own drawer or receive focus back.
    Remaining: the label keeps our honest copy "Recent cached mail" rather than "Mail" (vocabulary pass). The list is still the 4 most recent cached results from the sender search, not a provider-complete thread list.
-10. **Palette deltas.** Done: `text-primary` #ece9e2 → #ffffff (typeset pass), `text-secondary` #a8a29a → #c0bcb6 (rows pass), `text-tertiary`, `icon-muted` and `unread-marker` added (header and rows passes), the undefined `--text-muted` on coverage notes now maps to `text-secondary`, and `rail-well` / `rail-button` are CSS tokens (rail pass). Remaining: `divider` #3b3936 → #474543 (pane separators only; today the token also borders every global button, input and drawer row, so change it with the button pass, gap 11). `focus-accent` stays at the committed #bba5ed; the capture reads about #bfa1f6, which is within capture and color-profile noise.
-11. **Global button style.** Today: every `<button>` is a raised bordered chip. Target: ghost buttons and glyphs in the browsing shell. Raised `button-utility` chips appear only inside utility drawers and recovery banners.
-12. **Command overlay.** Today: hard-coded off-palette violets (#24212a, #17151d, #493d60, #c7a7ff, #81718f). Target: map them to `surface-raised`, `surface-contact`, `focus-fill` and `focus-accent`.
-13. **In-flow bars.** The Selection bar, Action notice, cached-coverage note and draft-recovery banner use bordered full-width strips with mixed paddings (their text is already 12px Body since the typeset pass). Target: borderless, 12px, aligned to the content inset, and still in flow and always visible.
+10. **Palette deltas.** Done: `text-primary` #ece9e2 → #ffffff (typeset pass), `text-secondary` #a8a29a → #c0bcb6 (rows pass), `text-tertiary`, `icon-muted` and `unread-marker` added (header and rows passes), the undefined `--text-muted` on coverage notes now maps to `text-secondary`, and `rail-well` / `rail-button` are CSS tokens (rail pass). `divider` is now #474543 (polish pass): the rail and contact-pane seams, the drawer's leading edge, utility-chip and input borders, the compact row-actions popover and the command-overlay hint rule. It never separates rows (the list has no row borders). The old #3b3936 survives as the quieter `rule` token for structure inside a pane, only in the reader (toolbar and message rules) and inside drawers (Activity and draft rows, group detail, Account panel, Reminders fieldset), so those surfaces keep their tone until a reader reference is captured. `focus-accent` stays at the committed #bba5ed; the capture reads about #bfa1f6, which is within capture and color-profile noise.
+11. **Global button style.** Done (polish pass). The `button` defaults are zero-specificity (`:where()`), so every component class keeps its own look. The default is a ghost: transparent, Paper White, 4px radius, `4px 8px` (24px tall at 12px, the old chip's hit target), Lifted Charcoal on hover, Focus Stone on press, 0.45 opacity when disabled, and the 2px Dusk Lavender focus ring at a 1px offset. The selection bar, the action notice's Undo, Load more, the search form and the reader toolbar are ghost text buttons. Bordered `button-utility` chips (Lifted Charcoal, 1px Seam, `3px 8px`) appear only inside utility drawers, the modal attachment chooser, recovery banners (`.recovery-banner`: draft-close recovery, inbox/account load errors, the reader's navigation error, the header's saved-split error) and the synthetic workspace strip. Fields follow "Inputs / Fields": a Seam border that shifts to Dusk Lavender (plus a 1px inner outline) on keyboard focus, Smoke placeholders (4.76:1 on Lifted Charcoal) and a lavender ring on native checkboxes.
+12. **Command overlay.** Done (polish pass). The off-palette values the overlay still carried (#56534e border and rules, #c9c4bc caption, icon and hint text, #d4cfc7 disabled reasons, #66615b `kbd` fill, `.85rem` radius, the 46rem width, 24px query and 1.5rem glyph) are now tokens: a 576px Lifted Charcoal panel with a 10px radius, no border, Overlay lift over a `rgba(0,0,0,0.53)` backdrop at 15vh. The query is 16px on Deep Umber with a 1px Dusk Lavender border, items are 36px rows of 12px Body with 16px Graphite glyphs, the highlighted item is Focus Stone plus a 3px Dusk Lavender bar, disabled items are Smoke with Ash reasons, and `kbd` is Ash on Deep Umber. Geometry is whole-pixel so a highlighted item scrolled into view is never clipped. The modal attachment chooser shares the panel (46rem wide, 12px body), which closes the "chooser body inherits 16px" remainder of gap 14. (The violets this gap once listed were already gone before this pass.)
+13. **In-flow bars.** Done (polish pass). Every bar is borderless Body type with its text on the 50px content inset and 6px block padding. The lines that come and go with triage keys (the Selection bar, the single-slot Action notice and the command-error alert) now live in a bottom dock of the list column (`.list-dock`) instead of above the list, so x, e and z never move a row. Measured at 1280×800 (Gmail preview): the first row stays at y=126 (real clock) or y=78 (Today clock) through x, x, Clear, e and z; before, it moved 126 → 186.9 → 162.8 → 156. The dock keeps one 36px line reserved and grows upward into the list viewport (selection: 56px). If that shrink would clip the focused row, the list scrolls just enough to keep it whole. The static context lines (Starred/Done coverage, draft-close recovery) stay above the list, because they belong to the destination rather than to an action. The reader's selection-scope note is a borderless line in the reader.
 14. **Type scale and dates.** Done (2026-11-07 typeset pass). The shell type is semantic tokens on `:root`: `--type-headline` 1rem, `--type-body` 0.75rem, `--type-count` 0.6875rem, `--type-mono` 0.85rem, weights 400/600 only (`--weight-regular`, `--weight-strong`). `.app-main` sets Body as the shell default, so the rail, contact pane, notices, drawers, the reader chrome and form controls are 12px instead of an inherited 16px or ad hoc 0.8/0.85/0.9/0.95/1.1rem. Shell h2 is Headline; h3/h4 and in-panel drawer headings are Title; the reader subject is Headline at 600. Row dates follow the Label rules below and are deterministic (no default-locale dependence: the old `30 Sept 2001` vs `Sep 30, 2001` rendered-layout gate now passes under any `LANG`). Rows carry `<time datetime>` plus the full date as the title; reader message times are full dates with `datetime`. The rendered larger-text gate expected the compact action disclosure at a 25px root font (was 23px) after this pass, and at 34.5px (expanded at 30px) after the rail/contact pass, since the fixed-px rail and contact pane leave the list wider at every text size.
-   Remaining: the command overlay keeps its own sizes (0.8/0.9/1.5rem) until gap 12; the attachment chooser's body text still inherits 16px (only its heading is on the scale); raw ISO timestamps remain in drawer and notice copy (Account "Last synced", Cached Done coverage "Last synced", Activity group times, Provider mail catalog/page/message times, Reminders due times, reader recovery snapshot) — route them through `fullDateLabel` in a polish pass, updating their tests.
+   Polish pass: the remaining raw timestamps (Account "Last synced", Cached Done coverage "Last synced", Activity group times, Provider mail catalog, page, recovery-snapshot and message times, Reminders due times, the reader's recovery snapshot) now go through `FullDate.vue`, which renders `fullDateLabel` in a `<time datetime>`. The command overlay and the attachment chooser are on the scale (gaps 12 and 14). Remaining: the Reminders time input still takes a typed ISO value; it is an input, not a display.
 15. **Typeface.** Superhuman ships a proprietary face. We stay on local `system-ui` (no remote fonts), so glyph widths will differ slightly. Calibrate sizes by eye on device, not by matching the font.
 16. **Out of scope for this capture.** The native title strip (Tauri window chrome) and the reader view are not shown. The reader's type is on the shell scale (typeset pass: Headline subject at 600, 12px message chrome, full dates, Mono body), but its layout and colours keep their current tokens until a reader reference is captured.
 
@@ -241,7 +250,8 @@ One warm charcoal ramp, one violet signal, and two status hues reserved for trut
 - **Ash** (`text-secondary`): snippet, date, group caption, contact threads, counts.
 - **Smoke** (`text-tertiary`): inactive split tabs.
 - **Graphite** (`icon-muted`): every resting glyph (row actions, compose, search, hamburger, footer icons, attachment). Hover and focus raise glyphs to Paper White.
-- **Seam** (`divider`): the 1px vertical separators between rail, list and contact pane. Nothing else.
+- **Seam** (`divider`): the 1px vertical separators between rail, list and contact pane, and the drawer's leading edge; also the 1px border of utility chips, fields and floating panels. Never between rows.
+- **Rule** (`rule`): a quieter 1px structure line inside a pane, used only in the reader and inside drawers. Never in the list.
 
 ### Status
 - **Amber Notice** (`warning`): pending, outcome unknown, local-only, expired-undo and partial states.
@@ -293,7 +303,7 @@ The browsing shell is flat. Depth comes from tonal layering: Warm Charcoal for t
 ### Shadow Vocabulary
 - **Drawer cast** (`box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35)`): the right-edge utility drawer (Activity, Account, Drafts).
 - **Popover lift** (`box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35)`): the compact row-actions disclosure panel.
-- **Overlay lift** (`box-shadow: 0 16px 64px rgba(0, 0, 0, 0.53)`): the command palette and navigator, over a `#00000088` backdrop.
+- **Overlay lift** (`box-shadow: 0 16px 64px rgba(0, 0, 0, 0.53)`): the command palette and navigator, over a `rgba(0, 0, 0, 0.53)` backdrop (`--overlay-lift`, `--overlay-backdrop`).
 
 ### Named Rules
 **The Flat-Shell Rule.** If something in the rail, header, list or contact pane casts a shadow, remove it. Shadows mean "this covers the shell", nothing else.
@@ -311,6 +321,7 @@ The core of the product: dense, quiet and exact.
 
 ### Date Group Caption
 - **Style:** Body, Ash, title case ("Yesterday"), on the 50px content inset, in a 48px block. No rule and no background band. Not focusable.
+- **Leading Today:** visually hidden (kept for assistive technology), so a list that opens with today's mail starts on the first list line. Every other leading caption stays visible.
 
 ### Split Tabs (Navigation)
 - **Style:** Headline type. The active tab is Paper White; inactive tabs are Smoke. The count (11px, Ash) follows 4px after the label and disappears at zero. Tabs are spaced 18px apart.
@@ -327,24 +338,28 @@ The core of the product: dense, quiet and exact.
 - **Footer:** none. Superhuman's footer toolbar has no counterpart with real actions here; the utilities live in the rail (Parity gap 9).
 
 ### Buttons
-- **Ghost (browsing shell):** transparent, Paper White Title text or a Graphite glyph, 4px radius, `2px 8px`. On hover or focus, the glyph rises to Paper White; the focus ring is a 2px Dusk Lavender outline at a 1px offset.
-- **Utility (drawers, recovery banners):** a Lifted Charcoal fill with a 1px Seam border, 4px radius, `2px 8px`. This is the only bordered button.
+- **Ghost (browsing shell, the default):** transparent, Paper White text or a Graphite glyph, 4px radius, `4px 8px` (24px tall). Text ghosts in the dock bars (selection actions, Undo, Load more) carry the Title weight. Hover lifts a text ghost to Lifted Charcoal and a glyph to Paper White; press is Focus Stone; disabled is 0.45 opacity. The focus ring is a 2px Dusk Lavender outline at a 1px offset.
+- **Utility (drawers, the attachment chooser, recovery banners):** a Lifted Charcoal fill with a 1px Seam border, 4px radius, `3px 8px` (24px tall); hover is Focus Stone. This is the only bordered button.
+- **Specificity:** the defaults are `:where()` rules, so a component class (split tab, rail item, row action, contact line) always wins without `!important`.
 
 ### Command Overlay
-- **Style:** a Lifted Charcoal panel, 10px radius, 576px max width, Overlay lift, 15vh from the top. The input sits on Deep Umber with a 1px Dusk Lavender border. The highlighted item gets a Focus Stone fill plus a 3px Dusk Lavender left bar. Shortcuts are shown as `kbd` in Ash.
+- **Style:** a Lifted Charcoal panel, 10px radius, 576px max width, no border, Overlay lift, 15vh from the top. A 36px Title caption in Ash with a 16px Graphite glyph, then the 38px query (16px Headline) on Deep Umber with a 1px Dusk Lavender border; it always owns keyboard focus, so that border is its focus indicator. Items are 36px rows of 12px Body with a 16px Graphite glyph that turns Paper White when highlighted. The highlighted item gets a Focus Stone fill plus a 3px Dusk Lavender left bar. Disabled items are Smoke, with their reason in Ash. Shortcuts are `kbd` in Ash on Deep Umber. The hint line sits under a 1px Seam.
 
 ### Inputs / Fields
 - **Style:** a Lifted Charcoal fill, a 1px Seam border, 4px radius, inherited font.
-- **Focus:** the border shifts to Dusk Lavender. No glow.
+- **Focus:** the border shifts to Dusk Lavender, doubled by a 1px inner outline so the ring reads at 12px. No glow.
+- **Placeholder:** Smoke (4.76:1 on Lifted Charcoal).
 
 ### In-flow Notices (Action notice, Selection bar, coverage and recovery)
-- **Style:** borderless strips in normal flow above the list, aligned to the 50px content inset, in Body type. Status words use Amber Notice or Coral Fault. Undo shows its `kbd` hint in Ash. They never overlay rows and never auto-hide a failure.
+- **Style:** borderless lines in normal flow, with text on the 50px content inset, in Body type with 6px block padding. Status words use Amber Notice or Coral Fault. Undo shows its `kbd` hint in Ash. They never overlay rows and never auto-hide a failure.
+- **Bottom dock (transient lines):** the Selection bar, the Action notice and the command-error alert sit in a dock at the bottom of the list column, below the list, never above it. Showing or hiding them never moves a row. The dock reserves one 36px line and grows upward into the list viewport; the focused row is kept whole when the viewport shrinks. Its lines are whole-pixel (16px line height, 24px buttons). This is the honest, in-flow form of Superhuman's bottom undo toast: no float, no shadow, nothing covered.
+- **Above the list (static lines):** Starred/Done coverage notes and the draft-close recovery banner, which belong to the destination or to a pending recovery rather than to the last keystroke.
 
 ## 6. Do's and Don'ts
 
 ### Do:
 - **Do** keep rows at exactly 36px with 12px type, and separate them by rhythm alone.
-- **Do** align split tabs, sender names, date captions and notices to the single 50px content inset.
+- **Do** align split tabs, sender names, date captions, notices and the bottom dock to the single 50px content inset.
 - **Do** use Dusk Lavender (#bba5ed) only for the current row or message, and the focus ring.
 - **Do** show every pending, partial, failed and outcome-unknown state in words, in Amber Notice or Coral Fault, where the user is already looking.
 - **Do** align the contact pane to the list: the name on the tab line, the email on the first-row line.

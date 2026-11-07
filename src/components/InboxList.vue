@@ -125,13 +125,27 @@ function setRowRef(el: Element | ComponentPublicInstance | null, key: string): v
   }
 }
 
-interface GroupItem { kind: 'group'; key: string; caption: string; id: number }
+interface GroupItem {
+  kind: 'group';
+  key: string;
+  caption: string;
+  id: number;
+  /** The list opens with Today: the caption stays for assistive technology only. */
+  leading: boolean;
+}
 interface RowItem { kind: 'row'; row: ConversationSummaryLike; index: number }
 type ListItem = GroupItem | RowItem;
 
 /**
  * Backend order is preserved; a heading is emitted wherever the calendar
  * bucket changes between consecutive rows (never re-sorted here).
+ *
+ * A leading Today caption is visually hidden (DESIGN.md "Date Group
+ * Caption"): today's rows already show a time instead of a date, so the
+ * caption adds no information on screen, and without it the first row sits on
+ * the first list line shared by the rail and contact pane. Any other leading
+ * bucket (Yesterday, a month, Unknown date) stays visible, because the row
+ * dates alone would not say where the list starts.
  */
 const items = computed<ListItem[]>(() => {
   const result: ListItem[] = [];
@@ -142,7 +156,7 @@ const items = computed<ListItem[]>(() => {
     if (key !== previousKey) {
       previousKey = key;
       groupId += 1;
-      result.push({ kind: 'group', key, caption: dateGroupCaption(key), id: groupId });
+      result.push({ kind: 'group', key, caption: dateGroupCaption(key), id: groupId, leading: groupId === 1 && key === 'today' });
     }
     result.push({ kind: 'row', row, index });
   });
@@ -310,6 +324,38 @@ onMounted(() => {
 onBeforeUnmount(() => {
   rowLayoutObserver?.disconnect();
   rowLayoutObserver = null;
+  viewportObserver?.disconnect();
+  viewportObserver = null;
+});
+
+/*
+ * The bottom dock (selection bar, action notice) grows upward into the list
+ * viewport instead of pushing rows down. When that shrink would clip the
+ * focused row at the bottom edge, scroll just enough to keep it whole; a row
+ * that was already out of view stays where the user scrolled it.
+ */
+let viewportObserver: ResizeObserver | null = null;
+let viewportHeight: number | null = null;
+
+function keepFocusedRowInView(): void {
+  const list = listEl.value;
+  if (!list) return;
+  const previous = viewportHeight;
+  viewportHeight = list.clientHeight;
+  if (previous === null || viewportHeight >= previous || !props.focusedRef) return;
+  const row = rowEls.get(rowKey(props.focusedRef));
+  if (!row) return;
+  const listBox = list.getBoundingClientRect();
+  const rowBox = row.getBoundingClientRect();
+  const visibleBottom = listBox.top + list.clientHeight;
+  const wasVisible = rowBox.top < listBox.top + previous && rowBox.bottom > listBox.top;
+  if (wasVisible && rowBox.bottom > visibleBottom) list.scrollTop += rowBox.bottom - visibleBottom;
+}
+
+onMounted(() => {
+  if (typeof ResizeObserver !== 'function' || !listEl.value) return;
+  viewportObserver = new ResizeObserver(() => keepFocusedRowInView());
+  viewportObserver.observe(listEl.value);
 });
 
 /*
@@ -475,6 +521,7 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
       <li
         v-if="item.kind === 'group'"
         class="row-group"
+        :class="{ 'visually-hidden': item.leading }"
         role="presentation"
       >{{ item.caption }}</li>
       <li

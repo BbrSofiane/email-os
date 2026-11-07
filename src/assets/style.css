@@ -44,7 +44,18 @@
   /* DESIGN.md split-header height: content top to the first row. */
   --split-header-height: 78px;
   --unread-marker: #ce9ece;
-  --divider: #3b3936;
+  /* DESIGN.md Seam: the 1px vertical separators between rail, list and
+     contact pane (and the drawer's leading edge), utility-chip and input
+     borders. Never between rows. */
+  --divider: #474543;
+  /* Quieter structural rule inside a pane (reader message stack, drawer list
+     rows): the pre-polish Seam value, kept so the reader and drawers do not
+     change tone until a reader reference is captured. */
+  --rule: #3b3936;
+  /* Overlay lift (DESIGN.md "Elevation"): palette/navigator and the modal
+     attachment chooser, over a dimmed shell. */
+  --overlay-backdrop: rgba(0, 0, 0, 0.53);
+  --overlay-lift: 0 16px 64px rgba(0, 0, 0, 0.53);
   /* DESIGN.md Inkwell (rail destination pill) and Rail Pebble (28px circle,
      active destination). */
   --rail-well: #141413;
@@ -70,13 +81,50 @@ body {
   margin: 0;
 }
 
-button {
-  background: var(--surface-raised);
+/*
+ * Buttons (DESIGN.md "Buttons"). Zero-specificity defaults so every component
+ * class (split tabs, rail and row glyphs, contact lines) keeps its own look.
+ *
+ * Ghost (the default, browsing shell): transparent, Paper White text, 4px
+ * radius, 24px tall at the 12px shell size (4px block padding) so the hit
+ * target matches the old bordered chip. Hover lifts to Lifted Charcoal.
+ */
+:where(button) {
+  background: transparent;
   color: var(--text-primary);
-  border: 1px solid var(--divider);
+  border: 0;
   border-radius: 4px;
-  padding: 0.15rem 0.5rem;
+  padding: 4px 8px;
   font: inherit;
+  cursor: pointer;
+}
+
+:where(button:not(:disabled):hover) {
+  background: var(--surface-raised);
+}
+
+:where(button:not(:disabled):active) {
+  background: var(--focus-fill);
+}
+
+:where(button:disabled) {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/*
+ * Utility chip: a Lifted Charcoal fill with a 1px Seam border, only inside
+ * utility drawers, the modal attachment chooser, recovery banners and the
+ * synthetic workspace strip. Same 24px height as the ghost button.
+ */
+:where(.utility-drawer, .attachment-chooser, .recovery-banner, .header-alert, .workspace-header) :where(button) {
+  background: var(--surface-raised);
+  border: 1px solid var(--divider);
+  padding: 3px 8px;
+}
+
+:where(.utility-drawer, .attachment-chooser, .recovery-banner, .header-alert, .workspace-header) :where(button:not(:disabled):hover) {
+  background: var(--focus-fill);
 }
 
 button:focus-visible {
@@ -84,17 +132,31 @@ button:focus-visible {
   outline-offset: 1px;
 }
 
-select {
-  font: inherit;
-}
-
-input,
-textarea {
+/* Fields (DESIGN.md "Inputs / Fields"): Lifted Charcoal, 1px Seam, 4px radius;
+   on keyboard focus the border shifts to Dusk Lavender (no glow), doubled by a
+   1px inner outline so the ring reads at 12px. */
+:where(input:not([type='checkbox'], [type='radio']), textarea, select) {
   font: inherit;
   background: var(--surface-raised);
   color: var(--text-primary);
   border: 1px solid var(--divider);
   border-radius: 4px;
+}
+
+:where(input:not([type='checkbox'], [type='radio']), textarea, select):focus-visible {
+  border-color: var(--focus-accent);
+  outline: 1px solid var(--focus-accent);
+  outline-offset: -2px;
+}
+
+:where(input[type='checkbox'], input[type='radio']):focus-visible {
+  outline: 2px solid var(--focus-accent);
+  outline-offset: 1px;
+}
+
+:where(input, textarea)::placeholder {
+  color: var(--text-tertiary);
+  opacity: 1;
 }
 
 .app {
@@ -176,7 +238,11 @@ textarea {
 }
 
 .header-alert {
-  margin: 0 0 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin: 0 0 6px;
   font-size: var(--type-body);
   color: var(--danger);
 }
@@ -338,26 +404,83 @@ textarea {
   text-decoration: underline;
 }
 
-.command-error {
+/*
+ * In-flow lines (DESIGN.md "In-flow Notices"): borderless, Body type, text on
+ * the 50px content inset, 6px block padding. Lines that come and go with
+ * triage keys (selection, action outcome, command error) live in the list
+ * column's bottom dock, so showing or hiding them never moves a row; static
+ * context lines (coverage, draft recovery) sit above the list.
+ */
+.recovery-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
   margin: 0;
-  padding: 0.4rem 1rem 0.4rem 50px;
-  color: var(--danger);
+  padding: 6px 24px 6px 50px;
   font-size: var(--type-body);
-  font-weight: var(--weight-strong);
+}
+
+.recovery-banner p {
+  margin: 0;
 }
 
 .draft-close-recovery {
-  border-bottom: 1px solid var(--divider);
-  padding: 0.4rem 0.75rem;
   color: var(--warning);
-  display: flex;
-  gap: 0.75rem;
-  align-items: center;
-  flex-wrap: wrap;
 }
 
-.draft-close-recovery p {
+/* Inside surfaces that already carry their own inset. */
+.account-gate .recovery-banner,
+.reader-pane .recovery-banner {
+  padding: 0 0 6px;
+}
+
+/* Loading and empty list states, and Load more, on the content inset. */
+.list-state {
   margin: 0;
+  padding: 10px 24px 10px 50px;
+  max-width: calc(75ch + 74px);
+  color: var(--text-secondary);
+}
+
+.list-state:focus {
+  outline: none;
+}
+
+.list-state:focus-visible {
+  outline: 2px solid var(--focus-accent);
+  outline-offset: -2px;
+}
+
+.list-more {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  margin: 6px 0 6px 42px;
+  font-weight: var(--weight-strong);
+}
+
+.list-dock {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  /* One reserved 36px line: the first notice never resizes the list. */
+  min-height: 36px;
+  min-width: 0;
+  padding: 0 24px 0 50px;
+  font-size: var(--type-body);
+  /* Whole-pixel lines (24px buttons, 36px slots) so the list viewport above
+     always ends on a whole pixel. */
+  line-height: 16px;
+}
+
+.command-error {
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  margin: 0;
+  padding: 6px 0;
+  color: var(--danger);
+  font-weight: var(--weight-strong);
 }
 
 /*
@@ -371,9 +494,10 @@ textarea {
   line-height: var(--leading-ui);
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  /* Header, in-flow notices, then the list-or-reader surface; the rail and
-     contact pane span all three so the header lives in the list column. */
-  grid-template-rows: auto auto minmax(0, 1fr);
+  /* Header, static in-flow notices, the list-or-reader surface, then the
+     bottom dock (selection, action outcome, command error); the rail and
+     contact pane span all four so the header lives in the list column. */
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   flex: 1;
   min-height: 0;
   position: relative;
@@ -385,12 +509,14 @@ textarea {
 }
 
 .app-main > .app-header,
-.app-main > .list-notices {
+.app-main > .list-notices,
+.app-main > .list-dock {
   grid-column: 2;
 }
 
 .app-main > .app-header { grid-row: 1; }
 .app-main > .list-notices { grid-row: 2; min-width: 0; }
+.app-main > .list-dock { grid-row: 4; }
 
 .app-main > .central,
 .app-main > .account-gate {
@@ -698,7 +824,7 @@ textarea {
 .contact-disclosure-panel .contact-line-mailbox { min-height: 24px; }
 .contact-disclosure-panel .contact-recent { margin-top: 12px; }
 
-.mail-search { padding: 1rem; border-bottom: 1px solid var(--divider); }
+.mail-search { padding: 6px 24px 12px 50px; }
 .mail-search-entry { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0; }
 .mail-search-entry input { flex: 1 1 16rem; min-width: 0; }
 .mail-search p { max-width: 75ch; color: var(--text-secondary); }
@@ -1093,6 +1219,12 @@ textarea {
   color: var(--text-secondary);
 }
 
+/* A visually hidden leading Today caption takes no box at all. */
+.row-group.visually-hidden {
+  min-height: 0;
+  padding: 0;
+}
+
 /* Reader: a bounded flex surface with its own content scroller; the toolbar
    (and its Back affordance) stays persistent while the message stack scrolls. */
 .reader-pane,
@@ -1124,7 +1256,7 @@ textarea {
   align-items: baseline;
   flex-wrap: wrap;
   padding-bottom: 0.4rem;
-  border-bottom: 1px solid var(--divider);
+  border-bottom: 1px solid var(--rule);
   margin-bottom: 0.5rem;
 }
 
@@ -1158,7 +1290,7 @@ textarea {
 }
 
 .message {
-  border-top: 1px solid var(--divider);
+  border-top: 1px solid var(--rule);
   padding: 0.4rem 0.4rem 0.6rem;
   margin-bottom: 0.5rem;
 }
@@ -1307,7 +1439,7 @@ textarea {
 }
 
 .activity-row {
-  border-bottom: 1px solid var(--divider);
+  border-bottom: 1px solid var(--rule);
   padding: 0.4rem 0;
   font-size: var(--type-body);
   display: flex;
@@ -1394,7 +1526,8 @@ textarea {
   width: 100%;
   padding: 0.4rem;
   border: 0;
-  border-bottom: 1px solid var(--divider);
+  border-bottom: 1px solid var(--rule);
+  border-radius: 0;
   background: transparent;
   color: inherit;
   text-align: left;
@@ -1441,12 +1574,12 @@ textarea {
 
 /* Account gate, capability disclosures, and reader notices. */
 .account-gate {
-  padding: 1rem;
+  padding: 12px 24px 12px 50px;
   color: var(--text-secondary);
 }
 
 .account-panel {
-  border: 1px solid var(--divider);
+  border: 1px solid var(--rule);
   border-radius: 6px;
   padding: 0.6rem 0.8rem;
   display: flex;
@@ -1508,45 +1641,66 @@ textarea {
 
 /* UX-03 discovery overlays: input owns keyboard focus; covered shell is inert. */
 /* Coverage notes in Ash (was the undefined --text-muted with a #bbb fallback). */
-.cached-coverage { margin: 0; padding: .4rem 1rem; color: var(--text-secondary); font-size: var(--type-body); }
+.cached-coverage { margin: 0; padding: 6px 24px 6px 50px; color: var(--text-secondary); font-size: var(--type-body); }
 
 /* UX-04 single-slot action notice: in-flow, never covers rows or reader controls. */
 .action-notice {
   display: flex;
-  gap: .75rem;
+  gap: 4px 12px;
   align-items: center;
   flex-wrap: wrap;
-  min-height: 1rem;
-  padding: .4rem 1rem;
-  border-bottom: 1px solid var(--divider);
+  min-height: 36px;
+  padding: 6px 0;
 }
 /* The empty region stays rendered at zero height/padding (never display:none):
    a hidden live region is removed from the accessibility tree and inserted
    content at the moment it becomes rendered may not be announced. */
-.action-notice-empty { min-height: 0; padding: 0; border-bottom: none; }
-.action-notice-text { margin: 0; font-size: var(--type-body); display: flex; gap: .5rem; flex-wrap: wrap; align-items: baseline; }
+.action-notice-empty { min-height: 0; padding: 0; }
+.action-notice-text { margin: 0; font-size: var(--type-body); display: flex; gap: 2px 12px; flex-wrap: wrap; align-items: baseline; }
 .action-notice-label { color: var(--text-primary); font-weight: var(--weight-strong); }
 .action-notice-status { color: var(--text-secondary); }
 .action-notice-expired { color: var(--warning); }
-.action-notice-undo { display: flex; gap: .4rem; align-items: center; }
-.action-notice-undo kbd { font: inherit; color: var(--text-secondary); }
-.action-backdrop { position: fixed; inset: 0; z-index: 100; background: #0008; display: flex; align-items: flex-start; justify-content: center; padding: min(15vh, 6rem) 1rem 1rem; }
-.action-overlay { width: min(46rem, 100%); max-height: 75vh; overflow: auto; background: var(--surface-raised); color: var(--text-primary); border: 1px solid #56534e; border-radius: .85rem; padding: 0; box-shadow: 0 1rem 4rem #0008; }
-.action-overlay .action-heading { display: flex; align-items: center; gap: .8rem; margin: 0 1.5rem; padding: 1.2rem 0; border-bottom: 1px solid #56534e; color: #c9c4bc; font-size: .9rem; }
-.action-heading > span { font-size: 1.5rem; line-height: 1; }
-.action-overlay input { box-sizing: border-box; width: 100%; padding: 1.5rem; color: var(--text-primary); background: transparent; border: 0; border-radius: 0; font: inherit; font-size: 1.5rem; }
-.action-overlay input::placeholder { color: #c9c4bc; }
-.action-overlay input:focus-visible { outline: 2px solid var(--focus-accent); outline-offset: -4px; }
-.action-overlay ul { list-style: none; padding: 0; margin: 0; }
-.action-overlay li { display: flex; align-items: center; gap: 1rem; padding: 1rem 1.5rem; cursor: pointer; min-width: 0; }
-.action-overlay li.highlighted { background: var(--focus-fill); }
-.action-overlay li[aria-disabled='true'] { cursor: default; }
-.action-icon { width: 1.4rem; height: 1.4rem; flex-shrink: 0; color: #c9c4bc; }
-.action-copy { display: flex; flex: 1; flex-direction: column; gap: .3rem; min-width: 0; overflow-wrap: anywhere; }
-.action-disabled-reason { color: #d4cfc7; font-size: .8rem; }
-.action-overlay kbd { flex-shrink: 0; padding: .15rem .4rem; border-radius: .25rem; background: #66615b; color: #fff; font: inherit; font-size: .8rem; }
-.action-hint, .action-overlay > [role='status'] { margin: 0; padding: .8rem 1.5rem; color: #c9c4bc; font-size: .8rem; }
+.action-notice-undo { display: flex; gap: 2px; align-items: center; }
+/* Ghost text actions in the dock bars carry the Title weight. */
+.action-notice-undo button,
+.selection-actions button { font-weight: var(--weight-strong); }
+/* The leading action's label starts on the content inset (its 8px padding
+   sits in the gap before it). */
+.action-notice-undo { margin-left: -8px; }
+.action-notice-undo kbd,
+.selection-bar kbd { font: inherit; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.action-backdrop { position: fixed; inset: 0; z-index: 100; background: var(--overlay-backdrop); display: flex; align-items: flex-start; justify-content: center; padding: 15vh 16px 16px; }
+/* Shared modal panel: Lifted Charcoal, 10px radius, Overlay lift. */
+.action-overlay { width: min(576px, 100%); max-height: 70vh; overflow: auto; background: var(--surface-raised); color: var(--text-primary); border: 0; border-radius: 10px; padding: 0; box-shadow: var(--overlay-lift); font-size: var(--type-body); line-height: var(--leading-ui); }
+
+/*
+ * Command overlay (DESIGN.md "Command Overlay"): a Title caption, the query on
+ * Deep Umber with a 1px Dusk Lavender border (it always owns keyboard focus,
+ * so the border is its focus indicator), then 36px items on the row pitch.
+ * The highlighted item is Focus Stone plus a 3px Dusk Lavender bar; shortcuts
+ * are Ash `kbd` labels. Two sizes only: the 16px query, 12px everything else.
+ */
+/* Whole-pixel geometry (36px caption, 38px query, 16px item lines) so a
+   highlighted item scrolled into view is never clipped by a sub-pixel. */
+.command-overlay .action-heading { display: flex; align-items: center; gap: 8px; min-height: 36px; margin: 0; padding: 0 16px; color: var(--text-secondary); font-weight: var(--weight-strong); }
+.command-overlay .action-heading > span { display: inline-grid; place-items: center; width: 16px; height: 16px; font-size: var(--type-headline); line-height: 1; color: var(--icon-muted); }
+.command-overlay input { display: block; box-sizing: border-box; width: calc(100% - 24px); height: 38px; margin: 0 12px 8px; padding: 0 12px; color: var(--text-primary); background: var(--surface-contact); border: 1px solid var(--focus-accent); border-radius: 6px; font: inherit; font-size: var(--type-headline); line-height: var(--leading-headline); }
+.command-overlay input:focus-visible { outline: none; }
+.command-overlay ul { list-style: none; padding: 0 0 6px; margin: 0; }
+.command-overlay li { display: flex; align-items: center; gap: 12px; min-height: 36px; padding: 6px 16px; line-height: 16px; cursor: pointer; min-width: 0; }
+.command-overlay li.highlighted { background: var(--focus-fill); box-shadow: inset 3px 0 0 var(--focus-accent); }
+.command-overlay li[aria-disabled='true'] { cursor: default; color: var(--text-tertiary); }
+.command-overlay li[aria-disabled='true'].highlighted { color: var(--text-secondary); }
+.action-icon { display: inline-grid; place-items: center; width: 16px; height: 16px; flex-shrink: 0; color: var(--icon-muted); }
+.command-overlay li.highlighted .action-icon { color: var(--text-primary); }
+.action-copy { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.action-disabled-reason { color: var(--text-secondary); }
+.command-overlay kbd { flex-shrink: 0; min-width: 20px; padding: 1px 6px; border-radius: 4px; background: var(--surface-contact); color: var(--text-secondary); font: inherit; text-align: center; font-variant-numeric: tabular-nums; }
+.action-hint, .command-overlay > [role='status'] { margin: 0; padding: 8px 16px; color: var(--text-secondary); }
 .action-hint { border-top: 1px solid var(--divider); }
+
+/* Modal attachment chooser: the shared panel, wider for file names and URLs. */
+.action-overlay.attachment-chooser { width: min(46rem, 100%); padding: 12px 16px 16px; }
 
 /* UX-06: compact overlapping Inbox views, no folder or classifier metaphor. */
 .split-editor { max-height: 38vh; overflow: auto; padding: .5rem 0; font-size: var(--type-body); }
@@ -1554,28 +1708,24 @@ textarea {
 .split-editor fieldset { border: 0; padding: 0; margin: 0 0 .6rem; display: flex; flex-wrap: wrap; gap: .6rem 1rem; align-items: center; }
 .split-editor label { display: flex; align-items: center; gap: .4rem; max-width: 100%; }
 .split-editor input:not([type="checkbox"]) { min-width: 0; width: 15rem; max-width: 100%; padding: .3rem; font: inherit; }
-.split-editor select { background: var(--surface-raised); color: var(--text-primary); border: 1px solid var(--divider); padding: .3rem; font: inherit; }
-.split-editor :is(input, select):focus-visible { outline: 2px solid var(--focus-accent); outline-offset: 1px; }
-.split-editor input::placeholder { color: var(--text-secondary); opacity: 1; }
+.split-editor select { padding: .3rem; }
 
 /* UX-05 selection action bar: compact, in normal flow above the list. */
 .selection-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: .5rem 1rem;
-  padding: .4rem .6rem;
-  border-bottom: 1px solid var(--divider);
+  gap: 4px 12px;
+  min-height: 36px;
+  padding: 6px 0;
   font-size: var(--type-body);
 }
 .selection-scope { margin: 0; }
 .selection-loaded-scope { color: var(--text-secondary); }
-.selection-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
+.selection-actions { display: flex; flex-wrap: wrap; gap: 2px; margin-left: -8px; }
 .selection-limit { margin: 0; flex-basis: 100%; color: var(--warning); }
 .reader-selection-scope {
-  margin: 0;
-  padding: .4rem .6rem;
-  border-bottom: 1px solid var(--divider);
+  margin: 0 0 6px;
   color: var(--text-secondary);
   font-size: var(--type-body);
 }
@@ -1585,7 +1735,7 @@ textarea {
 .activity-groups-title { margin: .2rem 0 .4rem; font-size: var(--type-body); font-weight: var(--weight-strong); }
 .activity-group-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .35rem; }
 .activity-group-toggle { width: 100%; text-align: left; cursor: pointer; }
-.activity-group-detail { margin-top: .4rem; padding: .5rem; border: 1px solid var(--divider); border-radius: .3rem; }
+.activity-group-detail { margin-top: .4rem; padding: .5rem; border: 1px solid var(--rule); border-radius: 4px; }
 .activity-group-request { margin: 0 0 .4rem; color: var(--text-secondary); font-size: var(--type-body); overflow-wrap: anywhere; }
 .activity-group-members { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .35rem; }
 .activity-group-member { display: flex; flex-wrap: wrap; align-items: baseline; gap: .4rem; }

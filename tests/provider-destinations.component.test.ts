@@ -3,6 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils';
 import ProviderDestinations from '../src/components/ProviderDestinations.vue';
 import { createBrowserFakeMailClient } from '../src/lib/ipc/browser-fake';
 import { deferred } from './helpers';
+import { fullDateLabel } from '../src/lib/browsing-dates';
 import type { DestinationPage } from '../src/lib/ipc/client';
 
 function setup() {
@@ -83,6 +84,9 @@ describe('read-only provider destinations', () => {
     // left open with an origin that a resolving page disconnected.
     expect(wrapper.find('.destination-reader').exists()).toBe(false);
     expect(wrapper.text()).toContain('Older synthetic mail');
+    // The page snapshot time is the full viewer-local form, not the raw timestamp.
+    expect(wrapper.get('time[datetime="2025-02-02T00:00:00.000Z"]').text()).toBe(fullDateLabel('2025-02-02T00:00:00Z'));
+    expect(wrapper.text()).not.toContain('2025-02-02T00:00:00Z');
     const replacedRow = wrapper.get('.destination-row');
     await replacedRow.trigger('click'); await flushPromises();
     expect(wrapper.find('.destination-reader').exists()).toBe(true);

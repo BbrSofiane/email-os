@@ -123,6 +123,22 @@ describe('App UX-05 selection and bulk groups', () => {
     await selectRows(w, ['conv-01', 'conv-03']);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect(w.find('[data-test="selection-count"]').text()).toContain('2 selected');
+    // The count and its scope read as one sentence ("2 selected of 18 loaded").
+    expect(w.get('[data-test="selection-scope"]').text()).toMatch(/^2 selected of 18 loaded — /);
+  });
+
+  it('docks the selection bar and the action notice below the list so they never push rows', async () => {
+    const w = mountApp();
+    await settle();
+    await selectRows(w, ['conv-01']);
+    const dock = w.get('[data-test="list-dock"]');
+    const central = w.get('[data-test="central-surface"]');
+    expect(dock.find('[data-test="selection-bar"]').exists()).toBe(true);
+    expect(dock.find('[data-test="action-notice"]').exists()).toBe(true);
+    // Both sit after the list surface in document order, never above it.
+    expect(central.element.compareDocumentPosition(dock.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(central.find('[data-test="selection-bar"]').exists()).toBe(false);
+    expect(w.find('.list-notices [data-test="action-notice"]').exists()).toBe(false);
   });
 
   it('dispatches one archive group for the selection with the count label, using group semantics for one row', async () => {

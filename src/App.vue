@@ -56,6 +56,7 @@ import AccountPanel from './components/AccountPanel.vue';
 import DraftsPanel from './components/DraftsPanel.vue';
 import ProviderDestinations from './components/ProviderDestinations.vue';
 import ContactPane from './components/ContactPane.vue';
+import FullDate from './components/FullDate.vue';
 import { BROWSER_PREVIEW_DISCLOSURE } from './lib/ipc/browser-fake';
 import type { ClientMode } from './lib/ipc';
 import type { ConversationRef, DraftRef, DraftSource, MailClient } from './lib/ipc/client';
@@ -1746,12 +1747,14 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
         <p v-if="selectedCount > 0" class="visually-hidden" role="status" data-test="selection-live">{{ selectedCount }} selected</p>
       </header>
 
-      <!-- In-flow notices between the header and the list (list column only). -->
+      <!-- Static in-flow notices between the header and the list (list column
+           only): context coverage and draft recovery. Lines that come and go
+           with triage keys live in the bottom dock instead (.list-dock). -->
       <div class="list-notices">
         <div
           v-if="drawer !== 'drafts' && (drafts.closeSetupError.value || drafts.closeRetryAvailable.value || (drafts.isVisible.value && drafts.error.value))"
           role="alert"
-          class="draft-close-recovery"
+          class="recovery-banner draft-close-recovery"
         >
           <p v-if="drafts.closeSetupError.value">Close protection could not be initialized: {{ drafts.closeSetupError.value }}</p>
           <p v-else-if="drafts.closeRetryAvailable.value">{{ drafts.closeError.value }}</p>
@@ -1762,25 +1765,14 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
         </div>
 
         <p v-if="mailbox.context.value === 'starred'" class="cached-coverage" role="note" data-test="starred-coverage">Local cache only — not provider-complete Starred. Total unknown. Unknown star facts are not treated as unstarred.</p>
-        <p v-if="mailbox.context.value === 'done'" class="cached-coverage" role="note" data-test="done-coverage">Local cache only — not provider-complete Done or All Mail. {{ mailbox.exactTotal.value === null ? 'Total unknown.' : `${mailbox.exactTotal.value} known locally.` }} {{ mailbox.lastSyncedAt.value ? `Last synced: ${mailbox.lastSyncedAt.value}` : 'Last sync unknown.' }}</p>
-        <!-- In normal flow above the central surface: never covers the focused row,
-             the reader back path, and stays visible in the empty-Inbox state. Inert
-             under a palette/navigator overlay exactly like header/main, so its Undo
-             button cannot be reached while covered; drawer/disclosure guards apply
-             through executeAction. -->
-        <ActionNotice v-if="!trashReader && drawer !== 'trash'" ref="actionNoticeComponent" :notice="actionNotice" :now="nowMs" :inert="!!overlay || !!attachmentConversation || undefined" @undo="executeAction('undo')" @undo-group="onNoticeGroupAction" @dismiss-group="mailbox.dismissGroupNotice()" />
-        <!-- The last command failure (formerly in the header status line) is an
-             outcome the user must see: it sits in the same in-flow outcome slot
-             as the action notice, as its own alert (not nested in the polite
-             notice region, so it is announced once). -->
-        <p v-if="commandError" class="command-error" role="alert" data-test="command-error">Last command failed: {{ errorText(commandError) }}</p>
+        <p v-if="mailbox.context.value === 'done'" class="cached-coverage" role="note" data-test="done-coverage">Local cache only — not provider-complete Done or All Mail. {{ mailbox.exactTotal.value === null ? 'Total unknown.' : `${mailbox.exactTotal.value} known locally.` }} <template v-if="mailbox.lastSyncedAt.value">Last synced <FullDate :at="mailbox.lastSyncedAt.value" />.</template><template v-else>Last sync unknown.</template></p>
       </div>
       <section v-if="!accountReady" class="account-gate" aria-label="Account">
         <p
           v-if="mailbox.accountState.value === 'loading' && mailbox.listState.value !== 'error'"
           data-test="account-loading"
         >Determining account mode…</p>
-        <div v-else data-test="account-error">
+        <div v-else class="recovery-banner" data-test="account-error">
           <p v-if="mailbox.accountState.value === 'error'" role="alert">
             Could not determine the account status:
             {{ mailbox.accountError.value ? errorText(mailbox.accountError.value) : 'unknown error' }}.
@@ -1876,29 +1868,14 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             <p v-if="mailbox.listError.value && mailbox.listState.value === 'ready'" role="alert">{{ errorText(mailbox.listError.value) }}</p>
           </form>
           <template v-if="!readerOpen">
-            <SelectionBar
-              v-if="selectedCount > 0 && mailbox.listState.value === 'ready'"
-              ref="selectionBarRef"
-              :count="selectedCount"
-              :loaded-count="mailbox.conversations.value.length"
-              :context="mailbox.context.value"
-              :actions-enabled="mailboxActionsEnabled && !mailbox.bulkUnresolved.value && !mailbox.commandInFlight.value"
-              :read-available="gmailActionsEnabled && !mailbox.bulkUnresolved.value && !mailbox.commandInFlight.value"
-              :limit-message="mailbox.selectionNotice.value"
-              @archive="bulkArchiveSelection()"
-              @unarchive="bulkRestoreSelection()"
-              @mark-read="bulkSetReadSelection(true)"
-              @mark-unread="bulkSetReadSelection(false)"
-              @select-all="mailbox.selectAllLoaded()"
-              @clear="clearSelectionFromBar()"
-            />
-            <p v-if="mailbox.listState.value === 'loading'" data-test="inbox-loading">Loading {{ contextTitle }}…</p>
-            <div v-else-if="mailbox.listState.value === 'error'" data-test="inbox-error">
+            <p v-if="mailbox.listState.value === 'loading'" class="list-state" data-test="inbox-loading">Loading {{ contextTitle }}…</p>
+            <div v-else-if="mailbox.listState.value === 'error'" class="recovery-banner" data-test="inbox-error">
               <p role="alert">Could not load {{ contextTitle }}: {{ mailbox.listError.value ? errorText(mailbox.listError.value) : 'unknown error' }}.</p>
               <button type="button" data-test="inbox-retry" @click="mailbox.refresh()">Retry</button>
             </div>
             <p
               v-else-if="mailbox.conversations.value.length === 0"
+              class="list-state"
               data-test="inbox-empty"
               ref="emptyState"
               tabindex="-1"
@@ -1923,7 +1900,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               @select-toggle="toggleRowSelection"
               @select-range="rangeSelectRow"
             />
-            <button v-if="mailbox.nextCursor.value" type="button" :disabled="mailbox.loadingMore.value || mailbox.listState.value !== 'ready'" data-test="done-more" @click="mailbox.loadMore()">{{ mailbox.context.value === 'search' ? 'Continue searching older mail' : `Load more ${contextTitle}` }}</button>
+            <button v-if="mailbox.nextCursor.value" type="button" class="list-more" :disabled="mailbox.loadingMore.value || mailbox.listState.value !== 'ready'" data-test="done-more" @click="mailbox.loadMore()">{{ mailbox.context.value === 'search' ? 'Continue searching older mail' : `Load more ${contextTitle}` }}</button>
           </template>
           <section v-else class="reader-pane" aria-label="Reader">
             <p
@@ -1932,7 +1909,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               role="note"
               data-test="reader-selection-scope"
             >{{ selectedCount }} selected — bulk actions apply to the selection, not only this conversation.</p>
-            <div v-if="mailbox.listState.value === 'error'" role="alert" data-test="reader-navigation-error">
+            <div v-if="mailbox.listState.value === 'error'" role="alert" class="recovery-banner" data-test="reader-navigation-error">
               Could not refresh the originating list: {{ mailbox.listError.value ? errorText(mailbox.listError.value) : 'unknown error' }}.
               Conversation navigation is paused. <button type="button" @click="mailbox.refresh()">Retry list</button>
             </div>
@@ -2092,6 +2069,41 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
           <ContactPane :contact="contact" :context="contactContext" :recent="recentMail" @search-sender="senderSearch" @open-recent="openRecent" />
         </div>
       </template>
+      <!-- Bottom dock of the list column (DESIGN.md "In-flow Notices"): the
+           selection bar, the single-slot action notice and the last command
+           failure. In normal flow below the central surface, so showing or
+           hiding them (x, e, z) never moves a row and never covers the focused
+           row, the reader back path or the empty-Inbox state; it grows upward
+           into the list viewport only. One 36px line stays reserved so the
+           first notice does not resize the list. -->
+      <div class="list-dock" data-test="list-dock">
+        <!-- Covered by a drawer or disclosure exactly like the list it acts on. -->
+        <SelectionBar
+          v-if="!readerOpen && accountReady && selectedCount > 0 && mailbox.listState.value === 'ready'"
+          ref="selectionBarRef"
+          :inert="centralCovered || undefined"
+          :count="selectedCount"
+          :loaded-count="mailbox.conversations.value.length"
+          :context="mailbox.context.value"
+          :actions-enabled="mailboxActionsEnabled && !mailbox.bulkUnresolved.value && !mailbox.commandInFlight.value"
+          :read-available="gmailActionsEnabled && !mailbox.bulkUnresolved.value && !mailbox.commandInFlight.value"
+          :limit-message="mailbox.selectionNotice.value"
+          @archive="bulkArchiveSelection()"
+          @unarchive="bulkRestoreSelection()"
+          @mark-read="bulkSetReadSelection(true)"
+          @mark-unread="bulkSetReadSelection(false)"
+          @select-all="mailbox.selectAllLoaded()"
+          @clear="clearSelectionFromBar()"
+        />
+        <!-- Inert under a palette/navigator overlay exactly like header/main, so
+             its Undo button cannot be reached while covered; drawer/disclosure
+             guards apply through executeAction. -->
+        <ActionNotice v-if="!trashReader && drawer !== 'trash'" ref="actionNoticeComponent" :notice="actionNotice" :now="nowMs" :inert="!!overlay || !!attachmentConversation || undefined" @undo="executeAction('undo')" @undo-group="onNoticeGroupAction" @dismiss-group="mailbox.dismissGroupNotice()" />
+        <!-- The last command failure is an outcome the user must see: it sits
+             in the same outcome slot as the action notice, as its own alert
+             (not nested in the polite notice region, so it is announced once). -->
+        <p v-if="commandError" class="command-error" role="alert" data-test="command-error">Last command failed: {{ errorText(commandError) }}</p>
+      </div>
     </main>
     <AttachmentChooser v-if="attachmentConversation" :client="props.client" :conversation="attachmentConversation" :preview="props.mode === 'browser-preview'" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" @close="closeAttachments" />
     <ActionOverlay v-if="overlay" v-model:query="overlayQuery" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" :kind="overlay" :actions="availableActions" @close="closeOverlay()" @execute="executeOverlay" />

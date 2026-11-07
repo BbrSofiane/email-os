@@ -680,7 +680,7 @@ defineExpose({
           {{ replyBlockedReason }}
         </p>
         <p v-if="props.conversation.retainedSnapshotAt" class="reader-recovery-snapshot" data-test="retained-snapshot-notice" role="note">
-          Local recovery snapshot saved at {{ props.conversation.retainedSnapshotAt }}; Gmail may have newer messages or mailbox changes.
+          Local recovery snapshot saved <time :datetime="machineDateTime(props.conversation.retainedSnapshotAt)">{{ fullDateLabel(props.conversation.retainedSnapshotAt) }}</time>; Gmail may have newer messages or mailbox changes.
         </p>
         <p v-if="props.browsingOnly" class="reader-readonly" role="note">Cached Trash — read only. Recovery is not available here; use your provider client. Opening does not change read state.</p>
         <p v-else-if="props.readOnly" class="reader-readonly" data-test="reader-readonly" role="note">

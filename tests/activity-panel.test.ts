@@ -1,6 +1,7 @@
 import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
 import ActivityPanel from '../src/components/ActivityPanel.vue';
+import { fullDateLabel } from '../src/lib/browsing-dates';
 import type { OperationStatus, OperationSummary } from '../src/lib/ipc/client';
 
 function operation(status: OperationStatus): OperationSummary {
@@ -120,6 +121,14 @@ function mountGroupDetail(props: Record<string, unknown> = {}): ReturnType<typeo
 }
 
 describe('ActivityPanel group recovery (review fixes)', () => {
+  it('dates a group in the full viewer-local form with a machine-readable datetime, never raw UTC', () => {
+    const w = mountGroupDetail();
+    const time = w.get('time[datetime="2026-01-01T00:00:00.000Z"]');
+    expect(time.text()).toBe(fullDateLabel('2026-01-01T00:00:00Z'));
+    expect(w.text()).not.toContain('UTC');
+    expect(w.text()).not.toContain('2026-01-01');
+  });
+
   it('renders persisted undo decisions and current compensation outcomes (review U10)', () => {
     const wrapper = mountGroupDetail();
     const decision0 = wrapper.get('[data-test="group-member-undo-decision-0"]').text();

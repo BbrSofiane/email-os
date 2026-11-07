@@ -61,6 +61,9 @@ describe('InboxList (UX-01 compact rows)', () => {
     await flushPromises();
     const headings = w.findAll('.row-group');
     expect(headings.map((h) => h.text())).toEqual(['Today', 'Yesterday', 'Earlier this month', 'December 2025']);
+    // A leading Today caption stays for assistive technology only: today's
+    // rows already show a time, and the first row keeps the first list line.
+    expect(headings.map((h) => h.classes().includes('visually-hidden'))).toEqual([true, false, false, false]);
     for (const heading of headings) {
       expect(heading.attributes('role')).toBe('presentation');
       expect((heading.element as HTMLElement).tabIndex).toBe(-1);
@@ -110,6 +113,14 @@ describe('InboxList (UX-01 compact rows)', () => {
     const rows = w.findAll('[role="listitem"]');
     expect(rows[3]!.find('.row-sender').text()).toBe('Unknown sender');
     expect(rows[1]!.find('.row-sender').text()).toBe('anon@example.test');
+  });
+
+  it('keeps a leading caption other than Today visible, so the list says where it starts', async () => {
+    const w = mountList(defaultRows().slice(2));
+    await flushPromises();
+    const headings = w.findAll('.row-group');
+    expect(headings.map((h) => h.text())).toEqual(['Yesterday', 'Earlier this month', 'December 2025']);
+    expect(headings.some((h) => h.classes().includes('visually-hidden'))).toBe(false);
   });
 
   it('maps missing and unparsable timestamps to the Unknown date bucket', async () => {
