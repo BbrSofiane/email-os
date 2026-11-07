@@ -1333,7 +1333,7 @@ export function useMailbox(client: MailClient): Mailbox {
         await refresh();
         if (!detached) lastAction.value = { ...slot, undoableUntil: null };
       }
-      // Activity / Mark Not Done stay reachable either way.
+      // Activity / Mark not done stay reachable either way.
       return null;
     } finally {
       if (!detached && sessionToken === mailboxSessionToken && token === commandToken) {

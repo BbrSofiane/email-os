@@ -123,8 +123,14 @@ describe('App UX-05 selection and bulk groups', () => {
     await selectRows(w, ['conv-01', 'conv-03']);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect(w.find('[data-test="selection-count"]').text()).toContain('2 selected');
-    // The count and its scope read as one sentence ("2 selected of 18 loaded").
-    expect(w.get('[data-test="selection-scope"]').text()).toMatch(/^2 selected of 18 loaded — /);
+    // Terse visible line; the exact scope caveat moves to title + hidden description.
+    expect(w.get('[data-test="selection-count"]').text()).toBe('2 selected');
+    expect(w.get('[data-test="selection-loaded-scope"]').text()).toBe('· 18 loaded');
+    const scope = w.get('[data-test="selection-scope"]');
+    expect(scope.attributes('title')).toContain('later arrivals and unseen pages are not included');
+    expect(scope.attributes('title')).toContain('18 loaded conversations');
+    expect(w.get('[data-test="selection-scope-caveat"]').classes()).toContain('visually-hidden');
+    expect(w.get('[data-test="selection-scope-caveat"]').text()).toBe(scope.attributes('title'));
   });
 
   it('docks the selection bar and the action notice below the list so they never push rows', async () => {
@@ -230,8 +236,8 @@ describe('App UX-05 selection and bulk groups', () => {
     await w.get('[data-test="action-notice-undo-group"]').trigger('click');
     await settle();
     const status = w.get('[data-test="action-notice-status"]').text();
-    expect(status).toContain('Undo accepted for 1 of 1');
-    expect(status).toContain('restored');
+    expect(status).toBe('Restored 1');
+    expect(w.get('[data-test="action-notice-status"]').attributes('title')).toContain('Undo accepted for 1 of 1; 0 skipped');
     expect(status).not.toContain('Undo expired');
   });
 
@@ -281,8 +287,10 @@ describe('App UX-05 selection and bulk groups', () => {
     await w.find('[data-test="action-notice-undo-group"]').trigger('click');
     await settle();
     const undoText = w.find('[data-test="action-notice-status"]').text();
-    expect(undoText).toContain('Undo accepted for 1 of 2');
-    expect(undoText).toContain('1 skipped — failed');
+    expect(undoText).toBe('Restored 1 · 1 skipped — failed');
+    const undoStatus = w.find('[data-test="action-notice-status"]');
+    expect(undoStatus.attributes('title')).toContain('Undo accepted for 1 of 2');
+    expect(undoStatus.attributes('title')).toContain('1 skipped (1 failed)');
   });
 
   it('select all loaded selects the loaded snapshot and refuses beyond the bound with wording', async () => {

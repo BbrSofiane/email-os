@@ -391,6 +391,19 @@ button:focus-visible {
   color: var(--warning);
 }
 
+/* Armed g-chord: a quiet pending hint at the trail's leading edge. */
+.chord-hint {
+  flex: 0 0 auto;
+  margin: 0 12px 0 0;
+  font-size: var(--type-body);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.chord-hint:empty {
+  display: none;
+}
+
 .header-link {
   padding: 0 2px;
   background: transparent;
@@ -1659,6 +1672,14 @@ button:focus-visible {
 .action-notice-text { margin: 0; font-size: var(--type-body); display: flex; gap: 2px 12px; flex-wrap: wrap; align-items: baseline; }
 .action-notice-label { color: var(--text-primary); font-weight: var(--weight-strong); }
 .action-notice-status { color: var(--text-secondary); }
+/* Honest state (DESIGN.md Status): pending, unknown and partial are Amber
+   Notice; confirmed failures are Coral Fault; settled stays Ash. The words
+   always carry the meaning; colour only reinforces it. Ratios on Warm Charcoal
+   (#292826): Amber 8.68:1, Coral 7.69:1, Ash 7.79:1 (>=4.9:1 even on Focus Stone). */
+.action-notice-status[data-status="pending"],
+.action-notice-status[data-status="unknown"],
+.action-notice-status[data-status="partial"] { color: var(--warning); }
+.action-notice-status[data-status="failed"] { color: var(--danger); }
 .action-notice-expired { color: var(--warning); }
 .action-notice-undo { display: flex; gap: 2px; align-items: center; }
 /* Ghost text actions in the dock bars carry the Title weight. */

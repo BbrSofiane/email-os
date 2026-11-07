@@ -20,7 +20,7 @@ export const actionGroupOf: Record<BrowsingActionId, ActionGroup> = {
   read: 'conversation', unread: 'conversation',
   'select-all-loaded': 'selection', 'clear-selection': 'selection',
   search: 'view', 'create-split': 'view', 'edit-split': 'view', 'toggle-unread-filter': 'view',
-  inbox: 'goto', saved: 'goto', done: 'goto', starred: 'goto', trash: 'goto', reminders: 'goto',
+  inbox: 'goto', saved: 'goto', done: 'goto', starred: 'goto', destinations: 'goto', trash: 'goto', reminders: 'goto',
   drafts: 'goto', activity: 'goto', account: 'goto', 'switch-account': 'goto',
 };
 
@@ -44,8 +44,9 @@ export const actionAliases: Record<BrowsingActionId, readonly string[]> = {
   'toggle-unread-filter': ['filter', 'unread only', 'all conversations'],
   inbox: ['home', 'mail'],
   saved: ['split', 'view'],
-  done: ['archived', 'archive', 'finished'],
+  done: ['finished', 'completed'],
   starred: ['favorites', 'flagged'],
+  destinations: ['provider', 'labels', 'folders', 'all mail'],
   trash: ['bin', 'deleted', 'delete'],
   reminders: ['snoozed', 'later'],
   drafts: ['compose', 'draft', 'writing'],

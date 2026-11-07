@@ -634,7 +634,7 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
                 :title="actionLabel(context === 'done' ? 'unarchive' : 'archive')"
                 :tabindex="tabIndexFor(item.row, item.index)"
                 @click.stop="context === 'done' ? emit('unarchive', item.row.ref) : emit('archive', item.row.ref)"
-              ><RowGlyph :name="context === 'done' ? 'restore' : 'archive'" /><span class="row-action-label">{{ context === 'done' ? 'Restore to Inbox' : 'Archive' }}</span></button>
+              ><RowGlyph :name="context === 'done' ? 'restore' : 'archive'" /><span class="row-action-label">{{ context === 'done' ? 'Mark not done' : 'Mark done' }}</span></button>
             </span>
           </span>
         </span>

@@ -376,7 +376,7 @@ describe.skipIf(chromePath === '')('InboxList rendered layout (real Chrome, opt-
         'row-mark-unread-conv-01',
         'row-archive-conv-01',
       ]);
-      expect(unknown.buttons.filter((b) => b.visible).map((b) => b.name)).toEqual(['Mark read', 'Mark unread', 'Archive']);
+      expect(unknown.buttons.filter((b) => b.visible).map((b) => b.name)).toEqual(['Mark read', 'Mark unread', 'Mark done']);
       // Pointer route works: a click really issues the read command.
       await cdp!.js("document.querySelector('[data-test=\"row-mark-read-conv-01\"]').click()");
       await tick();
@@ -397,7 +397,7 @@ describe.skipIf(chromePath === '')('InboxList rendered layout (real Chrome, opt-
       await tick();
       const unknownPending = await measure();
       assertCompactRowLayout(unknownPending, { minVisibleChars: 10, expectPending: true });
-      expect(unknownPending.buttons.filter((b) => b.visible).map((b) => b.name)).toEqual(['Mark read', 'Mark unread', 'Archive']);
+      expect(unknownPending.buttons.filter((b) => b.visible).map((b) => b.name)).toEqual(['Mark read', 'Mark unread', 'Mark done']);
 
       // Scenario 3: wider desktop sanity — nothing wedged, subject fully readable.
       await resize(1440);
@@ -492,7 +492,7 @@ describe.skipIf(chromePath === '')('InboxList rendered layout (real Chrome, opt-
       expect(openByPointer.toggle!.ariaExpanded).toBe('true');
       expect(openByPointer.actionsPanel!.visibility).toBe('visible');
       const popoverButtons = openByPointer.buttons.filter((b) => b.visible && b.test !== 'row-actions-toggle-conv-01');
-      expect(popoverButtons.map((b) => b.name)).toEqual(['Mark read', 'Mark unread', 'Archive']);
+      expect(popoverButtons.map((b) => b.name)).toEqual(['Mark read', 'Mark unread', 'Mark done']);
       // Every disclosed action is hit-testable at its center — inside the
       // visible panel, not clipped by the row or the list scroller. The hit
       // may be the button's own glyph or label, which activates the button.
@@ -536,7 +536,7 @@ describe.skipIf(chromePath === '')('InboxList rendered layout (real Chrome, opt-
       expect(afterActivate.rowScrollWidth).toBeLessThanOrEqual(afterActivate.rowClientWidth + 1);
       expect(afterActivate.listScrollWidth).toBeLessThanOrEqual(afterActivate.listClientWidth + 1);
       expect(afterActivate.subject.visibleChars).toBeGreaterThanOrEqual(10);
-      expect(afterActivate.buttons.filter((b) => b.test !== 'row-actions-toggle-conv-01').map((b) => b.name)).toEqual(['Mark unread', 'Archive']);
+      expect(afterActivate.buttons.filter((b) => b.test !== 'row-actions-toggle-conv-01').map((b) => b.name)).toEqual(['Mark unread', 'Mark done']);
 
       // Pointer access near the list bottom: the last compact row's panel opens
       // upward so every disclosed action stays inside the visible scroller box.

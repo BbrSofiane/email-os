@@ -24,7 +24,7 @@ const groupRank = Object.keys(actionGroupOf);
 const groupLabel = (id: BrowsingActionId) => actionGroups.find((group) => group.id === actionGroupOf[id])!.label;
 // Grouped in a fixed order; a stable sort keeps each group's own order. The navigator is one group, so it stays unlabelled.
 const results = computed(() => props.actions
-  .filter((action) => matchesQuery(query.value, action.label, actionAliases[action.id], [action.shortcut]))
+  .filter((action) => matchesQuery(query.value, action.label, [...(actionAliases[action.id] ?? []), ...(action.aliases ?? [])], [action.shortcut]))
   .sort((a, b) => actionGroups.findIndex((g) => g.id === actionGroupOf[a.id]) - actionGroups.findIndex((g) => g.id === actionGroupOf[b.id]) || groupRank.indexOf(a.id) - groupRank.indexOf(b.id)));
 const showGroups = computed(() => props.kind === 'palette');
 // Keys with no command behind them: shown for teaching, never highlighted or executed.

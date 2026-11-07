@@ -28,6 +28,7 @@ const own = ['open', 'undo', 'select-all-loaded', 'clear-selection', 'create-spl
     <HeaderGlyph v-else-if="id === 'unstar'" name="star" filled />
     <PaneGlyph v-else-if="id === 'inbox'" name="inbox" />
     <PaneGlyph v-else-if="id === 'done'" name="done" />
+    <PaneGlyph v-else-if="id === 'destinations'" name="provider" />
     <PaneGlyph v-else-if="id === 'trash'" name="trash" />
     <PaneGlyph v-else-if="id === 'drafts'" name="drafts" />
     <PaneGlyph v-else-if="id === 'activity'" name="activity" />

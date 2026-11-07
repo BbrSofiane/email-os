@@ -77,6 +77,18 @@ const bulkScope = computed(() =>
     : null,
 );
 
+type StarCoverage = NonNullable<Conversation['stars']>;
+
+/** Short visible star line; exact coverage moves to the title/description. */
+function starSummary(stars: StarCoverage): string {
+  if (stars.starredMessages > 0) return stars.knownMessages < stars.totalMessages ? 'Starred (partial)' : 'Starred';
+  return stars.knownMessages === stars.totalMessages && stars.totalMessages > 0 ? 'Not starred' : 'Star state unknown';
+}
+
+function starCoverageDetail(stars: StarCoverage): string {
+  return `Effective star values known for ${stars.knownMessages} of ${stars.totalMessages} cached messages. Pending intent is not provider confirmation.`;
+}
+
 const latestMessage = computed(() => props.conversation?.messages.at(-1) ?? null);
 const replyBlockedReason = computed(() => {
   if (!props.conversation || !latestMessage.value) return 'No displayed latest message is available as a reply source.';
@@ -626,7 +638,7 @@ defineExpose({
         :disabled="props.commandInFlight || props.navigationUnavailable"
         @click="props.conversation.isInInbox ? emit('archive') : emit('unarchive')"
       >
-        {{ props.conversation.isInInbox ? 'Archive (e)' : 'Unarchive' }}
+        {{ props.conversation.isInInbox ? 'Mark done (E)' : 'Mark not done' }}
       </button>
       <!-- Selected scope: explicit count-labelled desired-state controls, never
            a toggle derived from the OPEN conversation's state (§3.3). -->
@@ -636,14 +648,14 @@ defineExpose({
         data-test="reader-selection-archive"
         :disabled="props.commandInFlight || props.navigationUnavailable"
         @click="emit('archive')"
-      >Mark {{ bulkScope.count }} Done (archive)</button>
+      >Mark {{ bulkScope.count }} done</button>
       <button
         v-if="!props.readOnly && props.state === 'ready' && bulkScope && bulkScope.context !== 'inbox'"
         type="button"
         data-test="reader-selection-unarchive"
         :disabled="props.commandInFlight || props.navigationUnavailable"
         @click="emit('unarchive')"
-      >Mark {{ bulkScope.count }} Not Done</button>
+      >Mark {{ bulkScope.count }} not done</button>
       <span v-if="(props.readOnly || props.showReadControls) && props.conversation" data-test="reader-read-state">
         {{ props.conversation.isRead === undefined ? 'Read state unknown' : props.conversation.isRead ? 'Read' : 'Unread' }}
       </span>
@@ -675,7 +687,12 @@ defineExpose({
       </p>
       <template v-else-if="props.conversation">
         <h2 class="reader-subject">{{ props.conversation.subject }}</h2>
-        <p v-if="props.conversation.stars" data-test="reader-stars" class="reader-context-note">{{ props.conversation.stars.starredMessages > 0 ? 'Starred' : props.conversation.stars.knownMessages === props.conversation.stars.totalMessages && props.conversation.stars.totalMessages > 0 ? 'Not starred' : 'Star state unknown' }} — effective star values known for {{ props.conversation.stars.knownMessages }} of {{ props.conversation.stars.totalMessages }} cached messages. Pending intent is not provider confirmation.</p>
+        <p
+          v-if="props.conversation.stars"
+          data-test="reader-stars"
+          class="reader-context-note"
+          :title="starCoverageDetail(props.conversation.stars)"
+        >{{ starSummary(props.conversation.stars) }}<span class="visually-hidden" data-test="reader-stars-detail"> — {{ starCoverageDetail(props.conversation.stars) }}</span></p>
         <p v-if="replyBlockedReason" class="reader-notice" data-test="reply-blocked" role="note">
           {{ replyBlockedReason }}
         </p>

@@ -249,7 +249,7 @@ describe('App (Slice 02 Gmail account states)', () => {
       `Local recovery snapshot saved ${fullDateLabel('2025-02-03T04:05:06Z')}; Gmail may have newer messages or mailbox changes.`,
     );
     expect(w.find('[data-test="retained-snapshot-notice"] time').attributes('datetime')).toBe('2025-02-03T04:05:06.000Z');
-    expect(w.find('[data-test="reader-archive-toggle"]').text()).toContain('Unarchive');
+    expect(w.find('[data-test="reader-archive-toggle"]').text()).toContain('Mark not done');
     await w.find('[data-test="reader-archive-toggle"]').trigger('click');
     await settle();
     // Back to the list (the reader replaces it) to see the restored row.
@@ -297,7 +297,7 @@ describe('App (Slice 02 Gmail account states)', () => {
     const original = await fake.setArchived({ conversation: { ...fixtureRef('conv-01'), accountId: (await fake.getAccountStatus()).account!.accountId }, archived: true, requestId: 'retry-original' });
     await flushPromises();
     expect(w.find('[data-test="activity-applying"]').exists()).toBe(true);
-    expect(w.find('[data-test="activity-applying"]').text()).toContain('archive');
+    expect(w.find('[data-test="activity-applying"]').text()).toContain('Mark done');
     fake.controls.release();
     await settle();
     expect(w.find('[data-test="activity-confirmed"]').exists()).toBe(true);

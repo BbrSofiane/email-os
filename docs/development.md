@@ -408,8 +408,10 @@ whether a single or a group. A group Undo makes one durable attempt: queued
 members are cancelled, applying/confirmed members are compensated from the
 original preimages, and ineligible members (failed, unknown outcome, unknown
 prior, already undone, acceptance-rejected) are explicitly skipped with reasons.
-Partial results are worded honestly ("Undo accepted for 1 of 2; 1 skipped —
-failed"), and per-member failures stay recoverable in Activity regardless of
+Partial results are worded honestly: the dock line stays short ("Restored 1 · 1
+skipped — failed"; skips are named only when there are some) while its title and
+accessible description keep the exact ledger ("Undo accepted for 1 of 2; 1
+skipped (1 failed); …"), and per-member failures stay recoverable in Activity regardless of
 current list rows. A rejected IPC acceptance is never treated as "nothing
 happened": the UI keeps the original request ID and recovers via
 `get_operation_group` / replay of the exact original request.

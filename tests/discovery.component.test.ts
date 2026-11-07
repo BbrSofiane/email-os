@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import App from '../src/App.vue';
 import type { InboxSnapshot } from '../src/lib/ipc/client';
@@ -82,6 +82,24 @@ describe('UX-03 discovery and context history', () => {
     key('Escape'); await flushPromises(); expect(w.find('[data-test="reader"]').exists()).toBe(true);
   });
 
+  it('lists Provider mail in the navigator like the rail and opens its drawer', async () => {
+    const { w } = await setup();
+    (w.get('[data-test="conversation-row-read-02"]').element as HTMLElement).focus();
+    key('ArrowLeft'); await flushPromises();
+    await w.get('[data-test="action-query"]').setValue('provider'); await flushPromises();
+    expect(w.findAll('[role="option"]').map((o) => o.text())).toEqual([expect.stringContaining('Go to Provider mail (read only)')]);
+    key('Enter'); await flushPromises();
+    expect(w.find('[role="dialog"]').exists()).toBe(false);
+    expect(w.get('[data-test="utility-drawer"]').attributes('aria-label')).toBe('Provider mail — read only');
+  });
+
+  it('names the archive action "Mark done" once and keeps "archive" as a search alias', async () => {
+    const { w } = await setup();
+    (w.get('[data-test="conversation-row-read-02"]').element as HTMLElement).focus();
+    await palette(w, 'archive'); await flushPromises();
+    expect(w.findAll('[role="option"]').map((o) => o.find('.action-copy > span').text())).toEqual(['Mark done']);
+  });
+
   it('G then E is cancelled by unrelated keys, modifiers, IME, overlays, blur and timeout; no GH', async () => {
     const { fixture, w } = await setup();
     const focus = () => (w.get('[data-test="conversation-row-read-02"]').element as HTMLElement).focus();
@@ -93,7 +111,9 @@ describe('UX-03 discovery and context history', () => {
     }
     key('g'); await palette(w); key('Escape'); await flushPromises();
     key('e', { ctrlKey: true });
-    focus(); key('g'); await new Promise((resolve) => setTimeout(resolve, 1050)); key('e'); await flushPromises();
+    // Past the chord window AND the swallow grace, a plain e is Archive again.
+    focus(); vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    key('g'); vi.advanceTimersByTime(2200); vi.useRealTimers(); key('e'); await flushPromises();
     expect(fixture.doneCalls()).toBe(0);
     expect(fixture.controls.archiveCommands.map((command) => command.conversation.conversationId)).toEqual(['read-02']);
     key('g'); key('e'); await flushPromises();
@@ -202,7 +222,7 @@ describe('UX-03 query and lifecycle guarantees', () => {
     expect(fixture.controls.archiveCommands).toEqual([]);
     expect(fixture.controls.readCommands).toEqual([]);
     await new Promise((resolve) => setTimeout(resolve, 60)); await flushPromises();
-    await w.get('[data-test="action-query"]').setValue('Mark Done'); key('Enter'); await flushPromises();
+    await w.get('[data-test="action-query"]').setValue('Mark done'); key('Enter'); await flushPromises();
     expect(fixture.controls.archiveCommands.map((command) => command.conversation.conversationId)).toEqual(['read-03']);
   });
 

@@ -301,7 +301,7 @@ const actionNotice = computed(() => {
       ? (groupSlot.requestedRead ? 'read' : 'unread')
       : (groupSlot.requestedArchived ? 'archive' : 'unarchive');
     return {
-      label: groupSlot.kind === 'star' ? (groupSlot.requestedStarred ? 'Star' : 'Unstar') : groupSlot.kind === 'read' ? (groupSlot.requestedRead ? 'Mark read' : 'Mark unread') : (groupSlot.requestedArchived ? 'Mark Done (Archive)' : 'Mark Not Done (Restore)'),
+      label: groupSlot.kind === 'star' ? (groupSlot.requestedStarred ? 'Star' : 'Unstar') : groupSlot.kind === 'read' ? (groupSlot.requestedRead ? 'Mark read' : 'Mark unread') : (groupSlot.requestedArchived ? 'Mark done' : 'Mark not done'),
       actionId: groupActionId,
       subject: null,
       operation: null,
@@ -753,8 +753,37 @@ const overlayQuery = computed({
 const paletteButton = ref<HTMLElement | null>(null);
 let overlayOrigin: HTMLElement | null = null;
 let overlayRowOrigin: ConversationRef | null = null;
+// G-chord (g then e/h). The chord window is long enough for a hesitant second
+// key; when it lapses the hint disappears and a short grace window swallows a
+// late e/h, so a slow "g e" can never fall through to the plain-key meaning of
+// e (Archive). Any other key, focus change or explicit cancel ends the grace.
+const GO_CHORD_WINDOW_MS = 1500;
+const GO_CHORD_GRACE_MS = 600;
 let goTimer: ReturnType<typeof setTimeout> | null = null;
-function cancelGo(): void { if (goTimer) clearTimeout(goTimer); goTimer = null; }
+let goGraceTimer: ReturnType<typeof setTimeout> | null = null;
+const goPending = ref(false);
+function endGoGrace(): void { if (goGraceTimer) clearTimeout(goGraceTimer); goGraceTimer = null; }
+function cancelGo(): void {
+  if (goTimer) clearTimeout(goTimer);
+  goTimer = null;
+  goPending.value = false;
+  endGoGrace();
+}
+function armGo(): void {
+  cancelGo();
+  goPending.value = true;
+  goTimer = setTimeout(() => {
+    goTimer = null;
+    goPending.value = false;
+    goGraceTimer = setTimeout(endGoGrace, GO_CHORD_GRACE_MS);
+  }, GO_CHORD_WINDOW_MS);
+}
+/** Keys whose chorded meaning (Done / Reminders) differs from the plain key. */
+function isGoSecondKey(event: KeyboardEvent): boolean {
+  return (event.key === 'e' || (event.key === 'h' && remindersSupported.value))
+    && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey && !event.isComposing;
+}
+const goHintLabel = computed(() => `g pressed. Press E for Done${remindersSupported.value ? ' or H for Reminders' : ''}, Escape to cancel.`);
 function openOverlay(kind: 'palette' | 'navigator'): void {
   cancelGo();
   if (!accountReady.value) return;
@@ -1204,6 +1233,7 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   if (['inbox', 'done', 'activity'].includes(id)) return !!accountId.value;
   if (id === 'search') return !!accountId.value && !drawer.value && !contactDisclosure.value;
   if (id === 'account') return gmailMode.value;
+  if (id === 'destinations') return (gmailMode.value || props.mode === 'browser-preview') && !!accountId.value;
   if (id === 'trash') return gmailMode.value && !!accountId.value;
   if (id === 'drafts') return !!accountId.value;
   if (id === 'reminders') return remindersSupported.value;
@@ -1244,15 +1274,16 @@ function starPermissionReason(id: BrowsingActionId): string | undefined {
 }
 const availableActions = computed(() => browsingActions
   .filter((action) => (actionAvailable(action.id) || starPermissionReason(action.id))
-    && (overlay.value !== 'navigator' || ['inbox', 'saved', 'done', 'trash', 'starred', 'account', 'activity', 'drafts', 'reminders'].includes(action.id)))
+    && (overlay.value !== 'navigator' || ['inbox', 'saved', 'done', 'destinations', 'trash', 'starred', 'account', 'activity', 'drafts', 'reminders'].includes(action.id)))
   .map((action) => ({
     id: action.id,
     shortcut: action.shortcut,
+    aliases: 'aliases' in action ? action.aliases : undefined,
     disabledReason: starPermissionReason(action.id),
     // Selected-scope actions are labelled with the count (§3.3).
     label: selectedCount.value > 0 && ['archive', 'unarchive', 'read', 'unread', 'star', 'unstar'].includes(action.id)
       ? `${action.label} — ${selectedCount.value} selected`
-      : action.id === 'toggle-unread-filter' ? (mailbox.unreadOnly.value ? 'Show All Conversations' : 'Show Unread Only')
+      : action.id === 'toggle-unread-filter' ? (mailbox.unreadOnly.value ? 'Show all conversations' : 'Show unread only')
       : action.id === 'switch-account' ? `Switch account — ${props.switchAccountLabel}`
       : action.id === 'saved' ? `Go to ${mailbox.savedSplit.value?.name ?? 'saved split'}` : action.label,
   })));
@@ -1299,7 +1330,7 @@ async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): 
       else { await mailbox.setStarred(target, id === 'star'); if (!readerOpen.value) await focusFocusedRow(); }
       return;
     }
-    case 'trash': case 'account': case 'activity': case 'drafts': await openDrawer(id); return;
+    case 'destinations': case 'trash': case 'account': case 'activity': case 'drafts': await openDrawer(id); return;
     case 'back': if (readerOpen.value) closeReader(); else await contextBack(); return;
     case 'open': if (explicit) await openRowFromList(explicit); else await openFocusedFromList(); return;
     case 'archive':
@@ -1406,9 +1437,16 @@ function onKeydown(event: KeyboardEvent): void {
   }
   if (goTimer) {
     cancelGo();
-    if ((event.key === 'e' || (event.key === 'h' && remindersSupported.value)) && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey && !event.isComposing && !isEditableTarget(event.target) && !drawer.value && !contactDisclosure.value && !readerOpen.value) {
+    // Escape cancels the armed chord and is consumed: one Escape, one dismissal.
+    if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); return; }
+    if (isGoSecondKey(event) && !isEditableTarget(event.target) && !drawer.value && !contactDisclosure.value && !readerOpen.value) {
       event.preventDefault(); void executeAction(event.key === 'h' ? 'reminders' : 'done'); return;
     }
+  } else if (goGraceTimer) {
+    // The window just lapsed: a late second key was almost certainly meant for
+    // the chord, so it is swallowed instead of running the plain-key action.
+    endGoGrace();
+    if (isGoSecondKey(event) && !isEditableTarget(event.target)) { event.preventDefault(); return; }
   }
   // Only a visible composer owns all keys; a suspended editor behind another
   // disclosure must not silently keep keyboard ownership from the inbox.
@@ -1487,7 +1525,7 @@ function onKeydown(event: KeyboardEvent): void {
     event.preventDefault(); openOverlay('navigator'); return;
   }
   if (browsingOwns && !event.shiftKey && key === 'g') {
-    event.preventDefault(); goTimer = setTimeout(cancelGo, 1000); return;
+    event.preventDefault(); armGo(); return;
   }
   if (key === 's' && !event.shiftKey && !event.repeat && (browsingOwns || readerIsOpen) && !actionShortcutBlocked(event.target)) {
     const stars = readerIsOpen ? mailbox.conversation.value?.stars : mailbox.focusedSummary.value?.stars;
@@ -1729,6 +1767,10 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
           <span v-if="starredFilterShown && mailbox.starredOnly.value" class="header-filter" data-test="starred-filter-status">Starred only</span>
         </div>
         <div class="header-trail">
+          <!-- Armed g-chord hint: always-present polite status so the change is
+               announced; empty (display: none) when idle. It grows leftward in
+               the trail, so the glyphs never move. -->
+          <span class="chord-hint" role="status" data-test="chord-hint"><template v-if="goPending"><span aria-hidden="true">g…</span><span class="visually-hidden">{{ goHintLabel }}</span></template></span>
           <p v-if="props.mode === 'browser-preview'" class="header-note preview-tag" data-test="preview-banner" role="note" :title="BROWSER_PREVIEW_DISCLOSURE"><span aria-hidden="true">Preview · in-memory</span><span class="visually-hidden">{{ BROWSER_PREVIEW_DISCLOSURE }}</span></p>
           <p v-if="gmailMode && !mailboxActionsEnabled" class="header-note" data-test="mailbox-access-hint">
             {{ accountStatus?.mutationAccess === 'upgrading' ? 'Mailbox permission pending' : 'Gmail is read-only' }}
@@ -1880,7 +1922,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               ref="emptyState"
               tabindex="-1"
             >
-              {{ mailbox.context.value === 'search' ? (mailbox.nextCursor.value ? 'No matches on this candidate page. Continue scanning older mail below.' : 'No matching conversations in the searched content.') : mailbox.unreadOnly.value ? 'No known unread conversations in this view. Use Commands → Show All Conversations to turn off the unread filter; unknown read states are not included.' : mailbox.starredOnly.value ? 'No known starred conversations in this cached view; unknown facts and uncached mail are not included.' : mailbox.context.value === 'saved' ? 'No Inbox conversations match this saved split. Edit the sender or domain criteria, or return to Inbox.' : mailbox.context.value === 'inbox' ? 'No conversations are currently in the inbox. Archived conversations stay recoverable from Activity.' : mailbox.nextCursor.value ? 'No conversations on this cache page; more cached candidates are available.' : mailbox.context.value === 'starred' ? 'No known starred conversations in this local cache; unknown and uncached mail is not included.' : 'No known archived conversations in this local cache.' }}
+              {{ mailbox.context.value === 'search' ? (mailbox.nextCursor.value ? 'No matches on this candidate page. Continue scanning older mail below.' : 'No matching conversations in the searched content.') : mailbox.unreadOnly.value ? 'No known unread conversations in this view. Use Commands → Show all conversations to turn off the unread filter; unknown read states are not included.' : mailbox.starredOnly.value ? 'No known starred conversations in this cached view; unknown facts and uncached mail are not included.' : mailbox.context.value === 'saved' ? 'No Inbox conversations match this saved split. Edit the sender or domain criteria, or return to Inbox.' : mailbox.context.value === 'inbox' ? 'No conversations are currently in the inbox. Archived conversations stay recoverable from Activity.' : mailbox.nextCursor.value ? 'No conversations on this cache page; more cached candidates are available.' : mailbox.context.value === 'starred' ? 'No known starred conversations in this local cache; unknown and uncached mail is not included.' : 'No known archived conversations in this local cache.' }}
             </p>
             <InboxList
               v-else
