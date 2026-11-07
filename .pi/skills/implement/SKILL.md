@@ -43,7 +43,7 @@ Follow existing conventions and any applicable project instructions. Do not inve
 Using this skill authorizes one implementation subagent. Do not ask the user to request delegation again.
 
 - Read your runtime's subagent guidance and the local persona definition before launch.
-- Start `persona-feature-engineer` through the runtime's native subagent mechanism: the `subagent` tool in pi, the Task tool with subagent type `persona-feature-engineer` in Claude Code, or the custom agent `persona-feature-engineer` in Codex. Inherit the parent model unless the user specifies another one.
+- Launch `persona-feature-engineer` with whatever subagent or delegation mechanism your own runtime provides (a native subagent tool, a task tool, a delegate API — the choice is yours and not prescribed here). Inherit the parent model unless the user specifies another one.
 - Give the child a self-contained brief: explicit repository cwd, goal, acceptance criteria, non-goals, relevant files and contracts, pre-existing edits, edit boundary, required checks, verification method, and expected evidence.
 - Tell the child to execute directly. It must not use this skill to delegate again or start other agents.
 - Leave implementation to the child. Do not edit the same checkout while it works. Follow native async completion notifications; do not poll or sleep.
