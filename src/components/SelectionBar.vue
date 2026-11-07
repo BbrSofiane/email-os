@@ -54,14 +54,14 @@ const selectAllTitle = computed(() =>
         data-test="selection-archive"
         :disabled="!actionsEnabled"
         @click="emit('archive')"
-      >Mark {{ count }} Done</button>
+      >Mark {{ count }} done</button>
       <button
         v-if="context !== 'inbox'"
         type="button"
         data-test="selection-unarchive"
         :disabled="!actionsEnabled"
         @click="emit('unarchive')"
-      >Mark {{ count }} Not Done</button>
+      >Mark {{ count }} not done</button>
       <!-- Explicit Mark N read / Mark N unread: never a mixed-state toggle. -->
       <button
         v-if="readAvailable"

@@ -299,7 +299,7 @@ describe('InboxList (UX-01 compact rows)', () => {
     await flushPromises();
     const archive = w.get('[data-test="row-archive-yesterday"]');
     expect(archive.find('svg[aria-hidden="true"]').exists()).toBe(true);
-    expect(archive.text()).toBe('Archive');
+    expect(archive.text()).toBe('Mark done');
     expect(w.get('[data-test="row-toggle-read-yesterday"]').text()).toBe('Mark unread');
     expect(w.get('[data-test="row-toggle-read-today-1"]').text()).toBe('Mark read');
     expect(w.get('[data-test="row-actions-toggle-yesterday"]').attributes('aria-label')).toBe('More actions');

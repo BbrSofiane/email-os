@@ -59,7 +59,7 @@ export interface GroupNoticeView {
 const props = defineProps<{
   /** Null renders an empty live region so slot replacement stays announceable. */
   notice: {
-    /** Human label of the performed action, e.g. "Mark Done (Archive)". */
+    /** Human label of the performed action, e.g. "Mark done". */
     label: string;
     /** The setter action performed; selects the expired-recovery clause. */
     actionId: LastActionId;
@@ -139,8 +139,8 @@ const groupUndoExpired = computed(() => {
 
 /** Recovery clause after an expired window, per the action that was undone. */
 const UNDO_EXPIRED_RECOVERY: Record<LastActionId, string> = {
-  archive: 'Mark Not Done restores the whole conversation to Inbox',
-  unarchive: 'Mark Done archives the whole conversation',
+  archive: 'Mark not done restores the whole conversation to Inbox',
+  unarchive: 'Mark done archives the whole conversation',
   read: 'use the opposite read control',
   unread: 'use the opposite read control',
   star: 'use Unstar',

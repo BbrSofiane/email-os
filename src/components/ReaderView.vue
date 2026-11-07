@@ -626,7 +626,7 @@ defineExpose({
         :disabled="props.commandInFlight || props.navigationUnavailable"
         @click="props.conversation.isInInbox ? emit('archive') : emit('unarchive')"
       >
-        {{ props.conversation.isInInbox ? 'Archive (e)' : 'Unarchive' }}
+        {{ props.conversation.isInInbox ? 'Mark done (E)' : 'Mark not done' }}
       </button>
       <!-- Selected scope: explicit count-labelled desired-state controls, never
            a toggle derived from the OPEN conversation's state (§3.3). -->
@@ -636,14 +636,14 @@ defineExpose({
         data-test="reader-selection-archive"
         :disabled="props.commandInFlight || props.navigationUnavailable"
         @click="emit('archive')"
-      >Mark {{ bulkScope.count }} Done (archive)</button>
+      >Mark {{ bulkScope.count }} done</button>
       <button
         v-if="!props.readOnly && props.state === 'ready' && bulkScope && bulkScope.context !== 'inbox'"
         type="button"
         data-test="reader-selection-unarchive"
         :disabled="props.commandInFlight || props.navigationUnavailable"
         @click="emit('unarchive')"
-      >Mark {{ bulkScope.count }} Not Done</button>
+      >Mark {{ bulkScope.count }} not done</button>
       <span v-if="(props.readOnly || props.showReadControls) && props.conversation" data-test="reader-read-state">
         {{ props.conversation.isRead === undefined ? 'Read state unknown' : props.conversation.isRead ? 'Read' : 'Unread' }}
       </span>

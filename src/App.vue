@@ -301,7 +301,7 @@ const actionNotice = computed(() => {
       ? (groupSlot.requestedRead ? 'read' : 'unread')
       : (groupSlot.requestedArchived ? 'archive' : 'unarchive');
     return {
-      label: groupSlot.kind === 'star' ? (groupSlot.requestedStarred ? 'Star' : 'Unstar') : groupSlot.kind === 'read' ? (groupSlot.requestedRead ? 'Mark read' : 'Mark unread') : (groupSlot.requestedArchived ? 'Mark Done (Archive)' : 'Mark Not Done (Restore)'),
+      label: groupSlot.kind === 'star' ? (groupSlot.requestedStarred ? 'Star' : 'Unstar') : groupSlot.kind === 'read' ? (groupSlot.requestedRead ? 'Mark read' : 'Mark unread') : (groupSlot.requestedArchived ? 'Mark done' : 'Mark not done'),
       actionId: groupActionId,
       subject: null,
       operation: null,
@@ -1204,6 +1204,7 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   if (['inbox', 'done', 'activity'].includes(id)) return !!accountId.value;
   if (id === 'search') return !!accountId.value && !drawer.value && !contactDisclosure.value;
   if (id === 'account') return gmailMode.value;
+  if (id === 'destinations') return (gmailMode.value || props.mode === 'browser-preview') && !!accountId.value;
   if (id === 'trash') return gmailMode.value && !!accountId.value;
   if (id === 'drafts') return !!accountId.value;
   if (id === 'reminders') return remindersSupported.value;
@@ -1244,15 +1245,16 @@ function starPermissionReason(id: BrowsingActionId): string | undefined {
 }
 const availableActions = computed(() => browsingActions
   .filter((action) => (actionAvailable(action.id) || starPermissionReason(action.id))
-    && (overlay.value !== 'navigator' || ['inbox', 'saved', 'done', 'trash', 'starred', 'account', 'activity', 'drafts', 'reminders'].includes(action.id)))
+    && (overlay.value !== 'navigator' || ['inbox', 'saved', 'done', 'destinations', 'trash', 'starred', 'account', 'activity', 'drafts', 'reminders'].includes(action.id)))
   .map((action) => ({
     id: action.id,
     shortcut: action.shortcut,
+    aliases: 'aliases' in action ? action.aliases : undefined,
     disabledReason: starPermissionReason(action.id),
     // Selected-scope actions are labelled with the count (§3.3).
     label: selectedCount.value > 0 && ['archive', 'unarchive', 'read', 'unread', 'star', 'unstar'].includes(action.id)
       ? `${action.label} — ${selectedCount.value} selected`
-      : action.id === 'toggle-unread-filter' ? (mailbox.unreadOnly.value ? 'Show All Conversations' : 'Show Unread Only')
+      : action.id === 'toggle-unread-filter' ? (mailbox.unreadOnly.value ? 'Show all conversations' : 'Show unread only')
       : action.id === 'switch-account' ? `Switch account — ${props.switchAccountLabel}`
       : action.id === 'saved' ? `Go to ${mailbox.savedSplit.value?.name ?? 'saved split'}` : action.label,
   })));
@@ -1299,7 +1301,7 @@ async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): 
       else { await mailbox.setStarred(target, id === 'star'); if (!readerOpen.value) await focusFocusedRow(); }
       return;
     }
-    case 'trash': case 'account': case 'activity': case 'drafts': await openDrawer(id); return;
+    case 'destinations': case 'trash': case 'account': case 'activity': case 'drafts': await openDrawer(id); return;
     case 'back': if (readerOpen.value) closeReader(); else await contextBack(); return;
     case 'open': if (explicit) await openRowFromList(explicit); else await openFocusedFromList(); return;
     case 'archive':
@@ -1880,7 +1882,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               ref="emptyState"
               tabindex="-1"
             >
-              {{ mailbox.context.value === 'search' ? (mailbox.nextCursor.value ? 'No matches on this candidate page. Continue scanning older mail below.' : 'No matching conversations in the searched content.') : mailbox.unreadOnly.value ? 'No known unread conversations in this view. Use Commands → Show All Conversations to turn off the unread filter; unknown read states are not included.' : mailbox.starredOnly.value ? 'No known starred conversations in this cached view; unknown facts and uncached mail are not included.' : mailbox.context.value === 'saved' ? 'No Inbox conversations match this saved split. Edit the sender or domain criteria, or return to Inbox.' : mailbox.context.value === 'inbox' ? 'No conversations are currently in the inbox. Archived conversations stay recoverable from Activity.' : mailbox.nextCursor.value ? 'No conversations on this cache page; more cached candidates are available.' : mailbox.context.value === 'starred' ? 'No known starred conversations in this local cache; unknown and uncached mail is not included.' : 'No known archived conversations in this local cache.' }}
+              {{ mailbox.context.value === 'search' ? (mailbox.nextCursor.value ? 'No matches on this candidate page. Continue scanning older mail below.' : 'No matching conversations in the searched content.') : mailbox.unreadOnly.value ? 'No known unread conversations in this view. Use Commands → Show all conversations to turn off the unread filter; unknown read states are not included.' : mailbox.starredOnly.value ? 'No known starred conversations in this cached view; unknown facts and uncached mail are not included.' : mailbox.context.value === 'saved' ? 'No Inbox conversations match this saved split. Edit the sender or domain criteria, or return to Inbox.' : mailbox.context.value === 'inbox' ? 'No conversations are currently in the inbox. Archived conversations stay recoverable from Activity.' : mailbox.nextCursor.value ? 'No conversations on this cache page; more cached candidates are available.' : mailbox.context.value === 'starred' ? 'No known starred conversations in this local cache; unknown and uncached mail is not included.' : 'No known archived conversations in this local cache.' }}
             </p>
             <InboxList
               v-else

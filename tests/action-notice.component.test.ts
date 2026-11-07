@@ -17,7 +17,7 @@ function operation(status: OperationStatus): OperationSummary {
 
 const NOW = Date.now();
 const base = {
-  label: 'Mark Done (Archive)',
+  label: 'Mark done',
   actionId: 'archive' as LastActionId,
   subject: 'Fixture thread 1: weekly status',
   undoableUntil: new Date(NOW + 5_000).toISOString(),
@@ -70,7 +70,7 @@ describe('ActionNotice', () => {
     });
     expect(wrapper.find('[data-test="action-notice-undo"]').exists()).toBe(false);
     expect(wrapper.get('[data-test="action-notice-expired"]').text())
-      .toBe('Undo expired — Mark Not Done restores the whole conversation to Inbox');
+      .toBe('Undo expired — Mark not done restores the whole conversation to Inbox');
   });
 
   it('derives the expired recovery clause from the action (unarchive, read)', () => {
@@ -81,7 +81,7 @@ describe('ActionNotice', () => {
       },
     });
     expect(unarchive.get('[data-test="action-notice-expired"]').text())
-      .toBe('Undo expired — Mark Done archives the whole conversation');
+      .toBe('Undo expired — Mark done archives the whole conversation');
     unarchive.unmount();
     const read = mount(ActionNotice, {
       props: {
@@ -140,9 +140,9 @@ describe('ActionNotice', () => {
       },
     });
     const label = wrapper.get('[data-test="action-notice-label"]').text();
-    expect(label.startsWith('Mark Done (Archive) · ')).toBe(true);
+    expect(label.startsWith('Mark done · ')).toBe(true);
     expect(label.endsWith('…')).toBe(true);
-    expect(label.length).toBeLessThan('Mark Done (Archive) · '.length + 62);
+    expect(label.length).toBeLessThan('Mark done · '.length + 62);
   });
 
   it('shows acceptance wording before the activity row lands, without an undo control', () => {
@@ -155,7 +155,7 @@ describe('ActionNotice', () => {
   it('omits an unknown subject instead of rendering a placeholder', () => {
     const wrapper = mount(ActionNotice, { props: { notice: { ...base, subject: null, operation: operation('confirmed') }, now: NOW } });
     const label = wrapper.get('[data-test="action-notice-label"]').text();
-    expect(label).toBe('Mark Done (Archive)');
+    expect(label).toBe('Mark done');
     expect(label).not.toContain('·');
   });
 });
@@ -164,7 +164,7 @@ describe('ActionNotice group undo wording (review fixes)', () => {
   // --- UX-05 group notices: partial undo wording tracks CURRENT compensation
   // outcomes instead of a permanent "restoring…" (review U9). ---
   const groupBase = {
-    label: 'Mark Done (Archive)',
+    label: 'Mark done',
     actionId: 'archive' as LastActionId,
     subject: null,
     operation: null,
