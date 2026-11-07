@@ -8,11 +8,12 @@
  * collapsed the subject/snippet column to zero width. jsdom has no layout, so
  * these assertions only mean something against real rendered CSS.
  *
- * The second P1 guard covers larger user text: at 1000px with a 20px root font
- * and the long old date label, the full inline metadata overflows the row, so
- * the adaptive compact presentation collapses the actions behind a named,
- * keyboard- and pointer-operable disclosure instead of trading subject
- * collapse for horizontal overflow.
+ * The second P1 guard covers larger user text: at 1000px with the long old
+ * date label, a 20px root font still fits inline (the sender column gives up
+ * width first); at a 23px root font the sender is at its floor and the full
+ * inline metadata overflows the row, so the adaptive compact presentation
+ * collapses the actions behind a named, keyboard- and pointer-operable
+ * disclosure instead of trading subject collapse for horizontal overflow.
  *
  * Opt-in only: set EMAIL_OS_RENDERED_LAYOUT_CHROME to a Chrome/Chromium binary
  * path to run, e.g.
@@ -50,7 +51,7 @@ interface RowMeasure {
   meta: Rect;
   date: string | null;
   pending: { width: number; text: string } | null;
-  readState: { width: number; text: string; test: string | null } | null;
+  readState: { width: number; text: string; test: string | null; label: string | null } | null;
   buttons: Array<{ name: string; test: string | null; visible: boolean } & Rect>;
   focusedButtons: Array<string | null>;
   toggle: { visible: boolean; ariaExpanded: string | null } & Rect | null;
@@ -220,7 +221,7 @@ describe.skipIf(chromePath === '')('InboxList rendered layout (real Chrome, opt-
     const caret = document.caretRangeFromPoint(box.left + box.width * frac, midY);
     if (caret && caret.startContainer === textNode) visibleChars = Math.max(visibleChars, caret.startOffset);
   }
-  const pick = (selector) => { const el = row.querySelector(selector); return el ? { width: el.getBoundingClientRect().width, text: el.textContent, test: el.getAttribute('data-test') } : null; };
+  const pick = (selector) => { const el = row.querySelector(selector); return el ? { width: el.getBoundingClientRect().width, text: el.textContent, test: el.getAttribute('data-test'), label: el.getAttribute('aria-label') } : null; };
   const isVisible = (el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
   const focusedButtons = [];
   for (const button of row.querySelectorAll('button')) {
@@ -351,9 +352,11 @@ describe.skipIf(chromePath === '')('InboxList rendered layout (real Chrome, opt-
       expect(m.pending!.width).toBeGreaterThan(0);
       expect(m.pending!.text).toBe('Pending…');
     }
+    // The unknown read state is a visible gutter glyph with an exact name.
     expect(m.readState).not.toBeNull();
     expect(m.readState!.width).toBeGreaterThan(0);
     expect(m.readState!.test).toBe('row-read-unknown');
+    expect(m.readState!.label).toBe('Read state unknown');
   }
 
   it('keeps a readable single-line subject with unknown read state, pending membership, and row actions', async () => {
@@ -403,9 +406,12 @@ describe.skipIf(chromePath === '')('InboxList rendered layout (real Chrome, opt-
       await tick();
       const wide = await measure();
       assertCompactRowLayout(wide, { minVisibleChars: 20, expectPending: false, expectFullSubject: true });
-      // Full fixture subject text fits (no truncation on a wide desktop).
-      expect(wide.subject.width).toBeGreaterThan(200);
-      expect(wide.sender.width).toBeLessThanOrEqual(160.5);
+      // Full fixture subject text fits (no truncation on a wide desktop); at
+      // the 12px row type the whole fixture subject is ~172px wide.
+      expect(wide.subject.width).toBeGreaterThan(150);
+      // The sender column holds the 132px spec width on a wide list.
+      expect(wide.sender.width).toBeGreaterThan(131.5);
+      expect(wide.sender.width).toBeLessThanOrEqual(132.5);
     } finally {
       await setRootFont('').catch(() => undefined);
     }
@@ -447,30 +453,45 @@ describe.skipIf(chromePath === '')('InboxList rendered layout (real Chrome, opt-
       ]);
       expect(at16.toggle!.visible).toBe(false);
 
-      // 1000px / 20px root font, same scenario: the expanded presentation
-      // overflows the row, so the adaptive compact presentation engages —
-      // subject stays readable, nothing clips or overflows, and every action
-      // moves behind the named disclosure control.
+      // 1000px / 20px root font, same scenario: the sender column gives up
+      // width first, so the expanded presentation still fits without any
+      // collapse, overflow, or unreadable subject.
       await setRootFont(20);
       await tick();
       const at20 = await measure();
-      assertCompactRowLayout(at20, { minVisibleChars: 10, expectPending: true, expectCompact: true });
+      assertCompactRowLayout(at20, { minVisibleChars: 10, expectPending: true });
       expect(at20.date).toBe('30 Sept 2001');
-      expect(at20.subject.width).toBeGreaterThan(at16.subject.width);
+      expect(at20.toggle!.visible).toBe(false);
+      expect(at20.sender.width).toBeLessThan(at16.sender.width);
+
+      // 1000px / 23px root font: the sender is at its floor and the expanded
+      // presentation overflows the row, so the adaptive compact presentation
+      // engages — subject stays readable, nothing clips or overflows, and
+      // every action moves behind the named disclosure control.
+      await setRootFont(23);
+      await tick();
+      const at23 = await measure();
+      assertCompactRowLayout(at23, { minVisibleChars: 10, expectPending: true, expectCompact: true });
+      expect(at23.date).toBe('30 Sept 2001');
+      // The sender gave up width before the actions collapsed (it may regain
+      // a little of the width the collapse frees).
+      expect(at23.sender.width).toBeLessThan(at20.sender.width);
+      expect(at23.sender.width).toBeLessThan(80);
 
       // Pointer access: a real CDP mouse click on the disclosure toggle opens
       // the row action panel.
-      await realClick(at20.toggle!);
+      await realClick(at23.toggle!);
       const openByPointer = await measure();
       expect(openByPointer.toggle!.ariaExpanded).toBe('true');
       expect(openByPointer.actionsPanel!.visibility).toBe('visible');
       const popoverButtons = openByPointer.buttons.filter((b) => b.visible && b.test !== 'row-actions-toggle-conv-01');
       expect(popoverButtons.map((b) => b.name)).toEqual(['Mark read', 'Mark unread', 'Archive']);
       // Every disclosed action is hit-testable at its center — inside the
-      // visible panel, not clipped by the row or the list scroller.
+      // visible panel, not clipped by the row or the list scroller. The hit
+      // may be the button's own glyph or label, which activates the button.
       const hitTests = await cdp!.js<Array<{ test: string | null; hitIsTarget: boolean }>>(`[...document.querySelectorAll('[data-test="conversation-row-conv-01"] button')]
         .filter((b) => b.getAttribute('data-test') !== 'row-actions-toggle-conv-01' && b.getClientRects().length > 0 && getComputedStyle(b).visibility !== 'hidden')
-        .map((b) => { const r = b.getBoundingClientRect(); const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return { test: b.getAttribute('data-test'), hitTest: hit?.getAttribute('data-test') ?? null, hitIsTarget: hit === b }; })`);
+        .map((b) => { const r = b.getBoundingClientRect(); const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return { test: b.getAttribute('data-test'), hitTest: hit?.getAttribute('data-test') ?? null, hitIsTarget: hit !== null && b.contains(hit) }; })`);
       expect(hitTests.map((h) => h.test)).toEqual(['row-mark-read-conv-01', 'row-mark-unread-conv-01', 'row-archive-conv-01']);
       for (const hit of hitTests) expect(hit.hitIsTarget).toBe(true);
 
@@ -497,7 +518,7 @@ describe.skipIf(chromePath === '')('InboxList rendered layout (real Chrome, opt-
       await tick();
       const afterActivate = await measure();
       expect(afterActivate.readState!.test).toBe('row-read');
-      expect(afterActivate.readState!.text).toBe('Read');
+      expect(afterActivate.readState!.label).toBe('Read');
       expect(await cdp!.js<number>('window.__layoutFake.controls.activity().length')).toBeGreaterThan(operationsBefore);
       // The activated button is replaced by the read-state re-render, so focus
       // drops and the row's focusout-close folds the panel again; the row stays
@@ -519,7 +540,7 @@ describe.skipIf(chromePath === '')('InboxList rendered layout (real Chrome, opt-
       expect(await cdp!.js<boolean>("document.querySelector('[data-test=\"conversation-row-conv-17\"]').classList.contains('actions-up')")).toBe(true);
       const lastHits = await cdp!.js<Array<{ test: string | null; hitIsTarget: boolean; top: number; bottom: number }>>(`[...document.querySelectorAll('[data-test="conversation-row-conv-17"] button')]
         .filter((b) => b.getAttribute('data-test') !== 'row-actions-toggle-conv-17' && b.getClientRects().length > 0 && getComputedStyle(b).visibility !== 'hidden')
-        .map((b) => { const r = b.getBoundingClientRect(); const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return { test: b.getAttribute('data-test'), hitIsTarget: hit === b, top: r.top, bottom: r.bottom }; })`);
+        .map((b) => { const r = b.getBoundingClientRect(); const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return { test: b.getAttribute('data-test'), hitIsTarget: hit !== null && b.contains(hit), top: r.top, bottom: r.bottom }; })`);
       expect(lastHits.map((h) => h.test)).toEqual(['row-mark-read-conv-17', 'row-mark-unread-conv-17', 'row-archive-conv-17']);
       const viewportH = await cdp!.js<number>('innerHeight');
       for (const hit of lastHits) {

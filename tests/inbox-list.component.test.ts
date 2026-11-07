@@ -198,9 +198,11 @@ describe('InboxList (UX-01 compact rows)', () => {
     await flushPromises();
     expect(w.find('[data-test="row-pending"]').exists()).toBe(true);
     expect(w.find('[data-test="row-pending"]').attributes('role')).toBe('status');
-    // Compact visible label; the full disclosure stays in the accessible name.
-    expect(w.find('[data-test="row-read-unknown"]').text()).toBe('Unknown');
-    expect(w.find('[data-test="row-read-unknown"]').attributes('aria-label')).toBe('Read state unknown');
+    // Gutter marker glyph (hollow ring); the exact state is its accessible name.
+    const unknownMarker = w.find('[data-test="row-read-unknown"]');
+    expect(unknownMarker.attributes('role')).toBe('img');
+    expect(unknownMarker.attributes('aria-label')).toBe('Read state unknown');
+    expect(unknownMarker.attributes('title')).toBe('Read state unknown');
     expect(w.find('[data-test="row-mark-read-today-1"]').exists()).toBe(true);
     expect(w.find('[data-test="row-mark-unread-today-1"]').exists()).toBe(true);
     expect(w.find('[data-test="row-mark-read-today-1"]').attributes('aria-label')).toBe('Mark read');
@@ -256,6 +258,80 @@ describe('InboxList (UX-01 compact rows)', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     await flushPromises();
     expect(w.find('[data-test="row-actions-toggle-today-1"]').attributes('aria-expanded')).toBe('false');
+  });
+
+  it('names every read state in the gutter marker and only de-emphasizes known-read rows', async () => {
+    const w = mountList(defaultRows(), null, { showReadState: true });
+    await flushPromises();
+    const marker = (id: string) => w.get(`[data-test="conversation-row-${id}"] .row-read-state`);
+    expect(marker('today-1').attributes('data-test')).toBe('row-unread');
+    expect(marker('today-1').attributes('aria-label')).toBe('Unread');
+    expect(marker('yesterday').attributes('data-test')).toBe('row-read');
+    expect(marker('yesterday').attributes('aria-label')).toBe('Read');
+    expect(marker('today-2').attributes('data-test')).toBe('row-read-unknown');
+    expect(marker('today-2').attributes('aria-label')).toBe('Read state unknown');
+    // No text label competes with the subject; the state is never silent.
+    for (const id of ['today-1', 'yesterday', 'today-2']) expect(marker(id).text()).toBe('');
+    expect(w.get('[data-test="conversation-row-yesterday"]').classes()).toContain('is-read');
+    expect(w.get('[data-test="conversation-row-today-1"]').classes()).not.toContain('is-read');
+    expect(w.get('[data-test="conversation-row-today-2"]').classes()).not.toContain('is-read');
+
+    // Where read facts are not disclosed, neither the marker nor the weight cue renders.
+    await w.setProps({ showReadState: false });
+    expect(w.find('.row-read-state').exists()).toBe(false);
+    expect(w.get('[data-test="conversation-row-yesterday"]').classes()).not.toContain('read-disclosed');
+  });
+
+  it('keeps icon-only row actions named and moves inner Tab stops with the roving row', async () => {
+    const rows = defaultRows();
+    const w = mountList(rows, { accountId: ACCOUNT, conversationId: 'yesterday' }, { showReadState: true, showReadControls: true });
+    await flushPromises();
+    const archive = w.get('[data-test="row-archive-yesterday"]');
+    expect(archive.find('svg[aria-hidden="true"]').exists()).toBe(true);
+    expect(archive.text()).toBe('Archive');
+    expect(w.get('[data-test="row-toggle-read-yesterday"]').text()).toBe('Mark unread');
+    expect(w.get('[data-test="row-toggle-read-today-1"]').text()).toBe('Mark read');
+    expect(w.get('[data-test="row-actions-toggle-yesterday"]').attributes('aria-label')).toBe('More actions');
+
+    const tabStops = () => w.findAll('input, button')
+      .filter((control) => (control.element as HTMLElement).tabIndex === 0)
+      .map((control) => control.attributes('data-test'));
+    // Only the focused row's checkbox and actions are in the Tab sequence.
+    expect(tabStops()).toEqual([
+      'row-select-yesterday',
+      'row-actions-toggle-yesterday',
+      'row-toggle-read-yesterday',
+      'row-archive-yesterday',
+    ]);
+    // Other rows' controls stay programmatically focusable and operable.
+    const otherArchive = w.get('[data-test="row-archive-today-1"]').element as HTMLButtonElement;
+    expect(otherArchive.tabIndex).toBe(-1);
+    otherArchive.focus();
+    expect(document.activeElement).toBe(otherArchive);
+    await w.get('[data-test="row-archive-today-1"]').trigger('click');
+    expect(w.emitted('archive')).toEqual([[{ accountId: ACCOUNT, conversationId: 'today-1' }]]);
+    expect(w.emitted('open')).toBeUndefined();
+
+    // The inner stops follow the focused reference.
+    await w.setProps({ focusedRef: { accountId: ACCOUNT, conversationId: 'december' } });
+    expect(tabStops()[0]).toBe('row-select-december');
+    expect(tabStops().every((id) => id?.endsWith('-december'))).toBe(true);
+  });
+
+  it('enters selection mode on the list without conflating selection and focus', async () => {
+    const w = mountList(defaultRows(), { accountId: ACCOUNT, conversationId: 'today-1' });
+    await flushPromises();
+    expect(w.get('ul').classes()).not.toContain('selecting');
+    await w.setProps({ selectedRefs: [{ accountId: ACCOUNT, conversationId: 'yesterday' }] });
+    expect(w.get('ul').classes()).toContain('selecting');
+    const selected = w.get('[data-test="conversation-row-yesterday"]');
+    expect(selected.classes()).toContain('selected');
+    expect(selected.classes()).not.toContain('focused');
+    expect(selected.attributes('aria-current')).toBeUndefined();
+    expect((w.get('[data-test="row-select-yesterday"]').element as HTMLInputElement).checked).toBe(true);
+    const focused = w.get('[data-test="conversation-row-today-1"]');
+    expect(focused.classes()).toContain('focused');
+    expect(focused.classes()).not.toContain('selected');
   });
 
   it('omits the action disclosure when a row has no actions', async () => {

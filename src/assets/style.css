@@ -14,7 +14,9 @@
   --focus-fill: #474644;
   --focus-accent: #bba5ed;
   --text-primary: #ece9e2;
-  --text-secondary: #a8a29a;
+  /* DESIGN.md Ash: >=4.5:1 on Focus Stone (4.99:1; the old #a8a29a was 3.73:1). */
+  --text-secondary: #c0bcb6;
+  --unread-marker: #ce9ece;
   --divider: #3b3936;
   --warning: #e4c465;
   --danger: #f1a9a5;
@@ -298,7 +300,13 @@ textarea {
   margin: 0;
 }
 
-/* Compact conversation list: ~36px scanning rhythm, single-line rows. */
+/*
+ * Compact conversation list (DESIGN.md "Conversation Row"): 36px rows on 12px
+ * type in two weights, separated by rhythm alone (no per-row dividers). The
+ * row highlight is inset 6px from both pane edges; the 44px left gutter holds
+ * the selection checkbox and the read marker, so sender names, date captions
+ * and the split tabs share the 50px content inset.
+ */
 .inbox-scroll {
   list-style: none;
   margin: 0;
@@ -306,23 +314,30 @@ textarea {
   overflow-y: auto;
   height: 100%;
   min-height: 0;
+  /* Row columns size from the list width (cqi), never from one row's content. */
+  container-type: inline-size;
 }
 
 /*
- * Flex (not grid) so the bounded trailing region cannot starve the subject:
- * when the metadata is widest (unknown read state + pending + all actions),
- * the deficit comes out of the sender column first; the subject/snippet
- * column keeps its readable floor and the metadata keeps its full content.
+ * Flex (not grid) so the bounded trailing region cannot starve the subject.
+ * The sender column is sized from the list width, so it stays aligned on
+ * every row and gives up width first as the pane narrows: 132px from a
+ * ~700px list, ~115px at the 1030px window, 96px at its floor. Only if a row
+ * still cannot fit its subject/snippet floor does that row's sender shrink
+ * further (to 72px); the metadata keeps its full content.
  */
 .inbox-row {
   display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-  padding: 0.3rem 0.6rem;
+  align-items: center;
+  gap: 12px;
   min-height: 36px;
-  border-bottom: 1px solid var(--divider);
+  margin: 0 6px;
+  padding: 0 18px 0 44px;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: var(--text-primary);
   cursor: pointer;
-  /* Anchors the row action disclosure panel (meta-compact) to the row. */
+  /* Anchors the gutter controls and the row action disclosure panel. */
   position: relative;
 }
 
@@ -330,54 +345,109 @@ textarea {
   outline: none;
 }
 
+/* Focus: Focus Stone fill plus a 4px Dusk Lavender bar on the fill's own edge. */
 .inbox-row.focused {
   background: var(--focus-fill);
-  box-shadow: inset 3px 0 0 var(--focus-accent);
+  box-shadow: inset 4px 0 0 var(--focus-accent);
 }
 
-/* Hover never changes focus or read state; it is decoration only. */
+/* Hover never changes focus or read state; it only lifts and reveals controls. */
 .inbox-row:not(.focused):hover {
   background: rgba(255, 255, 255, 0.03);
 }
 
 /*
- * UX-05 selection: a distinct marker that is not color-only (the checkbox is
- * rendered and the row carries an inset bar), never replacing the lavender
- * focus cue, which stays on the focused row.
+ * UX-05 selection: a distinct marker that is not color-only (the checked
+ * checkbox stays rendered and the row carries an Ash inset bar), never
+ * replacing the lavender focus bar, which stays on the focused row.
  */
 .inbox-row.selected {
-  box-shadow: inset 3px 0 0 var(--text-secondary);
+  box-shadow: inset 4px 0 0 var(--text-secondary);
 }
 
 .inbox-row.selected.focused {
-  box-shadow: inset 3px 0 0 var(--focus-accent), inset 4px 0 0 var(--text-secondary);
+  box-shadow: inset 4px 0 0 var(--focus-accent), inset 6px 0 0 var(--text-secondary);
 }
 
+/* Gutter checkbox: revealed by selection mode, hover, the focused row, or its own focus. */
 .row-select {
-  flex: 0 0 auto;
-  align-self: center;
-  margin: 0;
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0;
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--text-secondary);
+  border-radius: 3px;
   cursor: pointer;
+  opacity: 0;
+}
+
+.row-select:checked {
+  border-color: var(--text-primary);
+  background: var(--text-primary) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='%23292826' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 12px no-repeat;
+}
+
+.inbox-list.selecting .row-select,
+.inbox-row:hover .row-select,
+.inbox-row.focused .row-select,
+.row-select:checked,
+.row-select:focus-visible {
+  opacity: 1;
+}
+
+.row-select:focus-visible {
+  outline: 2px solid var(--focus-accent);
+  outline-offset: 1px;
+}
+
+/* Gutter read marker, centered ~34px into the row: unread dot, unknown ring, read blank. */
+.row-read-state {
+  position: absolute;
+  left: 31.5px;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  margin-top: -2.5px;
+  border-radius: 50%;
+}
+
+.row-read-state[data-test='row-unread'] {
+  background: var(--unread-marker);
+}
+
+.row-read-state[data-test='row-read-unknown'] {
+  left: 30.5px;
+  width: 7px;
+  height: 7px;
+  margin-top: -3.5px;
+  border: 1.5px solid var(--text-secondary);
 }
 
 .row-sender {
-  flex: 0 1 160px;
-  min-width: 90px;
+  flex: 0 1 clamp(96px, 22cqi - 22px, 132px);
+  min-width: 72px;
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.row-sender.unread {
-  color: var(--text-primary);
+/* Known-read rows step down a weight; unread and unknown keep the Title weight. */
+.inbox-row.read-disclosed.is-read .row-sender {
+  font-weight: 400;
 }
 
 .row-subject-snippet {
-  flex: 1 1 136px;
-  min-width: 136px; /* readable-subject floor: never collapses to zero */
+  flex: 1 1 0;
+  /* Readable-subject floor: never collapses to zero, and never narrower than
+     the subject's own floor plus the gap (larger user text), so the subject
+     cannot spill over the pending/date metadata. */
+  min-width: max(136px, calc(6.5rem + 12px));
   display: flex;
-  gap: 0.5rem;
+  gap: 12px;
   white-space: nowrap;
 }
 
@@ -393,23 +463,115 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--text-secondary);
-  font-size: 0.8rem;
 }
 
 .row-meta {
   flex: 0 0 auto; /* content-sized and never squeezed: no clipped actions */
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: 12px;
   white-space: nowrap;
-  font-size: 0.72rem;
   color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
 }
 
-/* Compact row action chips: tighter inline padding keeps the metadata region
-   small enough that the subject column survives the 1000px contact layout. */
-.row-meta button {
-  padding-inline: 0.25rem;
+.row-pending {
+  font-style: italic;
+  color: var(--warning);
+}
+
+/*
+ * One trailing slot holds the date and the actions (or the compact disclosure
+ * control) in the same grid cell, so revealing the glyphs on the focused or
+ * hovered row replaces the date without shifting any column.
+ */
+.row-trailing {
+  display: grid;
+  align-items: center;
+  justify-items: end;
+}
+
+.row-trailing > * {
+  grid-area: 1 / 1;
+}
+
+.row-time {
+  text-align: right;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+}
+
+/*
+ * Icon-only ghost glyphs at a 32px pitch with 16px glyphs (at the default
+ * 12px row text); the last glyph sits ~26px from the highlight edge. Widths
+ * are in em so larger user text also enlarges the targets, and so the compact
+ * disclosure still frees width when a larger date shares the trailing slot.
+ */
+.row-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.667em;
+  width: 2.667em;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.row-actions,
+.row-actions-toggle {
+  margin-right: -0.667em;
+}
+
+.row-action:hover,
+.row-action:focus-visible {
+  color: var(--text-primary);
+}
+
+.row-action:focus-visible {
+  outline-offset: -2px;
+}
+
+.row-glyph {
+  flex: 0 0 auto;
+  width: 1.333em;
+  height: 1.333em;
+}
+
+/* Names stay in the accessibility tree; they are shown only inside the compact panel. */
+.row-action-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* At rest the date shows; the focused or hovered row shows its actions instead. */
+.row-actions,
+.row-actions-toggle {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.inbox-row:is(.focused, :hover, :focus-within, .actions-open) .row-actions,
+.inbox-row:is(.focused, :hover, :focus-within, .actions-open) .row-actions-toggle {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* The hidden date (opacity < 1 paints above in-flow siblings) must not catch the glyphs' clicks. */
+.inbox-row.has-actions:is(.focused, :hover, :focus-within, .actions-open) .row-time {
+  opacity: 0;
+  pointer-events: none;
 }
 
 /*
@@ -417,15 +579,10 @@ textarea {
  * metadata does not fit the laid-out row, InboxList moves the row into the
  * `meta-compact` state. The action buttons leave the flow — kept measurable
  * (absolute, hidden, max-content) so the component can restore them exactly
- * when space returns — and the visible disclosure control keeps every action
- * named and operable. Read state, pending, and date never leave the row.
+ * when space returns — and the disclosure control takes their place in the
+ * trailing slot, keeping every action named and operable. Read state,
+ * pending, and date never leave the row.
  */
-.row-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-}
-
 .row-actions-toggle {
   display: none;
 }
@@ -438,8 +595,9 @@ textarea {
   /* Right-anchored so the hidden panel adds no rightward scrollable overflow. */
   position: absolute;
   top: calc(100% - 1px);
-  right: 0.6rem;
+  right: 12px;
   z-index: 6;
+  margin-right: 0;
   visibility: hidden;
   width: max-content;
   pointer-events: none;
@@ -451,12 +609,28 @@ textarea {
   width: auto;
   flex-direction: column;
   align-items: stretch;
-  gap: 0.25rem;
-  padding: 0.3rem;
+  gap: 2px;
+  padding: 4px;
   background: var(--surface-raised);
   border: 1px solid var(--divider);
   border-radius: 6px;
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+}
+
+/* Inside the open panel each action shows its glyph and its name. */
+.inbox-row.meta-compact.actions-open .row-actions .row-action {
+  width: auto;
+  justify-content: flex-start;
+  padding: 0 10px 0 8px;
+  color: var(--text-primary);
+}
+
+.inbox-row.meta-compact.actions-open .row-actions .row-action-label {
+  position: static;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip-path: none;
 }
 
 /* Near the list bottom the panel opens upward to stay inside the scroller. */
@@ -465,33 +639,15 @@ textarea {
   bottom: calc(100% - 1px);
 }
 
-.row-time {
-  min-width: 3.5rem;
-  text-align: right;
-}
-
-.row-pending {
-  font-style: italic;
-  color: var(--warning);
-}
-
-.row-read-state {
-  font-size: 0.7rem;
-}
-
-.row-read-state[data-test='row-unread'] {
-  color: var(--text-primary);
-  font-weight: 600;
-}
-
+/* Date group caption: title case, Ash, on the 50px content inset, 48px block, no rule. */
 .row-group {
-  padding: 0.5rem 0.6rem 0.15rem;
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  display: flex;
+  align-items: flex-end;
+  min-height: 48px;
+  padding: 0 0 10px 50px;
+  font-size: 0.75rem;
+  line-height: 1.35;
   color: var(--text-secondary);
-  border-bottom: 1px solid var(--divider);
-  background: var(--surface);
 }
 
 /* Reader: a bounded flex surface with its own content scroller; the toolbar

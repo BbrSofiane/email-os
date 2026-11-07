@@ -11,7 +11,11 @@
  *   tabbable, and they never reorder the backend's rows.
  * - Hover changes nothing: no hover handler mutates focus or read state.
  *   Inline actions are row-scoped buttons that stop propagation; focusing one
- *   never opens the row or scrolls it to center.
+ *   never opens the row or scrolls it to center. Hover only reveals (CSS) the
+ *   checkbox and action glyphs that the focused row already shows.
+ * - Roving tabindex covers the row's inner controls too: only the tab-stop
+ *   row's checkbox and actions are in the Tab sequence; other rows' controls
+ *   stay programmatically focusable (tabindex -1) and pointer-operable.
  * - Anchor capture/restoration supports the reader round trip: a visible-row
  *   reference with its relative offset plus a scrollTop fallback.
  */
@@ -21,6 +25,7 @@ import type { ConversationSummaryLike } from '../composables/useMailbox';
 import { sameConversation } from '../composables/useMailbox';
 import { actionLabel } from '../lib/browsing-actions';
 import { compactDateLabel, dateGroupCaption, dateGroupFor } from '../lib/browsing-dates';
+import RowGlyph from './RowGlyph.vue';
 
 const props = defineProps<{
   rows: ConversationSummaryLike[];
@@ -46,6 +51,8 @@ const emit = defineEmits<{
 }>();
 
 const selectedKeys = computed(() => new Set((props.selectedRefs ?? []).map((ref) => `${ref.accountId}:${ref.conversationId}`)));
+/** Selection mode: any selected row reveals every row's gutter checkbox. */
+const selecting = computed(() => selectedKeys.value.size > 0);
 
 function isSelected(row: ConversationSummaryLike): boolean {
   return selectedKeys.value.has(`${row.ref.accountId}:${row.ref.conversationId}`);
@@ -146,7 +153,10 @@ function isFocused(row: ConversationSummaryLike): boolean {
   return sameConversation(row.ref, props.focusedRef);
 }
 
-/** Roving tabindex: the focused row, else the first row, is the tab stop. */
+/**
+ * Roving tabindex: the focused row, else the first row, is the tab stop. The
+ * same value gates that row's inner controls (checkbox, actions, disclosure).
+ */
 function tabIndexFor(row: ConversationSummaryLike, index: number): 0 | -1 {
   if (isFocused(row)) return 0;
   if (props.focusedRef === null && index === 0) return 0;
@@ -160,14 +170,19 @@ function senderLabel(row: ConversationSummaryLike): string {
   return primary.displayName ?? primary.mailbox;
 }
 
+/** Read facts are disclosed (gutter dot + sender weight) only where the provider supplies them. */
+function readStateDisclosed(): boolean {
+  return Boolean(props.showReadState || props.showReadControls);
+}
+
 /*
- * Compact visible labels; the full disclosure lives in the accessible name so
- * the bounded metadata region never starves the subject column at the 1000px
- * contact breakpoint (rows render "Unknown" + Read/Unread, AT reads the
- * complete "Read state unknown" / "Mark read" / "Mark unread" semantics).
+ * The gutter marker is a glyph (filled dot = unread, hollow ring = unknown,
+ * nothing visible = read); its exact state always lives in the accessible
+ * name, so the bounded row never trades the subject for a text label and an
+ * unknown fact is never rendered as silence.
  */
-function readStateLabel(row: ConversationSummaryLike): string {
-  if (row.isRead === undefined) return 'Unknown';
+function readStateName(row: ConversationSummaryLike): string {
+  if (row.isRead === undefined) return 'Read state unknown';
   return row.isRead ? 'Read' : 'Unread';
 }
 
@@ -233,14 +248,19 @@ function evaluateRowLayout(el: HTMLElement, key: string): void {
   // Rows without actions never overflow into the disclosure.
   if (!actions) return;
   const toggle = el.querySelector<HTMLElement>('.row-actions-toggle');
+  const date = el.querySelector<HTMLElement>('.row-time');
   let fitsExpanded: boolean;
   if (compactRows.has(key)) {
     const actionsWidth = actions.getBoundingClientRect().width;
     const toggleWidth = toggle ? toggle.getBoundingClientRect().width : 0;
-    // Strict margin: only leave the compact presentation when the expanded
-    // layout measurably fits, so integer-rounded overflow cannot oscillate.
-    fitsExpanded =
-      el.scrollWidth + (actionsWidth - toggleWidth) <= el.clientWidth - ROW_OVERFLOW_SLACK_PX;
+    const dateWidth = date ? date.getBoundingClientRect().width : 0;
+    // The date and the actions (or the disclosure toggle) share one trailing
+    // slot, so the slot is as wide as its widest occupant: expanding swaps
+    // max(date, toggle) for max(date, actions). Strict margin: only leave the
+    // compact presentation when the expanded layout measurably fits, so
+    // integer-rounded overflow cannot oscillate.
+    const slotGrowth = Math.max(dateWidth, actionsWidth) - Math.max(dateWidth, toggleWidth);
+    fitsExpanded = el.scrollWidth + slotGrowth <= el.clientWidth - ROW_OVERFLOW_SLACK_PX;
   } else {
     fitsExpanded = el.scrollWidth <= el.clientWidth + ROW_OVERFLOW_SLACK_PX;
   }
@@ -278,8 +298,15 @@ onBeforeUnmount(() => {
   rowLayoutObserver = null;
 });
 
+/*
+ * Re-observe (which re-measures every row) when the row set changes, and when
+ * a fact that widens the trailing metadata changes without resizing the row
+ * box (pending, read state, star coverage, the available actions):
+ * ResizeObserver alone would miss
+ * those and leave a newly overflowing row in the expanded presentation.
+ */
 watch(
-  () => props.rows.map((row) => rowKey(row.ref)),
+  () => `${props.actionsEnabled}|${props.showReadControls}|${props.showReadState}|${props.context}\n` + props.rows.map((row) => `${rowKey(row.ref)}|${row.pendingOperationId ?? ''}|${String(row.isRead)}|${row.stars ? `${row.stars.starredMessages}/${row.stars.knownMessages}/${row.stars.totalMessages}` : ''}`).join('\n'),
   () => observeRowLayouts(),
   { flush: 'post' },
 );
@@ -429,7 +456,7 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
 </script>
 
 <template>
-  <ul class="inbox-list inbox-scroll" role="list" :aria-label="context === 'search' ? 'Search results' : context === 'starred' ? 'Cached Starred conversations' : context === 'done' ? 'Cached Done conversations' : context === 'saved' ? 'Saved split conversations' : 'Inbox conversations'" ref="listEl">
+  <ul class="inbox-list inbox-scroll" :class="{ selecting }" role="list" :aria-label="context === 'search' ? 'Search results' : context === 'starred' ? 'Cached Starred conversations' : context === 'done' ? 'Cached Done conversations' : context === 'saved' ? 'Saved split conversations' : 'Inbox conversations'" ref="listEl">
     <template v-for="item in items" :key="item.kind === 'group' ? `group-${item.id}` : rowKey(item.row.ref)">
       <li
         v-if="item.kind === 'group'"
@@ -446,6 +473,9 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
           'meta-compact': isCompactRow(item.row),
           'actions-open': isActionsOpen(item.row),
           'actions-up': isPanelUpward(item.row),
+          'read-disclosed': readStateDisclosed(),
+          'is-read': item.row.isRead === true,
+          'has-actions': hasRowActions(),
         }"
         :aria-current="isFocused(item.row) ? 'true' : undefined"
         :tabindex="tabIndexFor(item.row, item.index)"
@@ -456,8 +486,9 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
         @keydown.escape="onRowKeydown($event, item.row)"
         @click="onRowClick($event, item.row)"
       >
-        <!-- UX-05 selection control: a native labelled checkbox inside the
-             listitem; it stops propagation and never opens the row. No
+        <!-- UX-05 selection control: a native labelled checkbox in the 44px
+             gutter; it stops propagation and never opens the row. Revealed by
+             selection mode, hover, the focused row, or its own focus. No
              aria-selected on listitem (invalid for role=listitem); aria-current
              stays the focus cue and the selected class is not color-only. -->
         <input
@@ -466,10 +497,20 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
           :data-test="`row-select-${item.row.ref.conversationId}`"
           :checked="isSelected(item.row)"
           :aria-label="`Select ${item.row.subject}`"
+          :tabindex="tabIndexFor(item.row, item.index)"
           @click.stop
           @change="emit('selectToggle', item.row.ref)"
         />
-        <span class="row-sender" :class="{ unread: item.row.isRead === false }">{{ senderLabel(item.row) }}</span>
+        <!-- Gutter read marker: exact state in the accessible name. -->
+        <span
+          v-if="readStateDisclosed()"
+          class="row-read-state"
+          :data-test="item.row.isRead === undefined ? 'row-read-unknown' : item.row.isRead ? 'row-read' : 'row-unread'"
+          role="img"
+          :aria-label="readStateName(item.row)"
+          :title="item.row.isRead === true ? undefined : readStateName(item.row)"
+        ></span>
+        <span class="row-sender">{{ senderLabel(item.row) }}</span>
         <span class="row-subject-snippet">
           <span class="row-subject">{{ item.row.subject }}</span>
           <span class="row-preview">{{ item.row.preview }}</span>
@@ -482,53 +523,58 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
             role="status"
           >Pending…</span>
           <span
-            v-if="props.showReadState || props.showReadControls"
-            class="row-read-state"
-            :data-test="item.row.isRead === undefined ? 'row-read-unknown' : item.row.isRead ? 'row-read' : 'row-unread'"
-            :aria-label="item.row.isRead === undefined ? 'Read state unknown' : undefined"
-          >{{ readStateLabel(item.row) }}</span>
-          <span
             v-if="item.row.stars && (item.row.stars.starredMessages > 0 || item.row.stars.knownMessages < item.row.stars.totalMessages || item.row.stars.totalMessages === 0)"
-            class="row-read-state" data-test="row-stars" role="img"
+            class="row-stars" data-test="row-stars" role="img"
             :aria-label="`${item.row.stars.starredMessages > 0 ? 'Starred' : 'Star state unknown'}; effective star values known for ${item.row.stars.knownMessages} of ${item.row.stars.totalMessages} cached messages; may include pending intent`"
             :title="`Effective star values known for ${item.row.stars.knownMessages} of ${item.row.stars.totalMessages} cached messages; pending intent is not provider confirmation`"
           >{{ item.row.stars.starredMessages > 0 ? '★' : 'Star unknown' }}{{ item.row.stars.knownMessages < item.row.stars.totalMessages ? ' (partial)' : '' }}</span>
-          <span class="row-time">{{ compactDateLabel(item.row.lastMessageAt) }}</span>
-          <button
-            v-if="hasRowActions()"
-            type="button"
-            class="row-actions-toggle"
-            :data-test="`row-actions-toggle-${item.row.ref.conversationId}`"
-            aria-label="More actions"
-            :aria-expanded="isActionsOpen(item.row) ? 'true' : 'false'"
-            :aria-controls="actionsPanelId(item.row)"
-            @click.stop="toggleActions(item.row)"
-          >More</button>
-          <span
-            v-if="hasRowActions()"
-            :id="actionsPanelId(item.row)"
-            class="row-actions"
-            role="group"
-            aria-label="Row actions"
-          >
-            <template v-if="props.showReadControls && item.row.isRead === undefined">
-              <button type="button" :data-test="`row-mark-read-${item.row.ref.conversationId}`" aria-label="Mark read" @click.stop="emit('setRead', item.row.ref, true)">Read</button>
-              <button type="button" :data-test="`row-mark-unread-${item.row.ref.conversationId}`" aria-label="Mark unread" @click.stop="emit('setRead', item.row.ref, false)">Unread</button>
-            </template>
+          <!-- One trailing slot: the date at rest; on the focused or hovered
+               row the action glyphs (or, when they do not fit, the disclosure
+               control) take its place without changing the row's width. -->
+          <span class="row-trailing">
+            <span class="row-time">{{ compactDateLabel(item.row.lastMessageAt) }}</span>
             <button
-              v-else-if="props.showReadControls"
+              v-if="hasRowActions()"
               type="button"
-              :data-test="`row-toggle-read-${item.row.ref.conversationId}`"
-              @click.stop="emit('setRead', item.row.ref, !item.row.isRead)"
-            >Mark {{ item.row.isRead ? 'unread' : 'read' }}</button>
-            <button
-              v-if="props.actionsEnabled && context !== 'starred'"
-              type="button"
-              class="row-archive-action"
-              :data-test="`row-archive-${item.row.ref.conversationId}`"
-              :title="actionLabel(context === 'done' ? 'unarchive' : 'archive')"
-              @click.stop="context === 'done' ? emit('unarchive', item.row.ref) : emit('archive', item.row.ref)"
-            >{{ context === 'done' ? 'Restore to Inbox' : 'Archive' }}</button>
+              class="row-action row-actions-toggle"
+              :data-test="`row-actions-toggle-${item.row.ref.conversationId}`"
+              aria-label="More actions"
+              title="More actions"
+              :aria-expanded="isActionsOpen(item.row) ? 'true' : 'false'"
+              :aria-controls="actionsPanelId(item.row)"
+              :tabindex="tabIndexFor(item.row, item.index)"
+              @click.stop="toggleActions(item.row)"
+            ><RowGlyph name="more" /></button>
+            <span
+              v-if="hasRowActions()"
+              :id="actionsPanelId(item.row)"
+              class="row-actions"
+              role="group"
+              aria-label="Row actions"
+            >
+              <template v-if="props.showReadControls && item.row.isRead === undefined">
+                <button type="button" class="row-action" :data-test="`row-mark-read-${item.row.ref.conversationId}`" aria-label="Mark read" title="Mark read" :tabindex="tabIndexFor(item.row, item.index)" @click.stop="emit('setRead', item.row.ref, true)"><RowGlyph name="mark-read" /><span class="row-action-label">Read</span></button>
+                <button type="button" class="row-action" :data-test="`row-mark-unread-${item.row.ref.conversationId}`" aria-label="Mark unread" title="Mark unread" :tabindex="tabIndexFor(item.row, item.index)" @click.stop="emit('setRead', item.row.ref, false)"><RowGlyph name="mark-unread" /><span class="row-action-label">Unread</span></button>
+              </template>
+              <button
+                v-else-if="props.showReadControls"
+                type="button"
+                class="row-action"
+                :data-test="`row-toggle-read-${item.row.ref.conversationId}`"
+                :title="`Mark ${item.row.isRead ? 'unread' : 'read'}`"
+                :tabindex="tabIndexFor(item.row, item.index)"
+                @click.stop="emit('setRead', item.row.ref, !item.row.isRead)"
+              ><RowGlyph :name="item.row.isRead ? 'mark-unread' : 'mark-read'" /><span class="row-action-label">Mark {{ item.row.isRead ? 'unread' : 'read' }}</span></button>
+              <button
+                v-if="props.actionsEnabled && context !== 'starred'"
+                type="button"
+                class="row-action row-archive-action"
+                :data-test="`row-archive-${item.row.ref.conversationId}`"
+                :title="actionLabel(context === 'done' ? 'unarchive' : 'archive')"
+                :tabindex="tabIndexFor(item.row, item.index)"
+                @click.stop="context === 'done' ? emit('unarchive', item.row.ref) : emit('archive', item.row.ref)"
+              ><RowGlyph :name="context === 'done' ? 'restore' : 'archive'" /><span class="row-action-label">{{ context === 'done' ? 'Restore to Inbox' : 'Archive' }}</span></button>
+            </span>
           </span>
         </span>
       </li>
