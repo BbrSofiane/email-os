@@ -12,6 +12,7 @@
  * notice is reported accessibly. Outcomes are announced via role="status".
  */
 import { computed, ref, watch } from 'vue';
+import type { ConversationRef } from '../lib/ipc/client';
 
 export interface ContactInfo {
   displayName: string | null;
@@ -23,7 +24,10 @@ const props = defineProps<{
   contact: ContactInfo | null;
   /** Which surface the contact belongs to; disclosed for clarity. */
   context: 'focused' | 'open';
+  recent?: { ref: ConversationRef; subject: string }[];
 }>();
+
+const emit = defineEmits<{ searchSender: [mailbox: string]; openRecent: [ref: ConversationRef] }>();
 
 type CopyOutcome = { ok: true; message: string } | { ok: false; message: string };
 const copyOutcome = ref<CopyOutcome | null>(null);
@@ -84,7 +88,7 @@ async function copyValue(label: 'name' | 'email', value: string): Promise<void> 
   <aside class="contact-pane" aria-label="Contact context" data-test="contact-pane">
     <h2 class="contact-title">{{ props.context === 'focused' ? 'Focused conversation' : 'Open conversation' }}</h2>
     <p v-if="props.contact" class="contact-identity" data-test="contact-identity">
-      <span class="contact-name" data-test="contact-name">{{ nameLabel(props.contact) }}</span>
+      <button type="button" class="contact-name contact-search" data-test="contact-name" title="Find mail from this sender" @click="emit('searchSender', props.contact.mailbox)">{{ nameLabel(props.contact) }}</button>
       <button
         v-if="props.contact.displayName"
         type="button"
@@ -103,6 +107,10 @@ async function copyValue(label: 'name' | 'email', value: string): Promise<void> 
     <p v-else class="contact-unknown" data-test="contact-unknown">
       No correspondent information is available.
     </p>
+    <section v-if="props.contact && props.recent?.length" class="contact-recent" aria-label="Recent cached mail from sender">
+      <h3>Recent cached mail</h3>
+      <ul><li v-for="item in props.recent" :key="item.ref.accountId + item.ref.conversationId"><button type="button" @click="emit('openRecent', item.ref)">{{ item.subject || '(No subject)' }}</button></li></ul>
+    </section>
     <p
       v-if="copyOutcome"
       class="contact-copy-status"

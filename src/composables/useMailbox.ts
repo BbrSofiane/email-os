@@ -57,7 +57,7 @@ export function sameConversation(a: ConversationRef | null, b: ConversationRef |
   return a !== null && b !== null && a.accountId === b.accountId && a.conversationId === b.conversationId;
 }
 
-export type BrowseContext = 'inbox' | 'saved' | 'done' | 'starred';
+export type BrowseContext = 'inbox' | 'saved' | 'done' | 'starred' | 'search';
 
 /**
  * UX-05 product/safety bound for selection and groups (docs/ux-05-safe-bulk-
@@ -104,6 +104,8 @@ export interface GroupNotice {
   originalCommand: SetArchivedGroup | SetReadGroup | SetStarredGroup;
 }
 
+export interface SearchVisit { query: string; cachedOnly: boolean; coverage: string; rows: ConversationSummaryLike[]; cursor: string | null }
+
 export interface DoneBoundary { lastMessageAt: string; conversationId: string }
 function reachesBoundary(rows: ConversationSummaryLike[], boundary: DoneBoundary | null): boolean {
   const last = rows.at(-1);
@@ -124,6 +126,15 @@ export interface Mailbox {
   unreadOnly: Ref<boolean>;
   saveSplit(split: SavedSplit): Promise<boolean>;
   setUnreadOnly(unread: boolean): Promise<void>;
+  searchQuery: Ref<string>;
+  searchCoverage: Ref<string>;
+  searchCachedOnly: Ref<boolean>;
+  search(query: string, cachedOnly?: boolean): Promise<void>;
+  restoreSearch(visit: SearchVisit): Promise<void>;
+  /** Explicit navigation supersedes a search still awaiting cancellation. */
+  invalidateSearchIntent(): void;
+  /** Capture current ownership for deferred navigation, without claiming a new intent. */
+  captureNavigationIntent(): () => boolean;
   context: Ref<BrowseContext>;
   starredOnly: Ref<boolean>;
   nextCursor: Ref<string | null>;
@@ -243,6 +254,9 @@ export function useMailbox(client: MailClient): Mailbox {
   const inboxTotal = ref<number | null>(null);
   const savedTotal = ref<number | null>(null);
   const unreadOnly = ref(false);
+  const searchQuery = ref('');
+  const searchCoverage = ref('');
+  const searchCachedOnly = ref(false);
   const loadingMore = ref(false);
   const loadedDonePages = ref(1);
   const loadedDoneBoundary = ref<DoneBoundary | null>(null);
@@ -281,6 +295,8 @@ export function useMailbox(client: MailClient): Mailbox {
 
   let readerSource: 'list' | 'activity' = 'list';
   let listToken = 0;
+  // Explicit query/navigation ownership must survive routine list refreshes.
+  let navigationIntentToken = 0;
   let activityToken = 0;
   let detailToken = 0;
   let commandToken = 0;
@@ -393,6 +409,38 @@ export function useMailbox(client: MailClient): Mailbox {
       if (current()) { inboxTotal.value = null; savedTotal.value = null; }
     }) : null;
     try {
+      if (source === 'search') {
+        // Background invalidations refresh loaded identities from cached facts, not
+        // a new provider traversal that would discard the user's loaded pages.
+        if (listState.value === 'loading' || listState.value === 'error') {
+          const page = await client.searchMail({ accountId: account!, query: searchQuery.value, cursor: null, cachedOnly: searchCachedOnly.value });
+          if (detached || token !== listToken || context.value !== 'search') return;
+          conversations.value = page.conversations;
+          nextCursor.value = page.nextCursor;
+          searchCoverage.value = page.coverage;
+          // Pin the continuation mode chosen by the backend (e.g. offline),
+          // so reconnection cannot reinterpret a cached cursor as provider data.
+          if (page.coverage === 'cached_incomplete') searchCachedOnly.value = true;
+        } else if (conversations.value.length) {
+          // Update authoritative action/read overlays without re-running a
+          // provider traversal or replacing the loaded query/page identities.
+          const refreshed = new Map<string, ConversationSummaryLike>();
+          let cursor: string | null = null;
+          for (let pageNumber = 0; pageNumber < 5; pageNumber += 1) {
+            const page = await client.searchMail({ accountId: account!, query: searchQuery.value, cursor, cachedOnly: true });
+            if (detached || token !== listToken || context.value !== 'search') return;
+            for (const row of page.conversations) refreshed.set(row.ref.conversationId, row);
+            cursor = page.nextCursor;
+            if (!cursor || conversations.value.every((row) => refreshed.has(row.ref.conversationId))) break;
+          }
+          conversations.value = conversations.value.map((row) => refreshed.get(row.ref.conversationId) ?? row);
+        }
+        if (detached || token !== listToken || context.value !== 'search') return;
+        focusedRef.value = resolveFocus(conversations.value, focusedRef.value, conversations.value);
+        listState.value = 'ready';
+        listError.value = null;
+        return;
+      }
       const projection = (source === 'inbox' || source === 'saved') ? await projectionRead : null;
       const initial = (source === 'inbox' || source === 'saved') ? projection?.snap : await (source === 'starred' ? client.listCachedStarred : client.listCachedDone)({ accountId: account!, limit: 100, cursor: null });
       if (!current() || !initial) return;
@@ -441,10 +489,65 @@ export function useMailbox(client: MailClient): Mailbox {
     } finally { await Promise.all([activityRead, doneProjection]); }
   }
 
+  async function restoreSearch(visit: SearchVisit): Promise<void> {
+    ++navigationIntentToken;
+    ++listToken;
+    void client.cancelSearchMail().catch(() => {});
+    closeReader();
+    clearSelection();
+    context.value = 'search';
+    searchQuery.value = visit.query;
+    searchCachedOnly.value = visit.cachedOnly;
+    searchCoverage.value = visit.coverage;
+    conversations.value = visit.rows;
+    nextCursor.value = visit.cursor;
+    focusedRef.value = resolveFocus([], null, visit.rows);
+    listState.value = 'ready';
+    listError.value = null;
+    loadingMore.value = false;
+  }
+
+  function invalidateSearchIntent(): void {
+    ++navigationIntentToken;
+  }
+
+  function captureNavigationIntent(): () => boolean {
+    const intent = navigationIntentToken;
+    return () => !detached && intent === navigationIntentToken;
+  }
+
+  async function search(query: string, cachedOnly = false): Promise<void> {
+    const account = accountStatus.value?.account?.accountId;
+    if (detached || !account || accountBusy.value === 'connect' || accountBusy.value === 'disconnect') return;
+    const intent = ++navigationIntentToken;
+    const source = context.value;
+    ++listToken;
+    await client.cancelSearchMail().catch(() => {});
+    // Refreshes may replace list reads while cancellation is pending, but only
+    // a newer explicit intent or account/context change may discard submission.
+    if (detached || intent !== navigationIntentToken
+      || account !== accountStatus.value?.account?.accountId || source !== context.value) return;
+    searchQuery.value = query;
+    searchCachedOnly.value = cachedOnly;
+    searchCoverage.value = '';
+    context.value = 'search';
+    closeReader();
+    clearSelection();
+    conversations.value = [];
+    focusedRef.value = null;
+    nextCursor.value = null;
+    listState.value = 'loading';
+    listError.value = null;
+    await refresh();
+  }
+
   async function setContext(next: BrowseContext, pages = 1, boundary: DoneBoundary | null = null, filter = false): Promise<void> {
+    // Even choosing the current destination supersedes a pending submission.
+    ++navigationIntentToken;
     if (next === 'saved' && (!savedSplit.value?.enabled || splitError.value)) next = 'inbox';
     if (next === context.value && filter === starredOnly.value && listState.value === 'ready') return;
     starredOnly.value = filter;
+    void client.cancelSearchMail().catch(() => {});
     loadedDonePages.value = Math.max(1, Math.floor(pages));
     loadedDoneBoundary.value = boundary;
     ++listToken;
@@ -504,20 +607,22 @@ export function useMailbox(client: MailClient): Mailbox {
     const token = ++listToken;
     loadingMore.value = true;
     try {
-      const snap = await (source === 'starred' ? client.listCachedStarred : client.listCachedDone)({ accountId: account, limit: 100, cursor });
+      const snap = source === 'search'
+        ? await client.searchMail({ accountId: account, query: searchQuery.value, cachedOnly: searchCachedOnly.value, cursor })
+        : await (source === 'starred' ? client.listCachedStarred : client.listCachedDone)({ accountId: account, limit: 100, cursor });
       if (detached || token !== listToken || context.value !== source) return;
-      conversations.value = [...conversations.value, ...snap.conversations.filter((row) => matchesCachedFilters(row) && !conversations.value.some((old) => sameConversation(old.ref, row.ref)))];
+      conversations.value = [...conversations.value, ...snap.conversations.filter((row: ConversationSummaryLike) => matchesCachedFilters(row) && !conversations.value.some((old) => sameConversation(old.ref, row.ref)))];
       focusedRef.value = resolveFocus(conversations.value, focusedRef.value, conversations.value);
       loadedDonePages.value += 1;
       loadedDoneBoundary.value = boundaryOf(snap.conversations) ?? loadedDoneBoundary.value;
       nextCursor.value = snap.nextCursor;
-      exactTotal.value = snap.exactTotal;
-      lastSyncedAt.value = snap.lastSyncedAt;
+      if ('lastSyncedAt' in snap) { exactTotal.value = snap.exactTotal; lastSyncedAt.value = snap.lastSyncedAt; }
       listState.value = 'ready';
+      listError.value = null;
     } catch (raw) {
       if (detached || token !== listToken) return;
       listError.value = toMailError(raw);
-      listState.value = 'error';
+      listState.value = context.value === 'search' ? 'ready' : 'error';
     } finally { if (token === listToken) loadingMore.value = false; }
   }
 
@@ -557,6 +662,7 @@ export function useMailbox(client: MailClient): Mailbox {
       if (detached || token !== statusToken) return;
       const oldAccount = accountStatus.value?.account?.accountId;
       if (oldAccount && oldAccount !== status.account?.accountId) {
+        ++navigationIntentToken;
         ++listToken;
         ++activityToken;
         activityError.value = null;
@@ -583,6 +689,9 @@ export function useMailbox(client: MailClient): Mailbox {
         inboxTotal.value = null;
         savedTotal.value = null;
         unreadOnly.value = false;
+        searchQuery.value = '';
+        searchCoverage.value = '';
+        void client.cancelSearchMail().catch(() => {});
         loadedDonePages.value = 1;
         loadedDoneBoundary.value = null;
         nextCursor.value = null;
@@ -711,6 +820,7 @@ export function useMailbox(client: MailClient): Mailbox {
     const token = ++detailToken;
     if (!background) {
       readerSource = source;
+      invalidateSearchIntent();
       // New object records explicit navigation independently of background refreshes.
       openRef.value = { ...target };
       conversation.value = null;
@@ -718,7 +828,7 @@ export function useMailbox(client: MailClient): Mailbox {
       detailError.value = null;
     }
     try {
-      const conv = await client.getConversation(target);
+      const conv = await client.getConversation(target, context.value === 'search');
       if (detached || token !== detailToken || !sameConversation(openRef.value, target)) return;
       conversation.value = conv;
       detailState.value = 'ready';
@@ -913,6 +1023,7 @@ export function useMailbox(client: MailClient): Mailbox {
 
   async function connectAccount(): Promise<void> {
     if (accountBusy.value) return;
+    ++navigationIntentToken;
     accountBusy.value = 'connect';
     // Mirror core: connecting flips the connection optimistically; a failure is
     // corrected by the status refetch below.
@@ -934,6 +1045,7 @@ export function useMailbox(client: MailClient): Mailbox {
 
   async function disconnectAccount(): Promise<void> {
     if (accountBusy.value) return;
+    ++navigationIntentToken;
     accountBusy.value = 'disconnect';
     try {
       // Resolves only after core deleted credentials and cleared local data.
@@ -1741,6 +1853,8 @@ export function useMailbox(client: MailClient): Mailbox {
 
   onScopeDispose(() => {
     detached = true;
+    ++navigationIntentToken;
+    void client.cancelSearchMail().catch(() => {});
     listToken += 1;
     activityToken += 1;
     detailToken += 1;
@@ -1759,6 +1873,7 @@ export function useMailbox(client: MailClient): Mailbox {
   const isGmail = computed(() => mode.value === 'gmail');
   return {
     savedSplit, splitError, splitBusy, inboxTotal, savedTotal, unreadOnly, saveSplit, setUnreadOnly,
+    searchQuery, searchCoverage, searchCachedOnly, search, restoreSearch, invalidateSearchIntent, captureNavigationIntent,
     context, starredOnly, nextCursor, loadingMore, loadedDonePages, loadedDoneBoundary, exactTotal, lastSyncedAt, activityError, setContext, loadMore,
     conversations, activity, listState, listError, focusedRef, focusedSummary,
     openRef, conversation, detailState, detailError, lastCommandError,

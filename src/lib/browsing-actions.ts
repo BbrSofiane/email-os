@@ -11,6 +11,7 @@ export const browsingActions = [
   { id: 'unread', label: 'Mark unread', shortcut: 'Shift+U' },
   { id: 'select-all-loaded', label: 'Select all loaded', shortcut: '' },
   { id: 'clear-selection', label: 'Clear selection', shortcut: 'Escape' },
+  { id: 'search', label: 'Find older mail', shortcut: '/' },
   { id: 'inbox', label: 'Go to Inbox', shortcut: '' },
   { id: 'saved', label: 'Go to saved split', shortcut: '' },
   { id: 'create-split', label: 'Create Split', shortcut: '' },

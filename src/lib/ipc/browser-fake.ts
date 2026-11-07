@@ -19,7 +19,10 @@
  * starts with Gmail actions disabled and only enables them through a synthetic,
  * explicit grant flow. All data and grants remain in-memory only.
  */
+import { parseSearch, matchesSearch } from '../search';
 import type {
+  SearchRequest,
+  SearchPage,
   CachedDoneRequest,
   CachedDoneSnapshot,
   AccountStatus,
@@ -1052,6 +1055,27 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
     },
     async listConversations(): Promise<InboxSnapshot> {
       return snapshot();
+    },
+
+    async cancelSearchMail(): Promise<void> {},
+    async searchMail(request: SearchRequest): Promise<SearchPage> {
+      const active = accountStatus().account;
+      if (!active || active.accountId !== request.accountId || cacheCleared) throw failNotShown();
+      const ast = parseSearch(request.query);
+      let offset = 0;
+      if (request.cursor) {
+        try {
+          const [a, q, n] = JSON.parse(request.cursor);
+          if (a !== request.accountId || q !== request.query || !Number.isSafeInteger(n) || n < 0) throw new Error();
+          offset = n;
+        } catch { throw { kind: 'invalid_request', field: 'searchCursor' } satisfies MailError; }
+      }
+      const rows = conversations.filter((c) => matchesSearch(ast, { ...c, isInInbox: effectiveInInbox(c).some(Boolean), pendingOperationId: pendingOperationId(c) }))
+        .map((c) => summarize(c, pendingOperationId(c)))
+        .sort((a,b) => b.lastMessageAt.localeCompare(a.lastMessageAt) || a.ref.conversationId.localeCompare(b.ref.conversationId));
+      return snapshotCopy({ conversations: rows.slice(offset, offset + 20),
+        nextCursor: rows.length > offset + 20 ? JSON.stringify([request.accountId, request.query, offset + 20]) : null,
+        coverage: 'cached_incomplete' });
     },
 
     async listCachedDone(request: CachedDoneRequest): Promise<CachedDoneSnapshot> {

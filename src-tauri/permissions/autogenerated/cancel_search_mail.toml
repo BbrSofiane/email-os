@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-cancel-search-mail"
+description = "Enables the cancel_search_mail command without any pre-configured scope."
+commands.allow = ["cancel_search_mail"]
+
+[[permission]]
+identifier = "deny-cancel-search-mail"
+description = "Denies the cancel_search_mail command without any pre-configured scope."
+commands.deny = ["cancel_search_mail"]

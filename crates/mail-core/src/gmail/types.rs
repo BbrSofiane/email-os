@@ -159,6 +159,13 @@ pub trait GmailReadProvider: Send + Sync {
         page_token: Option<&str>,
         cancel: &CancelToken,
     ) -> Result<InboxPage, MailError>;
+    fn search_threads(
+        &self,
+        _page_token: Option<&str>,
+        _cancel: &CancelToken,
+    ) -> Result<InboxPage, MailError> {
+        Err(MailError::ProviderUnavailable)
+    }
     fn get_thread(
         &self,
         thread_id: &str,

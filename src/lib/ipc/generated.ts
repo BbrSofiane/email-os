@@ -9,6 +9,8 @@ export const SET_STARRED_COMMAND = 'set_starred';
 export const SET_STARRED_GROUP_COMMAND = 'set_starred_group';
 export const GET_SAVED_SPLIT_COMMAND = 'get_saved_split';
 export const SAVE_SAVED_SPLIT_COMMAND = 'save_saved_split';
+export const SEARCH_MAIL_COMMAND = 'search_mail';
+export const CANCEL_SEARCH_MAIL_COMMAND = 'cancel_search_mail';
 export const GET_CONVERSATION_COMMAND = 'get_conversation';
 export const SET_ARCHIVED_COMMAND = 'set_archived';
 export const MAILBOX_CHANGED_EVENT = 'mailbox_changed';
@@ -46,6 +48,16 @@ export type SetStarredGroup = { accountId: string, members: Array<ConversationRe
 export type SplitCriterion = "sender" | "domain";
 
 export type SavedSplit = { name: string, criterion: SplitCriterion, value: string, enabled: boolean, hideWhenEmpty: boolean, };
+
+export type SearchRequest = { accountId: string, query: string, cursor: string | null,
+/**
+ * Explicit cached search; network failures never silently become empty results.
+ */
+cachedOnly: boolean, };
+
+export type SearchPage = { conversations: Array<ConversationSummary>, nextCursor: string | null, coverage: SearchCoverage, };
+
+export type SearchCoverage = "cached_incomplete" | "provider_candidates";
 
 export type ConversationRef = { accountId: string, conversationId: string, };
 

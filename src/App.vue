@@ -52,7 +52,7 @@ import ContactPane from './components/ContactPane.vue';
 import { BROWSER_PREVIEW_DISCLOSURE } from './lib/ipc/browser-fake';
 import type { ClientMode } from './lib/ipc';
 import type { ConversationRef, DraftRef, DraftSource, MailClient } from './lib/ipc/client';
-import { sameConversation, useMailbox, type BrowseContext, type DoneBoundary, type LastActionId } from './composables/useMailbox';
+import { sameConversation, useMailbox, type BrowseContext, type DoneBoundary, type SearchVisit, type LastActionId } from './composables/useMailbox';
 import { useDrafts } from './composables/useDrafts';
 
 const props = defineProps<{
@@ -86,7 +86,7 @@ const mailbox = useMailbox(props.client);
 const inboxList = ref<InstanceType<typeof InboxList> | null>(null);
 const editingSplit = ref(false);
 const splitEditor = ref<InstanceType<typeof SplitEditor> | null>(null);
-const contextTitle = computed(() => mailbox.context.value === 'starred' ? 'Cached Starred' : mailbox.context.value === 'done' ? 'Cached Done' : mailbox.context.value === 'saved' ? mailbox.savedSplit.value?.name ?? 'Saved split' : 'Inbox');
+const contextTitle = computed(() => mailbox.context.value === 'search' ? 'Search' : mailbox.context.value === 'starred' ? 'Cached Starred' : mailbox.context.value === 'done' ? 'Cached Done' : mailbox.context.value === 'saved' ? mailbox.savedSplit.value?.name ?? 'Saved split' : 'Inbox');
 const savedTabVisible = computed(() => mailbox.savedSplit.value?.enabled && !mailbox.splitError.value && (!mailbox.savedSplit.value.hideWhenEmpty || mailbox.savedTotal.value !== 0));
 async function closeSplitEditor(restoreFocus = true): Promise<void> {
   editingSplit.value = false;
@@ -135,7 +135,7 @@ function bulkMembers(): ConversationRef[] | null {
 function bulkActionAvailable(id: BrowsingActionId): boolean {
   if (!bulkMembers()) return false;
   if (id === 'archive') return mailbox.context.value !== 'done' && mailboxActionsEnabled.value;
-  if (id === 'unarchive') return mailbox.context.value === 'done' && mailboxActionsEnabled.value;
+  if (id === 'unarchive') return (mailbox.context.value === 'done' || mailbox.context.value === 'search') && mailboxActionsEnabled.value;
   if (id === 'read' || id === 'unread' || id === 'star' || id === 'unstar') return gmailActionsEnabled.value;
   return false;
 }
@@ -423,6 +423,7 @@ async function openDrawer(name: UtilityDrawer, entry: 'drawer' | 'toggle' = 'dra
   if (drawer.value === 'drafts' && name !== 'drafts') {
     if (!(await releaseDraftsDrawer())) return;
   }
+  mailbox.invalidateSearchIntent();
   // Disclosures are mutually exclusive: opening a utility surface dismisses
   // the contact disclosure so both fixed regions never coexist.
   contactDisclosure.value = false;
@@ -610,7 +611,54 @@ const contactContext = computed<ContactContext>(() => (readerOpen.value ? 'open'
 // ---------------------------------------------------------------------------
 
 // Context history is account-scoped and stores references/geometry, never indices.
-interface ContextEntry extends ReaderOrigin { starredOnly: boolean; context: BrowseContext; accountId: string; loadedDonePages: number; doneBoundary: DoneBoundary | null }
+interface ContextEntry extends ReaderOrigin { starredOnly: boolean; search?: SearchVisit; context: BrowseContext; accountId: string; loadedDonePages: number; doneBoundary: DoneBoundary | null }
+const searchVisible = ref(false);
+const searchDraft = ref('');
+const searchInput = ref<HTMLInputElement | null>(null);
+const cachedSearch = ref(false);
+async function revealSearch(): Promise<void> {
+  if (!accountReady.value || drawer.value || contactDisclosure.value) return;
+  searchVisible.value = true;
+  searchDraft.value = mailbox.searchQuery.value;
+  await nextTick();
+  searchInput.value?.focus();
+}
+async function submitSearch(query = searchDraft.value): Promise<void> {
+  if (!accountId.value) return;
+  if (drawer.value === 'drafts' && !(await releaseDraftsDrawer())) return;
+  if (mailbox.context.value !== 'search') {
+    const saved = captureContext();
+    if (saved) history.value.push(saved);
+  }
+  drawer.value = null;
+  contactDisclosure.value = false;
+  searchVisible.value = true;
+  searchDraft.value = query;
+  const token = ++navigationToken;
+  await mailbox.search(query, cachedSearch.value);
+  if (token !== navigationToken) return;
+  cachedSearch.value = mailbox.searchCachedOnly.value;
+  await focusFocusedRow();
+}
+async function senderSearch(address: string): Promise<void> {
+  await submitSearch('from:"' + address + '"');
+}
+const recentMail = ref<{ ref: ConversationRef; subject: string }[]>([]);
+let recentToken = 0;
+watch([contact, accountId], async ([person, account]) => {
+  const token = ++recentToken;
+  recentMail.value = [];
+  if (!person || !account) return;
+  try {
+    const page = await props.client.searchMail({ accountId: account, query: 'from:"' + person.mailbox + '"', cursor: null, cachedOnly: true });
+    if (token === recentToken) recentMail.value = page.conversations.slice(0, 4).map((c) => ({ ref: c.ref, subject: c.subject }));
+  } catch { /* Optional cached history: never invent links on failure. */ }
+});
+async function openRecent(target: ConversationRef): Promise<void> {
+  contactDisclosure.value = false;
+  captureListOrigin(mailbox.context.value);
+  await mailbox.openConversationByRef(target);
+}
 const history = ref<ContextEntry[]>([]);
 let navigationToken = 0;
 const overlay = ref<'palette' | 'navigator' | null>(null);
@@ -652,6 +700,7 @@ function captureContext(): ContextEntry | null {
   return {
     starredOnly: mailbox.starredOnly.value,
     accountId: accountId.value, context: mailbox.context.value, surface: mailbox.context.value,
+    search: mailbox.context.value === 'search' ? { query: mailbox.searchQuery.value, cachedOnly: mailbox.searchCachedOnly.value, coverage: mailbox.searchCoverage.value, rows: [...mailbox.conversations.value], cursor: mailbox.nextCursor.value } : undefined,
     loadedDonePages: mailbox.loadedDonePages.value,
     doneBoundary: mailbox.loadedDoneBoundary.value ? { ...mailbox.loadedDoneBoundary.value } : null,
     focusedRef: entry?.focusedRef ?? mailbox.focusedRef.value,
@@ -662,6 +711,7 @@ function captureContext(): ContextEntry | null {
 async function navigateContext(context: BrowseContext, saved?: ContextEntry): Promise<boolean> {
   cancelGo();
   editingSplit.value = false;
+  searchVisible.value = false;
   if (drawer.value === 'drafts' && !(await releaseDraftsDrawer())) return false;
   const token = ++navigationToken;
   const account = accountId.value;
@@ -677,7 +727,11 @@ async function navigateContext(context: BrowseContext, saved?: ContextEntry): Pr
     return token === navigationToken && account === accountId.value;
   }
   if (readerOpen.value) mailbox.closeReader();
-  await mailbox.setContext(context, saved?.loadedDonePages, saved?.doneBoundary, saved?.starredOnly ?? (context === mailbox.context.value && mailbox.starredOnly.value));
+  if (saved?.search && context === 'search') {
+    await mailbox.restoreSearch(saved.search);
+    searchDraft.value = saved.search.query;
+    cachedSearch.value = saved.search.cachedOnly;
+  } else await mailbox.setContext(context, saved?.loadedDonePages, saved?.doneBoundary, saved?.starredOnly ?? (context === mailbox.context.value && mailbox.starredOnly.value));
   if (token !== navigationToken || account !== accountId.value) return false;
   await nextTick();
   if (saved && mailbox.listState.value !== 'ready') return false;
@@ -704,6 +758,8 @@ watch(accountId, () => {
   editingSplit.value = false;
   ++navigationToken;
   history.value = [];
+  searchVisible.value = false;
+  searchDraft.value = '';
   origin.value = null;
   overlay.value = null;
   // Group detail is account-scoped: never keep an old-account expansion.
@@ -783,6 +839,9 @@ function resolveOriginFocus(originState: ReaderOrigin): ConversationRef | null {
  * An Activity-origin Back reopens Activity with the saved Inbox anchor.
  */
 function closeReader(explicitInbox = false): Promise<void> {
+  // This App boundary is Back/destination navigation; the composable's internal
+  // closeReader also runs on search entry and must not revoke that search.
+  mailbox.invalidateSearchIntent();
   const originState = origin.value;
   const token = navigationToken;
   const account = accountId.value;
@@ -935,6 +994,7 @@ async function archiveFromReader(starred?: boolean): Promise<void> {
   const target = currentReaderTarget();
   const opened = mailbox.openRef.value;
   if (!target) return;
+  const ownsNavigation = mailbox.captureNavigationIntent();
   // ACTION-TIME ordering: capture the account-scoped snapshot ordering BEFORE
   // the archive mutates the inbox, and resolve the surviving next/previous
   // neighbors from THIS ordering after the refresh. A concurrent reorder
@@ -946,8 +1006,9 @@ async function archiveFromReader(starred?: boolean): Promise<void> {
     .filter((row) => row.ref.accountId === target.accountId)
     .map((row) => ({ accountId: row.ref.accountId, conversationId: row.ref.conversationId }));
   const receipt = starred === undefined ? await mailbox.setArchived(target, true) : await mailbox.setStarred(target, starred);
-  // A late receipt must not drag the user back after they navigate or close.
-  if (!receipt || mailbox.openRef.value !== opened || mailbox.listState.value !== 'ready') return;
+  // Acceptance stands, but its navigation must not supersede a newer intent
+  // (including a search still awaiting cancellation with the same openRef).
+  if (!receipt || !ownsNavigation() || mailbox.openRef.value !== opened || mailbox.listState.value !== 'ready') return;
   const op = mailbox.activity.value.find((item) => item.id === receipt.operationId);
   if (op?.status === 'failed') return;
   // An Activity-origin reader must not advance into unrelated Inbox mail.
@@ -1037,6 +1098,7 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   if (id === 'toggle-unread-filter') return !!accountId.value && !editingSplit.value && !drawer.value && !contactDisclosure.value;
   if (id === 'saved') return !!mailbox.savedSplit.value?.enabled && !mailbox.splitError.value;
   if (['inbox', 'done', 'activity'].includes(id)) return !!accountId.value;
+  if (id === 'search') return !!accountId.value && !drawer.value && !contactDisclosure.value;
   if (id === 'account') return gmailMode.value;
   if (id === 'drafts') return !!accountId.value;
   if (id === 'back') return readerOpen.value || history.value.length > 0;
@@ -1060,7 +1122,8 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   if (id === 'read' || id === 'unread' || id === 'star' || id === 'unstar') return gmailActionsEnabled.value;
   if (mailbox.context.value === 'starred' && !readerOpen.value) return false;
   if (!mailboxActionsEnabled.value) return false;
-  const inInbox = readerOpen.value ? mailbox.conversation.value?.isInInbox : mailbox.context.value !== 'done';
+  const inInbox = readerOpen.value ? mailbox.conversation.value?.isInInbox : mailbox.context.value !== 'done' && mailbox.context.value !== 'search';
+  if (!readerOpen.value && mailbox.context.value === 'search') return true;
   return id === 'archive' ? inInbox === true : inInbox === false;
 }
 /** Keep permission-blocked star commands discoverable without allowing writes. */
@@ -1111,6 +1174,7 @@ async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): 
       await nextTick();
       if (actionAvailable(id) && !overlay.value) editingSplit.value = true;
       return;
+    case 'search': await revealSearch(); return;
     case 'inbox': await navigateToInbox(); return;
     case 'saved': await navigateContext('saved'); return;
     case 'done': await navigateContext('done'); return;
@@ -1229,6 +1293,7 @@ function onKeydown(event: KeyboardEvent): void {
   if (isEditableTarget(event.target)) return;
 
   const key = event.key;
+  if (key === '/' && actionAvailable('search')) { event.preventDefault(); void executeAction('search'); return; }
   const readerIsOpen = readerOpen.value;
 
   if (key === 'Escape') {
@@ -1436,6 +1501,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
     case 'not_found':
       return 'not found';
     case 'invalid_request':
+      if (error.field === 'searchQuery') return 'unsupported search syntax. Use text, straight-quoted phrases, from:, to:, subject:, AND, OR and -exclusions.';
       if (error.field === 'cachedDoneRestoreRange') return 'cached Done changed beyond the restoration limit; retry or return to Inbox';
       return `invalid request (field: ${error.field ?? '?'})`;
     case 'request_id_conflict':
@@ -1494,6 +1560,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
       <div class="app-title-row">
         <span class="rail-brand">Email</span>
         <h1 class="app-title" data-test="inbox-title">{{ contextTitle }}</h1>
+        <button v-if="accountId" type="button" :disabled="!actionAvailable('search')" data-test="search-trigger" :title="actionLabel('search')" @click="executeAction('search')">Search</button>
         <button type="button" data-test="palette-trigger" ref="paletteButton" title="Commands (Cmd+K in native app)" @click="openOverlay('palette')">Commands</button>
         <button v-if="gmailMode && !readerOpen && mailbox.context.value !== 'starred'" type="button" data-test="starred-filter" :aria-pressed="mailbox.starredOnly.value" :disabled="mailbox.listState.value !== 'ready'" @click="toggleStarFilter()">Starred only (cached)</button>
         <button type="button" data-test="navigator-trigger" title="Destinations (Left from list)" @click="openOverlay('navigator')">Destinations</button>
@@ -1510,7 +1577,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
         {{ BROWSER_PREVIEW_DISCLOSURE }}
       </p>
       <p class="status-line" data-test="status-line">
-        <span data-test="inbox-count">{{ mailbox.conversations.value.length }} {{ mailbox.context.value === 'inbox' ? 'in inbox' : `loaded in ${contextTitle}` }}</span>
+        <span data-test="inbox-count">{{ mailbox.conversations.value.length }} {{ mailbox.context.value === 'inbox' ? 'in inbox' : mailbox.context.value === 'search' ? 'search results loaded · total unknown' : `loaded in ${contextTitle}` }}</span>
         <span v-if="gmailMode && !mailboxActionsEnabled" data-test="mailbox-access-hint">
           {{ accountStatus?.mutationAccess === 'upgrading' ? 'Mailbox permission pending.' : 'Gmail is read-only.' }}
           <button type="button" @click="openDrawer('account')">Review access in Account</button>
@@ -1617,6 +1684,18 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
         </nav>
 
         <section class="central" :aria-label="readerOpen ? 'Reader' : 'Conversation list'" :inert="centralCovered || undefined" data-test="central-surface">
+          <form v-if="(searchVisible || mailbox.context.value === 'search') && !readerOpen" class="mail-search" role="search" @submit.prevent="submitSearch()">
+            <label for="mail-query">Find mail</label>
+            <div class="mail-search-entry">
+              <input id="mail-query" ref="searchInput" v-model="searchDraft" type="search" maxlength="512" aria-describedby="search-help" data-test="search-input" @keydown.esc.stop.prevent="searchVisible = false; mailbox.context.value === 'search' ? contextBack() : focusFocusedRow()" />
+              <button type="submit" data-test="search-submit">Search</button>
+              <button v-if="mailbox.context.value === 'search'" type="button" @click="contextBack()">Back to previous context</button>
+            </div>
+            <label class="search-cache-toggle"><input v-model="cachedSearch" type="checkbox" /> Cached mail only</label>
+            <p id="search-help">Use from:, to:, subject:, straight-quoted phrases, AND, OR, or -exclusions. AND binds before OR. Dates, labels, Cc/Bcc and parentheses are not supported.</p>
+            <p v-if="mailbox.context.value === 'search'" role="status" data-test="search-coverage">{{ mailbox.listState.value === 'loading' ? 'Searching… coverage not yet known.' : mailbox.listState.value === 'error' ? 'Search did not complete. Retry, edit the query, or choose cached mail only.' : mailbox.searchCoverage.value === 'cached_incomplete' ? 'Cached content only — incomplete mailbox coverage. Missing or HTML-only content may not match.' : 'Online · scans 20 mailbox candidates per page, including older archived mail. Spam/Trash excluded. A page can have no matches; continue to scan older mail.' }}</p>
+            <p v-if="mailbox.listError.value && mailbox.listState.value === 'ready'" role="alert">{{ errorText(mailbox.listError.value) }}</p>
+          </form>
           <template v-if="!readerOpen">
             <SelectionBar
               v-if="selectedCount > 0 && mailbox.listState.value === 'ready'"
@@ -1645,7 +1724,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               ref="emptyState"
               tabindex="-1"
             >
-              {{ mailbox.unreadOnly.value ? 'No known unread conversations in this view. Use Commands → Show All Conversations to turn off the unread filter; unknown read states are not included.' : mailbox.starredOnly.value ? 'No known starred conversations in this cached view; unknown facts and uncached mail are not included.' : mailbox.context.value === 'saved' ? 'No Inbox conversations match this saved split. Edit the sender or domain criteria, or return to Inbox.' : mailbox.context.value === 'inbox' ? 'No conversations are currently in the inbox. Archived conversations stay recoverable from Activity.' : mailbox.nextCursor.value ? 'No conversations on this cache page; more cached candidates are available.' : mailbox.context.value === 'starred' ? 'No known starred conversations in this local cache; unknown and uncached mail is not included.' : 'No known archived conversations in this local cache.' }}
+              {{ mailbox.context.value === 'search' ? (mailbox.nextCursor.value ? 'No matches on this candidate page. Continue scanning older mail below.' : 'No matching conversations in the searched content.') : mailbox.unreadOnly.value ? 'No known unread conversations in this view. Use Commands → Show All Conversations to turn off the unread filter; unknown read states are not included.' : mailbox.starredOnly.value ? 'No known starred conversations in this cached view; unknown facts and uncached mail are not included.' : mailbox.context.value === 'saved' ? 'No Inbox conversations match this saved split. Edit the sender or domain criteria, or return to Inbox.' : mailbox.context.value === 'inbox' ? 'No conversations are currently in the inbox. Archived conversations stay recoverable from Activity.' : mailbox.nextCursor.value ? 'No conversations on this cache page; more cached candidates are available.' : mailbox.context.value === 'starred' ? 'No known starred conversations in this local cache; unknown and uncached mail is not included.' : 'No known archived conversations in this local cache.' }}
             </p>
             <InboxList
               v-else
@@ -1665,7 +1744,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               @select-toggle="toggleRowSelection"
               @select-range="rangeSelectRow"
             />
-            <button v-if="mailbox.nextCursor.value" type="button" :disabled="mailbox.loadingMore.value || mailbox.listState.value !== 'ready'" data-test="done-more" @click="mailbox.loadMore()">Load more {{ contextTitle }}</button>
+            <button v-if="mailbox.nextCursor.value" type="button" :disabled="mailbox.loadingMore.value || mailbox.listState.value !== 'ready'" data-test="done-more" @click="mailbox.loadMore()">{{ mailbox.context.value === 'search' ? 'Continue searching older mail' : `Load more ${contextTitle}` }}</button>
           </template>
           <section v-else class="reader-pane" aria-label="Reader">
             <p
@@ -1711,7 +1790,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
           ref="contactColumnEl"
           :inert="centralCovered || undefined"
         >
-          <ContactPane :contact="contact" :context="contactContext" />
+          <ContactPane :contact="contact" :context="contactContext" :recent="recentMail" @search-sender="senderSearch" @open-recent="openRecent" />
         </aside>
 
         <div
@@ -1822,7 +1901,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             <h2>Contact</h2>
             <button type="button" data-test="contact-disclosure-close" @click="closeContactDisclosure()">Close</button>
           </header>
-          <ContactPane :contact="contact" :context="contactContext" />
+          <ContactPane :contact="contact" :context="contactContext" :recent="recentMail" @search-sender="senderSearch" @open-recent="openRecent" />
         </div>
       </template>
     </main>

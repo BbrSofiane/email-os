@@ -979,6 +979,35 @@ impl Store {
         })
     }
 
+    pub(crate) fn search_mail(
+        &self,
+        request: &crate::search::SearchRequest,
+    ) -> Result<crate::search::SearchPage, MailError> {
+        self.persistence_gate()?;
+        if request.account_id != ACCOUNT_ID {
+            return Err(MailError::NotFound);
+        }
+        let conn = self.lock_conn()?;
+        let ids = conn
+            .prepare("SELECT conversation_id FROM conversations WHERE account_id = ?1")
+            .map_err(|_| MailError::StorageUnavailable)?
+            .query_map([ACCOUNT_ID], |row| row.get::<_, String>(0))
+            .map_err(|_| MailError::StorageUnavailable)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        drop(conn);
+        let rows = ids
+            .into_iter()
+            .map(|id| {
+                self.get_conversation(&ConversationRef {
+                    account_id: ACCOUNT_ID.into(),
+                    conversation_id: id,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        crate::search::cached_page(request, rows)
+    }
+
     pub(crate) fn list_cached_done(
         &self,
         request: &crate::dto::CachedDoneRequest,
