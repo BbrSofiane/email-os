@@ -282,6 +282,13 @@ button:focus-visible {
   cursor: default;
 }
 
+/* While the previous thread is held for a fast J/K swap the actions stay
+   disabled (never actionable) but do not dim: dimming for under 120ms is a
+   flicker. They dim only once the loading presentation shows. */
+.header-glyph.header-glyph-held:disabled {
+  opacity: 1;
+}
+
 .header-glyph-icon {
   width: 1rem;
   height: 1rem;
@@ -1317,6 +1324,19 @@ button:focus-visible {
   font-weight: var(--weight-strong);
   line-height: var(--leading-headline);
   overflow-wrap: anywhere;
+}
+
+/* Loading identity: the list row's sender and date under the subject, then one
+   quiet line. No motion; same type scale as the loaded reader. */
+.reader-loading-identity {
+  display: flex;
+  gap: 12px;
+  margin: 0.2rem 0;
+  color: var(--text-secondary);
+}
+
+.reader-loading-quiet {
+  color: var(--text-secondary);
 }
 
 .reader-context-note {

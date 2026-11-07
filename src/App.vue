@@ -776,8 +776,31 @@ const readerContact = computed<ContactInfo | null>(() => {
   return message ? { displayName: message.from.displayName, mailbox: message.from.mailbox } : null;
 });
 
+/** The list row of the open reference: the list's own, truthful identity data. */
+const openRow = computed(() => {
+  const opened = mailbox.openRef.value;
+  return opened ? mailbox.conversations.value.find((row) => sameConversation(row.ref, opened)) ?? null : null;
+});
+const readerLoading = computed(() => readerOpen.value && mailbox.detailState.value === 'loading');
+/** What the reader may say about a still-loading target, from the list row only. */
+const readerLoadingIdentity = computed(() => {
+  const row = readerLoading.value ? openRow.value : null;
+  if (!row) return null;
+  const primary = row.primaryCorrespondent;
+  return {
+    subject: row.subject,
+    sender: primary ? primary.displayName ?? primary.mailbox : null,
+    at: row.lastMessageAt ?? null,
+  };
+});
+
 const contact = computed<ContactInfo | null>(() => {
   if (!readerOpen.value) return listContact.value;
+  // While the target loads, the list row's sender is the only truthful source.
+  if (readerLoading.value) {
+    const primary = mailbox.listState.value === 'ready' ? openRow.value?.primaryCorrespondent : undefined;
+    return primary ? { displayName: primary.displayName, mailbox: primary.mailbox } : null;
+  }
   // A participant override applies only while the referenced message still
   // exists on the open conversation: late blur/leave events, background
   // removals, and account changes cannot leak a stale contact.
@@ -1235,13 +1258,32 @@ async function moveReaderConversation(delta: number): Promise<void> {
   if (mailbox.listState.value !== 'ready') return;
   const target = resolveReaderNeighbor(delta);
   if (!target) return;
+  lastReaderMove = delta < 0 ? -1 : 1;
   // Hidden list focus must not move; the open reference is the reader cursor.
-  await mailbox.openConversationByRef(target);
+  await mailbox.openNeighbor(target);
 }
 
 /** Reader previous/next chevrons: the same neighbor rule as J/K. Hidden (undefined)
  * where J/K are no-ops (Activity/Reminders/Trash readers); disabled at the ends. */
 const readerNavigates = computed(() => readerOpen.value && origin.value?.surface !== 'activity' && origin.value?.surface !== 'reminders' && !trashReader.value);
+
+// Read-only neighbor prefetch (same getConversation call as opening) for the
+// readers that allow J/K, in the direction of the last move (next by default).
+let lastReaderMove: 1 | -1 = 1;
+watch(readerOpen, (open) => { if (!open) lastReaderMove = 1; });
+watch(
+  () => {
+    if (!readerNavigates.value || mailbox.detailState.value !== 'ready' || mailbox.listState.value !== 'ready') return null;
+    const shown = mailbox.conversation.value;
+    if (!shown || !sameConversation(shown.ref, mailbox.openRef.value)) return null;
+    // `shown` changes after every background refresh, which re-arms the prefetch.
+    return [shown, resolveReaderNeighbor(lastReaderMove)] as const;
+  },
+  (armed) => {
+    if (armed?.[1]) mailbox.prefetchConversation(armed[1]);
+  },
+  { immediate: true },
+);
 const canMoveReaderPrev = computed(() => readerNavigates.value ? mailbox.listState.value === 'ready' && resolveReaderNeighbor(-1) !== null : undefined);
 const canMoveReaderNext = computed(() => readerNavigates.value ? mailbox.listState.value === 'ready' && resolveReaderNeighbor(1) !== null : undefined);
 
@@ -2216,7 +2258,8 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             </div>
             <ReaderView
               ref="readerView"
-              :conversation="mailbox.conversation.value"
+              :conversation="mailbox.conversation.value ?? mailbox.heldConversation.value"
+              :loading-identity="readerLoadingIdentity"
               :state="mailbox.detailState.value"
               :error="mailbox.detailError.value"
               :command-in-flight="mailbox.commandInFlight.value || mailbox.bulkUnresolved.value"
@@ -2331,7 +2374,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
           ref="contactColumnEl"
           :inert="centralCovered || undefined"
         >
-          <ContactPane :contact="contact" :context="contactContext" :recent="recentMail" :compose-target="composeTarget" @search-sender="senderSearch" @open-recent="openRecent" />
+          <ContactPane :contact="contact" :loading="readerLoading" :context="contactContext" :recent="recentMail" :compose-target="composeTarget" @search-sender="senderSearch" @open-recent="openRecent" />
         </aside>
 
         <div
@@ -2450,7 +2493,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             <h2>Contact</h2>
             <button type="button" data-test="contact-disclosure-close" @click="closeContactDisclosure()">Close</button>
           </header>
-          <ContactPane :contact="contact" :context="contactContext" :recent="recentMail" :compose-target="composeTarget" @search-sender="senderSearch" @open-recent="openRecent" />
+          <ContactPane :contact="contact" :loading="readerLoading" :context="contactContext" :recent="recentMail" :compose-target="composeTarget" @search-sender="senderSearch" @open-recent="openRecent" />
         </div>
       </template>
       <!-- Bottom dock of the list column (DESIGN.md "In-flow Notices"): the

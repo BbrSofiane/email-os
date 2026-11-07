@@ -28,6 +28,8 @@ const props = withDefaults(defineProps<{
   recent?: { ref: ConversationRef; subject: string }[];
   /** Reply target while a draft editor is active; `null` renders no compose line. */
   composeTarget?: ContactInfo | null;
+  /** The open conversation is still loading: an absent contact is not yet known, not absent. */
+  loading?: boolean;
 }>(), { composeTarget: null });
 
 const emit = defineEmits<{ searchSender: [mailbox: string]; openRecent: [ref: ConversationRef] }>();
@@ -130,7 +132,7 @@ async function copyValue(label: 'name' | 'email', value: string): Promise<void> 
         ><PaneGlyph name="copy" /><span class="visually-hidden">Copy email</span></button>
       </p>
     </div>
-    <p v-else class="contact-unknown" data-test="contact-unknown">
+    <p v-else-if="!props.loading" class="contact-unknown" data-test="contact-unknown">
       No correspondent information is available.
     </p>
     <section v-if="props.contact && props.recent?.length" class="contact-recent" aria-label="Recent cached mail from sender">

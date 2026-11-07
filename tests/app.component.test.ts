@@ -17,7 +17,8 @@ import {
   openUtilityDrawer,
   type BrowserFake,
 } from './helpers';
-import { createReaderFixtureClient, type ReaderFixture } from './reader.fixture';
+import { createReaderFixtureClient, readerRef, type ReaderFixture } from './reader.fixture';
+import { READER_LOADING_DELAY_MS } from '../src/composables/useMailbox';
 
 function keydown(init: KeyboardEventInit & { keyCode?: number }): KeyboardEvent {
   const event = new KeyboardEvent('keydown', { bubbles: true, ...init });
@@ -387,7 +388,8 @@ describe('App (Slice 01 shell)', () => {
     await w.find('[data-test="conversation-row-conv-02"]').trigger('click');
     await flushPromises();
     expect(w.find('[data-test="reader-loading"]').exists()).toBe(true);
-    expect(w.find('[data-test="reader-archive-toggle"]').exists()).toBe(false);
+    // The header action stays mounted but disabled: it supplies no target while loading.
+    expect(w.find('[data-test="reader-archive-toggle"]').attributes('disabled')).toBeDefined();
     window.dispatchEvent(keydown({ key: 'e' }));
     await flushPromises();
     expect(counted.commands).toHaveLength(0);
@@ -1564,12 +1566,29 @@ describe('App UX-02 reader session', () => {
   it('keeps a stale delayed detail from replacing a newer cursor and refuses actions while loading', async () => {
     const w = mountReaderApp();
     await settle();
+    // read-02 is prefetched after read-01 became ready; make that in-flight
+    // response slow so J has to wait for it (the neighbor is not cached yet).
+    const real = fixture.client.getConversation.bind(fixture.client);
+    const staleRead02 = await real(readerRef('read-02'));
+    const slow = deferred<Awaited<ReturnType<MailClient['getConversation']>>>();
+    let delayedOnce = false;
+    fixture.client.getConversation = (target, searchContext) => {
+      if (target.conversationId === 'read-02' && !delayedOnce) { delayedOnce = true; return slow.promise; }
+      return real(target, searchContext);
+    };
     await openReader(w, 'read-01');
-    fixture.controls.delayNextDetail(60);
-    window.dispatchEvent(keydown({ key: 'j' })); // read-02 → loading, response delayed
+    window.dispatchEvent(keydown({ key: 'j' })); // read-02 → response pending
+    await flushPromises();
+    // Within the loading delay the previous conversation stays on screen but supplies no action target.
+    expect(readerSubject(w)).toBe('Reader journey thread');
+    expect(w.find('[data-test="reader-loading"]').exists()).toBe(false);
+    window.dispatchEvent(keydown({ key: 'e' }));
+    await flushPromises();
+    expect(fixture.controls.archiveCommands).toHaveLength(0);
+    // Past the delay the loading presentation shows the target's list identity, never the old body.
+    await new Promise((resolve) => setTimeout(resolve, READER_LOADING_DELAY_MS + 30));
     await flushPromises();
     expect(w.find('[data-test="reader-loading"]').exists()).toBe(true);
-    // A loading detail supplies no action target.
     window.dispatchEvent(keydown({ key: 'e' }));
     await flushPromises();
     expect(fixture.controls.archiveCommands).toHaveLength(0);
@@ -1587,7 +1606,7 @@ describe('App UX-02 reader session', () => {
     expect(readerSubject(w)).toBe('Changed neighbor read-02');
     // Now let the stale read-02 response (old subject) settle: it must not
     // replace the newer cursor's state.
-    await new Promise((resolve) => setTimeout(resolve, 80));
+    slow.resolve(staleRead02);
     await settle();
     expect(readerSubject(w)).toBe('Changed neighbor read-02');
     expect(w.find('[data-test="reader-loading"]').exists()).toBe(false);

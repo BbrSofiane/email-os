@@ -42,7 +42,7 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
   async function openReaderAndPrepareReply(w: VueWrapper): Promise<void> {
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
-    await w.find('[data-test="reader"]').find('[data-test="prepare-reply"]').trigger('click');
+    await w.find('[data-test="prepare-reply"]').trigger('click');
     await flushPromises();
     await waitFor(() => w.find('[data-test="reply-composer"]').exists());
     await flushPromises();

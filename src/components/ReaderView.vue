@@ -39,6 +39,11 @@ const props = defineProps<{
   commandInFlight: boolean;
   /** The conversation reference the shell currently wants displayed. */
   openRef: ConversationRef | null;
+  /**
+   * Target identity from the list's own row, shown while the target loads and
+   * no previous conversation is held. Never message content.
+   */
+  loadingIdentity?: { subject: string; sender: string | null; at: string | null } | null;
   /** Gmail mode: archive/unarchive controls are hidden, not just disabled. */
   readOnly?: boolean;
   browsingOnly?: boolean;
@@ -124,8 +129,17 @@ const replySourceId = `reader-reply-source-${useId()}`;
 const replyTargetLabel = computed(() => latestMessage.value
   ? `Reply targets the latest message from ${latestMessage.value.from.displayName ?? latestMessage.value.from.mailbox}`
   : '');
+/** Conversation-specific actions exist only for a ready conversation. */
+const actionable = computed(() => props.state === 'ready' && !!props.conversation);
+/**
+ * A previous conversation kept on screen while the J/K target loads. It is
+ * display only: nothing in it is actionable as if it were the open thread.
+ */
+const held = computed(() => props.state === 'loading' && !!props.conversation && keyOfDisplayed() === null);
+/** Header actions stay mounted (disabled, not removed) for as long as a conversation is open. */
+const actionsShown = computed(() => props.openRef !== null || actionable.value);
 const hasMetaRow = computed(() => {
-  if (props.state !== 'ready' || !props.conversation) return false;
+  if (!(actionable.value || held.value)) return false;
   return !!(props.readOnly || props.showReadControls || bulkScope.value);
 });
 
@@ -339,13 +353,18 @@ async function scheduleLoadingFocus(seq: number): Promise<void> {
  * (the article stays the empty/error fallback). The delayed focus is guarded
  * against a changed reference, a newer update, and inert ancestors.
  */
-async function schedulePostUpdate(key: string, focusIntent: boolean, readerHadFocus: boolean, restoringAfterLoading: boolean): Promise<void> {
+async function schedulePostUpdate(key: string, focusIntent: boolean, readerHadFocus: boolean, restoringAfterLoading: boolean, switched: boolean): Promise<void> {
   const seq = ++updateSeq;
   await nextTick();
   if (seq !== updateSeq || keyOfDisplayed() !== key) return;
   const visit = visits.get(key);
   const scroller = scrollerEl.value;
-  if (visit && scroller) restoreScroll(visit, scroller);
+  if (visit && scroller) {
+    // A returning visit restores its anchor; a first visit starts at the top
+    // instead of inheriting the outgoing conversation's offset.
+    if (visit.anchor) restoreScroll(visit, scroller);
+    else if (switched) scroller.scrollTop = 0;
+  }
   const messages = props.conversation?.messages ?? [];
   // A replacement that removed the focused message element must not drop
   // reader focus to <body>; resolve it to the visit's active message toggle.
@@ -438,7 +457,7 @@ watch(
     pendingFocusRestore = false;
     // A same-reference replacement never changes focus; a visit switch or a
     // reversed loading transition does.
-    void schedulePostUpdate(key, key !== previousKey || restoringAfterLoading, readerHadFocus, restoringAfterLoading);
+    void schedulePostUpdate(key, key !== previousKey || restoringAfterLoading, readerHadFocus, restoringAfterLoading, key !== previousKey);
   },
   { immediate: true, flush: 'pre' },
 );
@@ -568,7 +587,7 @@ function collapseMessage(visit: VisitState, id: string): void {
 
 function toggleMessage(message: Message): void {
   const visit = visitRef.value;
-  if (!visit) return;
+  if (!visit || !actionable.value) return;
   setActive(message.id);
   if (visit.expandedIds.has(message.id)) collapseMessage(visit, message.id);
   else visit.expandedIds.add(message.id);
@@ -577,6 +596,11 @@ function toggleMessage(message: Message): void {
 function onDetailsToggle(event: Event, message: Message): void {
   const visit = visitRef.value;
   if (!visit) return;
+  if (!actionable.value) {
+    // Held content: keep the disclosure exactly as saved.
+    (event.target as HTMLDetailsElement).open = isDetailsOpen(message);
+    return;
+  }
   const open = (event.target as HTMLDetailsElement).open;
   if (open && visit.detailsOpenId !== message.id) visit.detailsOpenId = message.id;
   else if (!open && visit.detailsOpenId === message.id) {
@@ -663,36 +687,39 @@ defineExpose({
     <Teleport :to="props.actionsHost ?? undefined" :disabled="!props.actionsHost">
       <div class="reader-actions" data-test="reader-toolbar">
         <button
-          v-if="!props.readOnly && props.state === 'ready' && props.conversation && !bulkScope"
+          v-if="actionsShown && !props.readOnly && !bulkScope"
           type="button"
           class="header-glyph"
+          :class="{ 'header-glyph-held': held }"
           data-test="reader-archive-toggle"
-          :title="actionLabel(props.conversation?.isInInbox ? 'archive' : 'unarchive')"
-          :disabled="props.commandInFlight || props.navigationUnavailable"
-          @click="props.conversation.isInInbox ? emit('archive') : emit('unarchive')"
-        ><HeaderGlyph name="done" /><span class="visually-hidden">{{ props.conversation.isInInbox ? 'Mark done (E)' : 'Mark not done' }}</span></button>
+          :title="actionLabel(props.conversation?.isInInbox === false ? 'unarchive' : 'archive')"
+          :disabled="!actionable || props.commandInFlight || props.navigationUnavailable"
+          @click="props.conversation?.isInInbox === false ? emit('unarchive') : emit('archive')"
+        ><HeaderGlyph name="done" /><span class="visually-hidden">{{ props.conversation?.isInInbox === false ? 'Mark not done' : 'Mark done (E)' }}</span></button>
         <button
-          v-if="props.showReadControls && props.conversation && !bulkScope && props.conversation.isRead !== undefined"
+          v-if="actionsShown && props.showReadControls && !bulkScope && (!props.conversation || props.conversation.isRead !== undefined)"
           type="button"
           class="header-glyph"
+          :class="{ 'header-glyph-held': held }"
           data-test="reader-toggle-read"
-          :title="actionLabel(props.conversation.isRead ? 'unread' : 'read')"
-          :disabled="props.commandInFlight || props.navigationUnavailable"
-          @click="emit('setRead', !props.conversation.isRead)"
-        ><HeaderGlyph :name="props.conversation.isRead ? 'unread' : 'read'" /><span class="visually-hidden">Mark {{ props.conversation.isRead ? 'unread' : 'read' }}</span></button>
-        <button v-if="props.state === 'ready' && props.conversation" type="button" class="header-glyph" data-test="files-links" title="Files and links — ⌘O" @click="emit('attachments', $event.currentTarget as HTMLElement)"><HeaderGlyph name="files" /><span class="visually-hidden">Files and links (⌘O)</span></button>
+          :title="actionLabel(props.conversation?.isRead ? 'unread' : 'read')"
+          :disabled="!actionable || props.commandInFlight || props.navigationUnavailable"
+          @click="emit('setRead', !props.conversation?.isRead)"
+        ><HeaderGlyph :name="props.conversation?.isRead ? 'unread' : 'read'" /><span class="visually-hidden">Mark {{ props.conversation?.isRead ? 'unread' : 'read' }}</span></button>
+        <button v-if="actionsShown" type="button" class="header-glyph" :class="{ 'header-glyph-held': held }" data-test="files-links" title="Files and links — ⌘O" :disabled="!actionable" @click="emit('attachments', $event.currentTarget as HTMLElement)"><HeaderGlyph name="files" /><span class="visually-hidden">Files and links (⌘O)</span></button>
         <button
-          v-if="!props.browsingOnly && props.state === 'ready' && props.conversation"
+          v-if="actionsShown && !props.browsingOnly"
           type="button"
           class="header-glyph"
+          :class="{ 'header-glyph-held': held }"
           data-test="prepare-reply"
-          :title="replyBlockedReason ?? replyTargetLabel"
-          :aria-describedby="replySourceId"
-          :disabled="!!replyBlockedReason"
+          :title="actionable ? (replyBlockedReason ?? replyTargetLabel) : 'Prepare reply'"
+          :aria-describedby="actionable ? replySourceId : undefined"
+          :disabled="!actionable || !!replyBlockedReason"
           @click="prepareReply"
         ><HeaderGlyph name="reply" /><span class="visually-hidden">Prepare reply</span></button>
         <span
-          v-if="!props.browsingOnly && props.state === 'ready' && latestMessage"
+          v-if="!props.browsingOnly && actionable && latestMessage"
           :id="replySourceId"
           class="visually-hidden"
           data-test="reply-source-label"
@@ -703,7 +730,17 @@ defineExpose({
     </Teleport>
 
     <div class="reader-scroll" ref="scrollerEl" data-test="reader-scroll">
-      <p v-if="props.state === 'loading'" data-test="reader-loading">Loading conversation…</p>
+      <template v-if="props.state === 'loading' && !held">
+        <!-- The list row's own subject, sender and date: truthful while the detail loads. -->
+        <template v-if="props.loadingIdentity">
+          <h2 class="reader-subject" data-test="reader-loading-subject">{{ props.loadingIdentity.subject }}</h2>
+          <p class="reader-loading-identity" data-test="reader-loading-identity">
+            <span v-if="props.loadingIdentity.sender" data-test="reader-loading-sender">{{ props.loadingIdentity.sender }}</span>
+            <time v-if="props.loadingIdentity.at" :datetime="machineDateTime(props.loadingIdentity.at)" :title="fullDateLabel(props.loadingIdentity.at)">{{ compactDateLabel(props.loadingIdentity.at) }}</time>
+          </p>
+        </template>
+        <p data-test="reader-loading" :class="{ 'reader-loading-quiet': props.loadingIdentity }">Loading conversation…</p>
+      </template>
       <p v-else-if="props.state === 'error' && props.error" data-test="reader-error" role="alert">
         {{ describeError(props.error) }}
       </p>
@@ -714,8 +751,8 @@ defineExpose({
         <div v-if="hasMetaRow" class="reader-meta-row" data-test="reader-meta-row">
           <span v-if="(props.readOnly || props.showReadControls)" data-test="reader-read-state">{{ props.conversation.isRead === undefined ? 'Read state unknown' : props.conversation.isRead ? 'Read' : 'Unread' }}</span>
           <template v-if="props.showReadControls && !bulkScope && props.conversation.isRead === undefined">
-            <button type="button" :title="actionLabel('read')" data-test="reader-mark-read" :disabled="props.commandInFlight || props.navigationUnavailable" @click="emit('setRead', true)">Mark read</button>
-            <button type="button" :title="actionLabel('unread')" data-test="reader-mark-unread" :disabled="props.commandInFlight || props.navigationUnavailable" @click="emit('setRead', false)">Mark unread</button>
+            <button type="button" :title="actionLabel('read')" data-test="reader-mark-read" :disabled="!actionable || props.commandInFlight || props.navigationUnavailable" @click="emit('setRead', true)">Mark read</button>
+            <button type="button" :title="actionLabel('unread')" data-test="reader-mark-unread" :disabled="!actionable || props.commandInFlight || props.navigationUnavailable" @click="emit('setRead', false)">Mark unread</button>
           </template>
           <!-- Selected scope: explicit count-labelled desired-state controls, never
                a toggle derived from the OPEN conversation's state (§3.3). -->
@@ -723,19 +760,19 @@ defineExpose({
             v-if="!props.readOnly && bulkScope && bulkScope.context !== 'done'"
             type="button"
             data-test="reader-selection-archive"
-            :disabled="props.commandInFlight || props.navigationUnavailable"
+            :disabled="!actionable || props.commandInFlight || props.navigationUnavailable"
             @click="emit('archive')"
           >Mark {{ bulkScope.count }} done</button>
           <button
             v-if="!props.readOnly && bulkScope && bulkScope.context !== 'inbox'"
             type="button"
             data-test="reader-selection-unarchive"
-            :disabled="props.commandInFlight || props.navigationUnavailable"
+            :disabled="!actionable || props.commandInFlight || props.navigationUnavailable"
             @click="emit('unarchive')"
           >Mark {{ bulkScope.count }} not done</button>
           <template v-if="props.showReadControls && bulkScope">
-            <button type="button" data-test="reader-selection-mark-read" :disabled="props.commandInFlight || props.navigationUnavailable" @click="emit('setRead', true)">Mark {{ bulkScope.count }} read</button>
-            <button type="button" data-test="reader-selection-mark-unread" :disabled="props.commandInFlight || props.navigationUnavailable" @click="emit('setRead', false)">Mark {{ bulkScope.count }} unread</button>
+            <button type="button" data-test="reader-selection-mark-read" :disabled="!actionable || props.commandInFlight || props.navigationUnavailable" @click="emit('setRead', true)">Mark {{ bulkScope.count }} read</button>
+            <button type="button" data-test="reader-selection-mark-unread" :disabled="!actionable || props.commandInFlight || props.navigationUnavailable" @click="emit('setRead', false)">Mark {{ bulkScope.count }} unread</button>
           </template>
         </div>
         <p
@@ -794,6 +831,7 @@ defineExpose({
                 :data-test="`message-toggle-${message.id}`"
                 :tabindex="tabIndexFor(message)"
                 :aria-expanded="isExpanded(message) ? 'true' : 'false'"
+                :aria-disabled="actionable ? undefined : 'true'"
                 :aria-controls="bodyId(message)"
                 @click="toggleMessage(message)"
               >
@@ -808,13 +846,13 @@ defineExpose({
               <!-- Quiet reply glyph: only on the displayed latest message while it is
                    active; same gating and event as the toolbar Prepare reply. -->
               <button
-                v-if="!props.browsingOnly && props.state === 'ready' && isActive(message) && message.id === latestMessage?.id"
+                v-if="!props.browsingOnly && isActive(message) && message.id === latestMessage?.id"
                 type="button"
                 class="message-reply"
                 :data-test="`message-reply-${message.id}`"
                 aria-label="Prepare reply"
                 title="Prepare reply"
-                :disabled="!!replyBlockedReason"
+                :disabled="!actionable || !!replyBlockedReason"
                 @click="prepareReply"
               >
                 <svg class="message-reply-glyph" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">

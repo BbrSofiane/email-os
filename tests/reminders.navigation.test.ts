@@ -93,7 +93,7 @@ describe('reminder reader navigation ownership', () => {
   });
 
   it('does not let a late reminder completion overwrite a newer Inbox reader origin or J/K', async () => {
-    const { entry, neighbor, detail, pending, getConversation, setRead } = await fixture();
+    const { reminded, entry, neighbor, detail, pending, getConversation, setRead } = await fixture();
     try {
       await openReturnedReminder();
       // Explicit Inbox navigation closes the loading reader without returning
@@ -103,19 +103,23 @@ describe('reminder reader navigation ownership', () => {
       await app!.get(`[data-test="conversation-row-${entry.conversationId}"]`).trigger('click');
       await flushPromises();
       expect(app!.getComponent(ReaderView).props('conversation')?.ref).toEqual(entry);
-      expect(getConversation).toHaveBeenCalledTimes(2);
+      // Opening the Inbox reader also prefetched its next neighbor (read-only).
+      expect(getConversation.mock.calls.map(([target]) => target)).toEqual([reminded, entry, neighbor]);
 
       pending.resolve(detail);
       await flushPromises();
       expect(app!.getComponent(ReaderView).props('conversation')?.ref).toEqual(entry);
       expect(app!.findComponent(RemindersPanel).exists()).toBe(false);
+      const before = getConversation.mock.calls.length;
       await key('j');
-      expect(getConversation).toHaveBeenCalledTimes(3);
-      expect(getConversation).toHaveBeenLastCalledWith(neighbor, false);
+      // The prefetched neighbor swaps in from cache; one background revalidation
+      // follows, then the next prefetch. The late reminder detail was never reused.
+      expect(getConversation.mock.calls.slice(before)[0]).toEqual([neighbor, false]);
+      expect(getConversation.mock.calls.slice(before).every(([target]) => target.conversationId !== reminded.conversationId)).toBe(true);
       expect(app!.getComponent(ReaderView).props('conversation')?.ref).toEqual(neighbor);
+      const beforeK = getConversation.mock.calls.length;
       await key('k');
-      expect(getConversation).toHaveBeenCalledTimes(4);
-      expect(getConversation).toHaveBeenLastCalledWith(entry, false);
+      expect(getConversation.mock.calls.slice(beforeK)[0]).toEqual([entry, false]);
       expect(app!.getComponent(ReaderView).props('conversation')?.ref).toEqual(entry);
 
       await key('Escape');

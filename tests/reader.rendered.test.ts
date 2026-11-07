@@ -628,13 +628,17 @@ describe.skipIf(chromePath === '')('Reader journey (real Chrome, opt-in)', () =>
     expect(before.scrollTop).toBe(200);
     expect(before.expanded).toBe('true,true,true');
 
-    // Delay BOTH foreground detail responses; the loading state tears the old
-    // message DOM down between the scroll and the return visit.
-    await cdp!.js('window.__fixture.controls.delayNextDetail(150, 2)');
+    // The prefetched neighbor would swap in instantly. A notification drops the
+    // neighbor cache, so J has to load read-02: its response is delayed beyond
+    // the loading delay and the loading state tears the old message DOM down
+    // between the scroll and the return visit. (The notification's own
+    // background reload takes the first delay; J takes the second.)
+    await cdp!.js('window.__fixture.controls.delayNextDetail(400, 2)');
+    await cdp!.js('window.__fixture.controls.notify()');
     await press('j');
-    await cdp!.js('window.__h.wait(60)');
+    await cdp!.js('window.__h.wait(220)');
     expect(await cdp!.js(`window.__h.exists('[data-test="reader-loading"]')`)).toBe(true);
-    await cdp!.js('window.__h.wait(250)');
+    await cdp!.js('window.__h.wait(450)');
     expect(await cdp!.js(`window.__h.text('.reader-subject')`)).toBe('Neighbor thread read-02');
     await press('k');
     await cdp!.js('window.__h.wait(60)');
@@ -725,9 +729,12 @@ describe.skipIf(chromePath === '')('Reader journey (real Chrome, opt-in)', () =>
     // dispatched while B is demonstrably still loading, before any B-ready
     // snapshot — the actual A-ready -> B-loading -> A-ready lastDataKey
     // reversal (P2-04), not an ordinary A->B->A roundtrip.
+    // A notification drops the neighbor cache so J cannot swap instantly; the
+    // notification's background reload takes the first delay, J the second.
     await cdp!.js('window.__fixture.controls.delayNextDetail(1000, 2)');
+    await cdp!.js('window.__fixture.controls.notify()');
     await press('j');
-    await cdp!.js('window.__h.wait(60)');
+    await cdp!.js('window.__h.wait(220)');
     expect(await cdp!.js(`window.__h.exists('[data-test="reader-loading"]')`)).toBe(true);
     // Reader-owned focus parks on the persistent reader article, not <body>.
     expect(await activeTest()).toBe('reader');
@@ -737,7 +744,10 @@ describe.skipIf(chromePath === '')('Reader journey (real Chrome, opt-in)', () =>
     // Still loading: no B-ready snapshot has arrived. Dispatch real native K
     // NOW, reversing back to A before its last successful key ever changes.
     expect(await cdp!.js(`window.__h.exists('[data-test="reader-loading"]')`)).toBe(true);
-    expect(await cdp!.js(`window.__h.text('.reader-subject')`)).toBe(null);
+    // The loading presentation names the target from its list row and shows no
+    // message body (neither the outgoing nor the incoming one).
+    expect(await cdp!.js(`window.__h.text('[data-test="reader-loading-subject"]')`)).toBe('Neighbor thread read-02');
+    expect(await cdp!.js(`window.__h.exists('[data-test="reader-messages"]')`)).toBe(false);
     await press('k');
     // Both delayed responses settle; the stale J response is token-discarded
     // and the A-ready snapshot restores the saved visit.
