@@ -1,0 +1,12 @@
+Run `/impeccable harden` for ONE critique issue in this Email OS repo (Vue 3 + Tauri). You're in your own worktree on branch impeccable/p1-safe-g-chord, based on main (which just merged PR #18, the Superhuman-parity browsing shell).
+
+Issue [P1]: The g-chord silently falls through to a destructive key. In src/App.vue (~lines 1490 and 1547) pressing `g` starts a silent 1s `goTimer`; if the second key arrives after it expires, `e` is handled as Archive / Mark Done. A reviewer archived a conversation by accident with a slow "g e". Keyboard-first users won't notice.
+Fix direction: (1) show a visible, quiet pending hint while the chord is armed (e.g. "g…" in the header right slot or the bottom dock; reuse existing surfaces, no new chrome strip, no layout shift); (2) make expiry safe: a key arriving shortly after the window lapses must not execute a destructive command it would have been chorded with — e.g. swallow the next key after a g-timeout within a short grace window, and/or lengthen the window to ~1.5s. Pick and justify. Escape should cancel the armed chord. Preserve all existing g-chord destinations and IME/editable-field shortcut protection (see docs/ux-03-command-discovery.md and existing tests about shortcuts).
+
+How to run the impeccable skill (it isn't installed as a Claude skill here): read /Users/sofianebebert/.pi/skills/impeccable/SKILL.md, then reference/harden.md and reference/product.md in that folder, and follow them. Skip `context.mjs`; read PRODUCT.md and DESIGN.md at the repo root instead. Scripts written as `.pi/skills/impeccable/scripts/...` live at /Users/sofianebebert/.pi/skills/impeccable/scripts/. Full critique: .impeccable/critique/2026-11-07T17-54-20Z__src-components-inboxlist-vue.md.
+
+Scope: only this issue. Parallel threads handle dock status colours (ActionNotice.vue/style.css), copy, vocabulary and the command palette — keep your diff to keyboard handling plus the minimal hint UI.
+
+Verify: `pnpm install` if needed, `pnpm typecheck`, `pnpm test` (baseline on main: 646 passed, 32 skipped). Add tests with fake timers: g→e within window opens Done; g, wait past window, e does NOT archive; Esc cancels; hint visible while armed and announced appropriately.
+
+Finish: commit with a conventional message ending with `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`, push the branch, open a PR to main with `gh pr create` (body ends with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`). Do NOT merge. Report the PR URL, test counts, and the timing design you chose.
