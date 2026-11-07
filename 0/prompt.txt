@@ -1,0 +1,294 @@
+I've attached a screenshot of Superhuman's UI for view email threads. Using Impeccable, I want you to review our current UI against it
+
+[Attached image "Screenshot 2026-11-07 at 19.20.38.png" is saved at: /Users/sofianebebert/.t3/userdata/attachments/608b39a0-e7c4-4398-8a1a-b8b5df87b790-7beadb55-45ec-4dcf-90c2-72007bba7771.png]
+
+---
+
+Split the work for each priority issue to a subagent to implement the changes. Once you're done, I want screenshot or videos (where required) so I can validate the changes
+
+---
+
+In the meantime, let's copy mise.local.toml from the main worktree
+
+---
+
+Delegated task node:delegated-task:command%3Amcp%3A5fbc700b-acb2-46a4-8926-537411ca7dad%3Adelegate-task%3Ae7e0d9cd-692f-4a18-b140-63883f211bcc (Reader P1: collapsed message snippets) [completed]:
+Collapsed reader messages now show sender, a one-line snippet and a short right-aligned date. It's committed on `t3/a45e10b8` at `08e14ea`, with no push or PR. The dev server is stopped and the preview tab is closed.
+
+**What changed**
+- **Collapsed row:** sender in a 132px column, then the snippet, then the date.
+  - The snippet comes from `message.bodyText` with whitespace collapsed, cut at 140 characters with `…`. It's text-interpolated only, and an empty body shows no snippet at all.
+  - The date comes from the existing `compactDateLabel`, so no second formatter. CSS uppercases it ("9 JAN 2025"), with tabular numerals.
+  - The row is a single 24px line. The snippet clips with an ellipsis instead of wrapping.
+- **Expanded header:** sender and "to …" stay, with the same short date on the right, and the snippet is not repeated.
+- **Full date:** it's in the time element's `title`, in a visually hidden span so the accessible name still includes it, and in the Details "Sent" field.
+- **Unchanged:** `message-toggle-<id>`, `aria-expanded`, `aria-controls`, the roving tabindex and the single focusable control all work as before.
+- **Details link:** it still shows under collapsed messages, so a collapsed message is still visually two lines. That is existing behaviour, and the Details dedupe agent's issue should handle it.
+
+**Files:** `src/components/ReaderView.vue`, `src/assets/style.css`, new `src/lib/message-snippet.ts`, new `tests/message-snippet.test.ts` and `tests/reader.component.test.ts`.
+
+**Tests:** `pnpm typecheck` is clean.
+- **Added:** four snippet tests covering whitespace collapse, truncation at 140 characters, empty and null bodies, and literal markup. One reader component test covers the collapsed and expanded states, the date title and `datetime`, the accessible-name text, and the empty-body case.
+- **Full suite:** the last full run passed (705 passed, 32 skipped).
+- **Flaky under load:** two earlier runs failed. One had a single failure in `discovery.component.test.ts`, which also failed on the base commit when run alone under load. The other had 14 failures across 8 files, which I put down to my dev server and preview tab running at the same time. I didn't capture which tests failed in that run, and it didn't reproduce on a clean rerun.
+
+**Evidence** (all in `/private/tmp/claude-501/-Users-sofianebebert-workspace-worktrees-email-os-t3-8289bc5f/c76d33d1-bfb7-485b-a7f9-1da77be42a31/scratchpad/evidence/p1-snippets/`):
+- `before-reader.png` and `after-reader.png`, both at 1280x800.
+- `after-reader-1030.png`.
+- `after-reader-long-body-1030.png`, taken with a temporary long-body fixture edit that I reverted.
+- **Geometry:** the toggle height is 24px in every state. At 1280px the snippet is 701px wide with the date right-aligned at the button edge. At 1030px, with the long body, the snippet is clipped, the date column is intact and there is no horizontal scroll.
+
+**DESIGN.md notes** (I didn't edit it):
+- Reader dates: collapsed and expanded message headers now use the compact row date ("9 JAN 2025", or the time if the message is from today), with the full form in `title`, screen-reader text and Details. This replaces the earlier "reader message times are full dates" wording in item 14 and the Dates section.
+- New reader row spec:
+  - **Row height:** 24px.
+  - **Sender column:** 132px, collapsed only.
+  - **Snippet:** Body type in Ash, one line, the first 140 characters, with an ellipsis.
+  - **Date:** right-aligned Label.
+  - **Empty body:** no snippet is shown.
+- Item 16's "reader view not shown" is still true. This follows the Superhuman reader screenshot.
+
+---
+
+Delegated task node:delegated-task:command%3Amcp%3A5fbc700b-acb2-46a4-8926-537411ca7dad%3Adelegate-task%3A46973358-c8aa-493e-b9fe-46348a8b99cc (Reader P3: active message raised card) [completed]:
+P3 is done: the active message is now a flat raised card, and the latest message has a quiet reply glyph. It's committed on branch `active-message-raised-card` at `f48aac8`, with no push and no PR.
+
+**Tests:** `pnpm typecheck` is clean. The first full `pnpm test` run had 13 failures. Most were 5s timeouts and one was a `discovery.component` assertion, so I suspect load from the other agents running in parallel. I didn't confirm that against the base commit. A rerun passed in full: 43 files and 701 tests passed, 32 skipped. I added one component test in `tests/reader.component.test.ts` for the reply glyph.
+
+**What changed**
+- **Card style:** `.message.message-active` now uses `--surface-raised` instead of `--focus-fill`. It keeps the 3px inset lavender bar and the bold primary-colour sender, with no radius, no shadow and no new border. `--surface-raised` already existed, so no new token.
+- **Header row:** each message header is now a `.message-header` flex row. The toggle button is unchanged apart from taking the remaining width instead of 100%. Its `message-toggle-<id>` test id, aria attributes and tabindex are the same.
+- **Reply glyph:** a 16px SVG in a 24px sibling button, icon-muted and turning white on hover and focus.
+  - **Where it shows:** only on the latest message while it is the active one, always visible (not hover-only).
+  - **Gating:** it is hidden when browsing-only and disabled when `replyBlockedReason` is set, the same conditions as the toolbar Prepare reply. It calls the same `prepareReply()`, so it still targets the latest message.
+  - **Name:** `data-test="message-reply-<id>"`, accessible name and title "Prepare reply". `actionLabel` has no reply entry and no R shortcut exists, so I didn't invent a "(R)".
+- **Files:** `src/components/ReaderView.vue` (template wrapper and glyph; the toggle's re-indent accounts for most of the diff) and `src/assets/style.css`.
+
+**Contrast** (also in `contrast.txt` in the evidence dir)
+
+| | Before | After |
+|---|---|---|
+| Secondary text `#c0bcb6` on the active card | 4.99 on `#474644` | 6.86 on `#33312e` |
+| White body text | 9.43 | 12.97 |
+
+The icon at rest (`#8e8a87`) is 3.79 on the raised surface; hover and focus give 12.97.
+
+**Evidence**, in `/private/tmp/claude-501/-Users-sofianebebert-workspace-worktrees-email-os-t3-8289bc5f/c76d33d1-bfb7-485b-a7f9-1da77be42a31/scratchpad/evidence/p3-active-card/`:
+- `before-latest-active.png`
+- `after-latest-active.png`
+- `after-earlier-active.png` (no reply icon)
+- `after-reply-focused.png`
+- `contrast.txt`
+
+The dev server is stopped and the preview tab is closed.
+
+**DESIGN.md notes** (I didn't edit it)
+- The Colors section says Focus Stone is "the focused-row and active-message fill". It should say the active message uses Lifted Charcoal (`surface-raised`) plus the 3px bar. Focus Stone stays for the focused row and the highlighted command item.
+- Gap 16 and "Do's" could mention the reader's active message as a raised flat panel and the quiet reply glyph (Graphite, 16px glyph in a 24px target). The "Palette deltas" gap 10 line that says Rule is used "only in the reader" still holds.
+- The raised card is a tonal step with no radius or shadow, so it follows the Flat-Shell Rule and doesn't read as a card stack.
+
+**Caveats**
+- The existing 1px `--rule` top border on `.message` is still there. It is the divider between messages and is barely visible on the raised fill, so the card has a faint top hairline. I left it to keep the diff minimal.
+- The glyph sits at the far right of the header row, not directly after the date. The date still sits next to the sender, as before.
+- The header-icons agent is also working on the reply control, so expect a merge conflict in `ReaderView.vue`. My markup is self-contained.
+
+---
+
+Delegated task node:delegated-task:command%3Amcp%3A5fbc700b-acb2-46a4-8926-537411ca7dad%3Adelegate-task%3Ab6ad1bfb-6544-404e-a62a-e82c60e63982 (Reader P2: dedupe Details and focus ring) [completed]:
+Both P2 changes are done and committed on branch `t3/df5a9330` at `5f03d68`, with nothing pushed.
+
+**Tests:** `pnpm typecheck` is clean. Full `pnpm test` gave 700 passed and 32 skipped across 43 passed and 4 skipped files. The skips are the browser-driven rendered tests (including `tests/reader.rendered.test.ts` and `tests/disclosure-focus.rendered.test.ts`), which don't run here, so I did not exercise them. I added one component test in `tests/reader.component.test.ts` for the new behaviour, which passes. No existing test needed changes.
+
+**Files changed:** `src/components/ReaderView.vue`, `src/assets/style.css`, `tests/reader.component.test.ts`.
+
+**What I did:**
+1. **Details:**
+   - **Placement:** The "▸ Details" row under every message is gone. The `<details>` now sits between the header and the body. Its summary is a quiet 12px `icon-muted` "▸/▾ Details" at the top-right of the header row, and the fields open below the header.
+   - **Collapsed messages:** They are `hidden` and show nothing. I checked this in the browser: the collapsed summaries measure 0×0 and the expanded one is 48×16.
+   - **Collapsing:** A new `collapseMessage()` runs on click and on O. It clears `detailsOpenId` and any participant hover or focus override, so Escape can't target an invisible Details.
+   - **Keyboard path:** Tab from the active toggle lands on the Details summary, Enter opens it, Escape closes it and returns focus to the toggle. I checked all three in the preview.
+   - **Test ids:** All existing `data-test` ids are kept.
+2. **Focus ring:** `.message.message-active .message-toggle:focus-visible { outline: none }`. The bar, the fill and the bold sender stay as the focus cue.
+   - **Before (base):** The focused active toggle had a `2px solid` outline plus the 3px inset bar.
+   - **After:** `outline: none`, one 3px bar.
+   - **Other controls:** The new rule needs the active-message ancestor, so it only affects that toggle. A Tab to the contact-pane button still showed the 2px lavender ring, and the Details summary has its own matching ring.
+   - **Reader container:** It has no outline.
+
+**Evidence:** all under `/private/tmp/claude-501/-Users-sofianebebert-workspace-worktrees-email-os-t3-8289bc5f/c76d33d1-bfb7-485b-a7f9-1da77be42a31/scratchpad/evidence/p2-details-focus/` at 1280×800.
+- `before-expanded-focused.png`
+- `before-collapsed-focused.png`
+- `after-expanded-focused.png`
+- `after-collapsed-focused.png`
+- `after-details-open.png`
+- `after-other-control-focus-ring.png`
+
+**DESIGN.md notes** (I did not edit it):
+- **Reader message disclosure:** Details is now an in-header affordance on the expanded message only. Collapsed messages carry no Details UI, and collapsing a message closes its Details.
+- **One Signal Rule:** The active message toggle has no focus ring beyond the bar. The bar, fill and bold sender are its focus cue, so the "focus outlines" line should say that exception applies to the message toggle only.
+- **Details summary:** Its own lavender ring appears only while it is keyboard-focused.
+
+**Preview caveats:**
+- **Flaky tool:** The preview snapshot tool timed out several times, so I reopened the tab and retried once the contention passed. The saved PNGs are all valid.
+- **Other control:** The "other control" shot is the contact-pane name button, not a header or toolbar button. Tab from the collapsed message went straight there, which also confirms there is no Details tab stop on collapsed messages.
+- **Chevron glyph:** The "▸" renders small at 12px (the computed `::before` content is correct).
+- **Details row spacing:** I did not tune it beyond placement; a designer may want to adjust it.
+
+---
+
+Delegated task node:delegated-task:command%3Amcp%3A5fbc700b-acb2-46a4-8926-537411ca7dad%3Adelegate-task%3A14ece378-40cb-4777-a812-61e5babe39be (Reader P2: body type and measure) [completed]:
+Message bodies now render in the proportional face at 15px with 1.6 line height, capped at about 90 characters per line, and the fallback keeps aligned text in monospace. Full suite passes serially (704 passed, 32 skipped) and `pnpm typecheck` is clean.
+
+**Branch:** `reader-body-type-measure`, head `b00bf56` (no push, no PR)
+
+## Files changed
+- `src/assets/style.css`:
+  - new tokens `--type-reading: 0.9375rem` and `--leading-reading: 1.6`;
+  - `.message-body` is now `--font-ui` with the reading tokens and `max-width: 65ch`;
+  - new `.message-body.message-body-mono` keeps the old mono values and uses `max-width: 88ch`.
+- `src/components/ReaderView.vue`: one import and one `:class` binding.
+- `src/lib/message-body-format.ts` (new): `bodyNeedsMonospace(bodyText)`.
+- `tests/message-body-format.test.ts` (new): unit tests for the helper.
+
+Message content is still text-interpolated with `pre-wrap` and `overflow-wrap: anywhere`. `--type-mono` is unchanged. Only `.message-body` used the mono tokens, so no other surface moved. No existing test needed changing.
+
+## Monospace fallback
+I chose automatic detection over a toggle. It needs no state, no keyboard shortcut and no palette command, so it can't conflict with the other branches editing `ReaderView.vue` and `App.vue`.
+
+A body stays monospace if it has any of these:
+- a line starting with `>`, after up to 3 spaces of indent;
+- two consecutive lines with 4+ leading spaces, or a tab;
+- two or more lines with at least two `|` each.
+
+The text is never altered. The mono variant is capped at 88ch rather than 65ch, so emails hard-wrapped at 72–78 columns aren't soft-wrapped a second time.
+
+The catch is that any reply with a `>` quote will render in mono, and a prose message can't be forced into mono. If you want that, a toggle can be added later.
+
+## Measure (1280×800, default fixture)
+- **Before:** mono 13.6px, 931px wide, about 114 characters per line.
+- **After:** proportional 15px, 614px wide, left-aligned with the message header (both at x=58.4).
+- **Long prose paragraph, after:** 89, 80, 84 and 94 characters on the full lines.
+- **First attempt:** `80ch` gave about 110 characters per line. `ch` is the width of `0`, and average proportional glyphs are narrower, so I tightened it to 65ch.
+- **Quoted fixture:** the mono fallback applied and measured 720px wide at 88ch.
+
+## Evidence
+Directory: `/private/tmp/claude-501/-Users-sofianebebert-workspace-worktrees-email-os-t3-8289bc5f/c76d33d1-bfb7-485b-a7f9-1da77be42a31/scratchpad/evidence/p2-body-type/`
+- `before-1280x800.png`
+- `after-1280x800.png`
+- `after-long-prose-1280x800.png`
+- `after-quoted-mono-fallback-1280x800.png`
+
+The last two used a temporary fixture edit in `browser-fake.ts`, which I reverted and which is not in the commit. The dev server is stopped and the preview tab is closed.
+
+## Tests
+The first parallel full run had flaky timeout failures in app, account, stars and discovery tests, and the failing set changed between runs. Those files pass when run on their own, `tests/app.component.test.ts` passes on the base commit, and the serial full run is green.
+
+## DESIGN.md notes (I did not edit it)
+- **Tokens:** `--type-reading` 0.9375rem and `--leading-reading` 1.6 are new. `--type-mono` and `--leading-mono` stay, now only for the aligned-text fallback.
+- **Typography:** "Label/Mono Font: ui-monospace, for plain-text message bodies only" becomes "message bodies use the UI face at the reading size; mono only for bodies with quotes, indented blocks or tables". The "Mono (400, 0.85rem, 1.45)" line should be reworded to match.
+- **Item 14:** "Mono body" in the typeset-pass description is now outdated.
+- **Item 16:** the "reader's type is on the shell scale" claim no longer holds, since the reader body adds a 15px step.
+- **Standing constraint:** "safe literal plain text" is unchanged.
+
+---
+
+Delegated task node:delegated-task:command%3Amcp%3A5fbc700b-acb2-46a4-8926-537411ca7dad%3Adelegate-task%3A9fb0de8c-c215-48e3-938f-7e99b845290b (Reader P1: header actions replace toolbar) [completed]:
+The reader toolbar row is gone. Its actions are now quiet icon buttons in the app header, and the subject sits about 40px higher (y 206 → 167 at 1280×800). Typecheck is clean and the full suite passes (701 passed, 32 skipped, 4 files skipped). One earlier full run had a composer test fail (`drafts.component.test.ts`, "retries a lost save…"); it passed in isolation and on the re-run, so I read it as timing under load.
+
+**Branch / head:** `reader-icon-header-actions` @ `ea406ed`, committed and not pushed.
+
+**Files changed:** `src/components/ReaderView.vue`, `src/App.vue`, `src/components/HeaderGlyph.vue`, `src/assets/style.css`, `tests/app.component.test.ts`, `tests/drafts.component.test.ts`.
+
+**What changed**
+- **Header actions:** `ReaderView` teleports its icon buttons into two new host spans in the app header. It falls back to inline rendering when no host is passed, so standalone reader tests still find every `data-test` id.
+- **Back arrow:** it leads the context title, with its glyph on the 50px inset.
+- **Right-aligned icons:** Mark done / not done, read/unread toggle, Files and links, Prepare reply, then previous/next chevrons, then the existing palette and search glyphs.
+- **Accessibility and test ids:** each icon has hidden text carrying the old label, plus a title with its shortcut. All `data-test` ids are kept.
+- **Chevrons:** K/J use an `@move` emit, handled by the existing `moveReaderConversation`, and App computes availability from `resolveReaderNeighbor`. They are disabled at the ends of the list and hidden in Activity, Reminders and Trash readers, where J/K do nothing.
+- **Reply sentence:** it is now the reply button's title and a visually-hidden `reply-source-label`, linked by `aria-describedby`. The blocked-reply notice is unchanged.
+- **Text controls:** read state, "Mark read/unread" (unknown state) and the count-labelled bulk controls ("Mark N done", "Mark N read"…) stay as text. They sit in one `reader-meta-row` line under the subject, which renders only when there is something to show.
+- **No layout shift:** the toolbar row and its rule are removed, and disabled buttons keep their 32px slot.
+- **Tests:** I added a test for the header icons and the prev/next chevrons, and updated the "prepares a reply" test to find the button from the app root, since it is no longer inside the reader article.
+
+**Checks beyond the suite:** I clicked through the thread in the preview (next, prev, done, back). At 1030px the trail fits (search glyph right edge 742 against header right 758). At 640px nothing overflows, and the document is no wider than the window. The fixture workspace has read controls off, so the read-toggle glyph was not exercised visually. Native tooltips don't appear in screenshots, so the tooltip shot shows the focus ring and brightened glyph instead.
+
+**Evidence** (all in `/private/tmp/claude-501/-Users-sofianebebert-workspace-worktrees-email-os-t3-8289bc5f/c76d33d1-bfb7-485b-a7f9-1da77be42a31/scratchpad/evidence/p1-header-actions/`):
+- `before-reader.png`
+- `after-reader-1280.png`
+- `after-reader-1030.png`
+- `after-focus-hover-done.png`
+- `after-flow-next-prev-done-back.mp4` (about 6 seconds: open, next, prev, next, done, back)
+
+**Notes for the parent**
+- **DESIGN.md:** the reader's actions now live in the split header, not a toolbar row. Reader actions are icon-only quiet glyphs (32px pitch, icon-muted, text-primary on hover/focus), each with a hidden text name and a title carrying its shortcut. Honest-state controls (read state, count-labelled bulk actions) stay as text under the subject. The existing `HeaderGlyph` stroke is 1.4px, not 1.5px, so I kept 1.4 for consistency.
+- **Merge conflicts:** I touched the toolbar block and the subject/meta area in `ReaderView.vue`, and added two spans and four props in `App.vue`. Merging with the star status line and collapsed-snippet branches should conflict only near the subject.
+
+**Not done:** there is no remind (clock) icon in the reader actions. The existing Reminders glyph in the header trail already covers it. Prev/next and K/J use `title` strings that I did not add to `browsingActions`, because that list feeds the command palette.
+
+---
+
+Delegated task node:delegated-task:command%3Amcp%3A5fbc700b-acb2-46a4-8926-537411ca7dad%3Adelegate-task%3A63feb2fe-1ed7-454e-a86e-b641cad1fb2c (Reader P2: star status line only when notable) [completed]:
+The star line under the subject now shows only when there's news, and the committed diff contains no fixture changes.
+
+Branch `t3/ee1ffdcb`, head `7df5767`, no push or PR. `pnpm typecheck` is clean. The full `pnpm test` run passed once the machine load dropped (43 files, 702 tests passed, 32 skipped). Earlier runs hit varying timeout failures in unrelated files while the load average was above 100. `tests/command-palette.component.test.ts` passed in isolation on the base commit.
+
+**Files changed**
+- `src/components/ReaderView.vue`: a new `starLine(conversation)` helper decides visibility and text, reusing `starSummary` and `starCoverageDetail`. The `<p data-test="reader-stars">` now renders only when it returns a line. The title and the visually-hidden `reader-stars-detail` are unchanged.
+- `src/assets/style.css`: `.reader-context-note` had no CSS rule at all, so I defined one: Ash text, body type, `max-width: 80ch`. A `[data-attention]` variant uses Amber Notice for partial, unknown and unconfirmed states.
+- `tests/reader.component.test.ts`: the "Not starred" case is removed from the visible-line table. I added a test that a not-starred, fully known conversation with nothing pending renders no line and no detail. I also added a test for the pending case (both "Not starred (unconfirmed)" and "Starred (unconfirmed)", with the amber attribute and the "Pending intent is not provider confirmation" detail).
+
+**Visibility rules**
+
+| State | Visible line |
+|---|---|
+| Not starred, fully known, nothing pending | none |
+| Starred, fully known | "Starred" (Ash) |
+| Starred, partial coverage | "Starred (partial)" (amber) |
+| Not starred, unknown or partial coverage | "Star state unknown" (amber) |
+| Any state with a pending action | the summary plus " (unconfirmed)" (amber) |
+
+I removed the hidden status entirely when there is no news instead of keeping a visually-hidden one. No test or ARIA reference depends on it, and a "Not starred" announcement on every conversation is noise for screen readers too. Starred state is still available through the Star/Unstar action.
+
+**One new string:** the star state has no pending field, only the conversation's `pendingOperationId`. So when an action is pending I append " (unconfirmed)" to the summary, because the effective value may include unconfirmed intent. The pending op might not be a star action, so the wording is deliberately generic. The existing "A mailbox action is pending…" line still shows below it.
+
+**Evidence** (1280x800, in `/private/tmp/claude-501/-Users-sofianebebert-workspace-worktrees-email-os-t3-8289bc5f/c76d33d1-bfb7-485b-a7f9-1da77be42a31/scratchpad/evidence/p2-star-line/`):
+- `before-default.png`: shows "Not starred".
+- `after-default.png`: no line.
+- `after-starred.png`
+- `after-partial.png`
+- `after-pending.png`
+
+The starred, partial and pending shots came from a scratch override in `browser-fake.ts`, which I reverted before committing. The dev server and preview tab are closed.
+
+**DESIGN.md notes (not edited)**
+- The reader's star line is conditional: hidden when the conversation is not starred, fully known and nothing is pending.
+- It reads "Starred" in Ash when starred and fully known.
+- It turns Amber Notice for partial, unknown or unconfirmed state, with exact coverage in the title and the visually-hidden detail.
+- `.reader-context-note` is now a defined style with an 80ch cap.
+
+---
+
+Delegated task node:delegated-task:command%3Amcp%3A5fbc700b-acb2-46a4-8926-537411ca7dad%3Adelegate-task%3Aac685dcb-90c2-4197-9a5a-49e5c3cbfa07 (Reader P3: recent mail excludes open thread) [completed]:
+"Recent cached mail" no longer lists the conversation you're in. In the contact pane, the open or focused thread is now left out, and the section hides when the sender has no other cached mail. Typecheck is clean and the full suite passes (702 passed, 32 skipped).
+
+- **Branch and commit:** `exclude-current-recent-thread` at `737e759`. Nothing is pushed and there's no PR.
+- **Files changed:** `src/App.vue`, `tests/app.search-intent.test.ts`, `tests/contact-pane.component.test.ts`. `ContactPane.vue` and the docs are untouched.
+- **The change:** in `src/App.vue`, `recentMail` is now computed from the fetched list. It drops the open conversation when the reader is open, otherwise the focused one, matching on account plus conversation id. It then keeps the first four. Before this change the search result was cut to four first, so removing the current thread would have left only three.
+- **Empty case:** I hid the section. `ContactPane.vue` already renders it only when the list is non-empty, and no test expected an empty-state note, so I added none.
+- **Unchanged:** `openRecent` and J/K behave as before, and all `data-test` and aria attributes are kept.
+
+**Tests**
+- The existing "recent link" case in the archive-receipt test assumed the first recent link opens `rows[0]`, which was the thread already open. It now expects `rows[1]` (the same destination as `j`). I also renamed the "reopening the same reader" test, since it now opens a different thread.
+- New App test: neither the open nor the focused subject appears among the recent links, and thread 2 does.
+- New ContactPane test: `recent: []` renders no `.contact-recent` section.
+- The new App test and the updated recent-link case both fail on the old `App.vue`.
+- Under parallel load, 3–6 unrelated tests (palette, saved-split, reminders, cached-trash) timed out on a few full runs, and the set differed each time. They passed when rerun alone and in the final full run. The baseline before my change was also green.
+
+**Screenshots at 1280×800** in `/private/tmp/claude-501/-Users-sofianebebert-workspace-worktrees-email-os-t3-8289bc5f/c76d33d1-bfb7-485b-a7f9-1da77be42a31/scratchpad/evidence/p3-recent-mail/`:
+- `before-open-1280x800.png`: thread 1 is open and "Fixture thread 1" is listed first, followed by threads 2–4.
+- `after-open-1280x800.png`: thread 1 is open and the pane lists threads 2–5.
+- `after-focused-1280x800.png`: the list is focused with nothing open, and the pane shows threads 2–5.
+- `after-no-other-mail-scratch-fixture-1280x800.png`: the pane has no "Recent cached mail" section. The default fixtures give the hostile sender three threads, so I temporarily gave them one and reverted it. The reverted file is not in the commit.
+
+**DESIGN.md note** (not edited): in the Contact Pane section, add that "Recent cached mail" excludes the open or focused conversation by account plus conversation id, shows up to four other conversations, and is hidden when there are none, with no empty-state copy.
+
+The dev server and preview tab are closed.
