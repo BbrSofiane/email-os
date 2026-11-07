@@ -1,0 +1,47 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6V09WZ0EQKR2CRRT49WFSHV",
+  "session_id": "01a1b5fc-5274-7745-bf17-3644ba27793d",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-07T12:39:01.336725Z",
+  "branch": "main",
+  "checkpoints_count": 3,
+  "files_touched": [
+    ".pi/skills/implement/SKILL.md"
+  ],
+  "agent": "Pi",
+  "model": "gpt-6.1-sol",
+  "turn_id": "f821b4712889",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 46376,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 573952,
+    "output_tokens": 5050,
+    "api_call_count": 20
+  },
+  "session_metrics": {
+    "turn_count": 3
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-07T12:39:01.282914Z",
+    "agent_lines": 96,
+    "agent_removed": 0,
+    "human_added": 91,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 187,
+    "total_lines_changed": 187,
+    "agent_percentage": 51.33689839572193,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}
