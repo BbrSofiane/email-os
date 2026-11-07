@@ -19,6 +19,7 @@ use mail_core::dto::{
     OperationReceipt, RetryOperation, SetArchived, SetRead, UndoOperation, UndoReceipt,
 };
 use mail_core::error::MailError;
+use mail_core::gmail::browsing::{DestinationCatalog, DestinationPage, DestinationRequest};
 use mail_core::gmail::provider::GmailProvider;
 use mail_core::gmail::secrets::KeychainSecrets;
 use mail_core::gmail::sync::GmailCore;
@@ -41,6 +42,26 @@ enum Backend {
 }
 
 impl Backend {
+    fn list_provider_destinations(
+        &self,
+        account_id: &str,
+        cached: bool,
+    ) -> Result<DestinationCatalog, MailError> {
+        match self {
+            Self::Gmail(core) => core.list_provider_destinations(account_id, cached),
+            Self::Fixture(_) => Err(MailError::ReadOnly),
+        }
+    }
+    fn browse_provider_destination(
+        &self,
+        request: &DestinationRequest,
+    ) -> Result<DestinationPage, MailError> {
+        match self {
+            Self::Gmail(core) => core.browse_provider_destination(request),
+            Self::Fixture(_) => Err(MailError::ReadOnly),
+        }
+    }
+
     fn list_conversations(&self) -> Result<InboxSnapshot, MailError> {
         match self {
             Self::Fixture(core) => core.list_conversations(),
@@ -481,6 +502,28 @@ async fn list_cached_done(
 }
 
 #[tauri::command]
+async fn list_provider_destinations(
+    state: State<'_, AppState>,
+    account_id: String,
+    cached: bool,
+) -> Result<DestinationCatalog, MailError> {
+    let backend = state.backend.clone();
+    run_blocking(backend, move |b| {
+        b.list_provider_destinations(&account_id, cached)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn browse_provider_destination(
+    state: State<'_, AppState>,
+    request: DestinationRequest,
+) -> Result<DestinationPage, MailError> {
+    let backend = state.backend.clone();
+    run_blocking(backend, move |b| b.browse_provider_destination(&request)).await
+}
+
+#[tauri::command]
 async fn list_conversations(state: State<'_, AppState>) -> Result<InboxSnapshot, MailError> {
     let backend = state.backend.clone();
     run_blocking(backend, Backend::list_conversations).await
@@ -850,6 +893,8 @@ fn begin_native_close(app: &AppHandle) {
 fn main() {
     let app = tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
+            list_provider_destinations,
+            browse_provider_destination,
             list_conversations,
             list_cached_done,
             list_cached_starred,
@@ -1294,6 +1339,21 @@ mod tests {
         assert!(snapshot.activity.iter().any(|op| {
             op.id == receipt.operation_id && op.status == mail_core::dto::OperationStatus::Confirmed
         }));
+        assert_eq!(
+            state.backend.list_provider_destinations(ACCOUNT_ID, false),
+            Err(MailError::ReadOnly)
+        );
+        assert_eq!(
+            state
+                .backend
+                .browse_provider_destination(&DestinationRequest {
+                    account_id: ACCOUNT_ID.into(),
+                    destination_id: "SENT".into(),
+                    cursor: None,
+                    cached: false,
+                }),
+            Err(MailError::ReadOnly)
+        );
         let request = CachedDoneRequest {
             account_id: ACCOUNT_ID.into(),
             limit: 10,

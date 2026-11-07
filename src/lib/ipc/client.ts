@@ -16,6 +16,7 @@ import type {
   SavedSplit,
   SearchRequest,
   SearchPage,
+  DestinationCatalog, DestinationRequest, DestinationPage,
   CachedDoneRequest,
   CachedDoneSnapshot,
   AccountStatus,
@@ -57,6 +58,7 @@ export type {
   SplitCriterion,
   SearchRequest,
   SearchPage,
+  ProviderDestination, DestinationCatalog, DestinationRequest, DestinationPage,
   AccountInfo,
   CachedDoneCoverage,
   CachedDoneRequest,
@@ -128,6 +130,7 @@ export {
   SET_STARRED_GROUP_COMMAND,
   SEARCH_MAIL_COMMAND,
   CANCEL_SEARCH_MAIL_COMMAND,
+  LIST_PROVIDER_DESTINATIONS_COMMAND, BROWSE_PROVIDER_DESTINATION_COMMAND,
   CANCEL_MAILBOX_ACTION_UPGRADE_COMMAND,
   CONNECT_ACCOUNT_COMMAND,
   DISCONNECT_ACCOUNT_COMMAND,
@@ -176,6 +179,8 @@ export interface MailClient {
   saveSavedSplit(accountId: string, split: SavedSplit): Promise<SavedSplit>;
   searchMail(request: SearchRequest): Promise<SearchPage>;
   cancelSearchMail(): Promise<void>;
+  listProviderDestinations(accountId: string, cached: boolean): Promise<DestinationCatalog>;
+  browseProviderDestination(request: DestinationRequest): Promise<DestinationPage>;
   listConversations(): Promise<InboxSnapshot>;
   /** Local archive evidence only; short/empty pages can still have a continuation. */
   listCachedDone(request: CachedDoneRequest): Promise<CachedDoneSnapshot>;

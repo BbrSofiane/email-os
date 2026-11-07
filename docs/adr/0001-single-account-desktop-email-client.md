@@ -78,6 +78,20 @@ disposable-account validation. The legacy archive-only fixture profile does not
 gain star controls. Native macOS/provider convergence remains a separate gate.
 Saved splits/search are not prerequisites and are not reimplemented here.
 
+### UX-09 bounded destination decision
+
+UX-09 increment A explicitly permits read-only Gmail destination metadata and
+bounded provider pages for Sent, provider Drafts, All Mail (excluding Spam/Trash),
+Spam, Trash and existing user labels. Rationale: the 100-conversation inbox cache
+cannot honestly serve those destinations. Separate timestamped SQLite snapshots
+must not change inbox/history checkpoints or evict durable-operation recovery.
+Provider Drafts remain read-only and distinct from application-local drafts.
+This does not authorize Trash/Spam writes, sending, label create/delete, arbitrary
+system-label mutation, or a second provider. Label/Move remain unavailable until
+a separate durable logical-intent/recovery increment satisfies the UX-09 contract.
+The Gmail readonly scope suffices for increment A; all existing real-account
+and native validation gates remain. No new mailbox access is authorized here.
+
 ### 4. One configurable view
 
 Provide one additional saved queue defined by a bounded, declarative filter over sender, domain, or existing provider labels, with a stable default order. It must reuse the ordinary reader, composer, and mailbox commands.

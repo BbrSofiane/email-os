@@ -48,6 +48,7 @@ import ReaderView from './components/ReaderView.vue';
 import ActivityPanel from './components/ActivityPanel.vue';
 import AccountPanel from './components/AccountPanel.vue';
 import DraftsPanel from './components/DraftsPanel.vue';
+import ProviderDestinations from './components/ProviderDestinations.vue';
 import ContactPane from './components/ContactPane.vue';
 import { BROWSER_PREVIEW_DISCLOSURE } from './lib/ipc/browser-fake';
 import type { ClientMode } from './lib/ipc';
@@ -63,7 +64,7 @@ const props = defineProps<{
 /** Contact context breakpoint (supervisor-approved strict value). */
 const CONTACT_BREAKPOINT_PX = 1000;
 
-type UtilityDrawer = 'account' | 'activity' | 'drafts';
+type UtilityDrawer = 'account' | 'activity' | 'drafts' | 'destinations';
 type ContactContext = 'focused' | 'open';
 interface ContactInfo { displayName: string | null; mailbox: string }
 /** Visible-row anchor for the reader round trip. */
@@ -401,6 +402,7 @@ function setToggleRef(name: UtilityDrawer): (el: Element | import('vue').Compone
 
 const drawerTitles: Record<UtilityDrawer, string> = {
   account: 'Account',
+  destinations: 'Provider mail — read only',
   activity: 'Operation activity',
   drafts: 'Local drafts',
 };
@@ -427,6 +429,7 @@ async function openDrawer(name: UtilityDrawer, entry: 'drawer' | 'toggle' = 'dra
   // Disclosures are mutually exclusive: opening a utility surface dismisses
   // the contact disclosure so both fixed regions never coexist.
   contactDisclosure.value = false;
+  if (name === 'destinations') mailbox.clearSelection();
   drawer.value = name;
   await nextTick();
   if (entry === 'drawer') drawerEl.value?.focus();
@@ -1642,6 +1645,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
           >Inbox</button>
           <button v-if="accountId && gmailMode" type="button" class="rail-item" data-test="rail-starred" :aria-current="mailbox.context.value === 'starred' && !readerOpen ? 'page' : undefined" @click="executeAction('starred')">Starred</button>
           <button v-if="accountId" type="button" class="rail-item rail-done" data-test="rail-done" :title="actionLabel('done')" :aria-current="mailbox.context.value === 'done' && !readerOpen ? 'page' : undefined" @click="executeAction('done')">Cached Done</button>
+          <button v-if="gmailMode || props.mode === 'browser-preview'" type="button" class="rail-item" data-test="rail-destinations" :ref="setToggleRef('destinations')" :aria-expanded="drawer === 'destinations'" @click="toggleDrawer('destinations')">Provider mail</button>
           <span class="rail-spacer" aria-hidden="true"></span>
           <button
             v-if="gmailMode && accountStatus"
@@ -1806,6 +1810,11 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             <h2>{{ drawerTitles[drawer] }}</h2>
             <button type="button" data-test="drawer-close" @click="closeDrawer()">Close</button>
           </header>
+          <ProviderDestinations v-if="drawer === 'destinations' && accountId" :key="accountId" :client="props.client" :account-id="accountId" />
+          <!-- No connected account (never configured, or disconnected while this
+               surface was open): the capability needs an account identity, so
+               render an explicit account-required state instead of an empty drawer. -->
+          <p v-else-if="drawer === 'destinations'" role="note" data-test="destinations-account-required">Provider mail needs a connected Gmail account. Connect one from Account first.</p>
           <AccountPanel
             v-if="drawer === 'account' && accountStatus"
             :status="accountStatus"

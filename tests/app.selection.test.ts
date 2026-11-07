@@ -98,6 +98,25 @@ describe('App UX-05 selection and bulk groups', () => {
     expect(w.find('[data-test="reader-selection-scope"]').text()).toContain('1 selected');
   });
 
+  it('provider destination browsing clears bulk scope, fences inbox controls and returns without writing', async () => {
+    const w = mountApp(); await settle();
+    await selectRows(w, ['conv-01', 'conv-03']);
+    const providerButton = w.findAll('button').find(b => b.text() === 'Provider mail')!;
+    await providerButton.trigger('click'); await settle();
+    expect(w.find('[data-test="selection-count"]').exists()).toBe(false);
+    const sent = w.findAll('button').find(b => b.text() === 'Sent')!;
+    await sent.trigger('click'); await settle();
+    await w.get('.destination-row').trigger('click'); await settle();
+    expect(w.get('.destination-reader').text()).toContain('Uncached synthetic');
+    await w.get('.destination-reader').trigger('keydown', { key: 'e' }); await settle();
+    expect(groupArchives).toHaveLength(0);
+    expect(w.get('[data-test="central-surface"]').attributes('inert')).toBeDefined();
+    await w.get('[data-test="destination-back"]').trigger('click'); await settle();
+    expect(w.get('.destination-row').isVisible()).toBe(true);
+    await w.get('[data-test="drawer-close"]').trigger('click'); await settle();
+    expect(w.find('[data-test="conversation-row-conv-01"]').exists()).toBe(true);
+  });
+
   it('checkbox toggles never open the row and stop propagation from row actions', async () => {
     const w = mountApp();
     await settle();

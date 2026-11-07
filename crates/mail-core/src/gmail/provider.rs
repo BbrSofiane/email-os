@@ -248,11 +248,25 @@ impl GmailProvider {
     /// Loads the cached token; refreshes through the serialized path when
     /// expired. No credentials means `auth_required`, not a silent retry.
     fn access_token(&self, cancel: &CancelToken) -> Result<String, MailError> {
+        self.access_token_with_account(cancel)
+            .map(|(token, _)| token)
+    }
+
+    /// Like [`Self::access_token`], but returns the published account
+    /// identity from the SAME coherent bundle snapshot the returned token was
+    /// admitted from. Token and identity are never read from different
+    /// publications, so callers can bind dispatch to an expected account
+    /// without a check-then-fetch TOCTOU window.
+    fn access_token_with_account(
+        &self,
+        cancel: &CancelToken,
+    ) -> Result<(String, Option<String>), MailError> {
         let (bundle, _, _) = self.credential_snapshot()?;
         let bundle = bundle.ok_or(MailError::AuthRequired)?;
         if bundle.expires_at_epoch_ms - EXPIRY_SKEW_MS > now_ms() && !bundle.access_token.is_empty()
         {
-            return Ok(bundle.access_token);
+            let account = bundle_account_id(&bundle).map(str::to_string);
+            return Ok((bundle.access_token, account));
         }
         let _refresh_guard = self
             .refresh_lock
@@ -270,7 +284,8 @@ impl GmailProvider {
             if latest.expires_at_epoch_ms - EXPIRY_SKEW_MS > now_ms()
                 && !latest.access_token.is_empty()
             {
-                return Ok(latest.access_token);
+                let account = bundle_account_id(&latest).map(str::to_string);
+                return Ok((latest.access_token, account));
             }
             let refresh_token = latest
                 .refresh_token
@@ -296,7 +311,8 @@ impl GmailProvider {
                     if current.expires_at_epoch_ms - EXPIRY_SKEW_MS > now_ms()
                         && !current.access_token.is_empty()
                     {
-                        return Ok(current.access_token);
+                        let account = bundle_account_id(&current).map(str::to_string);
+                        return Ok((current.access_token, account));
                     }
                     continue;
                 }
@@ -322,22 +338,12 @@ impl GmailProvider {
                 &updated,
                 CredentialPublicationKind::Refresh,
             )? {
-                return Ok(updated.access_token);
+                let account = bundle_account_id(&updated).map(str::to_string);
+                return Ok((updated.access_token, account));
             }
             // A connect, upgrade, or disconnect won while the readonly refresh
             // was in flight. Re-read and use its authorized token or refresh it.
         }
-    }
-
-    /// The cached account id (stable, scoped: the email for this single
-    /// account). Missing credentials mean `auth_required`.
-    fn cached_account_id(&self) -> Result<String, MailError> {
-        let bundle = self.secrets.load()?.ok_or(MailError::AuthRequired)?;
-        bundle
-            .account_id
-            .or(bundle.email)
-            .filter(|id| !id.is_empty())
-            .ok_or(MailError::AuthRequired)
     }
 
     /// GET the profile document and normalize it into a [`GmailProfile`].
@@ -443,6 +449,49 @@ impl GmailProvider {
                 continue;
             }
             return Ok(current);
+        }
+    }
+
+    /// Account-bound admission for readonly destination reads, mirroring the
+    /// setter admission fence: the returned token and its validated identity
+    /// come from ONE coherent credential publication naming
+    /// `expected_account_id`, so a publication racing between token
+    /// derivation and validation can never dispatch a foreign token under a
+    /// validated name. A missing bundle is `auth_required`; a published
+    /// identity that differs from the expected account (or is unknown) fails
+    /// closed. No lock is held across the subsequent network request.
+    fn destination_admission_token(
+        &self,
+        expected_account_id: &str,
+        cancel: &CancelToken,
+    ) -> Result<String, MailError> {
+        let (token, published_account) = self.access_token_with_account(cancel)?;
+        if cancel.is_cancelled() {
+            return Err(MailError::AuthCancelled);
+        }
+        match published_account.as_deref() {
+            Some(account) if account == expected_account_id => Ok(token),
+            _ => Err(MailError::AuthFailed),
+        }
+    }
+
+    /// Re-verifies after network work that the current credential publication
+    /// still names `expected_account_id`, so data fetched under a token that
+    /// raced a disconnect or re-authentication is discarded rather than
+    /// returned or persisted. Same fail-closed semantics as admission.
+    fn verify_destination_account(
+        &self,
+        expected_account_id: &str,
+        cancel: &CancelToken,
+    ) -> Result<(), MailError> {
+        if cancel.is_cancelled() {
+            return Err(MailError::AuthCancelled);
+        }
+        let (bundle, _, _) = self.credential_snapshot()?;
+        let bundle = bundle.ok_or(MailError::AuthRequired)?;
+        match bundle_account_id(&bundle) {
+            Some(account) if account == expected_account_id => Ok(()),
+            _ => Err(MailError::AuthFailed),
         }
     }
 
@@ -930,6 +979,111 @@ impl GmailReadProvider for GmailProvider {
         self.fetch_profile(&token, cancel)
     }
 
+    fn list_destinations_for_account(
+        &self,
+        expected_account_id: &str,
+        cancel: &CancelToken,
+    ) -> Result<Vec<super::browsing::ProviderDestination>, MailError> {
+        use super::browsing::ProviderDestination;
+        let token = self.destination_admission_token(expected_account_id, cancel)?;
+        let body = self
+            .api_get("/gmail/v1/users/me/labels", "", &token, cancel)?
+            .ok_or(MailError::InvalidProviderResponse)?;
+        let json: Value = parse_json(&body)?;
+        let mut labels = vec![];
+        for (id, name) in [
+            ("SENT", "Sent"),
+            ("DRAFT", "Provider Drafts"),
+            ("ALL_MAIL", "All Mail"),
+            ("SPAM", "Spam"),
+            ("TRASH", "Trash"),
+        ] {
+            labels.push(ProviderDestination {
+                id: id.into(),
+                name: name.into(),
+                user_label: false,
+            });
+        }
+        for label in optional_array(&json, "labels")?.ok_or(MailError::InvalidProviderResponse)? {
+            let kind = str_field(label, "type")?;
+            if kind == "user" {
+                labels.push(ProviderDestination {
+                    id: str_field(label, "id")?,
+                    name: str_field(label, "name")?,
+                    user_label: true,
+                });
+            } else if kind != "system" {
+                return Err(MailError::InvalidProviderResponse);
+            }
+        }
+        super::browsing::validate_catalog(&labels)?;
+        self.verify_destination_account(expected_account_id, cancel)?;
+        Ok(labels)
+    }
+
+    fn list_destination_for_account(
+        &self,
+        expected_account_id: &str,
+        id: &str,
+        cursor: Option<&str>,
+        cancel: &CancelToken,
+    ) -> Result<InboxPage, MailError> {
+        if !super::browsing::valid_id(id) {
+            return Err(super::browsing::invalid());
+        }
+        let token = self.destination_admission_token(expected_account_id, cancel)?;
+        let mut query = if id == "ALL_MAIL" {
+            "maxResults=25&q=-in%3Aspam%20-in%3Atrash".to_owned()
+        } else {
+            format!(
+                "maxResults=25&includeSpamTrash=true&labelIds={}",
+                url_encode(id)
+            )
+        };
+        if let Some(cursor) = cursor {
+            query.push_str(&format!("&pageToken={}", url_encode(cursor)));
+        }
+        let body = self
+            .api_get("/gmail/v1/users/me/threads", &query, &token, cancel)?
+            .ok_or(MailError::InvalidProviderResponse)?;
+        let json: Value = parse_json(&body)?;
+        let mut ids = vec![];
+        if let Some(threads) = optional_array(&json, "threads")? {
+            for thread in threads {
+                ids.push(str_field(thread, "id")?);
+            }
+        }
+        // An empty page is still a page: the account is re-verified even when
+        // there is no thread data whose stamps could expose a switch.
+        self.verify_destination_account(expected_account_id, cancel)?;
+        Ok(InboxPage {
+            thread_ids: ids,
+            next_page_token: optional_string(&json, "nextPageToken")?,
+        })
+    }
+
+    fn get_thread_for_account(
+        &self,
+        expected_account_id: &str,
+        thread_id: &str,
+        cancel: &CancelToken,
+    ) -> Result<Option<GmailThread>, MailError> {
+        let token = self.destination_admission_token(expected_account_id, cancel)?;
+        let path = format!("/gmail/v1/users/me/threads/{}", url_encode(thread_id));
+        let thread = match self.api_get(&path, "format=full", &token, cancel)? {
+            // Deleted threads are `None`, not an error.
+            None => None,
+            Some(body) => {
+                // Content is stamped with the admitted identity: the token
+                // dispatches only for the expected account, so the parsed
+                // thread can only ever carry that identity.
+                Some(parse_thread(expected_account_id, thread_id, &body)?)
+            }
+        };
+        self.verify_destination_account(expected_account_id, cancel)?;
+        Ok(thread)
+    }
+
     fn list_inbox(
         &self,
         page_token: Option<&str>,
@@ -993,8 +1147,11 @@ impl GmailReadProvider for GmailProvider {
         thread_id: &str,
         cancel: &CancelToken,
     ) -> Result<Option<GmailThread>, MailError> {
-        let token = self.access_token(cancel)?;
-        let account_id = self.cached_account_id()?;
+        // Token and stamp identity come from the same coherent publication so
+        // a racing publication can never label one account's content with
+        // another account's identity.
+        let (token, account_id) = self.access_token_with_account(cancel)?;
+        let account_id = account_id.ok_or(MailError::AuthRequired)?;
         let path = format!("/gmail/v1/users/me/threads/{}", url_encode(thread_id));
         match self.api_get(&path, "format=full", &token, cancel)? {
             // Deleted threads are `None`, not an error.
@@ -2895,6 +3052,247 @@ pub(crate) mod tests {
         assert!(matches!(
             provider.history("5", None, &CancelToken::default()),
             Err(GmailHistoryError::Mail(MailError::AuthRequired))
+        ));
+    }
+
+    #[test]
+    fn destination_catalog_and_queries_are_bounded_reads() {
+        let mut responses = vec![(
+            "/gmail/v1/users/me/labels",
+            200,
+            r#"{"labels":[{"id":"INBOX","name":"INBOX","type":"system"},{"id":"Label_7","name":"<img src=x>","type":"user"}]}"#,
+        )];
+        for _ in 0..6 {
+            responses.push((
+                "/gmail/v1/users/me/threads",
+                200,
+                r#"{"threads":[],"nextPageToken":"next"}"#,
+            ));
+        }
+        let (base, api) = FakeApi::start(responses);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        secrets.store(&future_token()).unwrap();
+        let provider = test_provider(&base, secrets);
+        let account = "synthetic@example.test";
+        let catalog = provider
+            .list_destinations_for_account(account, &CancelToken::default())
+            .unwrap();
+        assert_eq!(catalog.len(), 6);
+        assert_eq!(catalog[1].name, "Provider Drafts");
+        assert_eq!(catalog[5].name, "<img src=x>");
+        for id in ["SENT", "DRAFT", "ALL_MAIL", "SPAM", "TRASH", "Label_7"] {
+            provider
+                .list_destination_for_account(
+                    account,
+                    id,
+                    Some("opaque token"),
+                    &CancelToken::default(),
+                )
+                .unwrap();
+        }
+        let requests = api.requests();
+        assert_eq!(requests.len(), 7);
+        for request in &requests[1..] {
+            assert!(request.contains("maxResults=25"));
+            let url = url::Url::parse(&format!("http://fixture{request}")).unwrap();
+            assert!(url
+                .query_pairs()
+                .any(|(key, value)| key == "pageToken" && value == "opaque token"));
+        }
+        assert!(requests[1].contains("labelIds=SENT"));
+        assert!(requests[2].contains("labelIds=DRAFT"));
+        assert!(requests[3].contains("q=-in%3Aspam%20-in%3Atrash"));
+        assert!(requests[4].contains("includeSpamTrash=true&labelIds=SPAM"));
+        assert!(requests[5].contains("labelIds=TRASH"));
+        assert!(requests[6].contains("labelIds=Label_7"));
+    }
+
+    #[test]
+    fn destination_reads_fail_closed_for_a_foreign_expected_account() {
+        let (base, api) = FakeApi::start(vec![
+            (
+                "/gmail/v1/users/me/labels",
+                200,
+                r#"{"labels":[{"id":"Label_7","name":"B","type":"user"}]}"#,
+            ),
+            ("/gmail/v1/users/me/threads", 200, r#"{"threads":[]}"#),
+        ]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        // Published credentials belong to account A.
+        secrets.store(&future_token()).unwrap();
+        let provider = test_provider(&base, secrets);
+        let cancel = CancelToken::default();
+
+        // The admission check runs before any dispatch: a request naming a
+        // different expected account must never reach the network, so B's
+        // catalog or (even empty) pages can never be fetched under A's name.
+        assert_eq!(
+            provider.list_destinations_for_account("other@example.test", &cancel),
+            Err(MailError::AuthFailed)
+        );
+        assert!(matches!(
+            provider.list_destination_for_account("other@example.test", "SENT", None, &cancel),
+            Err(MailError::AuthFailed)
+        ));
+        assert!(api.requests().is_empty());
+
+        // The bound account still reads normally.
+        assert_eq!(
+            provider
+                .list_destinations_for_account("synthetic@example.test", &cancel)
+                .unwrap()
+                .len(),
+            6
+        );
+    }
+
+    #[test]
+    fn destination_reads_discard_data_when_credentials_switch_mid_read() {
+        enum BoundRead {
+            Catalog,
+            Page,
+        }
+        let cases = [
+            (
+                BoundRead::Catalog,
+                "/gmail/v1/users/me/labels",
+                r#"{"labels":[{"id":"Label_7","name":"B","type":"user"}]}"#,
+            ),
+            // An empty page has no thread stamps to expose the switch; the
+            // post-fetch identity verification must still discard it.
+            (
+                BoundRead::Page,
+                "/gmail/v1/users/me/threads",
+                r#"{"threads":[]}"#,
+            ),
+        ];
+        for (read, path, body) in cases {
+            let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+            secrets.store(&future_token()).unwrap();
+            let swap = Arc::clone(&secrets);
+            let hook: RequestHook = Arc::new(move |_target| {
+                // Reconnect as a different account publishes B's credentials
+                // while the read is in flight.
+                let mut bundle = future_token();
+                bundle.account_id = Some("other@example.test".to_string());
+                bundle.email = Some("other@example.test".to_string());
+                swap.store(&bundle).unwrap();
+            });
+            let (base, api) = FakeApi::start_with_request_hook(vec![(path, 200, body)], Some(hook));
+            let provider = test_provider(&base, secrets);
+            let cancel = CancelToken::default();
+            let result = match read {
+                BoundRead::Catalog => provider
+                    .list_destinations_for_account("synthetic@example.test", &cancel)
+                    .map(|_| ()),
+                BoundRead::Page => provider
+                    .list_destination_for_account("synthetic@example.test", "SENT", None, &cancel)
+                    .map(|_| ()),
+            };
+            assert_eq!(result, Err(MailError::AuthFailed));
+            // Exactly one network dispatch: the read fetched and was
+            // discarded post-fetch.
+            assert_eq!(api.requests().len(), 1);
+            // Token/identity coherence: the data fetch dispatched the token
+            // from the SAME validated account-A publication, so any content
+            // the server returned was account-A data, discarded only because
+            // the publication raced mid-read.
+            assert_eq!(
+                api.authorization_headers()[0].as_deref(),
+                Some("Bearer synthetic-access")
+            );
+        }
+    }
+
+    #[test]
+    fn destination_thread_gets_are_bound_and_token_coherent() {
+        let headers = [
+            ("From", "Sender Name <sender@example.test>"),
+            ("To", "rcpt@example.test"),
+            ("Subject", "Hello world"),
+            ("Date", "Mon, 13 Oct 2025 10:00:00 +0000"),
+            ("Content-Type", "text/plain; charset=utf-8"),
+        ];
+        let plain = gmail_message(
+            "m1",
+            &["INBOX"],
+            text_payload("text/plain", &headers, Some(b"Line one.")),
+        );
+        let body = thread_response("t1", "99", vec![plain]);
+        let cancel = CancelToken::default();
+
+        // Admitted account: the thread GET dispatches the validated token and
+        // the parsed thread carries exactly that identity.
+        let (base, api) = FakeApi::start(vec![("/gmail/v1/users/me/threads/t1", 200, &body)]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        secrets.store(&future_token()).unwrap();
+        let provider = test_provider(&base, secrets);
+        let thread = provider
+            .get_thread_for_account("synthetic@example.test", "t1", &cancel)
+            .unwrap()
+            .expect("thread exists");
+        assert_eq!(
+            thread.conversation.conversation_ref.account_id,
+            "synthetic@example.test"
+        );
+        assert!(api.requests()[0].contains("format=full"));
+        assert_eq!(
+            api.authorization_headers()[0].as_deref(),
+            Some("Bearer synthetic-access")
+        );
+
+        // Foreign expected account: fail closed before any dispatch.
+        let (base, api) = FakeApi::start(vec![("/gmail/v1/users/me/threads/t1", 200, &body)]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        secrets.store(&future_token()).unwrap();
+        let provider = test_provider(&base, secrets);
+        assert!(matches!(
+            provider.get_thread_for_account("other@example.test", "t1", &cancel),
+            Err(MailError::AuthFailed)
+        ));
+        assert!(api.requests().is_empty());
+
+        // Credential publication switches mid-read: the fetched thread is
+        // discarded post-fetch even though the dispatch itself used the
+        // validated account-A token.
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        secrets.store(&future_token()).unwrap();
+        let swap = Arc::clone(&secrets);
+        let hook: RequestHook = Arc::new(move |_target| {
+            let mut bundle = future_token();
+            bundle.account_id = Some("other@example.test".to_string());
+            bundle.email = Some("other@example.test".to_string());
+            swap.store(&bundle).unwrap();
+        });
+        let (base, api) = FakeApi::start_with_request_hook(
+            vec![("/gmail/v1/users/me/threads/t1", 200, &body)],
+            Some(hook),
+        );
+        let provider = test_provider(&base, secrets);
+        assert!(matches!(
+            provider.get_thread_for_account("synthetic@example.test", "t1", &cancel),
+            Err(MailError::AuthFailed)
+        ));
+        assert_eq!(api.requests().len(), 1);
+        assert_eq!(
+            api.authorization_headers()[0].as_deref(),
+            Some("Bearer synthetic-access")
+        );
+    }
+
+    #[test]
+    fn destination_reads_require_credentials() {
+        let (base, _api) = FakeApi::start(vec![]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        let provider = test_provider(&base, secrets);
+        let cancel = CancelToken::default();
+        assert!(matches!(
+            provider.list_destinations_for_account("synthetic@example.test", &cancel),
+            Err(MailError::AuthRequired)
+        ));
+        assert!(matches!(
+            provider.list_destination_for_account("synthetic@example.test", "SENT", None, &cancel),
+            Err(MailError::AuthRequired)
         ));
     }
 

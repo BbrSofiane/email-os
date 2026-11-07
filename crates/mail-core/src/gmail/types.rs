@@ -119,6 +119,43 @@ impl From<MailError> for GmailHistoryError {
 
 /// Synchronous calls run exclusively on background/blocking threads, outside DB locks.
 pub trait GmailReadProvider: Send + Sync {
+    /// Account-bound live destination catalog read. Implementations must
+    /// admit the network read only from a coherent credential snapshot whose
+    /// published identity is `expected_account_id`, dispatch with that
+    /// snapshot's token, and re-verify the identity after the network work
+    /// before returning data. The default fails closed so an unbound
+    /// implementation can never publish one account's data under another
+    /// account's identity.
+    fn list_destinations_for_account(
+        &self,
+        _expected_account_id: &str,
+        _cancel: &CancelToken,
+    ) -> Result<Vec<super::browsing::ProviderDestination>, MailError> {
+        Err(MailError::AuthFailed)
+    }
+    /// Account-bound live destination page read; see
+    /// [`GmailReadProvider::list_destinations_for_account`] for the
+    /// admission contract. The default fails closed.
+    fn list_destination_for_account(
+        &self,
+        _expected_account_id: &str,
+        _id: &str,
+        _cursor: Option<&str>,
+        _cancel: &CancelToken,
+    ) -> Result<InboxPage, MailError> {
+        Err(MailError::AuthFailed)
+    }
+    /// Account-bound live thread GET used by destination browsing; see
+    /// [`GmailReadProvider::list_destinations_for_account`] for the
+    /// admission contract. The default fails closed.
+    fn get_thread_for_account(
+        &self,
+        _expected_account_id: &str,
+        _thread_id: &str,
+        _cancel: &CancelToken,
+    ) -> Result<Option<GmailThread>, MailError> {
+        Err(MailError::AuthFailed)
+    }
     fn mutation_access(&self) -> Result<bool, MailError> {
         Ok(false)
     }

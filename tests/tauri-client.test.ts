@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  LIST_PROVIDER_DESTINATIONS_COMMAND, BROWSE_PROVIDER_DESTINATION_COMMAND,
   APP_CLOSE_REQUESTED_EVENT,
   CANCEL_APP_CLOSE_COMMAND,
   COMPLETE_APP_CLOSE_COMMAND,
@@ -97,6 +98,21 @@ describe('Tauri draft and close protocol adapter', () => {
     expect(mocks.invoke).toHaveBeenLastCalledWith(CANCEL_SEARCH_MAIL_COMMAND, undefined);
     mocks.invoke.mockRejectedValue({ kind: 'auth_required' });
     await expect(client.searchMail(request)).rejects.toEqual({ kind: 'auth_required' });
+  });
+
+  it('transports provider reads with exact account/cache/cursor envelopes and typed failures', async () => {
+    const client = createTauriMailClient();
+    const catalog = { accountId: 'a', destinations: [], fetchedAt: 'now' };
+    mocks.invoke.mockResolvedValue(catalog);
+    expect(await client.listProviderDestinations('a', true)).toBe(catalog);
+    expect(mocks.invoke).toHaveBeenLastCalledWith(LIST_PROVIDER_DESTINATIONS_COMMAND, { accountId: 'a', cached: true });
+    const request = { accountId: 'a', destinationId: 'DRAFT', cursor: null, cached: false };
+    const page = { accountId: 'a', destinationId: 'DRAFT', conversations: [], nextCursor: null, fetchedAt: 'now' };
+    mocks.invoke.mockResolvedValue(page);
+    expect(await client.browseProviderDestination(request)).toBe(page);
+    expect(mocks.invoke).toHaveBeenLastCalledWith(BROWSE_PROVIDER_DESTINATION_COMMAND, { request });
+    mocks.invoke.mockRejectedValue({ kind: 'network_unavailable' });
+    await expect(client.browseProviderDestination(request)).rejects.toEqual({ kind: 'network_unavailable' });
   });
 
   it('transports cached Done using only the named read query and exact request envelope', async () => {
