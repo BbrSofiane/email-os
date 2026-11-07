@@ -776,8 +776,31 @@ const readerContact = computed<ContactInfo | null>(() => {
   return message ? { displayName: message.from.displayName, mailbox: message.from.mailbox } : null;
 });
 
+/** The list row of the open reference: the list's own, truthful identity data. */
+const openRow = computed(() => {
+  const opened = mailbox.openRef.value;
+  return opened ? mailbox.conversations.value.find((row) => sameConversation(row.ref, opened)) ?? null : null;
+});
+const readerLoading = computed(() => readerOpen.value && mailbox.detailState.value === 'loading');
+/** What the reader may say about a still-loading target, from the list row only. */
+const readerLoadingIdentity = computed(() => {
+  const row = readerLoading.value ? openRow.value : null;
+  if (!row) return null;
+  const primary = row.primaryCorrespondent;
+  return {
+    subject: row.subject,
+    sender: primary ? primary.displayName ?? primary.mailbox : null,
+    at: row.lastMessageAt ?? null,
+  };
+});
+
 const contact = computed<ContactInfo | null>(() => {
   if (!readerOpen.value) return listContact.value;
+  // While the target loads, the list row's sender is the only truthful source.
+  if (readerLoading.value) {
+    const primary = mailbox.listState.value === 'ready' ? openRow.value?.primaryCorrespondent : undefined;
+    return primary ? { displayName: primary.displayName, mailbox: primary.mailbox } : null;
+  }
   // A participant override applies only while the referenced message still
   // exists on the open conversation: late blur/leave events, background
   // removals, and account changes cannot leak a stale contact.
@@ -853,15 +876,21 @@ async function submitSearch(query = searchDraft.value): Promise<void> {
 async function senderSearch(address: string): Promise<void> {
   await submitSearch('from:"' + address + '"');
 }
-const recentMail = ref<{ ref: ConversationRef; subject: string }[]>([]);
+const recentFetched = ref<{ ref: ConversationRef; subject: string }[]>([]);
+// The open (or focused) conversation is where the user already is: exclude it
+// by ref identity, then cap, so the pane still lists up to four other threads.
+const recentMail = computed(() => {
+  const here = readerOpen.value ? mailbox.openRef.value : mailbox.focusedRef.value;
+  return recentFetched.value.filter((item) => !sameConversation(item.ref, here)).slice(0, 4);
+});
 let recentToken = 0;
 watch([contact, accountId], async ([person, account]) => {
   const token = ++recentToken;
-  recentMail.value = [];
+  recentFetched.value = [];
   if (!person || !account) return;
   try {
     const page = await props.client.searchMail({ accountId: account, query: 'from:"' + person.mailbox + '"', cursor: null, cachedOnly: true });
-    if (token === recentToken) recentMail.value = page.conversations.slice(0, 4).map((c) => ({ ref: c.ref, subject: c.subject }));
+    if (token === recentToken) recentFetched.value = page.conversations.map((c) => ({ ref: c.ref, subject: c.subject }));
   } catch { /* Optional cached history: never invent links on failure. */ }
 });
 async function openRecent(target: ConversationRef): Promise<void> {
@@ -1038,6 +1067,9 @@ watch([drawer, contactDisclosure, readerOpen], cancelGo);
 
 const origin = ref<ReaderOrigin | null>(null);
 const readerView = ref<InstanceType<typeof ReaderView> | null>(null);
+/** Header slots the open reader teleports its quiet icon actions into. */
+const readerBackHost = ref<HTMLElement | null>(null);
+const readerActionsHost = ref<HTMLElement | null>(null);
 /** Message identity that currently owns reader focus (for the contact baseline). */
 const readerActiveMessageId = ref<string | null>(null);
 /** Temporary participant hover/focus context from the reader. */
@@ -1226,9 +1258,34 @@ async function moveReaderConversation(delta: number): Promise<void> {
   if (mailbox.listState.value !== 'ready') return;
   const target = resolveReaderNeighbor(delta);
   if (!target) return;
+  lastReaderMove = delta < 0 ? -1 : 1;
   // Hidden list focus must not move; the open reference is the reader cursor.
-  await mailbox.openConversationByRef(target);
+  await mailbox.openNeighbor(target);
 }
+
+/** Reader previous/next chevrons: the same neighbor rule as J/K. Hidden (undefined)
+ * where J/K are no-ops (Activity/Reminders/Trash readers); disabled at the ends. */
+const readerNavigates = computed(() => readerOpen.value && origin.value?.surface !== 'activity' && origin.value?.surface !== 'reminders' && !trashReader.value);
+
+// Read-only neighbor prefetch (same getConversation call as opening) for the
+// readers that allow J/K, in the direction of the last move (next by default).
+let lastReaderMove: 1 | -1 = 1;
+watch(readerOpen, (open) => { if (!open) lastReaderMove = 1; });
+watch(
+  () => {
+    if (!readerNavigates.value || mailbox.detailState.value !== 'ready' || mailbox.listState.value !== 'ready') return null;
+    const shown = mailbox.conversation.value;
+    if (!shown || !sameConversation(shown.ref, mailbox.openRef.value)) return null;
+    // `shown` changes after every background refresh, which re-arms the prefetch.
+    return [shown, resolveReaderNeighbor(lastReaderMove)] as const;
+  },
+  (armed) => {
+    if (armed?.[1]) mailbox.prefetchConversation(armed[1]);
+  },
+  { immediate: true },
+);
+const canMoveReaderPrev = computed(() => readerNavigates.value ? mailbox.listState.value === 'ready' && resolveReaderNeighbor(-1) !== null : undefined);
+const canMoveReaderNext = computed(() => readerNavigates.value ? mailbox.listState.value === 'ready' && resolveReaderNeighbor(1) !== null : undefined);
 
 function onReaderActiveMessage(messageId: string | null): void {
   readerActiveMessageId.value = messageId;
@@ -1956,6 +2013,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
           <!-- The context heading stays in the accessibility tree; on screen the
                active split tab already names it, so it is shown only when no
                rendered tab is active (Cached Done, Starred, Search, reader). -->
+          <span ref="readerBackHost" class="reader-back-host"></span>
           <h1 class="app-title" :class="{ 'visually-hidden': activeTabShown }" data-test="inbox-title">{{ contextTitle }}<template v-if="switchAccountLabel"><span class="app-title-account"> — {{ accountStatus?.account?.emailAddress }}</span></template></h1>
           <nav v-if="splitNavShown" class="split-nav" aria-label="Inbox splits" :title="splitCoverageShown ? SPLIT_COVERAGE : undefined">
             <button type="button" class="split-tab" data-test="split-inbox" :aria-current="mailbox.context.value === 'inbox' ? 'page' : undefined" :aria-describedby="splitCoverageShown ? `${domIdPrefix}split-coverage` : undefined" @click="navigateContext('inbox')"><span class="split-label">Inbox</span> <span v-if="splitBadge(mailbox.inboxTotal.value)" class="split-count">{{ splitBadge(mailbox.inboxTotal.value) }}</span></button>
@@ -1978,6 +2036,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             {{ accountStatus?.mutationAccess === 'upgrading' ? 'Mailbox permission pending' : 'Gmail is read-only' }}
             <button type="button" class="header-link" @click="openDrawer('account')">Review access<span class="visually-hidden"> in Account</span></button>
           </p>
+          <span ref="readerActionsHost" class="reader-actions-host"></span>
           <button v-if="history.length && !readerOpen" type="button" class="header-glyph" data-test="context-back" title="Back to previous context" @click="executeAction('back')"><HeaderGlyph name="back" /><span class="visually-hidden">Back to previous context</span></button>
           <button v-if="remindersSupported" type="button" class="header-glyph" :ref="setToggleRef('reminders')" title="Reminders (G then H)" @click="executeAction('reminders')"><HeaderGlyph name="reminders" /><span class="visually-hidden">Reminders</span></button>
           <button v-if="starredFilterShown" type="button" class="header-glyph" data-test="starred-filter" title="Starred only (cached)" :aria-pressed="mailbox.starredOnly.value" :disabled="mailbox.listState.value !== 'ready'" @click="toggleStarFilter()"><HeaderGlyph name="star" :filled="mailbox.starredOnly.value" /><span class="visually-hidden">Starred only (cached)</span></button>
@@ -2199,7 +2258,8 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             </div>
             <ReaderView
               ref="readerView"
-              :conversation="mailbox.conversation.value"
+              :conversation="mailbox.conversation.value ?? mailbox.heldConversation.value"
+              :loading-identity="readerLoadingIdentity"
               :state="mailbox.detailState.value"
               :error="mailbox.detailError.value"
               :command-in-flight="mailbox.commandInFlight.value || mailbox.bulkUnresolved.value"
@@ -2210,7 +2270,12 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               :show-read-controls="gmailActionsEnabled && !trashReader"
               :selection-count="selectedCount"
               :selection-context="mailbox.context.value"
+              :back-host="readerBackHost"
+              :actions-host="readerActionsHost"
+              :can-move-prev="canMoveReaderPrev"
+              :can-move-next="canMoveReaderNext"
               @close="executeAction('back')"
+              @move="moveReaderConversation"
               @archive="executeAction('archive')"
               @unarchive="executeAction('unarchive')"
               @set-read="executeAction($event ? 'read' : 'unread')"
@@ -2309,7 +2374,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
           ref="contactColumnEl"
           :inert="centralCovered || undefined"
         >
-          <ContactPane :contact="contact" :context="contactContext" :recent="recentMail" :compose-target="composeTarget" @search-sender="senderSearch" @open-recent="openRecent" />
+          <ContactPane :contact="contact" :loading="readerLoading" :context="contactContext" :recent="recentMail" :compose-target="composeTarget" @search-sender="senderSearch" @open-recent="openRecent" />
         </aside>
 
         <div
@@ -2428,7 +2493,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             <h2>Contact</h2>
             <button type="button" data-test="contact-disclosure-close" @click="closeContactDisclosure()">Close</button>
           </header>
-          <ContactPane :contact="contact" :context="contactContext" :recent="recentMail" :compose-target="composeTarget" @search-sender="senderSearch" @open-recent="openRecent" />
+          <ContactPane :contact="contact" :loading="readerLoading" :context="contactContext" :recent="recentMail" :compose-target="composeTarget" @search-sender="senderSearch" @open-recent="openRecent" />
         </div>
       </template>
       <!-- Bottom dock of the list column (DESIGN.md "In-flow Notices"): the

@@ -117,7 +117,7 @@ describe('App archive continuation ownership', () => {
       });
       const chosen = location();
       if (destination === 'Close' || destination === 'Inbox' || destination === 'Done') expect(chosen.subject).toBeNull();
-      else expect(chosen.subject).toBe(h.rows[destination === 'j' ? 1 : 0]!.subject);
+      else expect(chosen.subject).toBe(h.rows[destination === 'j' || destination === 'recent link' ? 1 : 0]!.subject);
       expect(chosen.title).toBe(destination === 'Done' ? 'Cached Done' : 'Inbox');
       expect(chosen.activity).toBe(destination === 'Activity' ? 'true' : 'false');
       await completeArchive();
@@ -196,7 +196,18 @@ describe('App explicit navigation during deferred search cancellation', () => {
     expect(document.activeElement?.getAttribute('data-test')).toBe(rowId);
   });
 
-  it('a contact recent-mail link supersedes pending sender search even when reopening the same reader', async () => {
+  it('never lists the open or focused conversation under recent cached mail', async () => {
+    const h = await setup();
+    await flushPromises();
+    const listed = () => h.w.findAll('.contact-recent button').map((b) => b.text());
+    expect(listed()).not.toContain(h.rows[0]!.subject);
+    await h.openRow();
+    await flushPromises();
+    expect(listed()).not.toContain(h.rows[0]!.subject);
+    expect(listed()).toContain(h.rows[1]!.subject);
+  });
+
+  it('a contact recent-mail link supersedes pending sender search and opens another cached thread', async () => {
     const h = await setup();
     await h.openRow();
     const cancellation = await h.senderSearch();

@@ -173,6 +173,11 @@ describe('ContactPane layout markup (rail/contact layout pass)', () => {
     expect(wrapper.findAll('[data-test="copy-email"]')).toHaveLength(1);
   });
 
+  it('renders no recent-mail section when there is no other cached mail', () => {
+    wrapper = mount(ContactPane, { props: { contact: ADA, context: 'open', recent: [] } });
+    expect(wrapper.find('.contact-recent').exists()).toBe(false);
+  });
+
   it('lists recent cached mail as plain activatable text rows with the full subject as title', async () => {
     const ref = { accountId: 'acct', conversationId: 'conv-01' };
     wrapper = mount(ContactPane, { props: { contact: ADA, context: 'focused', recent: [{ ref, subject: 'A long fixture subject' }, { ref: { ...ref, conversationId: 'conv-02' }, subject: '' }] } });

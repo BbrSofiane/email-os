@@ -212,18 +212,20 @@ describe('UX-03 query and lifecycle guarantees', () => {
 
   it('revalidates targets across slow reader navigation so palette cannot mutate the previous thread', async () => {
     const { fixture, w } = await setup();
-    await w.get('[data-test="conversation-row-read-02"]').trigger('click'); await flushPromises();
+    await w.get('[data-test="conversation-row-read-03"]').trigger('click'); await flushPromises();
+    // The next neighbor (read-04) is prefetched; K targets the uncached read-02.
     fixture.controls.delayNextDetail(50);
-    key('j');
+    key('k');
     await palette(w);
     expect(w.find('#action-archive').exists()).toBe(false);
     expect(w.find('#action-unread').exists()).toBe(false);
     await w.get('[data-test="action-query"]').setValue('e/s/h'); key('e'); key('Enter'); await flushPromises();
     expect(fixture.controls.archiveCommands).toEqual([]);
     expect(fixture.controls.readCommands).toEqual([]);
-    await new Promise((resolve) => setTimeout(resolve, 60)); await flushPromises();
+    // Real timers: the delayed detail resolves after 50ms. Wait well past it (and past the 120ms hold) so a loaded machine cannot race it.
+    await new Promise((resolve) => setTimeout(resolve, 250)); await flushPromises();
     await w.get('[data-test="action-query"]').setValue('Mark done'); key('Enter'); await flushPromises();
-    expect(fixture.controls.archiveCommands.map((command) => command.conversation.conversationId)).toEqual(['read-03']);
+    expect(fixture.controls.archiveCommands.map((command) => command.conversation.conversationId)).toEqual(['read-02']);
   });
 
   it('keeps dirty draft recovery visible and aborts a palette destination when save fails', async () => {
@@ -275,8 +277,10 @@ describe('UX-03 query and lifecycle guarantees', () => {
     expect(w.get('[aria-current="true"]').attributes('data-test')).toBe('conversation-row-read-04');
     await w.get('[data-test="conversation-row-read-04"]').trigger('click'); await flushPromises();
     fixture.controls.notify(); await flushPromises();
+    const callsBeforeK = fixture.controls.detailCalls.length;
     key('k'); await flushPromises();
-    expect(fixture.controls.detailCalls.at(-1)?.conversationId).toBe('read-01');
+    // K requests read-01 first; a neighbor prefetch may follow it.
+    expect(fixture.controls.detailCalls[callsBeforeK]?.conversationId).toBe('read-01');
     key('Escape'); await flushPromises();
     await w.get('[data-test="rail-inbox"]').trigger('click'); await flushPromises();
     await w.get('[data-test="context-back"]').trigger('click'); await flushPromises();
@@ -308,8 +312,10 @@ describe('UX-03 query and lifecycle guarantees', () => {
     expect(w.get('[aria-current="true"]').attributes('data-test')).toBe('conversation-row-read-04');
     await w.get('[data-test="conversation-row-read-04"]').trigger('click'); await flushPromises();
     fixture.controls.notify(); await flushPromises();
+    const callsBeforeK = fixture.controls.detailCalls.length;
     key('k'); await flushPromises();
-    expect(fixture.controls.detailCalls.at(-1)?.conversationId).toBe('read-01');
+    // K requests read-01 first; a neighbor prefetch may follow it.
+    expect(fixture.controls.detailCalls[callsBeforeK]?.conversationId).toBe('read-01');
     key('Escape'); await flushPromises();
     await w.get('[data-test="rail-inbox"]').trigger('click'); await flushPromises();
     insertions = 2;
