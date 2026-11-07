@@ -1,0 +1,20 @@
+Act as the implementation sub-agent for this task.
+
+You are implementing ONE issue in the Email OS Vue/Tauri client (repo = your worktree). Read first: PRODUCT.md, DESIGN.md ("Contact Pane" section), src/components/ContactPane.vue (`recent` prop, "Recent cached mail"), and where App.vue computes and passes `recent` (grep `recent` / `ContactPane` in src/App.vue and src/composables/useMailbox.ts), plus tests referencing recent mail (grep tests/ and src for 'Recent cached mail', 'recent').
+
+## Shared rules (all reader-review tasks)
+- Context: we compared our conversation reader against a Superhuman screenshot; in our contact pane, "Recent cached mail from sender" lists the conversation that is currently OPEN ("Fixture thread 1" is listed while thread 1 is open), so the first entry is a link to where you already are. (A previous critique flagged the same for the focused conversation.)
+- Stay on-brand per PRODUCT.md/DESIGN.md: terse, honest-state. Don't fabricate data. Keep the pane layout (24px pitch rows pinned to list geometry) intact.
+- Keep every existing `data-test` attribute and aria-label; update tests in tests/ and src that your change legitimately affects (explain each in the report). Do NOT edit DESIGN.md or PRODUCT.md — put design-doc notes in your final report.
+- Other agents are changing nearby files in parallel on separate branches (reader toolbar/header, snippets, etc.); you should touch only ContactPane.vue / the App.vue computation of `recent` / tests. Keep your diff MINIMAL; no reformatting.
+- Setup: `pnpm install --frozen-lockfile`. Verify with `pnpm typecheck` and `pnpm test` (full suite; report honestly incl. pre-existing failures).
+- Preview: `pnpm dev --port <PORT> --strictPort` (in-memory fixture workspace). Use mcp__t3-code__preview_* tools (load via ToolSearch), resize 1280x800, press Enter on the focused first row to open "Fixture thread 1: weekly status". Stop dev server and close preview tab when done.
+- Evidence: save PNGs under the evidence dir below (mkdir -p). BEFORE (base commit) and AFTER at 1280x800 via preview_snapshot save=true (copy screenshotPath to named files). If blurry, retry and include the DOM text of the pane in your report.
+- Commit on your worktree's branch (no push, no PR). End the commit message with: `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`.
+- Final report (brief): branch + head SHA, files changed, what you did, tests run/results, evidence absolute paths, DESIGN.md notes, anything you couldn't do.
+
+## Your issue: P3 – Recent cached mail repeats the open thread
+- Exclude the currently open (context 'open') or focused (context 'focused') conversation from the `recent` list, matching by ConversationRef identity (account + conversation id), not by subject text. The list size cap must be applied AFTER excluding so the pane still shows up to the same number of other conversations when available.
+- When the sender has no other cached conversations: hide the "Recent cached mail" section entirely (no empty heading) OR, if the existing design/tests require an explicit empty state, show a one-line honest empty note ("No other cached mail from this sender") — check what the code/tests do today for the empty case and keep that behaviour consistent; report your choice.
+- Keep J/K/open-recent behaviour (`openRecent` emit) intact.
+- Evidence dir: /private/tmp/claude-501/-Users-sofianebebert-workspace-worktrees-email-os-t3-8289bc5f/c76d33d1-bfb7-485b-a7f9-1da77be42a31/scratchpad/evidence/p3-recent-mail . PORT: 5207. Required: before/after at 1280x800 with a thread open, after with the list focused (not open) showing the focused conversation excluded, and an after screenshot of the empty/other-senders case if reachable in the fixtures (else tweak a scratch fixture, screenshot, revert).
