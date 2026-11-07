@@ -1,0 +1,109 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6TNQMN2DF24RTYNXR3MWMKD",
+  "session_id": "01a1b551-2e4e-7189-b18d-db95f8019570",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-07T09:34:16.549767Z",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "save_step_count": 1,
+  "files_touched": [
+    "t3.json"
+  ],
+  "agent": "Pi",
+  "model": "deepseek-v4.1-flash",
+  "turn_id": "fd0484938829",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 86788,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 981888,
+    "output_tokens": 8078,
+    "api_call_count": 28
+  },
+  "session_metrics": {
+    "turn_count": 2
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-07T09:34:16.529452Z",
+    "agent_lines": 12,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 12,
+    "total_lines_changed": 12,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 906,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".delta/clones/sct7f7816kqb/email-os.git/HEAD": 1,
+        ".delta/clones/sct7f7816kqb/email-os.git/ORIG_HEAD": 1,
+        ".delta/clones/sct7f7816kqb/email-os.git/config": 19,
+        ".delta/clones/sct7f7816kqb/email-os.git/delta/copy-baseline": 1,
+        ".delta/clones/sct7f7816kqb/email-os.git/description": 1,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/applypatch-msg.sample": 15,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/commit-msg.sample": 24,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/fsmonitor-watchman.sample": 174,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/post-update.sample": 8,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/pre-applypatch.sample": 14,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/pre-commit.sample": 49,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/pre-merge-commit.sample": 13,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/pre-push.sample": 53,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/pre-rebase.sample": 169,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/pre-receive.sample": 24,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/prepare-commit-msg.sample": 42,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/push-to-checkout.sample": 78,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/sendemail-validate.sample": 77,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/update.sample": 128,
+        ".delta/clones/sct7f7816kqb/email-os.git/info/exclude": 6,
+        ".delta/clones/sct7f7816kqb/email-os.git/logs/HEAD": 3,
+        ".delta/clones/sct7f7816kqb/email-os.git/logs/refs/remotes/origin/HEAD": 1,
+        ".delta/clones/sct7f7816kqb/email-os.git/objects/info/alternates": 1,
+        ".delta/clones/sct7f7816kqb/email-os.git/packed-refs": 3,
+        ".delta/clones/sct7f7816kqb/email-os.git/refs/remotes/origin/HEAD": 1
+      }
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 906,
+      "user_lines_removed": 0,
+      "agent_lines_added": 12,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".delta/clones/sct7f7816kqb/email-os.git/HEAD": 1,
+        ".delta/clones/sct7f7816kqb/email-os.git/ORIG_HEAD": 1,
+        ".delta/clones/sct7f7816kqb/email-os.git/config": 19,
+        ".delta/clones/sct7f7816kqb/email-os.git/delta/copy-baseline": 1,
+        ".delta/clones/sct7f7816kqb/email-os.git/description": 1,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/applypatch-msg.sample": 15,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/commit-msg.sample": 24,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/fsmonitor-watchman.sample": 174,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/post-update.sample": 8,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/pre-applypatch.sample": 14,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/pre-commit.sample": 49,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/pre-merge-commit.sample": 13,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/pre-push.sample": 53,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/pre-rebase.sample": 169,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/pre-receive.sample": 24,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/prepare-commit-msg.sample": 42,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/push-to-checkout.sample": 78,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/sendemail-validate.sample": 77,
+        ".delta/clones/sct7f7816kqb/email-os.git/hooks/update.sample": 128,
+        ".delta/clones/sct7f7816kqb/email-os.git/info/exclude": 6,
+        ".delta/clones/sct7f7816kqb/email-os.git/logs/HEAD": 3,
+        ".delta/clones/sct7f7816kqb/email-os.git/logs/refs/remotes/origin/HEAD": 1,
+        ".delta/clones/sct7f7816kqb/email-os.git/objects/info/alternates": 1,
+        ".delta/clones/sct7f7816kqb/email-os.git/packed-refs": 3,
+        ".delta/clones/sct7f7816kqb/email-os.git/refs/remotes/origin/HEAD": 1
+      }
+    }
+  ]
+}
