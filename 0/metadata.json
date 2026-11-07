@@ -1,0 +1,71 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6VPV0C9MB5XQS0PDJBVF6D3",
+  "session_id": "29577b8f-dae1-4b50-af0a-d5529fb4453d",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-07T19:12:52.184355Z",
+  "branch": "impeccable/p2-dock-copy",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "DESIGN.md",
+    "src/App.vue",
+    "src/assets/style.css",
+    "src/components/AccountPanel.vue",
+    "src/components/ActionNotice.vue",
+    "src/components/ActionOverlay.vue",
+    "src/components/ActivityPanel.vue",
+    "src/components/InboxList.vue",
+    "src/components/ReaderView.vue",
+    "src/components/SelectionBar.vue",
+    "src/composables/useMailbox.ts",
+    "src/lib/browsing-actions.ts",
+    "tests/account.component.test.ts",
+    "tests/action-notice.component.test.ts",
+    "tests/activity-panel.test.ts",
+    "tests/create-split-command.test.ts",
+    "tests/discovery.component.test.ts",
+    "tests/discovery.rendered.test.ts",
+    "tests/inbox-list.component.test.ts",
+    "tests/inbox-list.rendered-layout.test.ts",
+    "tests/saved-split.test.ts",
+    "tests/undo.component.test.ts",
+    "tests/unread-filter-command.test.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "02da4bf99ead",
+  "checkpoint_transcript_start": 236,
+  "transcript_lines_at_start": 236,
+  "compact_transcript_start": 32,
+  "token_usage": {
+    "input_tokens": 84,
+    "cache_creation_tokens": 39050,
+    "cache_read_tokens": 4524969,
+    "output_tokens": 15184,
+    "api_call_count": 38
+  },
+  "session_metrics": {
+    "turn_count": 2
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-07T19:12:52.127764Z",
+    "agent_lines": 249,
+    "agent_removed": 74,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 249,
+    "total_lines_changed": 323,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}
