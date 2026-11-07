@@ -1,0 +1,40 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6V9HS44FXFWQTNES9P3YNMW",
+  "strategy": "manual-commit",
+  "branch": "impeccable-init",
+  "checkpoints_count": 2,
+  "files_touched": [
+    ".impeccable/critique/2026-11-07T13-54-30Z__src-components-inboxlist-vue.md",
+    "DESIGN.md",
+    "src/assets/style.css",
+    "src/components/InboxList.vue",
+    "src/components/RowGlyph.vue",
+    "tests/discovery.rendered.test.ts",
+    "tests/inbox-list.component.test.ts",
+    "tests/inbox-list.rendered-layout.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 80,
+    "cache_creation_tokens": 109271,
+    "cache_read_tokens": 2954356,
+    "output_tokens": 25427,
+    "api_call_count": 34,
+    "subagent_tokens": {
+      "input_tokens": 344,
+      "cache_creation_tokens": 608456,
+      "cache_read_tokens": 26993968,
+      "output_tokens": 166384,
+      "api_call_count": 167
+    }
+  }
+}
