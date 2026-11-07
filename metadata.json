@@ -1,0 +1,30 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6VQYHS8M9PDJWW4XN2AQNR9",
+  "strategy": "manual-commit",
+  "branch": "collapsed-message-snippets",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/assets/style.css",
+    "src/components/ReaderView.vue",
+    "src/lib/message-snippet.ts",
+    "tests/message-snippet.test.ts",
+    "tests/reader.component.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 64,
+    "cache_creation_tokens": 57391,
+    "cache_read_tokens": 2093366,
+    "output_tokens": 13131,
+    "api_call_count": 31
+  }
+}

@@ -1,0 +1,22 @@
+Act as the implementation sub-agent for this task.
+
+You are implementing ONE issue in the Email OS Vue/Tauri client (repo = your worktree). Read first: PRODUCT.md, DESIGN.md (esp. dates/label rules, reader notes), src/components/ReaderView.vue, src/lib/browsing-dates.ts, src/assets/style.css (reader/message sections), and how InboxList.vue renders row date + snippet-like text.
+
+## Shared rules (all reader-review tasks)
+- Context: we compared our conversation reader against a Superhuman screenshot. Superhuman shows each collapsed earlier message as ONE line: sender | snippet of the body | short date right-aligned. Ours shows only sender + a long full date ("Thu 9 Jan 2025, 7:43 PM") so collapsed messages can't be scanned.
+- Stay on-brand per PRODUCT.md/DESIGN.md: terse, honest-state, keyboard-first, no AI/sparkle features, no Superhuman scope import. Message content must stay text-interpolated only (no v-html).
+- Keep every existing `data-test` attribute, aria-label and keyboard behaviour working unless your issue explicitly changes it; update existing tests in tests/ (and src tests) that your change legitimately affects. Do NOT edit DESIGN.md or PRODUCT.md — put design-doc notes in your final report.
+- Other agents are changing the same files in parallel on separate branches (issues: toolbar→header, body type/measure, Details/focus-ring dedupe, star status line, active-card style, recent-mail filter). Keep your diff MINIMAL and localized; do not refactor or reformat unrelated code.
+- Setup: run `pnpm install --frozen-lockfile`. Verify with `pnpm typecheck` and `pnpm test` (full suite; report pass/fail honestly, including pre-existing failures).
+- Preview: `pnpm dev --port <PORT> --strictPort` (in-memory fixture workspace). Open with mcp__t3-code__preview_* tools (load via ToolSearch), resize to 1280x800, press Enter on the focused first row to open "Fixture thread 1: weekly status" (3 messages). Stop your dev server and close your preview tab when done.
+- Evidence: save PNGs under the evidence dir below (mkdir -p). Capture BEFORE (base commit, before editing) and AFTER at 1280x800 via preview_snapshot save=true (copy screenshotPath into your evidence dir with names like before-reader.png / after-reader.png). If blurry, retry, and add getBoundingClientRect geometry in the report.
+- Commit on your worktree's branch (no push, no PR). End the commit message with: `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`.
+- Final report (brief): branch + head SHA, files changed, what you did, tests run/results, evidence absolute paths, DESIGN.md notes, anything you couldn't do.
+
+## Your issue: P1 – Collapsed messages don't support scanning
+- In the collapsed state of `.message-toggle`, show: sender (existing), a one-line truncated snippet of the message body (single line, ellipsis, plain text derived from `message.bodyText` with whitespace collapsed, ~first 140 chars; text interpolation only; if body empty/unavailable show nothing rather than inventing text), and a short right-aligned date using the existing row-date format helpers in browsing-dates.ts (the compact form like "8 OCT" / time-of-day rules per DESIGN.md "Label"/dates section; reuse `rowDateLabel`-style helper, don't write a second formatter). Keep `<time datetime>` and put the full date label in the element `title` and keep it fully available in the details disclosure and to screen readers (accessible name must still include the full date).
+- Expanded message header: keep sender + "to …" and show the same short date right-aligned (full date in title/details). The expanded body must not repeat the snippet.
+- Layout: single 24-28px line per collapsed message; date column right-aligned with tabular numerals; snippet uses `min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap` in the flex row; no wrapping at 1030px width.
+- The collapsed row must keep the `message-toggle-<id>` test id, aria-expanded, and remain a single focusable control.
+- Add/adjust tests for snippet derivation (whitespace collapsing, truncation, empty body) next to existing reader tests.
+- Evidence dir: /private/tmp/claude-501/-Users-sofianebebert-workspace-worktrees-email-os-t3-8289bc5f/c76d33d1-bfb7-485b-a7f9-1da77be42a31/scratchpad/evidence/p1-snippets . PORT: 5202. Required: before/after at 1280x800 showing the collapsed rows; an after shot at 1030x800; an after shot with a long-body message (if fixtures lack one, temporarily tweak the fixture in a scratch edit, screenshot, and revert).
