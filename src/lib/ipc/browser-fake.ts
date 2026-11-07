@@ -275,9 +275,8 @@ function msg(
 
 const SAFE_SENDER = addr('Ada Fixture', 'ada@example.test');
 const HOSTILE_SENDER = addr('<script>alert("sender")</script>', 'hostile@example.test');
-const ME = addr('You', FIXTURE_MAILBOX);
-
-function seedConversations(): FakeConversation[] {
+function seedConversations(accountId = ACCOUNT_ID, mailbox = FIXTURE_MAILBOX): FakeConversation[] {
+  const ME = addr('You', mailbox);
   const conversations: FakeConversation[] = [];
   for (let i = 1; i <= CONVERSATION_COUNT; i += 1) {
     const id = `conv-${String(i).padStart(2, '0')}`;
@@ -296,7 +295,7 @@ function seedConversations(): FakeConversation[] {
       : `Thread ${i} body.\nPlain text only.\nLine three.`;
     const base = 5000 - i * 37;
     conversations.push({
-      ref: { accountId: ACCOUNT_ID, conversationId: id },
+      ref: { accountId, conversationId: id },
       subject,
       messages: [
         msg(`${id}-m1`, from, [ME], base, `First message of ${id}.\n${body}`),
@@ -406,9 +405,19 @@ function toOperationSummary(op: InternalOperation, accountId: string, undoableUn
   };
 }
 
-export function createBrowserFakeMailClient(now: () => string = () => new Date().toISOString()): BrowserFake {
+/** Immutable fixture identity; never used to select a native profile or credentials. */
+export interface FixtureIdentity { accountId: string; emailAddress: string }
+
+export function createBrowserFakeMailClient(
+  now: () => string = () => new Date().toISOString(),
+  identity: FixtureIdentity = { accountId: ACCOUNT_ID, emailAddress: FIXTURE_MAILBOX },
+): BrowserFake {
+  // Capture values rather than retaining a caller-mutable identity object.
+  const fixtureId = identity.accountId;
+  const fixtureMailbox = identity.emailAddress;
   let savedSplit: SavedSplit | null = null;
-  const conversations = seedConversations();
+  const ME = addr('You', fixtureMailbox);
+  const conversations = seedConversations(fixtureId, fixtureMailbox);
   const listeners = new Set<() => void>();
   const draftListeners = new Set<() => void>();
   const closeListeners = new Set<(request: AppCloseRequest) => void>();
@@ -438,7 +447,7 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
   const account: FakeAccountState = {
     mode: 'fixture',
     connection: 'connected',
-    emailAddress: FIXTURE_MAILBOX,
+    emailAddress: fixtureMailbox,
     syncState: 'idle',
     lastSyncedAt: null,
     syncError: null,
@@ -524,7 +533,7 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
       connection: account.connection,
       account: account.emailAddress
         ? {
-            accountId: account.mode === 'gmail' ? 'gmail-account' : 'fixture-account',
+            accountId: account.mode === 'gmail' ? 'gmail-account' : fixtureId,
             emailAddress: account.emailAddress,
           }
         : null,
@@ -719,7 +728,9 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
     requested: { archived?: boolean; read?: boolean },
   ): OperationGroupReceipt {
     requireMutationAccess(kind);
-    if (!command.accountId) throw { kind: 'invalid_request', field: 'accountId' } satisfies MailError;
+    if (!command.accountId || command.accountId !== accountStatus().account?.accountId) {
+      throw { kind: 'invalid_request', field: 'accountId' } satisfies MailError;
+    }
     if (!Array.isArray(command.members) || command.members.length < 1 || command.members.length > OPERATION_GROUP_MAX_MEMBERS) {
       throw { kind: 'invalid_request', field: 'members' } satisfies MailError;
     }
@@ -979,14 +990,14 @@ export function createBrowserFakeMailClient(now: () => string = () => new Date()
         if (identityChanged) {
           // Mode/account controls represent a fresh synthetic cache, not migration
           // of another account's operations or mail into the new identity.
-          conversations.splice(0, conversations.length, ...seedConversations());
+          conversations.splice(0, conversations.length, ...seedConversations(fixtureId, fixtureMailbox));
           receiptsByRequest.clear();
           groups.splice(0, groups.length);
           groupReceiptsByRequest.clear();
           groupUndoReceiptsByRequest.clear();
           cacheCleared = false;
         }
-        const accountId = account.mode === 'gmail' ? 'gmail-account' : ACCOUNT_ID;
+        const accountId = account.mode === 'gmail' ? 'gmail-account' : fixtureId;
         for (const conv of conversations) conv.ref.accountId = accountId;
         notify();
       },

@@ -96,8 +96,15 @@ Core and frontend gates run independently of native GTK/WebKit prerequisites:
 ## Running the app
 
 **Browser preview (in-memory, not durable):** `mise run dev:web`, then open the
-printed localhost URL. The disclosure banner identifies the labelled fake client;
-there is no real OAuth or mailbox access in browser preview.
+printed localhost URL. UX-13A mounts two explicitly synthetic **in-app account
+workspaces**, each with its own labelled in-memory client and the same conversation
+IDs. These are not native tabs. Switch with the account buttons or the supported
+Switch account command; the current local editor must save/recover successfully
+before leaving. Each workspace retains navigation/Back, selection, command query,
+reader state, focus and scroll. There is no mail-search capability on this UX-05
+base (UX-06/07 are absent), real OAuth, credentials or mailbox access in preview.
+Native mode remains a single account/window and exposes no switch command. See
+[UX-13A's contract and remaining gates](ux-13-independent-workspaces.md).
 
 **Native fixture mode (default):** `mise run dev:native`. This opens the synthetic
 fixture profile under `<app_data_dir>/fixture-profile`; local drafts are stored
@@ -430,6 +437,30 @@ SQLite or native convergence. Gmail's bounded cache is not complete fresh reply
 evidence. Fresh thread reconciliation, pinned recovery inventory and atomic
 Gmail reminder/setter acceptance remain concrete implementation blockers before
 Gmail exposure. No credentials or real provider were used for this increment.
+
+## Synthetic account workspaces (UX-13A)
+
+### UX-13A validation boundaries
+
+`tests/workspaces.component.test.ts` and `browser-fake.accounts.test.ts` exercise
+two synthetic identities with colliding conversation/message/draft/request IDs,
+late detail/list/action results, independent Back/focus/selection/command queries,
+save-before-switch, failed saves and serialized pending saves. This is in-memory
+frontend integration, not proof of native account/credential ownership.
+
+The existing opt-in `tests/discovery.rendered.test.ts` CDP harness also contains a
+`UX-13:` pointer/keyboard journey (isolated temporary Chromium profile). Run with
+`EMAIL_OS_RENDERED_LAYOUT_CHROME=/path/to/chromium mise exec -- pnpm exec vitest run tests/discovery.rendered.test.ts -t 'UX-13:'`.
+It checks actual inert focus rejection, independent IDs/selection, list scroll,
+reader Back and exact account-local action outcomes. It does not test WKWebView
+or native tabs. Existing core mail/Gmail/draft profile-lock tests remain the
+exclusive-writer regression gate; frontend sessions are not native profile leases.
+No IPC, command registration, permissions or Rust-generated TS change in UX-13A.
+
+Native account expansion is blocked on approval of a registry/credential/lease/
+close-coordinator design. Current `KeychainSecrets` is a single global
+`mail-core-gmail` / `single-profile` entry, not one credential namespace per DB
+directory. Do not run a second Gmail profile as a multi-account workaround.
 
 ## Native prerequisites and platform limits
 

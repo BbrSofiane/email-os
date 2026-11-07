@@ -58,6 +58,25 @@ textarea {
   color: var(--text-primary);
 }
 
+/* UX-13A: disclosed browser workspaces, deliberately not a native tab strip. */
+.fixture-workspaces {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  color: var(--text-primary);
+}
+.workspace-header {
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--divider);
+  font-size: 0.8rem;
+}
+.workspace-header p { margin: 0 0 0.35rem; }
+.workspace-header nav { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.workspace-header button[aria-current] { background: var(--focus-fill); }
+.workspace-panel { flex: 1; min-height: 0; }
+.workspace-panel > .app { height: 100%; }
+
 /* Compact Inbox navigation/status header. */
 .app-header {
   border-bottom: 1px solid var(--divider);

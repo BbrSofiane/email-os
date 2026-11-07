@@ -60,10 +60,15 @@ import type { ConversationRef, DraftRef, DraftSource, MailClient } from './lib/i
 import { sameConversation, useMailbox, type BrowseContext, type DoneBoundary, type SearchVisit, type LastActionId } from './composables/useMailbox';
 import { useDrafts } from './composables/useDrafts';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   client: MailClient;
   mode: ClientMode;
-}>();
+  /** Only the visible in-app workspace may own global keys or focus. */
+  active?: boolean;
+  switchAccountLabel?: string;
+}>(), { active: true });
+const emit = defineEmits<{ switchAccount: []; workspaceTitle: [title: string] }>();
+const workspaceActive = computed(() => props.active !== false);
 
 /** Contact context breakpoint (supervisor-approved strict value). */
 const CONTACT_BREAKPOINT_PX = 1000;
@@ -356,7 +361,7 @@ async function undoFromNotice(): Promise<void> {
   // The clicked Undo button is removed with the successful slot; if the restored
   // row cannot take focus, hand focus to the reader (or the list) instead of
   // dropping it to <body>.
-  if (!receipt || !focusWasInNotice) return;
+  if (!receipt || !focusWasInNotice || !workspaceActive.value) return;
   if (readerOpen.value) (readerView.value?.$el as HTMLElement | undefined)?.focus({ preventScroll: true });
   else if (mailbox.listState.value === 'ready') await focusFocusedRow(true);
 }
@@ -388,6 +393,15 @@ const accountReady = computed(() => mailbox.accountState.value === 'ready');
 const accountStatus = computed(() => mailbox.accountStatus.value);
 const accountId = computed(() => accountStatus.value?.account?.accountId ?? null);
 const drafts = useDrafts(props.client, accountId, props.mode);
+
+// Reuse the exact draft transition protocol; never hide an unacknowledged buffer.
+defineExpose({ prepareWorkspaceSwitch: () => drafts.flushAndClose() });
+watch(() => [mailbox.context.value, mailbox.listState.value, mailbox.conversations.value.length, accountStatus.value?.account?.emailAddress], () => {
+  const view = contextTitle.value;
+  const count = mailbox.listState.value === 'ready' ? ` — ${mailbox.conversations.value.length} loaded` : '';
+  emit('workspaceTitle', `${view}${count} — ${accountStatus.value?.account?.emailAddress ?? 'Loading account'}`);
+}, { immediate: true });
+watch(workspaceActive, () => { cancelGo(); });
 
 // ---------------------------------------------------------------------------
 // Utility disclosures (Account / Activity / Drafts)
@@ -439,6 +453,7 @@ async function openDrawer(name: UtilityDrawer, entry: 'drawer' | 'toggle' = 'dra
   if (name === 'destinations' || name === 'trash') mailbox.clearSelection();
   drawer.value = name;
   await nextTick();
+  if (!workspaceActive.value) return;
   if (entry === 'drawer') drawerEl.value?.focus();
   else drawerToggles.get(name)?.focus();
 }
@@ -463,7 +478,7 @@ async function closeDrawer(): Promise<void> {
   if (closing === 'drafts' && !(await releaseDraftsDrawer())) return; // closure failed; keep drawer visible
   drawer.value = null;
   await nextTick();
-  if (closing) drawerToggles.get(closing)?.focus();
+  if (workspaceActive.value && closing) drawerToggles.get(closing)?.focus();
 }
 
 // A suspended (hidden) draft editor must never survive into the visible inbox:
@@ -537,12 +552,12 @@ function onViewportChange(event: MediaQueryListEvent): void {
       // Hand focus to the surviving narrow disclosure control only when the
       // wide contact surface owned focus; no focus theft when focus was
       // elsewhere (e.g. the list or a row).
-      if (activeIsInWideContact) contactDisclosureButton.value?.focus();
+      if (workspaceActive.value && activeIsInWideContact) contactDisclosureButton.value?.focus();
     });
   } else if (!wasWide && event.matches) {
     contactDisclosure.value = false;
     void nextTick().then(() => {
-      if (focusInNarrowContact) {
+      if (workspaceActive.value && focusInNarrowContact) {
         // The disclosure and trigger no longer exist; hand focus to the
         // surviving wide contact surface instead of dropping it to the body.
         contactColumnEl.value?.focus();
@@ -563,6 +578,7 @@ async function toggleContactDisclosure(): Promise<void> {
   drawer.value = null;
   contactDisclosure.value = !contactDisclosure.value;
   void nextTick().then(() => {
+    if (!workspaceActive.value) return;
     if (contactDisclosure.value) contactPanelEl.value?.focus();
     else contactDisclosureButton.value?.focus();
   });
@@ -571,7 +587,7 @@ async function toggleContactDisclosure(): Promise<void> {
 async function closeContactDisclosure(): Promise<void> {
   contactDisclosure.value = false;
   await nextTick();
-  contactDisclosureButton.value?.focus();
+  if (workspaceActive.value) contactDisclosureButton.value?.focus();
 }
 
 onMounted(() => {
@@ -691,22 +707,33 @@ let navigationToken = 0;
 const attachmentConversation = ref<import('./lib/ipc/client').Conversation | null>(null);
 let attachmentOrigin: HTMLElement | null = null;
 let attachmentScroll = 0;
+// Scope DOM lookups to this App: two workspaces each have their own reader scroller.
+const appRoot = ref<HTMLElement | null>(null);
 function openAttachments(origin?: HTMLElement) {
   if (drawer.value || overlay.value || !readerOpen.value || mailbox.detailState.value !== 'ready' || !mailbox.conversation.value) return;
   cancelGo();
   attachmentOrigin = origin ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
-  attachmentScroll = document.querySelector('.reader-scroll')?.scrollTop ?? 0;
+  attachmentScroll = appRoot.value?.querySelector('.reader-scroll')?.scrollTop ?? 0;
   attachmentConversation.value = structuredClone(JSON.parse(JSON.stringify(mailbox.conversation.value)));
 }
 async function closeAttachments() {
   attachmentConversation.value = null;
   await nextTick();
   if (attachmentOrigin?.isConnected && !attachmentOrigin.closest('[inert]')) attachmentOrigin.focus({ preventScroll: true });
-  const scroll = document.querySelector('.reader-scroll');
+  const scroll = appRoot.value?.querySelector('.reader-scroll');
   if (scroll) scroll.scrollTop = attachmentScroll;
 }
 watch(accountId, () => { attachmentConversation.value = null; });
 const overlay = ref<'palette' | 'navigator' | null>(null);
+// This App belongs to one immutable fixture session. Keep its command query
+// across transient overlay mounts, without sharing the destination query or
+// changing standalone/native palette reset behavior.
+const paletteQuery = ref('');
+const overlayQuery = computed({
+  get: () => props.mode === 'browser-preview' && props.switchAccountLabel && overlay.value === 'palette'
+    ? paletteQuery.value : undefined,
+  set: (query: string) => { if (overlayQuery.value !== undefined) paletteQuery.value = query; },
+});
 const paletteButton = ref<HTMLElement | null>(null);
 let overlayOrigin: HTMLElement | null = null;
 let overlayRowOrigin: ConversationRef | null = null;
@@ -723,7 +750,7 @@ function openOverlay(kind: 'palette' | 'navigator'): void {
 async function closeOverlay(restore = true): Promise<void> {
   overlay.value = null;
   await nextTick();
-  if (!restore) return;
+  if (!restore || !workspaceActive.value) return;
   if (overlayOrigin?.isConnected && !overlayOrigin.closest('[inert]')) {
     if (overlayRowOrigin && inboxList.value) inboxList.value.focusRef(overlayRowOrigin, { preventScroll: true });
     else overlayOrigin.focus({ preventScroll: true });
@@ -839,6 +866,7 @@ function captureListOrigin(surface: ReaderOrigin['surface']): void {
 
 async function focusFocusedRow(preventScroll = false): Promise<void> {
   await nextTick();
+  if (!workspaceActive.value) return;
   const focused = mailbox.focusedRef.value;
   if (focused && inboxList.value) inboxList.value.focusRef(focused, { preventScroll });
   else if (mailbox.conversations.value.length === 0) emptyState.value?.focus();
@@ -1150,7 +1178,8 @@ function actionTarget(explicit?: ConversationRef): ConversationRef | null {
   return target?.accountId === accountId.value ? target : null;
 }
 function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): boolean {
-  if (!accountReady.value) return false;
+  if (!workspaceActive.value || !accountReady.value) return false;
+  if (id === 'switch-account') return props.mode === 'browser-preview' && !!props.switchAccountLabel;
   if (id === 'starred') return gmailMode.value && !!accountId.value;
   if (id === 'create-split') return !!accountId.value && !mailbox.savedSplit.value && !editingSplit.value;
   if (id === 'edit-split') return !!accountId.value && !!mailbox.savedSplit.value && !editingSplit.value;
@@ -1208,6 +1237,7 @@ const availableActions = computed(() => browsingActions
     label: selectedCount.value > 0 && ['archive', 'unarchive', 'read', 'unread', 'star', 'unstar'].includes(action.id)
       ? `${action.label} — ${selectedCount.value} selected`
       : action.id === 'toggle-unread-filter' ? (mailbox.unreadOnly.value ? 'Show All Conversations' : 'Show Unread Only')
+      : action.id === 'switch-account' ? `Switch account — ${props.switchAccountLabel}`
       : action.id === 'saved' ? `Go to ${mailbox.savedSplit.value?.name ?? 'saved split'}` : action.label,
   })));
 async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): Promise<void> {
@@ -1217,6 +1247,7 @@ async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): 
     return;
   }
   switch (id) {
+    case 'switch-account': emit('switchAccount'); return;
     case 'toggle-unread-filter': {
       const token = ++navigationToken;
       const account = accountId.value;
@@ -1323,6 +1354,7 @@ function actionShortcutBlocked(target: EventTarget | null): boolean {
 }
 
 function onKeydown(event: KeyboardEvent): void {
+  if (!workspaceActive.value) return;
   if (attachmentConversation.value) {
     // A focused Save button can become disabled during transfer, leaving native
     // focus on body. The top surface still owns Escape in that focus vacuum.
@@ -1636,11 +1668,11 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
 </script>
 
 <template>
-  <div class="app" :data-client-mode="props.mode">
+  <div ref="appRoot" class="app" :data-client-mode="props.mode">
     <header class="app-header" :inert="!!overlay || !!attachmentConversation || undefined">
       <div class="app-title-row">
         <span class="rail-brand">Email</span>
-        <h1 class="app-title" data-test="inbox-title">{{ contextTitle }}</h1>
+        <h1 class="app-title" data-test="inbox-title">{{ contextTitle }}<template v-if="switchAccountLabel"> — {{ accountStatus?.account?.emailAddress }}</template></h1>
         <button v-if="accountId" type="button" :disabled="!actionAvailable('search')" data-test="search-trigger" :title="actionLabel('search')" @click="executeAction('search')">Search</button>
         <button type="button" data-test="palette-trigger" ref="paletteButton" title="Commands (Cmd+K in native app)" @click="openOverlay('palette')">Commands</button>
         <button v-if="gmailMode && !readerOpen && mailbox.context.value !== 'starred'" type="button" data-test="starred-filter" :aria-pressed="mailbox.starredOnly.value" :disabled="mailbox.listState.value !== 'ready'" @click="toggleStarFilter()">Starred only (cached)</button>
@@ -1999,7 +2031,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
         </div>
       </template>
     </main>
-    <AttachmentChooser v-if="attachmentConversation" :client="props.client" :conversation="attachmentConversation" :preview="props.mode === 'browser-preview'" @close="closeAttachments" />
-    <ActionOverlay v-if="overlay" :kind="overlay" :actions="availableActions" @close="closeOverlay()" @execute="executeOverlay" />
+    <AttachmentChooser v-if="attachmentConversation" :client="props.client" :conversation="attachmentConversation" :preview="props.mode === 'browser-preview'" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" @close="closeAttachments" />
+    <ActionOverlay v-if="overlay" v-model:query="overlayQuery" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" :kind="overlay" :actions="availableActions" @close="closeOverlay()" @execute="executeOverlay" />
   </div>
 </template>
