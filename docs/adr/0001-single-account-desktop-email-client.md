@@ -180,16 +180,15 @@ silently relaxing it to claim BROWSE-14 complete.
 - AI classification, generated replies, or agent-authored configuration.
 - Public plugins, arbitrary extension code, a marketplace, or stable external APIs.
 - Follow-up automation, scheduled send, sophisticated snooze, or background execution while quit.
-- Provider-backed reminders remain deferred. UX-11 explicitly permits only the
-  bounded desktop-local synthetic fixture reminder contract in
-  [UX-11](../ux-11-local-reminders.md): manual fixed-offset time or unscheduled
-  someday, conditional/regardless reply handling, durable exact-target archive
-  and return, distinct pending/returned membership and cancellation recovery.
-  Rationale: exercise scheduling and recovery without claiming that Gmail's
-  incomplete cache proves no reply. This narrows the reminder deferral, not
-  mailbox authority: Gmail reminders require fresh reply evidence, pinned
-  inventories and their own transactional integration before exposure. No
-  calendar, cross-device or fully-quit execution promise is introduced.
+- UX-11 permits bounded desktop-local reminders in the fixture and Gmail
+  profiles. Gmail reminders live in `gmail.db`, pin baseline IDs and a reader
+  snapshot, and use account-scoped receipts and revision checks. Scheduling and
+  cancellation do not stage provider mailbox operations. No-reply deadlines
+  require a complete fresh thread read plus local account/generation/revision
+  fences; the provider can still receive a reply after that checkpoint. This
+  does not claim provider-atomic absence. No calendar, cross-device or
+  fully-quit execution promise is introduced. See
+  [UX-11](../ux-11-local-reminders.md) for semantics and validation gates.
 - Application-owned state replication across devices.
 - Complete offline mailbox search, advanced rich-text editing, attachment previews, or inline attachment composition.
 - Recruitment, billing, or the customization pilot described in Experiment 1.

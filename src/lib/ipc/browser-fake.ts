@@ -20,7 +20,9 @@
  * explicit grant flow. All data and grants remain in-memory only.
  */
 import { parseSearch, matchesSearch } from '../search';
+import { isReminderTimestamp } from '../reminder-time';
 import type {
+  Reminder, PutReminder, CancelReminder,
   SearchRequest,
   SearchPage,
   CachedTrashRequest,
@@ -447,6 +449,9 @@ export function createBrowserFakeMailClient(
   const groups: InternalGroup[] = [];
   const groupReceiptsByRequest = new Map<string, { fingerprint: string; receipt: OperationGroupReceipt }>();
   const groupUndoReceiptsByRequest = new Map<string, { fingerprint: string; receipt: GroupUndoReceipt }>();
+  const reminders = new Map<string, Reminder>();
+  const reminderReceipts = new Map<string, { fingerprint: string; reminder: Reminder }>();
+  const reminderSourceInventories = new Map<string, Set<string>>();
   let groupCounter = 0;
   /** Shared top-level action-order identity across singles, group children and groups. */
   let actionSeqCounter = 0;
@@ -826,6 +831,7 @@ export function createBrowserFakeMailClient(
   }
 
   function snapshot(): InboxSnapshot {
+    reconcileFakeReminders();
     // No account / cleared cache means no cached mail; core would return the same.
     const empty =
       cacheCleared ||
@@ -839,10 +845,28 @@ export function createBrowserFakeMailClient(
       ? []
       : conversations
           .map((c) => ({ c, flags: effectiveInInbox(c) }))
-          .filter((entry) => !entry.c.triage && entry.flags.some((f) => f))
+          .filter((entry) => !entry.c.triage && entry.flags.some((f) => f)
+            && (reminders.get(`${entry.c.ref.accountId}:${entry.c.ref.conversationId}`)?.phase !== 'pending'
+              || entry.c.messages.some(message => !reminderSourceInventories.get(`${entry.c.ref.accountId}:${entry.c.ref.conversationId}`)?.has(message.id))))
           .map((entry) => summarize(entry.c, pendingOperationId(entry.c)))
           .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
     return snapshotCopy({ conversations: rows, activity });
+  }
+
+  function reconcileFakeReminders(): void {
+    const instant = Date.parse(now());
+    for (const reminder of reminders.values()) {
+      if (reminder.phase === 'pending' && reminder.dueAt && Date.parse(reminder.dueAt) <= instant) {
+        const conv = byId(reminder.conversation.conversationId);
+        if (reminder.condition === 'if_no_reply' && (!conv || conv.contextComplete === false || conv.retainedSnapshotAt || account.connection !== 'connected' || account.syncError || !account.initialSyncComplete)) continue;
+        const sourceIds = reminderSourceInventories.get(`${reminder.conversation.accountId}:${reminder.conversation.conversationId}`) ?? new Set([reminder.sourceMessageId]);
+        const primary = accountStatus().account?.emailAddress?.toLowerCase();
+        const replied = reminder.condition === 'if_no_reply' && conv?.messages.some(message =>
+          !sourceIds.has(message.id) && message.from.mailbox.toLowerCase() !== primary);
+        reminder.phase = replied ? 'suppressed' : 'returned';
+        reminder.revision += 1;
+      }
+    }
   }
 
   function failNotShown(): MailError {
@@ -1011,6 +1035,9 @@ export function createBrowserFakeMailClient(
           groups.splice(0, groups.length);
           groupReceiptsByRequest.clear();
           groupUndoReceiptsByRequest.clear();
+          reminders.clear();
+          reminderReceipts.clear();
+          reminderSourceInventories.clear();
           cacheCleared = false;
         }
         const accountId = account.mode === 'gmail' ? 'gmail-account' : fixtureId;
@@ -1135,6 +1162,82 @@ export function createBrowserFakeMailClient(
         }] };
       destinationPages.set(key, page);
       return snapshotCopy(page);
+    },
+
+    reminders: {
+      async list(): Promise<Reminder[]> {
+        reconcileFakeReminders();
+        return snapshotCopy([...reminders.values()]);
+      },
+      async put(command: PutReminder): Promise<Reminder> {
+        const checkAccount = () => {
+          const activeId = account.mode === 'gmail' ? accountStatus().account?.accountId : fixtureId;
+          if (activeId !== command.conversation.accountId || cacheCleared) throw failNotShown();
+        };
+        if (account.mode !== 'gmail') checkAccount();
+        if (!command.requestId || new TextEncoder().encode(command.requestId).length > 128) throw { kind: 'invalid_request', field: 'requestId' } satisfies MailError;
+        if (account.mode === 'gmail') checkAccount();
+        const fingerprint = JSON.stringify(['put', command]);
+        const receiptKey = `${command.conversation.accountId}:${command.requestId}`;
+        const prior = reminderReceipts.get(receiptKey);
+        if (prior) {
+          if (prior.fingerprint !== fingerprint) throw { kind: 'request_id_conflict' } satisfies MailError;
+          return snapshotCopy(prior.reminder);
+        }
+        if (command.dueAt !== null && (!isReminderTimestamp(command.dueAt) || Date.parse(command.dueAt) <= Date.parse(now()))) throw { kind: 'invalid_request', field: 'dueAt' } satisfies MailError;
+        const key = `${command.conversation.accountId}:${command.conversation.conversationId}`;
+        const current = reminders.get(key);
+        if (command.expectedRevision !== null && !current) throw failNotShown();
+        if (command.expectedRevision === null
+          ? current && !['returned', 'cancelled', 'suppressed'].includes(current.phase)
+          : current?.phase !== 'pending' || current.revision !== command.expectedRevision || current.sourceMessageId !== command.sourceMessageId) {
+          throw { kind: 'invalid_request', field: 'revision' } satisfies MailError;
+        }
+        const conv = byId(command.conversation.conversationId);
+        if (!conv || conv.ref.accountId !== command.conversation.accountId) throw failNotShown();
+        if (command.expectedRevision === null) {
+          if (conv.messages.at(-1)?.id !== command.sourceMessageId) throw { kind: 'invalid_request', field: 'sourceMessageId' } satisfies MailError;
+          const pending = conv.ops.some(op => op.status === 'queued' || op.status === 'applying' || (account.mode === 'gmail' && op.status === 'outcome_unknown'));
+          const inInbox = effectiveInInbox(conv).some(Boolean);
+          if (account.mode === 'gmail' && (!inInbox || pending)) throw { kind: 'invalid_request', field: 'conversation' } satisfies MailError;
+          if (pending) throw { kind: 'invalid_request', field: 'pendingOperation' } satisfies MailError;
+          if (account.mode !== 'gmail' && conv.messages.length > 1000) throw { kind: 'invalid_request', field: 'targets' } satisfies MailError;
+          if (!inInbox) throw { kind: 'invalid_request', field: 'inbox' } satisfies MailError;
+        }
+        const reminder: Reminder = { conversation: { ...command.conversation }, subject: conv.subject,
+          revision: (current?.revision ?? 0) + 1, sourceMessageId: command.sourceMessageId,
+          dueAt: command.dueAt, condition: command.condition, phase: 'pending' };
+        reminders.set(key, reminder);
+        if (command.expectedRevision === null) reminderSourceInventories.set(key, new Set(conv.messages.map(message => message.id)));
+        reminderReceipts.set(receiptKey, { fingerprint, reminder: snapshotCopy(reminder) });
+        notify();
+        return snapshotCopy(reminder);
+      },
+      async cancel(command: CancelReminder): Promise<Reminder> {
+        const checkAccount = () => {
+          const activeId = account.mode === 'gmail' ? accountStatus().account?.accountId : fixtureId;
+          if (activeId !== command.conversation.accountId || cacheCleared) throw failNotShown();
+        };
+        if (account.mode !== 'gmail') checkAccount();
+        if (!command.requestId || new TextEncoder().encode(command.requestId).length > 128) throw { kind: 'invalid_request', field: 'requestId' } satisfies MailError;
+        if (account.mode === 'gmail') checkAccount();
+        const fingerprint = JSON.stringify(['cancel', command]);
+        const receiptKey = `${command.conversation.accountId}:${command.requestId}`;
+        const prior = reminderReceipts.get(receiptKey);
+        if (prior) {
+          if (prior.fingerprint !== fingerprint) throw { kind: 'request_id_conflict' } satisfies MailError;
+          return snapshotCopy(prior.reminder);
+        }
+        const key = `${command.conversation.accountId}:${command.conversation.conversationId}`;
+        const current = reminders.get(key);
+        if (!current) throw failNotShown();
+        if (current.phase !== 'pending' || current.revision !== command.expectedRevision) throw { kind: 'invalid_request', field: 'revision' } satisfies MailError;
+        current.phase = 'cancelled';
+        current.revision += 1;
+        reminderReceipts.set(receiptKey, { fingerprint, reminder: snapshotCopy(current) });
+        notify();
+        return snapshotCopy(current);
+      },
     },
 
     async listConversations(): Promise<InboxSnapshot> {
@@ -1783,6 +1886,9 @@ export function createBrowserFakeMailClient(
         delete conv.retainedSnapshotAt;
       }
       savedSplit = null;
+      reminders.clear();
+      reminderReceipts.clear();
+      reminderSourceInventories.clear();
       receiptsByRequest.clear();
       groups.splice(0, groups.length);
       groupReceiptsByRequest.clear();

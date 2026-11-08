@@ -21,7 +21,7 @@ export const actionGroupOf: Record<BrowsingActionId, ActionGroup> = {
   read: 'conversation', unread: 'conversation',
   'select-all-loaded': 'selection', 'clear-selection': 'selection',
   search: 'view', 'create-split': 'view', 'edit-split': 'view', 'toggle-unread-filter': 'view',
-  inbox: 'goto', saved: 'goto', done: 'goto', starred: 'goto', destinations: 'goto', trash: 'goto', reminders: 'goto',
+  inbox: 'goto', saved: 'goto', done: 'goto', starred: 'goto', destinations: 'goto', trash: 'goto', reminders: 'goto', 'reminder-settings': 'goto',
   drafts: 'goto', activity: 'goto', account: 'goto', 'switch-account': 'goto',
 };
 
@@ -51,6 +51,7 @@ export const actionAliases: Record<BrowsingActionId, readonly string[]> = {
   destinations: ['provider', 'labels', 'folders', 'all mail'],
   trash: ['bin', 'deleted', 'delete'],
   reminders: ['snoozed', 'later'],
+  'reminder-settings': ['reminder', 'time', 'defaults', 'settings'],
   drafts: ['compose', 'draft', 'writing'],
   activity: ['operations', 'history', 'log', 'queue', 'pending'],
   account: ['settings', 'google', 'gmail', 'permissions', 'access'],

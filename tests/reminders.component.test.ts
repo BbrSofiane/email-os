@@ -1,11 +1,12 @@
 import { mount, flushPromises } from '@vue/test-utils';
 import { describe, expect, it, vi } from 'vitest';
 import RemindersPanel from '../src/components/RemindersPanel.vue';
+import ReminderPicker from '../src/components/ReminderPicker.vue';
 import { fullDateLabel } from '../src/lib/browsing-dates';
 import App from '../src/App.vue';
 import { createBrowserFakeMailClient } from '../src/lib/ipc/browser-fake';
 import type { PutReminder, Reminder } from '../src/lib/ipc/client';
-import { useGmailMode } from './helpers';
+import { deferred, useGmailMode } from './helpers';
 
 function fixture() {
   const fake = createBrowserFakeMailClient();
@@ -18,22 +19,72 @@ function fixture() {
   return { fake, rows, put };
 }
 describe('bounded local reminder journey', () => {
+  it('keeps an untouched reschedule exact and disarms Save while visible edits are invalid', async () => {
+    const { fake, rows, put } = fixture();
+    const target = { accountId: 'fixture-account', conversationId: 'conv-01' };
+    rows.push({ conversation: target, subject: 'Stored subject', revision: 7, sourceMessageId: 'message-1', dueAt: '2030-11-03T01:30:00-05:00', condition: 'if_no_reply', phase: 'pending' });
+    const panel = mount(RemindersPanel, { global: { stubs: { Teleport: true } }, props: { client: fake, target: null } });
+    await flushPromises();
+    await panel.findAll('button').find(b => b.text() === 'Reschedule')!.trigger('click');
+    const input = panel.get('#reminder-time-input');
+    expect((input.element as HTMLInputElement).value).toContain('November 3, 2030');
+    expect((input.element as HTMLInputElement).value).not.toContain('2030-11-03T01:30:00-05:00');
+    expect(panel.text()).not.toContain('No matching suggestions');
+    await input.setValue('not a valid time');
+    const save = panel.findAll('button').find(b => b.text() === 'Save new time')!;
+    expect(save.attributes('disabled')).toBeDefined();
+    await input.trigger('keydown', { key: 'Enter' });
+    expect(panel.findAll('[role="alert"]').some(alert => alert.text().includes('Try'))).toBe(true);
+    expect(put).not.toHaveBeenCalled();
+    await input.setValue('2030-11-03T01:30:00-05:00');
+    await input.trigger('keydown', { key: 'Enter' });
+    await flushPromises();
+    const resolvedSave = panel.findAll('button').find(b => b.text() === 'Save new time')!;
+    expect((resolvedSave.element as HTMLButtonElement).disabled).toBe(false);
+    await resolvedSave.trigger('click');
+    await flushPromises();
+    expect(put).toHaveBeenCalledWith(expect.objectContaining({ dueAt: '2030-11-03T01:30:00-05:00', expectedRevision: 7 }));
+    panel.unmount();
+  });
+
+  it('requires a future replacement before saving a reminder whose stored time has passed', async () => {
+    const { fake, rows, put } = fixture();
+    rows.push({ conversation: { accountId: 'fixture-account', conversationId: 'conv-01' }, subject: 'Past reminder', revision: 2, sourceMessageId: 'message-1', dueAt: '2000-01-01T00:00:00Z', condition: 'if_no_reply', phase: 'pending' });
+    const panel = mount(RemindersPanel, { global: { stubs: { Teleport: true } }, props: { client: fake, target: null } });
+    await flushPromises();
+    await panel.findAll('button').find(b => b.text() === 'Reschedule')!.trigger('click');
+    const save = panel.findAll('button').find(b => b.text() === 'Save new time')!;
+    expect((save.element as HTMLButtonElement).disabled).toBe(true);
+    expect(panel.text()).not.toContain('No matching suggestions');
+    await panel.get('#reminder-time-input').setValue('2030-11-03T01:30:00-05:00');
+    await panel.get('#reminder-time-input').trigger('keydown', { key: 'Enter' });
+    await flushPromises();
+    expect((panel.findAll('button').find(b => b.text() === 'Save new time')!.element as HTMLButtonElement).disabled).toBe(false);
+    await panel.findAll('button').find(b => b.text() === 'Save new time')!.trigger('click');
+    await flushPromises();
+    expect(put).toHaveBeenCalledWith(expect.objectContaining({ dueAt: '2030-11-03T01:30:00-05:00', expectedRevision: 2 }));
+    panel.unmount();
+  });
+
   it('prepares an immutable source, defaults conditional, retries exact lost ACK and separates returned membership', async () => {
     const { fake, rows, put } = fixture();
     const target = { accountId: 'fixture-account', conversationId: 'conv-01' };
-    const panel = mount(RemindersPanel, { props: { client: fake, target } });
+    const panel = mount(RemindersPanel, { global: { stubs: { Teleport: true } }, props: { client: fake, target } });
     await flushPromises();
     const detail = await fake.getConversation(target);
     put.mockRejectedValueOnce({ kind: 'storage_unavailable' });
-    await panel.get('input[type="text"]').setValue('2030-11-03T01:30:00-05:00');
-    await panel.get('form').trigger('submit'); await flushPromises();
+    await panel.get('#reminder-time-input').setValue('2030-11-03T01:30:00-05:00');
+    await panel.get('#reminder-time-input').trigger('keydown', { key: 'Enter' }); await flushPromises();
+    { const save = panel.findAll('button').find(b => b.text() === 'Schedule reminder');
+    if (save && !save.attributes('disabled')) { await save.trigger('click'); await flushPromises(); } }
     expect(panel.get('[role="alert"]').text()).toContain('not acknowledged');
     const first = put.mock.calls[0]![0];
     expect(first).toMatchObject({ conversation: target, sourceMessageId: detail.messages.at(-1)!.id, condition: 'if_no_reply', expectedRevision: null });
     const retry = panel.findAll('button').find(b => b.text() === 'Retry exact request')!;
     await retry.trigger('click'); await flushPromises();
     expect(put.mock.calls[1]![0]).toEqual(first);
-    expect(panel.text()).toContain('removing'); expect(panel.find('script').exists()).toBe(false);
+    expect(panel.emitted('scheduled')).toEqual([[rows[0], false]]);
+    expect(panel.text()).toContain('Hiding from Inbox'); expect(panel.find('script').exists()).toBe(false);
     rows[0]!.phase = 'returned';
     await panel.findAll('button').find(b => b.text() === 'Refresh reminders')!.trigger('click'); await flushPromises();
     expect(panel.text()).toContain('No pending reminders');
@@ -42,16 +93,37 @@ describe('bounded local reminder journey', () => {
     await panel.findAll('li button')[0]!.trigger('click'); expect(panel.emitted('open')![0]).toEqual([target]);
     panel.unmount();
   });
+  it('emits dismiss for a new picker and does not change destination when browsing', async () => {
+    const { fake } = fixture();
+    const panel = mount(RemindersPanel, { global: { stubs: { Teleport: true } }, props: { client: fake, target: { accountId: 'fixture-account', conversationId: 'conv-01' }, initialDestination: 'returned' } });
+    await flushPromises();
+    await panel.get('#reminder-time-input').trigger('keydown', { key: 'Escape' });
+    expect(panel.emitted('dismiss')).toHaveLength(1);
+    expect(panel.findAll('nav button')[1]!.attributes('aria-pressed')).toBe('true');
+    panel.unmount();
+  });
   it('keeps a rejected time editable rather than endlessly replaying a validation error', async () => {
     const { fake, put } = fixture();
-    const panel = mount(RemindersPanel, { props: { client: fake, target: { accountId: 'fixture-account', conversationId: 'conv-01' } } }); await flushPromises();
+    const panel = mount(RemindersPanel, { global: { stubs: { Teleport: true } }, props: { client: fake, target: { accountId: 'fixture-account', conversationId: 'conv-01' } } }); await flushPromises();
     put.mockRejectedValueOnce({ kind: 'invalid_request', field: 'dueAt' });
-    await panel.get('input[type="text"]').setValue('2030-11-03T01:30:00');
-    await panel.get('form').trigger('submit'); await flushPromises();
-    expect(panel.get('[role="alert"]').text()).toContain('timezone offset');
-    expect(panel.get('fieldset').attributes('disabled')).toBeUndefined();
-    await panel.get('input[type="text"]').setValue('2030-11-03T01:30:00-05:00');
-    await panel.get('form').trigger('submit'); await flushPromises();
+    await panel.get('#reminder-time-input').setValue('2030-11-03T01:30:00');
+    await panel.get('#reminder-time-input').trigger('keydown', { key: 'Enter' }); await flushPromises();
+    { const save = panel.findAll('button').find(b => b.text() === 'Schedule reminder');
+    if (save && !save.attributes('disabled')) { await save.trigger('click'); await flushPromises(); } }
+    expect(panel.get('[role="alert"]').text()).toContain('offset');
+    expect(put).not.toHaveBeenCalled();
+    put.mockRejectedValueOnce({ kind: 'invalid_request', field: 'dueAt' });
+    await panel.get('#reminder-time-input').setValue('2030-11-03T01:30:00-05:00');
+    await panel.get('#reminder-time-input').trigger('keydown', { key: 'Enter' }); await flushPromises();
+    { const save = panel.findAll('button').find(b => b.text() === 'Schedule reminder');
+    if (save && !save.attributes('disabled')) { await save.trigger('click'); await flushPromises(); } }
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(panel.get('[role="alert"]').text()).toContain('numeric timezone offset');
+    expect(panel.get('#reminder-time-input').attributes('disabled')).toBeUndefined();
+    await panel.get('#reminder-time-input').setValue('2030-11-03T01:30:00-05:00');
+    await panel.get('#reminder-time-input').trigger('keydown', { key: 'Enter' }); await flushPromises();
+    { const save = panel.findAll('button').find(b => b.text() === 'Schedule reminder');
+    if (save && !save.attributes('disabled')) { await save.trigger('click'); await flushPromises(); } }
     expect(put.mock.calls[1]![0].requestId).not.toBe(put.mock.calls[0]![0].requestId);
     panel.unmount();
   });
@@ -59,16 +131,21 @@ describe('bounded local reminder journey', () => {
   it('offers someday and revisioned cancel / reschedule against authoritative rows', async () => {
     const { fake, rows, put } = fixture();
     const target = { accountId: 'fixture-account', conversationId: 'conv-01' };
-    const panel = mount(RemindersPanel, { props: { client: fake, target } }); await flushPromises();
-    await panel.get('input[type="checkbox"]').setValue(true);
-    await panel.get('select').setValue('regardless'); await panel.get('form').trigger('submit'); await flushPromises();
+    const panel = mount(RemindersPanel, { global: { stubs: { Teleport: true } }, props: { client: fake, target } }); await flushPromises();
+    await panel.findAll('[aria-label="Suggested reminder times"] [role="option"]').find(b => b.text().includes('Someday'))!.trigger('click');
+    await panel.get('select').setValue('regardless'); await panel.findAll('button').find(b => b.text() === 'Schedule reminder')!.trigger('click'); await flushPromises();
     expect(put.mock.calls[0]![0]).toMatchObject({ dueAt: null, condition: 'regardless' });
     rows[0]!.phase = 'pending'; rows[0]!.revision = 3;
     await panel.findAll('button').find(b => b.text() === 'Refresh reminders')!.trigger('click'); await flushPromises();
     await panel.findAll('button').find(b => b.text() === 'Reschedule')!.trigger('click');
-    await panel.get('form').trigger('submit'); await flushPromises();
+    await panel.findAll('button').find(b => b.text() === 'Save new time')!.trigger('click'); await flushPromises();
     expect(put.mock.calls[1]![0].expectedRevision).toBe(3);
-    await panel.findAll('button').find(b => b.text().startsWith('Cancel and restore'))!.trigger('click'); await flushPromises();
+    expect(panel.emitted('scheduled')?.at(-1)).toEqual([rows[0], true]);
+    const confirmations = panel.emitted('scheduled')!.length;
+    const cancelButton = panel.findAll('button').find(b => b.text().startsWith('Cancel reminder'))!;
+    expect(cancelButton.attributes('disabled')).toBeUndefined();
+    await cancelButton.trigger('click'); await flushPromises();
+    expect(panel.emitted('scheduled')).toHaveLength(confirmations);
     expect(fake.reminders!.cancel).toHaveBeenCalledWith(expect.objectContaining({ conversation: target, expectedRevision: 1 }));
     panel.unmount();
   });
@@ -78,7 +155,7 @@ describe('bounded local reminder journey', () => {
     const detail = await fake.getConversation(target);
     rows.push({ conversation: target, subject: 'Returned fixture', revision: 4, sourceMessageId: detail.messages.at(-1)!.id, dueAt: '2030-01-01T00:00:00Z', condition: 'regardless', phase: 'returned' });
     const setRead = vi.spyOn(fake, 'setRead');
-    const app = mount(App, { props: { client: fake, mode: 'native' }, attachTo: document.body }); await flushPromises();
+    const app = mount(App, { props: { client: fake, mode: 'native' }, global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
     await app.findAll('button').find(b => b.text() === 'Reminders')!.trigger('click'); await flushPromises();
     await app.findComponent(RemindersPanel).findAll('nav button')[1]!.trigger('click'); await flushPromises();
     // Due times are the full viewer-local form with a machine-readable datetime.
@@ -91,13 +168,13 @@ describe('bounded local reminder journey', () => {
     expect(setRead).not.toHaveBeenCalled(); app.unmount();
   });
 
-  it('H opens supported fixture picker, not for bulk, text input, or Gmail; absent transport exposes no dead controls', async () => {
+  it('H opens a capable fixture or Gmail picker and guards bulk, text input, IME, and absent transport', async () => {
     const { fake } = fixture();
-    const app = mount(App, { props: { client: fake, mode: 'native' }, attachTo: document.body }); await flushPromises();
+    const app = mount(App, { props: { client: fake, mode: 'native' }, global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', bubbles: true })); await flushPromises();
     expect(app.findComponent(RemindersPanel).exists()).toBe(true);
-    expect(app.findComponent(RemindersPanel).find('form').exists()).toBe(true);
-    const input = app.findComponent(RemindersPanel).get('input[type="text"]');
+    expect(app.findComponent(RemindersPanel).findComponent(ReminderPicker).exists()).toBe(true);
+    const input = app.findComponent(RemindersPanel).get('#reminder-time-input');
     await input.setValue('h'); await input.trigger('keydown', { key: 'h' });
     expect((input.element as HTMLInputElement).value).toBe('h');
     await app.get('[data-test="drawer-close"]').trigger('click'); await flushPromises();
@@ -110,10 +187,126 @@ describe('bounded local reminder journey', () => {
     app.unmount();
     const gmail = fixture(); useGmailMode(gmail.fake);
     const gated = mount(App, { props: { client: gmail.fake, mode: 'native' } }); await flushPromises();
-    expect(gated.text()).not.toContain('Remind me'); window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h' })); await flushPromises();
-    expect(gated.findComponent(RemindersPanel).exists()).toBe(false); gated.unmount();
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h' })); await flushPromises();
+    expect(gated.findComponent(RemindersPanel).exists()).toBe(true); gated.unmount();
     const unsupported = createBrowserFakeMailClient();
+    delete unsupported.reminders;
     const preview = mount(App, { props: { client: unsupported, mode: 'browser-preview' } }); await flushPromises();
     expect(preview.text()).not.toContain('Remind me'); preview.unmount();
+  });
+
+  it('returns an acknowledged schedule from list and reader to Inbox with receipt-based status', async () => {
+    const { fake, put } = fixture();
+    const app = mount(App, { props: { client: fake, mode: 'native' }, global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
+    const row = app.find('[data-test^="conversation-row-"]');
+    const rowTestId = row.attributes('data-test');
+    await row.trigger('click'); await flushPromises();
+    expect(app.find('[data-test="reader"]').exists()).toBe(true);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', bubbles: true })); await flushPromises();
+    const input = app.get('#reminder-time-input');
+    await input.setValue('2030-11-03T01:30:00-05:00'); await input.trigger('keydown', { key: 'Enter' }); await flushPromises();
+    await app.findAll('button').find(b => b.text() === 'Schedule reminder')!.trigger('click'); await flushPromises();
+    expect(app.findComponent(RemindersPanel).exists()).toBe(false);
+    expect(app.find('[data-test="reminder-confirmation"]').attributes('role')).toBe('status');
+    expect(app.find('[data-test="reminder-confirmation"]').text()).toMatch(/^Reminder scheduled for /);
+    expect(app.find('[data-test="reader"]').exists()).toBe(false);
+    expect(document.activeElement?.getAttribute('data-test')).toBe(rowTestId);
+    expect(put).toHaveBeenCalledTimes(1);
+    app.unmount();
+  });
+
+  it('returns a reschedule from the Reminders manager to Inbox with a brief confirmation', async () => {
+    const { fake, rows, put } = fixture();
+    const target = { accountId: 'fixture-account', conversationId: 'conv-01' };
+    const detail = await fake.getConversation(target);
+    rows.push({ conversation: target, subject: 'Existing reminder', revision: 3, sourceMessageId: detail.messages.at(-1)!.id, dueAt: '2030-11-03T01:30:00-05:00', condition: 'regardless', phase: 'pending' });
+    const app = mount(App, { props: { client: fake, mode: 'native' }, global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
+    await app.findAll('button').find(button => button.text() === 'Reminders')!.trigger('click'); await flushPromises();
+    await app.findAll('button').find(button => button.text() === 'Reschedule')!.trigger('click'); await flushPromises();
+    await app.findAll('button').find(button => button.text() === 'Save new time')!.trigger('click'); await flushPromises();
+    expect(put.mock.calls[0]![0]).toMatchObject({ expectedRevision: 3, dueAt: rows[0]!.dueAt });
+    expect(app.findComponent(RemindersPanel).exists()).toBe(false);
+    expect(app.find('[data-test="inbox-title"]').text()).toContain('Inbox');
+    expect(app.get('[data-test="reminder-confirmation"]').text()).toMatch(/^Reminder rescheduled for /);
+    expect(document.activeElement?.getAttribute('data-test')).toMatch(/^conversation-row-/);
+    app.unmount();
+  });
+
+  it('keeps failure and dismissal silent, then confirms Someday only after exact retry succeeds', async () => {
+    const { fake, put } = fixture();
+    put.mockRejectedValueOnce({ kind: 'storage_unavailable' });
+    const app = mount(App, { props: { client: fake, mode: 'native' }, global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', bubbles: true })); await flushPromises();
+    const picker = app.findComponent(RemindersPanel);
+    const input = picker.get('#reminder-time-input');
+    await input.setValue('Someday'); await input.trigger('keydown', { key: 'ArrowDown' }); await input.trigger('keydown', { key: 'Enter' }); await flushPromises();
+    await app.findAll('button').find(button => button.text() === 'Schedule reminder')!.trigger('click'); await flushPromises();
+    expect(app.find('[data-test="reminder-confirmation"]').exists()).toBe(false);
+    expect(picker.text()).toContain('not acknowledged');
+    const exact = put.mock.calls[0]![0];
+    await app.findAll('button').find(button => button.text() === 'Retry exact request')!.trigger('click'); await flushPromises();
+    expect(put.mock.calls[1]![0]).toEqual(exact);
+    expect(app.find('[data-test="reminder-confirmation"]').text()).toBe('Reminder scheduled for Someday');
+    expect(app.findComponent(RemindersPanel).exists()).toBe(false);
+    app.unmount();
+
+    const dismissed = fixture();
+    const second = mount(App, { props: { client: dismissed.fake, mode: 'native' }, global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', bubbles: true })); await flushPromises();
+    await second.get('#reminder-time-input').trigger('keydown', { key: 'Escape' }); await flushPromises();
+    expect(second.find('[data-test="reminder-confirmation"]').exists()).toBe(false);
+    expect(second.findComponent(RemindersPanel).exists()).toBe(false);
+    second.unmount();
+  });
+
+  it('expires the brief confirmation and ignores a refresh that finishes after unmount', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const timeout = vi.spyOn(globalThis, 'setTimeout');
+    const { fake } = fixture();
+    const app = mount(App, { props: { client: fake, mode: 'native' }, global: { stubs: { Teleport: true } }, attachTo: document.body });
+    try {
+      await flushPromises();
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', bubbles: true })); await flushPromises();
+      const receipt: Reminder = { conversation: { accountId: 'fixture-account', conversationId: 'conv-01' }, subject: 'Reminder', revision: 1, sourceMessageId: 'message-1', dueAt: null, condition: 'regardless', phase: 'pending' };
+      app.getComponent(RemindersPanel).vm.$emit('scheduled', receipt, false);
+      await flushPromises();
+      expect(app.get('[data-test="reminder-confirmation"]').text()).toBe('Reminder scheduled for Someday');
+      await vi.advanceTimersByTimeAsync(6000);
+      expect(app.find('[data-test="reminder-confirmation"]').exists()).toBe(false);
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', bubbles: true })); await flushPromises();
+      const snapshot = await fake.listConversations();
+      const pendingList = deferred<typeof snapshot>();
+      vi.spyOn(fake, 'listConversations').mockImplementationOnce(() => pendingList.promise);
+      app.getComponent(RemindersPanel).vm.$emit('scheduled', receipt, false);
+      await flushPromises();
+      const confirmationTimers = timeout.mock.calls.filter(call => call[1] === 6000).length;
+      app.unmount();
+      pendingList.resolve(snapshot); await flushPromises();
+      expect(timeout.mock.calls.filter(call => call[1] === 6000)).toHaveLength(confirmationTimers);
+    } finally {
+      if (app.exists()) app.unmount();
+      timeout.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not let a late acknowledged schedule replace newer Inbox navigation', async () => {
+    const { fake } = fixture();
+    const app = mount(App, { props: { client: fake, mode: 'native' }, global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
+    const originalList = fake.listConversations.bind(fake);
+    const pendingList = deferred<Awaited<ReturnType<typeof fake.listConversations>>>();
+    const list = vi.spyOn(fake, 'listConversations').mockImplementationOnce(() => pendingList.promise);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', bubbles: true })); await flushPromises();
+    const input = app.get('#reminder-time-input');
+    await input.setValue('Someday'); await input.trigger('keydown', { key: 'ArrowDown' }); await input.trigger('keydown', { key: 'Enter' }); await flushPromises();
+    await app.findAll('button').find(button => button.text() === 'Schedule reminder')!.trigger('click');
+    await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(1));
+    await app.get('[data-test="rail-inbox"]').trigger('click'); await flushPromises();
+    pendingList.resolve(await originalList());
+    await flushPromises();
+    expect(app.findComponent(RemindersPanel).exists()).toBe(false);
+    expect(app.find('[data-test="inbox-title"]').text()).toContain('Inbox');
+    expect(app.find('[data-test="reminder-confirmation"]').text()).toBe('Reminder scheduled for Someday');
+    app.unmount();
   });
 });

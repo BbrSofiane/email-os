@@ -41,6 +41,8 @@ import CachedTrashPanel from './components/CachedTrashPanel.vue';
 import { emptyCachedTrash } from './lib/cached-trash';
 import ActionOverlay from './components/ActionOverlay.vue';
 import RemindersPanel from './components/RemindersPanel.vue';
+import { formatReminderDateTime } from './lib/reminder-timezone';
+import ReminderSettings from './components/ReminderSettings.vue';
 import ActionNotice, { type GroupNoticeView } from './components/ActionNotice.vue';
 import SelectionBar from './components/SelectionBar.vue';
 import HeaderGlyph from './components/HeaderGlyph.vue';
@@ -63,7 +65,7 @@ import ContactPane from './components/ContactPane.vue';
 import FullDate from './components/FullDate.vue';
 import { BROWSER_PREVIEW_DISCLOSURE } from './lib/ipc/browser-fake';
 import type { ClientMode } from './lib/ipc';
-import type { ConversationRef, DraftRef, DraftSource, MailClient } from './lib/ipc/client';
+import type { ConversationRef, DraftRef, DraftSource, MailClient, Reminder } from './lib/ipc/client';
 import { sameConversation, useMailbox, type BrowseContext, type ConversationSummaryLike, type DoneBoundary, type SearchVisit, type LastActionId } from './composables/useMailbox';
 import { useDrafts } from './composables/useDrafts';
 
@@ -80,7 +82,7 @@ const workspaceActive = computed(() => props.active !== false);
 /** Contact context breakpoint (supervisor-approved strict value). */
 const CONTACT_BREAKPOINT_PX = 1000;
 
-type UtilityDrawer = 'account' | 'activity' | 'drafts' | 'destinations' | 'reminders' | 'trash';
+type UtilityDrawer = 'account' | 'activity' | 'drafts' | 'destinations' | 'reminders' | 'reminder-settings' | 'trash';
 const trashState = ref(emptyCachedTrash());
 type ContactContext = 'focused' | 'open';
 interface ContactInfo { displayName: string | null; mailbox: string }
@@ -490,7 +492,8 @@ const drawerTitles: Record<UtilityDrawer, string> = {
   destinations: 'Provider mail — read only',
   activity: 'Operation activity',
   drafts: 'Local drafts',
-  reminders: 'Desktop-local reminders',
+  reminders: 'Reminders',
+  'reminder-settings': 'Reminder settings',
   trash: 'Cached Trash — read only',
 };
 
@@ -538,12 +541,33 @@ async function openDrawer(name: UtilityDrawer, entry: 'drawer' | 'toggle' = 'dra
   else drawerToggles.get(name)?.focus();
 }
 
+const remindersPanel = ref<InstanceType<typeof RemindersPanel> | null>(null);
 const reminderTarget = ref<ConversationRef | null>(null);
 const reminderDestination = ref<'pending' | 'returned' | 'history'>('pending');
-const remindersSupported = computed(() => !!props.client.reminders && accountStatus.value?.mode === 'fixture');
-async function openReminders(picker: boolean) {
+const reminderConfirmation = ref('');
+let reminderViewAlive = true;
+let reminderAccountEpoch = 0;
+let reminderConfirmationTimer: ReturnType<typeof setTimeout> | null = null;
+function clearReminderConfirmation(): void {
+  if (reminderConfirmationTimer !== null) clearTimeout(reminderConfirmationTimer);
+  reminderConfirmationTimer = null;
+  reminderConfirmation.value = '';
+}
+function showReminderConfirmation(receipt: Reminder, rescheduled: boolean): void {
+  clearReminderConfirmation();
+  const action = rescheduled ? 'Reminder rescheduled' : 'Reminder scheduled';
+  reminderConfirmation.value = receipt.dueAt
+    ? `${action} for ${formatReminderDateTime(receipt.dueAt)}`
+    : `${action} for Someday`;
+  reminderConfirmationTimer = setTimeout(clearReminderConfirmation, 6000);
+}
+const remindersSupported = computed(() => !!props.client.reminders);
+function reminderPreferencesSaved(): void {
+  void closeDrawer();
+}
+async function openReminders(picker: boolean, explicit?: ConversationRef) {
   if (!remindersSupported.value || (picker && (selectedCount.value > 0 || mailbox.commandInFlight.value || mailbox.bulkUnresolved.value))) return;
-  const target = actionTarget();
+  const target = actionTarget(explicit);
   if (picker && !target) return;
   reminderTarget.value = picker && target ? { ...target } : null;
   if (picker) reminderDestination.value = 'pending';
@@ -552,9 +576,48 @@ async function openReminders(picker: boolean) {
 function openReminderConversation(target: ConversationRef): Promise<void> {
   return openFromUtility(target, 'reminders');
 }
+async function reminderScheduled(receipt: Reminder, rescheduled: boolean): Promise<void> {
+  if (!reminderViewAlive || receipt.conversation.accountId !== accountId.value || drawer.value !== 'reminders' || (!rescheduled && reminderTarget.value === null)) return;
+  const account = accountId.value;
+  const epoch = reminderAccountEpoch;
+  const token = navigationToken;
+  reminderTarget.value = null;
+  await mailbox.refresh();
+  if (!reminderViewAlive || epoch !== reminderAccountEpoch || account !== accountId.value) return;
+  if (token !== navigationToken || drawer.value !== 'reminders') {
+    showReminderConfirmation(receipt, rescheduled);
+    return;
+  }
+  const navigation = navigateToInbox();
+  const navigationOwner = navigationToken;
+  await navigation;
+  if (!reminderViewAlive || epoch !== reminderAccountEpoch || account !== accountId.value) return;
+  showReminderConfirmation(receipt, rescheduled);
+  if (navigationOwner !== navigationToken) return;
+  await focusFocusedRow(true);
+}
+async function reminderDismissed(): Promise<void> {
+  if (drawer.value !== 'reminders' || reminderTarget.value === null) return;
+  const token = navigationToken;
+  const epoch = reminderAccountEpoch;
+  reminderTarget.value = null;
+  drawer.value = null;
+  await nextTick();
+  if (!reminderViewAlive || !workspaceActive.value || epoch !== reminderAccountEpoch || token !== navigationToken || drawer.value) return;
+  if (readerOpen.value) (readerView.value?.$el as HTMLElement | undefined)?.focus({ preventScroll: true });
+  else {
+    const focused = mailbox.focusedRef.value;
+    if (focused && inboxList.value) inboxList.value.focusRef(focused, { preventScroll: true });
+    else if (mailbox.conversations.value.length === 0) emptyState.value?.focus();
+  }
+}
 
 async function closeDrawer(): Promise<void> {
   const closing = drawer.value;
+  if (closing === 'reminders') {
+    if (remindersPanel.value?.dismissBlocked) { remindersPanel.value.retainPickerFocus(); return; }
+    if (reminderTarget.value) { await reminderDismissed(); return; }
+  }
   if (closing === 'drafts' && !(await releaseDraftsDrawer())) return; // closure failed; keep drawer visible
   drawer.value = null;
   await nextTick();
@@ -653,6 +716,8 @@ watch(readerOpen, (open) => {
 
 // Local drafts are account-scoped: with no account there is no drafts surface.
 watch(accountId, (id) => {
+  reminderAccountEpoch++;
+  clearReminderConfirmation();
   trashState.value = emptyCachedTrash();
   if (drawer.value === 'trash') drawer.value = null;
   if (id === null && drawer.value === 'drafts') drawer.value = null;
@@ -663,6 +728,9 @@ watch(accountId, (id) => {
 // ---------------------------------------------------------------------------
 
 const contactDisclosure = ref(false);
+const reminderActionEnabled = computed(() => remindersSupported.value && selectedCount.value === 0
+  && !mailbox.bulkUnresolved.value && !mailbox.commandInFlight.value && !drafts.activeRef.value
+  && !drawer.value && !contactDisclosure.value);
 const contactPanelEl = ref<HTMLElement | null>(null);
 const contactDisclosureButton = ref<HTMLElement | null>(null);
 /** Wide contact surface: focus target when the narrow disclosure is removed. */
@@ -755,11 +823,13 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  reminderViewAlive = false;
   window.removeEventListener('keydown', onKeydown);
   window.removeEventListener('blur', cancelGo);
   window.removeEventListener('compositionstart', cancelGo);
   window.removeEventListener('focusin', cancelGo);
   cancelGo();
+  clearReminderConfirmation();
   if (nowTimer !== null) clearInterval(nowTimer);
   nowTimer = null;
   wideQuery?.removeEventListener('change', onViewportChange);
@@ -1623,6 +1693,7 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   if (id === 'trash') return gmailMode.value && !!accountId.value;
   if (id === 'drafts') return !!accountId.value;
   if (id === 'reminders') return remindersSupported.value;
+  if (id === 'reminder-settings') return remindersSupported.value && !!accountId.value;
   if (id === 'back') return readerOpen.value || history.value.length > 0;
   if (id === 'select-all-loaded') return !drafts.activeRef.value && !drawer.value && !contactDisclosure.value && !readerOpen.value && mailbox.listState.value === 'ready' && mailbox.conversations.value.length > 0;
   if (id === 'clear-selection') return !drafts.activeRef.value && !drawer.value && !contactDisclosure.value && selectedCount.value > 0;
@@ -1666,7 +1737,7 @@ function starPermissionReason(id: BrowsingActionId): string | undefined {
 }
 const availableActions = computed(() => browsingActions
   .filter((action) => (actionAvailable(action.id) || starPermissionReason(action.id))
-    && (overlay.value !== 'navigator' || ['inbox', 'saved', 'done', 'destinations', 'trash', 'starred', 'account', 'activity', 'drafts', 'reminders'].includes(action.id)))
+    && (overlay.value !== 'navigator' || ['inbox', 'saved', 'done', 'destinations', 'trash', 'starred', 'account', 'activity', 'drafts', 'reminders', 'reminder-settings'].includes(action.id)))
   .map((action) => ({
     id: action.id,
     shortcut: action.shortcut,
@@ -1717,8 +1788,9 @@ async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): 
       if (actionAvailable(id) && !overlay.value) editingSplit.value = true;
       return;
     case 'search': await revealSearch(); return;
-    case 'remind': await openReminders(true); return;
+    case 'remind': await openReminders(true, explicit); return;
     case 'reminders': await openReminders(false); return;
+    case 'reminder-settings': await openDrawer('reminder-settings'); return;
     case 'inbox': await navigateToInbox(); return;
     case 'saved': await navigateContext('saved'); return;
     case 'done': await navigateContext('done'); return;
@@ -1804,6 +1876,14 @@ function actionShortcutBlocked(target: EventTarget | null): boolean {
 
 function onKeydown(event: KeyboardEvent): void {
   if (!workspaceActive.value) return;
+  if (drawer.value === 'reminders' && remindersPanel.value?.dismissBlocked) {
+    if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229) {
+      event.preventDefault(); remindersPanel.value.retainPickerFocus();
+    } else if (event.key === 'Tab' && event.target === document.body) {
+      event.preventDefault(); remindersPanel.value.retainPickerFocus();
+    }
+    return;
+  }
   if (attachmentConversation.value) {
     // A focused Save button can become disabled during transfer, leaving native
     // focus on body. The top surface still owns Escape in that focus vacuum.
@@ -2238,6 +2318,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
            only): context coverage and draft recovery. Lines that come and go
            with triage keys live in the bottom dock instead (.list-dock). -->
       <div class="list-notices">
+        <p v-if="reminderConfirmation" class="reminder-confirmation" role="status" data-test="reminder-confirmation">{{ reminderConfirmation }}</p>
         <div
           v-if="drawer !== 'drafts' && (drafts.closeSetupError.value || drafts.closeRetryAvailable.value || (drafts.isVisible.value && drafts.error.value))"
           role="alert"
@@ -2481,11 +2562,13 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               :actions-enabled="mailboxActionsEnabled"
               :show-read-state="gmailMode"
               :show-read-controls="gmailActionsEnabled"
+              :reminder-enabled="reminderActionEnabled"
               :selected-refs="mailbox.selectedRefs.value"
               @focus="mailbox.focusConversation($event)"
               @open="executeAction('open', $event)"
               @archive="executeAction('archive', $event)"
               @unarchive="executeAction('unarchive', $event)"
+              @remind="executeAction('remind', $event)"
               @set-read="(target, read) => executeAction(read ? 'read' : 'unread', target)"
               @select-toggle="toggleRowSelection"
               @select-range="rangeSelectRow"
@@ -2510,6 +2593,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               :state="mailbox.detailState.value"
               :error="mailbox.detailError.value"
               :command-in-flight="mailbox.commandInFlight.value || mailbox.bulkUnresolved.value"
+              :reminder-enabled="reminderActionEnabled"
               :open-ref="mailbox.openRef.value"
               :navigation-unavailable="mailbox.context.value !== 'inbox' && mailbox.listState.value === 'error'"
               :read-only="trashReader || (gmailMode && !mailboxActionsEnabled)"
@@ -2524,6 +2608,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               @close="executeAction('back')"
               @move="moveReaderConversation"
               @archive="executeAction('archive')"
+              @remind="executeAction('remind')"
               @unarchive="executeAction('unarchive')"
               @set-read="executeAction($event ? 'read' : 'unread')"
               @prepare-reply="prepareReply"
@@ -2642,7 +2727,10 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
                surface was open): the capability needs an account identity, so
                render an explicit account-required state instead of an empty drawer. -->
           <p v-else-if="drawer === 'destinations'" role="note" data-test="destinations-account-required">Provider mail needs a connected Gmail account. Connect one from Account first.</p>
-          <RemindersPanel v-if="drawer === 'reminders' && remindersSupported" :key="reminderTarget ? `${reminderTarget.accountId}:${reminderTarget.conversationId}` : 'destination'" :client="props.client" :target="reminderTarget" :initial-destination="reminderDestination" @destination-change="reminderDestination = $event" @open="openReminderConversation" />
+          <RemindersPanel ref="remindersPanel" v-if="drawer === 'reminders' && remindersSupported" :key="reminderTarget ? `${reminderTarget.accountId}:${reminderTarget.conversationId}` : 'destination'" :client="props.client" :target="reminderTarget" :initial-destination="reminderDestination" @destination-change="reminderDestination = $event" @open="openReminderConversation" @scheduled="reminderScheduled" @dismiss="reminderDismissed" />
+          <section v-if="drawer === 'reminder-settings' && remindersSupported" class="utility-panel" data-test="reminder-settings-dialog">
+            <ReminderSettings @close="closeDrawer" @saved="reminderPreferencesSaved" />
+          </section>
           <CachedTrashPanel v-if="drawer === 'trash' && accountId && gmailMode" :key="accountId" :client="client" :account-id="accountId" :state="trashState" @open="openFromTrash" />
           <AccountPanel
             v-if="drawer === 'account' && accountStatus"

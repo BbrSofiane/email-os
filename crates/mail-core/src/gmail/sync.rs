@@ -121,6 +121,7 @@ struct CtrlState {
     auth_kind: AuthKind,
     auth_auto_retry: bool,
     sync_requested: bool,
+    reminder_work: bool,
     operations_requested: bool,
     upgrade_requested: bool,
     upgrade_in_flight: bool,
@@ -133,9 +134,12 @@ struct CtrlState {
     /// `None` means no live destination job is active; overlaps are typed
     /// `Busy` instead of accumulating unbounded provider reads.
     destination_read: Option<CancelToken>,
+    reminder_read: Option<CancelToken>,
     connection: ConnectionState,
     error: Option<MailError>,
     backoff: u32,
+    #[cfg(test)]
+    wait_divisor: u32,
 }
 
 fn cancel_independent_reads(st: &mut CtrlState) {
@@ -143,6 +147,9 @@ fn cancel_independent_reads(st: &mut CtrlState) {
         cancel.cancel();
     }
     if let Some(cancel) = &st.destination_read {
+        cancel.cancel();
+    }
+    if let Some(cancel) = &st.reminder_read {
         cancel.cancel();
     }
 }
@@ -296,6 +303,7 @@ impl GmailCore {
                 auth_kind: AuthKind::Restore,
                 auth_auto_retry: false,
                 sync_requested: false,
+                reminder_work: false,
                 operations_requested: true,
                 upgrade_requested: false,
                 upgrade_in_flight: false,
@@ -305,9 +313,12 @@ impl GmailCore {
                 pass_cancel: CancelToken::default(),
                 reply_enrichments: HashMap::new(),
                 destination_read: None,
+                reminder_read: None,
                 connection,
                 error,
                 backoff: 0,
+                #[cfg(test)]
+                wait_divisor: 1,
             }),
             wake: Condvar::new(),
         });
@@ -341,6 +352,66 @@ impl GmailCore {
     /// cache: cached reads survive offline and authentication errors.
     pub fn list_conversations(&self) -> Result<InboxSnapshot, MailError> {
         self.inner.store.list_snapshot()
+    }
+
+    pub fn list_reminders(&self) -> Result<Vec<crate::reminders::Reminder>, MailError> {
+        self.inner.store.list_reminders()
+    }
+
+    pub fn put_reminder(
+        &self,
+        command: &crate::reminders::PutReminder,
+    ) -> Result<crate::reminders::Reminder, MailError> {
+        let mut state = self
+            .inner
+            .ctrl
+            .state
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        if state.stop || state.halted {
+            return Err(MailError::StorageUnavailable);
+        }
+        if state.disconnecting {
+            return Err(MailError::Busy);
+        }
+        let result = self.inner.store.put_reminder(command);
+        if let Err(error) = &result {
+            latch_admission_storage_error(&mut state, &self.inner.ctrl, error);
+        } else {
+            state.reminder_work = true;
+        }
+        drop(state);
+        self.inner.ctrl.wake.notify_all();
+        self.inner.hub.dispatch();
+        result
+    }
+
+    pub fn cancel_reminder(
+        &self,
+        command: &crate::reminders::CancelReminder,
+    ) -> Result<crate::reminders::Reminder, MailError> {
+        let mut state = self
+            .inner
+            .ctrl
+            .state
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        if state.stop || state.halted {
+            return Err(MailError::StorageUnavailable);
+        }
+        if state.disconnecting {
+            return Err(MailError::Busy);
+        }
+        let result = self.inner.store.cancel_reminder(command);
+        if let Err(error) = &result {
+            latch_admission_storage_error(&mut state, &self.inner.ctrl, error);
+        } else {
+            state.reminder_work = true;
+        }
+        drop(state);
+        self.inner.ctrl.wake.notify_all();
+        self.inner.hub.dispatch();
+        result
     }
 
     pub fn list_cached_starred(
@@ -1565,7 +1636,10 @@ impl Ctrl {
     fn wait_until_idle(&self, timeout: Duration) -> Result<(), MailError> {
         let deadline = Instant::now() + timeout;
         let mut st = self.state.lock().expect("gmail ctrl poisoned");
-        while st.pass_in_flight || !st.reply_enrichments.is_empty() || st.destination_read.is_some()
+        while st.pass_in_flight
+            || !st.reply_enrichments.is_empty()
+            || st.destination_read.is_some()
+            || st.reminder_read.is_some()
         {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
@@ -1659,6 +1733,18 @@ fn backoff_delay(backoff: u32) -> Duration {
         .unwrap_or(MAX_BACKOFF_INTERVAL)
 }
 
+// Per-worker time compression for lifecycle tests; production uses real durations.
+fn worker_wait(_state: &CtrlState, wait: Duration) -> Duration {
+    #[cfg(test)]
+    {
+        wait / _state.wait_divisor
+    }
+    #[cfg(not(test))]
+    {
+        wait
+    }
+}
+
 // ------------------------------------------------------------------- worker
 
 fn spawn_worker(
@@ -1683,8 +1769,22 @@ fn run(
     // outlive the profile lock.
     _profile: Arc<ProfileGuard>,
 ) {
-    let mut first_tick = true;
+    let mut sync_deadline = Instant::now();
     loop {
+        {
+            let state = ctrl.state.lock().expect("gmail ctrl poisoned");
+            if state.stop || state.halted {
+                return;
+            }
+        }
+        if let Err(error) = process_due_reminders(&store, provider.as_ref(), &ctrl, &hub) {
+            let mut st = ctrl.state.lock().expect("gmail ctrl poisoned");
+            if latch_admission_storage_error(&mut st, &ctrl, &error) {
+                drop(st);
+                hub.dispatch();
+                return;
+            }
+        }
         // Select the next action: request-driven work runs immediately,
         // tick-driven catch-up waits for the periodic/backoff interval.
         let (action, pass_cancel) = {
@@ -1695,20 +1795,38 @@ fn run(
             if st.stop || st.halted {
                 return;
             }
-            let mut tick_due = first_tick;
+            let mut tick_due = Instant::now() >= sync_deadline;
             let runnable_request = |st: &CtrlState| {
                 st.auth_requested
                     || (st.connection == ConnectionState::Connected
                         && (st.upgrade_requested || st.sync_requested || st.operations_requested))
             };
-            if !runnable_request(&st) && !first_tick {
+            if !runnable_request(&st) && !st.reminder_work && !tick_due {
                 // No runnable request pending: wait for one or the periodic
                 // catch-up/backoff deadline.
-                let deadline = Instant::now() + backoff_delay(st.backoff);
+                let reminder_wait = match store.reminder_wait() {
+                    Ok(value) => value,
+                    Err(error) => {
+                        if latch_admission_storage_error(&mut st, &ctrl, &error) {
+                            drop(st);
+                            hub.dispatch();
+                            return;
+                        }
+                        None
+                    }
+                };
+                let reminder_deadline = reminder_wait.map(|wait| {
+                    Instant::now() + worker_wait(&st, wait.max(Duration::from_secs(1)))
+                });
+                let deadline = reminder_deadline.map_or(sync_deadline, |d| d.min(sync_deadline));
                 loop {
                     let remaining = deadline.saturating_duration_since(Instant::now());
                     if remaining.is_zero() {
-                        tick_due = true;
+                        let now = Instant::now();
+                        tick_due = now >= sync_deadline;
+                        if reminder_deadline.is_some_and(|d| now >= d) {
+                            st.reminder_work = true;
+                        }
                         break;
                     }
                     let (guard, _) = ctrl
@@ -1719,7 +1837,7 @@ fn run(
                     if st.stop || st.halted {
                         return;
                     }
-                    if st.disconnecting || runnable_request(&st) {
+                    if st.disconnecting || st.reminder_work || runnable_request(&st) {
                         break;
                     }
                 }
@@ -1731,11 +1849,15 @@ fn run(
                 drop(st);
                 continue;
             }
-            first_tick = false;
+            tick_due |= Instant::now() >= sync_deadline;
+            st.reminder_work = false;
             let action = if st.auth_requested {
                 st.auth_requested = false;
                 PassAction::Auth(st.auth_kind)
-            } else if st.connection == ConnectionState::Authenticating && st.auth_auto_retry {
+            } else if st.connection == ConnectionState::Authenticating
+                && st.auth_auto_retry
+                && tick_due
+            {
                 PassAction::Auth(AuthKind::Restore)
             } else if st.connection == ConnectionState::Connected && st.upgrade_requested {
                 st.upgrade_requested = false;
@@ -1750,6 +1872,9 @@ fn run(
             } else if st.connection == ConnectionState::Connected && tick_due {
                 PassAction::Sync
             } else {
+                if tick_due {
+                    sync_deadline = Instant::now() + worker_wait(&st, backoff_delay(st.backoff));
+                }
                 // Nothing runnable (not configured / disconnected / auth
                 // required): go back to waiting without running a pass.
                 drop(st);
@@ -1786,6 +1911,7 @@ fn run(
             if action == PassAction::MutationUpgrade {
                 st.upgrade_in_flight = false;
             }
+            let reschedule = !matches!(outcome, PassOutcome::Idle | PassOutcome::Cancelled);
             if st.halted {
                 halted = true;
             } else {
@@ -1855,12 +1981,163 @@ fn run(
                     }
                 }
             }
+            if reschedule {
+                sync_deadline = Instant::now() + worker_wait(&st, backoff_delay(st.backoff));
+            }
             ctrl.wake.notify_all();
         }
         hub.dispatch();
         if halted {
             return;
         }
+    }
+}
+
+/// Process local deadlines from the serial worker. A conditional reminder is
+/// decided only after a complete fresh thread read; an error or partial thread
+/// stays pending and remains visible through its due marker.
+fn process_due_reminders(
+    store: &GmailStore,
+    provider: &dyn GmailReadProvider,
+    ctrl: &Arc<Ctrl>,
+    hub: &GmailHub,
+) -> Result<(), MailError> {
+    let due = store.due_reminders()?;
+    for (reminder, baseline) in due {
+        let replied = if reminder.condition == crate::reminders::ReminderCondition::Regardless {
+            false
+        } else {
+            let connected = {
+                let state = ctrl
+                    .state
+                    .lock()
+                    .map_err(|_| MailError::StorageUnavailable)?;
+                state.connection == ConnectionState::Connected
+                    && !state.disconnecting
+                    && !state.stop
+                    && !state.halted
+            };
+            if !connected {
+                continue;
+            }
+            let account = match store.account() {
+                Ok(Some(account)) if account.account_id == reminder.conversation.account_id => {
+                    account
+                }
+                Err(error) => return Err(error),
+                _ => continue,
+            };
+            let generation = store.generation()?;
+            let observation = store.observation_revision()?;
+            let cancel = CancelToken::default();
+            {
+                let mut st = ctrl
+                    .state
+                    .lock()
+                    .map_err(|_| MailError::StorageUnavailable)?;
+                if st.stop || st.halted || st.disconnecting {
+                    continue;
+                }
+                st.reminder_read = Some(cancel.clone());
+            }
+            let thread = match provider.get_thread_for_account(
+                &account.account_id,
+                &reminder.conversation.conversation_id,
+                &cancel,
+            ) {
+                Ok(Some(thread)) => thread,
+                Err(error) => {
+                    clear_reminder_read(ctrl);
+                    if error == MailError::StorageUnavailable {
+                        return Err(error);
+                    }
+                    continue;
+                }
+                _ => {
+                    clear_reminder_read(ctrl);
+                    continue;
+                }
+            };
+            clear_reminder_read(ctrl);
+            if thread.conversation.conversation_ref != reminder.conversation {
+                continue;
+            }
+            let Some(ids) = thread.message_ids.as_ref() else {
+                continue;
+            };
+            if thread.conversation.context_complete != Some(true) {
+                continue;
+            }
+            let senders: HashMap<String, String> = thread
+                .conversation
+                .messages
+                .iter()
+                .map(|message| (message.id.clone(), message.from.mailbox.clone()))
+                .collect();
+            if ids.iter().any(|id| !senders.contains_key(id))
+                || senders.keys().any(|id| !ids.contains(id))
+            {
+                continue;
+            }
+            let mut has_reply = false;
+            let mut complete = true;
+            for id in ids.iter().filter(|id| !baseline.contains(id)) {
+                match senders.get(id) {
+                    Some(sender) if !sender.eq_ignore_ascii_case(&account.email_address) => {
+                        has_reply = true
+                    }
+                    Some(_) => {}
+                    None => {
+                        complete = false;
+                        break;
+                    }
+                }
+            }
+            if !complete {
+                continue;
+            }
+            let st = ctrl
+                .state
+                .lock()
+                .map_err(|_| MailError::StorageUnavailable)?;
+            if st.stop || st.halted || st.disconnecting {
+                continue;
+            }
+            let changed = store.finish_due_reminder_with_thread(
+                &reminder,
+                generation,
+                observation,
+                has_reply,
+                Some(&thread),
+            )?;
+            drop(st);
+            if changed {
+                hub.dispatch();
+            }
+            continue;
+        };
+        let generation = store.generation()?;
+        let observation = store.observation_revision()?;
+        let st = ctrl
+            .state
+            .lock()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        if st.stop || st.halted || st.disconnecting {
+            continue;
+        }
+        let changed = store.finish_due_reminder(&reminder, generation, observation, replied)?;
+        drop(st);
+        if changed {
+            hub.dispatch();
+        }
+    }
+    Ok(())
+}
+
+fn clear_reminder_read(ctrl: &Ctrl) {
+    if let Ok(mut st) = ctrl.state.lock() {
+        st.reminder_read = None;
+        ctrl.wake.notify_all();
     }
 }
 
@@ -2360,6 +2637,13 @@ mod worker_halt_tests {
         writes: usize,
         mutation_granted: bool,
         auth_expired: bool,
+        include_reply: bool,
+        archived: bool,
+        incomplete: bool,
+        fail_history: bool,
+        history_calls: usize,
+        block_thread: bool,
+        thread_started: bool,
     }
 
     struct HaltTestProvider {
@@ -2384,6 +2668,13 @@ mod worker_halt_tests {
                     writes: 0,
                     mutation_granted: true,
                     auth_expired: false,
+                    include_reply: false,
+                    archived: false,
+                    incomplete: false,
+                    fail_history: false,
+                    history_calls: 0,
+                    block_thread: false,
+                    thread_started: false,
                 }),
                 wake: Condvar::new(),
             })
@@ -2486,6 +2777,372 @@ mod worker_halt_tests {
         }
     }
 
+    #[test]
+    fn gmail_no_reply_deadline_defers_offline_then_uses_fresh_thread_read() {
+        use crate::reminders::{PutReminder, ReminderCondition, ReminderPhase};
+        let dir = std::env::temp_dir().join(format!(
+            "mail-core-gmail-reminder-worker-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+            "2026-01-01T00:00:00Z",
+        )));
+        let store = GmailStore::open(&dir, clock.clone()).unwrap();
+        store.begin_account(&test_profile(), 0).unwrap();
+        store
+            .apply_discovery_page(
+                &[ThreadFetch::Cached(Box::new(test_thread()))],
+                None,
+                true,
+                false,
+                0,
+            )
+            .unwrap();
+        store
+            .put_reminder(&PutReminder {
+                conversation: ConversationRef {
+                    account_id: TEST_ACCOUNT.into(),
+                    conversation_id: TEST_THREAD.into(),
+                },
+                source_message_id: "message-1".into(),
+                due_at: Some("2026-01-01T00:01:00Z".into()),
+                condition: ReminderCondition::IfNoReply,
+                expected_revision: None,
+                request_id: "gmail-reminder-put".into(),
+            })
+            .unwrap();
+        clock.advance_seconds(60);
+        let provider = HaltTestProvider::new();
+        let ctrl = Arc::new(Ctrl {
+            state: Mutex::new(CtrlState {
+                stop: false,
+                halted: false,
+                auth_requested: false,
+                auth_kind: AuthKind::Restore,
+                auth_auto_retry: false,
+                sync_requested: false,
+                reminder_work: false,
+                operations_requested: false,
+                upgrade_requested: false,
+                upgrade_in_flight: false,
+                active_action: None,
+                pass_in_flight: false,
+                disconnecting: false,
+                pass_cancel: CancelToken::default(),
+                reply_enrichments: HashMap::new(),
+                destination_read: None,
+                reminder_read: None,
+                connection: ConnectionState::Disconnected,
+                error: None,
+                backoff: 0,
+                #[cfg(test)]
+                wait_divisor: 1,
+            }),
+            wake: Condvar::new(),
+        });
+        let hub = GmailHub {
+            listeners: Mutex::new(HashMap::new()),
+        };
+        process_due_reminders(&store, provider.as_ref(), &ctrl, &hub).unwrap();
+        assert_eq!(
+            store.list_reminders().unwrap()[0].phase,
+            ReminderPhase::Pending,
+            "offline cannot prove no reply"
+        );
+        ctrl.state.lock().unwrap().connection = ConnectionState::Connected;
+        process_due_reminders(&store, provider.as_ref(), &ctrl, &hub).unwrap();
+        assert_eq!(
+            store.list_reminders().unwrap()[0].phase,
+            ReminderPhase::Returned,
+            "complete fresh thread evidence resolves the due reminder"
+        );
+        store
+            .put_reminder(&PutReminder {
+                conversation: ConversationRef {
+                    account_id: TEST_ACCOUNT.into(),
+                    conversation_id: TEST_THREAD.into(),
+                },
+                source_message_id: "message-1".into(),
+                due_at: Some("2026-01-01T00:02:00Z".into()),
+                condition: ReminderCondition::IfNoReply,
+                expected_revision: None,
+                request_id: "gmail-reminder-put-reply".into(),
+            })
+            .unwrap();
+        provider.state.lock().unwrap().include_reply = true;
+        clock.advance_seconds(60);
+        process_due_reminders(&store, provider.as_ref(), &ctrl, &hub).unwrap();
+        assert_eq!(
+            store.list_reminders().unwrap()[0].phase,
+            ReminderPhase::Suppressed,
+            "new external message IDs in fresh thread evidence suppress a conditional reminder"
+        );
+        assert_eq!(
+            provider.state.lock().unwrap().writes,
+            0,
+            "reminder handling performs no provider mutation"
+        );
+        drop(store);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn due_read_reconciles_external_archive_without_provider_writes() {
+        use crate::reminders::{PutReminder, ReminderCondition, ReminderPhase};
+        let dir = std::env::temp_dir().join(format!("due-archive-{}", uuid::Uuid::new_v4()));
+        let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+            "2026-01-01T00:00:00Z",
+        )));
+        let provider = HaltTestProvider::new();
+        let core = GmailCore::open_with_clock(&dir, provider.clone(), clock.clone()).unwrap();
+        assert!(until(|| core
+            .list_conversations()
+            .is_ok_and(|s| s.conversations.len() == 1)));
+        core.inner
+            .ctrl
+            .wait_until_idle(Duration::from_secs(5))
+            .unwrap();
+        core.put_reminder(&PutReminder {
+            conversation: test_thread().conversation.conversation_ref,
+            source_message_id: "message-1".into(),
+            due_at: Some("2026-01-01T00:00:01Z".into()),
+            condition: ReminderCondition::IfNoReply,
+            expected_revision: None,
+            request_id: "archive-due".into(),
+        })
+        .unwrap();
+        provider.state.lock().unwrap().archived = true;
+        clock.advance_seconds(2);
+        assert!(until(|| core
+            .list_reminders()
+            .is_ok_and(|r| r[0].phase == ReminderPhase::Returned)));
+        assert!(
+            core.list_conversations().unwrap().conversations.is_empty(),
+            "fresh external archive must survive local reminder return"
+        );
+        assert_eq!(provider.writes(), 0);
+        core.stop();
+        drop(core);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn reminder_wakes_do_not_starve_sync_recovery() {
+        use crate::reminders::{PutReminder, ReminderCondition, ReminderPhase};
+        let dir =
+            std::env::temp_dir().join(format!("sync-reminder-retry-{}", uuid::Uuid::new_v4()));
+        let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+            "2026-01-01T00:00:00Z",
+        )));
+        let provider = HaltTestProvider::new();
+        let core = GmailCore::open_with_clock(&dir, provider.clone(), clock.clone()).unwrap();
+        assert!(until(|| core
+            .list_conversations()
+            .is_ok_and(|s| s.conversations.len() == 1)));
+        core.inner
+            .ctrl
+            .wait_until_idle(Duration::from_secs(5))
+            .unwrap();
+        core.inner.ctrl.state.lock().unwrap().wait_divisor = 100;
+        core.put_reminder(&PutReminder {
+            conversation: test_thread().conversation.conversation_ref,
+            source_message_id: "message-1".into(),
+            due_at: Some("2026-01-01T00:00:01Z".into()),
+            condition: ReminderCondition::IfNoReply,
+            expected_revision: None,
+            request_id: "incomplete-due".into(),
+        })
+        .unwrap();
+        {
+            let mut state = provider.state.lock().unwrap();
+            state.incomplete = true;
+            state.fail_history = true;
+        }
+        clock.advance_seconds(2);
+        core.request_sync().unwrap();
+        assert!(until(
+            || core.account_status().unwrap().sync.error == Some(MailError::NetworkUnavailable)
+        ));
+        core.inner
+            .ctrl
+            .wait_until_idle(Duration::from_secs(5))
+            .unwrap();
+        let calls = provider.state.lock().unwrap().history_calls;
+        provider.state.lock().unwrap().fail_history = false;
+        // 120s sync backoff becomes 1.2s; overdue reminder retries are 0.6s.
+        std::thread::sleep(Duration::from_millis(700));
+        assert_eq!(
+            provider.state.lock().unwrap().history_calls,
+            calls,
+            "reminder wake must not shorten sync backoff"
+        );
+        assert!(
+            until(|| provider.state.lock().unwrap().history_calls > calls),
+            "periodic sync must recover while reminder evidence stays incomplete"
+        );
+        assert_eq!(
+            core.list_reminders().unwrap()[0].phase,
+            ReminderPhase::Pending
+        );
+        assert_eq!(provider.writes(), 0);
+        core.stop();
+        drop(core);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn local_reminder_worker_reschedules_deadline_and_catches_up_after_reopen() {
+        use crate::reminders::{PutReminder, ReminderCondition, ReminderPhase};
+        let dir =
+            std::env::temp_dir().join(format!("reminder-worker-public-{}", uuid::Uuid::new_v4()));
+        let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+            "2026-01-01T00:00:00Z",
+        )));
+        let provider = HaltTestProvider::new();
+        let core = GmailCore::open_with_clock(&dir, provider.clone(), clock.clone()).unwrap();
+        assert!(until(|| core
+            .account_status()
+            .is_ok_and(|s| s.sync.initial_sync_complete)
+            && core
+                .list_conversations()
+                .is_ok_and(|s| !s.conversations.is_empty())));
+        core.inner
+            .ctrl
+            .wait_until_idle(Duration::from_secs(5))
+            .unwrap();
+        // A real consumer may synchronously read status in its change listener.
+        let observed = core.clone();
+        let listener = core.subscribe(move || {
+            observed.account_status().unwrap();
+        });
+        let command = PutReminder {
+            conversation: ConversationRef {
+                account_id: TEST_ACCOUNT.into(),
+                conversation_id: TEST_THREAD.into(),
+            },
+            source_message_id: "message-1".into(),
+            due_at: Some("2026-01-01T00:01:00Z".into()),
+            condition: ReminderCondition::Regardless,
+            expected_revision: None,
+            request_id: "public-long".into(),
+        };
+        let first = core.put_reminder(&command).unwrap();
+        assert!(core.list_conversations().unwrap().conversations.is_empty());
+        assert!(until(|| !core
+            .inner
+            .ctrl
+            .state
+            .lock()
+            .unwrap()
+            .reminder_work));
+        let revised = core
+            .put_reminder(&PutReminder {
+                due_at: Some("2026-01-01T00:00:01Z".into()),
+                expected_revision: Some(first.revision),
+                request_id: "public-short".into(),
+                ..command.clone()
+            })
+            .unwrap();
+        assert!(until(|| !core
+            .inner
+            .ctrl
+            .state
+            .lock()
+            .unwrap()
+            .reminder_work));
+        clock.advance_seconds(2);
+        // No request_sync or list-side execution: the sleeping worker must wake itself.
+        assert!(until(|| core
+            .list_reminders()
+            .is_ok_and(|rows| rows[0].phase == ReminderPhase::Returned)));
+        assert_eq!(
+            core.list_reminders().unwrap()[0].revision,
+            revised.revision + 1
+        );
+        assert_eq!(core.list_conversations().unwrap().conversations.len(), 1);
+        let next = core
+            .put_reminder(&PutReminder {
+                due_at: Some("2026-01-01T00:00:03Z".into()),
+                request_id: "public-restart".into(),
+                ..command
+            })
+            .unwrap();
+        listener.unsubscribe();
+        core.stop();
+        drop(core);
+        clock.advance_seconds(2);
+        let reopened = GmailCore::open_with_clock(&dir, provider.clone(), clock).unwrap();
+        assert!(until(|| reopened
+            .list_reminders()
+            .is_ok_and(|r| r[0].phase == ReminderPhase::Returned)));
+        assert_eq!(
+            reopened.list_reminders().unwrap()[0].revision,
+            next.revision + 1
+        );
+        assert_eq!(provider.writes(), 0);
+        reopened.stop();
+        drop(reopened);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn local_reminder_thread_read_is_cancelled_on_stop_and_disconnect() {
+        use crate::reminders::{PutReminder, ReminderCondition, ReminderPhase};
+        for disconnect in [false, true] {
+            let dir =
+                std::env::temp_dir().join(format!("reminder-read-cancel-{}", uuid::Uuid::new_v4()));
+            let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+                "2026-01-01T00:00:00Z",
+            )));
+            let provider = HaltTestProvider::new();
+            let core = GmailCore::open_with_clock(&dir, provider.clone(), clock.clone()).unwrap();
+            assert!(until(|| core
+                .account_status()
+                .is_ok_and(|s| s.sync.initial_sync_complete)
+                && core
+                    .list_conversations()
+                    .is_ok_and(|s| !s.conversations.is_empty())));
+            core.inner
+                .ctrl
+                .wait_until_idle(Duration::from_secs(5))
+                .unwrap();
+            provider.state.lock().unwrap().block_thread = true;
+            core.put_reminder(&PutReminder {
+                conversation: ConversationRef {
+                    account_id: TEST_ACCOUNT.into(),
+                    conversation_id: TEST_THREAD.into(),
+                },
+                source_message_id: "message-1".into(),
+                due_at: Some("2026-01-01T00:00:01Z".into()),
+                condition: ReminderCondition::IfNoReply,
+                expected_revision: None,
+                request_id: "cancel-read".into(),
+            })
+            .unwrap();
+            clock.advance_seconds(2);
+            assert!(until(|| provider.state.lock().unwrap().thread_started));
+            if disconnect {
+                core.disconnect_account().unwrap();
+                assert!(core.list_reminders().unwrap().is_empty());
+                assert!(core.list_conversations().unwrap().conversations.is_empty());
+            } else {
+                core.stop();
+                assert_eq!(
+                    core.list_reminders().unwrap()[0].phase,
+                    ReminderPhase::Pending
+                );
+            }
+            assert_eq!(provider.writes(), 0);
+            core.stop();
+            drop(core);
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
     impl GmailReadProvider for HaltTestProvider {
         fn mutation_access(&self) -> Result<bool, MailError> {
             let hook = self.mutation_hook.lock().unwrap().take();
@@ -2566,7 +3223,32 @@ mod worker_halt_tests {
             _cancel: &CancelToken,
         ) -> Result<Option<GmailThread>, MailError> {
             if thread_id == TEST_THREAD {
-                return Ok(Some(test_thread()));
+                let mut thread = test_thread();
+                {
+                    let state = self.state.lock().unwrap();
+                    if state.archived {
+                        thread.inbox_message_ids.clear();
+                        thread.conversation.is_in_inbox = false;
+                    }
+                    if state.incomplete {
+                        thread.conversation.context_complete = Some(false);
+                    }
+                }
+                if self.state.lock().unwrap().include_reply {
+                    thread.conversation.messages.push(Message {
+                        id: "reply-1".to_string(),
+                        from: Address {
+                            display_name: None,
+                            mailbox: "other@example.test".to_string(),
+                        },
+                        to: vec![],
+                        sent_at: "2026-01-01T00:02:00Z".to_string(),
+                        body_text: "synthetic reply".to_string(),
+                        has_attachment: None,
+                    });
+                    thread.message_ids = Some(vec!["message-1".to_string(), "reply-1".to_string()]);
+                }
+                return Ok(Some(thread));
             }
             self.search_reads
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -2583,6 +3265,35 @@ mod worker_halt_tests {
             Ok(thread)
         }
 
+        fn get_thread_for_account(
+            &self,
+            expected_account_id: &str,
+            thread_id: &str,
+            cancel: &CancelToken,
+        ) -> Result<Option<GmailThread>, MailError> {
+            if expected_account_id != TEST_ACCOUNT {
+                return Err(MailError::NotFound);
+            }
+            {
+                let mut state = self.state.lock().unwrap();
+                if state.block_thread {
+                    state.thread_started = true;
+                    self.wake.notify_all();
+                    while state.block_thread && !cancel.is_cancelled() {
+                        state = self
+                            .wake
+                            .wait_timeout(state, Duration::from_millis(10))
+                            .unwrap()
+                            .0;
+                    }
+                    if cancel.is_cancelled() {
+                        return Err(MailError::AuthCancelled);
+                    }
+                }
+            }
+            self.get_thread(thread_id, cancel)
+        }
+
         fn history(
             &self,
             start_history_id: &str,
@@ -2590,6 +3301,10 @@ mod worker_halt_tests {
             cancel: &CancelToken,
         ) -> Result<HistoryPage, GmailHistoryError> {
             let mut state = self.state.lock().unwrap();
+            state.history_calls += 1;
+            if state.fail_history {
+                return Err(GmailHistoryError::Mail(MailError::NetworkUnavailable));
+            }
             if state.auth_expired {
                 return Err(GmailHistoryError::Mail(MailError::AuthRequired));
             }

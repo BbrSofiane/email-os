@@ -1,178 +1,148 @@
-# UX-11 — Bounded desktop-local reminders
+# UX-11 — Device-local reminders
 
-Status: implemented bounded native-fixture increment; **not complete Gmail UX-11**. Source: browsing plan UX-11, source UX spec
-manual reminders/BROWSE-13, ADR 0001 (amended before implementation).
+Email OS owns reminder state. Native fixture reminders use the fixture store;
+Gmail-profile reminders use account-scoped tables in `gmail.db`. Gmail scheduling,
+rescheduling, cancellation and return do not create provider mailbox operations,
+change Gmail labels or require a write-permission upgrade. Fixture reminders retain
+the earlier synthetic archive/restore operation path for compatibility.
 
-## Capability boundary / prerequisites
+## User flow
 
-This checkout is UX-05 at 6c30b9c. UX-06–10 are absent. No dependency on saved
-splits, search, labels, or an Important/Other classifier is assumed. Implement
-one single-conversation reminder in the durable native **synthetic fixture**
-profile and a usable standalone pending/returned destination. Gmail is explicitly
-unsupported: its bounded cache/history checkpoint is not fresh, complete reply
-absence evidence; it also lacks reminder-owned retained inventories and atomic
-reminder/setter acceptance. Do not wire a cached no-reply predicate into Gmail.
-Provider support needs a separate implementation of fresh thread reconciliation,
-generation fencing and pinned immutable inventories in Gmail's own transaction.
-No real mailbox access, credential changes or provider writes are authorized.
-Browser preview may disclose this boundary but must not pretend persistence.
+- H or a row/reader clock opens a focused time picker for one Inbox conversation.
+  Command discovery includes Remind me, Reminders (G then H), and Reminder Settings.
+  Bulk selection, active editors, composition and hidden surfaces retain their
+  existing shortcut guards.
+- Tomorrow, Next Monday, Next weekend and Someday are offered as presets. Next
+  Monday means the strictly next Monday (seven days later when today is Monday).
+  On Sunday, the duplicate Tomorrow suggestion is hidden when both resolve to
+  the same available instant. Free text supports clock times such as `8 am` and
+  `9:30 pm`, relative days such as
+  `3 days`, month/day dates such as `Aug 7`, and explicit-offset ISO timestamps.
+  The picker resolves the selection before the user confirms scheduling.
+- Date presets use the device's local timezone and a configurable default time
+  (08:00 initially). Preferences are stored on the device. Ambiguous/nonexistent
+  local times are rejected instead of guessing a DST offset. Instants sent to the
+  backend carry Z or a numeric offset. Settings, suggestions and selected-time
+  confirmation name the resolved device IANA timezone when available and show
+  the offset for the scheduled instant. Defaults apply to new selections,
+  including explicit rescheduling. Changing defaults or the device timezone does
+  not move existing scheduled instants, though displayed local times can change
+  when the device timezone changes. Reminders are one-time instants; there is no
+  IANA wall-clock recurrence.
+- Rescheduling displays the stored instant as a readable device-local date/time
+  with its current zone and offset. The original instant, including an explicit
+  offset or DST-fold choice, remains selected until the user edits it. Saving
+  without edits preserves that exact value. Editing clears the current selection
+  until a preset or valid parsed value resolves; invalid visible text cannot be
+  saved against the prior instant. Someday displays as Someday.
+- Default condition is If no reply. Regardless returns without checking replies.
+  Someday stores no due instant and never automatically fires.
+- Pending, returned and cancelled/suppressed history are distinct destinations.
+  Pending reminders support rescheduling and cancellation. Reminder actions do not
+  consume the ordinary mailbox Undo slot or mark messages read.
+- Acknowledged scheduling and rescheduling return to Inbox and show a brief polite
+  confirmation using the accepted time, or Someday for an untimed reminder.
+  Failures retain their recovery controls without announcing success. A newer
+  navigation choice takes precedence over a delayed completion.
 
-## Frozen semantics
+## Local storage and Inbox visibility
 
-- Single account+conversation+explicit latest source message ID, no bulk reminder.
-  Source must still be latest; baseline is **all** message IDs at acceptance.
-  Require at least one effective INBOX message and no in-flight mailbox intent.
-- Default condition `if_no_reply`; alternative `regardless`. Qualifying reply is
-  any new ID in the same provider thread, outside the source inventory, with a
-  From mailbox other than the exact primary mailbox (case-insensitive). No alias,
-  RFC reply-header, delivery-order or display-name inference. Self messages do
-  not qualify. Fixture DB is the complete synthetic provider inventory, not a
-  model of Gmail cache completeness. Offline/incomplete Gmail never proves absence.
-- Time input is strict RFC3339 with an explicit numeric offset or Z. Persist the
-  original offset-bearing time and UTC instant: fixed-offset timezone, not an
-  IANA wall-clock recurrence. Reject offset-free local times, natural language,
-  leap seconds and past times. Thus DST gaps/folds cannot be silently guessed;
-  user must choose the intended offset. No recurrence or calendar.
-- `someday` = null due time; never auto-fires (including on incoming mail).
-- Durable scheduling atomically snapshots original inbox IDs, stages archive
-  intent, and stores the reminder. Only confirmed removal becomes pending.
-  At due time, reconcile replies first; conditional replies suppress return,
-  regardless returns. Return/cancel restores **only original inbox IDs**, never
-  newer incoming or originally archived messages. New mail stays in Inbox; no
-  repeated archive to hide it. No automatic read changes. The due transaction
-  is the decision linearization point: incoming mail committed before it is
-  checked; a reply arriving after return intent acceptance does not retroactively
-  cancel that return. That later message is never a target of the old intent.
-- Returned membership requires confirmed return, not merely queued intent.
-  Pending includes removing/pending/returning/cancelling and failures, labelled
-  by phase. Suppressed/cancelled history is distinct from returned. Returned is
-  a persisted local return marker until the next reminder replaces it, not a
-  provider folder or Important/Other classifier; subsequent ordinary triage
-  does not erase that local history.
-- Revision CAS serializes cancel/reschedule versus clock execution. Reschedule
-  only a pending reminder, preserving its source inventory. Cancel while removal
-  is in flight stages ordered exact-target restoration. Failed removal/return
-  remains visible; explicit Cancel/recover stages restoration, never blind replay.
-  A later independent mailbox action supersedes automatic restoration; mark
-  failed and allow cancellation without overriding that newer user intent.
-- Each command has a durable payload-fingerprinted request receipt; replay
-  returns the original result even after newer revisions/restart. Same key with
-  changed payload conflicts. Reminder intents do not consume the ordinary Undo
-  slot; explicit Cancel/recover is the reminder recovery path. Existing single
-  and group Undo continue to apply to their original immutable targets.
-- Execute on the existing serial fixture worker while running; reconcile overdue
-  reminders on worker start. Each transition and operation are one transaction.
-  Restart is idempotent. Due times are not-before instants, not punctual delivery
-  guarantees: the serial worker may be occupied by another intent. No execution
-  guarantee while fully quit, no cross-device
-  state, no notifications/calendar/send/AI/remote resources.
+Acceptance captures account, conversation, explicit latest source ID and the
+baseline message IDs. It rejects a stale source and conflicting mailbox intent.
+The local record, immutable baseline, pinned snapshot and request receipt commit
+in one transaction. Replacement reminders get a new baseline/snapshot;
+rescheduling preserves the accepted baseline. Revisions fence cancel/reschedule
+against deadline processing. Exact request retries return the original receipt,
+including after the deadline, later revisions and a store reopen; changed payloads
+with the same key conflict.
 
-## Acceptance checklist
+While pending, a Gmail-profile reminder hides its known conversation from the
+Email OS Inbox. New message IDs release hiding immediately when synced. Someday
+also hides the baseline conversation. Reaching a deadline alone does not release
+conditional hiding: incomplete/offline evidence leaves the reminder pending.
+Confirmed return or cancellation releases the overlay. Explicit newer remote
+archive, Trash or Spam state is respected; local reminders do not unarchive mail
+on the provider. The Gmail read model and reminder destination are local views,
+not Gmail folders.
 
-- [x] Rust-generated DTOs, typed named IPC, registration and permissions.
-- [x] H picker only in supported mode, explicit immutable source, no bulk widening.
-- [x] Pending/returned destination opens real cached conversations and offers
-      revisioned Cancel/recover and reschedule; failures remain visible.
-- [x] SQLite commit/replay/restart and fake clock/provider tests: fire once,
-      conditional versus regardless reply, someday, self-message, cancellation,
-      reschedule/fire CAS, failure, supersession, new-mail exact targets.
-- [x] UI/transport tests, standard check/build gates.
-- [ ] Native Mac/WKWebView/VoiceOver verification (separate operator gate).
-- [ ] Gmail fresh-evidence/pinned-inventory implementation and approved disposable
-      provider validation (not claimed by fixture tests).
+Active reminders retain conversation data across bounded cache eviction. Capped
+rediscovery does not interpret an unseen pinned thread as proven archived;
+authoritative complete discovery and direct thread updates still reconcile remote
+membership. History cursor expiry preserves local reminders and receipts. Account
+disconnect clears their snapshots and receipts with the account cache.
 
-## Executed evidence (synthetic/headless)
+## Reply evidence and worker lifecycle
 
-- `mise run gen:ts` generated Reminder/condition/phase/put/cancel types and named
-  command constants from Rust; `check:contract` detects drift.
-- `mise run check`: core synthetic tests, contract check, fmt/clippy, Vitest and
-  typecheck pass (238 core tests; 462 UI tests passed, 20 opt-in rendered tests
-  skipped). The final tree includes seven reminder storage/race tests,
-  two fake-provider/worker integration tests, 22 reminder UI tests and
-  one new exact-envelope transport test. Existing bulk/Undo/draft/close tests
-  remain in the full suite. The opt-in rendered-browser suites are skipped by
-  the ordinary check, not claimed as browser evidence.
-- `mise run build:web`: production build passes.
-- `mise run check:native`: native shell all-target compile passes in this Mac
-  checkout. `mise run test:native`: eight bridge/close-gate tests pass, including
-  exact-source/account reminder forwarding and Gmail mode rejection. Compilation
-  and headless bridge tests are **not** a WKWebView interactive smoke test.
-- One intermediate full core run hit the existing Gmail
-  `archive_read_ordering_idempotency_and_unknown_after_apply` timeout; subsequent
-  full checks pass without a Gmail implementation change. No provider network
-  or credentials were used by those synthetic tests.
-- The accepted-fixes combined check initially hit the unchanged draft test
-  `retains the frozen retry across an account change during delayed save
-  verification`: its transient `Saving locally` assertion observed an already
-  completed saved status. That test passed in isolation and the subsequent full
-  check passed without draft-code or draft-test changes. The first run is not
-  counted as passing; the timing-sensitive result remains a validation caveat.
+A qualifying reply is a new ID in the same thread with a sender other than the
+exact primary mailbox, case-insensitively. Alias inference, RFC reply-header
+inference, and cross-thread matching are excluded. Gmail conditional decisions
+require a fresh complete per-thread read with inventory/sender coverage, fenced by
+account, generation, reminder revision and local observation revision. Offline,
+failed or incomplete reads leave the reminder pending. A reply can arrive after
+the provider read checkpoint and before the local decision commits; this is not a
+provider-atomic absence guarantee.
 
-Storage evidence covers durable command replay across newer revisions/restart,
-conflicting keys, per-message mixed original inbox facts, due-time commit
-failure, concurrent cancel/reschedule CAS, source/account rejection, offset-free
-DST rejection, explicit offset handling, conditional/external versus self reply,
-regardless, someday, in-flight removal/cancel ordering, return failure recovery,
-newer triage supersession, unchanged ordinary Undo slot and exact incoming-ID
-exclusion. Worker integration interrupts a paused synthetic provider, restarts
-overdue, and confirms exactly two archive/restore calls; a later restart makes
-zero calls. A second integration test keeps the worker alive across a future
-fake-clock deadline, confirms removal then return without direct reconciliation
-or restart, verifies original target IDs and incoming-mail preservation, and
-observes further worker polls/time advances without additional provider calls or
-operations. This is idempotent **fixture setter** recovery, not exactly-once
-remote execution certification.
+Native workers own execution while the app runs and catch up overdue reminders on
+launch. New schedules/reschedules wake the worker and recalculate deadlines;
+conditional retries use the periodic interval instead of a tight polling loop.
+Stop and disconnect cancel in-flight reminder reads. Persistence failures halt
+worker processing and reject further admission. No database/control lock is held
+across provider network calls, and change subscribers run outside control locks.
 
-UI evidence is Vitest/jsdom with an injected memory-only reminder capability:
-H opens the supported fixture picker and is gated for bulk selection, text input,
-IME composition and Gmail; a lost ACK retries the same key; invalid times remain
-editable; Someday/Regardless submit explicit fields; returned membership is
-separate. The pointer journey clicks Reminders, the Returned tab and a returned
-conversation; Escape/Back restores that tab without auto-read. Plain-text subject
-markup stays literal. Shared registry routes for palette, navigator and G then H
-are implemented, but these reminder tests do not exercise those routes or assert
-their capability/selection/editor/IME boundaries. The ordinary browser-preview
-fake does not implement reminders and exposes no dead controls. No real-browser
-reminder rendering or native interactive session was performed.
+Delivery times are not-before instants, not punctual guarantees: serial worker
+work can delay processing. Fully-quit execution, cross-device state, OS
+notifications, calendar integration and scheduled sending are outside scope.
 
-## Accepted adversarial-review fixes
+## Verification boundaries
 
-The accepted fix pass covers these four findings only:
+Automated coverage uses synthetic providers and clocks. It exercises local Inbox
+visibility, due return, conditional reply suppression, offline deferral, Someday,
+replacement/reschedule baselines, exact retries, account isolation, retention,
+restart catch-up and cancellation of paused reads. UI coverage includes picker
+keyboard behavior, source preparation and lost-ACK recovery, navigation origins,
+Gmail-mode discovery and settings persistence.
 
-- Capture the Activity/Reminders reader origin synchronously before detail
-  loading. Deferred-transport regressions cover Back during loading and a late
-  reminder response after a newer Inbox reader opens; origin, J/K, focus and
-  no-auto-read behavior remain owned by the current visit.
-- Offer explicit in-panel source-preparation retry after transient read failure
-  or stale-source rejection. Preserve time/condition choices, require explicit
-  resubmission with the latest same-account/conversation source and a new key,
-  retain exact retries after ambiguous ACKs, and never convert revision conflicts
-  into a new schedule. Tests also fence stale/changed-target/unmounted responses.
-- Test a future deadline crossed while the worker remains running, as described
-  above; the restart test remains separate.
-- Narrow shortcut evidence to the actual H and pointer assertions, not untested
-  palette/navigator/G-H dispatch boundaries.
+The browser fake implements memory-only reminders for development and tests. It
+never establishes SQLite durability or native scheduling. Its due transitions are
+reconciled on synthetic reads rather than a native worker. Browser preview must
+retain its memory-only disclosure.
 
-Deferred P2 notes were not included in this pass: Escape from reminder form
-controls, clearing obsolete list-load errors after successful refresh, and
-additional palette/navigator/G-H or failed-draft-flush coverage. These remain
-non-blocking review notes, not verified fixes.
+Native compilation and synthetic bridge tests are distinct from interactive
+WKWebView, VoiceOver, packaged-app quit/relaunch and disposable-account testing.
+No credentials, real account connection or provider writes are authorized by the
+synthetic verification workflow. Those interactive/operator checks remain separate
+verification gates and must not be claimed from automated test results.
 
-## Remaining gates / needed decision
+## Automated validation (2026-11-08)
 
-Keep this increment labelled native synthetic fixture only. To finish Gmail
-UX-11, decide whether to authorize a follow-up implementing fresh complete
-thread evidence, generation-fenced reply checks, reminder-pinned retained
-inventories and atomic exact-target Gmail intent staging, or retain the current
-fixture-only boundary. Do not enable Gmail reminders merely by adding a UI flag.
-No later thread was merged/cherry-picked or reimplemented to manufacture these
-prerequisites. A fresh read can still race a later provider reply; the future
-Gmail contract must explicitly bound its evidence checkpoint and avoid claiming
-provider-atomic absence.
+On the integrated tree, `mise run check` passes: 312 core tests (including
+integration suites), 881 UI tests, contract generation, formatting/clippy and
+typecheck. The 33 opt-in rendered UI tests remain skipped. `mise run build:web`
+passes. Native `mise run check:native` and `mise run test:native` pass, with all
+11 bridge tests passing. Rust checks use `CARGO_PROFILE_DEV_DEBUG=0` and
+`CARGO_PROFILE_TEST_DEBUG=0` to fit the VM disk budget. No source or assertion
+is disabled by those build settings.
 
-After that implementation, approved disposable-account validation is still
-required. Native fixture H/palette/G-H, pointer/keyboard focus and retained
-returned-tab round trip, WKWebView/VoiceOver, real quit/relaunch scheduling and
-normal-close draft protection remain operator smoke gates. No real mailbox
-access, credential changes, provider writes, sends, OS package installation,
-calendar or cross-device execution was attempted.
+New worker tests exercise a shortened future deadline, local return and catch-up
+after core reopen, and cancellation of a paused thread read on stop/disconnect.
+Store regressions exercise receipt replay after the deadline/reopen, replacement
+baseline retention through capped rediscovery and cache pruning, Someday hiding,
+and account cleanup. These are synthetic process/core tests, not interactive
+packaged-app or disposable-account evidence.
+
+## Critique follow-up
+
+The five approved UI priorities are implemented: the reminder surfaces use the
+shared overlay and field styles; the picker identifies the subject and known
+sender; suggestions expose combobox/listbox selection and resolved-time
+announcements; Next Monday is explicit, with duplicate Sunday suggestions
+removed; and device-zone labels explain scheduled times without moving stored
+instants. The complete subject is available through a keyboard-operable
+disclosure. Subject text remains literal and source/revision fencing is unchanged.
+
+The integrated follow-up UI suite passes (893 tests, 33 optional rendered tests
+skipped), as do typecheck, production web build and diff checks. Focused reminder
+suites also pass in UTC and America/New_York. These are automated component and
+flow checks, not new browser, VoiceOver or NVDA verification. Previous screenshots
+show the implementation before these critique fixes and should not be presented
+as current after-state captures.

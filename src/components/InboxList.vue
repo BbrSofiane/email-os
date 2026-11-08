@@ -40,6 +40,7 @@ const props = defineProps<{
   actionsEnabled?: boolean;
   showReadState?: boolean;
   showReadControls?: boolean;
+  reminderEnabled?: boolean;
   /** UX-05: selected references (account-scoped); selection ≠ focus. */
   selectedRefs?: ConversationRef[];
 }>();
@@ -49,6 +50,7 @@ const emit = defineEmits<{
   open: [ref: ConversationRef];
   archive: [ref: ConversationRef];
   unarchive: [ref: ConversationRef];
+  remind: [ref: ConversationRef];
   setRead: [ref: ConversationRef, read: boolean];
   /** X / checkbox / Cmd-click: toggle one row (the parent moves focus/anchor). */
   selectToggle: [ref: ConversationRef];
@@ -263,7 +265,7 @@ function readStateName(row: ConversationSummaryLike): string {
 }
 
 function hasRowActions(): boolean {
-  return Boolean(props.showReadControls || props.actionsEnabled);
+  return Boolean(props.showReadControls || props.actionsEnabled || props.reminderEnabled);
 }
 
 /** DOM id of the row's action disclosure panel (for aria-controls). */
@@ -711,6 +713,16 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
                 :tabindex="tabIndexFor(item.row, item.index)"
                 @click.stop="emit('setRead', item.row.ref, !item.row.isRead)"
               ><RowGlyph :name="item.row.isRead ? 'mark-unread' : 'mark-read'" /><span class="row-action-label">Mark {{ item.row.isRead ? 'unread' : 'read' }}</span></button>
+              <button
+                v-if="props.reminderEnabled && context === 'inbox'"
+                type="button"
+                class="row-action"
+                :data-test="`row-remind-${item.row.ref.conversationId}`"
+                title="Remind me on this device"
+                aria-label="Remind me on this device"
+                :tabindex="tabIndexFor(item.row, item.index)"
+                @click.stop="emit('remind', item.row.ref)"
+              ><RowGlyph name="reminder" /><span class="row-action-label">Remind</span></button>
               <button
                 v-if="props.actionsEnabled && context !== 'starred'"
                 type="button"
