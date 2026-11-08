@@ -328,7 +328,7 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
     // card, titled as the reply draft, with the reason it is not in its thread.
     expect(w.find('[data-test="compose-card"]').exists()).toBe(true);
     expect(w.get('[data-test="compose-card"]').attributes('aria-label')).toBe('Reply draft to ada@example.test');
-    expect(w.get('[data-test="compose-card-notice"]').text()).toBe('Source conversation unavailable. Editing locally; nothing is sent.');
+    expect(w.get('[data-test="compose-card-notice"]').text()).toBe('Source conversation unavailable: not open. Editing locally; nothing is sent.');
     expect(w.find('[data-test="composer"]').exists()).toBe(true);
     expect((await fake.listDrafts())).toHaveLength(1);
     expect((await fake.listDrafts())[0]?.source).toMatchObject({ kind: 'reply' });

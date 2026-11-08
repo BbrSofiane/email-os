@@ -4,11 +4,11 @@
  * error lines, and the keyboard model. It only lists drafts and reports which
  * one was chosen; opening is the app's decision (see drafts.context.test.ts).
  */
-import { afterEach, describe, expect, it } from 'vitest';
-import { mount, type VueWrapper } from '@vue/test-utils';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import DraftsList from '../src/components/DraftsList.vue';
 import { compactDateLabel, fullDateLabel } from '../src/lib/browsing-dates';
-import type { DraftRef, DraftSummary } from '../src/lib/ipc/client';
+import type { DraftRef, DraftSummary, MailError } from '../src/lib/ipc/client';
 import { fixtureRef } from './helpers';
 
 const ref = (draftId: string): DraftRef => ({ accountId: 'acct-fixture', draftId });
@@ -201,5 +201,230 @@ describe('DraftsList in-flow alerts', () => {
     wrapper = mountList({ createError: { kind: 'storage_unavailable' } });
     expect(wrapper.get('[data-test="draft-open-error"]').attributes('role')).toBe('alert');
     expect(wrapper.findAll('[data-drawer-row]')).toHaveLength(2);
+  });
+});
+
+describe('DraftsList body preview', () => {
+  let wrapper: VueWrapper | null = null;
+  afterEach(() => { wrapper?.unmount(); wrapper = null; });
+  const bodies: Record<string, string> = {};
+  const loadBody = (draftRef: DraftRef) => Promise.resolve(bodies[draftRef.draftId] ?? '');
+  const previews = () => wrapper!.findAll('[data-test="draft-preview"]');
+
+  it('shows nothing invented: no preview without a body loader, and none for a body that could not be read', async () => {
+    wrapper = mountList();
+    await flushPromises();
+    expect(previews()).toHaveLength(0);
+    wrapper.unmount();
+    wrapper = mountList({ loadBody: () => Promise.reject(new Error('read failed')) });
+    await flushPromises();
+    expect(previews()).toHaveLength(0);
+    expect(wrapper.findAll('.draft-subject')).toHaveLength(2);
+  });
+
+  it('puts the body after the subject as one Ash line of plain text with whitespace collapsed', async () => {
+    bodies.d1 = '  Hello\n\n   Ada,\t\tship it  ';
+    wrapper = mountList({ summaries: [summary('d1')], loadBody });
+    await flushPromises();
+    const preview = wrapper.get('.context-row-secondary [data-test="draft-preview"]');
+    expect(preview.text()).toBe('Hello Ada, ship it');
+    expect(preview.classes()).not.toContain('drawer-empty');
+    expect(preview.element.previousElementSibling?.classList.contains('draft-subject')).toBe(true);
+  });
+
+  it('keeps text that looks like HTML literal: no element is created and no attribute runs', async () => {
+    bodies.d1 = '<img src=x onerror="alert(1)"> <b>bold</b> &amp; <script>alert(2)</script>';
+    wrapper = mountList({ summaries: [summary('d1')], loadBody });
+    await flushPromises();
+    const preview = wrapper.get('[data-test="draft-preview"]');
+    expect(preview.text()).toBe('<img src=x onerror="alert(1)"> <b>bold</b> &amp; <script>alert(2)</script>');
+    expect(preview.element.children).toHaveLength(0);
+    expect(wrapper.find('.context-row img, .context-row b, .context-row script').exists()).toBe(false);
+  });
+
+  it('caps a very long body in memory and leaves the one-line clip to CSS', async () => {
+    bodies.d1 = 'word '.repeat(2000);
+    wrapper = mountList({ summaries: [summary('d1')], loadBody });
+    await flushPromises();
+    const text = wrapper.get('[data-test="draft-preview"]').text();
+    expect(text.length).toBeLessThanOrEqual(240);
+    expect(text.startsWith('word word')).toBe(true);
+  });
+
+  it('says "No text yet" in Ash for an empty or whitespace-only body', async () => {
+    bodies.d1 = ' \n\t ';
+    bodies.d2 = '';
+    wrapper = mountList({ loadBody });
+    await flushPromises();
+    expect(previews().map((preview) => preview.text())).toEqual(['No text yet', 'No text yet']);
+    expect(previews().every((preview) => preview.classes().includes('drawer-empty'))).toBe(true);
+  });
+
+  it('reads each body once per revision: an unchanged list is not read again, a new revision is', async () => {
+    bodies.d1 = 'first';
+    let reads = 0;
+    const counting = (draftRef: DraftRef) => { reads += 1; return loadBody(draftRef); };
+    wrapper = mountList({ summaries: [summary('d1')], loadBody: counting });
+    await flushPromises();
+    expect(reads).toBe(1);
+    await wrapper.setProps({ summaries: [summary('d1')] });
+    await flushPromises();
+    expect(reads).toBe(1);
+    bodies.d1 = 'second';
+    await wrapper.setProps({ summaries: [summary('d1', { revision: 4 })] });
+    await flushPromises();
+    expect(reads).toBe(2);
+    expect(wrapper.get('[data-test="draft-preview"]').text()).toBe('second');
+  });
+});
+
+describe('DraftsList Discard', () => {
+  let wrapper: VueWrapper | null = null;
+  afterEach(() => { wrapper?.unmount(); wrapper = null; });
+  const three = [summary('d1'), summary('d2', { subject: 'Two' }), summary('d3', { subject: 'Three' })];
+  const discardBtn = (id: string) => wrapper!.get(`[data-test="draft-row-${id}"] [data-test="discard-draft"]`);
+  const rowButton = (id: string) => wrapper!.get(`[data-test="open-draft-${id}"]`).element;
+  const status = () => wrapper!.get('[data-test="draft-discard-status"]');
+
+  /** A discard that, like the app, deletes the draft and lets the list refresh before it resolves. */
+  function deleting(result: MailError | null = null) {
+    const calls: Array<{ draftId: string; requestId: string }> = [];
+    const discardDraft = async (draft: DraftSummary, requestId: string): Promise<MailError | null> => {
+      calls.push({ draftId: draft.ref.draftId, requestId });
+      if (result) return result;
+      await wrapper!.setProps({ summaries: (wrapper!.props() as { summaries: DraftSummary[] }).summaries.filter((item) => item.ref.draftId !== draft.ref.draftId) });
+      return null;
+    };
+    return { calls, discardDraft };
+  }
+
+  it('offers no Discard without a discard handler', () => {
+    wrapper = mountList();
+    expect(wrapper.find('[data-test="discard-draft"]').exists()).toBe(false);
+  });
+
+  it('is a quiet inline ghost on every row, named for its draft, in the Tab order and revealed on the current row', () => {
+    wrapper = mountList({ summaries: three, discardDraft: deleting().discardDraft });
+    expect(wrapper.findAll('[data-test="discard-draft"]')).toHaveLength(3);
+    const button = discardBtn('d1');
+    expect(button.text()).toBe('Discard');
+    expect(button.classes()).toContain('drawer-quiet');
+    expect(button.attributes('aria-label')).toBe('Discard draft ada@example.test');
+    expect(button.attributes('tabindex')).toBeUndefined();
+    expect(button.element.closest('.context-row-actions')).not.toBeNull();
+    expect(wrapper.get('[data-test="draft-row-d1"] .context-row').classes()).toContain('focused');
+    // A draft with neither recipient nor subject is still named.
+    wrapper.unmount();
+    wrapper = mountList({ summaries: [REPLY], discardDraft: deleting().discardDraft });
+    expect(discardBtn('d2').attributes('aria-label')).toBe('Discard draft with no recipient or subject');
+  });
+
+  it('asks first: nothing is deleted until the confirmation is confirmed, and focus enters it', async () => {
+    const { calls, discardDraft } = deleting();
+    wrapper = mountList({ summaries: three, discardDraft });
+    await discardBtn('d2').trigger('click');
+    await flushPromises();
+    const confirm = wrapper.get('[data-test="draft-discard-confirm"]');
+    expect(confirm.attributes('role')).toBe('alertdialog');
+    expect(confirm.text()).toContain('Discard this local draft? This cannot be undone.');
+    expect(confirm.element.closest('[data-test="draft-row-d2"]')).not.toBeNull();
+    expect(document.activeElement).toBe(wrapper.get('[data-test="confirm-discard-draft"]').element);
+    expect(calls).toHaveLength(0);
+    expect(wrapper.findAll('[data-drawer-row]')).toHaveLength(3);
+  });
+
+  it('cancels with Keep draft or Escape, deletes nothing, returns focus to Discard, and keeps Escape from also running Back', async () => {
+    const { calls, discardDraft } = deleting();
+    wrapper = mountList({ summaries: three, discardDraft });
+    const outside = vi.fn();
+    window.addEventListener('keydown', outside);
+    await discardBtn('d2').trigger('click'); await flushPromises();
+    await wrapper.get('[data-test="cancel-discard-draft"]').trigger('click'); await flushPromises();
+    expect(wrapper.find('[data-test="draft-discard-confirm"]').exists()).toBe(false);
+    expect(document.activeElement).toBe(discardBtn('d2').element);
+    await discardBtn('d2').trigger('click'); await flushPromises();
+    await wrapper.get('[data-test="confirm-discard-draft"]').trigger('keydown', { key: 'Escape' }); await flushPromises();
+    expect(wrapper.find('[data-test="draft-discard-confirm"]').exists()).toBe(false);
+    expect(document.activeElement).toBe(discardBtn('d2').element);
+    expect(outside).not.toHaveBeenCalled();
+    window.removeEventListener('keydown', outside);
+    expect(calls).toHaveLength(0);
+    expect(wrapper.findAll('[data-drawer-row]')).toHaveLength(3);
+    expect(status().text()).toBe('');
+  });
+
+  it('discards the confirmed draft, announces "Local draft deleted" and moves focus to the next row', async () => {
+    const { calls, discardDraft } = deleting();
+    wrapper = mountList({ summaries: three, discardDraft });
+    await discardBtn('d2').trigger('click'); await flushPromises();
+    await wrapper.get('[data-test="confirm-discard-draft"]').trigger('click'); await flushPromises();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.draftId).toBe('d2');
+    expect(calls[0]!.requestId).toMatch(/\S/);
+    expect(wrapper.findAll('[data-drawer-row]').map((row) => row.attributes('data-drawer-row'))).toEqual(['acct-fixture:d1', 'acct-fixture:d3']);
+    expect(status().attributes('role')).toBe('status');
+    expect(status().attributes('aria-live')).toBe('polite');
+    expect(status().text()).toBe('Local draft deleted');
+    expect(document.activeElement).toBe(rowButton('d3'));
+    expect(wrapper.emitted('update:activeKey')!.at(-1)).toEqual(['acct-fixture:d3']);
+  });
+
+  it('moves focus to the previous row when the last row is discarded, and to the pane when none is left', async () => {
+    const { discardDraft } = deleting();
+    wrapper = mountList({ summaries: [summary('d1'), summary('d2')], discardDraft });
+    await discardBtn('d2').trigger('click'); await flushPromises();
+    await wrapper.get('[data-test="confirm-discard-draft"]').trigger('click'); await flushPromises();
+    expect(document.activeElement).toBe(rowButton('d1'));
+    await discardBtn('d1').trigger('click'); await flushPromises();
+    await wrapper.get('[data-test="confirm-discard-draft"]').trigger('click'); await flushPromises();
+    expect(wrapper.get('[data-test="draft-list-empty"]').text()).toBe('No local drafts.');
+    expect(document.activeElement).toBe(wrapper.get('[data-test="drafts-pane"]').element);
+    expect(status().text()).toBe('Local draft deleted');
+  });
+
+  it('keeps the draft and the failure visible when the delete is not confirmed, and retries with the same request id', async () => {
+    const { calls, discardDraft } = deleting({ kind: 'storage_unavailable' });
+    wrapper = mountList({ summaries: three, discardDraft });
+    await discardBtn('d2').trigger('click'); await flushPromises();
+    await wrapper.get('[data-test="confirm-discard-draft"]').trigger('click'); await flushPromises();
+    expect(wrapper.get('[data-test="draft-discard-error"]').attributes('role')).toBe('alert');
+    expect(wrapper.get('[data-test="draft-discard-error"]').text()).toBe('Draft not discarded: local storage did not confirm the delete. Retry is safe.');
+    expect(wrapper.findAll('[data-drawer-row]')).toHaveLength(3);
+    expect(status().text()).toBe('');
+    // The confirmation stays so Retry is one press; the same request is repeated.
+    expect(wrapper.find('[data-test="draft-discard-confirm"]').exists()).toBe(true);
+    await wrapper.get('[data-test="confirm-discard-draft"]').trigger('click'); await flushPromises();
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.requestId).toBe(calls[0]!.requestId);
+  });
+
+  it('closes the confirmation on a definite rejection, keeps the draft, says why and returns focus to Discard', async () => {
+    const { discardDraft } = deleting({ kind: 'draft_conflict', currentRevision: 7 });
+    wrapper = mountList({ summaries: three, discardDraft });
+    await discardBtn('d2').trigger('click'); await flushPromises();
+    await wrapper.get('[data-test="confirm-discard-draft"]').trigger('click'); await flushPromises();
+    expect(wrapper.get('[data-test="draft-discard-error"]').text()).toBe('Draft not discarded: it changed to revision 7. Open it to review.');
+    expect(wrapper.find('[data-test="draft-discard-confirm"]').exists()).toBe(false);
+    expect(wrapper.findAll('[data-drawer-row]')).toHaveLength(3);
+    expect(document.activeElement).toBe(discardBtn('d2').element);
+  });
+
+  it('cannot discard a draft that is open in the editor, and not while the editor is busy', async () => {
+    wrapper = mountList({ summaries: three, discardDraft: deleting().discardDraft, activeRef: ref('d2') });
+    expect(discardBtn('d2').attributes('disabled')).toBeDefined();
+    expect(discardBtn('d2').attributes('title')).toBe('This draft is open in an editor');
+    expect(discardBtn('d1').attributes('disabled')).toBeUndefined();
+    await wrapper.setProps({ busy: true });
+    expect(discardBtn('d1').attributes('disabled')).toBeDefined();
+  });
+
+  it('disables a pending confirmation when its draft opens in the editor', async () => {
+    const { calls, discardDraft } = deleting();
+    wrapper = mountList({ summaries: three, discardDraft });
+    await discardBtn('d2').trigger('click'); await flushPromises();
+    await wrapper.setProps({ activeRef: ref('d2') });
+    expect(wrapper.get('[data-test="confirm-discard-draft"]').attributes('disabled')).toBeDefined();
+    await wrapper.get('[data-test="confirm-discard-draft"]').trigger('click');
+    expect(calls).toHaveLength(0);
   });
 });

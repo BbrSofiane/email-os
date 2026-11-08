@@ -1840,14 +1840,19 @@ describe('local plain-text drafts UI', () => {
     const loadedDraft = await fake.getDraft(receipt.ref);
     const pending = deferred<Awaited<ReturnType<MailClient['getDraft']>>>();
     let reads = 0;
+    // The Drafts list reads each body once for its row preview when it mounts;
+    // only the read that opens the draft is held back and counted.
+    let armed = false;
     const client: MailClient = {
       ...fake,
       getDraft: (ref) => {
+        if (!armed) return fake.getDraft(ref);
         reads += 1;
         return reads === 1 ? pending.promise : fake.getDraft(ref);
       },
     };
     const w = await mountApp(fake, client);
+    armed = true;
     await w.find(`[data-test="open-draft-${receipt.ref.draftId}"]`).trigger('click');
     await flushPromises();
     expect(reads).toBe(1);

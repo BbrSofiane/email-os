@@ -4,6 +4,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import App from '../src/App.vue';
 import ComposeCard from '../src/components/ComposeCard.vue';
 import { browsingActions } from '../src/lib/browsing-actions';
+import { REPLY_REASONS, sourceLoadErrorReason } from '../src/lib/reply-context';
 import { actionAliases, actionGroupOf, matchesQuery } from '../src/lib/action-palette';
 import { createBrowserFakeMailClient, deferred, waitFor, type BrowserFake } from './helpers';
 import type { DraftContent, DraftReceipt, MailClient } from '../src/lib/ipc/client';
@@ -444,5 +445,38 @@ describe('compose entry points in App (inline card in the central pane)', () => 
     expect(fake.controls.activity()).toEqual([]);
     expect((w.find('[data-test="draft-body"]').element as HTMLTextAreaElement).value).toBe('e j k stay text');
     expect(w.find('[data-test="search-input"]').exists()).toBe(false);
+  });
+});
+
+describe('ComposeCard fallback reason (reply draft that cannot show its thread)', () => {
+  let wrapper: VueWrapper | null = null;
+  afterEach(() => { wrapper?.unmount(); wrapper = null; });
+  const replySource = { kind: 'reply', conversation: { accountId: 'fixture-account', conversationId: 'conv-01' }, sourceMessageId: 'm1' } as const;
+  const noticeFor = (notice: string | null) => {
+    wrapper?.unmount();
+    wrapper = mount(ComposeCard, { props: cardProps({ source: replySource, recipientLabel: 'Ada', notice }) });
+    return wrapper.find('[data-test="compose-card-notice"]');
+  };
+
+  it.each([
+    [REPLY_REASONS.noLatestMessage.text, 'no latest message'],
+    [REPLY_REASONS.retainedSnapshot.text, 'retained snapshot'],
+    [REPLY_REASONS.incomplete.text, 'incomplete cached conversation'],
+    [REPLY_REASONS.headerMismatch.text, 'reply headers do not match the latest message'],
+    [REPLY_REASONS.otherAccount.text, 'belongs to another account'],
+    [REPLY_REASONS.notOpen.text, 'not open'],
+    [REPLY_REASONS.stillLoading.text, 'still loading'],
+    [sourceLoadErrorReason('not found'), 'could not be loaded: not found'],
+    [sourceLoadErrorReason(null), 'could not be loaded'],
+  ])('shows the reason "%s" as visible text and keeps the sentence in the title', (reason, label) => {
+    const notice = noticeFor(reason);
+    expect(notice.text()).toBe(`Source conversation unavailable: ${label}. Editing locally; nothing is sent.`);
+    expect(notice.attributes('title')).toBe(reason);
+    expect(notice.attributes('role')).toBe('note');
+  });
+
+  it('shows an unknown reason as written, never a vague word, and no line without a reason', () => {
+    expect(noticeFor('Something specific broke.').text()).toBe('Source conversation unavailable: Something specific broke. Editing locally; nothing is sent.');
+    expect(noticeFor(null).exists()).toBe(false);
   });
 });

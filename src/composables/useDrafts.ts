@@ -797,6 +797,33 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
     return sendDelete(command);
   }
 
+  /**
+   * Discard a draft from the Drafts list, after the list's own confirmation.
+   * The editor's discard (`askDiscard` / `discard`) acts on the open buffer
+   * (flush, revision of the buffer, `clearEditor`), so it cannot serve a row
+   * with no editor open. This sends the same revision-checked `DeleteDraft`
+   * through the same client call, and refreshes the list before it resolves.
+   * `listRequestId` stays the same across retries of one confirmation, so a
+   * delete whose acknowledgement was lost is repeated, never doubled.
+   * Returns `null` once the delete is confirmed, else the error; the draft is
+   * never removed locally before the client confirms. A draft that is open in
+   * the editor is refused (`busy`): the editor owns it.
+   */
+  async function discardListed(summary: DraftSummary, listRequestId: string): Promise<MailError | null> {
+    const target = summary.ref;
+    if (target.accountId !== accountId.value) return { kind: 'auth_required' };
+    const open = activeRef.value;
+    const openHere = !!open && open.accountId === target.accountId && open.draftId === target.draftId;
+    if (openHere || transitioning.value || closingForWindow.value) return { kind: 'busy' };
+    try {
+      await client.deleteDraft({ ref: { ...target }, expectedRevision: summary.revision, requestId: listRequestId });
+    } catch (raw) {
+      return normalizeError(raw);
+    }
+    await refresh();
+    return null;
+  }
+
   function setContent(field: keyof DraftContent, value: string): void {
     const correctingCopyValidation = conflict.value && error.value?.kind === 'invalid_request' && !copyRetryEnvelope.value;
     if (!activeRef.value || transitioning.value || closingForWindow.value || (creating.value && activeSource.value?.kind === 'reply') || deleting.value || deletePending.value || (conflict.value && !correctingCopyValidation)) return;
@@ -975,7 +1002,7 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
     closeError, closeRetryAvailable, closeSetupError, confirmDiscard, discardBusy, confirmReload, copyPending, copyRetryEnvelope,
     isVisible, canCancelReplyPreparation, recoveryRequired,
     transitioning, deletePending, dirty, hasUnsavedWork, statusLabel, refresh, openNew, openDraft, flush, flushAndClose,
-    retrySave, reloadSaved, cancelReload, saveAsNew, askDiscard, discard, cancelDiscard, cancelReplyPreparation, setContent, scheduleSave, setTransitioning,
+    retrySave, reloadSaved, cancelReload, saveAsNew, askDiscard, discard, discardListed, cancelDiscard, cancelReplyPreparation, setContent, scheduleSave, setTransitioning,
     retryDraftSubscription, retryClose, retryCloseSetup,
   };
 }

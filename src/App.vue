@@ -57,7 +57,7 @@ import FullDate from './components/FullDate.vue';
 import { BROWSER_PREVIEW_DISCLOSURE } from './lib/ipc/browser-fake';
 import type { ClientMode } from './lib/ipc';
 import type { ConversationRef, DraftSource, DraftSummary, MailClient, Reminder } from './lib/ipc/client';
-import { replyBlockedReason } from './lib/reply-context';
+import { REPLY_REASONS, replyBlockedReason, sourceLoadErrorReason } from './lib/reply-context';
 import { sameConversation, useMailbox, type BrowseContext, type ConversationSummaryLike, type DoneBoundary, type SearchVisit, type LastActionId } from './composables/useMailbox';
 import { useDrafts } from './composables/useDrafts';
 
@@ -737,11 +737,11 @@ function toggleDrawer(name: UtilityDrawer): void {
  */
 function replyHostBlock(source: DraftSource | null): string | null {
   if (source?.kind !== 'reply') return null;
-  if (source.conversation.accountId !== accountId.value) return 'The source conversation belongs to another account.';
-  if (!readerOpen.value || !sameConversation(mailbox.openRef.value, source.conversation)) return 'The source conversation is not open.';
-  if (mailbox.detailState.value === 'error') return mailbox.detailError.value ? `The source conversation could not be loaded: ${errorText(mailbox.detailError.value)}.` : 'The source conversation could not be loaded.';
+  if (source.conversation.accountId !== accountId.value) return REPLY_REASONS.otherAccount.text;
+  if (!readerOpen.value || !sameConversation(mailbox.openRef.value, source.conversation)) return REPLY_REASONS.notOpen.text;
+  if (mailbox.detailState.value === 'error') return sourceLoadErrorReason(mailbox.detailError.value ? errorText(mailbox.detailError.value) : null);
   const conversation = mailbox.conversation.value;
-  if (!conversation || !sameConversation(conversation.ref, source.conversation)) return 'The source conversation is still loading.';
+  if (!conversation || !sameConversation(conversation.ref, source.conversation)) return REPLY_REASONS.stillLoading.text;
   return replyBlockedReason(conversation);
 }
 
@@ -2726,6 +2726,8 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             :close-error="drafts.closeError.value"
             :close-retry-available="drafts.closeRetryAvailable.value"
             :close-setup-error="drafts.closeSetupError.value"
+            :load-body="async (ref) => (await props.client.getDraft(ref)).content.bodyText"
+            :discard-draft="drafts.discardListed"
             @new-draft="executeAction('compose')"
             @open="openDraftFromList"
             @retry-draft-subscription="drafts.retryDraftSubscription()"

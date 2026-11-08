@@ -1445,6 +1445,42 @@ button:focus-visible {
   color: var(--text-primary);
 }
 
+/* The body preview follows the subject on the same clipped line: Ash, plain text. */
+.draft-preview {
+  margin-left: 0.75em;
+  color: var(--text-secondary);
+}
+
+/* Discard outcome: a polite live region, zero height until it has text. */
+.draft-discard-status {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--type-body);
+}
+
+.draft-discard-status:not(:empty) {
+  padding: 0 24px 6px 50px;
+}
+
+/* The confirmation under its row: the editor's question, then two quiet 24px ghosts. */
+.draft-discard-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 6px;
+  color: var(--text-secondary);
+}
+
+.draft-discard-confirm .drawer-quiet:hover:not(:disabled) {
+  box-shadow: inset 0 0 0 1px var(--text-secondary);
+}
+
+/* Reserve the room of the `Reply` word on every row so Discard keeps one column. */
+.drafts-pane .context-row-trailing {
+  min-width: 8.5em;
+  justify-content: flex-end;
+}
+
 .draft-reply {
   color: var(--text-secondary);
 }
@@ -2737,6 +2773,9 @@ button:focus-visible {
 .compose-card-notice {
   margin: 0 0 0.25rem;
   color: var(--warning);
+  /* The reason is visible text: a long one wraps, it is never clipped. */
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 /* Docked at the bottom of the reader pane (editor active while a reader is
    open): same raised-surface card, compact. Full 1px border — no accent side

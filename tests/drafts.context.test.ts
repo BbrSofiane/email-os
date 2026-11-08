@@ -297,7 +297,8 @@ describe('opening a draft', () => {
 });
 
 describe('a reply draft whose source cannot host it', () => {
-  const NOTICE = 'Source conversation unavailable. Editing locally; nothing is sent.';
+  /** The Amber line: the terse reason is visible text, the full sentence stays in the title. */
+  const notice = (label: string) => `Source conversation unavailable: ${label}. Editing locally; nothing is sent.`;
 
   async function openReply(fake: BrowserFake, client: MailClient = fake) {
     const { reply } = await seed(fake);
@@ -308,16 +309,16 @@ describe('a reply draft whose source cannot host it', () => {
     await flushPromises();
     return { w, reply };
   }
-  function expectEditableInCard(w: VueWrapper, reason: RegExp): void {
+  function expectEditableInCard(w: VueWrapper, reason: RegExp, label: string): void {
     // The same draft, in the Drafts context's card, titled as the reply, with one Amber line.
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect(w.find('[data-test="reply-composer"]').exists()).toBe(false);
     expect(title(w)).toBe('Drafts');
     expect(w.get('[data-test="compose-card"]').attributes('aria-label')).toBe('Reply draft to ada@example.test');
-    const notice = w.get('[data-test="compose-card-notice"]');
-    expect(notice.text()).toBe(NOTICE);
-    expect(notice.attributes('title')).toMatch(reason);
-    expect(notice.attributes('role')).toBe('note');
+    const line = w.get('[data-test="compose-card-notice"]');
+    expect(line.text()).toBe(notice(label));
+    expect(line.attributes('title')).toMatch(reason);
+    expect(line.attributes('role')).toBe('note');
     expect(w.get('[data-test="reply-source"]').attributes('data-source-conversation')).toBe('conv-01');
     expect(w.get('[data-test="draft-to"]').attributes('disabled')).toBeUndefined();
     expect(w.get('[data-test="draft-body"]').attributes('disabled')).toBeUndefined();
@@ -328,7 +329,7 @@ describe('a reply draft whose source cannot host it', () => {
     const fake = createBrowserFakeMailClient();
     const client: MailClient = { ...fake, getConversation: (ref, ...rest) => ref.conversationId === 'conv-01' ? Promise.reject({ kind: 'not_found' }) : fake.getConversation(ref, ...rest) };
     const { w, reply } = await openReply(fake, client);
-    expectEditableInCard(w, /could not be loaded/);
+    expectEditableInCard(w, /could not be loaded/, 'could not be loaded: not found');
     await typeBody(w, 'edited without the thread');
     await key('Escape');
     expect(w.find('[data-test="compose-card"]').exists()).toBe(false);
@@ -347,7 +348,7 @@ describe('a reply draft whose source cannot host it', () => {
     await w.get(`[data-test="open-draft-${reply.ref.draftId}"]`).trigger('click');
     await waitFor(() => w.find('[data-test="compose-card"]').exists());
     await flushPromises();
-    expectEditableInCard(w, /incomplete/);
+    expectEditableInCard(w, /incomplete/, 'incomplete cached conversation');
   });
 
   it('opens in the card for a source in another account', async () => {
@@ -368,7 +369,63 @@ describe('a reply draft whose source cannot host it', () => {
     expect(loads).not.toHaveBeenCalled();
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect(w.get('[data-test="compose-card-notice"]').attributes('title')).toMatch(/another account/);
+    expect(w.get('[data-test="compose-card-notice"]').text()).toBe(notice('belongs to another account'));
     expect(body(w)).toBe('');
+  });
+});
+
+describe('triaging drafts in the list', () => {
+  const discardOf = (w: VueWrapper, draftId: string) => w.get(`[data-test="draft-row-${draftId}"] [data-test="discard-draft"]`);
+
+  it('shows a one-line plain-text preview of each body, and "No text yet" for an empty draft', async () => {
+    const fake = createBrowserFakeMailClient();
+    const { reply, plain } = await seed(fake);
+    const w = await mountApp(fake);
+    await enter(w);
+    await waitFor(() => w.findAll('[data-test="draft-preview"]').length === 2);
+    expect(w.get(`[data-test="draft-row-${plain.ref.draftId}"] [data-test="draft-preview"]`).text()).toBe('plain body');
+    expect(w.get(`[data-test="draft-row-${reply.ref.draftId}"] [data-test="draft-preview"]`).text()).toBe('No text yet');
+  });
+
+  it('discards a draft only after the confirmation, announces it, and moves focus to the neighbouring row', async () => {
+    const fake = createBrowserFakeMailClient();
+    const { reply, plain } = await seed(fake);
+    const w = await mountApp(fake);
+    await enter(w);
+    // Cancel: nothing is deleted.
+    await discardOf(w, plain.ref.draftId).trigger('click'); await flushPromises();
+    expect(w.get('[data-test="draft-discard-confirm"]').text()).toContain('Discard this local draft? This cannot be undone.');
+    await key('Escape', {}, w.get('[data-test="confirm-discard-draft"]').element);
+    expect(w.find('[data-test="draft-discard-confirm"]').exists()).toBe(false);
+    expect(title(w)).toBe('Drafts');
+    expect(await fake.listDrafts()).toHaveLength(2);
+    // Confirm: the existing draft store is asked, the row leaves, the status is announced.
+    await discardOf(w, plain.ref.draftId).trigger('click'); await flushPromises();
+    await w.get('[data-test="confirm-discard-draft"]').trigger('click'); await flushPromises();
+    expect((await fake.listDrafts()).map((draft) => draft.ref.draftId)).toEqual([reply.ref.draftId]);
+    expect(rows(w)).toHaveLength(1);
+    expect(w.get('[data-test="draft-discard-status"]').text()).toBe('Local draft deleted');
+    expect(document.activeElement).toBe(w.get(`[data-test="open-draft-${reply.ref.draftId}"]`).element);
+    // The last draft: the empty state, focus on the pane.
+    await discardOf(w, reply.ref.draftId).trigger('click'); await flushPromises();
+    await w.get('[data-test="confirm-discard-draft"]').trigger('click'); await flushPromises();
+    expect(await fake.listDrafts()).toHaveLength(0);
+    expect(w.get('[data-test="draft-list-empty"]').text()).toBe('No local drafts.');
+    expect(document.activeElement).toBe(w.get('[data-test="drafts-pane"]').element);
+  });
+
+  it('keeps the draft and says so when the delete is not confirmed', async () => {
+    const fake = createBrowserFakeMailClient();
+    const { plain } = await seed(fake);
+    const client: MailClient = { ...fake, deleteDraft: () => Promise.reject({ kind: 'storage_unavailable' }) };
+    const w = await mountApp(fake, client);
+    await enter(w);
+    await discardOf(w, plain.ref.draftId).trigger('click'); await flushPromises();
+    await w.get('[data-test="confirm-discard-draft"]').trigger('click'); await flushPromises();
+    expect(w.get('[data-test="draft-discard-error"]').text()).toContain('Draft not discarded');
+    expect(await fake.listDrafts()).toHaveLength(2);
+    expect(rows(w)).toHaveLength(2);
+    expect(w.get('[data-test="draft-discard-status"]').text()).toBe('');
   });
 });
 

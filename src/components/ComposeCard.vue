@@ -8,11 +8,13 @@
  * discard-confirm, footer) is the shared DraftEditorCore; this surface only
  * supplies the card shell and its header: "New Message", or the reply draft's
  * own title when a reply draft is edited here because its source conversation
- * cannot host it (then one Amber Notice line says so, its reason in the title).
+ * cannot host it (then one Amber Notice line says so, with the terse reason as
+ * visible text and the full sentence in the title).
  * No Send action exists.
  */
 import { computed } from 'vue';
 import type { DraftContent, DraftRef, DraftSource, MailError } from '../lib/ipc/client';
+import { replyReasonLabel } from '../lib/reply-context';
 import DraftEditorCore from './DraftEditorCore.vue';
 
 const props = defineProps<{
@@ -46,7 +48,10 @@ const props = defineProps<{
 const title = computed(() => props.source?.kind !== 'reply' ? 'New Message'
   : props.recipientLabel ? `Reply draft to ${props.recipientLabel}` : 'Reply draft');
 
-const NOTICE_LINE = 'Source conversation unavailable. Editing locally; nothing is sent.';
+/** One Amber line: the terse reason is visible text; the full sentence stays in the title. */
+const noticeLine = computed(() => props.notice
+  ? `Source conversation unavailable: ${replyReasonLabel(props.notice)}. Editing locally; nothing is sent.`
+  : '');
 
 const emit = defineEmits<{
   closeEditor: [];
@@ -112,7 +117,7 @@ function onSetField(field: keyof DraftContent, value: string): void {
           <h2 v-else>New Message</h2>
         </header>
         <!-- Honest state: the reply cannot be shown in its thread, so it is edited here. -->
-        <p v-if="notice" class="compose-card-notice" role="note" data-test="compose-card-notice" :title="notice">{{ NOTICE_LINE }}</p>
+        <p v-if="notice" class="compose-card-notice" role="note" data-test="compose-card-notice" :title="notice">{{ noticeLine }}</p>
       </template>
       <template #context>
         <!-- The fixed reply source: attributes only, never visible text. -->
