@@ -1,0 +1,15 @@
+{
+  "tool_use_id": "toolu_01Nq3W48GSFcBTDyNS9WXATX",
+  "agent_id": "ab8b277815f1733b9",
+  "subagent_type": "general-purpose",
+  "task_description": "Critique B: detector evidence",
+  "token_usage": {
+    "input_tokens": 114,
+    "cache_creation_tokens": 107479,
+    "cache_read_tokens": 4584046,
+    "output_tokens": 29571,
+    "api_call_count": 57
+  },
+  "started_at": "2026-11-08T17:41:27.545976448Z",
+  "completed_at": "2026-11-08T17:46:25.019738187Z"
+}
