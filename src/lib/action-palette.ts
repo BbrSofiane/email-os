@@ -74,7 +74,7 @@ export const keyHints: readonly KeyHint[] = [
   { id: 'draft-discard', label: 'Discard focused draft (asks first)', keys: ['Delete', 'Backspace'], aliases: ['delete', 'remove', 'trash'], scope: 'drafts' },
 ];
 
-/** "G then E (within 1 second)" → "G then E"; the timing stays in the tooltip. */
+/** Strips a trailing parenthetical from a shortcut hint, e.g. "G then E (note)" → "G then E". */
 export function compactShortcut(shortcut: string): string {
   return shortcut.replace(/\s*\([^)]*\)\s*$/, '');
 }

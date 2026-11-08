@@ -2495,7 +2495,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               aria-controls="reminder-tabpanel"
               :tabindex="reminders.destination.value === tab.id ? 0 : -1"
               @click="reminders.destination.value = tab.id"
-            ><span class="split-label">{{ tab.label }}</span> <span class="split-count">{{ reminders.counts.value[tab.id] }}</span></button>
+            ><span class="split-label">{{ tab.label }}</span> <span class="split-count">{{ reminders.counts.value[tab.id] }}</span> <span v-if="tab.id === 'pending' && reminders.attentionTotal.value > 0" class="split-count">· {{ reminders.attentionTotal.value }} {{ reminders.attentionTotal.value === 1 ? 'needs' : 'need' }} attention</span></button>
           </div>
           <!-- Coverage qualifies the counts, so it lives on them: the tabs'
                accessible description and the nav's hover title. -->

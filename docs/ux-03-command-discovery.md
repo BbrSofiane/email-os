@@ -116,7 +116,7 @@ Browser/CDP or synthetic KeyboardEvents do not satisfy these native checks.
    target the previous context.
 5. From Inbox list navigation, Left opens the navigator; Escape closes it and
    restores focus. Left in palette/editor text only moves the caret. `G`, then
-   `E` within 1 second opens Done. Check timeout, unrelated key, modifier, blur
+   `E` within the chord window opens Done. Check timeout, unrelated key, modifier, blur
    and overlay cancellation; `G`, then `H` does nothing unsupported.
 6. Open palette/navigator over list and reader. Tab/Shift+Tab must not reach
    covered archive/read/reply controls; Escape must dismiss only the top surface.
