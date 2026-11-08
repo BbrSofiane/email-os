@@ -1393,6 +1393,33 @@ button:focus-visible {
   color: var(--text-secondary);
 }
 
+/* Static placeholder bars in the Rule colour: the subject line, then rows at the
+   collapsed message height (2em). No shimmer: nothing moves while loading. */
+.reader-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.reader-skeleton-subject,
+.reader-skeleton-row {
+  display: block;
+  background: var(--rule);
+  border-radius: 4px;
+  opacity: 0.6;
+}
+
+.reader-skeleton-subject {
+  height: var(--type-headline);
+  width: 40%;
+}
+
+.reader-skeleton-row {
+  height: 1.4em;
+  width: 100%;
+}
+
 .reader-context-note {
   max-width: 80ch;
   margin: 0.2rem 0;
@@ -1799,6 +1826,37 @@ button:focus-visible {
   color: var(--text-secondary);
 }
 
+/* The status line plus its small info toggle. The toggle is Ash (Graphite is
+   under the 4.5:1 floor on the composer's Lifted Charcoal) and rises to Paper
+   White on hover and focus. */
+.composer-status-group {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25rem;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.composer-caveat-toggle {
+  flex: none;
+  align-self: center;
+  display: inline-flex;
+  padding: 2px;
+  color: var(--text-secondary);
+}
+
+.composer-caveat-toggle:hover:not(:disabled),
+.composer-caveat-toggle[aria-expanded="true"] {
+  color: var(--text-primary);
+}
+
+.composer-caveat {
+  margin: 0.1rem 0 0.2rem;
+  color: var(--text-secondary);
+  font-size: var(--type-body);
+  line-height: var(--leading-ui);
+}
+
 /* Heading line: the title on the left, the one status line on the right. */
 .composer-top {
   display: flex;
@@ -1983,6 +2041,11 @@ button:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-primary);
+}
+
+/* The real address sits beside the display name in Ash, so a name can never hide it. */
+.field-summary-address {
+  color: var(--text-secondary);
 }
 
 .field-row .field-summary:hover:not(:disabled) {

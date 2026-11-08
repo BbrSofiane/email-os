@@ -97,6 +97,10 @@ describe('reader status line and exceptions', () => {
     expect(notes).toHaveLength(1);
     expect(notes[0]!.text()).toBe('Cached Trash — read only. Recovery is not available here; use your provider client.');
     expect(w.find('[data-test="reader-readonly"]').exists()).toBe(false);
+    // The read-state span names the mode too, so "Read" is never shown bare in a read-only view.
+    expect(w.get('[data-test="reader-status-word"]').text()).toBe('Read-only');
+    expect(w.get('[data-test="reader-read-state"]').text()).toBe('Read');
+    expect(w.find('[data-test="reader-status-detail"]').exists()).toBe(false);
   });
 
   it('adds nothing under the subject for a plain conversation without exceptions', async () => {
@@ -400,5 +404,38 @@ describe('inline attachments', () => {
     expect(w.find('[data-test="attachment-old"]').exists()).toBe(false);
     await w.get('[data-test="message-toggle-m0"]').trigger('click');
     expect(w.get('[data-test="attachment-old"]').text()).toContain('older.txt');
+  });
+});
+
+describe('reader loading placeholder', () => {
+  function mountLoading(props: Record<string, unknown> = {}): VueWrapper {
+    wrapper = mount(ReaderView, {
+      props: { conversation: null, state: 'loading', error: null, commandInFlight: false, openRef: null, ...props },
+      attachTo: document.body,
+    });
+    return wrapper;
+  }
+
+  it('keeps the exact status text and adds a static, hidden placeholder of the loaded shape', async () => {
+    const w = mountLoading();
+    await settle();
+    expect(w.get('[data-test="reader-loading"]').text()).toBe('Loading conversation…');
+    expect(w.get('[data-test="reader-loading"]').attributes('role')).toBe('status');
+    const skeleton = w.get('[data-test="reader-skeleton"]');
+    expect(skeleton.attributes('aria-hidden')).toBe('true');
+    // Subject bar plus message rows; no text of its own for assistive tech.
+    expect(skeleton.text()).toBe('');
+    expect(skeleton.findAll('.reader-skeleton-row').length).toBeGreaterThanOrEqual(3);
+    expect(skeleton.find('.reader-skeleton-subject').exists()).toBe(true);
+  });
+
+  it('with a known row identity shows the subject and sender, and only the rows as placeholder', async () => {
+    const w = mountLoading({ loadingIdentity: { subject: 'Quarterly plan', sender: 'Ada Fixture', at: '2026-11-06T10:00:00Z' } });
+    await settle();
+    expect(w.get('[data-test="reader-loading-subject"]').text()).toBe('Quarterly plan');
+    expect(w.get('[data-test="reader-loading-sender"]').text()).toBe('Ada Fixture');
+    const skeleton = w.get('[data-test="reader-skeleton"]');
+    expect(skeleton.find('.reader-skeleton-subject').exists()).toBe(false);
+    expect(skeleton.findAll('.reader-skeleton-row').length).toBeGreaterThanOrEqual(3);
   });
 });

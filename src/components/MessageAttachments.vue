@@ -10,6 +10,7 @@ import { computed } from 'vue';
 import type { AttachmentDescriptor } from '../lib/ipc/generated';
 import { attachmentKey } from '../composables/useAttachmentTransfer';
 import { ATTACHMENT_LIMIT_BYTES, formatBytes } from '../lib/format-bytes';
+import { displayFileName } from '../lib/display-name';
 import RowGlyph from './RowGlyph.vue';
 
 const props = defineProps<{
@@ -35,8 +36,9 @@ const emit = defineEmits<{
 
 const RETAINED_TITLE = 'Attachment fetch is unavailable for a retained recovery snapshot.';
 
+/** Bidi controls are removed from what is shown (name, title and button label); the descriptor itself is untouched. */
 function nameOf(file: AttachmentDescriptor): string {
-  return file.filename || 'Unnamed attachment';
+  return displayFileName(file.filename);
 }
 
 const rows = computed(() => props.files.map((file) => ({

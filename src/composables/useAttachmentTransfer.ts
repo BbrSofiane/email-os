@@ -1,6 +1,7 @@
 import { onBeforeUnmount, ref } from 'vue';
 import type { ConversationRef, MailClient } from '../lib/ipc/client';
 import type { AttachmentDescriptor } from '../lib/ipc/generated';
+import { displayFileName } from '../lib/display-name';
 
 /** Stable identity of one file inside a conversation. */
 export function attachmentKey(file: Pick<AttachmentDescriptor, 'messageId' | 'attachmentId'>): string {
@@ -51,7 +52,7 @@ export function useAttachmentTransfer(options: {
       if (live && mine === epoch) {
         status.value = options.preview()
           ? 'Modelled save in preview memory only; no file was written.'
-          : `Saved to Downloads as ${saved.filename}. No file was opened.`;
+          : `Saved to Downloads as ${displayFileName(saved.filename)}. No file was opened.`;
       }
     } catch {
       if (live && mine === epoch) error.value = ATTACHMENT_SAVE_ERROR;

@@ -81,6 +81,94 @@ describe('R: Prepare reply from the reader', () => {
     expect(document.activeElement).toBe(w.get('[data-test="message-toggle-conv-01-m1"]').element);
   });
 
+  describe('hand-off of focus to the body from non-button reader focus', () => {
+    /** Expands the first message so its Details summary and participant spans are reachable. */
+    async function expandFirst(w: VueWrapper): Promise<void> {
+      await w.get('[data-test="message-toggle-conv-01-m1"]').trigger('click');
+      await flushPromises();
+    }
+
+    async function pressRFrom(w: VueWrapper, fake: BrowserFake, element: HTMLElement): Promise<void> {
+      element.focus();
+      expect(document.activeElement).toBe(element);
+      const event = press({ key: 'r' }, element);
+      expect(event.defaultPrevented).toBe(true);
+      await waitFor(() => w.find('[data-test="reply-composer"]').exists());
+      await flushPromises();
+      expect(await drafts(fake)).toHaveLength(1);
+    }
+
+    it.each([
+      ['the reader article (focus after clicking message text)', (w: VueWrapper) => w.get('[data-test="reader"]').element as HTMLElement],
+      ['a Details summary', (w: VueWrapper) => w.get('[data-test="message-details-summary-conv-01-m1"]').element as HTMLElement],
+      ['a participant span', (w: VueWrapper) => w.get('[data-test="participant-from-conv-01-m1"]').element as HTMLElement],
+    ])('focuses the body after R pressed from %s', async (_name, pick) => {
+      const fake = createBrowserFakeMailClient();
+      const w = await mountApp(fake);
+      await openReader(w);
+      await expandFirst(w);
+      await pressRFrom(w, fake, pick(w));
+      await waitFor(() => document.activeElement === w.get('[data-test="draft-body"]').element);
+      // Typing now goes into the draft, not into the key handler.
+      const body = w.get('[data-test="draft-body"]');
+      await body.setValue('hello');
+      expect((body.element as HTMLTextAreaElement).value).toBe('hello');
+    });
+
+    it('never takes focus from a text field the user moved to while the reply was preparing', async () => {
+      const fake = createBrowserFakeMailClient();
+      const w = await mountApp(fake);
+      await openReader(w);
+      const field = document.createElement('input');
+      document.body.appendChild(field);
+      press({ key: 'r' });
+      field.focus();
+      await waitFor(() => w.find('[data-test="reply-composer"]').exists());
+      await flushPromises();
+      expect(document.activeElement).toBe(field);
+      field.remove();
+    });
+
+    it.each([
+      ['isComposing', { isComposing: true, key: 'r' }],
+      ['keyCode 229', { keyCode: 229, key: 'r' }],
+    ] as const)('stays inert with IME (%s) from the article, and IME keys in the body are not swallowed', async (_name, init) => {
+      const fake = createBrowserFakeMailClient();
+      const w = await mountApp(fake);
+      await openReader(w);
+      const article = w.get('[data-test="reader"]').element as HTMLElement;
+      article.focus();
+      const ignored = press({ ...init }, article);
+      await flushPromises();
+      expect(ignored.defaultPrevented).toBe(false);
+      expect(await drafts(fake)).toHaveLength(0);
+      expect(w.find('[data-test="reply-composer"]').exists()).toBe(false);
+      // Now open the reply properly and compose with an IME: keys are left alone.
+      press({ key: 'r' }, article);
+      await waitFor(() => w.find('[data-test="reply-composer"]').exists());
+      await waitFor(() => document.activeElement === w.get('[data-test="draft-body"]').element);
+      const imeKey = press({ ...init }, w.get('[data-test="draft-body"]').element);
+      expect(imeKey.defaultPrevented).toBe(false);
+      expect(await drafts(fake)).toHaveLength(1);
+    });
+
+    it('returns focus to the reader after Discard, not to <body>', async () => {
+      const fake = createBrowserFakeMailClient();
+      const w = await mountApp(fake);
+      await openReader(w);
+      await pressRFrom(w, fake, w.get('[data-test="reader"]').element as HTMLElement);
+      await waitFor(() => document.activeElement === w.get('[data-test="draft-body"]').element);
+      await w.get('[data-test="discard-draft"]').trigger('click');
+      await waitFor(() => w.find('[data-test="confirm-discard"]').exists());
+      await w.get('[data-test="confirm-discard"]').trigger('click');
+      await waitFor(() => !w.find('[data-test="reply-composer"]').exists());
+      await flushPromises();
+      expect(await drafts(fake)).toHaveLength(0);
+      expect(document.activeElement).not.toBe(document.body);
+      expect(w.get('[data-test="reader"]').element.contains(document.activeElement)).toBe(true);
+    });
+  });
+
   it.each([
     ['Shift', { shiftKey: true, key: 'R' }],
     ['Ctrl', { ctrlKey: true, key: 'r' }],

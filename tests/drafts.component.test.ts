@@ -93,7 +93,7 @@ describe('local plain-text drafts UI', () => {
     expect(source.text()).toBe('');
     expect(w.find('[data-test="composer"]').text()).not.toContain(latest.id);
     // Compact reply: To is a collapsed row until activated; Cc and Subject are on demand.
-    expect(w.find('[data-test="draft-to-row"]').text()).toBe('Ada Fixture');
+    expect(w.find('[data-test="draft-to-row"]').text()).toBe('Ada Fixture <ada@example.test>');
     expect(w.find('[data-test="draft-to"]').exists()).toBe(false);
     await w.find('[data-test="draft-to-row"]').trigger('click');
     await flushPromises();

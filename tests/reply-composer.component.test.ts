@@ -88,7 +88,7 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
     expect(w.find('[data-test="reply-composer"] .composer-heading h2').text()).toContain('to Ada Fixture');
     // Compact layout: a one-line recipient row (name while To is the default sender),
     // Cc and Subject behind the toggle, and the body focused.
-    expect(w.find('[data-test="draft-to-row"]').text()).toBe('Ada Fixture');
+    expect(w.find('[data-test="draft-to-row"]').text()).toBe('Ada Fixture <ada@example.test>');
     expect(w.find('[data-test="draft-to"]').exists()).toBe(false);
     expect(w.find('[data-test="draft-cc"]').exists()).toBe(false);
     expect(w.find('[data-test="draft-subject"]').exists()).toBe(false);
@@ -337,8 +337,7 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
       wrapper = w as unknown as VueWrapper;
       const row = w.get('[data-test="draft-to-row"]');
       expect(row.element.tagName).toBe('BUTTON');
-      expect(row.text()).toBe('Ada Fixture');
-      expect(row.attributes('title')).toBe('ada@example.test');
+      expect(row.text()).toBe('Ada Fixture <ada@example.test>');
       expect(w.find('[data-test="draft-to"]').exists()).toBe(false);
       await row.trigger('click');
       await flushPromises();
@@ -347,6 +346,30 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
       expect(document.activeElement).toBe(input.element);
       await input.setValue('someone-else@example.test');
       expect(w.emitted('setField')).toEqual([['to', 'someone-else@example.test']]);
+    });
+
+    it('shows the real address next to a display name that differs from it (no hover-only address)', () => {
+      const w = mount(ReplyComposer, {
+        props: { ...props({ to: 'x@evil.test' }), recipientLabel: 'Bank Support', recipientMailbox: 'x@evil.test' },
+      });
+      wrapper = w as unknown as VueWrapper;
+      const row = w.get('[data-test="draft-to-row"]');
+      expect(row.text()).toContain('Bank Support');
+      expect(row.text()).toContain('<x@evil.test>');
+      expect(row.get('[data-test="draft-to-address"]').text()).toBe('<x@evil.test>');
+      // Interpolated text, never markup.
+      expect(row.find('b, a, img').exists()).toBe(false);
+    });
+
+    it('shows the address once when there is no distinct display name, and for a still-created reply', () => {
+      const bare = mount(ReplyComposer, {
+        props: { ...props({ to: 'ada@example.test' }), recipientLabel: 'ada@example.test', recipientMailbox: 'ada@example.test' },
+      });
+      expect(bare.get('[data-test="draft-to-row"]').text()).toBe('ada@example.test');
+      bare.unmount();
+      const creating = mount(ReplyComposer, { props: { ...props({ to: '' }), activeRef: null, creating: true, status: 'Creating local draft…' } });
+      wrapper = creating as unknown as VueWrapper;
+      expect(creating.get('[data-test="draft-to-row"]').text()).toBe('Ada Fixture <ada@example.test>');
     });
 
     it('never misrepresents an edited To: the raw text is shown verbatim in the input, with Cc and Subject open', () => {
@@ -400,7 +423,7 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
     it('stays disabled and shows the name while the reply is still being created', () => {
       const w = mount(ReplyComposer, { props: { ...props({ to: '' }), activeRef: null, creating: true, status: 'Creating local draft…' } });
       wrapper = w as unknown as VueWrapper;
-      expect(w.get('[data-test="draft-to-row"]').text()).toBe('Ada Fixture');
+      expect(w.get('[data-test="draft-to-row"]').text()).toBe('Ada Fixture <ada@example.test>');
       expect(w.get('[data-test="draft-to-row"]').attributes('disabled')).toBeDefined();
       expect(w.get('[data-test="draft-body"]').attributes('disabled')).toBeDefined();
     });

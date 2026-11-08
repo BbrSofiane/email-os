@@ -82,7 +82,7 @@ const bodyInput = ref<HTMLTextAreaElement | null>(null);
 const dialog = ref<HTMLElement | null>(null);
 
 const uid = useId();
-const ids = { to: `${uid}-to`, cc: `${uid}-cc`, subject: `${uid}-subject`, body: `${uid}-body`, detail: `${uid}-detail`, extras: `${uid}-extras` };
+const ids = { to: `${uid}-to`, cc: `${uid}-cc`, subject: `${uid}-subject`, body: `${uid}-body`, detail: `${uid}-detail`, extras: `${uid}-extras`, caveat: `${uid}-caveat` };
 
 const isReply = computed(() => props.variant === 'reply');
 
@@ -103,6 +103,31 @@ const statusLine = computed(() => {
   return { text: status, calm: false };
 });
 
+/** The caveats are one extra line behind a real button (keyboard and touch), never tooltip-only. */
+const caveatOpen = ref(false);
+
+/**
+ * Quiet live region. The visible status flips Saving…/Saved on every autosave,
+ * which would be chatty if announced; only the first settled state, a problem
+ * (not confirmed, conflict) and the recovery from a problem are spoken. Errors
+ * also keep their own role="alert" lines below.
+ */
+const ROUTINE_STATUS = new Set(['Saving locally…', 'Creating local draft…']);
+const announcement = ref('');
+let announcedSettled = false;
+let announcedProblem = false;
+watch(() => props.status, (status) => {
+  if (!status || ROUTINE_STATUS.has(status)) return;
+  if (SETTLED_CALM.has(status) || SETTLED_NON_DURABLE.has(status)) {
+    if (!announcedSettled || announcedProblem) announcement.value = statusLine.value.text;
+    announcedSettled = true;
+    announcedProblem = false;
+    return;
+  }
+  announcement.value = status;
+  announcedProblem = true;
+}, { immediate: true });
+
 // ---- Recipient / extra fields ---------------------------------------------
 
 const unpreparedReply = computed(() => props.source?.kind === 'reply' && (!props.activeRef?.draftId || props.creating));
@@ -112,7 +137,16 @@ const toIsDefault = computed(() => isReply.value
 const toEditing = ref(false);
 /** The reply shows a name only while it is true; anything else shows the raw To text. */
 const showToSummary = computed(() => isReply.value && !toEditing.value && toIsDefault.value);
-const toSummary = computed(() => (props.content.to === '' && !unpreparedReply.value ? 'No recipient' : (props.recipientLabel || props.content.to)));
+/**
+ * The collapsed row always shows the real address; a display name is context,
+ * never a substitute (a sender called "Bank Support" must not hide x@evil.test).
+ */
+const toAddress = computed(() => props.content.to || (unpreparedReply.value ? props.recipientMailbox ?? '' : ''));
+const toName = computed(() => {
+  const name = props.recipientLabel?.trim() ?? '';
+  return name !== '' && name !== toAddress.value ? name : '';
+});
+const toSummaryTitle = computed(() => (toAddress.value === '' ? undefined : toName.value ? `${toName.value} <${toAddress.value}>` : toAddress.value));
 
 async function editTo(): Promise<void> {
   toEditing.value = true;
@@ -153,19 +187,26 @@ watch(() => props.content.bodyText, async () => {
   fitBody();
 });
 
+/** A text field the user is typing in (or may start typing in): focus is never taken from these. */
+function isEditable(el: Element): boolean {
+  return el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement
+    || (el as HTMLElement).isContentEditable === true;
+}
+
 /**
  * A disabled field cannot take focus, and a reply editor mounts while its draft
  * is still being created (fields disabled). So the requested focus stays owed
- * until the field is enabled, and is only taken from nothing (<body>) or from
- * a button such as the Prepare reply control that opened this editor, never
- * from a text field or surface the user moved to.
+ * until the field is enabled, and is taken from anything that is not a text
+ * field: <body>, the button that opened this editor, or reader content such as
+ * the article, a Details summary or a participant (the R shortcut can fire from
+ * any of them). It is never taken from a text field the user moved to.
  */
 let focusOwed = false;
 function takeFocus(): void {
   const el = props.autofocus === 'to' ? toInput.value : props.autofocus === 'body' ? bodyInput.value : null;
   if (!el) { focusOwed = false; return; }
   const active = document.activeElement;
-  if (active && active !== document.body && !(active instanceof HTMLButtonElement)) { focusOwed = false; return; }
+  if (active && active !== el && isEditable(active)) { focusOwed = false; return; }
   el.focus();
   focusOwed = document.activeElement !== el;
 }
@@ -196,16 +237,29 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
   <div class="composer-body" :class="`composer-body-${props.variant ?? 'new'}`">
     <div class="composer-top">
       <div class="composer-top-main"><slot name="header" /></div>
-      <!-- The only place the local-only guarantee is stated: one status line.
-           Detail lives in the title and in the body's hidden description. -->
-      <p
-        class="draft-status"
-        :class="{ 'draft-status-calm': statusLine.calm }"
-        data-test="draft-status"
-        aria-live="polite"
-        :title="LOCAL_DETAIL"
-      >{{ statusLine.text }}</p>
+      <!-- The local-only guarantee is one terse status line. The caveats are
+           one extra line behind a focusable toggle (not a tooltip), and the
+           body's hidden description. Announcements are quiet, see above. -->
+      <div class="composer-status-group">
+        <p
+          class="draft-status"
+          :class="{ 'draft-status-calm': statusLine.calm }"
+          data-test="draft-status"
+          :title="LOCAL_DETAIL"
+        >{{ statusLine.text }}</p>
+        <button
+          type="button"
+          class="composer-caveat-toggle"
+          data-test="draft-caveat-toggle"
+          aria-label="About local drafts"
+          :aria-expanded="caveatOpen"
+          :aria-controls="ids.caveat"
+          @click="caveatOpen = !caveatOpen"
+        ><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="6.25" /><path d="M8 7.25v4M8 4.75v.01" /></svg></button>
+        <span class="visually-hidden" role="status" data-test="draft-status-announce">{{ announcement }}</span>
+      </div>
     </div>
+    <p v-if="caveatOpen" :id="ids.caveat" class="composer-caveat" data-test="draft-caveat">{{ LOCAL_DETAIL }}</p>
     <p v-if="props.error" role="alert" data-test="draft-error">{{ describe(props.error) }}</p>
     <p v-if="props.createError" role="alert" data-test="draft-create-error">{{ describe(props.createError) }}</p>
     <p v-if="props.closeError" role="alert" data-test="draft-close-error">{{ props.closeError }}</p>
@@ -218,10 +272,10 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
           :id="ids.to"
           class="field-summary"
           data-test="draft-to-row"
-          :title="props.content.to || undefined"
+          :title="toSummaryTitle"
           :disabled="fieldsDisabled()"
           @click="editTo"
-        >{{ toSummary }}</button>
+        ><template v-if="toAddress === ''">No recipient</template><template v-else><template v-if="toName"><span data-test="draft-to-name">{{ toName }}</span> <span class="field-summary-address" data-test="draft-to-address">&lt;{{ toAddress }}&gt;</span></template><template v-else>{{ toAddress }}</template></template></button>
         <input v-else :id="ids.to" ref="toInput" class="field-input" data-test="draft-to" type="text" autocomplete="off" :value="props.content.to" :disabled="fieldsDisabled()" @input="emit('setField', 'to', ($event.target as HTMLInputElement).value)">
         <button
           type="button"

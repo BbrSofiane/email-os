@@ -175,7 +175,9 @@ describe('ComposeCard inline new-message card', () => {
     const status = wrapper.get('[data-test="draft-status"]');
     // One status line: the preview words stay, "not sent" is appended, and non-durable stays Amber.
     expect(status.text()).toBe('Saved in preview memory (non-durable) · not sent');
-    expect(status.attributes('aria-live')).toBe('polite');
+    // Not a live region itself: the hidden status region announces only meaningful transitions.
+    expect(status.attributes('aria-live')).toBeUndefined();
+    expect(wrapper.get('[data-test="draft-status-announce"]').text()).toBe('Saved in preview memory (non-durable) · not sent');
     expect(wrapper.get('[data-test="draft-error"]').text()).toContain('revision 7');
     expect(wrapper.find('[data-test="draft-conflict-actions"]').exists()).toBe(true);
     await wrapper.get('[data-test="save-as-new"]').trigger('click');
