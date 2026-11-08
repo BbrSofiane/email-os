@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6XNW87CJN78J5NJDNE9M292",
+  "strategy": "manual-commit",
+  "branch": "impeccable/list-contexts",
+  "checkpoints_count": 3,
+  "files_touched": [
+    ".impeccable/critique/2026-11-08T13-34-14Z__list-contexts-trash-reminders-drafts.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 76,
+    "cache_creation_tokens": 216337,
+    "cache_read_tokens": 7514682,
+    "output_tokens": 24172,
+    "api_call_count": 37
+  }
+}

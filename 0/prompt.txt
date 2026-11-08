@@ -1,0 +1,11 @@
+Show me screenshots and recording so I can validate the changes
+
+---
+
+/impeccable Looks good overall but it feels like draft, reminders, trash views should be in the main part of UI that's used to display a list of threads. What do you think?
+
+---
+
+It makes sense to me that opening a draft navigate the user to its source thread and docks the composer there (same as the reply flow)
+
+Delegate the work to subagents to implement and once done take screenshots so I can validate the changes
