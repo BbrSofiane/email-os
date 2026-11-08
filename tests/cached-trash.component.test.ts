@@ -88,7 +88,7 @@ describe('UX-10 A read-only cached Trash list context', () => {
     const rail = w.get('[data-test="rail-trash"]');
     expect(rail.attributes('aria-current')).toBeUndefined();
     expect(rail.attributes('aria-expanded')).toBeUndefined();
-    expect(rail.attributes('title')).toBe('Go to cached Trash (read only) — G then T (within 1 second)');
+    expect(rail.attributes('title')).toBe('Go to cached Trash (read only) — G then T');
     await rail.trigger('click'); await flushPromises();
     expect(w.get('[data-test="rail-trash"]').attributes('aria-current')).toBe('page');
     expect(w.get('[data-test="rail-trash"]').attributes('aria-expanded')).toBeUndefined();
@@ -106,6 +106,40 @@ describe('UX-10 A read-only cached Trash list context', () => {
     expect(w.get('[data-test="inbox-title"]').text()).toBe('Inbox');
     expect(w.get('[data-test="rail-trash"]').attributes('aria-current')).toBeUndefined();
     expect(w.get('[data-test="rail-inbox"]').attributes('aria-current')).toBe('page');
+  });
+
+  it('ignores the Inbox unread filter: lists every cached row, shows no filter status or command, and the filter returns with Inbox', async () => {
+    const fake = createBrowserFakeMailClient();
+    useGmailMode(fake, { mutationAccess: 'enabled' });
+    fake.controls.markTriage('conv-04', 'trash'); fake.controls.markTriage('conv-05', 'trash'); fake.controls.markTriage('conv-06', 'trash');
+    const base = (await trashRows(fake)).map((row, index) => {
+      const { isRead: _drop, ...rest } = row;
+      return index === 0 ? { ...rest, isRead: true } : index === 1 ? { ...rest, isRead: false } : rest;
+    });
+    expect(base.length).toBe(3);
+    const client = { ...fake, listCachedTrash: async () => emptySnapshot({ conversations: base }) };
+    const w = await mountApp(client as typeof fake);
+    const filterCommand = async () => {
+      await w.get('[data-test="palette-trigger"]').trigger('click');
+      const present = w.find('#action-toggle-unread-filter').exists();
+      key('Escape'); await flushPromises();
+      return present;
+    };
+    await w.get('[data-test="palette-trigger"]').trigger('click');
+    await w.get('[data-test="action-query"]').setValue('Show unread only');
+    key('Enter'); await flushPromises();
+    expect(w.find('[data-test="unread-filter-status"]').exists()).toBe(true);
+    await goTrash(w);
+    expect(w.get('[data-test="inbox-title"]').text()).toBe('Cached Trash');
+    // Read, unread and unknown rows all stay listed; the filter is neither applied nor claimed.
+    expect(w.findAll('li.inbox-row')).toHaveLength(3);
+    expect(w.find('[data-test="unread-filter-status"]').exists()).toBe(false);
+    expect(await filterCommand()).toBe(false);
+    // Paging in more Trash rows also ignores the filter.
+    await w.get('[data-test="context-back"]').trigger('click'); await flushPromises();
+    expect(w.get('[data-test="inbox-title"]').text()).toBe('Inbox');
+    expect(w.find('[data-test="unread-filter-status"]').exists()).toBe(true);
+    expect(await filterCommand()).toBe(true);
   });
 
   it('is not a mutation surface: no row actions, checkboxes, selection or mutation keys in the list', async () => {

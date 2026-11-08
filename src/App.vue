@@ -1819,7 +1819,7 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   if (id === 'starred') return gmailMode.value && !!accountId.value;
   if (id === 'create-split') return !!accountId.value && !mailbox.savedSplit.value && !editingSplit.value;
   if (id === 'edit-split') return !!accountId.value && !!mailbox.savedSplit.value && !editingSplit.value;
-  if (id === 'toggle-unread-filter') return !!accountId.value && !editingSplit.value && !drawer.value && !contactDisclosure.value && !remindersList.value && !draftsList.value;
+  if (id === 'toggle-unread-filter') return !!accountId.value && mailbox.context.value !== 'trash' && !editingSplit.value && !drawer.value && !contactDisclosure.value && !remindersList.value && !draftsList.value;
   if (id === 'saved') return !!mailbox.savedSplit.value?.enabled && !mailbox.splitError.value;
   if (['inbox', 'done', 'activity'].includes(id)) return !!accountId.value;
   if (id === 'search') return !!accountId.value && !drawer.value && !contactDisclosure.value;
@@ -2501,7 +2501,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
                accessible description and the nav's hover title. -->
           <p v-if="splitCoverageShown" :id="`${domIdPrefix}split-coverage`" class="visually-hidden" role="note" data-test="split-coverage">{{ SPLIT_COVERAGE }}</p>
           <!-- Active list filters stay visible in words, never only as a pressed glyph. -->
-          <span v-if="accountReady && mailbox.unreadOnly.value" class="header-filter" role="status" data-test="unread-filter-status">Unread only</span>
+          <span v-if="accountReady && mailbox.unreadOnly.value && mailbox.context.value !== 'trash'" class="header-filter" role="status" data-test="unread-filter-status">Unread only</span>
           <span v-if="starredFilterShown && mailbox.starredOnly.value" class="header-filter" data-test="starred-filter-status">Starred only</span>
         </div>
         <div class="header-trail">
@@ -2799,7 +2799,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               ref="emptyState"
               tabindex="-1"
             >
-              {{ mailbox.context.value === 'search' ? (mailbox.nextCursor.value ? 'No matches on this candidate page. Continue scanning older mail below.' : 'No matching conversations in the searched content.') : mailbox.unreadOnly.value ? 'No known unread conversations in this view. Use Commands → Show all conversations to turn off the unread filter; unknown read states are not included.' : mailbox.starredOnly.value ? 'No known starred conversations in this cached view; unknown facts and uncached mail are not included.' : mailbox.context.value === 'trash' ? 'No known cached Trash conversations. This does not mean your Gmail Trash is empty.' : mailbox.context.value === 'saved' ? 'No Inbox conversations match this saved split. Edit the sender or domain criteria, or return to Inbox.' : mailbox.context.value === 'inbox' ? 'No conversations are currently in the inbox. Archived conversations stay recoverable from Activity.' : mailbox.nextCursor.value ? 'No conversations on this cache page; more cached candidates are available.' : mailbox.context.value === 'starred' ? 'No known starred conversations in this local cache; unknown and uncached mail is not included.' : 'No known archived conversations in this local cache.' }}
+              {{ mailbox.context.value === 'search' ? (mailbox.nextCursor.value ? 'No matches on this candidate page. Continue scanning older mail below.' : 'No matching conversations in the searched content.') : mailbox.unreadOnly.value && mailbox.context.value !== 'trash' ? 'No known unread conversations in this view. Use Commands → Show all conversations to turn off the unread filter; unknown read states are not included.' : mailbox.starredOnly.value ? 'No known starred conversations in this cached view; unknown facts and uncached mail are not included.' : mailbox.context.value === 'trash' ? 'No known cached Trash conversations. This does not mean your Gmail Trash is empty.' : mailbox.context.value === 'saved' ? 'No Inbox conversations match this saved split. Edit the sender or domain criteria, or return to Inbox.' : mailbox.context.value === 'inbox' ? 'No conversations are currently in the inbox. Archived conversations stay recoverable from Activity.' : mailbox.nextCursor.value ? 'No conversations on this cache page; more cached candidates are available.' : mailbox.context.value === 'starred' ? 'No known starred conversations in this local cache; unknown and uncached mail is not included.' : 'No known archived conversations in this local cache.' }}
             </p>
             <InboxList
               v-else

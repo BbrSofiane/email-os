@@ -98,12 +98,12 @@ describe('G chords for Trash and Drafts', () => {
 
   it('shows the chords in the palette and the rail titles', async () => {
     const { w } = await mountPlain('gmail');
-    expect(w.get('[data-test="rail-trash"]').attributes('title')).toBe('Go to cached Trash (read only) — G then T (within 1 second)');
-    expect(w.get('[data-test="rail-drafts"]').attributes('title')).toBe('Go to local Drafts — G then D (within 1 second)');
+    expect(w.get('[data-test="rail-trash"]').attributes('title')).toBe('Go to cached Trash (read only) — G then T');
+    expect(w.get('[data-test="rail-drafts"]').attributes('title')).toBe('Go to local Drafts — G then D');
     await w.get('[data-test="palette-trigger"]').trigger('click'); await flushPromises();
     expect(w.get('#action-trash kbd').text()).toBe('G then T');
     expect(w.get('#action-drafts kbd').text()).toBe('G then D');
-    expect(w.get('#action-drafts kbd').attributes('title')).toBe('G then D (within 1 second)');
+    expect(w.get('#action-drafts kbd').attributes('title')).toBeUndefined();
   });
 });
 

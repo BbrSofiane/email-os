@@ -384,9 +384,10 @@ export function useMailbox(client: MailClient): Mailbox {
     savedTotal.value = null;
   }
 
-  /** Independent cache filters compose by intersection; unknown facts never qualify. */
+  /** Independent cache filters compose by intersection; unknown facts never qualify.
+   *  Cached Trash is a read-only recovery view: it always lists everything, so the unread filter never applies there. */
   function matchesCachedFilters(row: ConversationSummaryLike): boolean {
-    return (!unreadOnly.value || row.isRead === false)
+    return (!unreadOnly.value || context.value === 'trash' || row.isRead === false)
       && (!starredOnly.value || (row.stars?.starredMessages ?? 0) > 0);
   }
 
