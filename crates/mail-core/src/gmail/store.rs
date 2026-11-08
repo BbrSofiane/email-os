@@ -187,6 +187,21 @@ impl GmailStore {
                 snapshot_json TEXT NOT NULL,
                 PRIMARY KEY(account_id, destination_id)
             );
+            CREATE TABLE IF NOT EXISTS gmail_reminders (
+                account_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                data TEXT NOT NULL,
+                baseline_ids TEXT NOT NULL,
+                snapshot_json TEXT NOT NULL,
+                PRIMARY KEY(account_id, conversation_id)
+            );
+            CREATE TABLE IF NOT EXISTS gmail_reminder_requests (
+                account_id TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                receipt TEXT NOT NULL,
+                PRIMARY KEY(account_id, request_id)
+            );
             CREATE TABLE IF NOT EXISTS gmail_conversations (
                 account_id         TEXT NOT NULL,
                 conversation_id    TEXT NOT NULL,
@@ -777,7 +792,14 @@ impl GmailStore {
         let mut stmt = conn
             .prepare(
                 "SELECT c.conversation_id FROM gmail_conversations c
-                 WHERE c.account_id = ?1 AND (NOT EXISTS (
+                 WHERE c.account_id = ?1 AND NOT EXISTS (
+                     SELECT 1 FROM gmail_reminders r WHERE r.account_id=c.account_id
+                       AND r.conversation_id=c.conversation_id
+                       AND json_extract(r.data, '$.phase')='pending'
+                       AND NOT EXISTS (SELECT 1 FROM gmail_message_facts newer
+                         WHERE newer.account_id=r.account_id AND newer.conversation_id=r.conversation_id
+                           AND newer.message_id NOT IN (SELECT value FROM json_each(r.baseline_ids)))
+                 ) AND (NOT EXISTS (
                      SELECT 1 FROM gmail_search_cache sc WHERE sc.account_id = c.account_id AND sc.conversation_id = c.conversation_id)
                      OR EXISTS (SELECT 1 FROM gmail_operations restored WHERE restored.account_id = c.account_id
                          AND restored.conversation_id = c.conversation_id AND restored.kind = 'archive'
@@ -799,7 +821,7 @@ impl GmailStore {
             )
             .map_err(|_| MailError::StorageUnavailable)?;
         let ids = stmt
-            .query_map([&account_id], |row| row.get::<_, String>(0))
+            .query_map(params![&account_id], |row| row.get::<_, String>(0))
             .map_err(|_| MailError::StorageUnavailable)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| MailError::StorageUnavailable)?;
@@ -842,6 +864,486 @@ impl GmailStore {
             conversations: summaries,
             activity,
         })
+    }
+
+    pub(crate) fn list_reminders(&self) -> Result<Vec<crate::reminders::Reminder>, MailError> {
+        self.persistence_gate()?;
+        let conn = self.lock_conn()?;
+        let account = meta_get(&conn, "account_id")?;
+        let Some(account) = account else {
+            return Ok(Vec::new());
+        };
+        let mut stmt = conn
+            .prepare(
+                "SELECT data FROM gmail_reminders WHERE account_id=?1 ORDER BY conversation_id",
+            )
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let rows = stmt
+            .query_map([account], |row| row.get::<_, String>(0))
+            .map_err(|_| MailError::StorageUnavailable)?;
+        rows.map(|row| {
+            serde_json::from_str(&row.map_err(|_| MailError::StorageUnavailable)?)
+                .map_err(|_| MailError::StorageUnavailable)
+        })
+        .collect()
+    }
+
+    pub(crate) fn put_reminder(
+        &self,
+        c: &crate::reminders::PutReminder,
+    ) -> Result<crate::reminders::Reminder, MailError> {
+        use crate::reminders::{Reminder, ReminderPhase};
+        use chrono::DateTime;
+        self.persistence_gate()?;
+        if c.request_id.is_empty() || c.request_id.len() > 128 {
+            return Err(MailError::InvalidRequest {
+                field: "requestId".into(),
+            });
+        }
+        let payload = serde_json::to_string(c).map_err(|_| MailError::StorageUnavailable)?;
+        let mut conn = self.lock_conn()?;
+        let tx = conn
+            .transaction()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let account = meta_get(&tx, "account_id")?.ok_or(MailError::NotFound)?;
+        if account != c.conversation.account_id {
+            return Err(MailError::NotFound);
+        }
+        if let Some((old, receipt)) = tx.query_row("SELECT payload,receipt FROM gmail_reminder_requests WHERE account_id=?1 AND request_id=?2", params![account,c.request_id], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?))).optional().map_err(|_| MailError::StorageUnavailable)? {
+            if old != payload { return Err(MailError::RequestIdConflict); }
+            let result = serde_json::from_str(&receipt).map_err(|_| MailError::StorageUnavailable)?;
+            tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+            return Ok(result);
+        }
+        if let Some(due) = &c.due_at {
+            let parsed =
+                DateTime::parse_from_rfc3339(due).map_err(|_| MailError::InvalidRequest {
+                    field: "dueAt".into(),
+                })?;
+            let now = DateTime::parse_from_rfc3339(&self.clock.now_iso())
+                .map_err(|_| MailError::StorageUnavailable)?;
+            if due.len() > 40
+                || parsed <= now
+                || parsed.timestamp_subsec_nanos() != 0
+                || due.contains(":60")
+            {
+                return Err(MailError::InvalidRequest {
+                    field: "dueAt".into(),
+                });
+            }
+        }
+        let existing: Option<String> = tx
+            .query_row(
+                "SELECT data FROM gmail_reminders WHERE account_id=?1 AND conversation_id=?2",
+                params![account, c.conversation.conversation_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut baseline: Vec<String>;
+        let snapshot: Option<String>;
+        let revision;
+        if let Some(data) = existing {
+            let mut prior: Reminder =
+                serde_json::from_str(&data).map_err(|_| MailError::StorageUnavailable)?;
+            if c.expected_revision == Some(prior.revision)
+                && prior.phase == ReminderPhase::Pending
+                && prior.source_message_id == c.source_message_id
+            {
+                let raw: (String, String) = tx.query_row(
+                    "SELECT baseline_ids,snapshot_json FROM gmail_reminders WHERE account_id=?1 AND conversation_id=?2",
+                    params![account, c.conversation.conversation_id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                ).map_err(|_| MailError::StorageUnavailable)?;
+                baseline =
+                    serde_json::from_str(&raw.0).map_err(|_| MailError::StorageUnavailable)?;
+                snapshot = Some(raw.1);
+                prior.revision =
+                    prior
+                        .revision
+                        .checked_add(1)
+                        .ok_or(MailError::InvalidRequest {
+                            field: "revision".into(),
+                        })?;
+                prior.due_at = c.due_at.clone();
+                prior.condition = c.condition;
+                prior.phase = ReminderPhase::Pending;
+                revision = prior;
+            } else if c.expected_revision.is_none()
+                && matches!(
+                    prior.phase,
+                    ReminderPhase::Returned | ReminderPhase::Cancelled | ReminderPhase::Suppressed
+                )
+            {
+                let next_revision =
+                    prior
+                        .revision
+                        .checked_add(1)
+                        .ok_or(MailError::InvalidRequest {
+                            field: "revision".into(),
+                        })?;
+                let built = build_conversation(&tx, &account, &c.conversation.conversation_id)?
+                    .ok_or(MailError::NotFound)?;
+                if built.messages.last().map(|m| m.id.as_str())
+                    != Some(c.source_message_id.as_str())
+                {
+                    return Err(MailError::InvalidRequest {
+                        field: "sourceMessageId".into(),
+                    });
+                }
+                let (inbox, _, _) =
+                    effective_conversation_state(&tx, &account, &c.conversation.conversation_id)?;
+                let pending_intent: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM gmail_operations WHERE account_id=?1 AND conversation_id=?2 AND status IN ('queued','applying','outcome_unknown'))",
+                    params![account, c.conversation.conversation_id],
+                    |row| row.get(0),
+                ).map_err(|_| MailError::StorageUnavailable)?;
+                if !inbox || pending_intent {
+                    return Err(MailError::InvalidRequest {
+                        field: "conversation".into(),
+                    });
+                }
+                let mut baseline_stmt = tx.prepare("SELECT message_id FROM gmail_message_facts WHERE account_id=?1 AND conversation_id=?2 ORDER BY message_id").map_err(|_| MailError::StorageUnavailable)?;
+                baseline = baseline_stmt
+                    .query_map(params![account, c.conversation.conversation_id], |row| {
+                        row.get::<_, String>(0)
+                    })
+                    .map_err(|_| MailError::StorageUnavailable)?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|_| MailError::StorageUnavailable)?;
+                if baseline.is_empty() {
+                    baseline = built.messages.iter().map(|m| m.id.clone()).collect();
+                }
+                let pinned = crate::dto::Conversation {
+                    stars: None,
+                    conversation_ref: built.conversation_ref.clone(),
+                    subject: built.subject.clone(),
+                    messages: built.messages.clone(),
+                    is_in_inbox: true,
+                    is_read: None,
+                    context_complete: built.context_complete,
+                    unsupported_reason: built.unsupported_reason.clone(),
+                    retained_snapshot_at: Some(self.clock.now_iso()),
+                    reply_context: built.reply_context.clone(),
+                    pending_operation_id: None,
+                };
+                snapshot = Some(
+                    serde_json::to_string(&pinned).map_err(|_| MailError::StorageUnavailable)?,
+                );
+                revision = Reminder {
+                    conversation: c.conversation.clone(),
+                    subject: built.subject,
+                    revision: next_revision,
+                    source_message_id: c.source_message_id.clone(),
+                    due_at: c.due_at.clone(),
+                    condition: c.condition,
+                    phase: ReminderPhase::Pending,
+                };
+            } else {
+                return Err(MailError::InvalidRequest {
+                    field: "revision".into(),
+                });
+            }
+        } else {
+            if c.expected_revision.is_some() {
+                return Err(MailError::NotFound);
+            }
+            let built = build_conversation(&tx, &account, &c.conversation.conversation_id)?
+                .ok_or(MailError::NotFound)?;
+            if built.messages.last().map(|m| m.id.as_str()) != Some(c.source_message_id.as_str()) {
+                return Err(MailError::InvalidRequest {
+                    field: "sourceMessageId".into(),
+                });
+            }
+            let (inbox, _, _) =
+                effective_conversation_state(&tx, &account, &c.conversation.conversation_id)?;
+            let pending_intent: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM gmail_operations WHERE account_id=?1 AND conversation_id=?2 AND status IN ('queued','applying','outcome_unknown'))",
+                params![account, c.conversation.conversation_id],
+                |row| row.get(0),
+            ).map_err(|_| MailError::StorageUnavailable)?;
+            if !inbox || pending_intent {
+                return Err(MailError::InvalidRequest {
+                    field: "conversation".into(),
+                });
+            }
+            let mut baseline_stmt = tx
+                .prepare(
+                    "SELECT message_id FROM gmail_message_facts
+                     WHERE account_id=?1 AND conversation_id=?2 ORDER BY message_id",
+                )
+                .map_err(|_| MailError::StorageUnavailable)?;
+            baseline = baseline_stmt
+                .query_map(params![account, c.conversation.conversation_id], |row| {
+                    row.get::<_, String>(0)
+                })
+                .map_err(|_| MailError::StorageUnavailable)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| MailError::StorageUnavailable)?;
+            if baseline.is_empty() {
+                baseline = built.messages.iter().map(|m| m.id.clone()).collect();
+            }
+            let pinned = crate::dto::Conversation {
+                stars: None,
+                conversation_ref: built.conversation_ref.clone(),
+                subject: built.subject.clone(),
+                messages: built.messages.clone(),
+                is_in_inbox: true,
+                is_read: None,
+                context_complete: built.context_complete,
+                unsupported_reason: built.unsupported_reason.clone(),
+                retained_snapshot_at: Some(self.clock.now_iso()),
+                reply_context: built.reply_context.clone(),
+                pending_operation_id: None,
+            };
+            snapshot =
+                Some(serde_json::to_string(&pinned).map_err(|_| MailError::StorageUnavailable)?);
+            revision = Reminder {
+                conversation: c.conversation.clone(),
+                subject: built.subject,
+                revision: 1,
+                source_message_id: c.source_message_id.clone(),
+                due_at: c.due_at.clone(),
+                condition: c.condition,
+                phase: ReminderPhase::Pending,
+            };
+        }
+        let snapshot = snapshot.ok_or(MailError::StorageUnavailable)?;
+        tx.execute("INSERT INTO gmail_reminders(account_id,conversation_id,data,baseline_ids,snapshot_json) VALUES (?1,?2,?3,?4,?5) ON CONFLICT(account_id,conversation_id) DO UPDATE SET data=excluded.data, baseline_ids=excluded.baseline_ids, snapshot_json=excluded.snapshot_json", params![account,c.conversation.conversation_id,serde_json::to_string(&revision).map_err(|_| MailError::StorageUnavailable)?,serde_json::to_string(&baseline).map_err(|_| MailError::StorageUnavailable)?,snapshot]).map_err(|_| MailError::StorageUnavailable)?;
+        let receipt =
+            serde_json::to_string(&revision).map_err(|_| MailError::StorageUnavailable)?;
+        tx.execute(
+            "INSERT INTO gmail_reminder_requests VALUES (?1,?2,?3,?4)",
+            params![account, c.request_id, payload, receipt],
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        Ok(revision)
+    }
+
+    pub(crate) fn cancel_reminder(
+        &self,
+        c: &crate::reminders::CancelReminder,
+    ) -> Result<crate::reminders::Reminder, MailError> {
+        use crate::reminders::{Reminder, ReminderPhase};
+        self.persistence_gate()?;
+        if c.request_id.is_empty() || c.request_id.len() > 128 {
+            return Err(MailError::InvalidRequest {
+                field: "requestId".into(),
+            });
+        }
+        let payload = serde_json::to_string(c).map_err(|_| MailError::StorageUnavailable)?;
+        let mut conn = self.lock_conn()?;
+        let tx = conn
+            .transaction()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let account = meta_get(&tx, "account_id")?.ok_or(MailError::NotFound)?;
+        if account != c.conversation.account_id {
+            return Err(MailError::NotFound);
+        }
+        if let Some((old, receipt)) = tx.query_row("SELECT payload,receipt FROM gmail_reminder_requests WHERE account_id=?1 AND request_id=?2", params![account,c.request_id], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?))).optional().map_err(|_| MailError::StorageUnavailable)? {
+            if old != payload { return Err(MailError::RequestIdConflict); }
+            return serde_json::from_str(&receipt).map_err(|_| MailError::StorageUnavailable);
+        }
+        let data: String = tx
+            .query_row(
+                "SELECT data FROM gmail_reminders WHERE account_id=?1 AND conversation_id=?2",
+                params![account, c.conversation.conversation_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|_| MailError::StorageUnavailable)?
+            .ok_or(MailError::NotFound)?;
+        let mut result: Reminder =
+            serde_json::from_str(&data).map_err(|_| MailError::StorageUnavailable)?;
+        if result.revision != c.expected_revision || result.phase != ReminderPhase::Pending {
+            return Err(MailError::InvalidRequest {
+                field: "revision".into(),
+            });
+        }
+        result.revision = result
+            .revision
+            .checked_add(1)
+            .ok_or(MailError::InvalidRequest {
+                field: "revision".into(),
+            })?;
+        result.phase = ReminderPhase::Cancelled;
+        let receipt = serde_json::to_string(&result).map_err(|_| MailError::StorageUnavailable)?;
+        tx.execute(
+            "UPDATE gmail_reminders SET data=?3 WHERE account_id=?1 AND conversation_id=?2",
+            params![account, c.conversation.conversation_id, receipt],
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+        tx.execute(
+            "INSERT INTO gmail_reminder_requests VALUES (?1,?2,?3,?4)",
+            params![account, c.request_id, payload, receipt],
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        Ok(result)
+    }
+
+    pub(crate) fn due_reminders(
+        &self,
+    ) -> Result<Vec<(crate::reminders::Reminder, Vec<String>)>, MailError> {
+        self.persistence_gate()?;
+        let now = chrono::DateTime::parse_from_rfc3339(&self.clock.now_iso())
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let conn = self.lock_conn()?;
+        let account = meta_get(&conn, "account_id")?;
+        let Some(account) = account else {
+            return Ok(Vec::new());
+        };
+        let mut stmt = conn
+            .prepare("SELECT data,baseline_ids FROM gmail_reminders WHERE account_id=?1")
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let rows = stmt
+            .query_map([account], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut due = Vec::new();
+        for row in rows {
+            let (data, baseline) = row.map_err(|_| MailError::StorageUnavailable)?;
+            let reminder: crate::reminders::Reminder =
+                serde_json::from_str(&data).map_err(|_| MailError::StorageUnavailable)?;
+            if reminder.phase == crate::reminders::ReminderPhase::Pending
+                && reminder
+                    .due_at
+                    .as_ref()
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                    .is_some_and(|at| at <= now)
+            {
+                due.push((
+                    reminder,
+                    serde_json::from_str(&baseline).map_err(|_| MailError::StorageUnavailable)?,
+                ));
+            }
+        }
+        Ok(due)
+    }
+
+    pub(crate) fn reminder_wait(&self) -> Result<Option<std::time::Duration>, MailError> {
+        self.persistence_gate()?;
+        let now = chrono::DateTime::parse_from_rfc3339(&self.clock.now_iso())
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let conn = self.lock_conn()?;
+        let Some(account) = meta_get(&conn, "account_id")? else {
+            return Ok(None);
+        };
+        let mut stmt = conn
+            .prepare("SELECT data FROM gmail_reminders WHERE account_id=?1")
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let rows = stmt
+            .query_map([account], |r| r.get::<_, String>(0))
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut next = None;
+        for row in rows {
+            let reminder: crate::reminders::Reminder =
+                serde_json::from_str(&row.map_err(|_| MailError::StorageUnavailable)?)
+                    .map_err(|_| MailError::StorageUnavailable)?;
+            if reminder.phase == crate::reminders::ReminderPhase::Pending {
+                if let Some(at) = reminder
+                    .due_at
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                {
+                    let wait = if at <= now {
+                        if reminder.condition == crate::reminders::ReminderCondition::IfNoReply {
+                            std::time::Duration::from_secs(60)
+                        } else {
+                            std::time::Duration::ZERO
+                        }
+                    } else {
+                        (at - now).to_std().unwrap_or_default()
+                    };
+                    next =
+                        Some(next.map_or(wait, |current: std::time::Duration| current.min(wait)));
+                }
+            }
+        }
+        Ok(next)
+    }
+
+    pub(crate) fn finish_due_reminder(
+        &self,
+        reminder: &crate::reminders::Reminder,
+        generation: u64,
+        observation: u64,
+        replied: bool,
+    ) -> Result<bool, MailError> {
+        self.finish_due_reminder_with_thread(reminder, generation, observation, replied, None)
+    }
+
+    pub(crate) fn finish_due_reminder_with_thread(
+        &self,
+        reminder: &crate::reminders::Reminder,
+        generation: u64,
+        observation: u64,
+        replied: bool,
+        fetched: Option<&GmailThread>,
+    ) -> Result<bool, MailError> {
+        self.persistence_gate()?;
+        let mut conn = self.lock_conn()?;
+        let tx = conn
+            .transaction()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        if !generation_matches(&tx, generation)?
+            || tx.total_changes() != observation
+            || meta_get(&tx, "account_id")?.as_deref() != Some(&reminder.conversation.account_id)
+        {
+            return Ok(false);
+        }
+        let data: Option<String> = tx
+            .query_row(
+                "SELECT data FROM gmail_reminders WHERE account_id=?1 AND conversation_id=?2",
+                params![
+                    reminder.conversation.account_id,
+                    reminder.conversation.conversation_id
+                ],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|_| MailError::StorageUnavailable)?;
+        let Some(data) = data else { return Ok(false) };
+        let mut current: crate::reminders::Reminder =
+            serde_json::from_str(&data).map_err(|_| MailError::StorageUnavailable)?;
+        if current.revision != reminder.revision
+            || current.phase != crate::reminders::ReminderPhase::Pending
+        {
+            return Ok(false);
+        }
+        // Check the captured observation and reminder revision before any merge.
+        // Fresh provider facts and the local transition commit together.
+        if let Some(thread) = fetched {
+            if thread.conversation.conversation_ref != reminder.conversation {
+                return Err(MailError::InvalidProviderResponse);
+            }
+            upsert_thread(&tx, &reminder.conversation.account_id, thread)?;
+            trim_cache(&tx, &reminder.conversation.account_id)?;
+        }
+        current.phase =
+            if current.condition == crate::reminders::ReminderCondition::IfNoReply && replied {
+                crate::reminders::ReminderPhase::Suppressed
+            } else {
+                crate::reminders::ReminderPhase::Returned
+            };
+        current.revision = current
+            .revision
+            .checked_add(1)
+            .ok_or(MailError::InvalidRequest {
+                field: "revision".into(),
+            })?;
+        tx.execute(
+            "UPDATE gmail_reminders SET data=?3 WHERE account_id=?1 AND conversation_id=?2",
+            params![
+                reminder.conversation.account_id,
+                reminder.conversation.conversation_id,
+                serde_json::to_string(&current).map_err(|_| MailError::StorageUnavailable)?
+            ],
+        )
+        .map_err(|_| MailError::StorageUnavailable)?;
+        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        Ok(true)
     }
 
     /// Bounded local evidence only; pagination scans cache candidates and may
@@ -1236,7 +1738,11 @@ impl GmailStore {
             let recovered: Option<(String, String)> = conn
                 .query_row(
                     "SELECT snapshot_json, snapshot_saved_at FROM gmail_operation_snapshots
-                     WHERE account_id = ?1 AND conversation_id = ?2",
+                     WHERE account_id = ?1 AND conversation_id = ?2
+                     UNION ALL
+                     SELECT snapshot_json, COALESCE(json_extract(snapshot_json, '$.retainedSnapshotAt'), '') FROM gmail_reminders
+                     WHERE account_id = ?1 AND conversation_id = ?2
+                     LIMIT 1",
                     params![account_id, r#ref.conversation_id],
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
@@ -2325,14 +2831,14 @@ impl GmailStore {
                 tx.execute(
                     "DELETE FROM gmail_messages
                      WHERE account_id = ?1 AND conversation_id NOT IN
-                         (SELECT conversation_id FROM gmail_discovery_seen UNION SELECT conversation_id FROM gmail_search_cache WHERE account_id=?1)",
+                         (SELECT conversation_id FROM gmail_discovery_seen UNION SELECT conversation_id FROM gmail_search_cache WHERE account_id=?1 UNION SELECT conversation_id FROM gmail_reminders WHERE account_id=?1 AND json_extract(data,'$.phase')='pending')",
                     params![account_id],
                 )
                 .map_err(|_| MailError::StorageUnavailable)?;
                 tx.execute(
                     "DELETE FROM gmail_inbox_membership
                      WHERE account_id = ?1 AND conversation_id NOT IN
-                         (SELECT conversation_id FROM gmail_discovery_seen)",
+                         (SELECT conversation_id FROM gmail_discovery_seen UNION SELECT conversation_id FROM gmail_reminders WHERE account_id=?1 AND json_extract(data,'$.phase')='pending')",
                     params![account_id],
                 )
                 .map_err(|_| MailError::StorageUnavailable)?;
@@ -2343,7 +2849,7 @@ impl GmailStore {
                 tx.execute(
                     "DELETE FROM gmail_message_facts
                      WHERE account_id = ?1 AND conversation_id NOT IN
-                         (SELECT conversation_id FROM gmail_discovery_seen UNION SELECT conversation_id FROM gmail_search_cache WHERE account_id=?1)
+                         (SELECT conversation_id FROM gmail_discovery_seen UNION SELECT conversation_id FROM gmail_search_cache WHERE account_id=?1 UNION SELECT conversation_id FROM gmail_reminders WHERE account_id=?1 AND json_extract(data,'$.phase')='pending')
                        AND NOT EXISTS (
                          SELECT 1 FROM gmail_operation_snapshots s
                          WHERE s.account_id = gmail_message_facts.account_id
@@ -2363,7 +2869,7 @@ impl GmailStore {
                 tx.execute(
                     "DELETE FROM gmail_conversations
                      WHERE account_id = ?1 AND conversation_id NOT IN
-                         (SELECT conversation_id FROM gmail_discovery_seen UNION SELECT conversation_id FROM gmail_search_cache WHERE account_id=?1)",
+                         (SELECT conversation_id FROM gmail_discovery_seen UNION SELECT conversation_id FROM gmail_search_cache WHERE account_id=?1 UNION SELECT conversation_id FROM gmail_reminders WHERE account_id=?1 AND json_extract(data,'$.phase')='pending')",
                     params![account_id],
                 )
                 .map_err(|_| MailError::StorageUnavailable)?;
@@ -2595,6 +3101,10 @@ impl GmailStore {
             .map_err(|_| MailError::StorageUnavailable)?;
         tx.execute("DELETE FROM gmail_operation_groups", [])
             .map_err(|_| MailError::StorageUnavailable)?;
+        tx.execute("DELETE FROM gmail_reminders", [])
+            .map_err(|_| MailError::StorageUnavailable)?;
+        tx.execute("DELETE FROM gmail_reminder_requests", [])
+            .map_err(|_| MailError::StorageUnavailable)?;
         tx.execute("DELETE FROM gmail_discovery_seen", [])
             .map_err(|_| MailError::StorageUnavailable)?;
         tx.execute(
@@ -2697,7 +3207,7 @@ fn admit_search_rows(
 /// and recovery snapshots, including already-cached members near the LRU tail.
 fn evict_search(tx: &Connection, account: &str) -> Result<(), MailError> {
     let ids = {
-        let mut stmt = tx.prepare("SELECT conversation_id FROM gmail_search_cache WHERE account_id = ?1 ORDER BY seq DESC, conversation_id LIMIT -1 OFFSET 100").map_err(|_| MailError::StorageUnavailable)?;
+        let mut stmt = tx.prepare("SELECT conversation_id FROM gmail_search_cache s WHERE account_id = ?1 AND NOT EXISTS (SELECT 1 FROM gmail_reminders r WHERE r.account_id=s.account_id AND r.conversation_id=s.conversation_id AND json_extract(r.data,'$.phase')='pending') ORDER BY seq DESC, conversation_id LIMIT -1 OFFSET 100").map_err(|_| MailError::StorageUnavailable)?;
         let ids = stmt
             .query_map([account], |r| r.get::<_, String>(0))
             .map_err(|_| MailError::StorageUnavailable)?
@@ -4619,7 +5129,8 @@ fn evict_over_cap(
          LEFT JOIN gmail_messages m
            ON m.account_id = c.account_id
           AND m.conversation_id = c.conversation_id
-         WHERE c.account_id = ?1 AND NOT EXISTS (SELECT 1 FROM gmail_search_cache sc WHERE sc.account_id=c.account_id AND sc.conversation_id=c.conversation_id)
+         WHERE c.account_id = ?1 AND NOT EXISTS (SELECT 1 FROM gmail_reminders r WHERE r.account_id=c.account_id AND r.conversation_id=c.conversation_id AND json_extract(r.data,'$.phase')='pending')
+           AND NOT EXISTS (SELECT 1 FROM gmail_search_cache sc WHERE sc.account_id=c.account_id AND sc.conversation_id=c.conversation_id)
          GROUP BY c.conversation_id
          ORDER BY {seen_order} MAX(m.sent_at) DESC, c.conversation_id ASC
          LIMIT -1 OFFSET ?2"
@@ -4931,6 +5442,401 @@ mod tests {
 
     fn cached(thread: GmailThread) -> ThreadFetch {
         ThreadFetch::Cached(Box::new(thread))
+    }
+
+    #[test]
+    fn due_thread_merge_rejects_stale_observation_revision_and_generation() {
+        use crate::reminders::{CancelReminder, PutReminder, ReminderCondition};
+        let (store, dir) = open_store("due-thread-fences");
+        store
+            .begin_account(&profile("acct", "test@example.test", "h1"), 0)
+            .unwrap();
+        let original = thread(
+            "acct",
+            "thr",
+            "h1",
+            vec![message("m1", "2026-01-01T00:00:00Z")],
+            &["m1"],
+        );
+        store
+            .apply_discovery_page(&[cached(original.clone())], None, true, false, 0)
+            .unwrap();
+        let command = PutReminder {
+            conversation: original.conversation.conversation_ref.clone(),
+            source_message_id: "m1".into(),
+            due_at: Some("2099-01-01T00:00:00Z".into()),
+            condition: ReminderCondition::IfNoReply,
+            expected_revision: None,
+            request_id: "fenced-put".into(),
+        };
+        let accepted = store.put_reminder(&command).unwrap();
+        let generation = store.generation().unwrap();
+        let observation = store.observation_revision().unwrap();
+        let mut stale = original.clone();
+        stale.inbox_message_ids.clear();
+        stale.conversation.is_in_inbox = false;
+        stale.conversation.subject = "stale remote facts".into();
+        // An unrelated cache write invalidates the observation, even with the
+        // same reminder revision.
+        store
+            .apply_discovery_page(&[cached(original.clone())], None, true, false, generation)
+            .unwrap();
+        assert!(!store
+            .finish_due_reminder_with_thread(
+                &accepted,
+                generation,
+                observation,
+                false,
+                Some(&stale)
+            )
+            .unwrap());
+        assert_eq!(store.list_reminders().unwrap()[0], accepted);
+        assert_eq!(
+            store
+                .get_conversation(&command.conversation)
+                .unwrap()
+                .subject,
+            original.conversation.subject
+        );
+        let cancelled = store
+            .cancel_reminder(&CancelReminder {
+                conversation: command.conversation.clone(),
+                expected_revision: accepted.revision,
+                request_id: "fenced-cancel".into(),
+            })
+            .unwrap();
+        // A fresh observation cannot bypass the reminder revision/phase fence.
+        assert!(!store
+            .finish_due_reminder_with_thread(
+                &accepted,
+                generation,
+                store.observation_revision().unwrap(),
+                false,
+                Some(&stale)
+            )
+            .unwrap());
+        assert_eq!(store.list_reminders().unwrap()[0], cancelled);
+        assert_eq!(store.list_snapshot().unwrap().conversations.len(), 1);
+        store.clear_account().unwrap();
+        assert!(!store
+            .finish_due_reminder_with_thread(
+                &accepted,
+                generation,
+                store.observation_revision().unwrap(),
+                false,
+                Some(&stale)
+            )
+            .unwrap());
+        assert!(store.list_snapshot().unwrap().conversations.is_empty());
+        assert!(store.list_reminders().unwrap().is_empty());
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn gmail_reminder_is_local_account_scoped_revisioned_and_replayed() {
+        use crate::reminders::{CancelReminder, PutReminder, ReminderCondition, ReminderPhase};
+        let (store, dir) = open_store("gmail-reminder-local");
+        store
+            .begin_account(&profile("acct", "test@example.test", "h1"), 0)
+            .unwrap();
+        store
+            .apply_discovery_page(
+                &[cached(thread(
+                    "acct",
+                    "thr",
+                    "h1",
+                    vec![message("m1", "2026-01-01T00:00:00Z")],
+                    &["m1"],
+                ))],
+                None,
+                true,
+                false,
+                0,
+            )
+            .unwrap();
+        let put = PutReminder {
+            conversation: ConversationRef {
+                account_id: "acct".into(),
+                conversation_id: "thr".into(),
+            },
+            source_message_id: "m1".into(),
+            due_at: Some("2099-01-01T00:00:00Z".into()),
+            condition: ReminderCondition::Regardless,
+            expected_revision: None,
+            request_id: "put-1".into(),
+        };
+        let scheduled = store.put_reminder(&put).unwrap();
+        assert_eq!(store.put_reminder(&put).unwrap(), scheduled);
+        assert!(
+            store.list_snapshot().unwrap().conversations.is_empty(),
+            "pending baseline is hidden locally"
+        );
+        store
+            .apply_discovery_page(
+                &[cached(thread(
+                    "acct",
+                    "thr",
+                    "h2",
+                    vec![
+                        message("m1", "2026-01-01T00:00:00Z"),
+                        message("m2", "2026-01-02T00:00:00Z"),
+                    ],
+                    &["m1", "m2"],
+                ))],
+                None,
+                false,
+                false,
+                0,
+            )
+            .unwrap();
+        assert_eq!(
+            store.list_snapshot().unwrap().conversations.len(),
+            1,
+            "new external ID releases hiding"
+        );
+        let mut conflict = put.clone();
+        conflict.due_at = None;
+        assert_eq!(
+            store.put_reminder(&conflict),
+            Err(MailError::RequestIdConflict)
+        );
+        assert_eq!(
+            store.get_conversation(&put.conversation).unwrap().messages[0].id,
+            "m1"
+        );
+        let cancel = CancelReminder {
+            conversation: put.conversation.clone(),
+            expected_revision: 1,
+            request_id: "cancel-1".into(),
+        };
+        let cancelled = store.cancel_reminder(&cancel).unwrap();
+        assert_eq!(cancelled.phase, ReminderPhase::Cancelled);
+        assert_eq!(store.cancel_reminder(&cancel).unwrap(), cancelled);
+        assert_eq!(
+            store.list_snapshot().unwrap().conversations.len(),
+            1,
+            "cancel releases local hiding"
+        );
+        assert_eq!(
+            store.put_reminder(&PutReminder {
+                conversation: ConversationRef {
+                    account_id: "other".into(),
+                    conversation_id: "thr".into()
+                },
+                ..put.clone()
+            }),
+            Err(MailError::NotFound)
+        );
+        drop(store);
+        let reopened = open_store_in(&dir);
+        assert_eq!(reopened.list_reminders().unwrap(), vec![cancelled]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn gmail_reminder_lost_ack_replays_after_due_and_reopen() {
+        use crate::reminders::{PutReminder, ReminderCondition};
+        let dir = temp_dir("gmail-reminder-lost-ack");
+        let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+            "2026-01-01T00:00:00Z",
+        )));
+        let store = GmailStore::open(&dir, clock.clone()).unwrap();
+        store
+            .begin_account(&profile("acct", "test@example.test", "h1"), 0)
+            .unwrap();
+        store
+            .apply_discovery_page(
+                &[cached(thread(
+                    "acct",
+                    "thr",
+                    "h1",
+                    vec![message("m1", "2026-01-01T00:00:00Z")],
+                    &["m1"],
+                ))],
+                None,
+                true,
+                false,
+                0,
+            )
+            .unwrap();
+        let put = PutReminder {
+            conversation: ConversationRef {
+                account_id: "acct".into(),
+                conversation_id: "thr".into(),
+            },
+            source_message_id: "m1".into(),
+            due_at: Some("2026-01-01T00:01:00Z".into()),
+            condition: ReminderCondition::Regardless,
+            expected_revision: None,
+            request_id: "lost-ack".into(),
+        };
+        let receipt = store.put_reminder(&put).unwrap();
+        assert!(store.list_snapshot().unwrap().conversations.is_empty());
+        clock.advance_seconds(120);
+        assert!(
+            store.list_snapshot().unwrap().conversations.is_empty(),
+            "deadline alone does not resolve a pending reminder"
+        );
+        assert_eq!(
+            store.get_conversation(&put.conversation).unwrap().messages[0].id,
+            "m1"
+        );
+        assert_eq!(store.put_reminder(&put).unwrap(), receipt);
+        let mut conflict = put.clone();
+        conflict.condition = ReminderCondition::IfNoReply;
+        assert_eq!(
+            store.put_reminder(&conflict),
+            Err(MailError::RequestIdConflict)
+        );
+        drop(store);
+        let reopened = GmailStore::open(&dir, clock).unwrap();
+        assert_eq!(reopened.put_reminder(&put).unwrap(), receipt);
+        drop(reopened);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn local_reminder_replacement_pins_new_baseline_and_survives_rediscovery() {
+        use crate::reminders::{CancelReminder, PutReminder, ReminderCondition, ReminderPhase};
+        let dir = temp_dir("reminder-replacement-pin");
+        let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+            "2026-01-01T00:00:00Z",
+        )));
+        let store = GmailStore::open(&dir, clock.clone()).unwrap();
+        store
+            .begin_account(&profile("acct", "self@example.test", "h1"), 0)
+            .unwrap();
+        store
+            .apply_discovery_page(
+                &[cached(thread(
+                    "acct",
+                    "original",
+                    "h1",
+                    vec![message("m1", "2020-01-01T00:00:00Z")],
+                    &["m1"],
+                ))],
+                None,
+                true,
+                false,
+                0,
+            )
+            .unwrap();
+        let first = PutReminder {
+            conversation: ConversationRef {
+                account_id: "acct".into(),
+                conversation_id: "original".into(),
+            },
+            source_message_id: "m1".into(),
+            due_at: None,
+            condition: ReminderCondition::Regardless,
+            expected_revision: None,
+            request_id: "first".into(),
+        };
+        let scheduled = store.put_reminder(&first).unwrap();
+        assert!(
+            store.list_snapshot().unwrap().conversations.is_empty(),
+            "Someday must stay hidden"
+        );
+        store
+            .cancel_reminder(&CancelReminder {
+                conversation: first.conversation.clone(),
+                expected_revision: scheduled.revision,
+                request_id: "cancel-first".into(),
+            })
+            .unwrap();
+        store
+            .apply_discovery_page(
+                &[cached(thread(
+                    "acct",
+                    "original",
+                    "h2",
+                    vec![
+                        message("m1", "2020-01-01T00:00:00Z"),
+                        message("m2", "2020-01-02T00:00:00Z"),
+                    ],
+                    &["m1", "m2"],
+                ))],
+                None,
+                false,
+                false,
+                0,
+            )
+            .unwrap();
+        let replacement = PutReminder {
+            source_message_id: "m2".into(),
+            due_at: Some("2026-01-01T00:01:00Z".into()),
+            request_id: "replacement".into(),
+            ..first
+        };
+        let receipt = store.put_reminder(&replacement).unwrap();
+        assert!(
+            store.list_snapshot().unwrap().conversations.is_empty(),
+            "replacement baseline includes m2"
+        );
+        store.begin_rediscovery("h2", 0).unwrap();
+        assert_eq!(
+            store.put_reminder(&replacement).unwrap(),
+            receipt,
+            "rediscovery preserves receipts"
+        );
+        let mut newer = Vec::new();
+        for index in 0..=DISCOVERY_CAP {
+            let id = format!("new-{index}");
+            newer.push(cached(thread(
+                "acct",
+                &id,
+                "h2",
+                vec![message(&id, "2026-01-01T00:00:00Z")],
+                &[&id],
+            )));
+        }
+        store
+            .apply_discovery_page(&newer, None, true, true, 0)
+            .unwrap();
+        assert_eq!(
+            store
+                .get_conversation(&replacement.conversation)
+                .unwrap()
+                .messages
+                .len(),
+            2,
+            "active reminder bodies survive real cap pruning"
+        );
+        drop(store);
+        clock.advance_seconds(120);
+        let store = GmailStore::open(&dir, clock).unwrap();
+        let due = store.due_reminders().unwrap();
+        assert_eq!(due[0].1.len(), 2, "replacement inventory persists");
+        assert!(store
+            .finish_due_reminder(
+                &due[0].0,
+                store.generation().unwrap(),
+                store.observation_revision().unwrap(),
+                false
+            )
+            .unwrap());
+        assert_eq!(
+            store.list_reminders().unwrap()[0].phase,
+            ReminderPhase::Returned
+        );
+        assert!(store
+            .list_snapshot()
+            .unwrap()
+            .conversations
+            .iter()
+            .any(|c| c.conversation_ref == replacement.conversation));
+        store.clear_account().unwrap();
+        let conn = store.lock_conn().unwrap();
+        for table in ["gmail_reminders", "gmail_reminder_requests"] {
+            let count: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(count, 0, "disconnect removes reminder mail and receipts");
+        }
+        drop(conn);
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// P5a: per-message attachment facts parse -> persist -> summary. Known

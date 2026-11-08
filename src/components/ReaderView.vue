@@ -40,6 +40,7 @@ const props = defineProps<{
   state: DetailState;
   error: MailError | null;
   commandInFlight: boolean;
+  reminderEnabled?: boolean;
   /** The conversation reference the shell currently wants displayed. */
   openRef: ConversationRef | null;
   /**
@@ -75,6 +76,7 @@ const emit = defineEmits<{
   move: [delta: number];
   attachments: [origin: HTMLElement];
   archive: [];
+  remind: [];
   unarchive: [];
   setRead: [read: boolean];
   prepareReply: [source: DraftSource];
@@ -853,6 +855,7 @@ defineExpose({
     </Teleport>
     <Teleport :to="props.actionsHost ?? undefined" :disabled="!props.actionsHost">
       <div class="reader-actions" data-test="reader-toolbar">
+        <button v-if="actionsShown && props.reminderEnabled && !bulkScope && props.conversation?.isInInbox" type="button" class="header-glyph" data-test="reader-remind" title="Remind me on this device" :disabled="!actionable || props.commandInFlight" @click="emit('remind')"><HeaderGlyph name="reminders" /><span class="visually-hidden">Remind me on this device</span></button>
         <button
           v-if="actionsShown && !props.readOnly && !bulkScope"
           type="button"

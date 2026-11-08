@@ -512,6 +512,11 @@ button:focus-visible {
   font-weight: var(--weight-strong);
 }
 
+.reminder-confirmation {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
 /*
  * Rail + one central list-or-reader surface + contact context. The contact
  * column exists only at >=1000 CSS px; strictly below it, the rail exposes a

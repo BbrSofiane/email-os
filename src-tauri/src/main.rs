@@ -49,12 +49,22 @@ enum Backend {
 }
 
 impl Backend {
-    fn reminder_core(&self) -> Result<&MailCore, MailError> {
+    fn list_reminders(&self) -> Result<Vec<Reminder>, MailError> {
         match self {
-            Self::Fixture(core) => Ok(core),
-            Self::Gmail(_) => Err(MailError::InvalidRequest {
-                field: "remindersUnavailable".into(),
-            }),
+            Self::Fixture(core) => core.list_reminders(),
+            Self::Gmail(core) => core.list_reminders(),
+        }
+    }
+    fn put_reminder(&self, command: &PutReminder) -> Result<Reminder, MailError> {
+        match self {
+            Self::Fixture(core) => core.put_reminder(command),
+            Self::Gmail(core) => core.put_reminder(command),
+        }
+    }
+    fn cancel_reminder(&self, command: &CancelReminder) -> Result<Reminder, MailError> {
+        match self {
+            Self::Fixture(core) => core.cancel_reminder(command),
+            Self::Gmail(core) => core.cancel_reminder(command),
         }
     }
     fn list_provider_destinations(
@@ -605,10 +615,7 @@ async fn cancel_search_mail(state: State<'_, AppState>) -> Result<(), MailError>
 
 #[tauri::command]
 async fn list_reminders(state: State<'_, AppState>) -> Result<Vec<Reminder>, MailError> {
-    run_blocking(state.backend.clone(), |backend| {
-        backend.reminder_core()?.list_reminders()
-    })
-    .await
+    run_blocking(state.backend.clone(), |backend| backend.list_reminders()).await
 }
 #[tauri::command]
 async fn put_reminder(
@@ -616,7 +623,7 @@ async fn put_reminder(
     command: PutReminder,
 ) -> Result<Reminder, MailError> {
     run_blocking(state.backend.clone(), move |backend| {
-        backend.reminder_core()?.put_reminder(&command)
+        backend.put_reminder(&command)
     })
     .await
 }
@@ -626,7 +633,7 @@ async fn cancel_reminder(
     command: CancelReminder,
 ) -> Result<Reminder, MailError> {
     run_blocking(state.backend.clone(), move |backend| {
-        backend.reminder_core()?.cancel_reminder(&command)
+        backend.cancel_reminder(&command)
     })
     .await
 }
@@ -1385,9 +1392,7 @@ mod tests {
         let gmail =
             GmailCore::open(temp_dir("gmail-readonly"), Arc::new(ReadOnlyProvider)).unwrap();
         let gmail = Backend::Gmail(gmail);
-        assert!(
-            matches!(gmail.reminder_core(), Err(MailError::InvalidRequest { field }) if field == "remindersUnavailable")
-        );
+        assert!(gmail.list_reminders().unwrap().is_empty());
         let status = gmail.account_status().unwrap();
         assert_eq!(status.mode, MailMode::Gmail);
         assert_eq!(
@@ -1457,28 +1462,11 @@ mod tests {
             expected_revision: None,
             request_id: "bridge-reminder".into(),
         };
-        let receipt = backend
-            .reminder_core()
-            .unwrap()
-            .put_reminder(&command)
-            .unwrap();
-        assert_eq!(
-            backend
-                .reminder_core()
-                .unwrap()
-                .put_reminder(&command)
-                .unwrap(),
-            receipt
-        );
-        assert_eq!(
-            backend.reminder_core().unwrap().list_reminders().unwrap(),
-            vec![receipt]
-        );
+        let receipt = backend.put_reminder(&command).unwrap();
+        assert_eq!(backend.put_reminder(&command).unwrap(), receipt);
+        assert_eq!(backend.list_reminders().unwrap(), vec![receipt]);
         command.conversation.account_id = "foreign".into();
-        assert_eq!(
-            backend.reminder_core().unwrap().put_reminder(&command),
-            Err(MailError::NotFound)
-        );
+        assert_eq!(backend.put_reminder(&command), Err(MailError::NotFound));
         backend.stop();
         drop(backend);
         std::fs::remove_dir_all(dir).unwrap();

@@ -8,6 +8,7 @@ export const browsingActions = [
   { id: 'unarchive', label: 'Mark not done', shortcut: 'Shift+E', aliases: ['unarchive', 'restore to inbox'] },
   { id: 'remind', label: 'Remind me (this device)', shortcut: 'H' },
   { id: 'reminders', label: 'Go to local Reminders', shortcut: 'G then H (within 1 second)' },
+  { id: 'reminder-settings', label: 'Reminder Settings', shortcut: '' },
   { id: 'undo', label: 'Undo last action', shortcut: 'Z' },
   { id: 'star', label: 'Star', shortcut: 'S' },
   { id: 'unstar', label: 'Unstar', shortcut: 'S' },

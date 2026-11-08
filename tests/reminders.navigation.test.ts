@@ -135,3 +135,94 @@ describe('reminder reader navigation ownership', () => {
     }
   });
 });
+
+it.each(['list', 'reader'])('restores %s shortcut focus after H then Escape', async surface => {
+  const client = createBrowserFakeMailClient();
+  const archive = vi.spyOn(client, 'setArchived');
+  app = mount(App, { props: { client, mode: 'native' }, attachTo: document.body });
+  await flushPromises();
+  const row = app.find('[data-test^="conversation-row-"]');
+  if (surface === 'reader') { await row.trigger('click'); await flushPromises(); }
+  else (row.element as HTMLElement).focus();
+  await key('h');
+  const input = document.querySelector('#reminder-time-input')!;
+  expect(input).not.toBeNull();
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await flushPromises();
+  expect(app.findComponent(RemindersPanel).exists()).toBe(false);
+  if (surface === 'list') expect(document.activeElement).toBe(row.element);
+  else expect(app.getComponent(ReaderView).element.contains(document.activeElement)).toBe(true);
+  document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', bubbles: true }));
+  await flushPromises();
+  expect(archive).toHaveBeenCalledTimes(1);
+});
+
+it.each(['ack', 'lost ACK', 'unmount'])('keeps BODY Escape and drawer Close from discarding a put; handles %s', async outcome => {
+  const client = createBrowserFakeMailClient();
+  const pending = deferred<Reminder>();
+  const put = vi.spyOn(client.reminders!, 'put').mockImplementationOnce(() => pending.promise);
+  app = mount(App, { props: { client, mode: 'native' }, attachTo: document.body });
+  await flushPromises();
+  await key('h');
+  (document.querySelector('#reminder-time-option-someday') as HTMLElement).click();
+  await flushPromises();
+  const schedule = [...document.querySelectorAll('button')].find(b => b.textContent === 'Schedule reminder')!;
+  schedule.click(); await flushPromises();
+  const command = put.mock.calls[0]![0];
+  const input = document.querySelector('#reminder-time-input') as HTMLInputElement;
+  expect(input.disabled).toBe(true);
+  expect(document.querySelector('[data-reminder-picker]')!.contains(document.activeElement)).toBe(true);
+  (document.activeElement as HTMLElement).blur();
+  document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await flushPromises();
+  await app.get('[data-test="drawer-close"]').trigger('click');
+  expect(document.querySelector('[data-reminder-picker]')).not.toBeNull();
+  expect(document.querySelector('[data-reminder-picker]')!.contains(document.activeElement)).toBe(true);
+  expect(app.find('[data-test="reminder-confirmation"]').exists()).toBe(false);
+  if (outcome === 'unmount') {
+    app.unmount(); app = undefined;
+    const other = document.createElement('button'); document.body.append(other); other.focus();
+    pending.resolve({ ...command, subject: 'Saved', revision: 1, phase: 'pending' });
+    await flushPromises();
+    expect(document.activeElement).toBe(other);
+    expect(document.querySelector('[data-reminder-picker]')).toBeNull();
+    return;
+  }
+  if (outcome === 'ack') pending.resolve({ ...command, subject: 'Saved', revision: 1, phase: 'pending' });
+  else pending.reject({ kind: 'storage_unavailable' });
+  await flushPromises();
+  if (outcome === 'ack') {
+    expect(app.get('[data-test="reminder-confirmation"]').text()).toContain('Someday');
+    expect(document.querySelector('[data-reminder-picker]')).toBeNull();
+  } else {
+    (document.activeElement as HTMLElement).blur();
+    await key('Escape');
+    await app.get('[data-test="drawer-close"]').trigger('click');
+    expect(document.querySelector('[data-reminder-picker]')).not.toBeNull();
+    expect(app.find('[data-test="reminder-confirmation"]').exists()).toBe(false);
+    const picker = document.querySelector('[data-reminder-picker]')!;
+    const inspect = [...picker.querySelectorAll('button')].find(b => b.textContent === 'Inspect saved state')!;
+    inspect.click(); await flushPromises();
+    expect(document.querySelector('[data-reminder-picker]')).toBeNull();
+    expect(app.findComponent(RemindersPanel).exists()).toBe(true);
+  }
+});
+
+it.each(['inactive workspace', 'new drawer'])('does not restore origin focus after dismissal when a %s takes ownership', async owner => {
+  const client = createBrowserFakeMailClient();
+  app = mount(App, { props: { client, mode: 'native' }, attachTo: document.body });
+  await flushPromises(); await key('h');
+  const input = document.querySelector('#reminder-time-input')!;
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  if (owner === 'inactive workspace') {
+    const other = document.createElement('button'); document.body.append(other); other.focus();
+    await app.setProps({ active: false });
+    await flushPromises();
+    expect(document.activeElement).toBe(other);
+  } else {
+    (app.get('[data-test="rail-activity"]').element as HTMLElement).click();
+    await flushPromises();
+    expect(app.get('[data-test="rail-activity"]').attributes('aria-expanded')).toBe('true');
+    expect(document.activeElement?.closest('.utility-drawer')).not.toBeNull();
+  }
+});

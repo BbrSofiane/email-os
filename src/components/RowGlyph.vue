@@ -3,7 +3,7 @@
  * Local inline 16px row glyphs (no icon font, no CDN). Purely decorative:
  * every glyph is aria-hidden and its control carries the accessible name.
  */
-defineProps<{ name: 'archive' | 'restore' | 'mark-read' | 'mark-unread' | 'more' | 'attachment' | 'attachment-outline' }>();
+defineProps<{ name: 'archive' | 'restore' | 'mark-read' | 'mark-unread' | 'more' | 'attachment' | 'attachment-outline' | 'reminder' }>();
 </script>
 
 <template>
@@ -27,6 +27,7 @@ defineProps<{ name: 'archive' | 'restore' | 'mark-read' | 'mark-unread' | 'more'
       <path d="M6.25 3.75L3 7l3.25 3.25" />
       <path d="M3.25 7h6.25a3.25 3.25 0 010 6.5H8" />
     </template>
+    <template v-else-if="name === 'reminder'"><circle cx="8" cy="8" r="6" /><path d="M8 4.5V8l2.25 1.5" /></template>
     <!-- Mark read: an opened envelope. -->
     <template v-else-if="name === 'mark-read'">
       <path d="M2.5 6.75L8 3.25l5.5 3.5v5.5a1 1 0 01-1 1h-9a1 1 0 01-1-1z" />

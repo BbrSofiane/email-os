@@ -481,25 +481,29 @@ WKWebView key handling, VoiceOver, Downloads permissions, OS browser dispatch,
 or the PDF security spike. Disposable provider validation remains separately
 operator-gated, not authorized by implementation work.
 
-## Desktop-local reminder increment (UX-11, fixture only)
+## Desktop-local reminder increment (UX-11)
 
-See [the frozen contract and acceptance evidence](ux-11-local-reminders.md) and
-ADR 0001's explicit reminder-deferral amendment. Native synthetic fixture mode
-supports H / Remind me for one Inbox conversation, explicit offset-bearing
-RFC3339 time (or unscheduled Someday), default If no reply / Regardless, and
+See [the local reminder contract](ux-11-local-reminders.md) and
+ADR 0001's reminder boundary. H / Remind me supports one Inbox conversation,
+local time presets and free-text dates (or unscheduled Someday),
+default If no reply / Regardless, and
 Reminders pending/returned/history destinations (also G then H and palette).
 Cancel/recover and reschedule are revisioned, durable commands. Pending stages
 are not provider confirmation; returned membership requires confirmed return.
 The existing fixture worker executes while running and reconciles overdue work
 on launch. No execution while fully quit, cross-device state or calendar.
 
-**Not Gmail support:** reminder commands reject Gmail mode, and UI discovery
-hides them. The ordinary browser fake deliberately has no reminder transport;
-component tests inject a labelled synthetic capability but do not establish
-SQLite or native convergence. Gmail's bounded cache is not complete fresh reply
-evidence. Fresh thread reconciliation, pinned recovery inventory and atomic
-Gmail reminder/setter acceptance remain concrete implementation blockers before
-Gmail exposure. No credentials or real provider were used for this increment.
+Gmail commands use local `gmail.db` reminders, immutable baseline IDs, a pinned
+reader snapshot, account-scoped request receipts, and revision checks. They do
+not enqueue Gmail archive or unarchive operations. Pending Inbox hiding ends
+when a new message ID is observed. Regardless deadlines resolve locally. A
+no-reply deadline needs a connected, complete fresh thread read. Offline,
+incomplete, and failed reads stay pending. A provider reply can arrive after the
+observed checkpoint and before commit; the decision is local and is not an
+atomic provider absence guarantee. The browser fake supports memory-only reminder transport for UI tests and
+development. Its due transitions reconcile on synthetic reads; they do not
+establish native persistence or worker execution.
+No credentials or real provider were used for this increment.
 
 ## Synthetic account workspaces (UX-13A)
 
