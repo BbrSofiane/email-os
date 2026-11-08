@@ -1,0 +1,133 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6YJV2347M39B65ETP12TWZ7",
+  "session_id": "f985be7d-cba0-4fa8-a8b8-ec1d0f052dd4",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-08T22:00:42.266728156Z",
+  "branch": "worktree-agent-a8ead0218e3850c1c",
+  "checkpoints_count": 6,
+  "save_step_count": 7,
+  "files_touched": [],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "b6ad8b8061aa",
+  "checkpoint_transcript_start": 1783,
+  "transcript_lines_at_start": 1783,
+  "compact_transcript_start": 245,
+  "token_usage": {
+    "input_tokens": 0,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 0,
+    "output_tokens": 0,
+    "api_call_count": 0
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "prompt-skill-claude-code-impeccable-2026-11-08T13:24:38.799411184Z",
+      "event_type": "prompt_invocation",
+      "skill": {
+        "name": "impeccable"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "prompt_slash_command",
+        "confidence": "explicit"
+      },
+      "turn_id": "2a229841a343",
+      "timestamp": "2026-11-08T13:24:38.799411184Z",
+      "native": {
+        "command": "/impeccable"
+      },
+      "collapse": {
+        "target": "user_message",
+        "label": "/impeccable",
+        "default_collapsed": true
+      }
+    },
+    {
+      "id": "prompt-skill-claude-code-impeccable-2026-11-08T17:40:49.119278346Z",
+      "event_type": "prompt_invocation",
+      "skill": {
+        "name": "impeccable"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "prompt_slash_command",
+        "confidence": "explicit"
+      },
+      "turn_id": "043d2d38bc28",
+      "timestamp": "2026-11-08T17:40:49.119278346Z",
+      "native": {
+        "command": "/impeccable"
+      },
+      "collapse": {
+        "target": "user_message",
+        "label": "/impeccable",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 20
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 1,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".impeccable/hook.cache.json": 1
+      }
+    },
+    {
+      "checkpoint_number": 4,
+      "user_lines_added": 1,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".impeccable/hook.cache.json": 1
+      }
+    },
+    {
+      "checkpoint_number": 5,
+      "user_lines_added": 1,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".impeccable/hook.cache.json": 1
+      }
+    },
+    {
+      "checkpoint_number": 6,
+      "user_lines_added": 1,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".impeccable/hook.cache.json": 1
+      }
+    },
+    {
+      "checkpoint_number": 7,
+      "user_lines_added": 1,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".impeccable/hook.cache.json": 1
+      }
+    }
+  ]
+}
