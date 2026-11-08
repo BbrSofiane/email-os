@@ -94,7 +94,7 @@ fn list_cached_done_caps_large_sqlite_result_and_pages_equal_dates_by_id() {
             rusqlite::params![ACCOUNT_ID, id],
         )
         .unwrap();
-        conn.execute("INSERT INTO messages SELECT account_id, ?1, ?1, from_display, from_mailbox, to_json, '2026-04-01T00:00:00Z', body_text, 1 FROM messages WHERE account_id = ?2 LIMIT 1", rusqlite::params![id, ACCOUNT_ID]).unwrap();
+        conn.execute("INSERT INTO messages SELECT account_id, ?1, ?1, from_display, from_mailbox, to_json, '2026-04-01T00:00:00Z', body_text, 1, 0 FROM messages WHERE account_id = ?2 LIMIT 1", rusqlite::params![id, ACCOUNT_ID]).unwrap();
         core.set_archived(&SetArchived {
             conversation: ConversationRef {
                 account_id: ACCOUNT_ID.into(),

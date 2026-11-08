@@ -3,7 +3,7 @@
  * Local inline 16px row glyphs (no icon font, no CDN). Purely decorative:
  * every glyph is aria-hidden and its control carries the accessible name.
  */
-defineProps<{ name: 'archive' | 'restore' | 'mark-read' | 'mark-unread' | 'more' }>();
+defineProps<{ name: 'archive' | 'restore' | 'mark-read' | 'mark-unread' | 'more' | 'attachment' | 'attachment-outline' }>();
 </script>
 
 <template>
@@ -37,6 +37,17 @@ defineProps<{ name: 'archive' | 'restore' | 'mark-read' | 'mark-unread' | 'more'
       <path d="M11 4H3.5a1 1 0 00-1 1v6.5a1 1 0 001 1h9a1 1 0 001-1V7.5" />
       <path d="M2.75 5.25L8 9l2.5-1.8" />
       <circle cx="13" cy="4" r="1.6" fill="currentColor" stroke="none" />
+    </template>
+    <!-- Attachment present: a paperclip (row indicator; the wrapping element
+         carries the accessible name, like the read-state and star markers). -->
+    <template v-else-if="name === 'attachment'">
+      <path d="M14.29 7.37l-6.13 6.13a4 4 0 01-5.66-5.66l6.13-6.13a2.67 2.67 0 013.77 3.77l-6.13 6.13a1.33 1.33 0 01-1.89-1.89l5.66-5.65" />
+    </template>
+    <!-- Attachment state unknown: the same paperclip as a thin outline, the
+         hollow counterpart of the solid glyph (mirrors the read marker's
+         hollow ring); the wrapping element carries the accessible name. -->
+    <template v-else-if="name === 'attachment-outline'">
+      <path stroke-width="0.8" d="M14.29 7.37l-6.13 6.13a4 4 0 01-5.66-5.66l6.13-6.13a2.67 2.67 0 013.77 3.77l-6.13 6.13a1.33 1.33 0 01-1.89-1.89l5.66-5.65" />
     </template>
     <!-- More actions: a horizontal ellipsis. -->
     <template v-else>

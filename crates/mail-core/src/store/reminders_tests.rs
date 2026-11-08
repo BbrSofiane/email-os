@@ -43,7 +43,7 @@ fn row(s: &Store) -> Reminder {
 }
 fn incoming(s: &Store, mailbox: &str) {
     let conn = s.lock_conn().unwrap();
-    conn.execute("INSERT INTO messages SELECT account_id,conversation_id,'new-mail',NULL,?1,to_json,'2030-01-01T00:00:30Z','new plain text',1 FROM messages WHERE conversation_id='conv-01' LIMIT 1",[mailbox]).unwrap();
+    conn.execute("INSERT INTO messages SELECT account_id,conversation_id,'new-mail',NULL,?1,to_json,'2030-01-01T00:00:30Z','new plain text',1,0 FROM messages WHERE conversation_id='conv-01' LIMIT 1",[mailbox]).unwrap();
 }
 #[test]
 fn fire_once_exact_inventory_restart_and_receipt_replay() {

@@ -7,8 +7,11 @@
  *   semantics with roving tabindex and `aria-current` (not `aria-selected`),
  *   so a future selection model can diverge from focus.
  * - Row keys are account+conversation; DOM refs and navigation address
- *   conversations only. Date group headings are non-actionable and never
- *   tabbable, and they never reorder the backend's rows.
+ *   conversations only. Group headings (date captions, or sender captions in
+ *   a single-from search with nested date captions, P5b) are non-actionable
+ *   and never tabbable; date headings never reorder the backend's rows, and
+ *   sender grouping only buckets rows by sender, keeping backend order inside
+ *   each group.
  * - Hover changes nothing: no hover handler mutates focus or read state.
  *   Inline actions are row-scoped buttons that stop propagation; focusing one
  *   never opens the row or scrolls it to center. Hover only reveals (CSS) the
@@ -25,11 +28,14 @@ import type { ConversationSummaryLike } from '../composables/useMailbox';
 import { sameConversation } from '../composables/useMailbox';
 import { actionLabel } from '../lib/browsing-actions';
 import { compactDateLabel, dateGroupCaption, dateGroupFor, fullDateLabel, machineDateTime } from '../lib/browsing-dates';
+import { groupRowsBySender, isSingleFromQuery, senderGroupKey, senderGroupLabel } from '../lib/search';
 import RowGlyph from './RowGlyph.vue';
 
 const props = defineProps<{
   rows: ConversationSummaryLike[];
   context?: 'inbox' | 'saved' | 'done' | 'starred' | 'search';
+  /** Submitted query in search context; drives sender grouping for a single from: query (P5b). */
+  searchQuery?: string;
   focusedRef: ConversationRef | null;
   actionsEnabled?: boolean;
   showReadState?: boolean;
@@ -137,6 +143,17 @@ interface RowItem { kind: 'row'; row: ConversationSummaryLike; index: number }
 type ListItem = GroupItem | RowItem;
 
 /**
+ * P5b sender grouping: in search context, a submitted query that is exactly one
+ * non-excluded from: term (the contact-pane path) renders sender-grouped like
+ * the reference, instead of flat date order. Rows are bucketed by their exact
+ * sender — never re-sorted inside a group — and each group starts with one
+ * "Name (count)" caption through the same non-actionable row-group mechanism
+ * as the date captions, which then continue nested inside the group.
+ */
+const senderGroupingActive = computed(() =>
+  props.context === 'search' && isSingleFromQuery(props.searchQuery ?? '') !== null);
+
+/**
  * Backend order is preserved; a heading is emitted wherever the calendar
  * bucket changes between consecutive rows (never re-sorted here).
  *
@@ -146,11 +163,56 @@ type ListItem = GroupItem | RowItem;
  * the first list line shared by the rail and contact pane. Any other leading
  * bucket (Yesterday, a month, Unknown date) stays visible, because the row
  * dates alone would not say where the list starts.
+ *
+ * When sender grouping is active (search context, single from: query) the
+ * captions nest two levels: a sender caption starts each sender group (groups
+ * in first-seen order, rows keep backend order inside a group, caption reads
+ * "Name (count)"), and the date captions continue INSIDE the group with the
+ * same dateGroupCaption logic and the same row-group styling. The leading
+ * Today rule applies to the very first caption in the list, whether it is a
+ * sender or a date caption: a list that opens with today's mail hides that
+ * first caption on screen (it stays in the accessibility tree).
  */
 const items = computed<ListItem[]>(() => {
   const result: ListItem[] = [];
-  let previousKey: string | null = null;
   let groupId = 0;
+  if (senderGroupingActive.value) {
+    // Stable bucketing (shared with App's navigation order): groups in
+    // first-seen order, rows keep their incoming order inside each group.
+    const grouped = groupRowsBySender(
+      props.rows.map((row, index) => ({ row, index })),
+      (entry) => senderGroupKey(entry.row),
+    );
+    const counts = new Map<string, number>();
+    for (const entry of grouped) {
+      const key = senderGroupKey(entry.row);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    // A list that opens with today's mail hides its very first caption —
+    // whether that caption is the leading sender or a leading date caption.
+    const opensToday = props.rows.length > 0 && dateGroupFor(props.rows[0]!.lastMessageAt) === 'today';
+    let previousKey: string | null = null;
+    let previousDateKey: string | null = null;
+    for (const entry of grouped) {
+      const key = senderGroupKey(entry.row);
+      if (key !== previousKey) {
+        previousKey = key;
+        // The sender caption heads the group; date captions continue inside it.
+        previousDateKey = null;
+        groupId += 1;
+        result.push({ kind: 'group', key: `sender:${key}`, caption: `${senderGroupLabel(entry.row)} (${counts.get(key)})`, id: groupId, leading: result.length === 0 && opensToday });
+      }
+      const dateKey = dateGroupFor(entry.row.lastMessageAt);
+      if (dateKey !== previousDateKey) {
+        previousDateKey = dateKey;
+        groupId += 1;
+        result.push({ kind: 'group', key: dateKey, caption: dateGroupCaption(dateKey), id: groupId, leading: result.length === 0 && dateKey === 'today' });
+      }
+      result.push({ kind: 'row', row: entry.row, index: entry.index });
+    }
+    return result;
+  }
+  let previousKey: string | null = null;
   props.rows.forEach((row, index) => {
     const key = dateGroupFor(row.lastMessageAt);
     if (key !== previousKey) {
@@ -361,12 +423,13 @@ onMounted(() => {
 /*
  * Re-observe (which re-measures every row) when the row set changes, and when
  * a fact that widens the trailing metadata changes without resizing the row
- * box (pending, read state, star coverage, the available actions):
+ * box (pending, read state, attachment state, star coverage, the available
+ * actions):
  * ResizeObserver alone would miss
  * those and leave a newly overflowing row in the expanded presentation.
  */
 watch(
-  () => `${props.actionsEnabled}|${props.showReadControls}|${props.showReadState}|${props.context}\n` + props.rows.map((row) => `${rowKey(row.ref)}|${row.pendingOperationId ?? ''}|${String(row.isRead)}|${row.stars ? `${row.stars.starredMessages}/${row.stars.knownMessages}/${row.stars.totalMessages}` : ''}`).join('\n'),
+  () => `${props.actionsEnabled}|${props.showReadControls}|${props.showReadState}|${props.context}\n` + props.rows.map((row) => `${rowKey(row.ref)}|${row.pendingOperationId ?? ''}|${String(row.isRead)}|${String(row.hasAttachments)}|${row.stars ? `${row.stars.starredMessages}/${row.stars.knownMessages}/${row.stars.totalMessages}` : ''}`).join('\n'),
   () => observeRowLayouts(),
   { flush: 'post' },
 );
@@ -589,6 +652,28 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
             :aria-label="`${item.row.stars.starredMessages > 0 ? 'Starred' : 'Star state unknown'}; effective star values known for ${item.row.stars.knownMessages} of ${item.row.stars.totalMessages} cached messages; may include pending intent`"
             :title="`Effective star values known for ${item.row.stars.knownMessages} of ${item.row.stars.totalMessages} cached messages; pending intent is not provider confirmation`"
           >{{ item.row.stars.starredMessages > 0 ? '★' : 'Star unknown' }}{{ item.row.stars.knownMessages < item.row.stars.totalMessages ? ' (partial)' : '' }}</span>
+          <!-- P5a/P3: attachment glyph before the date (DESIGN.md row spec),
+               three-state like the read marker: solid paperclip on a KNOWN
+               hasAttachments === true, outline paperclip when the state is
+               unknown (undefined/absent), nothing when known false — an
+               unknown fact is never rendered as silence, and never as a
+               guessed marker. -->
+          <span
+            v-if="item.row.hasAttachments === true"
+            class="row-attachment"
+            data-test="row-attachment"
+            role="img"
+            aria-label="Has attachments"
+            title="Has attachments"
+          ><RowGlyph name="attachment" /></span>
+          <span
+            v-else-if="item.row.hasAttachments == null"
+            class="row-attachment row-attachment-unknown"
+            data-test="row-attachment-unknown"
+            role="img"
+            aria-label="Attachment state unknown"
+            title="Attachment state unknown"
+          ><RowGlyph name="attachment-outline" /></span>
           <!-- One trailing slot: the date at rest; on the focused or hovered
                row the action glyphs (or, when they do not fit, the disclosure
                control) take its place without changing the row's width. -->

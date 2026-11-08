@@ -563,6 +563,7 @@ fn msg(id: &str, sent_at: &str) -> Message {
         }],
         sent_at: sent_at.to_string(),
         body_text: "plain text body".to_string(),
+        has_attachment: None,
     }
 }
 

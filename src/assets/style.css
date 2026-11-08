@@ -853,10 +853,41 @@ button:focus-visible {
 .contact-disclosure-panel .contact-line-mailbox { min-height: 24px; }
 .contact-disclosure-panel .contact-recent { margin-top: 12px; }
 
+/* Search surface (UX-07): a one-line results header echoing the query at
+ * active-tab size with an X exit, then the entry form as a single row with
+ * suggestions under the input. */
+.search-results-header { display: flex; align-items: center; gap: 12px; padding: 6px 24px 6px 50px; }
+/* The query echo is a button (the edit affordance): it keeps the headline look
+ * but drops the ghost-button padding so the header row height is unchanged. */
+.search-results-query { flex: 1; min-width: 0; margin: 0; padding: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; font-size: var(--type-headline); line-height: var(--leading-headline); color: var(--text-primary); }
 .mail-search { padding: 6px 24px 12px 50px; }
-.mail-search-entry { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0; }
-.mail-search-entry input { flex: 1 1 16rem; min-width: 0; }
-.mail-search p { max-width: 75ch; color: var(--text-secondary); }
+.mail-search-entry { display: flex; gap: 0.5rem; margin: 0.5rem 0; }
+.mail-search-entry input { flex: 1 1 auto; min-width: 0; }
+.mail-search p, .mail-search ul { max-width: 75ch; color: var(--text-secondary); }
+/* Inline grammar feedback while typing (mirror of the Rust-owned grammar). */
+.mail-search p.search-error { color: var(--danger); }
+/* Suggestion rows under the input: same listbox vocabulary as the command
+ * overlay; the highlight is the Focus Stone fill + Dusk Lavender bar, never a
+ * new accent. */
+/* The listbox is capped at six 28px rows and scrolls; the highlighted option is
+ * scrolled into view from the keydown/pointermove handlers (block: nearest). */
+.search-suggestions { list-style: none; margin: 0 0 0.5rem; padding: 0; max-height: 168px; overflow-y: auto; }
+.search-suggestion { display: flex; gap: 12px; align-items: baseline; min-height: 28px; padding: 4px 8px; cursor: pointer; }
+.search-suggestion .suggestion-name { font-weight: var(--weight-strong); color: var(--text-primary); }
+.search-suggestion .suggestion-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-suggestion .suggestion-query { overflow-wrap: anywhere; }
+.search-suggestion.highlighted { background: var(--focus-fill); box-shadow: inset 4px 0 0 var(--focus-accent); }
+/* Operator + gloss help: one row per supported item, operator in mono-strong,
+ * gloss in Ash; the unsupported line is count-size and muted. */
+.search-help { list-style: none; margin: 0.5rem 0 0; padding: 0; }
+.search-help li { display: flex; gap: 8px; align-items: baseline; font-size: var(--type-body); }
+.search-op { font-family: var(--font-mono); font-size: var(--type-body); font-weight: var(--weight-strong); color: var(--text-primary); }
+.search-gloss { font-size: var(--type-body); color: var(--text-secondary); }
+.mail-search p.search-unsupported { margin: 4px 0 0; font-size: var(--type-count); color: var(--text-tertiary); }
+/* Coverage / continuation-error lines live outside the form so they stay
+ * visible in search context while the entry form is collapsed. */
+.search-coverage, .search-inline-error { margin: 0; padding: 6px 24px 6px 50px; max-width: calc(75ch + 74px); font-size: var(--type-body); color: var(--text-secondary); }
+.search-inline-error { color: var(--danger); }
 /*
  * Utility disclosures overlay the central surface; they are never columns.
  * They start below the split header (positioned against .app-main), so the
@@ -1073,6 +1104,29 @@ button:focus-visible {
 .row-pending {
   font-style: italic;
   color: var(--warning);
+}
+
+/*
+ * P5a/P3: the attachment glyph sits before the date (DESIGN.md row spec) as a
+ * Graphite (icon-muted) 16px paperclip in the metadata row; it replaces
+ * nothing and is three-state like the read marker — solid when attachments
+ * are known present, nothing when known absent.
+ */
+.row-attachment {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  color: var(--icon-muted);
+}
+
+/*
+ * Unknown attachment state: same Graphite icon-muted color as the solid
+ * glyph, but quieter (the glyph itself is a thin outline stroke, mirroring
+ * the hollow unread ring), so "unknown" stays visible yet distinct from a
+ * known paperclip.
+ */
+.row-attachment-unknown {
+  opacity: 0.75;
 }
 
 /*

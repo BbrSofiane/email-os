@@ -96,6 +96,11 @@ describe('App archive continuation ownership', () => {
       expect(h.w.find('[data-test="reader"]').exists()).toBe(false);
       expect(h.submissions()).toHaveLength(1);
       expect(h.submissions()[0]![0]).toMatchObject({ query: `from:"${sender}"`, cursor: null, cachedOnly: false });
+      // The sender search auto-collapsed the form; the query echoes in the
+      // results header and reopening via the glyph seeds the input with it.
+      expect(h.w.find('form[role="search"]').exists()).toBe(false);
+      expect(h.w.get('[data-test="search-results-query"]').text()).toBe(`Search: from:"${sender}"`);
+      await h.w.get('[data-test="search-trigger"]').trigger('click'); await flushPromises();
       expect(h.w.get('[data-test="search-input"]').element).toHaveProperty('value', `from:"${sender}"`);
     },
   );

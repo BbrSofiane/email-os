@@ -298,13 +298,26 @@ primaryCorrespondent?: Address,
 /**
  * Plain-text preview derived from the newest message body.
  */
-preview: string, lastMessageAt: string, isRead?: boolean, pendingOperationId: string | null, };
+preview: string, lastMessageAt: string, isRead?: boolean,
+/**
+ * Whether any cached message of the conversation has attachments:
+ * `Some(true)`/`Some(false)` when attachment facts are known for the
+ * cached messages, `None` when unknown (legacy cache rows). Never
+ * inferred; the row glyph renders only on a known `Some(true)`.
+ */
+hasAttachments?: boolean, pendingOperationId: string | null, };
 
 export type Message = { id: string, from: Address, to: Array<Address>, sentAt: string,
 /**
  * Literal fixture text; hostile markup is data, never rendered.
  */
-bodyText: string, };
+bodyText: string,
+/**
+ * Whether this cached message carries attachments, when that fact is
+ * known (provider parse or a v4+ cache write). Absent when unknown
+ * (legacy cache rows); never inferred.
+ */
+hasAttachment?: boolean, };
 
 export type Conversation = {
 /**

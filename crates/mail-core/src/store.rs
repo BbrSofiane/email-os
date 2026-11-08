@@ -172,6 +172,7 @@ impl Store {
                 sent_at         TEXT NOT NULL,
                 body_text       TEXT NOT NULL,
                 provider_inbox  INTEGER NOT NULL CHECK (provider_inbox IN (0, 1)),
+                has_attachment  INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (account_id, conversation_id, message_id)
             );
             CREATE TABLE IF NOT EXISTS operations (
@@ -234,8 +235,8 @@ impl Store {
             .optional()
             .map_err(|_| MailError::StorageUnavailable)?;
         match schema_version {
-            Some(version) if version == "3" => {}
-            Some(version) if version == "2" || version == "1" => {
+            Some(version) if version == "4" => {}
+            Some(version) if version == "3" || version == "2" || version == "1" => {
                 if version == "1" {
                     // UX-04 migration (docs/ux-04-trustworthy-undo.md §3.5): admit
                     // 'cancelled' and add the undo columns. Copy-rebuild in one
@@ -295,16 +296,47 @@ impl Store {
                 )
                 .map_err(|_| MailError::StorageUnavailable)?;
                 tx.execute(
-                    "INSERT INTO meta (key, value) VALUES ('schema_version', '3')
-                     ON CONFLICT(key) DO UPDATE SET value = '3'",
+                    "INSERT INTO meta (key, value) VALUES ('schema_version', '4')
+                     ON CONFLICT(key) DO UPDATE SET value = '4'",
                     [],
                 )
                 .map_err(|_| MailError::StorageUnavailable)?;
+                // P5a v3→v4: copy-rebuild `messages` in the same transaction to
+                // add the per-message attachment fact, preserving every row.
+                // Legacy rows get has_attachment = 0, which carries NO fact
+                // (unknown, read back as absent) — never a guessed false.
+                if !has_column(&tx, "messages", "has_attachment")? {
+                    tx.execute_batch(
+                        "ALTER TABLE messages RENAME TO messages_v3;
+                         CREATE TABLE messages (
+                             account_id      TEXT NOT NULL,
+                             conversation_id TEXT NOT NULL,
+                             message_id      TEXT NOT NULL,
+                             from_display    TEXT,
+                             from_mailbox    TEXT NOT NULL,
+                             to_json         TEXT NOT NULL,
+                             sent_at         TEXT NOT NULL,
+                             body_text       TEXT NOT NULL,
+                             provider_inbox  INTEGER NOT NULL CHECK (provider_inbox IN (0, 1)),
+                             has_attachment  INTEGER NOT NULL DEFAULT 0,
+                             PRIMARY KEY (account_id, conversation_id, message_id)
+                         );
+                         INSERT INTO messages
+                             (account_id, conversation_id, message_id, from_display,
+                              from_mailbox, to_json, sent_at, body_text, provider_inbox,
+                              has_attachment)
+                         SELECT account_id, conversation_id, message_id, from_display,
+                                from_mailbox, to_json, sent_at, body_text, provider_inbox, 0
+                         FROM messages_v3;
+                         DROP TABLE messages_v3;",
+                    )
+                    .map_err(|_| MailError::StorageUnavailable)?;
+                }
             }
             Some(_) => return Err(MailError::StorageUnavailable),
             None => {
                 tx.execute(
-                    "INSERT INTO meta (key, value) VALUES ('schema_version', '3')",
+                    "INSERT INTO meta (key, value) VALUES ('schema_version', '4')",
                     [],
                 )
                 .map_err(|_| MailError::StorageUnavailable)?;
@@ -961,6 +993,7 @@ impl Store {
                     participants: participants_of(&built.messages),
                     primary_correspondent: built.messages.last().map(|m| m.from.clone()),
                     is_read: None,
+                    has_attachments: crate::search::messages_have_attachments(&built.messages),
                     preview: preview_of(&built.messages),
                     last_message_at: built
                         .messages
@@ -1068,6 +1101,7 @@ impl Store {
                 participants: participants_of(&built.messages),
                 primary_correspondent: built.messages.last().map(|m| m.from.clone()),
                 is_read: None,
+                has_attachments: crate::search::messages_have_attachments(&built.messages),
                 preview: preview_of(&built.messages),
                 last_message_at: built
                     .messages
@@ -1292,7 +1326,7 @@ fn insert_seed_conversation(
         params![ACCOUNT_ID, conversation.id, conversation.subject],
     )
     .map_err(|_| MailError::StorageUnavailable)?;
-    for message in conversation.messages {
+    for (index, message) in conversation.messages.iter().enumerate() {
         let to_json = serde_json::to_string(
             &message
                 .to
@@ -1304,11 +1338,17 @@ fn insert_seed_conversation(
                 .collect::<Vec<_>>(),
         )
         .map_err(|_| MailError::StorageUnavailable)?;
+        // P5a: the fixture attachment model is deterministic — exactly one
+        // synthetic 'fixture-text' attachment on each conversation's FIRST
+        // message (src-tauri `list_attachments` Fixture arm; browser-fake
+        // `listAttachments`). The seed marks that message with 1; every other
+        // message gets 0, which carries no attachment fact.
+        let has_attachment = i64::from(index == 0);
         tx.execute(
             "INSERT INTO messages
                 (account_id, conversation_id, message_id, from_display, from_mailbox,
-                 to_json, sent_at, body_text, provider_inbox)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                 to_json, sent_at, body_text, provider_inbox, has_attachment)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 ACCOUNT_ID,
                 conversation.id,
@@ -1319,6 +1359,7 @@ fn insert_seed_conversation(
                 message.sent_at,
                 message.body,
                 conversation.in_inbox as i64,
+                has_attachment,
             ],
         )
         .map_err(|_| MailError::StorageUnavailable)?;
@@ -2439,7 +2480,7 @@ fn build_conversation_view(
     let mut message_stmt = conn
         .prepare(
             "SELECT message_id, from_display, from_mailbox, to_json, sent_at, body_text,
-                    provider_inbox
+                    provider_inbox, has_attachment
              FROM messages
              WHERE account_id = ?1 AND conversation_id = ?2
              ORDER BY sent_at ASC, message_id ASC",
@@ -2449,6 +2490,12 @@ fn build_conversation_view(
         .query_map(params![account_id, conversation_id], |row| {
             let from_display: Option<String> = row.get(1)?;
             let to_json: String = row.get(3)?;
+            // 1 marks a known attachment; 0 carries no fact (legacy rows and
+            // attachment-free messages alike) and reads back as unknown.
+            let has_attachment = match row.get::<_, i64>(7)? {
+                0 => None,
+                _ => Some(true),
+            };
             Ok((
                 Message {
                     id: row.get(0)?,
@@ -2465,6 +2512,7 @@ fn build_conversation_view(
                     })?,
                     sent_at: row.get(4)?,
                     body_text: row.get(5)?,
+                    has_attachment,
                 },
                 row.get::<_, i64>(6)? != 0,
             ))
@@ -3340,7 +3388,7 @@ mod tests {
                     |row| row.get(0),
                 )
                 .unwrap();
-            assert_eq!(version, "3");
+            assert_eq!(version, "4");
             let action_id: Option<String> = conn
                 .query_row(
                     "SELECT action_id FROM operations WHERE operation_id = ?1",
@@ -3636,7 +3684,7 @@ mod tests {
                     |row| row.get(0),
                 )
                 .unwrap();
-            assert_eq!(version, "3");
+            assert_eq!(version, "4");
             // UX-05 columns and tables exist; nothing was invented.
             let action_id: String = conn
                 .query_row(
@@ -3673,6 +3721,192 @@ mod tests {
             })
             .expect("historical single still undoable from its preserved preimage");
         assert_eq!(undo.outcome, UndoOutcome::Compensating);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An AUTHENTIC pre-P5a profile (v3 `messages` without `has_attachment`,
+    /// `schema_version = '3'`) migrates by copy-rebuild: every row survives
+    /// with has_attachment = 0, which carries no fact (unknown), the version
+    /// becomes '4', and reads/summaries report the attachment fact as unknown
+    /// rather than guessing false.
+    #[test]
+    fn authentic_pre_v4_database_migrates_with_unknown_attachment_facts() {
+        let dir = temp_dir("attachment-migration-v3");
+        std::fs::create_dir_all(&dir).unwrap();
+        {
+            let conn = Connection::open(dir.join("mail.db")).unwrap();
+            conn.pragma_update(None, "journal_mode", "WAL").unwrap();
+            conn.execute_batch(
+                "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 CREATE TABLE conversations (
+                     account_id TEXT NOT NULL, conversation_id TEXT NOT NULL,
+                     subject TEXT NOT NULL, PRIMARY KEY (account_id, conversation_id));
+                 CREATE TABLE messages (
+                     account_id TEXT NOT NULL, conversation_id TEXT NOT NULL,
+                     message_id TEXT NOT NULL, from_display TEXT, from_mailbox TEXT NOT NULL,
+                     to_json TEXT NOT NULL, sent_at TEXT NOT NULL, body_text TEXT NOT NULL,
+                     provider_inbox INTEGER NOT NULL CHECK (provider_inbox IN (0, 1)),
+                     PRIMARY KEY (account_id, conversation_id, message_id));
+                 INSERT INTO meta VALUES ('schema_version', '3');
+                 INSERT INTO meta VALUES ('seed_version', 'fixture-seed-v1');
+                 INSERT INTO conversations VALUES ('fixture-account', 'conv-old', 'Old subject');
+                 INSERT INTO messages VALUES ('fixture-account', 'conv-old', 'm-1', NULL,
+                     'ana@ridpath.example', '[{\"displayName\":null,\"mailbox\":\"you@fixture.emailos\"}]',
+                     '2026-01-01T00:00:00Z', 'hello', 1);
+                 INSERT INTO messages VALUES ('fixture-account', 'conv-old', 'm-2', 'Ana',
+                     'ana@ridpath.example', '[]',
+                     '2026-01-01T01:00:00Z', 'reply', 1);",
+            )
+            .unwrap();
+        }
+        let clock: Arc<dyn Clock> = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+            "2026-01-01T00:00:00Z",
+        )));
+        let store = Store::open(&dir, clock).expect("pre-P5a v3 profile migrates");
+        {
+            let conn = store.lock_conn().unwrap();
+            let version: String = conn
+                .query_row(
+                    "SELECT value FROM meta WHERE key = 'schema_version'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(version, "4");
+            // Both rows survive the copy-rebuild with the unknown fact (0).
+            let rows: Vec<(String, i64)> = {
+                let mut stmt = conn
+                    .prepare("SELECT message_id, has_attachment FROM messages ORDER BY message_id")
+                    .unwrap();
+                stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                    .unwrap()
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap()
+            };
+            assert_eq!(
+                rows,
+                vec![("m-1".to_string(), 0), ("m-2".to_string(), 0)],
+                "every legacy row preserved with has_attachment = 0 (unknown)"
+            );
+        }
+        // Reads map 0 to an absent fact; the summary stays unknown (no glyph).
+        let conversation = store
+            .get_conversation(&ConversationRef {
+                account_id: ACCOUNT_ID.to_string(),
+                conversation_id: "conv-old".to_string(),
+            })
+            .expect("migrated conversation still readable");
+        assert_eq!(conversation.messages.len(), 2);
+        assert!(conversation
+            .messages
+            .iter()
+            .all(|m| m.has_attachment.is_none()));
+        let snapshot = store.list_snapshot().expect("snapshot after migration");
+        let row = snapshot
+            .conversations
+            .iter()
+            .find(|c| c.conversation_ref.conversation_id == "conv-old")
+            .expect("migrated conversation still listed");
+        assert_eq!(
+            row.has_attachments, None,
+            "legacy cache: unknown, never guessed"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A fresh v4 profile gets the column directly, and the deterministic
+    /// seed marks exactly the first message of each conversation (the
+    /// fixture attachment model), so summaries report a known Some(true).
+    #[test]
+    fn fresh_v4_seed_marks_first_message_attachment_fact() {
+        let dir = temp_dir("attachment-fresh-v4");
+        let clock: Arc<dyn Clock> = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+            "2026-01-01T00:00:00Z",
+        )));
+        let store = Store::open(&dir, clock).expect("fresh store opens at v4");
+        {
+            let conn = store.lock_conn().unwrap();
+            let version: String = conn
+                .query_row(
+                    "SELECT value FROM meta WHERE key = 'schema_version'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(version, "4");
+            let flagged: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM messages WHERE has_attachment = 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let total: i64 = conn
+                .query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))
+                .unwrap();
+            let conversations: i64 = conn
+                .query_row("SELECT COUNT(*) FROM conversations", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(
+                flagged, conversations,
+                "exactly one flagged message per conversation"
+            );
+            assert!(total > conversations);
+            let firsts: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM messages m WHERE has_attachment = 1 AND NOT EXISTS (
+                         SELECT 1 FROM messages o
+                         WHERE o.account_id = m.account_id AND o.conversation_id = m.conversation_id
+                           AND (o.sent_at < m.sent_at OR (o.sent_at = m.sent_at AND o.message_id < m.message_id)))",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                firsts, conversations,
+                "the flagged message is the first of its conversation"
+            );
+        }
+        let snapshot = store.list_snapshot().expect("snapshot");
+        assert!(!snapshot.conversations.is_empty());
+        for row in &snapshot.conversations {
+            assert_eq!(
+                row.has_attachments,
+                Some(true),
+                "fixture model: first message carries the synthetic attachment"
+            );
+        }
+        let conversation = store
+            .get_conversation(&ConversationRef {
+                account_id: ACCOUNT_ID.to_string(),
+                conversation_id: "conv-01".to_string(),
+            })
+            .expect("seeded conversation");
+        assert_eq!(conversation.messages[0].has_attachment, Some(true));
+        assert_eq!(conversation.messages[1].has_attachment, None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Older-than-supported schema versions still fail closed at open.
+    #[test]
+    fn unsupported_older_schema_version_fails_closed() {
+        let dir = temp_dir("attachment-unsupported-version");
+        std::fs::create_dir_all(&dir).unwrap();
+        {
+            let conn = Connection::open(dir.join("mail.db")).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 INSERT INTO meta VALUES ('schema_version', '0');",
+            )
+            .unwrap();
+        }
+        let clock: Arc<dyn Clock> = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+            "2026-01-01T00:00:00Z",
+        )));
+        assert!(
+            matches!(Store::open(&dir, clock), Err(MailError::StorageUnavailable)),
+            "version older than the supported floor must fail closed"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

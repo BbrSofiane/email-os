@@ -160,6 +160,7 @@ impl FakeProvider {
             to: vec![],
             sent_at: "2026-02-01T00:00:00Z".to_string(),
             body_text: "new incoming".to_string(),
+            has_attachment: None,
         });
         drop(state);
         self.gate.notify_all();
@@ -382,6 +383,7 @@ fn message(id: &str, sent_at: &str) -> Message {
         to: vec![],
         sent_at: sent_at.to_string(),
         body_text: "synthetic body".to_string(),
+        has_attachment: None,
     }
 }
 
@@ -1901,9 +1903,9 @@ fn fixture_migration_one_to_two_preserves_rows_and_request_keys_and_fails_closed
                 |row| row.get(0),
             )
             .unwrap();
-        // UX-05 migrates the profile to v3 (group tables + action ordering)
-        // in the same reopen.
-        assert_eq!(version, "3");
+        // UX-05 migrates the profile past v3 (group tables + action ordering)
+        // and P5a lands it on v4 (messages.has_attachment) in the same reopen.
+        assert_eq!(version, "4");
     }
     core.stop_worker();
     drop(core);

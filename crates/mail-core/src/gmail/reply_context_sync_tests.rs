@@ -166,6 +166,7 @@ fn thread(context: Option<ReplyContext>, complete: bool) -> GmailThread {
             to: Vec::new(),
             sent_at: "2026-01-01T00:00:00Z".to_string(),
             body_text: "earlier body".to_string(),
+            has_attachment: None,
         },
         Message {
             id: "m-latest".to_string(),
@@ -176,6 +177,7 @@ fn thread(context: Option<ReplyContext>, complete: bool) -> GmailThread {
             to: Vec::new(),
             sent_at: "2026-01-02T00:00:00Z".to_string(),
             body_text: "latest plain body".to_string(),
+            has_attachment: None,
         },
     ];
     GmailThread {
@@ -566,6 +568,7 @@ fn provider_error_and_generation_source_account_races_leave_no_metadata_write() 
             to: Vec::new(),
             sent_at: "2026-01-03T00:00:00Z".to_string(),
             body_text: "new body".to_string(),
+            has_attachment: None,
         });
         newer_thread.inbox_message_ids.push("m-newer".to_string());
         newer_thread.message_ids = Some(vec![
