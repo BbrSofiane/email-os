@@ -41,7 +41,8 @@ export interface MessageBodyParts {
 const QUOTE_LINE = /^ {0,3}>/;
 const ATTRIBUTION = /^On .+ wrote:$/i;
 const ORIGINAL_MESSAGE = /^-{2,}\s*Original Message\s*-{2,}$/i;
-const SIGNATURE_DELIMITER = /^-- ?$/;
+/** Exactly the RFC 3676 delimiter: dash, dash, space. A bare "--" is ordinary prose (dimming real content would misrepresent it). */
+const SIGNATURE_DELIMITER = /^-- $/;
 const MAX_SIGNATURE_LINES = 12;
 
 /**
@@ -55,7 +56,7 @@ const MAX_SIGNATURE_LINES = 12;
  *   contiguous run of `>` lines that reaches the end of the body, or a bare run
  *   of at least two `>` lines that reaches the end. Quotes in the middle of a
  *   body are never split off.
- * - Signature: the last line that is exactly `-- ` or `--`, only when at most 12
+ * - Signature: the last line that is exactly `-- ` (a bare `--` is not one), only when at most 12
  *   lines follow it before the quote or the end of the body.
  * - A body that would be left with no prose (all quote) is returned unsplit.
  */

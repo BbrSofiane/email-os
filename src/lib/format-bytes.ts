@@ -1,6 +1,7 @@
 /** Largest attachment the client will fetch: 5 MiB, shown to people as "5 MB". */
 export const ATTACHMENT_LIMIT_BYTES = 5 * 1024 * 1024;
 
+const LIMIT_TEXT = '5.0 MB';
 const UNITS = ['KB', 'MB', 'GB'] as const;
 
 /**
@@ -20,5 +21,9 @@ export function formatBytes(bytes: number): string {
     value /= 1024;
     unit += 1;
   }
-  return `${value.toFixed(1)} ${UNITS[unit]}`;
+  const text = `${value.toFixed(1)} ${UNITS[unit]}`;
+  // One decimal can round a size across the 5 MB limit ("5.0 MB" next to
+  // "Over the 5 MB limit"). Next to the limit, say the exact bytes instead.
+  if (size !== ATTACHMENT_LIMIT_BYTES && text === LIMIT_TEXT) return `${String(size).replace(/\B(?=(\d{3})+$)/g, ',')} B`;
+  return text;
 }

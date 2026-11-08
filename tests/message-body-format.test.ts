@@ -63,13 +63,30 @@ describe('splitMessageBody', () => {
     expect(splitMessageBody(body)).toEqual({ main: body, signature: null, quoted: null });
   });
 
-  it('splits a short RFC 3676 signature, with or without the trailing space', () => {
+  it('splits a short RFC 3676 signature after the exact "-- " delimiter', () => {
     expect(splitMessageBody('Thanks.\n-- \nAda\nExample Co')).toEqual({
       main: 'Thanks.\n',
       signature: '-- \nAda\nExample Co',
       quoted: null,
     });
-    expect(splitMessageBody('Thanks.\n--\nAda').signature).toBe('--\nAda');
+    // CRLF line ends keep the delimiter.
+    expect(splitMessageBody('Thanks.\r\n-- \r\nAda').signature).toBe('-- \r\nAda');
+  });
+
+  it('never dims real content after a bare "--" line (no trailing space)', () => {
+    const body = 'Summary below.\n--\nItem one: ship Friday\nItem two: hire\nItem three: budget\nItem four: legal\nItem five: rent';
+    expect(splitMessageBody(body)).toEqual({ main: body, signature: null, quoted: null });
+    // Even a short tail: only the standard delimiter marks a signature.
+    expect(splitMessageBody('Thanks.\n--\nAda')).toEqual({ main: 'Thanks.\n--\nAda', signature: null, quoted: null });
+    // A bare "--" before a real delimiter does not move the signature start.
+    const both = 'Intro.\n--\nnot a signature\n-- \nAda';
+    expect(splitMessageBody(both).main).toBe('Intro.\n--\nnot a signature\n');
+    expect(splitMessageBody(both).signature).toBe('-- \nAda');
+  });
+
+  it('keeps the decision about a quoted "-- " line inside prose to the last delimiter', () => {
+    const body = 'a\n-- \nb\n-- \nc';
+    expect(splitMessageBody(body).signature).toBe('-- \nc');
   });
 
   it('does not treat a long tail after the delimiter as a signature', () => {

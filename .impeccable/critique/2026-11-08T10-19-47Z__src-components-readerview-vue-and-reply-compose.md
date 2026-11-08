@@ -76,3 +76,26 @@ Not rendered: the quote toggle (no fixture message has a quote), Gmail-mode stat
 
 ## Not verified
 Contrast numbers are computed from tokens, not sampled from pixels. Native/WKWebView is not exercised. Contrast numbers are computed from the tokens, not sampled from pixels. Real-Chrome journeys (`reader.rendered.test.ts`) are opt-in on `EMAIL_OS_RENDERED_LAYOUT_CHROME` and cannot run on this VM.
+
+## Follow-up (2026-11-08, after the adversarial review of PR #29)
+Method: each claim was reproduced in a failing test (or, for pure functions, against the pre-fix code) before the fix. Still code-and-test only: nothing was rendered, so geometry, contrast and the new placeholder's look are unverified.
+
+| # | Review claim | Verdict | Change |
+|---|---|---|---|
+| 1 | R opens the composer but the body never gets focus when the key fires from the article, a `Details` summary or a participant | CONFIRMED (6 tests failed) | `DraftEditorCore.takeFocus` now takes focus from anything that is not a text field. Tests press R from the article, a summary and a participant, check IME (`isComposing`, keyCode 229) from the article and in the body, a text field the user moved to keeps focus, and Discard returns focus into the reader |
+| 2 | Collapsed To row hides the address behind a hover title | CONFIRMED | Row shows `name <address>` (address in Ash); a name equal to the address is not repeated; tested with a "Bank Support" / `x@evil.test` sender |
+| 3 | Local-only caveats are tooltip/sr-only | CONFIRMED | Info button (`aria-expanded`) reveals the one caveat line; status text unchanged |
+| 4 | Status line is `aria-live` and flips on every autosave | CONFIRMED | Live region moved to a hidden `role=status` that announces first save, problems and recovery only; error paragraphs keep `role=alert`. Successful discard has no announcement of its own (the editor unmounts); noted, not added |
+| 5 | `5242881` prints `5.0 MB` beside "Over the 5 MB limit" | CONFIRMED (old code printed `5.0 MB` for 5242881 and 5242879) | Sizes that would print `5.0 MB` but are not exactly the limit print exact bytes (`5,242,881 B`) |
+| 6 | Bidi controls in file names render | CONFIRMED | `displayFileName` strips them for the inline row (text, title, button label), the chooser and the saved-as line |
+| 7 | Bare `--` dims up to 12 real lines | CONFIRMED | Only the exact RFC 3676 `-- ` delimiter starts a signature |
+| 7b | One interleaved `>` line forces the whole body to monospace | CONFIRMED, NOT CHANGED | Any rule that stops this changes how inline-reply threads render and needs a rendered pass; recorded as a known limitation in DESIGN.md |
+| 8a | "chooser and reader share the same transfer state" | CONFIRMED (two `useAttachmentTransfer` instances) | Doc corrected. Lifting would couple the modal chooser (whose status line also reports link actions, and whose close cancels its own transfer) to the reader; not worth the risk |
+| 8b | `shown()` comment says every character stays | CONFIRMED (wrong comment) | Comment now says trailing line breaks of a part are the only thing dropped |
+| 8c | Cached Trash status span reads "Read" with no "Read-only" | CONFIRMED | The word is rendered; the Trash line itself, and the absence of the standing sentence and `reader-readonly` hook, are unchanged |
+
+Open items from run 1 that were only PARTIAL:
+- Bare `Loading conversation…`: now followed by a static, `aria-hidden` placeholder (subject bar when no row identity, plus three rows at the collapsed message height). Text and `role=status` unchanged. Look unverified.
+- `.message-toggle` / `.message-from` / `.message-time` versus the list: NOT DONE. Re-checked against `style.css`: the date is already uppercased like `.row-time`; the collapsed sender column is 132px at the default text size, same as the list; its Ash/regular weight is the deliberate One Signal distinction. What genuinely differs is that the list column shrinks (`clamp(96px, 22cqi - 22px, 132px)`) and is fixed-px, while the reader's is `11em`. Matching that needs `container-type` on the reader, which changes intrinsic sizing and must be checked in a rendered pass (the opt-in `reader.rendered.test.ts` gate).
+
+Not verified: nothing here was rendered; the opt-in Chrome gates cannot run on this VM. Screen-reader behaviour of the new live region was reasoned from the markup, not heard.

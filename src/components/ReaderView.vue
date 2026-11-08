@@ -161,9 +161,11 @@ const replyTitle = computed(() => {
   return replyBlockedReason.value ?? `${actionLabel('reply')}. ${replyTargetLabel.value}`;
 });
 
-/** The standing guarantee behind the status line (hook per mode); null in Cached Trash, which has its own line. */
+/** The standing guarantee behind the status line (hook per mode); Cached Trash has its own line and only names the mode. */
 const readerStatus = computed(() => {
-  if (props.browsingOnly) return null;
+  // Cached Trash keeps its own line below; the status span only names the mode,
+  // with no standing sentence or hook.
+  if (props.browsingOnly) return { hook: undefined, word: 'Read-only', sentence: null };
   if (props.readOnly) {
     return {
       hook: 'reader-readonly',
@@ -626,7 +628,11 @@ function partsOf(message: Message): MessageBodyParts {
   return parts;
 }
 
-/** Line breaks that only separated the parts are not shown; every character stays in the DOM text otherwise. */
+/**
+ * Trailing line breaks of a part are not shown: they only separated the prose,
+ * the signature and the quote, and would draw an empty gap between them. Every
+ * other character, blank lines inside a part included, stays in the DOM text.
+ */
 function shown(text: string): string {
   return text.replace(/(?:\r?\n)+$/, '');
 }
@@ -901,6 +907,12 @@ defineExpose({
           </p>
         </template>
         <p data-test="reader-loading" role="status" :class="{ 'reader-loading-quiet': props.loadingIdentity }">Loading conversation…</p>
+        <!-- Static placeholder of the loaded shape (subject, then message rows) so the
+             pane does not jump when the conversation arrives. No motion; hidden from assistive tech. -->
+        <div class="reader-skeleton" aria-hidden="true" data-test="reader-skeleton">
+          <span v-if="!props.loadingIdentity" class="reader-skeleton-subject"></span>
+          <span v-for="n in 3" :key="n" class="reader-skeleton-row"></span>
+        </div>
       </template>
       <p v-else-if="props.state === 'error' && props.error" data-test="reader-error" role="alert">
         {{ describeError(props.error) }}
@@ -916,11 +928,11 @@ defineExpose({
             v-if="(props.readOnly || props.showReadControls)"
             class="reader-status"
             :data-test="readerStatus?.hook"
-            :title="readerStatus?.sentence"
+            :title="readerStatus?.sentence ?? undefined"
           >
             <span v-if="readerStatus?.word" class="reader-status-word" data-test="reader-status-word">{{ readerStatus.word }}</span>
             <span data-test="reader-read-state">{{ props.conversation.isRead === undefined ? 'Read state unknown' : props.conversation.isRead ? 'Read' : 'Unread' }}</span>
-            <span v-if="readerStatus" class="visually-hidden" data-test="reader-status-detail">{{ readerStatus.sentence }}</span>
+            <span v-if="readerStatus?.sentence" class="visually-hidden" data-test="reader-status-detail">{{ readerStatus.sentence }}</span>
           </span>
           <template v-if="props.showReadControls && !bulkScope && props.conversation.isRead === undefined">
             <button type="button" :title="actionLabel('read')" data-test="reader-mark-read" :disabled="!actionable || props.commandInFlight || props.navigationUnavailable" @click="emit('setRead', true)">Mark read</button>

@@ -20,6 +20,16 @@ describe('formatBytes', () => {
     expect(formatBytes(1024 * 1024 - 1)).toBe('1.0 MB');
   });
 
+  it('never rounds across the 5 MB limit: sizes next to it print exact bytes', () => {
+    expect(formatBytes(ATTACHMENT_LIMIT_BYTES)).toBe('5.0 MB');
+    expect(formatBytes(ATTACHMENT_LIMIT_BYTES + 1)).toBe('5,242,881 B');
+    expect(formatBytes(ATTACHMENT_LIMIT_BYTES - 1)).toBe('5,242,879 B');
+    expect(formatBytes(ATTACHMENT_LIMIT_BYTES + 40_000)).toBe('5,282,880 B');
+    // Far enough away that the rounded size is unambiguous.
+    expect(formatBytes(ATTACHMENT_LIMIT_BYTES + 100_000)).toBe('5.1 MB');
+    expect(formatBytes(ATTACHMENT_LIMIT_BYTES - 100_000)).toBe('4.9 MB');
+  });
+
   it('clamps negatives and refuses non-finite sizes', () => {
     expect(formatBytes(-5)).toBe('0 B');
     expect(formatBytes(Number.NaN)).toBe('unknown size');

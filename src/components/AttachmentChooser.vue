@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import type { Conversation, MailClient } from '../lib/ipc/client';
 import type { AttachmentDescriptor } from '../lib/ipc/generated';
 import { useAttachmentTransfer } from '../composables/useAttachmentTransfer';
+import { displayFileName } from '../lib/display-name';
 import { ATTACHMENT_LIMIT_BYTES, formatBytes } from '../lib/format-bytes';
 const props = defineProps<{ client: MailClient; conversation: Conversation; preview: boolean; idPrefix?: string }>();
 const titleId = `${props.idPrefix ? `${props.idPrefix}-` : ''}attachment-title`;
@@ -77,7 +78,7 @@ onBeforeUnmount(() => { live = false; });
       <p v-if="status" role="status">{{ status }}</p>
       <ul aria-label="Known files">
         <li v-for="file in files" :key="`${file.messageId}:${file.attachmentId}`">
-          <span>{{ file.filename || 'Unnamed attachment' }} — {{ file.mimeType }}, {{ formatBytes(file.size) }}</span>
+          <span>{{ displayFileName(file.filename) }} — {{ file.mimeType }}, {{ formatBytes(file.size) }}</span>
           <span v-if="file.size > ATTACHMENT_LIMIT_BYTES">Over the 5 MB limit; cannot download.</span>
           <button v-else type="button" :disabled="!!pending || !!conversation.retainedSnapshotAt" @click="save(file)">Save to Downloads</button>
         </li>
