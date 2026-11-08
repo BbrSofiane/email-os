@@ -34,3 +34,15 @@ A view belongs in the main pane when its rows are conversations the user triages
 
 ## Order
 1. Cached Trash, 2. Reminders, 3. Drafts. One writer per checkout; each phase is committed separately on `impeccable/list-contexts` (stacked on `impeccable/drawer-panels`).
+
+## Outcome
+- **Phase 1, Cached Trash (shipped).** A read-only list context on the Done/Starred machinery; the drawer, `CachedTrashPanel` and the special reader origin are gone.
+- **Phase 2, Reminders (shipped).** A list context with header tabs, an in-flow picker and the reusable `ContextRowList`; request logic moved unchanged into `useReminders`.
+- **Phase 3, Drafts (shipped).** `'drafts'` is a `BrowseContext`; `DraftsList` (on `ContextRowList`) replaces `DraftsPanel`. A reply draft opens its source thread and docks the existing reply composer there; a new-message draft opens the inline card; a source that cannot host the reply falls back to the same draft in the card with an Amber line and the reason as its title. A navigation token cancels a stale open (Back, another open, account change). `UtilityDrawer` is now Account, Activity and Provider mail only. The lifecycle (protected flush, failed flush keeps the editor, recovery banners, suspended editor, native close) is unchanged and its tests are migrated, not weakened.
+- **Deviations from the plan.**
+  - The `Open drafts` attention button is removed: its only state (an active editor with an error and no surface) cannot exist now that every active editor has a visible surface, and `navigateContext` would have run the protected flush that the error makes fail, so it would have done nothing.
+  - An open error (`draft-open-error`) no longer replaces the list: it shows above the rows, so a failed open never hides drafts.
+  - The list and subscription alert lines also show in the list notices while an editor covers the list (the old drawer showed them in its editor view), through a shared `DraftAlerts`.
+  - After an account change the app returns to the Inbox (the mailbox resets its context), so the suspended-editor alert is in the Drafts list, one rail click away, instead of in an open drawer.
+  - `ComposeCard` gained a reply heading, the `reply-source` attributes and the notice; `DraftEditorCore`, `ReplyComposer` and the draft lifecycle are untouched.
+- **Open risks.** Reply drafts rely on the reader's loaded conversation to decide whether the composer docks (the same rule as Prepare reply, now in `src/lib/reply-context.ts`); a conversation that turns incomplete after the composer docked keeps the dock until the next routing. No one-column flash was observed but the list renders for one frame between a failed source load and the card.

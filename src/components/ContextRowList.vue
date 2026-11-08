@@ -1,6 +1,6 @@
 <script setup lang="ts" generic="T extends { key: string }">
 /**
- * Rows of a list context whose rows are not threads (Reminders, later Drafts):
+ * Rows of a list context whose rows are not threads (Reminders, Drafts):
  * the Conversation Row geometry of DESIGN.md with slots instead of sender,
  * subject and snippet.
  *
@@ -34,6 +34,10 @@ const props = defineProps<{
   /** Hover title of the open button (for example a revision). */
   rowTitle?: (item: T) => string | undefined;
   rowTestId?: (item: T) => string | undefined;
+  /** Test hook of the open button (the row's marker element). */
+  openTestId?: (item: T) => string | undefined;
+  /** Rows cannot be opened while true (an editor transition is running). */
+  disabled?: boolean;
 }>();
 const emit = defineEmits<{ open: [item: T]; 'update:activeKey': [key: string] }>();
 
@@ -47,6 +51,7 @@ const currentKey = computed(() => {
 
 /** Opening a row also makes it the remembered current row, so Back lands on it. */
 function open(item: T): void {
+  if (props.disabled) return;
   emit('update:activeKey', item.key);
   emit('open', item);
 }
@@ -86,6 +91,8 @@ defineExpose({ focusRow, el: listEl });
           class="context-row-main"
           v-bind="rows.rowAttrs(item.key)"
           :title="rowTitle?.(item)"
+          :data-test="openTestId?.(item)"
+          :disabled="disabled || undefined"
           @focus="emit('update:activeKey', item.key)"
           @click="open(item)"
         >

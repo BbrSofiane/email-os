@@ -43,15 +43,20 @@ describe('drawer headings and landmarks', () => {
     expect(drawerOf(w).findAll('h3').map((h) => h.text())).not.toContain('Activity');
   });
 
-  it('Drafts: one h2 in the list view and in the editor view', async () => {
+  it('Drafts is a list context, not a drawer: no drawer opens, the one h1 names the list and the editor is the inline card with its own h2', async () => {
     const w = await mountApp();
     await w.get('[data-test="rail-drafts"]').trigger('click');
     await waitFor(() => w.find('[data-test="drafts-pane"]').exists());
-    expectOneHeading(w, 'Local drafts', 'Drafts');
+    expect(w.find('[data-test="utility-drawer"]').exists()).toBe(false);
+    expect(w.findAll('h1').map((h) => h.text())).toEqual(['Drafts']);
+    expect(w.get('[data-test="inbox-title"]').classes()).not.toContain('visually-hidden');
+    expect(w.get('[data-test="rail-drafts"]').attributes('aria-current')).toBe('page');
+    expect(w.get('[data-test="rail-drafts"]').attributes('aria-expanded')).toBeUndefined();
     await w.get('[data-test="new-draft"]').trigger('click');
-    await waitFor(() => w.find('[data-test="composer"]').exists());
-    expectOneHeading(w, 'Local drafts', 'Drafts');
-    expect(drawerOf(w).get('.composer-heading h3').text()).toBe('New local draft');
+    await waitFor(() => w.find('[data-test="compose-card"]').exists());
+    expect(w.find('[data-test="utility-drawer"]').exists()).toBe(false);
+    expect(w.get('[data-test="compose-card"]').findAll('h2').map((h) => h.text())).toEqual(['New Message']);
+    expect(w.get('[data-test="rail-drafts"]').attributes('aria-current')).toBeUndefined();
   });
 
   it('Reminders is a list context, not a drawer (fixture mode): no drawer opens and the one h1 names the list', async () => {

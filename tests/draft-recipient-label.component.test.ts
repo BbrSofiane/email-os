@@ -1,5 +1,6 @@
 /**
- * Recipient affordance tests (TASK C): the drafts-drawer composer shows a
+ * Recipient affordance tests (TASK C): the inline compose card (where a reply draft
+ * is edited when its thread cannot host it) shows a
  * human-readable "Reply draft to {recipient}" heading for reply drafts, and the
  * contact pane stays exactly as it is while a reply editor is active (no
  * "Composing to …" line: it pushed the pinned name and email off their lines,
@@ -10,11 +11,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import App from '../src/App.vue';
-import DraftsPanel from '../src/components/DraftsPanel.vue';
+import ComposeCard from '../src/components/ComposeCard.vue';
 import ContactPane, { type ContactInfo } from '../src/components/ContactPane.vue';
 import type { DraftContent, DraftSource, MailClient } from '../src/lib/ipc/client';
 import {
-  closeUtilityDrawer,
   createBrowserFakeMailClient,
   fixtureRef,
   waitFor,
@@ -25,16 +25,13 @@ const REPLY_SOURCE: DraftSource = { kind: 'reply', conversation: fixtureRef('con
 const CONTENT: DraftContent = { to: 'ada@example.test', cc: '', subject: 'Re: Fixture thread 1: weekly status', bodyText: '' };
 const ADA: ContactInfo = { displayName: 'Ada Fixture', mailbox: 'ada@example.test' };
 
-function mountPanel(overrides: Record<string, unknown> = {}): VueWrapper {
-  return mount(DraftsPanel, {
+function mountCard(overrides: Record<string, unknown> = {}): VueWrapper {
+  return mount(ComposeCard, {
     props: {
-      summaries: [],
       activeRef: { accountId: 'acct-fixture', draftId: 'draft-1' },
       source: REPLY_SOURCE,
       content: CONTENT,
       status: '',
-      visible: true,
-      suspendedEditor: false,
       creating: false,
       saving: false,
       conflict: false,
@@ -50,32 +47,29 @@ function mountPanel(overrides: Record<string, unknown> = {}): VueWrapper {
       copyPending: false,
       recoveryRequired: false,
       canCancelReplyPreparation: false,
-      listError: null,
-      subscriptionError: null,
       closeError: null,
-      closeRetryAvailable: false,
-      closeSetupError: null,
       ...overrides,
     },
   });
 }
 
-describe('DraftsPanel reply recipient label', () => {
+describe('ComposeCard reply recipient label', () => {
   let wrapper: VueWrapper | null = null;
   afterEach(() => { wrapper?.unmount(); wrapper = null; });
 
   it('names the reply target once, in the editor heading, exposing the reply source only as data attributes', () => {
-    wrapper = mountPanel({ recipientLabel: 'Ada Fixture' });
+    wrapper = mountCard({ recipientLabel: 'Ada Fixture' });
     const label = wrapper.get('[data-test="draft-recipient-label"]');
     expect(label.text()).toBe('Ada Fixture');
     // The separate "Draft to" flag line duplicated the heading and is gone.
     expect(wrapper.find('strong.draft-flag').exists()).toBe(false);
     expect(wrapper.find('.draft-recipient').exists()).toBe(false);
-    const heading = wrapper.get('.composer-heading h3');
+    const heading = wrapper.get('.composer-heading h2');
     expect(heading.text()).toBe('Reply draft to Ada Fixture');
     expect(heading.element.contains(label.element)).toBe(true);
-    // The drawer owns the one h2; the editor heading is a sub-section.
-    expect(wrapper.find('h2').exists()).toBe(false);
+    // The card owns the one heading of its surface, and its accessible name.
+    expect(wrapper.findAll('h1, h2, h3')).toHaveLength(1);
+    expect(wrapper.get('[data-test="compose-card"]').attributes('aria-label')).toBe('Reply draft to Ada Fixture');
     // Raw provider IDs are attributes for tools and tests; they are never visible text.
     const source = wrapper.get('[data-test="reply-source"]');
     expect(source.attributes('data-source-conversation')).toBe('conv-01');
@@ -86,14 +80,14 @@ describe('DraftsPanel reply recipient label', () => {
   });
 
   it('renders no recipient label without recipientLabel, keeping the reply-source attributes', () => {
-    wrapper = mountPanel();
-    expect(wrapper.get('.composer-heading h3').text()).toBe('Reply draft');
+    wrapper = mountCard();
+    expect(wrapper.get('.composer-heading h2').text()).toBe('Reply draft');
     expect(wrapper.find('[data-test="draft-recipient-label"]').exists()).toBe(false);
     expect(wrapper.find('[data-test="reply-source"]').exists()).toBe(true);
   });
 
   it('renders no recipient label for a non-reply source even when recipientLabel is set', () => {
-    wrapper = mountPanel({ source: { kind: 'new_message' }, recipientLabel: 'Ada Fixture' });
+    wrapper = mountCard({ source: { kind: 'new_message' }, recipientLabel: 'Ada Fixture' });
     expect(wrapper.find('[data-test="draft-recipient-label"]').exists()).toBe(false);
     expect(wrapper.find('[data-test="reply-source"]').exists()).toBe(false);
   });
@@ -116,7 +110,7 @@ describe('ContactPane while a reply editor is active', () => {
   });
 });
 
-describe('App wiring: drawer label and contact-pane compose context for an active reply editor', () => {
+describe('App wiring: reply label and contact-pane compose context for an active reply editor', () => {
   let wrapper: VueWrapper | null = null;
 
   async function mountApp(fake: BrowserFake, client: MailClient = fake): Promise<VueWrapper> {
@@ -131,10 +125,15 @@ describe('App wiring: drawer label and contact-pane compose context for an activ
 
   afterEach(() => { wrapper?.unmount(); wrapper = null; });
 
+  async function openInbox(w: VueWrapper): Promise<void> {
+    await w.get('[data-test="rail-inbox"]').trigger('click');
+    await flushPromises();
+  }
+
   it('shows "Draft to <sender>" in the inline reply composer and leaves the contact pane unchanged after preparing a reply (reader stays open)', async () => {
     const fake = createBrowserFakeMailClient();
     const w = await mountApp(fake);
-    if (w.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w);
+    await openInbox(w);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
     await w.find('[data-test="prepare-reply"]').trigger('click');
@@ -157,11 +156,11 @@ describe('App wiring: drawer label and contact-pane compose context for an activ
   it('prefers the open source conversation latest sender ("Ada Fixture") while the reader is open on the reply source', async () => {
     const fake = createBrowserFakeMailClient();
     const w = await mountApp(fake);
-    if (w.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w);
+    await openInbox(w);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
-    // Seed a reply draft for the open conversation, then reopen the drafts surface.
+    // Seed a reply draft for the open conversation, then go to the Drafts list.
     await fake.createDraft({
       requestId: 'seed-recipient-label',
       source: REPLY_SOURCE,
@@ -174,8 +173,9 @@ describe('App wiring: drawer label and contact-pane compose context for an activ
     const summary = (await fake.listDrafts())[0]!;
     await w.find(`[data-test="open-draft-${summary.ref.draftId}"]`).trigger('click');
     await flushPromises();
-    // Reader is open on conv-01, so the reply editor docks in the reader and the
-    // drawer closes; the latest message sender wins over the raw To text.
+    // Opening the reply draft from the Drafts list navigates to its source
+    // thread (conv-01) and docks the editor in that reader; the latest message
+    // sender wins over the raw To text.
     await waitFor(() => w.find('[data-test="reply-composer"]').exists());
     expect(w.find('[data-test="drafts-pane"]').exists()).toBe(false);
     const latest = (await fake.getConversation(fixtureRef('conv-01'))).messages.at(-1)!;

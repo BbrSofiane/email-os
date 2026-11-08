@@ -70,11 +70,11 @@ export function sameConversation(a: ConversationRef | null, b: ConversationRef |
 }
 
 /**
- * `reminders` is a list context whose rows are not conversations: the mailbox
- * only tracks that it is the active context (history, Back, reader origin);
- * `useReminders` owns the reminder rows.
+ * `reminders` and `drafts` are list contexts whose rows are not conversations:
+ * the mailbox only tracks that one is the active context (history, Back, reader
+ * origin); `useReminders` and `useDrafts` own their rows.
  */
-export type BrowseContext = 'inbox' | 'saved' | 'done' | 'starred' | 'trash' | 'reminders' | 'search';
+export type BrowseContext = 'inbox' | 'saved' | 'done' | 'starred' | 'trash' | 'reminders' | 'drafts' | 'search';
 
 /**
  * UX-05 product/safety bound for selection and groups (docs/ux-05-safe-bulk-
@@ -457,8 +457,8 @@ export function useMailbox(client: MailClient): Mailbox {
       if (current()) { inboxTotal.value = null; savedTotal.value = null; }
     }) : null;
     try {
-      if (source === 'reminders') {
-        // The Reminders list reads its own transport; the mailbox list is empty.
+      if (source === 'reminders' || source === 'drafts') {
+        // These lists read their own transports; the mailbox list is empty.
         if (!current()) return;
         conversations.value = [];
         focusedRef.value = null;
@@ -660,7 +660,7 @@ export function useMailbox(client: MailClient): Mailbox {
     const source = context.value;
     const cursor = nextCursor.value;
     const account = accountStatus.value?.account?.accountId;
-    if (source === 'inbox' || source === 'saved' || source === 'reminders' || !cursor || !account || loadingMore.value || listState.value !== 'ready') return;
+    if (source === 'inbox' || source === 'saved' || source === 'reminders' || source === 'drafts' || !cursor || !account || loadingMore.value || listState.value !== 'ready') return;
     const token = ++listToken;
     loadingMore.value = true;
     try {

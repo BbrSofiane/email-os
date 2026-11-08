@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import App from '../src/App.vue';
-import DraftsPanel from '../src/components/DraftsPanel.vue';
-import type { DraftReceipt, DraftRef, MailClient } from '../src/lib/ipc/client';
+import type { DraftReceipt, DraftSummary, MailClient } from '../src/lib/ipc/client';
 import {
   closeUtilityDrawer,
   createBrowserFakeMailClient,
   deferred,
   fixtureRef,
+  openDraftsList,
   openUtilityDrawer,
   waitFor,
   type BrowserFake,
@@ -23,7 +23,7 @@ describe('local plain-text drafts UI', () => {
   async function mountApp(fake: BrowserFake, client: MailClient = fake): Promise<VueWrapper> {
     const mounted = mount(App, { props: { client, mode: 'browser-preview' }, attachTo: document.body });
     wrapper = mounted;
-    // Drafts live in an explicit utility disclosure; open it explicitly.
+    // Drafts is a list context in the main pane; go there through the rail.
     await flushPromises();
     await mounted.find('[data-test="rail-drafts"]').trigger('click');
     await waitFor(() => mounted.find('[data-test="drafts-pane"]').exists());
@@ -31,16 +31,22 @@ describe('local plain-text drafts UI', () => {
     return mounted;
   }
 
+  /** The Inbox list (where conversation rows live), through the rail. */
+  async function openInbox(w: VueWrapper): Promise<void> {
+    await w.get('[data-test="rail-inbox"]').trigger('click');
+    await flushPromises();
+  }
+
   /**
-   * The drawer is one column: while an editor is open, the list (with New draft
-   * and the draft rows) is not on screen, so the UI no longer offers a switch.
-   * These tests guard the lifecycle behind it, so the request is sent through
-   * the panel's own events, which reach the same App handlers the buttons used.
+   * While an editor is open its surface (the inline card or the docked reply
+   * composer) covers the list, so the UI offers no switch. These tests guard
+   * the lifecycle behind it, so the request is sent through the App's own
+   * handlers, the ones the Drafts list's New draft button and rows reach.
    */
-  async function requestEditorSwitch(w: VueWrapper, to?: DraftRef): Promise<void> {
-    const panel = w.findComponent(DraftsPanel);
-    if (to) panel.vm.$emit('openDraft', to);
-    else panel.vm.$emit('newDraft');
+  async function requestEditorSwitch(w: VueWrapper, to?: Pick<DraftSummary, 'ref' | 'source'>): Promise<void> {
+    const app = w.vm as unknown as { drafts: { openNew(): Promise<boolean> }; openDraftFromList(draft: Pick<DraftSummary, 'ref' | 'source'>): Promise<void> };
+    if (to) void app.openDraftFromList(to);
+    else void app.drafts.openNew();
     await flushPromises();
   }
 
@@ -91,7 +97,7 @@ describe('local plain-text drafts UI', () => {
   it('prepares a reply to the displayed latest message with immutable source and blank body', async () => {
     const fake = createBrowserFakeMailClient();
     const w = await mountApp(fake);
-    if (w.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w);
+    await openInbox(w);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
     // Reader actions are teleported into the app header, outside the article.
@@ -134,7 +140,7 @@ describe('local plain-text drafts UI', () => {
       },
     };
     const w = await mountApp(fake, client);
-    if (w.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w);
+    await openInbox(w);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
     await w.find('[data-test="prepare-reply"]').trigger('click');
@@ -170,7 +176,7 @@ describe('local plain-text drafts UI', () => {
       },
     };
     const w = await mountApp(fake, client);
-    if (w.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w);
+    await openInbox(w);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
     await w.find('[data-test="prepare-reply"]').trigger('click');
@@ -184,7 +190,7 @@ describe('local plain-text drafts UI', () => {
     await flushPromises();
     // The reply flow keeps the reader open and never auto-opens the drawer; the
     // late receipt must stay recoverable in the drafts list, not in an editor.
-    await openUtilityDrawer(w, 'drafts');
+    await openDraftsList(w);
     await waitFor(() => w.text().includes('Re: Fixture thread 1: weekly status'));
     expect(w.find('[data-test="composer"]').exists()).toBe(false);
     expect(await fake.getDraft(receipt.ref)).toMatchObject({ source: { kind: 'reply' } });
@@ -201,7 +207,7 @@ describe('local plain-text drafts UI', () => {
       },
     };
     const w = await mountApp(fake, client);
-    if (w.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w);
+    await openInbox(w);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
     expect(w.find('[data-test="reply-blocked"]').exists()).toBe(false);
@@ -213,7 +219,7 @@ describe('local plain-text drafts UI', () => {
     wrapper = null;
     const staleFake = createBrowserFakeMailClient();
     const stale = await mountApp(staleFake);
-    if (stale.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(stale);
+    await openInbox(stale);
     await stale.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
     staleFake.controls.addMessage('conv-01');
@@ -227,7 +233,7 @@ describe('local plain-text drafts UI', () => {
     const fake = createBrowserFakeMailClient();
     fake.controls.markRetainedSnapshot('conv-01', '2025-01-01T00:00:00.000Z');
     const w = await mountApp(fake);
-    if (w.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w);
+    await openInbox(w);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
     expect(w.find('[data-test="prepare-reply"]').attributes('disabled')).toBeDefined();
@@ -239,7 +245,7 @@ describe('local plain-text drafts UI', () => {
     const second = createBrowserFakeMailClient();
     second.controls.markUnsupported('conv-01', 'plain text incomplete', false);
     const w2 = await mountApp(second);
-    if (w2.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w2);
+    await openInbox(w2);
     await w2.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
     expect(w2.find('[data-test="reply-blocked"]').text()).toContain('incomplete');
@@ -610,7 +616,7 @@ describe('local plain-text drafts UI', () => {
     }
     await flushPromises();
     // The blocked disconnect keeps the editor; return to its visible surface.
-    if (action === 'account transition') await openUtilityDrawer(w, 'drafts');
+    if (action === 'account transition') await openDraftsList(w);
 
     if (action === 'native close') {
       await waitFor(() => fake.controls.pendingAppClose() === null);
@@ -1174,9 +1180,11 @@ describe('local plain-text drafts UI', () => {
 
       if (action === 'account transition') {
         expect(disconnects).toBe(1);
+        await waitFor(() => w.find('[data-test="account-connect"]').attributes('disabled') === undefined);
         await w.find('[data-test="account-connect"]').trigger('click');
         await flushPromises();
-        await openUtilityDrawer(w, 'drafts');
+        await waitFor(() => w.find('[data-test="rail-drafts"]').exists());
+        await openDraftsList(w);
         await waitFor(() => w.find(`[data-test="open-draft-${copied.ref.draftId}"]`).exists());
       }
       expect(await fake.getDraft(copied.ref)).toMatchObject({ content: { subject: 'valuable original', bodyText: 'only remaining exact text' } });
@@ -1350,8 +1358,8 @@ describe('local plain-text drafts UI', () => {
     await startNew(w);
     const original = (await fake.listDrafts())[0]!;
     const saved = await fake.getDraft(original.ref);
-    // Re-opening the already-open draft: the one-column drawer shows no list, so the request comes from the panel event.
-    await requestEditorSwitch(w, original.ref);
+    // Re-opening the already-open draft: its card covers the list, so the request goes through the App's handler.
+    await requestEditorSwitch(w, original);
     await fake.deleteDraft({ ref: original.ref, expectedRevision: saved.revision, requestId: 'delete-elsewhere' });
     await w.find('[data-test="draft-body"]').setValue('recover text without resurrecting old ref');
     await w.find('[data-test="close-composer"]').trigger('click');
@@ -1406,7 +1414,7 @@ describe('local plain-text drafts UI', () => {
     await openUtilityDrawer(w, 'account');
     await w.find('[data-test="account-disconnect"]').trigger('click');
     await flushPromises();
-    await openUtilityDrawer(w, 'drafts');
+    await openDraftsList(w);
     expect(w.find('[data-test="new-draft"]').attributes('disabled')).toBeDefined();
     await w.find('[data-test="new-draft"]').trigger('click');
     expect(w.find('[data-test="composer"]').exists()).toBe(false);
@@ -1659,7 +1667,7 @@ describe('local plain-text drafts UI', () => {
     await flushPromises();
     expect(saveCommand).not.toBeNull();
 
-    await requestEditorSwitch(w, next.ref);
+    await requestEditorSwitch(w, { ref: next.ref, source: { kind: 'new_message' } });
     expect(w.find('[data-test="confirm-discard"]').exists()).toBe(false);
     pendingSave.resolve(await fake.saveDraft(saveCommand!));
     await flushPromises();
@@ -1736,19 +1744,21 @@ describe('local plain-text drafts UI', () => {
     expect((w.find('[data-test="draft-body"]').element as HTMLTextAreaElement).value).toBe('e j Enter remain text');
     expect(w.find('form').exists()).toBe(false);
     expect(w.findAll('button').every((button) => !/send/i.test(button.text()))).toBe(true);
-    // Escape is the editor's, not the mailbox's and not the drawer's: it closes
+    // Escape is the editor's, not the mailbox's and not the app's Back: it closes
     // through the protected flush, saves the exact text and returns to the list.
     window.dispatchEvent(keydown('Escape'));
     await flushPromises();
     expect(w.find('[data-test="composer"]').exists()).toBe(false);
-    expect(w.find('[data-test="utility-drawer"]').exists()).toBe(true);
-    expect(w.find('[data-test="draft-list-view"]').exists()).toBe(true);
+    expect(w.find('[data-test="utility-drawer"]').exists()).toBe(false);
+    expect(w.find('[data-test="drafts-pane"]').exists()).toBe(true);
+    expect(w.find('[data-test="draft-list"]').exists()).toBe(true);
     expect(fake.controls.activity()).toEqual([]);
     expect((await fake.getDraft((await fake.listDrafts())[0]!.ref)).content.bodyText).toBe('e j Enter remain text');
-    // A second Escape closes the drawer.
+    // A second Escape goes Back from the Drafts list to the previous context.
     window.dispatchEvent(keydown('Escape'));
     await flushPromises();
-    expect(w.find('[data-test="utility-drawer"]').exists()).toBe(false);
+    expect(w.find('[data-test="drafts-pane"]').exists()).toBe(false);
+    expect(w.get('[data-test="inbox-title"]').text()).toBe('Inbox');
   });
 
   it('flushes a native close request, cancels on failure, and completes only after a later ACK', async () => {
@@ -1794,7 +1804,7 @@ describe('local plain-text drafts UI', () => {
     await openUtilityDrawer(w, 'account');
     expect(w.find('[data-test="disconnect-warning"]').text()).toContain('local drafts remain on this device');
     await closeUtilityDrawer(w);
-    await openUtilityDrawer(w, 'drafts');
+    await openDraftsList(w);
     await startNew(w);
     await w.find('[data-test="draft-body"]').setValue('must persist through disconnect');
     // The blocked switch keeps the editor visible with its exact buffer; the
@@ -1817,7 +1827,7 @@ describe('local plain-text drafts UI', () => {
     expect(w.find('[data-test="drafts-pane"]').exists()).toBe(false);
     await w.find('[data-test="account-connect"]').trigger('click');
     await flushPromises();
-    await openUtilityDrawer(w, 'drafts');
+    await openDraftsList(w);
     await waitFor(() => w.find('[data-test^="open-draft-"]').exists());
     await w.find('[data-test^="open-draft-"]').trigger('click');
     await flushPromises();
@@ -1858,6 +1868,9 @@ describe('local plain-text drafts UI', () => {
     fake.controls.setAccount({ mode: 'gmail', connection: 'connected', emailAddress: 'operator@example.test', mutationAccess: 'read_only' });
     await flushPromises();
     await waitFor(() => w.find('[data-test="composer"]').exists() === false);
+    // The account change returns to the Inbox; the suspended editor's alert is in the Drafts list.
+    await w.get('[data-test="rail-drafts"]').trigger('click');
+    await flushPromises();
     expect(w.text()).not.toContain('account one unacked');
     expect(w.find('[data-test="suspended-editor"]').text()).toContain('suspended in memory');
     expect(w.text()).toContain('No local drafts.');

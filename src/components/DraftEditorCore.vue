@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
- * Shared draft-editor body used by every compose surface (the drafts-drawer
- * editor in DraftsPanel, the inline ComposeCard, and the docked ReplyComposer).
+ * Shared draft-editor body used by every compose surface (the inline
+ * ComposeCard and the docked ReplyComposer).
  * One copy of the field markup, the error wording and the disabled-logic — the
  * surfaces differ only in their header and context (recipient label, quoted
  * message) supplied through slots.

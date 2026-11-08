@@ -9,9 +9,10 @@
  *
  * Layout contract: a persistent narrow email rail, a 78px split header in the
  * list column (no status line), one central surface that is either the list or the
- * reader (never both), and contact context. Account/Activity/Drafts live in
- * explicit labelled utility disclosures instead of permanent competing columns;
- * the contact pane shows only exact known fields.
+ * reader (never both), and contact context. Account/Activity/Provider mail live
+ * in explicit labelled utility disclosures instead of permanent competing
+ * columns; Drafts, Reminders and Cached Trash are list contexts in the central
+ * pane; the contact pane shows only exact known fields.
  *
  * Keyboard contract: this comment is a short index. The action catalog in
  * `src/lib/browsing-actions.ts` and `onKeydown` below define the full contract.
@@ -46,7 +47,8 @@ import ReaderView from './components/ReaderView.vue';
 import AttachmentChooser from './components/AttachmentChooser.vue';
 import ActivityPanel from './components/ActivityPanel.vue';
 import AccountPanel from './components/AccountPanel.vue';
-import DraftsPanel from './components/DraftsPanel.vue';
+import DraftsList from './components/DraftsList.vue';
+import DraftAlerts from './components/DraftAlerts.vue';
 import ReplyComposer from './components/ReplyComposer.vue';
 import ComposeCard from './components/ComposeCard.vue';
 import ProviderDestinations from './components/ProviderDestinations.vue';
@@ -54,7 +56,8 @@ import ContactPane from './components/ContactPane.vue';
 import FullDate from './components/FullDate.vue';
 import { BROWSER_PREVIEW_DISCLOSURE } from './lib/ipc/browser-fake';
 import type { ClientMode } from './lib/ipc';
-import type { ConversationRef, DraftRef, DraftSource, MailClient, Reminder } from './lib/ipc/client';
+import type { ConversationRef, DraftSource, DraftSummary, MailClient, Reminder } from './lib/ipc/client';
+import { replyBlockedReason } from './lib/reply-context';
 import { sameConversation, useMailbox, type BrowseContext, type ConversationSummaryLike, type DoneBoundary, type SearchVisit, type LastActionId } from './composables/useMailbox';
 import { useDrafts } from './composables/useDrafts';
 
@@ -71,7 +74,7 @@ const workspaceActive = computed(() => props.active !== false);
 /** Contact context breakpoint (supervisor-approved strict value). */
 const CONTACT_BREAKPOINT_PX = 1000;
 
-type UtilityDrawer = 'account' | 'activity' | 'drafts' | 'destinations' | 'reminder-settings';
+type UtilityDrawer = 'account' | 'activity' | 'destinations' | 'reminder-settings';
 type ContactContext = 'focused' | 'open';
 interface ContactInfo { displayName: string | null; mailbox: string }
 /** Visible-row anchor for the reader round trip. */
@@ -112,7 +115,7 @@ const listRows = computed<ConversationSummaryLike[]>(() =>
 const inboxList = ref<InstanceType<typeof InboxList> | null>(null);
 const editingSplit = ref(false);
 const splitEditor = ref<InstanceType<typeof SplitEditor> | null>(null);
-const contextTitle = computed(() => mailbox.context.value === 'search' ? 'Search' : mailbox.context.value === 'starred' ? 'Cached Starred' : mailbox.context.value === 'trash' ? 'Cached Trash' : mailbox.context.value === 'reminders' ? 'Reminders' : mailbox.context.value === 'done' ? 'Cached Done' : mailbox.context.value === 'saved' ? mailbox.savedSplit.value?.name ?? 'Saved split' : 'Inbox');
+const contextTitle = computed(() => mailbox.context.value === 'search' ? 'Search' : mailbox.context.value === 'starred' ? 'Cached Starred' : mailbox.context.value === 'trash' ? 'Cached Trash' : mailbox.context.value === 'reminders' ? 'Reminders' : mailbox.context.value === 'drafts' ? 'Drafts' : mailbox.context.value === 'done' ? 'Cached Done' : mailbox.context.value === 'saved' ? mailbox.savedSplit.value?.name ?? 'Saved split' : 'Inbox');
 const savedTabVisible = computed(() => mailbox.savedSplit.value?.enabled && !mailbox.splitError.value && (!mailbox.savedSplit.value.hideWhenEmpty || mailbox.savedTotal.value !== 0));
 async function closeSplitEditor(restoreFocus = true): Promise<void> {
   editingSplit.value = false;
@@ -412,7 +415,7 @@ const drafts = useDrafts(props.client, accountId, props.mode);
 /**
  * Inline reply composer: a reply to the conversation the reader is currently
  * showing docks the draft editor at the bottom of the reader pane (the reader
- * stays open) instead of routing to the drafts drawer.
+ * stays open). A reply that cannot dock there uses the inline compose card.
  */
 const replyComposerOpen = ref(false);
 /** Latest message of the open conversation (the fixed reply source). */
@@ -448,7 +451,7 @@ const composeCardOpen = ref(false);
 defineExpose({ prepareWorkspaceSwitch: () => drafts.flushAndClose() });
 watch(() => [mailbox.context.value, mailbox.listState.value, mailbox.conversations.value.length, accountStatus.value?.account?.emailAddress], () => {
   const view = contextTitle.value;
-  const count = mailbox.listState.value === 'ready' && mailbox.context.value !== 'reminders' ? ` — ${mailbox.conversations.value.length} loaded` : '';
+  const count = mailbox.listState.value === 'ready' && mailbox.context.value !== 'reminders' && mailbox.context.value !== 'drafts' ? ` — ${mailbox.conversations.value.length} loaded` : '';
   emit('workspaceTitle', `${view}${count} — ${accountStatus.value?.account?.emailAddress ?? 'Loading account'}`);
 }, { immediate: true });
 watch(workspaceActive, () => { cancelGo(); });
@@ -476,7 +479,7 @@ const TRASH_COVERAGE_DETAIL = 'Known cached Trash only, not your complete Gmail 
 const SPLIT_COVERAGE = 'Local Inbox cache only — counts are exact for cached conversations, not mailbox-wide totals. Split membership uses the latest message’s sender.';
 const splitCoverageShown = computed(() => splitNavShown.value && gmailMode.value
   && (mailbox.context.value === 'inbox' || mailbox.context.value === 'saved'));
-const starredFilterShown = computed(() => gmailMode.value && !readerOpen.value && mailbox.context.value !== 'starred' && mailbox.context.value !== 'reminders');
+const starredFilterShown = computed(() => gmailMode.value && !readerOpen.value && mailbox.context.value !== 'starred' && mailbox.context.value !== 'reminders' && mailbox.context.value !== 'drafts');
 /** Per-workspace DOM id prefix: two fixture workspaces mount two Apps at once. */
 const domIdPrefix = computed(() => props.switchAccountLabel ? accountId.value ?? '' : '');
 const drawerEl = ref<HTMLElement | null>(null);
@@ -494,7 +497,6 @@ const drawerTitles: Record<UtilityDrawer, string> = {
   account: 'Account',
   destinations: 'Provider mail — read only',
   activity: 'Operation activity',
-  drafts: 'Local drafts',
   'reminder-settings': 'Reminder settings',
 };
 /** The drawer's one visible heading; panels render no heading that repeats it. */
@@ -502,41 +504,29 @@ const drawerHeadings: Record<UtilityDrawer, string> = {
   account: 'Account',
   destinations: 'Provider mail — read only',
   activity: 'Activity',
-  drafts: 'Drafts',
   'reminder-settings': 'Reminder settings',
 };
 
 /**
- * Leave the active drafts editor through its protected lifecycle before the
- * drawer unmounts. Returns false when closure failed and the drawer must stay
- * visible with its recovery/error controls rather than hiding an editor that
- * would otherwise silently own all mailbox shortcuts.
+ * Leave the active draft editor through its protected lifecycle before its
+ * surface goes away. The editor is surfaced either in the inline compose card
+ * (central pane, or docked at the bottom of the reader pane) or as the docked
+ * reply composer; every surface hides only through the same protected flush.
+ * Returns false when closure failed and the surface must stay visible with its
+ * recovery/error controls rather than hiding an editor that would otherwise
+ * silently own all mailbox shortcuts.
  */
-async function releaseDraftsDrawer(): Promise<boolean> {
-  // The active editor is surfaced either in the drafts drawer, docked inline at
-  // the bottom of the reader pane (reply composer or compose card), or as the
-  // inline compose card in the central pane; every surface hides only through
-  // the same protected flush.
-  if ((drawer.value !== 'drafts' && !replyComposerOpen.value && !composeCardOpen.value) || !drafts.activeRef.value) return true;
+async function releaseEditorSurface(): Promise<boolean> {
+  if ((!replyComposerOpen.value && !composeCardOpen.value) || !drafts.activeRef.value) return true;
   return drafts.flushAndClose();
 }
 
 async function openDrawer(name: UtilityDrawer, entry: 'drawer' | 'toggle' = 'drawer'): Promise<void> {
-  // Switching away from the drafts surface must release the editor first:
-  // without this guard, a user can move to another utility while the editor
-  // silently owns shortcuts, and recovery controls stay hidden behind it.
-  // Another drawer would also cover the reader pane and hide the inline reply
-  // composer or docked compose card, so it releases the editor through the
-  // same protected flush.
-  if (name !== 'drafts' && (drawer.value === 'drafts' || replyComposerOpen.value || composeCardOpen.value)) {
-    if (!(await releaseDraftsDrawer())) return;
-  }
-  // Opening the drafts drawer itself re-docks an inline reply composer or
-  // compose card there: the buffer stays visible on the new surface, so
-  // nothing is hidden.
-  if (name === 'drafts') {
-    replyComposerOpen.value = false;
-    composeCardOpen.value = false;
+  // A drawer covers the central pane, so it would hide the inline compose card
+  // or the docked reply composer while the editor silently owns shortcuts:
+  // release the editor through the same protected flush first.
+  if (replyComposerOpen.value || composeCardOpen.value) {
+    if (!(await releaseEditorSurface())) return;
   }
   mailbox.invalidateSearchIntent();
   // Disclosures are mutually exclusive: opening a utility surface dismisses
@@ -632,90 +622,185 @@ async function reminderDismissed(): Promise<void> {
   await executeAction('back');
 }
 
+/** A reader opened from these surfaces never walks the Inbox with J/K, and Back does not resolve an Inbox row. */
+function nonThreadSurface(surface: ReaderOrigin['surface'] | undefined): boolean {
+  return surface === 'activity' || surface === 'reminders' || surface === 'drafts';
+}
+
+// Drafts is a list context whose rows are drafts, not threads: the rows come
+// from useDrafts, the mailbox only tracks that the context is active (history,
+// Back, reader origin). Opening a draft goes to its source conversation.
+const draftsContext = computed(() => !!accountId.value && mailbox.context.value === 'drafts');
+/** The Drafts list itself: no reader and no editor card covers it. A browse surface where mailbox actions do not apply. */
+const draftsList = computed(() => draftsContext.value && !readerOpen.value && !composeCardOpen.value);
+const draftsPane = ref<InstanceType<typeof DraftsList> | null>(null);
+/** The remembered current row (`accountId:draftId`), kept across reader and editor round trips. */
+const draftsActiveKey = ref<string | null>(null);
+watch(() => drafts.activeRef.value, (active) => {
+  // Back lands on the draft that was being edited, also once a new draft got its id.
+  if (active?.draftId) draftsActiveKey.value = `${active.accountId}:${active.draftId}`;
+});
+watch(accountId, () => { draftsActiveKey.value = null; });
+async function focusDraftsList(preventScroll = false): Promise<void> {
+  await nextTick();
+  if (!workspaceActive.value || !draftsList.value || overlay.value) return;
+  await draftsPane.value?.focusRow({ preventScroll });
+}
+/** After the card closes the list is back: give focus to the current row if it fell to <body>. */
+watch(composeCardOpen, async (open, wasOpen) => {
+  if (open || !wasOpen) return;
+  await nextTick();
+  if (!draftsList.value || drawer.value || overlay.value) return;
+  const active = document.activeElement;
+  if (active && active !== document.body) return;
+  await focusDraftsList();
+});
+
+// A draft open from the list is a short asynchronous sequence (release the
+// current editor, open the source conversation, activate the draft). Any newer
+// navigation (Back, another context, another open, an account change) cancels it.
+let draftOpenToken = 0;
+function cancelDraftOpen(): void { draftOpenToken += 1; fallbackReason = null; }
+watch(accountId, cancelDraftOpen);
+
+/**
+ * Open a draft from the Drafts list. A reply draft goes to its source
+ * conversation first (the reader, with the Drafts list as its origin), then the
+ * draft is activated so the editor docks in that reader exactly like a reply
+ * prepared there. A new-message draft is activated and opens in the inline card.
+ * If the source cannot be shown or cannot host the reply, the same draft opens
+ * in the inline card with the reason: it never becomes unopenable.
+ */
+async function openDraftFromList(summary: DraftSummary): Promise<void> {
+  const token = ++draftOpenToken;
+  fallbackReason = null;
+  const account = accountId.value;
+  const current = () => token === draftOpenToken && account === accountId.value;
+  // One editor: the current one goes through the protected flush first, and a
+  // failed flush keeps it open with its error.
+  if (drafts.activeRef.value && !(await drafts.flushAndClose())) return;
+  if (!current()) return;
+  const source = summary.source;
+  let openedReader = false;
+  if (source.kind === 'reply' && source.conversation.accountId === account) {
+    // Capture the return surface synchronously, before loading: Back can happen
+    // while the detail is pending, and a late response must never rewrite the
+    // origin of a newer reader.
+    captureListOrigin('drafts');
+    openedReader = true;
+    await mailbox.openConversationByRef(source.conversation, 'activity');
+    if (!current()) return;
+    // A source that cannot be shown or cannot host the reply is edited in the
+    // inline card of the Drafts context, so the reader goes first.
+    const block = replyHostBlock(source);
+    if (block !== null) {
+      fallbackReason = block;
+      mailbox.closeReader();
+      origin.value = null;
+      openedReader = false;
+    }
+  }
+  const opened = await drafts.openDraft(summary.ref);
+  if (!current()) return;
+  if (!opened) fallbackReason = null;
+  if (!opened && openedReader) {
+    // The draft could not be loaded: back to the list, where the error shows.
+    mailbox.closeReader();
+    origin.value = null;
+    await focusDraftsList(true);
+  }
+}
+
 async function closeDrawer(): Promise<void> {
   const closing = drawer.value;
-  if (closing === 'drafts' && !(await releaseDraftsDrawer())) return; // closure failed; keep drawer visible
   drawer.value = null;
   await nextTick();
   if (workspaceActive.value && closing) drawerToggles.get(closing)?.focus();
 }
-
-// A suspended (hidden) draft editor must never survive into the visible inbox:
-// whenever no drawer is open and an editor is still active, bring its surface
-// back so keyboard ownership and the visible panel agree. The inline compose
-// card is already a visible surface, so it is not re-docked into the drawer.
-watch(drawer, (value) => {
-  if (value === null && drafts.isVisible.value && !readerOpen.value && !composeCardOpen.value) void openDrawer('drafts');
-});
 
 function toggleDrawer(name: UtilityDrawer): void {
   if (drawer.value === name) void closeDrawer();
   else void openDrawer(name);
 }
 
-// A newly active editor routes to a visible surface instead of a hidden pane.
-// A reply to the conversation the reader is currently showing docks the
-// composer at the bottom of the reader pane (the reader stays open); a reply to
-// any other conversation — and every other source — keeps the drafts drawer.
+// ---------------------------------------------------------------------------
+// Draft editor surfaces
+// ---------------------------------------------------------------------------
+
+/**
+ * Why a reply draft cannot dock in the reader, or `null` when it can. The
+ * reader must show the draft's own source conversation, loaded and able to host
+ * a reply (the same rule the Prepare reply control uses).
+ */
+function replyHostBlock(source: DraftSource | null): string | null {
+  if (source?.kind !== 'reply') return null;
+  if (source.conversation.accountId !== accountId.value) return 'The source conversation belongs to another account.';
+  if (!readerOpen.value || !sameConversation(mailbox.openRef.value, source.conversation)) return 'The source conversation is not open.';
+  if (mailbox.detailState.value === 'error') return mailbox.detailError.value ? `The source conversation could not be loaded: ${errorText(mailbox.detailError.value)}.` : 'The source conversation could not be loaded.';
+  const conversation = mailbox.conversation.value;
+  if (!conversation || !sameConversation(conversation.ref, source.conversation)) return 'The source conversation is still loading.';
+  return replyBlockedReason(conversation);
+}
+
+/** The visible reason a reply draft is edited in the inline card instead of its thread; null elsewhere. */
+const cardNotice = ref<string | null>(null);
+/** The specific reason a reply draft opened from the list could not dock; consumed by the next routing. */
+let fallbackReason: string | null = null;
+
 /**
  * Single routing point for an active draft editor (one editor, one visible
  * surface; the buffer is shared, never duplicated):
- * - reply + reader open on the source conversation → docked reply composer;
- * - new_message + central pane free (no drawer, no narrow contact disclosure)
- *   → inline compose card in the central pane (or docked at the reader bottom
- *   when a reader is open);
- * - anything else (reply off-source, drawer already open, central covered) →
- *   the drafts drawer. The drawer is never opened while another drawer or the
- *   contact disclosure covers the central pane, so no editor surface is ever
- *   mounted inert behind a disclosure.
+ * - a reply whose source conversation is open and can host it → the docked
+ *   reply composer at the bottom of the reader pane (the existing reply flow);
+ * - anything else → the inline compose card: in the central pane, or docked at
+ *   the bottom of the reader pane while a reader is open. A reply that cannot
+ *   dock keeps its reason as a visible notice; its text is never dropped.
+ * A drawer or narrow contact disclosure that would cover the card is dismissed
+ * first (they hold no editor), so an active editor is never mounted inert or
+ * kept invisibly.
  */
 function routeDraftSurface(visible: boolean): void {
   const source = drafts.activeSource.value;
   if (!visible) {
     replyComposerOpen.value = false;
     composeCardOpen.value = false;
+    cardNotice.value = null;
     return;
   }
-  if (source?.kind === 'reply'
-    && readerOpen.value
-    && mailbox.conversation.value
-    && sameConversation(mailbox.conversation.value.ref, source.conversation)) {
+  const block = replyHostBlock(source);
+  if (source?.kind === 'reply' && block === null) {
     replyComposerOpen.value = true;
     composeCardOpen.value = false;
-    // Docking in the reader replaces the drafts drawer (direct assignment: the
-    // editor stays active, so closeDrawer's protected release must not run).
-    if (drawer.value === 'drafts') drawer.value = null;
+    cardNotice.value = null;
     return;
   }
-  const centralFree = drawer.value === null && (wideViewport.value || !contactDisclosure.value);
-  if (source?.kind === 'new_message' && centralFree) {
-    composeCardOpen.value = true;
-    replyComposerOpen.value = false;
-    return;
-  }
-  composeCardOpen.value = false;
+  drawer.value = null;
+  contactDisclosure.value = false;
   replyComposerOpen.value = false;
-  if (drawer.value !== 'drafts') void openDrawer('drafts');
+  composeCardOpen.value = true;
+  cardNotice.value = source?.kind === 'reply' ? fallbackReason ?? block : null;
+  fallbackReason = null;
 }
 watch(drafts.isVisible, routeDraftSurface);
-watch(drawer, (value) => {
-  if (value === 'drafts') composeCardOpen.value = false;
+// An active editor always has a visible surface: if one of the flags above is
+// cleared while the editor stays active, route it again.
+watch(() => drafts.isVisible.value && !replyComposerOpen.value && !composeCardOpen.value, (orphaned) => {
+  if (orphaned) routeDraftSurface(true);
 });
 
 // If the reader moves off the reply source conversation (e.g. a contact-pane
 // recent row), the docked reply composer must not keep showing the wrong
-// "Draft to …"/quote: re-dock the editor into the drafts drawer instead.
+// "Draft to …"/quote: the editor moves to the inline card.
 watch(() => mailbox.openRef.value, (ref) => {
   const source = drafts.activeSource.value;
   if (replyComposerOpen.value && source?.kind === 'reply' && ref && !sameConversation(ref, source.conversation)) {
     replyComposerOpen.value = false;
-    if (drawer.value !== 'drafts') void openDrawer('drafts');
   }
 });
 
 // Closing the docked reply composer removes the control that held focus. Give it
 // back to the reader's active message, but only when it fell to <body> and the
-// reader is still the visible surface (a re-dock into the drawer keeps its own focus).
+// reader is still the visible surface (a move to the card keeps its own focus).
 watch(replyComposerOpen, async (open, wasOpen) => {
   if (open || !wasOpen) return;
   await nextTick();
@@ -731,22 +816,18 @@ async function closeComposeCard(): Promise<void> {
 }
 
 // If the reader disappears while the inline composer is docked (background list
-// events close it directly), the active editor must stay visible: re-dock it in
-// the drafts drawer instead of hiding an unacknowledged buffer. A docked
-// compose card needs no re-docking: its mount follows readerOpen, so it moves
-// to the central pane on its own.
+// events close it directly), the active editor must stay visible: it moves to
+// the inline card instead of hiding an unacknowledged buffer. A docked compose
+// card needs no move: its mount follows readerOpen, so it goes to the central
+// pane on its own.
 watch(readerOpen, (open) => {
-  if (!open && replyComposerOpen.value && drafts.isVisible.value) {
-    replyComposerOpen.value = false;
-    if (drawer.value !== 'drafts') void openDrawer('drafts');
-  }
+  if (!open && replyComposerOpen.value && drafts.isVisible.value) replyComposerOpen.value = false;
 });
 
-// Local drafts are account-scoped: with no account there is no drafts surface.
-watch(accountId, (id) => {
+// Reminder scheduling and its confirmation are account-scoped.
+watch(accountId, () => {
   reminderAccountEpoch++;
   clearReminderConfirmation();
-  if (id === null && drawer.value === 'drafts') drawer.value = null;
 });
 
 // ---------------------------------------------------------------------------
@@ -818,9 +899,9 @@ function onViewportChange(event: MediaQueryListEvent): void {
 async function toggleContactDisclosure(): Promise<void> {
   if (wideViewport.value) return;
   // Leaving an active drafts editor must go through its protected lifecycle
-  // rather than unmounting the panel silently; on failure it stays visible.
-  if ((drawer.value === 'drafts' || replyComposerOpen.value || composeCardOpen.value) && !contactDisclosure.value) {
-    if (!(await releaseDraftsDrawer())) return;
+  // rather than unmounting the editor silently; on failure it stays visible.
+  if ((replyComposerOpen.value || composeCardOpen.value) && !contactDisclosure.value) {
+    if (!(await releaseEditorSurface())) return;
   }
   // Disclosures are mutually exclusive: the contact disclosure replaces any
   // open utility drawer so the visible panel and keyboard owner agree.
@@ -923,9 +1004,9 @@ const contact = computed<ContactInfo | null>(() => {
 });
 const contactContext = computed<ContactContext>(() => (readerOpen.value ? 'open' : 'focused'));
 
-// Reply-target resolution for an active reply draft editor, for the
-// drafts-drawer composer label (the contact pane shows no compose line: it
-// would move its pinned name and email lines). While
+// Reply-target resolution for an active reply draft editor, for the compose
+// card's heading (the contact pane shows no compose line: it would move its
+// pinned name and email lines). While
 // the reader is open on the source conversation, the latest message's sender
 // is the exact known target; otherwise the draft's current raw To text is the
 // only honest fallback. No target is guessed from participants or names.
@@ -940,10 +1021,13 @@ const composeTarget = computed<ContactInfo | null>(() => {
   const to = drafts.content.value.to;
   return to.trim() ? { displayName: null, mailbox: to } : null;
 });
-const drawerRecipientLabel = computed<string | null>(() => {
+const composeRecipientLabel = computed<string | null>(() => {
   const target = composeTarget.value;
   return target ? (target.displayName ?? target.mailbox) : null;
 });
+/** The inline card's name: "New Message", or the reply draft's own title when a reply is edited there. */
+const cardTitle = computed(() => drafts.activeSource.value?.kind !== 'reply' ? 'New Message'
+  : composeRecipientLabel.value ? `Reply draft to ${composeRecipientLabel.value}` : 'Reply draft');
 
 // ---------------------------------------------------------------------------
 // Reader origin, focus, and scroll restoration
@@ -1040,7 +1124,7 @@ async function submitSearch(query = searchDraft.value): Promise<void> {
   // Entering search closes the reader (and with it the docked inline reply
   // composer or compose card), so the active editor flushes through the
   // protected path first; a failed close keeps the reader and composer visible.
-  if ((drawer.value === 'drafts' || replyComposerOpen.value || composeCardOpen.value) && !(await releaseDraftsDrawer())) return;
+  if (!(await releaseEditorSurface())) return;
   if (mailbox.context.value !== 'search') {
     const saved = captureContext();
     if (saved) history.value.push(saved);
@@ -1259,7 +1343,8 @@ async function navigateContext(context: BrowseContext, saved?: ContextEntry): Pr
   cancelGo();
   editingSplit.value = false;
   searchVisible.value = false;
-  if ((drawer.value === 'drafts' || replyComposerOpen.value || composeCardOpen.value) && !(await releaseDraftsDrawer())) return false;
+  if (!(await releaseEditorSurface())) return false;
+  cancelDraftOpen();
   const token = ++navigationToken;
   const account = accountId.value;
   if (context === 'saved' && (!mailbox.savedSplit.value?.enabled || mailbox.splitError.value)) context = 'inbox';
@@ -1292,6 +1377,11 @@ async function navigateContext(context: BrowseContext, saved?: ContextEntry): Pr
   if (mailbox.context.value === 'reminders') {
     // The rows load after the context is active; focus the current row once they are there.
     void reminders.whenLoaded().then(() => (token === navigationToken && account === accountId.value ? focusRemindersList(!!saved) : undefined));
+    return true;
+  }
+  if (mailbox.context.value === 'drafts') {
+    // Draft rows are already local state: focus the current one.
+    await focusDraftsList(!!saved);
     return true;
   }
   await focusFocusedRow(!!saved);
@@ -1356,6 +1446,7 @@ async function focusFocusedRow(preventScroll = false): Promise<void> {
   await nextTick();
   if (!workspaceActive.value) return;
   if (remindersList.value) { await focusRemindersList(preventScroll); return; }
+  if (draftsList.value) { await focusDraftsList(preventScroll); return; }
   const focused = mailbox.focusedRef.value;
   if (focused && inboxList.value) inboxList.value.focusRef(focused, { preventScroll });
   else if (mailbox.conversations.value.length === 0) emptyState.value?.focus();
@@ -1414,35 +1505,30 @@ async function closeReader(explicitInbox = false): Promise<void> {
   mailbox.invalidateSearchIntent();
   // The inline reply composer or compose card docks the active editor inside
   // the reader pane: closing the reader would hide it, so the close goes
-  // through the same protected flush as the drafts drawer. A failed close
+  // through the same protected flush as the editor's own close. A failed close
   // keeps the reader and the docked editor visible with their unacknowledged
   // buffer.
-  if ((replyComposerOpen.value || composeCardOpen.value) && !(await releaseDraftsDrawer())) return;
+  if (!(await releaseEditorSurface())) return;
+  cancelDraftOpen();
   const originState = origin.value;
   const token = navigationToken;
   const account = accountId.value;
   mailbox.closeReader();
   await (async () => {
-    // An active draft editor owns attention: keep it visible rather than
-    // leaving it hidden behind another disclosure or off-screen entirely.
-    // A reply docked in the reader keeps the reader open — no drawer routing;
-    // a compose card docked there likewise keeps the reader open.
-    if (drafts.isVisible.value) {
-      if (replyComposerOpen.value || composeCardOpen.value) return;
-      if (drawer.value !== 'drafts') await openDrawer('drafts');
-      return;
-    }
+    // An active draft editor owns attention: a docked reply or compose card
+    // keeps the reader open, and an editor left without a surface is routed to
+    // the inline card by its watcher, so focus is not moved here.
+    if (drafts.isVisible.value) return;
     await nextTick();
     if (token !== navigationToken || account !== accountId.value || readerOpen.value) return;
     const anchor = originState?.anchor ?? null;
     if (anchor && inboxList.value) await inboxList.value.restoreAnchor(anchor);
-    if (originState && originState.surface !== 'activity' && originState.surface !== 'reminders' && !explicitInbox) {
+    if (originState && !nonThreadSurface(originState.surface) && !explicitInbox) {
       const resolved = resolveOriginFocus(originState);
       if (resolved) mailbox.focusConversation(resolved);
     }
-    // The Reminders list keeps its own current row; the reader returns to it.
-    if (remindersContext.value) await focusRemindersList(true);
-    else await focusFocusedRow(true);
+    // The Reminders and Drafts lists keep their own current row; the reader returns to it.
+    await focusFocusedRow(true);
     if (!explicitInbox && originState?.surface === 'activity') await openDrawer('activity');
   })();
 }
@@ -1518,7 +1604,7 @@ function resolveReaderNeighbor(delta: number): ConversationRef | null {
 async function moveReaderConversation(delta: number): Promise<void> {
   // Activity-origin readers never navigate and never issue getConversation
   // calls — including when Activity history duplicates the reference.
-  if (!readerOpen.value || origin.value?.surface === 'activity' || origin.value?.surface === 'reminders' || trashReader.value) return;
+  if (!readerOpen.value || nonThreadSurface(origin.value?.surface) || trashReader.value) return;
   if (mailbox.listState.value !== 'ready') return;
   const target = resolveReaderNeighbor(delta);
   if (!target) return;
@@ -1528,8 +1614,8 @@ async function moveReaderConversation(delta: number): Promise<void> {
 }
 
 /** Reader previous/next chevrons: the same neighbor rule as J/K. Hidden (undefined)
- * where J/K are no-ops (Activity/Reminders/Trash readers); disabled at the ends. */
-const readerNavigates = computed(() => readerOpen.value && origin.value?.surface !== 'activity' && origin.value?.surface !== 'reminders' && !trashReader.value);
+ * where J/K are no-ops (Activity/Reminders/Drafts/Trash readers); disabled at the ends. */
+const readerNavigates = computed(() => readerOpen.value && !nonThreadSurface(origin.value?.surface) && !trashReader.value);
 
 // Read-only neighbor prefetch (same getConversation call as opening) for the
 // readers that allow J/K, in the direction of the last move (next by default).
@@ -1624,7 +1710,7 @@ async function archiveFromReader(starred?: boolean): Promise<void> {
   const op = mailbox.activity.value.find((item) => item.id === receipt.operationId);
   if (op?.status === 'failed') return;
   // An Activity-origin reader must not advance into unrelated Inbox mail.
-  if (origin.value?.surface === 'activity' || origin.value?.surface === 'reminders') {
+  if (nonThreadSurface(origin.value?.surface)) {
     closeReader();
     return;
   }
@@ -1665,8 +1751,7 @@ async function disconnectAccount(): Promise<void> {
   drafts.setTransitioning(true);
   try {
     if (await drafts.flushAndClose()) await mailbox.disconnectAccount();
-    // A failed flush keeps the editor; the global recovery banner (shown below
-    // whenever the drafts drawer is closed) routes attention back to it.
+    // A failed flush keeps the editor on its visible surface with its error.
   } finally {
     drafts.setTransitioning(false);
   }
@@ -1685,13 +1770,8 @@ async function connectAccount(): Promise<void> {
 async function prepareReply(source: DraftSource): Promise<void> {
   if (trashReader.value) return;
   // The reader stays open after a successful preparation: the drafts watcher
-  // docks the reply composer at the bottom of the reader pane instead of
-  // closing the reader and opening the drafts drawer.
+  // docks the reply composer at the bottom of the reader pane.
   await drafts.openNew(source);
-}
-
-function openDraft(ref: DraftRef): void {
-  void drafts.openDraft(ref);
 }
 
 /** Targets are resolved at dispatch, not when the palette was opened. */
@@ -1712,7 +1792,7 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   if (id === 'starred') return gmailMode.value && !!accountId.value;
   if (id === 'create-split') return !!accountId.value && !mailbox.savedSplit.value && !editingSplit.value;
   if (id === 'edit-split') return !!accountId.value && !!mailbox.savedSplit.value && !editingSplit.value;
-  if (id === 'toggle-unread-filter') return !!accountId.value && !editingSplit.value && !drawer.value && !contactDisclosure.value && !remindersList.value;
+  if (id === 'toggle-unread-filter') return !!accountId.value && !editingSplit.value && !drawer.value && !contactDisclosure.value && !remindersList.value && !draftsList.value;
   if (id === 'saved') return !!mailbox.savedSplit.value?.enabled && !mailbox.splitError.value;
   if (['inbox', 'done', 'activity'].includes(id)) return !!accountId.value;
   if (id === 'search') return !!accountId.value && !drawer.value && !contactDisclosure.value;
@@ -1723,7 +1803,7 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   if (id === 'reminders') return remindersSupported.value;
   if (id === 'reminder-settings') return remindersSupported.value && !!accountId.value;
   if (id === 'back') return readerOpen.value || history.value.length > 0;
-  if (id === 'select-all-loaded') return !trashList.value && !remindersList.value && !drafts.activeRef.value && !drawer.value && !contactDisclosure.value && !readerOpen.value && mailbox.listState.value === 'ready' && mailbox.conversations.value.length > 0;
+  if (id === 'select-all-loaded') return !trashList.value && !remindersList.value && !draftsList.value && !drafts.activeRef.value && !drawer.value && !contactDisclosure.value && !readerOpen.value && mailbox.listState.value === 'ready' && mailbox.conversations.value.length > 0;
   if (id === 'clear-selection') return !drafts.activeRef.value && !drawer.value && !contactDisclosure.value && selectedCount.value > 0;
   // Compose stays available while an editor is already open: it routes to the
   // existing surface instead of stacking a second draft.
@@ -1732,9 +1812,10 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   // inert behind another surface.
   if (id === 'compose') return !!accountId.value && !editingSplit.value && !drawer.value && !contactDisclosure.value;
   // Cached Trash is browse-only: opening a row is the one action it offers.
-  // The Reminders list offers none from the keyboard: its own row actions are
-  // the only mutations, and mailbox shortcuts do not apply to its rows.
-  if ((trashBrowsing.value && id !== 'open') || remindersList.value) return false;
+  // The Reminders and Drafts lists offer none from the keyboard: their rows
+  // are not conversations, so mailbox shortcuts do not apply to them (a
+  // reminder's own row actions are its only mutations).
+  if ((trashBrowsing.value && id !== 'open') || remindersList.value || draftsList.value) return false;
   if (drafts.activeRef.value || drawer.value || contactDisclosure.value) return false;
   // Reply is reader-only and uses ReaderView's own rule, the same one that
   // disables its buttons (blocked, incomplete or retained conversations, Trash).
@@ -1794,10 +1875,12 @@ async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): 
   switch (id) {
     case 'switch-account': emit('switchAccount'); return;
     case 'compose': {
-      // One active editor: an existing draft routes to its visible surface
-      // (inline compose card, inline reply composer, or drafts drawer), never a duplicate.
+      // One active editor: an existing draft stays on its visible surface
+      // (inline compose card or docked reply composer), never a duplicate. A
+      // suspended editor from another account has no surface: the Drafts list
+      // is where its alert shows.
       if (drafts.activeRef.value) {
-        if (!composeCardOpen.value && !replyComposerOpen.value) await openDrawer('drafts');
+        if (!composeCardOpen.value && !replyComposerOpen.value && !drafts.isVisible.value) await navigateContext('drafts');
         return;
       }
       await drafts.openNew({ kind: 'new_message' });
@@ -1850,7 +1933,8 @@ async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): 
       else { await mailbox.setStarred(target, id === 'star'); if (!readerOpen.value) await focusFocusedRow(); }
       return;
     }
-    case 'destinations': case 'account': case 'activity': case 'drafts': await openDrawer(id); return;
+    case 'drafts': await navigateContext('drafts'); return;
+    case 'destinations': case 'account': case 'activity': await openDrawer(id); return;
     case 'back': if (readerOpen.value) closeReader(); else await contextBack(); return;
     case 'open': if (explicit) await openRowFromList(explicit); else await openFocusedFromList(); return;
     case 'archive':
@@ -1977,13 +2061,13 @@ function onKeydown(event: KeyboardEvent): void {
     endGoGrace();
     if (isGoSecondKey(event) && !isEditableTarget(event.target)) { event.preventDefault(); return; }
   }
-  // A visible compose surface (inline reply composer, inline compose card or
-  // the drafts drawer's editor) owns Escape: it closes through the same
-  // protected flush as the editor's own close control. This must run before the
-  // key suppression below so the editor (not the mailbox or the drawer) answers
-  // Escape; the surface hides when drafts.isVisible goes false, which returns
-  // the drawer to its list, and a second Escape closes the drawer.
-  if ((replyComposerOpen.value || composeCardOpen.value || (drawer.value === 'drafts' && drafts.isVisible.value)) && event.key === 'Escape' && !event.isComposing && event.keyCode !== 229
+  // A visible compose surface (inline reply composer or inline compose card)
+  // owns Escape: it closes through the same protected flush as the editor's own
+  // close control. This must run before the key suppression below so the editor
+  // (not the mailbox) answers Escape; the surface hides when drafts.isVisible
+  // goes false, which returns to the reader or the Drafts list, and a second
+  // Escape goes Back from there.
+  if ((replyComposerOpen.value || composeCardOpen.value) && event.key === 'Escape' && !event.isComposing && event.keyCode !== 229
     && !event.ctrlKey && !event.metaKey && !event.altKey) {
     event.preventDefault();
     void drafts.flushAndClose();
@@ -1991,7 +2075,7 @@ function onKeydown(event: KeyboardEvent): void {
   }
   // Only a visible composer owns all keys; a suspended editor behind another
   // disclosure must not silently keep keyboard ownership from the inbox.
-  if (drafts.activeRef.value && (drawer.value === 'drafts' || composeCardOpen.value || replyComposerOpen.value)) return;
+  if (drafts.activeRef.value && (composeCardOpen.value || replyComposerOpen.value)) return;
   if (event.isComposing || event.keyCode === 229) return; // IME composition
   if (event.ctrlKey || event.metaKey || event.altKey) return;
   if (isEditableTarget(event.target)) return;
@@ -2049,11 +2133,13 @@ function onKeydown(event: KeyboardEvent): void {
     return;
   }
 
-  // A Reminders row's open button is a real button but the list's own row, so
-  // the browsing keys (G chords, Left) work from it as they do from an Inbox row.
-  const remindersRowOwns = remindersList.value && event.target instanceof HTMLElement && event.target.hasAttribute('data-drawer-row')
-    && !!remindersPane.value?.el?.contains(event.target);
-  const browsingOwns = !readerIsOpen && (!buttonOwns(event.target) || remindersRowOwns) && (event.target === document.body || (event.target instanceof Node && (!!inboxList.value?.$el?.contains(event.target) || !!remindersPane.value?.el?.contains(event.target))) || event.target === emptyState.value);
+  // A Reminders or Drafts row's open button is a real button but the list's own
+  // row, so the browsing keys (G chords, Left) work from it as they do from an
+  // Inbox row.
+  const isContextRow = event.target instanceof HTMLElement && event.target.hasAttribute('data-drawer-row');
+  const remindersRowOwns = remindersList.value && isContextRow && !!remindersPane.value?.el?.contains(event.target as Node);
+  const draftsRowOwns = draftsList.value && isContextRow && !!draftsPane.value?.el?.contains(event.target as Node);
+  const browsingOwns = !readerIsOpen && (!buttonOwns(event.target) || remindersRowOwns || draftsRowOwns) && (event.target === document.body || (event.target instanceof Node && (!!inboxList.value?.$el?.contains(event.target) || !!remindersPane.value?.el?.contains(event.target) || !!draftsPane.value?.el?.contains(event.target))) || event.target === emptyState.value);
   // Split navigation is deliberately nonwrapping and owns only the list,
   // not form fields, toolbar buttons, the reader, or other destinations.
   const splitListOwns = browsingOwns && event.target === document.activeElement
@@ -2093,7 +2179,7 @@ function onKeydown(event: KeyboardEvent): void {
   }
   // Compose works from BOTH the list and the reader, like S: no modifiers, no
   // editable target, no button owning the key (checked above).
-  if (key === 'c' && !event.shiftKey && !event.repeat && (browsingOwns || readerIsOpen) && !actionShortcutBlocked(event.target)) {
+  if (key === 'c' && !event.shiftKey && !event.repeat && (browsingOwns || readerIsOpen) && (!actionShortcutBlocked(event.target) || draftsRowOwns)) {
     event.preventDefault();
     void executeAction('compose');
     return;
@@ -2160,6 +2246,7 @@ function onKeydown(event: KeyboardEvent): void {
   const selectionKeysOwned = !readerIsOpen
     && !trashList.value
     && !remindersList.value
+    && !draftsList.value
     && !buttonOwns(event.target)
     // A real Node must be the list surface (body, list, empty state); a
     // non-Node target (window-dispatched synthetic event) is list-owned too.
@@ -2398,18 +2485,26 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
            with triage keys live in the bottom dock instead (.list-dock). -->
       <div class="list-notices">
         <p v-if="reminderConfirmation" class="reminder-confirmation" role="status" data-test="reminder-confirmation">{{ reminderConfirmation }}</p>
+        <!-- Close recovery is global: the Drafts list shows the same lines in
+             flow above its rows, so the banner shows everywhere else. -->
         <div
-          v-if="drawer !== 'drafts' && (drafts.closeSetupError.value || drafts.closeRetryAvailable.value || (drafts.isVisible.value && drafts.error.value))"
+          v-if="!draftsList && (drafts.closeSetupError.value || drafts.closeRetryAvailable.value)"
           role="alert"
           class="recovery-banner draft-close-recovery"
         >
           <p v-if="drafts.closeSetupError.value">Close protection could not be initialized: {{ drafts.closeSetupError.value }}</p>
           <p v-else-if="drafts.closeRetryAvailable.value">{{ drafts.closeError.value }}</p>
-          <p v-else>The local draft editor needs attention.</p>
           <button v-if="drafts.closeSetupError.value" type="button" data-test="retry-close-setup" @click="drafts.retryCloseSetup()">Retry close protection</button>
           <button v-if="drafts.closeRetryAvailable.value" type="button" data-test="retry-close" @click="drafts.retryClose()">Retry close request</button>
-          <button v-if="drafts.isVisible.value && drafts.error.value" type="button" data-test="draft-attention-open" @click="openDrawer('drafts')">Open drafts</button>
         </div>
+
+        <!-- An editor covers the Drafts list: its list and subscription lines stay visible here. -->
+        <DraftAlerts
+          v-if="!draftsList && (composeCardOpen || replyComposerOpen) && (drafts.listError.value || drafts.draftSubscriptionError.value)"
+          :list-error="drafts.listError.value"
+          :subscription-error="drafts.draftSubscriptionError.value"
+          @retry-draft-subscription="drafts.retryDraftSubscription()"
+        />
 
         <p v-if="mailbox.context.value === 'starred'" class="cached-coverage" role="note" data-test="starred-coverage">Local cache only — not provider-complete Starred. Total unknown. Unknown star facts are not treated as unstarred.</p>
         <p v-if="mailbox.context.value === 'trash' && !readerOpen" class="cached-coverage" role="note" data-test="trash-coverage" :title="TRASH_COVERAGE_DETAIL">{{ TRASH_COVERAGE_LINE }}<span class="visually-hidden"> {{ TRASH_COVERAGE_DETAIL }}</span><template v-if="mailbox.listState.value === 'ready' && mailbox.conversations.value.length">{{ ' ' }}{{ mailbox.conversations.value.length }} cached · total unknown<template v-if="mailbox.lastSyncedAt.value">{{ ' · Last synced ' }}<FullDate :at="mailbox.lastSyncedAt.value" /></template>.</template></p>
@@ -2485,9 +2580,8 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               class="rail-item"
               data-test="rail-drafts"
               :title="actionLabel('drafts')"
-              :ref="setToggleRef('drafts')"
-              :aria-expanded="drawer === 'drafts'"
-              @click="toggleDrawer('drafts')"
+              :aria-current="draftsList && drawer === null ? 'page' : undefined"
+              @click="executeAction('drafts')"
             ><PaneGlyph name="drafts" /><span class="rail-label">Drafts</span></button>
             <button
               v-if="!wideViewport"
@@ -2502,7 +2596,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
           </div>
         </nav>
 
-        <section class="central" :aria-label="readerOpen ? 'Reader' : composeCardOpen ? 'New Message' : 'Conversation list'" :inert="centralCovered || undefined" data-test="central-surface">
+        <section class="central" :aria-label="readerOpen ? 'Reader' : composeCardOpen ? cardTitle : draftsContext ? 'Drafts' : 'Conversation list'" :inert="centralCovered || undefined" data-test="central-surface">
           <!-- Search results header (UX-07): the query echoes at active-tab
                size and the X is the visible exit (same as the header Back
                glyph, which is reachable in search context). -->
@@ -2580,6 +2674,8 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
                non-inert while composing. -->
           <ComposeCard
             v-if="composeCardOpen && !readerOpen"
+            :recipient-label="composeRecipientLabel"
+            :notice="cardNotice"
             :active-ref="drafts.activeRef.value"
             :source="drafts.activeSource.value"
             :content="drafts.content.value"
@@ -2611,6 +2707,27 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             @cancel-reload="drafts.cancelReload()"
             @save-as-new="drafts.saveAsNew()"
             @cancel-reply-preparation="drafts.cancelReplyPreparation()"
+          />
+          <DraftsList
+            v-else-if="draftsContext && !readerOpen"
+            ref="draftsPane"
+            v-model:active-key="draftsActiveKey"
+            :summaries="drafts.summaries.value"
+            :active-ref="drafts.activeRef.value"
+            :conflict="drafts.conflict.value"
+            :suspended-editor="!!drafts.activeRef.value && !drafts.isVisible.value"
+            :busy="drafts.closingForWindow.value || drafts.transitioning.value"
+            :create-error="drafts.createError.value"
+            :list-error="drafts.listError.value"
+            :subscription-error="drafts.draftSubscriptionError.value"
+            :close-error="drafts.closeError.value"
+            :close-retry-available="drafts.closeRetryAvailable.value"
+            :close-setup-error="drafts.closeSetupError.value"
+            @new-draft="executeAction('compose')"
+            @open="openDraftFromList"
+            @retry-draft-subscription="drafts.retryDraftSubscription()"
+            @retry-close="drafts.retryClose()"
+            @retry-close-setup="drafts.retryCloseSetup()"
           />
           <RemindersList v-else-if="remindersContext && !readerOpen" ref="remindersPane" :model="reminders" @open="openReminderConversation" />
           <template v-else-if="!readerOpen">
@@ -2703,7 +2820,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             />
             <!-- Inline reply composer docked at the bottom of the reader pane:
                  the thread stays visible above it. Wired directly to the shared
-                 drafts state, exactly like the DraftsPanel mount below. -->
+                 drafts state, like the inline compose card. -->
             <ReplyComposer
               v-if="replyComposerOpen && readerOpen"
               :recipient-label="replyRecipientLabel"
@@ -2747,6 +2864,8 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
                  like the reply composer above it. -->
             <ComposeCard
               v-if="composeCardOpen && readerOpen"
+              :recipient-label="composeRecipientLabel"
+              :notice="cardNotice"
               :active-ref="drafts.activeRef.value"
               :source="drafts.activeSource.value"
               :content="drafts.content.value"
@@ -2850,53 +2969,6 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             @retry-groups="mailbox.refreshGroups()"
             @retry-group-detail="expandedGroupRequestId && mailbox.openGroupDetail(expandedGroupRequestId)"
             @undo-group="(groupId) => mailbox.undoGroupById(groupId)"
-          />
-          <DraftsPanel
-            v-if="drawer === 'drafts'"
-            :summaries="drafts.summaries.value"
-            :active-ref="drafts.activeRef.value"
-            :source="drafts.activeSource.value"
-            :content="drafts.content.value"
-            :status="drafts.statusLabel.value"
-            :visible="drafts.isVisible.value"
-            :suspended-editor="!!drafts.activeRef.value && !drafts.isVisible.value"
-            :creating="drafts.creating.value"
-            :saving="drafts.saving.value"
-            :conflict="drafts.conflict.value"
-            :error="drafts.error.value"
-            :create-error="drafts.createError.value"
-            :deleting="drafts.deleting.value"
-            :closing="drafts.closingForWindow.value"
-            :transitioning="drafts.transitioning.value"
-            :delete-pending="drafts.deletePending.value"
-            :confirm-discard="drafts.confirmDiscard.value"
-            :discard-busy="drafts.discardBusy.value"
-            :confirm-reload="drafts.confirmReload.value"
-            :copy-pending="drafts.copyPending.value"
-            :recovery-required="drafts.recoveryRequired.value"
-            :can-cancel-reply-preparation="drafts.canCancelReplyPreparation.value"
-            :list-error="drafts.listError.value"
-            :subscription-error="drafts.draftSubscriptionError.value"
-            :close-error="drafts.closeError.value"
-            :close-retry-available="drafts.closeRetryAvailable.value"
-            :close-setup-error="drafts.closeSetupError.value"
-            :recipient-label="drawerRecipientLabel"
-            @retry-draft-subscription="drafts.retryDraftSubscription()"
-            @retry-close="drafts.retryClose()"
-            @retry-close-setup="drafts.retryCloseSetup()"
-            @new-draft="drafts.openNew()"
-            @cancel-reply-preparation="drafts.cancelReplyPreparation()"
-            @open-draft="openDraft"
-            @close-editor="drafts.flushAndClose()"
-            @set-field="drafts.setContent"
-            @retry="drafts.retrySave()"
-            @ask-discard="drafts.askDiscard()"
-            @confirm-discard="drafts.discard()"
-            @cancel-discard="drafts.cancelDiscard()"
-            @ask-reload="drafts.confirmReload.value = true"
-            @confirm-reload="drafts.reloadSaved()"
-            @cancel-reload="drafts.cancelReload()"
-            @save-as-new="drafts.saveAsNew()"
           />
         </div>
 

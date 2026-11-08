@@ -174,10 +174,6 @@ function rowTitle(item: ReminderItem): string { return `Revision ${item.reminder
 </template>
 
 <style scoped>
-.context-pane:focus { outline: none; }
-.context-coverage { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-right: 24px; }
-.context-coverage .cached-coverage { padding-right: 0; }
-.context-coverage .drawer-quiet { margin-right: -8px; }
 .reminder-form, .reminder-fields { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .reminder-form { padding: 6px 24px 12px 50px; overflow-wrap: anywhere; }
 .reminder-fields { border: 0; margin: 0; padding: 0; }

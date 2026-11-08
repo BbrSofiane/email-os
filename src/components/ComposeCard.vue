@@ -6,12 +6,20 @@
  * backdrop and no dimming: the rail, header and contact pane stay visible and
  * interactive. The editor body (fields, status, errors, conflict/recovery,
  * discard-confirm, footer) is the shared DraftEditorCore; this surface only
- * supplies the card shell and the "New Message" header. No Send action exists.
+ * supplies the card shell and its header: "New Message", or the reply draft's
+ * own title when a reply draft is edited here because its source conversation
+ * cannot host it (then one Amber Notice line says so, its reason in the title).
+ * No Send action exists.
  */
+import { computed } from 'vue';
 import type { DraftContent, DraftRef, DraftSource, MailError } from '../lib/ipc/client';
 import DraftEditorCore from './DraftEditorCore.vue';
 
-defineProps<{
+const props = defineProps<{
+  /** Reply drafts only: the human-readable target shown as "Reply draft to {label}"; null hides it. */
+  recipientLabel?: string | null;
+  /** Reply drafts only: why the draft is edited here and not in its thread. */
+  notice?: string | null;
   activeRef: DraftRef | null;
   source: DraftSource | null;
   content: DraftContent;
@@ -34,6 +42,12 @@ defineProps<{
   closeError: string | null;
 }>();
 
+/** The card's accessible name: "New Message", or the reply draft's own title. */
+const title = computed(() => props.source?.kind !== 'reply' ? 'New Message'
+  : props.recipientLabel ? `Reply draft to ${props.recipientLabel}` : 'Reply draft');
+
+const NOTICE_LINE = 'Source conversation unavailable. Editing locally; nothing is sent.';
+
 const emit = defineEmits<{
   closeEditor: [];
   setField: [field: keyof DraftContent, value: string];
@@ -54,8 +68,9 @@ function onSetField(field: keyof DraftContent, value: string): void {
 </script>
 
 <template>
-  <section class="compose-card" aria-label="New Message" data-test="compose-card">
+  <section class="compose-card" :aria-label="title" data-test="compose-card">
     <DraftEditorCore
+      data-test="composer"
       autofocus="to"
       variant="new"
       :active-ref="activeRef"
@@ -92,8 +107,22 @@ function onSetField(field: keyof DraftContent, value: string): void {
     >
       <template #header>
         <header class="composer-heading">
-          <h2>New Message</h2>
+          <h2 v-if="source?.kind === 'reply' && recipientLabel">Reply draft <span class="reply-to">to <span data-test="draft-recipient-label">{{ recipientLabel }}</span></span></h2>
+          <h2 v-else-if="source?.kind === 'reply'">Reply draft</h2>
+          <h2 v-else>New Message</h2>
         </header>
+        <!-- Honest state: the reply cannot be shown in its thread, so it is edited here. -->
+        <p v-if="notice" class="compose-card-notice" role="note" data-test="compose-card-notice" :title="notice">{{ NOTICE_LINE }}</p>
+      </template>
+      <template #context>
+        <!-- The fixed reply source: attributes only, never visible text. -->
+        <span
+          v-if="source?.kind === 'reply'"
+          hidden
+          data-test="reply-source"
+          :data-source-conversation="source.conversation.conversationId"
+          :data-source-message="source.sourceMessageId"
+        ></span>
       </template>
     </DraftEditorCore>
   </section>

@@ -2,7 +2,7 @@ import type { MailError } from './ipc/client';
 
 /**
  * Single shared copy of the user-facing draft/mail error wording, used by the
- * drafts list (DraftsPanel) and the composer body (DraftEditorCore). Do not
+ * Drafts list (DraftAlerts) and the composer body (DraftEditorCore). Do not
  * fork per component.
  */
 export function describeDraftError(error: MailError): string {

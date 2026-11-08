@@ -1004,21 +1004,12 @@ button:focus-visible {
   gap: 6px;
 }
 
-.drawer-subject,
-.drawer-sender {
+.drawer-subject {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.drawer-subject {
   flex: 1 1 auto;
-}
-
-.drawer-sender {
-  flex: 0 1 9em;
-  font-weight: var(--weight-strong);
 }
 
 .drawer-strong,
@@ -1027,14 +1018,12 @@ button:focus-visible {
 }
 
 .activity-action,
-.drawer-date,
-.drawer-flag {
+.drawer-date {
   flex: none;
   white-space: nowrap;
 }
 
 .drawer-date,
-.drawer-flag,
 .drawer-empty {
   color: var(--text-secondary);
 }
@@ -1087,18 +1076,6 @@ button:focus-visible {
   margin: 0 0 6px;
   font-size: var(--type-body);
   font-weight: var(--weight-strong);
-}
-
-.drawer-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 0 0 6px;
-}
-
-.drawer-toolbar > .drawer-note {
-  margin: 0;
 }
 
 .drawer-row-actions {
@@ -1166,15 +1143,8 @@ button:focus-visible {
 
 .drawer-line > .drawer-quiet:first-child,
 .drawer-line > .drawer-action:first-child,
-.drawer-row-actions > .drawer-quiet:first-child,
-.drawer-toolbar > .drawer-quiet:first-child,
-.drawer-toolbar > .drawer-action:first-child {
+.drawer-row-actions > .drawer-quiet:first-child {
   margin-left: -8px;
-}
-
-.drawer-toolbar > .drawer-quiet:last-child,
-.drawer-toolbar > .drawer-action:last-child {
-  margin-right: -8px;
 }
 
 .drawer-alert .drawer-quiet {
@@ -1433,6 +1403,56 @@ button:focus-visible {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+}
+
+.context-pane:focus {
+  outline: none;
+}
+
+/* Coverage line with one quiet action on its trailing side (Reminders, Drafts). */
+.context-coverage {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-right: 24px;
+}
+
+.context-coverage .cached-coverage {
+  padding-right: 0;
+}
+
+.context-coverage .drawer-quiet {
+  margin-right: -8px;
+}
+
+/* In-flow recovery and error lines above the rows, on the content inset. */
+.draft-notices:not(:empty) {
+  padding: 6px 24px 0 50px;
+}
+
+/* Drafts rows: the recipient is the row's button and keeps a bounded width; the subject takes the rest. */
+.drafts-pane .context-row-main {
+  flex: 0 1 16em;
+}
+
+.drafts-pane .context-row-secondary {
+  flex: 1 1 0;
+  padding: 0 12px;
+}
+
+.draft-subject:not(.drawer-empty) {
+  color: var(--text-primary);
+}
+
+.draft-reply {
+  color: var(--text-secondary);
+}
+
+.draft-date {
+  min-width: 4em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .context-list {
@@ -2220,15 +2240,7 @@ button:focus-visible {
   color: var(--warning);
 }
 
-/* Local-only plain-text drafts (drawer): one column, list or editor. */
-.drafts-pane {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-}
-
-.draft-list,
+/* Local-only plain-text draft editors (compose card, docked reply composer). */
 .composer {
   min-width: 0;
 }
@@ -2249,14 +2261,6 @@ button:focus-visible {
   font-weight: var(--weight-strong);
   margin: 0.25rem 0;
   overflow-wrap: anywhere;
-}
-
-/* Informational note: secondary text, not a warning. Warnings stay on
-   status/error lines (draft-status, reply-source). */
-.draft-local-note {
-  margin: 0.3rem 0;
-  font-size: var(--type-body);
-  color: var(--text-secondary);
 }
 
 .draft-status {
@@ -2341,7 +2345,7 @@ button:focus-visible {
 }
 
 /* Composer footer, shared by the inline compose card, the docked reply
-   composer and the drafts-drawer editor: actions right-aligned above a rule. */
+   composer: actions right-aligned above a rule. */
 .composer-footer {
   display: flex;
   align-items: center;
@@ -2716,6 +2720,11 @@ button:focus-visible {
   padding: var(--composer-padding);
   font-size: var(--type-body);
   line-height: var(--leading-ui);
+}
+/* A reply draft edited here because its thread cannot host it: one Amber Notice line. */
+.compose-card-notice {
+  margin: 0 0 0.25rem;
+  color: var(--warning);
 }
 /* Docked at the bottom of the reader pane (editor active while a reader is
    open): same raised-surface card, compact. Full 1px border — no accent side

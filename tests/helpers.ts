@@ -165,9 +165,15 @@ export function focusedRow(wrapper: VueWrapper): ReturnType<VueWrapper['find']> 
 /** Utility surfaces live in explicit disclosures; tests open them explicitly. */
 export async function openUtilityDrawer(
   wrapper: VueWrapper,
-  name: 'account' | 'activity' | 'drafts',
+  name: 'account' | 'activity',
 ): Promise<void> {
   await wrapper.find(`[data-test="rail-${name}"]`).trigger('click');
+  await flushPromises();
+}
+
+/** Drafts is a list context in the main pane, not a drawer: the rail item navigates to it. */
+export async function openDraftsList(wrapper: VueWrapper): Promise<void> {
+  await wrapper.find('[data-test="rail-drafts"]').trigger('click');
   await flushPromises();
 }
 
