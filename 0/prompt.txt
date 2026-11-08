@@ -495,3 +495,85 @@ I did not edit `App.vue`, `DESIGN.md` or `docs/`. The header tab reads `reminder
 <usage><subagent_tokens>119272</subagent_tokens><tool_uses>54</tool_uses><duration_ms>600423</duration_ms></usage>
 <worktree><worktreePath>/home/exedev/email-os/.claude/worktrees/agent-a5f44572aa1f16bed</worktreePath><worktreeBranch>worktree-agent-a5f44572aa1f16bed</worktreeBranch></worktree>
 </task-notification>
+
+---
+
+<task-notification>
+<task-id>a4a211843072b7b2e</task-id>
+<tool-use-id>toolu_01YGt112fFYzarfG5gz2CXSx</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-impeccable-drawer-panels/f985be7d-cba0-4fa8-a8b8-ec1d0f052dd4/tasks/a4a211843072b7b2e.output</output-file>
+<status>completed</status>
+<summary>Agent "Drafts triage rows and discard" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>**Status: complete.** Worktree `/home/exedev/email-os/.claude/worktrees/agent-a4a211843072b7b2e`, branch `worktree-agent-a4a211843072b7b2e`, commit `773dfe9`. Nothing pushed, no PR.
+
+The worktree started on `main`, not `impeccable/list-contexts`. I reset my own branch to 763de08, the tip of `impeccable/list-contexts`, before any work. `node_modules` is a symlink to the main checkout and is not committed.
+
+## What changed
+
+- **Body preview.** `DraftSummary` has no body, so the summary list cannot show one. I read each body with the existing `getDraft` call instead. The new `src/composables/useDraftPreviews.ts` reads each body once per revision. It collapses whitespace and control characters, caps the text at 240 characters, and renders it only as a text node. If a read fails, that row shows nothing. An empty body shows "No text yet" in Ash.
+- **Empty subject.** `DraftsList` already shows "(no subject)", so I left it unchanged. The brief's "shared row shows blank" does not match this branch. Inbox rows are untouched.
+- **Visible fallback reason.** The Amber notice now reads "Source conversation unavailable: &lt;reason&gt;. Editing locally; nothing is sent." The full sentence stays in the title, and long reasons wrap rather than clip. `src/lib/reply-context.ts` now holds one `REPLY_REASONS` table (sentence plus terse label), plus `sourceLoadErrorReason` and `replyReasonLabel`. The labels are: no latest message, retained snapshot, incomplete cached conversation, reply headers do not match the latest message, belongs to another account, not open, still loading, and "could not be loaded: &lt;word&gt;". An unknown sentence is shown as written.
+- **Row Discard.** The button uses the Reminders row-action pattern: a `drawer-quiet` ghost, 24px high, Tab-reachable, and visible on the current, hovered or focused row. It opens a confirmation under the row with the editor's wording: "Discard this local draft? This cannot be undone." / "Confirm discard" / "Keep draft". Escape cancels the confirmation only.
+  - On success the list refreshes, a polite live region says "Local draft deleted", and focus moves to the next row, else the previous one, else the pane.
+  - On failure the draft stays and an alert shows "Draft not discarded: …". For a retryable error the confirmation stays open and a retry reuses the same request id. Definite rejections (conflict, not found) close the confirmation and return focus to Discard.
+  - Discard is disabled when the draft is open in the editor or the editor is busy.
+- **Extras.** `src/lib/draft-errors.ts` gained `describeDiscardError` and `isDefiniteDiscardFailure`. In `src/assets/style.css` I added the preview, status and confirmation styles, and reserved the Reply word's width on every row so Discard sits in one column. I found this misalignment while rendering.
+
+## Files changed
+
+- **Source:** `src/components/DraftsList.vue`, `src/components/ComposeCard.vue`, `src/composables/useDraftPreviews.ts` (new), `src/composables/useDrafts.ts`, `src/lib/reply-context.ts`, `src/lib/draft-errors.ts`, `src/assets/style.css`
+- **Tests:** `tests/drafts-list.component.test.ts`, `tests/drafts.context.test.ts`, `tests/compose-card.component.test.ts`, `tests/reply-composer.component.test.ts`, `tests/drafts.component.test.ts`
+
+## What I touched in `src/App.vue`
+
+1. The import line for `reply-context` now brings in `REPLY_REASONS` and `sourceLoadErrorReason`.
+2. In `replyHostBlock`, the four inline reason strings now use those constants. The wording is identical.
+3. On `&lt;DraftsList&gt;`, two new props: `:load-body="async (ref) =&gt; (await props.client.getDraft(ref)).content.bodyText"` and `:discard-draft="drafts.discardListed"`.
+
+## Changed assertions
+
+- `tests/reply-composer.component.test.ts:303` expected "Source conversation unavailable. Editing locally; nothing is sent." and now expects "Source conversation unavailable: not open. Editing locally; nothing is sent."
+- `tests/drafts.context.test.ts`: the `NOTICE` constant became `notice(label)`, and `expectEditableInCard` takes a `label` argument.
+  - The "could not be loaded" case expects `could not be loaded: not found`.
+  - The "incomplete" case expects `incomplete cached conversation`.
+  - The title `toMatch(reason)` checks and the role check are unchanged.
+- `tests/drafts.component.test.ts`, "ignores a late draft load after the active account changes": the list now reads each body once when it mounts, which would be counted as the first `getDraft`. I added an `armed` flag set after mount so only the opening read is held back and counted. The `reads` assertion is unchanged.
+- **Added:**
+  - `drafts-list.component.test.ts`: 17 new tests covering preview rendering, truncation, HTML-looking text staying literal, the empty placeholder, one read per revision, and the Discard confirm, cancel, failure, retry, focus and disabled cases.
+  - `drafts.context.test.ts`: 3 tests that run through the real fake client.
+  - `compose-card.component.test.ts`: one case per reason code, plus unknown reasons and no notice.
+  - `drafts.context.test.ts`: one added visible-text assertion for the other-account reason.
+
+## Checks
+
+- `pnpm typecheck` passes.
+- `pnpm test` passes: 65 files and 1080 tests, with 4 files and 33 tests skipped as before.
+- `pnpm build` passes.
+
+## Rendering
+
+I ran vite on port 5202 at 1280x800 and created two new drafts to the same recipient plus a reply draft. I then discarded one draft: the confirmation appeared, "Local draft deleted" was announced, and focus moved to the next row's open button. The server (pids 1455664 and 1455653) is killed and the tab is closed. I did not exercise the failure path in the browser; the tests cover it.
+
+- Drafts list with previews: `/home/exedev/.t3/userdata/browser-artifacts/browser-screenshot-127-0-0-1-mw86wys9-483aaa9b.png`
+- Discard confirmation: `/home/exedev/.t3/userdata/browser-artifacts/browser-screenshot-127-0-0-1-mw86xgoj-8b260a17.png`
+- After discard, with the status line and focus on the next row: `/home/exedev/.t3/userdata/browser-artifacts/browser-screenshot-127-0-0-1-mw86xlyx-4d58407a.png`
+
+The list screenshot predates the Reply-width fix, so its Discard column is misaligned. The other two show the fix.
+
+## Rejected or deviated
+
+- **A second discard implementation.** The brief said to reuse the existing discard path. That path (`askDiscard`, `discard`, `sendDelete`) acts on the open editor buffer and calls `clearEditor`, so it cannot serve a list row without opening the editor. I added `useDrafts.discardListed`. It sends the same revision-checked `DeleteDraft` through the same `client.deleteDraft` call, refreshes the list before it resolves, and refuses a draft that is open in the editor. The confirmation wording and test-id style match the editor's.
+- **A new `bodyPreview` field on `DraftSummary`.** This would be a Rust DTO and generated-type change, which is backend behaviour. It would remove the per-row `getDraft` reads, so it is a cleaner follow-up for you to decide on.
+- **Escape inside the confirmation.** This is a small scoped handler, the same pattern as the Reminders picker, so Escape does not also trigger the app's Back. It is not a row-action shortcut.
+
+## Worth adding to DESIGN.md
+
+- Drafts rows have a body preview (Ash, same line as the subject, "No text yet" when empty). It comes from `getDraft`, one read per revision.
+- The row action `Discard`, its confirmation line, and the focus handoff rule.
+- The `Discard` column is fixed by reserving the Reply word's width.
+- The compose-card Amber notice carries its terse reason, with the labels listed above.
+- The "Drafts (phase 3)" row description should add the preview, `Discard` and the status line.</result>
+<usage><subagent_tokens>208001</subagent_tokens><tool_uses>105</tool_uses><duration_ms>1278786</duration_ms></usage>
+<worktree><worktreePath>/home/exedev/email-os/.claude/worktrees/agent-a4a211843072b7b2e</worktreePath><worktreeBranch>worktree-agent-a4a211843072b7b2e</worktreeBranch></worktree>
+</task-notification>
