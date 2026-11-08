@@ -60,10 +60,18 @@ describe('ComposeCard inline new-message card', () => {
     expect(wrapper.find('[data-test="compose-backdrop"]').exists()).toBe(false);
     expect(wrapper.find('.compose-backdrop').exists()).toBe(false);
     expect(wrapper.get('.composer-heading h2').text()).toBe('New Message');
-    for (const hook of ['draft-to', 'draft-cc', 'draft-subject', 'draft-body']) {
+    // To and Subject stay visible as one-line rows; Cc is on demand.
+    for (const hook of ['draft-to', 'draft-subject', 'draft-body']) {
       expect(wrapper.find(`[data-test="${hook}"]`).exists()).toBe(true);
     }
+    expect(wrapper.find('[data-test="draft-cc"]').exists()).toBe(false);
+    const toggle = wrapper.get('[data-test="draft-fields-toggle"]');
+    expect(toggle.text()).toBe('Cc');
+    expect(toggle.attributes('aria-expanded')).toBe('false');
     await wrapper.get('[data-test="draft-to"]').setValue('ada@example.test');
+    await toggle.trigger('click');
+    expect(toggle.attributes('aria-expanded')).toBe('true');
+    expect(wrapper.find('[data-test="draft-cc"]').exists()).toBe(true);
     await wrapper.get('[data-test="draft-cc"]').setValue('cc@example.test');
     await wrapper.get('[data-test="draft-subject"]').setValue('Hello <b>not markup</b>');
     await wrapper.get('[data-test="draft-body"]').setValue('Body text ✓');
@@ -92,10 +100,11 @@ describe('ComposeCard inline new-message card', () => {
     expect(rule).toContain('background: var(--surface-raised)');
   });
 
-  it('offers only Close editor and Discard… in the footer and has no Send control', async () => {
+  it('offers only Save and close and Discard… in the footer, with an Esc hint that is not a button, and has no Send control', async () => {
     wrapper = mount(ComposeCard, { props: cardProps() });
     const footer = wrapper.get('.composer-footer');
-    expect(footer.findAll('button').map((button) => button.text().trim())).toEqual(['Close editor', 'Discard…']);
+    expect(footer.findAll('button').map((button) => button.text().trim())).toEqual(['Save and close', 'Discard…']);
+    expect(footer.get('kbd').text()).toBe('Esc');
     expect(wrapper.findAll('button').every((button) => !/send/i.test(button.text()))).toBe(true);
     expect(wrapper.findAll('*').filter((el) => el.text().trim() === 'Send')).toHaveLength(0);
     expect(wrapper.find('form').exists()).toBe(false);
@@ -103,6 +112,55 @@ describe('ComposeCard inline new-message card', () => {
     await footer.get('[data-test="discard-draft"]').trigger('click');
     expect(wrapper.emitted('closeEditor')).toHaveLength(1);
     expect(wrapper.emitted('askDiscard')).toHaveLength(1);
+  });
+
+  it('states the local-only guarantee once, in one status line, with the detail in the title and a hidden description', async () => {
+    wrapper = mount(ComposeCard, { props: cardProps() });
+    // No permanent multi-line disclaimer.
+    expect(wrapper.find('.draft-local-note').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain('No Send action exists');
+    const status = wrapper.get('[data-test="draft-status"]');
+    expect(status.text()).toBe('Local draft · not sent');
+    expect(status.classes()).toContain('draft-status-calm');
+    const detail = 'Local plain-text draft. Nothing is sent. Recipients are stored as typed and are not validated. Bcc, reply-all and rich text are not supported.';
+    expect(status.attributes('title')).toBe(detail);
+    const hidden = wrapper.get('[data-test="draft-local-detail"]');
+    expect(hidden.text()).toBe(detail);
+    expect(hidden.classes()).toContain('visually-hidden');
+    expect(wrapper.get('[data-test="draft-body"]').attributes('aria-describedby')).toBe(hidden.attributes('id'));
+    // Never claims quoted text is unsupported.
+    expect(wrapper.text()).not.toMatch(/quoted text/i);
+  });
+
+  it.each([
+    ['Saved locally', 'Saved locally · not sent', true],
+    ['Draft loaded from this device', 'Draft loaded from this device · not sent', true],
+    ['Saved in preview memory (non-durable)', 'Saved in preview memory (non-durable) · not sent', false],
+    ['Loaded from preview memory (non-durable)', 'Loaded from preview memory (non-durable) · not sent', false],
+    ['Saving locally…', 'Saving locally…', false],
+    ['Creating local draft…', 'Creating local draft…', false],
+    ['Save not confirmed', 'Save not confirmed', false],
+    ['Conflict — edits preserved', 'Conflict — edits preserved', false],
+  ])('shows the %s status as "%s" (calm Ash: %s)', async (status, text, calm) => {
+    wrapper = mount(ComposeCard, { props: cardProps({ status }) });
+    const line = wrapper.get('[data-test="draft-status"]');
+    expect(line.text()).toBe(text);
+    expect(line.classes().includes('draft-status-calm')).toBe(calm);
+  });
+
+  it('keeps a saved Cc visible and its toggle expanded', async () => {
+    wrapper = mount(ComposeCard, { props: cardProps({ content: { ...EMPTY_CONTENT, cc: 'cc@example.test' } }) });
+    expect((wrapper.get('[data-test="draft-cc"]').element as HTMLInputElement).value).toBe('cc@example.test');
+    expect(wrapper.get('[data-test="draft-fields-toggle"]').attributes('aria-expanded')).toBe('true');
+  });
+
+  it('ships a body of at least six lines and a docked shell that keeps the thread visible', () => {
+    const css = readFileSync('src/assets/style.css', 'utf8');
+    const textarea = css.slice(css.indexOf('.field-textarea {'), css.indexOf('}', css.indexOf('.field-textarea {')));
+    expect(textarea).toMatch(/min-height:\s*7\.5rem/);
+    const docked = css.slice(css.indexOf('.reader-pane > .compose-card {'), css.indexOf('}', css.indexOf('.reader-pane > .compose-card {')));
+    expect(docked).toContain('max-height: 60%');
+    expect(readFileSync('src/components/ReplyComposer.vue', 'utf8')).toContain('max-height: 60%');
   });
 
   it('shows the status line, alerts and the mirrored conflict/discard blocks with their emits', async () => {
@@ -115,8 +173,11 @@ describe('ComposeCard inline new-message card', () => {
       }),
     });
     const status = wrapper.get('[data-test="draft-status"]');
-    expect(status.text()).toContain('Saved in preview memory');
-    expect(status.attributes('aria-live')).toBe('polite');
+    // One status line: the preview words stay, "not sent" is appended, and non-durable stays Amber.
+    expect(status.text()).toBe('Saved in preview memory (non-durable) · not sent');
+    // Not a live region itself: the hidden status region announces only meaningful transitions.
+    expect(status.attributes('aria-live')).toBeUndefined();
+    expect(wrapper.get('[data-test="draft-status-announce"]').text()).toBe('Saved in preview memory (non-durable) · not sent');
     expect(wrapper.get('[data-test="draft-error"]').text()).toContain('revision 7');
     expect(wrapper.find('[data-test="draft-conflict-actions"]').exists()).toBe(true);
     await wrapper.get('[data-test="save-as-new"]').trigger('click');
@@ -198,7 +259,7 @@ describe('compose entry points in App (inline card in the central pane)', () => 
     expect(card.find('[data-test="draft-body"]').exists()).toBe(true);
     expect(card.find('[data-test="draft-status"]').exists()).toBe(true);
     const footer = card.find('.composer-footer');
-    expect(footer.findAll('button').map((button) => button.text().trim())).toEqual(['Close editor', 'Discard…']);
+    expect(footer.findAll('button').map((button) => button.text().trim())).toEqual(['Save and close', 'Discard…']);
     expect(card.findAll('button').every((button) => !/send/i.test(button.text()))).toBe(true);
   }
 

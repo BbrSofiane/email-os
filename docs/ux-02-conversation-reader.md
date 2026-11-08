@@ -104,6 +104,10 @@ Implemented behavior:
   accidentally clearing it. A visible "Reply targets the latest message from …" label sits near
   Prepare reply so focusing an older message cannot imply a different reply
   target.
+  Update (2026-11-08): `R` runs Prepare reply from the open reader under the same
+  rule as the buttons (ready, not Cached Trash, not blocked), and the standing
+  read-state sentences are now the title and hidden text of one status line in
+  the meta row instead of visible paragraphs; exception notices are unchanged.
 - **Copy controls (copy-only BROWSE-15 portion):** separately labelled
   copy-name (only when a display name is known) and copy-email buttons in
   `ContactPane.vue`, reachable by hover and keyboard. Activation uses

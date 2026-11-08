@@ -15,7 +15,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import App from '../src/App.vue';
 import ReplyComposer from '../src/components/ReplyComposer.vue';
-import type { DraftReceipt, DraftSource, MailClient } from '../src/lib/ipc/client';
+import type { DraftContent, DraftReceipt, DraftSource, MailClient } from '../src/lib/ipc/client';
 import {
   createBrowserFakeMailClient,
   deferred,
@@ -81,10 +81,25 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
     const w = await mountApp(fake);
     await openReaderAndPrepareReply(w);
 
-    expect(w.find('[data-test="draft-flag"]').text()).toBe('Draft');
+    // One compact heading line: no separate "Draft" flag (the status line says "not sent").
+    expect(w.find('[data-test="draft-flag"]').exists()).toBe(false);
     // Latest message of the open conversation: from.displayName ?? mailbox.
     expect(w.find('[data-test="draft-recipient-label"]').text()).toBe('Ada Fixture');
     expect(w.find('[data-test="reply-composer"] .composer-heading h2').text()).toContain('to Ada Fixture');
+    // Compact layout: a one-line recipient row (name while To is the default sender),
+    // Cc and Subject behind the toggle, and the body focused.
+    expect(w.find('[data-test="draft-to-row"]').text()).toBe('Ada Fixture <ada@example.test>');
+    expect(w.find('[data-test="draft-to"]').exists()).toBe(false);
+    expect(w.find('[data-test="draft-cc"]').exists()).toBe(false);
+    expect(w.find('[data-test="draft-subject"]').exists()).toBe(false);
+    expect(document.activeElement).toBe(w.find('[data-test="draft-body"]').element);
+    const toggle = w.find('[data-test="draft-fields-toggle"]');
+    expect(toggle.text()).toBe('Cc / Subject');
+    expect(toggle.attributes('aria-expanded')).toBe('false');
+    await toggle.trigger('click');
+    expect(toggle.attributes('aria-expanded')).toBe('true');
+    await w.find('[data-test="draft-to-row"]').trigger('click');
+    await flushPromises();
     expect((w.find('[data-test="draft-to"]').element as HTMLInputElement).value).toBe('ada@example.test');
     expect((w.find('[data-test="draft-cc"]').element as HTMLInputElement).value).toBe('');
     expect((w.find('[data-test="draft-subject"]').element as HTMLInputElement).value).toBe('Re: Fixture thread 1: weekly status');
@@ -168,7 +183,7 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
     expect(saved.content.bodyText).toBe('last keystroke');
   });
 
-  it('closes the inline composer through the Close editor control and keeps the reader open', async () => {
+  it('closes the inline composer through the Save and close control and keeps the reader open', async () => {
     const fake = createBrowserFakeMailClient();
     const w = await mountApp(fake);
     await openReaderAndPrepareReply(w);
@@ -219,7 +234,7 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
     expect(saved.content.bodyText).toBe('unacknowledged buffer');
   });
 
-  it('offers no Send path: the footer has only Close editor and Discard…', async () => {
+  it('offers no Send path: the footer has only Save and close and Discard… (the Esc hint is not a button)', async () => {
     const fake = createBrowserFakeMailClient();
     const w = await mountApp(fake);
     await openReaderAndPrepareReply(w);
@@ -228,7 +243,8 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
     expect(composer.find('form').exists()).toBe(false);
     const footer = composer.find('.composer-footer');
     expect(footer.exists()).toBe(true);
-    expect(footer.findAll('button').map((button) => button.text())).toEqual(['Close editor', 'Discard…']);
+    expect(footer.findAll('button').map((button) => button.text())).toEqual(['Save and close', 'Discard…']);
+    expect(footer.get('kbd').text()).toBe('Esc');
     // The discard flow is the revision-checked confirm dialog, mirrored from the drawer.
     await composer.find('[data-test="discard-draft"]').trigger('click');
     await flushPromises();
@@ -285,6 +301,132 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
     expect(w.find('[data-test="composer"]').exists()).toBe(true);
     expect((await fake.listDrafts())).toHaveLength(1);
     expect((await fake.listDrafts())[0]?.source).toMatchObject({ kind: 'reply' });
+  });
+
+  describe('compact recipient row and on-demand fields', () => {
+    const source: DraftSource = { kind: 'reply', conversation: fixtureRef('conv-01'), sourceMessageId: 'conv-01-m3' };
+    const props = (content: Partial<DraftContent> = {}) => ({
+      recipientLabel: 'Ada Fixture',
+      recipientMailbox: 'ada@example.test',
+      quotedSnippet: 'Ship it > <b>Friday</b>\nsecond line',
+      activeRef: { accountId: 'fixture', draftId: 'd1' },
+      source,
+      content: { to: 'ada@example.test', cc: '', subject: 'Re: x', bodyText: '', ...content },
+      status: 'Saved locally',
+      visible: true,
+      creating: false,
+      saving: false,
+      conflict: false,
+      error: null,
+      createError: null,
+      deleting: false,
+      closing: false,
+      transitioning: false,
+      deletePending: false,
+      confirmDiscard: false,
+      discardBusy: false,
+      confirmReload: false,
+      copyPending: false,
+      recoveryRequired: false,
+      canCancelReplyPreparation: false,
+      closeError: null,
+    });
+
+    it('shows the display name only while To is the default sender, and an input on activation', async () => {
+      const w = mount(ReplyComposer, { props: props(), attachTo: document.body });
+      wrapper = w as unknown as VueWrapper;
+      const row = w.get('[data-test="draft-to-row"]');
+      expect(row.element.tagName).toBe('BUTTON');
+      expect(row.text()).toBe('Ada Fixture <ada@example.test>');
+      expect(w.find('[data-test="draft-to"]').exists()).toBe(false);
+      await row.trigger('click');
+      await flushPromises();
+      const input = w.get('[data-test="draft-to"]');
+      expect((input.element as HTMLInputElement).value).toBe('ada@example.test');
+      expect(document.activeElement).toBe(input.element);
+      await input.setValue('someone-else@example.test');
+      expect(w.emitted('setField')).toEqual([['to', 'someone-else@example.test']]);
+    });
+
+    it('shows the real address next to a display name that differs from it (no hover-only address)', () => {
+      const w = mount(ReplyComposer, {
+        props: { ...props({ to: 'x@evil.test' }), recipientLabel: 'Bank Support', recipientMailbox: 'x@evil.test' },
+      });
+      wrapper = w as unknown as VueWrapper;
+      const row = w.get('[data-test="draft-to-row"]');
+      expect(row.text()).toContain('Bank Support');
+      expect(row.text()).toContain('<x@evil.test>');
+      expect(row.get('[data-test="draft-to-address"]').text()).toBe('<x@evil.test>');
+      // Interpolated text, never markup.
+      expect(row.find('b, a, img').exists()).toBe(false);
+    });
+
+    it('shows the address once when there is no distinct display name, and for a still-created reply', () => {
+      const bare = mount(ReplyComposer, {
+        props: { ...props({ to: 'ada@example.test' }), recipientLabel: 'ada@example.test', recipientMailbox: 'ada@example.test' },
+      });
+      expect(bare.get('[data-test="draft-to-row"]').text()).toBe('ada@example.test');
+      bare.unmount();
+      const creating = mount(ReplyComposer, { props: { ...props({ to: '' }), activeRef: null, creating: true, status: 'Creating local draft…' } });
+      wrapper = creating as unknown as VueWrapper;
+      expect(creating.get('[data-test="draft-to-row"]').text()).toBe('Ada Fixture <ada@example.test>');
+    });
+
+    it('never misrepresents an edited To: the raw text is shown verbatim in the input, with Cc and Subject open', () => {
+      const w = mount(ReplyComposer, { props: props({ to: '  Ada, bob@example.test ' }) });
+      wrapper = w as unknown as VueWrapper;
+      expect(w.find('[data-test="draft-to-row"]').exists()).toBe(false);
+      expect((w.get('[data-test="draft-to"]').element as HTMLInputElement).value).toBe('  Ada, bob@example.test ');
+      expect(w.find('[data-test="draft-cc"]').exists()).toBe(true);
+      expect(w.find('[data-test="draft-subject"]').exists()).toBe(true);
+    });
+
+    it.each([
+      ['a saved Cc', { cc: 'cc@example.test' }],
+      ['a subject that is not the default Re: line', { subject: 'Different topic' }],
+    ])('keeps %s visible instead of hiding data', (_name, content) => {
+      const w = mount(ReplyComposer, { props: props(content) });
+      wrapper = w as unknown as VueWrapper;
+      expect(w.get('[data-test="draft-fields-toggle"]').attributes('aria-expanded')).toBe('true');
+      expect(w.find('[data-test="draft-cc"]').exists()).toBe(true);
+      expect(w.find('[data-test="draft-subject"]').exists()).toBe(true);
+    });
+
+    it('reveals Cc and Subject on demand, moves focus into Cc, and hides them again when collapsed', async () => {
+      const w = mount(ReplyComposer, { props: props(), attachTo: document.body });
+      wrapper = w as unknown as VueWrapper;
+      const toggle = w.get('[data-test="draft-fields-toggle"]');
+      expect(w.find('[data-test="draft-cc"]').exists()).toBe(false);
+      await toggle.trigger('click');
+      await flushPromises();
+      expect(toggle.attributes('aria-expanded')).toBe('true');
+      expect(document.activeElement).toBe(w.get('[data-test="draft-cc"]').element);
+      expect((w.get('[data-test="draft-subject"]').element as HTMLInputElement).value).toBe('Re: x');
+      await toggle.trigger('click');
+      expect(w.find('[data-test="draft-cc"]').exists()).toBe(false);
+      expect(w.find('[data-test="draft-subject"]').exists()).toBe(false);
+    });
+
+    it('shows the quoted block read-only as literal text and exposes the fixed source only as attributes', () => {
+      const w = mount(ReplyComposer, { props: props() });
+      wrapper = w as unknown as VueWrapper;
+      const quoted = w.get('[data-test="reply-quoted-context"]');
+      expect(quoted.attributes('aria-label')).toBe('Quoted latest message (read-only)');
+      expect(quoted.text()).toBe('Ship it > <b>Friday</b>\nsecond line');
+      expect(quoted.find('b').exists()).toBe(false);
+      const sourceEl = w.get('[data-test="reply-source"]');
+      expect(sourceEl.attributes('data-source-conversation')).toBe('conv-01');
+      expect(sourceEl.attributes('data-source-message')).toBe('conv-01-m3');
+      expect(w.text()).not.toContain('conv-01');
+    });
+
+    it('stays disabled and shows the name while the reply is still being created', () => {
+      const w = mount(ReplyComposer, { props: { ...props({ to: '' }), activeRef: null, creating: true, status: 'Creating local draft…' } });
+      wrapper = w as unknown as VueWrapper;
+      expect(w.get('[data-test="draft-to-row"]').text()).toBe('Ada Fixture <ada@example.test>');
+      expect(w.get('[data-test="draft-to-row"]').attributes('disabled')).toBeDefined();
+      expect(w.get('[data-test="draft-body"]').attributes('disabled')).toBeDefined();
+    });
   });
 
   it('offers conflict recovery (reload / save as new) on the docked reply composer', async () => {

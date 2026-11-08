@@ -47,6 +47,9 @@ describe('local plain-text drafts UI', () => {
     const w = await mountApp(fake);
     await startNew(w);
     await w.find('[data-test="draft-to"]').setValue('  not an address, left as typed  ');
+    // Cc is on demand in the new-message layout.
+    expect(w.find('[data-test="draft-cc"]').exists()).toBe(false);
+    await w.find('[data-test="draft-fields-toggle"]').trigger('click');
     await w.find('[data-test="draft-cc"]').setValue('cc raw; no validation');
     await w.find('[data-test="draft-subject"]').setValue('<literal subject>');
     await w.find('[data-test="draft-body"]').setValue('Unicode ✓\n<script>still text</script>\nlast line');
@@ -63,7 +66,10 @@ describe('local plain-text drafts UI', () => {
     expect((w.find('[data-test="draft-subject"]').element as HTMLInputElement).value).toBe('<literal subject>');
     expect((w.find('[data-test="draft-body"]').element as HTMLTextAreaElement).value).toBe('Unicode ✓\n<script>still text</script>\nlast line');
     expect(w.find('[data-test="draft-body"]').element.querySelector('script')).toBeNull();
-    expect(w.text()).toContain('stored raw and is not validated');
+    // The local-only detail is the body's hidden description, not a visible paragraph.
+    expect(w.find('[data-test="draft-local-detail"]').text()).toContain('stored as typed and are not validated');
+    expect(w.find('[data-test="draft-local-detail"]').classes()).toContain('visually-hidden');
+    expect(w.find('[data-test="draft-body"]').attributes('aria-describedby')).toBe(w.find('[data-test="draft-local-detail"]').attributes('id'));
     expect(w.text()).toContain('Loaded from preview memory (non-durable)');
     expect(w.find('button').text()).not.toMatch(/send/i);
   });
@@ -80,8 +86,19 @@ describe('local plain-text drafts UI', () => {
     await w.find('[data-test="prepare-reply"]').trigger('click');
     await flushPromises();
     expect(w.find('[data-test="composer"]').exists()).toBe(true);
-    expect(w.find('[data-test="reply-source"]').text()).toContain(latest.id);
+    // The fixed source is an attribute only: no visible or accessible raw IDs.
+    const source = w.find('[data-test="reply-source"]');
+    expect(source.attributes('data-source-message')).toBe(latest.id);
+    expect(source.attributes('data-source-conversation')).toBe('conv-01');
+    expect(source.text()).toBe('');
+    expect(w.find('[data-test="composer"]').text()).not.toContain(latest.id);
+    // Compact reply: To is a collapsed row until activated; Cc and Subject are on demand.
+    expect(w.find('[data-test="draft-to-row"]').text()).toBe('Ada Fixture <ada@example.test>');
+    expect(w.find('[data-test="draft-to"]').exists()).toBe(false);
+    await w.find('[data-test="draft-to-row"]').trigger('click');
+    await flushPromises();
     expect((w.find('[data-test="draft-to"]').element as HTMLInputElement).value).toBe('ada@example.test');
+    await w.find('[data-test="draft-fields-toggle"]').trigger('click');
     expect((w.find('[data-test="draft-cc"]').element as HTMLInputElement).value).toBe('');
     expect((w.find('[data-test="draft-subject"]').element as HTMLInputElement).value).toBe('Re: Fixture thread 1: weekly status');
     expect((w.find('[data-test="draft-body"]').element as HTMLTextAreaElement).value).toBe('');
@@ -640,7 +657,7 @@ describe('local plain-text drafts UI', () => {
     await flushPromises();
     expect(commands).toHaveLength(2);
     expect(commands[1]).toEqual(commands[0]);
-    expect((w.find('[data-test="draft-status"]').text())).toBe('Saved in preview memory (non-durable)');
+    expect((w.find('[data-test="draft-status"]').text())).toBe('Saved in preview memory (non-durable) · not sent');
     expect(await fake.getDraft(commands[0]!.ref)).toMatchObject({ revision: 2, content: { bodyText: 'saved but not yet verified' } });
   });
 
@@ -912,7 +929,7 @@ describe('local plain-text drafts UI', () => {
       const remaining = await fake.listDrafts();
       expect(remaining).toHaveLength(1);
       expect((await fake.getDraft(remaining[0]!.ref)).content.bodyText).toBe('latest exact recovery buffer');
-      expect(w.find('[data-test="draft-status"]').text()).toBe('Saved in preview memory (non-durable)');
+      expect(w.find('[data-test="draft-status"]').text()).toBe('Saved in preview memory (non-durable) · not sent');
       const unload = new Event('beforeunload', { cancelable: true }) as BeforeUnloadEvent;
       window.dispatchEvent(unload);
       expect(unload.defaultPrevented).toBe(false);
@@ -1060,7 +1077,7 @@ describe('local plain-text drafts UI', () => {
     else oldRetry.resolve({ ref: original.ref, revision: original.revision + 1, savedAt: '2025-01-01T00:00:00Z' });
     await flushPromises();
     expect(w.find('[data-test="draft-error"]').exists()).toBe(false);
-    expect(w.find('[data-test="draft-status"]').text()).toBe('Saved in preview memory (non-durable)');
+    expect(w.find('[data-test="draft-status"]').text()).toBe('Saved in preview memory (non-durable) · not sent');
     const unload = new Event('beforeunload', { cancelable: true }) as BeforeUnloadEvent;
     window.dispatchEvent(unload);
     expect(unload.defaultPrevented).toBe(false);

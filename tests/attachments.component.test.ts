@@ -28,7 +28,13 @@ describe('UX-12 download-only chooser', () => {
     expect(list).toHaveBeenCalledExactlyOnceWith(conversation.ref);
     expect(save).not.toHaveBeenCalled(); expect(open).not.toHaveBeenCalled();
     expect(wrapper!.find('iframe, object, embed, img, a').exists()).toBe(false);
-    expect(wrapper!.text()).toContain('PDF preview is unavailable');
+    // The long caveat moved into the title; the visible line is one short sentence.
+    const note = wrapper!.get('.chooser-note');
+    expect(note.text()).toBe('Download only. Files save inert with a .download suffix; nothing is opened.');
+    expect(note.attributes('title')).toContain('PDF preview is unavailable');
+    expect(note.attributes('title')).toContain('32 cached files and 32 plain-text links');
+    expect(wrapper!.text()).toContain('text/html, 29 B');
+    expect(wrapper!.text()).not.toContain('bytes');
     expect(wrapper!.findAll('[aria-label="Known links"] li')).toHaveLength(2);
     await wrapper!.findAll('button').find(b => b.text() === 'Open link…')!.trigger('click');
     expect(open).not.toHaveBeenCalled();
@@ -62,6 +68,15 @@ describe('UX-12 download-only chooser', () => {
     await wrapper!.setProps({ conversation: { ...conversation, retainedSnapshotAt: '2026-01-01' } });
     expect(button('Save to Downloads').attributes('disabled')).toBeDefined();
     expect(save).not.toHaveBeenCalled();
+  });
+  it('shows human sizes and the 5 MB limit message instead of a Save button for large files', async () => {
+    const client = createBrowserFakeMailClient();
+    vi.spyOn(client, 'listAttachments').mockResolvedValue([{ ...file, attachmentId: 'big', filename: 'big.bin', mimeType: 'application/octet-stream', size: 6 * 1024 * 1024 }]);
+    wrapper = mount(AttachmentChooser, { props: { client, conversation, preview: false }, attachTo: document.body });
+    await flushPromises();
+    expect(wrapper.text()).toContain('big.bin — application/octet-stream, 6.0 MB');
+    expect(wrapper.text()).toContain('Over the 5 MB limit; cannot download.');
+    expect(wrapper.findAll('button').some((b) => b.text() === 'Save to Downloads')).toBe(false);
   });
   it('native Cmd+O opens a chooser rather than choosing a resource; browser Cmd+O stays reserved', async () => {
     for (const mode of ['native', 'browser-preview'] as const) {
