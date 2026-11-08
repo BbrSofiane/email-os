@@ -79,7 +79,7 @@ describe('bounded local reminder journey', () => {
     // The visible text is "Cancel reminder"; the accessible name still says what it does.
     const cancel = panel.findAll('button').find(b => b.text() === 'Cancel reminder')!;
     expect(cancel.attributes('aria-label')).toBe('Cancel reminder and restore original inbox messages');
-    expect(cancel.attributes('title')).toBe('Cancel and restore original inbox messages');
+    expect(cancel.attributes('title')).toBe('Cancel and restore original inbox messages — Shift+H');
     await cancel.trigger('click'); await flushPromises();
     expect(fake.reminders!.cancel).toHaveBeenCalledWith(expect.objectContaining({ conversation: target, expectedRevision: 1 }));
     unmount();

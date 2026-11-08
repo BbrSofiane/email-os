@@ -126,6 +126,26 @@ export function useReminders(client: MailClient, options: RemindersOptions = {})
   });
 
   // ---- Tabs: their own arrow keys; rows use J/K/arrows (useDrawerRows) -------
+  /** Polite words for the last list-side tab change (`[` / `]`); the list renders them in a live region. */
+  const tabAnnouncement = ref('');
+  /**
+   * Move to the previous or next tab with the same wrap as the tablist's arrow
+   * keys, forget the old current row (the new tab starts at its first row) and
+   * announce the new tab. The caller moves focus into the list.
+   */
+  function stepDestination(delta: 1 | -1) {
+    const index = REMINDER_TABS.findIndex(tab => tab.id === destination.value);
+    const next = REMINDER_TABS[(index + delta + REMINDER_TABS.length) % REMINDER_TABS.length]!;
+    destination.value = next.id;
+    activeRow.value = null;
+    // The same numbers the tab shows: calm rows, then the separate attention count.
+    const count = counts.value[next.id];
+    const attention = attentionCount.value;
+    const words = `${next.label}, ${count === 0 ? 'no reminders' : `${count} ${count === 1 ? 'reminder' : 'reminders'}`}${attention > 0 ? `. ${NEEDS_ATTENTION_LABEL} ${attention}` : ''}`;
+    // Clear first so the same words announce again after an unrelated tab change.
+    tabAnnouncement.value = '';
+    void nextTick(() => { tabAnnouncement.value = words; });
+  }
   function onTabKeydown(event: KeyboardEvent) {
     if (event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
     const index = REMINDER_TABS.findIndex(tab => tab.id === destination.value);
@@ -323,14 +343,15 @@ export function useReminders(client: MailClient, options: RemindersOptions = {})
     unsubscribe?.(); unsubscribe = undefined;
     dismissPicker();
     target.value = null;
+    tabAnnouncement.value = '';
   }
   onScopeDispose(deactivate);
 
   return {
     rows, error, preparationError, preparationTarget, busy, loading, source, due, presets, customOpen, someday, condition,
-    destination, target, activeRow, retrying, dismissBlocked,
+    destination, target, activeRow, retrying, dismissBlocked, tabAnnouncement,
     displayed, attentionCount, counts, presetList, customForced, customShown,
-    onTabKeydown, refresh, prepare, dismissPicker, closePicker, setTarget, reschedule, choosePreset, submit, cancel, retryOrRefresh, inspectDurableState,
+    onTabKeydown, stepDestination, refresh, prepare, dismissPicker, closePicker, setTarget, reschedule, choosePreset, submit, cancel, retryOrRefresh, inspectDurableState,
     activate, deactivate, whenLoaded: () => loaded,
   };
 }

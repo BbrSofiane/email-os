@@ -14,6 +14,13 @@
  *
  * Esc inside the picker dismisses the picker alone; anywhere else Esc is the
  * app's Back. Row keys come from ContextRowList (J/K, arrows, Home, End).
+ *
+ * The app's key handler reaches the focused row through `rescheduleRow` (H)
+ * and `cancelRow` (Shift+H): the same actions as the two row buttons, with the
+ * same enabled rules, and a silent `false` for a row that does not offer the
+ * action. Cancel keeps its immediate semantics. When a cancelled row leaves the
+ * tab while focus is on <body>, focus moves to the next row (else the previous
+ * one, else the pane). A polite status line names the tab after `[` / `]`.
  */
 import { computed, nextTick, ref, watch } from 'vue';
 import type { Reminder } from '../lib/ipc/client';
@@ -26,7 +33,7 @@ const props = defineProps<{ model: RemindersModel }>();
 const emit = defineEmits<{ open: [target: Reminder['conversation']] }>();
 const {
   error, preparationError, preparationTarget, busy, loading, source, due, someday, condition, destination,
-  displayed, attentionCount, activeRow, retrying, presetList, customForced, customShown, customOpen,
+  displayed, attentionCount, activeRow, retrying, presetList, customForced, customShown, customOpen, tabAnnouncement,
 } = props.model;
 
 interface ReminderItem { key: string; reminder: Reminder }
@@ -43,11 +50,57 @@ async function focusRow(options: { preventScroll?: boolean } = {}): Promise<void
   if (list.value) await list.value.focusRow(activeRow.value, options);
   else paneEl.value?.focus(options);
 }
+
+function canReschedule(item: ReminderItem): boolean {
+  return item.reminder.phase === 'pending' && !busy.value && !retrying.value;
+}
+function canCancel(item: ReminderItem): boolean {
+  return CANCELLABLE.includes(item.reminder.phase) && !busy.value && !retrying.value;
+}
+function itemFor(key: string): ReminderItem | undefined {
+  return items.value.find(item => item.key === key);
+}
+/** Open Reschedule for the row with this key, like its button. False when the row offers none. */
+function rescheduleRow(key: string): boolean {
+  const item = itemFor(key);
+  if (!item || !canReschedule(item)) return false;
+  props.model.reschedule(item.reminder);
+  return true;
+}
+/** Cancel the row's reminder at once, like its button. False when the row offers none. */
+function cancelRow(key: string): boolean {
+  const item = itemFor(key);
+  if (!item || !canCancel(item)) return false;
+  const keys = items.value.map(candidate => candidate.key);
+  const index = keys.indexOf(key);
+  refocus = { key, neighbour: keys[index + 1] ?? keys[index - 1] ?? null };
+  props.model.cancel(item.reminder);
+  return true;
+}
 /** Keep focus inside an open picker while its request cannot be dismissed. */
 function retainPickerFocus(): void {
   if (pickerEl.value && !pickerEl.value.contains(document.activeElement)) pickerEl.value.focus({ preventScroll: true });
 }
-defineExpose({ focusRow, retainPickerFocus, el: paneEl });
+defineExpose({ focusRow, rescheduleRow, cancelRow, retainPickerFocus, el: paneEl });
+
+// A cancelled row leaves the tab a moment later. If it had keyboard focus, focus
+// would fall to <body>, where the row keys no longer work.
+let refocus: { key: string; neighbour: string | null } | null = null;
+watch(() => items.value.map(item => item.key), async (keys) => {
+  if (!refocus || keys.includes(refocus.key)) return;
+  const { neighbour } = refocus;
+  refocus = null;
+  await nextTick();
+  const active = document.activeElement;
+  if (active && active !== document.body && active.isConnected) return;
+  if (neighbour !== null && keys.includes(neighbour)) activeRow.value = neighbour;
+  await focusRow();
+});
+/** Focus that moves to any other row ends the pending refocus. */
+function onPaneFocusin(event: FocusEvent): void {
+  const target = event.target;
+  if (refocus && !(target instanceof HTMLElement && target.dataset.drawerRow === refocus.key)) refocus = null;
+}
 
 // The picker is an in-flow block: when it opens, focus moves to its first
 // choice; when it closes while focus was inside it, focus returns to the rows.
@@ -76,7 +129,7 @@ function rowTitle(item: ReminderItem): string { return `Revision ${item.reminder
 </script>
 
 <template>
-  <div ref="paneEl" class="context-pane" data-test="reminders-panel" tabindex="-1">
+  <div ref="paneEl" class="context-pane" data-test="reminders-panel" tabindex="-1" @focusin="onPaneFocusin">
     <!-- Honest state, once: the fixture disclosure is visible; the rest is its title and hidden text. -->
     <div class="context-coverage">
       <p class="cached-coverage" role="note" data-test="reminders-coverage" :title="REMINDERS_FIXTURE_DETAIL">{{ REMINDERS_FIXTURE_LINE }}<span class="visually-hidden"> · {{ REMINDERS_FIXTURE_DETAIL }}</span></p>
@@ -143,6 +196,8 @@ function rowTitle(item: ReminderItem): string { return `Revision ${item.reminder
         </div>
       </fieldset>
     </form>
+    <!-- Names the tab after `[` / `]`; mounted all the time so each change is announced. -->
+    <p class="visually-hidden" role="status" aria-live="polite" data-test="reminders-tab-status">{{ tabAnnouncement }}</p>
     <div id="reminder-tabpanel" role="tabpanel" :aria-labelledby="`reminder-tab-${destination}`">
       <p v-if="loading" class="list-state" role="status">Loading local reminders…</p>
       <p v-else-if="!displayed.length" class="list-state" data-test="reminders-empty">No {{ destination }} reminders.</p>
@@ -161,13 +216,14 @@ function rowTitle(item: ReminderItem): string { return `Revision ${item.reminder
         <template #primary="{ item }"><span class="context-subject">{{ item.reminder.subject || '(No subject)' }}</span></template>
         <template #secondary="{ item }"><span v-if="item.reminder.condition === 'regardless'" data-test="reminder-condition">Returns regardless of reply</span></template>
         <template #actions="{ item }">
-          <button v-if="item.reminder.phase === 'pending'" type="button" class="drawer-quiet" :disabled="busy || retrying" @click="model.reschedule(item.reminder)">Reschedule</button>
+          <button v-if="item.reminder.phase === 'pending'" type="button" class="drawer-quiet" title="Reschedule — H" aria-keyshortcuts="H" :disabled="busy || retrying" @click="model.reschedule(item.reminder)">Reschedule</button>
           <button
             v-if="CANCELLABLE.includes(item.reminder.phase)"
             type="button"
             class="drawer-quiet"
             :aria-label="item.reminder.phase === 'failed' ? 'Cancel reminder and recover original inbox messages' : 'Cancel reminder and restore original inbox messages'"
-            :title="item.reminder.phase === 'failed' ? 'Cancel / recover original inbox messages' : 'Cancel and restore original inbox messages'"
+            :title="`${item.reminder.phase === 'failed' ? 'Cancel / recover original inbox messages' : 'Cancel and restore original inbox messages'} — Shift+H`"
+            aria-keyshortcuts="Shift+H"
             :disabled="busy || retrying"
             @click="model.cancel(item.reminder)"
           >Cancel reminder</button>

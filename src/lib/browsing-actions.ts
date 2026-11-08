@@ -25,10 +25,10 @@ export const browsingActions = [
   { id: 'done', label: 'Go to cached Done', shortcut: 'G then E (within 1 second)' },
   { id: 'starred', label: 'Go to cached Starred', shortcut: '' },
   { id: 'destinations', label: 'Go to Provider mail (read only)', shortcut: '' },
-  { id: 'trash', label: 'Go to cached Trash (read only)', shortcut: '' },
+  { id: 'trash', label: 'Go to cached Trash (read only)', shortcut: 'G then T (within 1 second)' },
   { id: 'account', label: 'Go to Account', shortcut: '' },
   { id: 'activity', label: 'Go to Activity', shortcut: '' },
-  { id: 'drafts', label: 'Go to local Drafts', shortcut: '' },
+  { id: 'drafts', label: 'Go to local Drafts', shortcut: 'G then D (within 1 second)' },
   { id: 'switch-account', label: 'Switch account', shortcut: '' },
 ] as const;
 export type BrowsingActionId = typeof browsingActions[number]['id'];

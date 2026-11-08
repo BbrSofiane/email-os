@@ -88,7 +88,7 @@ describe('UX-10 A read-only cached Trash list context', () => {
     const rail = w.get('[data-test="rail-trash"]');
     expect(rail.attributes('aria-current')).toBeUndefined();
     expect(rail.attributes('aria-expanded')).toBeUndefined();
-    expect(rail.attributes('title')).toBe('Go to cached Trash (read only)');
+    expect(rail.attributes('title')).toBe('Go to cached Trash (read only) — G then T (within 1 second)');
     await rail.trigger('click'); await flushPromises();
     expect(w.get('[data-test="rail-trash"]').attributes('aria-current')).toBe('page');
     expect(w.get('[data-test="rail-trash"]').attributes('aria-expanded')).toBeUndefined();

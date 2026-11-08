@@ -26,6 +26,11 @@
  * keeps the draft and says so, a success moves focus to the next row (else the
  * previous one, else the pane) and announces `Local draft deleted`. A draft
  * that is open in the editor cannot be discarded here.
+ *
+ * The app's key handler reaches the focused row through `discardRow` (Delete
+ * or Backspace). It only opens the same confirmation as the button and never
+ * discards; a row that cannot be discarded (editor open, busy, no `discardDraft`)
+ * answers `false` and nothing happens.
  */
 import { computed, nextTick, ref } from 'vue';
 import type { DraftRef, DraftSummary, MailError } from '../lib/ipc/client';
@@ -135,6 +140,14 @@ async function askDiscard(item: DraftItem): Promise<void> {
   rowEl(item, '[data-test="confirm-discard-draft"]')?.focus();
 }
 
+/** Open the confirmation for the row with this key, like its button. False when the row offers no Discard. */
+function discardRow(key: string): boolean {
+  const item = items.value.find(candidate => candidate.key === key);
+  if (!item || !props.discardDraft || discardDisabled(item)) return false;
+  void askDiscard(item);
+  return true;
+}
+
 async function cancelDiscard(item: DraftItem): Promise<void> {
   if (discarding.value) return;
   confirmKey.value = null;
@@ -187,7 +200,7 @@ async function focusRow(options: { preventScroll?: boolean } = {}): Promise<void
   if (list.value) await list.value.focusRow(props.activeKey, options);
   else paneEl.value?.focus(options);
 }
-defineExpose({ focusRow, el: paneEl });
+defineExpose({ focusRow, discardRow, el: paneEl });
 </script>
 
 <template>
@@ -246,7 +259,8 @@ defineExpose({ focusRow, el: paneEl });
           class="drawer-quiet"
           data-test="discard-draft"
           :aria-label="`Discard draft ${rowLabel(item.draft)}`"
-          :title="editorOwns(item.draft.ref) ? 'This draft is open in an editor' : 'Discard this local draft'"
+          :title="editorOwns(item.draft.ref) ? 'This draft is open in an editor' : 'Discard this local draft — Delete'"
+          aria-keyshortcuts="Delete Backspace"
           :aria-expanded="confirmKey === item.key"
           :disabled="discardDisabled(item)"
           @click="askDiscard(item)"

@@ -21,7 +21,11 @@
  *   r prepares a local reply,
  *   c composes a local draft, h schedules a local reminder, and z undoes.
  * - x selects; Shift+J/K extends selection; Tab switches Inbox/saved split.
- *   G then E opens cached Done; G then H opens Reminders when supported.
+ *   G then E opens cached Done, G then T cached Trash (when the rail has it),
+ *   G then D Drafts, G then H Reminders when supported.
+ * - Reminders list: `[` / `]` step the tab; on a focused row H opens
+ *   Reschedule and Shift+H cancels. Drafts list: Delete or Backspace on a
+ *   focused row opens its Discard confirmation only.
  * - Cmd+K opens Commands in native mode. Mailbox shortcuts yield to editors,
  *   IME composition, and modifier keys. Drafts have no send path.
  */
@@ -1270,7 +1274,7 @@ const overlayQuery = computed({
 const paletteButton = ref<HTMLElement | null>(null);
 let overlayOrigin: HTMLElement | null = null;
 let overlayRowOrigin: ConversationRef | null = null;
-// G-chord (g then e/h). The chord window is long enough for a hesitant second
+// G-chord (g then e/t/d/h). The chord window is long enough for a hesitant second
 // key; when it lapses the hint disappears and a short grace window swallows a
 // late e/h, so a slow "g e" can never fall through to the plain-key meaning of
 // e (Archive). Any other key, focus change or explicit cancel ends the grace.
@@ -1295,12 +1299,31 @@ function armGo(): void {
     goGraceTimer = setTimeout(endGoGrace, GO_CHORD_GRACE_MS);
   }, GO_CHORD_WINDOW_MS);
 }
-/** Keys whose chorded meaning (Done / Reminders) differs from the plain key. */
-function isGoSecondKey(event: KeyboardEvent): boolean {
-  return (event.key === 'e' || (event.key === 'h' && remindersSupported.value))
-    && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey && !event.isComposing;
+/** The action each G chord's second key opens, in the order the hint names them. */
+const GO_TARGETS: ReadonlyArray<{ key: string; id: 'done' | 'trash' | 'drafts' | 'reminders'; word: string }> = [
+  { key: 'e', id: 'done', word: 'Done' },
+  { key: 't', id: 'trash', word: 'Trash' },
+  { key: 'd', id: 'drafts', word: 'Drafts' },
+  { key: 'h', id: 'reminders', word: 'Reminders' },
+];
+/** Only what the palette and rail offer: Trash needs its rail item, Reminders its transport. */
+function availableGoTargets() {
+  return GO_TARGETS.filter((target) => target.id === 'done' || actionAvailable(target.id));
 }
-const goHintLabel = computed(() => `g pressed. Press E for Done${remindersSupported.value ? ' or H for Reminders' : ''}, Escape to cancel.`);
+/** The chord's target for an unmodified key, or undefined (the key keeps its plain meaning). */
+function goTargetFor(event: KeyboardEvent) {
+  if (event.shiftKey || event.metaKey || event.ctrlKey || event.altKey || event.isComposing) return undefined;
+  return availableGoTargets().find((target) => target.key === event.key);
+}
+/** Keys whose chorded meaning (Done / Trash / Drafts / Reminders) differs from the plain key. */
+function isGoSecondKey(event: KeyboardEvent): boolean {
+  return goTargetFor(event) !== undefined;
+}
+const goHintLabel = computed(() => {
+  const phrases = availableGoTargets().map((target) => `${target.key.toUpperCase()} for ${target.word}`);
+  const list = phrases.length > 1 ? `${phrases.slice(0, -1).join(', ')} or ${phrases.at(-1)}` : phrases[0];
+  return `g pressed. Press ${list}, Escape to cancel.`;
+});
 function openOverlay(kind: 'palette' | 'navigator'): void {
   cancelGo();
   if (!accountReady.value) return;
@@ -2056,7 +2079,7 @@ function onKeydown(event: KeyboardEvent): void {
     // Escape cancels the armed chord and is consumed: one Escape, one dismissal.
     if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); return; }
     if (isGoSecondKey(event) && !isEditableTarget(event.target) && !drawer.value && !contactDisclosure.value && !readerOpen.value) {
-      event.preventDefault(); void executeAction(event.key === 'h' ? 'reminders' : 'done'); return;
+      event.preventDefault(); void executeAction(goTargetFor(event)!.id); return;
     }
   } else if (goGraceTimer) {
     // The window just lapsed: a late second key was almost certainly meant for
@@ -2159,6 +2182,28 @@ function onKeydown(event: KeyboardEvent): void {
     }
     // At either boundary, leave Tab to native traversal (never wrap).
     return;
+  }
+  // Reminders list: `[` / `]` step the tab from the rows or the pane (never from
+  // a button, field or picker), and H / Shift+H act on the focused row only.
+  // A row without the action ignores the key silently. Trash has no row key.
+  if (remindersList.value && browsingOwns && !event.repeat && (key === '[' || key === ']')) {
+    event.preventDefault();
+    reminders.stepDestination(key === ']' ? 1 : -1);
+    void nextTick().then(() => remindersPane.value?.focusRow());
+    return;
+  }
+  const contextRowKey = isContextRow && event.target instanceof HTMLElement ? event.target.dataset.drawerRow : undefined;
+  if (contextRowKey !== undefined && !event.repeat) {
+    if (remindersRowOwns && key.toLowerCase() === 'h') {
+      const handled = event.shiftKey ? remindersPane.value?.cancelRow(contextRowKey) : remindersPane.value?.rescheduleRow(contextRowKey);
+      if (handled) event.preventDefault();
+      return;
+    }
+    // Delete or Backspace only asks; the confirmation owns the discard.
+    if (draftsRowOwns && !event.shiftKey && (key === 'Delete' || key === 'Backspace')) {
+      if (draftsPane.value?.discardRow(contextRowKey)) event.preventDefault();
+      return;
+    }
   }
   if (browsingOwns && !event.shiftKey && key === 'ArrowLeft') {
     event.preventDefault(); openOverlay('navigator'); return;
@@ -3030,6 +3075,6 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
       </div>
     </main>
     <AttachmentChooser v-if="attachmentConversation" :client="props.client" :conversation="attachmentConversation" :preview="props.mode === 'browser-preview'" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" @close="closeAttachments" />
-    <ActionOverlay v-if="overlay" v-model:query="overlayQuery" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" :kind="overlay" :actions="availableActions" @close="closeOverlay()" @execute="executeOverlay" />
+    <ActionOverlay v-if="overlay" v-model:query="overlayQuery" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" :kind="overlay" :actions="availableActions" :key-scope="remindersList ? 'reminders' : draftsList ? 'drafts' : undefined" @close="closeOverlay()" @execute="executeOverlay" />
   </div>
 </template>

@@ -219,14 +219,14 @@ describe('Remind me from the list and the reader', () => {
 });
 
 describe('mutation safety', () => {
-  it('mailbox shortcuts do nothing in the Reminders list; the row actions are its only mutations', async () => {
+  it('mailbox shortcuts do nothing in the Reminders list; the row actions (H, Shift+H) are its only mutations', async () => {
     const { fake, w } = await mountApp();
     const archive = vi.spyOn(fake, 'setArchived');
     const read = vi.spyOn(fake, 'setRead');
     const star = vi.spyOn(fake, 'setStarred');
     await w.get('[data-test="reminders-trigger"]').trigger('click'); await flushPromises();
     const target = rowButtons(w)[0]!.element;
-    for (const [name, init] of [['e', {}], ['E', { shiftKey: true }], ['z', {}], ['s', {}], ['U', { shiftKey: true }], ['x', {}], ['J', { shiftKey: true }], ['h', {}], ['r', {}]] as const) {
+    for (const [name, init] of [['e', {}], ['E', { shiftKey: true }], ['z', {}], ['s', {}], ['U', { shiftKey: true }], ['x', {}], ['J', { shiftKey: true }], ['r', {}]] as const) {
       await key(name, init, target);
     }
     expect(archive).not.toHaveBeenCalled();
