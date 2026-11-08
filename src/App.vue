@@ -424,6 +424,8 @@ const replyLatestMessage = computed(() => {
   if (!readerOpen.value || !conversation || !sameConversation(conversation.ref, mailbox.openRef.value)) return null;
   return conversation.messages.at(-1) ?? null;
 });
+/** Default To of the reply: the mailbox of the latest message's sender. */
+const replyRecipientMailbox = computed(() => replyLatestMessage.value?.from.mailbox ?? null);
 /** "Draft to {sender}": display name when known, otherwise the mailbox. */
 const replyRecipientLabel = computed(() => {
   const latest = replyLatestMessage.value;
@@ -632,6 +634,18 @@ watch(() => mailbox.openRef.value, (ref) => {
     replyComposerOpen.value = false;
     if (drawer.value !== 'drafts') void openDrawer('drafts');
   }
+});
+
+// Closing the docked reply composer removes the control that held focus. Give it
+// back to the reader's active message, but only when it fell to <body> and the
+// reader is still the visible surface (a re-dock into the drawer keeps its own focus).
+watch(replyComposerOpen, async (open, wasOpen) => {
+  if (open || !wasOpen) return;
+  await nextTick();
+  if (!readerOpen.value || drawer.value || overlay.value) return;
+  const active = document.activeElement;
+  if (active && active !== document.body) return;
+  readerView.value?.focusActiveMessage();
 });
 
 /** Close the inline compose card through the protected draft lifecycle; a failed flush keeps the card open. */
@@ -1633,6 +1647,9 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   // inert behind another surface.
   if (id === 'compose') return !!accountId.value && !editingSplit.value && !drawer.value && !contactDisclosure.value;
   if (drafts.activeRef.value || drawer.value || contactDisclosure.value || trashReader.value) return false;
+  // Reply is reader-only and uses ReaderView's own rule, the same one that
+  // disables its buttons (blocked, incomplete or retained conversations, Trash).
+  if (id === 'reply') return readerOpen.value && mailbox.detailState.value === 'ready' && readerView.value?.canPrepareReply() === true;
   if (id === 'undo') {
     // Same guards as the key: no in-flight undo (a second dispatch would race
     // into a false already_undone), and no open reader message-details disclosure.
@@ -1717,6 +1734,7 @@ async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): 
       if (actionAvailable(id) && !overlay.value) editingSplit.value = true;
       return;
     case 'search': await revealSearch(); return;
+    case 'reply': readerView.value?.prepareReply(); return;
     case 'remind': await openReminders(true); return;
     case 'reminders': await openReminders(false); return;
     case 'inbox': await navigateToInbox(); return;
@@ -1787,14 +1805,15 @@ function buttonOwns(target: EventTarget | null): boolean {
 }
 
 /**
- * A reader message toggle is the reader's navigation focus, not a toolbar
+ * A reader message toggle (and its quoted-text toggle, which keeps focus after a
+ * click) is the reader's navigation focus, not a toolbar
  * action button: the conversation-level shortcuts (E, Shift+U) must stay
  * usable from it. All other buttons/links keep the generic exclusion, and
  * native Enter/Space on a toggle still expands/collapses its message.
  */
 function readerMessageToggleOwns(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;
-  return !!el && typeof el.closest === 'function' && el.closest('.message-toggle') !== null;
+  return !!el && typeof el.closest === 'function' && el.closest('.message-toggle, .message-quote-toggle') !== null;
 }
 
 /** Generic button exclusion, except reader-owned message-navigation focus. */
@@ -1964,6 +1983,12 @@ function onKeydown(event: KeyboardEvent): void {
   if (key === 'c' && !event.shiftKey && !event.repeat && (browsingOwns || readerIsOpen) && !actionShortcutBlocked(event.target)) {
     event.preventDefault();
     void executeAction('compose');
+    return;
+  }
+  // Reply works from the reader only: the source is the displayed latest message.
+  // actionAvailable owns every guard (ready, not blocked, not Trash, no drawer).
+  if (key === 'r' && !event.shiftKey && !event.repeat && readerIsOpen && !actionShortcutBlocked(event.target)) {
+    if (actionAvailable('reply')) { event.preventDefault(); void executeAction('reply'); }
     return;
   }
   // Undo works from BOTH the list and the reader; the same guard set as E
@@ -2521,6 +2546,8 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               :actions-host="readerActionsHost"
               :can-move-prev="canMoveReaderPrev"
               :can-move-next="canMoveReaderNext"
+              :client="props.client"
+              :preview="props.mode === 'browser-preview'"
               @close="executeAction('back')"
               @move="moveReaderConversation"
               @archive="executeAction('archive')"
@@ -2537,6 +2564,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             <ReplyComposer
               v-if="replyComposerOpen && readerOpen"
               :recipient-label="replyRecipientLabel"
+              :recipient-mailbox="replyRecipientMailbox"
               :quoted-snippet="quotedSnippet"
               :active-ref="drafts.activeRef.value"
               :source="drafts.activeSource.value"

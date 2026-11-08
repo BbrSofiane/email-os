@@ -145,9 +145,14 @@ function onSetField(field: keyof DraftContent, value: string): void {
           <p v-if="props.source?.kind === 'reply' && props.recipientLabel" class="draft-recipient" data-test="draft-recipient-label"><strong class="draft-flag">Draft</strong> to {{ props.recipientLabel }}</p>
         </template>
         <template #context>
-          <p v-if="props.source?.kind === 'reply'" class="reply-source" data-test="reply-source">
-            Reply source is fixed: {{ props.source.conversation.conversationId }} · {{ props.source.sourceMessageId }}
-          </p>
+          <!-- The fixed reply source: attributes only, never visible text. -->
+          <span
+            v-if="props.source?.kind === 'reply'"
+            hidden
+            data-test="reply-source"
+            :data-source-conversation="props.source.conversation.conversationId"
+            :data-source-message="props.source.sourceMessageId"
+          ></span>
         </template>
       </DraftEditorCore>
     </section>

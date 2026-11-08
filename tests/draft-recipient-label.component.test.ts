@@ -2,8 +2,8 @@
  * Recipient affordance tests (TASK C): the drafts-drawer composer shows a
  * human-readable "Draft to {recipient}" label for reply drafts, and the
  * contact pane shows a "Composing to …" context line while a reply editor is
- * active. Both are plain-text interpolation; no raw IDs replace the label and
- * the existing reply-source ID line stays visible.
+ * active. Both are plain-text interpolation; no raw IDs replace the label, and
+ * the fixed reply source is exposed as data attributes only (never as text).
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
@@ -62,7 +62,7 @@ describe('DraftsPanel reply recipient label', () => {
   let wrapper: VueWrapper | null = null;
   afterEach(() => { wrapper?.unmount(); wrapper = null; });
 
-  it('renders "Draft to <name>" with an accent flag for a reply source with recipientLabel, keeping the raw reply-source line', () => {
+  it('renders "Draft to <name>" with an accent flag for a reply source with recipientLabel, exposing the reply source only as data attributes', () => {
     wrapper = mountPanel({ recipientLabel: 'Ada Fixture' });
     const label = wrapper.get('[data-test="draft-recipient-label"]');
     expect(label.classes()).toContain('draft-recipient');
@@ -70,13 +70,16 @@ describe('DraftsPanel reply recipient label', () => {
     expect(label.text()).toContain('to Ada Fixture');
     const flag = label.get('strong.draft-flag');
     expect(flag.text()).toBe('Draft');
-    // The raw conversation/message ID line stays visible.
+    // Raw provider IDs are attributes for tools and tests; they are never visible text.
     const source = wrapper.get('[data-test="reply-source"]');
-    expect(source.text()).toContain('conv-01');
-    expect(source.text()).toContain('conv-01-m3');
+    expect(source.attributes('data-source-conversation')).toBe('conv-01');
+    expect(source.attributes('data-source-message')).toBe('conv-01-m3');
+    expect(source.text()).toBe('');
+    expect(wrapper.text()).not.toContain('conv-01');
+    expect(wrapper.html()).not.toMatch(/(?:title|aria-[a-z]+)="[^"]*conv-01/);
   });
 
-  it('renders no recipient label without recipientLabel, keeping the reply-source line', () => {
+  it('renders no recipient label without recipientLabel, keeping the reply-source attributes', () => {
     wrapper = mountPanel();
     expect(wrapper.find('[data-test="draft-recipient-label"]').exists()).toBe(false);
     expect(wrapper.find('[data-test="reply-source"]').exists()).toBe(true);
@@ -149,9 +152,10 @@ describe('App wiring: drawer label and contact-pane compose context for an activ
     // The reader stays open on the reply source, so the latest sender names the target.
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
     expect(w.find('[data-test="drafts-pane"]').exists()).toBe(false);
-    expect(w.get('[data-test="draft-flag"]').text()).toBe('Draft');
+    // The compact heading replaces the old "Draft" flag; the status line says it is not sent.
+    expect(w.find('[data-test="reply-composer"] [data-test="draft-flag"]').exists()).toBe(false);
     expect(w.get('[data-test="draft-recipient-label"]').text()).toBe('Ada Fixture');
-    expect(w.get('[data-test="reply-source"]').text()).toContain('conv-01-m3');
+    expect(w.get('[data-test="reply-source"]').attributes('data-source-message')).toBe('conv-01-m3');
     const compose = w.get('[data-test="compose-target"]');
     expect(compose.text()).toContain('Composing to Ada Fixture');
     expect(compose.get('.compose-target-mail').text()).toBe('ada@example.test');

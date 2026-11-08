@@ -4,21 +4,24 @@
  * reply shot). The thread stays visible above it; this pane only edits the
  * local plain-text draft through the shared `useDrafts` state wired by App.
  * The editor body is the shared DraftEditorCore; this surface supplies the
- * docked shell, the "Draft to {sender}" header and the read-only quoted
- * context.
+ * docked shell, the compact "Reply draft to {sender}" heading and the
+ * read-only quoted context.
  *
  * Frozen draft contract (vertical-slice-04): the quoted latest message is a
  * READ-ONLY context block — it is never inserted into `bodyText`, which stays
  * blank on prepare. No Send/send-later/AI/attachments/rich text/Bcc/reply-all:
- * the footer offers "Close editor" and "Discard…" only. All text is rendered
- * through interpolation; no v-html.
+ * the footer offers "Save and close" and "Discard…" only. All text is rendered
+ * through interpolation; no v-html. The fixed reply source is exposed to tests
+ * and tools as data attributes only; opaque provider IDs are never shown.
  */
 import type { DraftContent, DraftRef, DraftSource, MailError } from '../lib/ipc/client';
 import DraftEditorCore from './DraftEditorCore.vue';
 
 const props = defineProps<{
-  /** "Draft to {sender}" header label: displayName ?? mailbox of the latest message. */
+  /** "Reply draft to {sender}" label: displayName ?? mailbox of the latest message. */
   recipientLabel: string;
+  /** The latest message sender's mailbox: the default To. The recipient row shows the name only while To still equals it. */
+  recipientMailbox?: string | null;
   /** Read-only quoted snippet of the latest message plain-text body. */
   quotedSnippet: string;
   activeRef: DraftRef | null;
@@ -68,6 +71,9 @@ function onSetField(field: keyof DraftContent, value: string): void {
     <section v-if="props.visible" class="composer" aria-label="Plain-text draft editor" data-test="composer">
       <DraftEditorCore
         autofocus="body"
+        variant="reply"
+        :recipient-label="props.recipientLabel"
+        :recipient-mailbox="props.recipientMailbox ?? null"
         :active-ref="props.activeRef"
         :source="props.source"
         :content="props.content"
@@ -102,14 +108,18 @@ function onSetField(field: keyof DraftContent, value: string): void {
       >
         <template #header>
           <header class="composer-heading">
-            <span class="draft-flag" data-test="draft-flag">Draft</span>
             <h2>Reply draft <span class="reply-to">to <span data-test="draft-recipient-label">{{ props.recipientLabel }}</span></span></h2>
           </header>
         </template>
         <template #context>
-          <p v-if="props.source?.kind === 'reply'" class="reply-source" data-test="reply-source">
-            Reply source is fixed: {{ props.source.conversation.conversationId }} · {{ props.source.sourceMessageId }}
-          </p>
+          <!-- The fixed reply source: attributes only, never visible text. -->
+          <span
+            v-if="props.source?.kind === 'reply'"
+            hidden
+            data-test="reply-source"
+            :data-source-conversation="props.source.conversation.conversationId"
+            :data-source-message="props.source.sourceMessageId"
+          ></span>
           <!-- Read-only quoted context of the latest message. It is display-only:
                it is never part of bodyText and the saved reply body stays blank. -->
           <blockquote class="reply-quoted" data-test="reply-quoted-context" aria-label="Quoted latest message (read-only)">{{ props.quotedSnippet }}</blockquote>
@@ -120,8 +130,9 @@ function onSetField(field: keyof DraftContent, value: string): void {
 </template>
 
 <style scoped>
-/* Docked reply composer on the raised surface. Full 1px border — no accent
-   side stripe; the "Draft" flag in the header carries the state. */
+/* Docked reply composer on the raised surface. Full 1px border, no accent
+   side stripe. The shell scrolls only when the thread and composer genuinely
+   do not fit; the body textarea, not the header stack, takes the space. */
 .reply-composer {
   flex: 0 0 auto;
   min-height: 0;
@@ -132,7 +143,7 @@ function onSetField(field: keyof DraftContent, value: string): void {
   color: var(--text-primary);
   font-size: var(--type-body);
   overflow-y: auto;
-  max-height: 45%;
+  max-height: 60%;
 }
 
 .composer {
@@ -150,17 +161,23 @@ function onSetField(field: keyof DraftContent, value: string): void {
 }
 
 /* Read-only quoted context: plain text only, never editable, never part of
-   the draft body. */
+   the draft body. UI face at the body size, clamped to three lines so it can
+   never push the body down; the full snippet stays in the DOM text. */
 .reply-quoted {
   margin: 0.3rem 0;
-  padding: 0.3rem 0.5rem;
+  padding: 0.1rem 0.5rem;
   border-left: 2px solid var(--rule);
   color: var(--text-secondary);
-  font-family: var(--font-mono);
-  font-size: var(--type-mono);
-  line-height: var(--leading-mono);
+  font-family: var(--font-ui);
+  font-size: var(--type-body);
+  line-height: var(--leading-ui);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   user-select: text;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
 }
 </style>

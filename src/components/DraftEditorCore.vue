@@ -9,9 +9,15 @@
  * Frozen draft contract (docs/vertical-slice-04.md): local-only plain text, no
  * Send action/shortcut/IPC, recipient text stored raw and unvalidated, reply
  * body starts blank (quoted context is display-only). All text is bound as
- * plain text; no v-html. The footer offers "Close editor" and "Discard…" only.
+ * plain text; no v-html. The footer offers "Save and close" and "Discard…"
+ * only (plus "Cancel reply preparation" while one is pending).
+ *
+ * Layouts: `variant="new"` shows To and Subject as one-line rows with Cc on
+ * demand; `variant="reply"` is the compact docked reply: a one-line recipient
+ * row, Cc and Subject on demand, and the body as the dominant field. Both use
+ * the same inputs, hooks and disabled-logic.
  */
-import { nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, useId, watch } from 'vue';
 import type { DraftContent, DraftRef, DraftSource, MailError } from '../lib/ipc/client';
 import { describeDraftError } from '../lib/draft-errors';
 
@@ -38,6 +44,12 @@ const props = defineProps<{
   closeError: string | null;
   /** Which field receives focus when the editor appears (keyboard-first). */
   autofocus?: 'to' | 'body';
+  /** `reply` is the compact docked layout; `new` keeps To and Subject visible. */
+  variant?: 'new' | 'reply';
+  /** Reply only: the display name shown while To is still the default mailbox. */
+  recipientLabel?: string | null;
+  /** Reply only: the default To (the latest message sender's mailbox). */
+  recipientMailbox?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -57,8 +69,7 @@ const emit = defineEmits<{
 /** Single shared copy — do not fork per surface. */
 function fieldsDisabled(): boolean {
   const conflictBlocked = props.conflict && !(props.error?.kind === 'invalid_request' && !props.copyPending);
-  const unpreparedReply = props.source?.kind === 'reply' && (!props.activeRef?.draftId || props.creating);
-  return props.closing || props.transitioning || props.deletePending || conflictBlocked || props.deleting || unpreparedReply;
+  return props.closing || props.transitioning || props.deletePending || conflictBlocked || props.deleting || unpreparedReply.value;
 }
 
 function describe(error: MailError): string {
@@ -66,14 +77,111 @@ function describe(error: MailError): string {
 }
 
 const toInput = ref<HTMLInputElement | null>(null);
+const ccInput = ref<HTMLInputElement | null>(null);
 const bodyInput = ref<HTMLTextAreaElement | null>(null);
 const dialog = ref<HTMLElement | null>(null);
 
-watch(() => props.autofocus, async (field) => {
+const uid = useId();
+const ids = { to: `${uid}-to`, cc: `${uid}-cc`, subject: `${uid}-subject`, body: `${uid}-body`, detail: `${uid}-detail`, extras: `${uid}-extras` };
+
+const isReply = computed(() => props.variant === 'reply');
+
+// ---- One status line ------------------------------------------------------
+
+/** Plain-language detail for the title and the body's hidden description. */
+const LOCAL_DETAIL = 'Local plain-text draft. Nothing is sent. Recipients are stored as typed and are not validated. Bcc, reply-all and rich text are not supported.';
+/** Settled states that read "<state> · not sent"; the first two stay calm (Ash). */
+const SETTLED_CALM = new Set(['Saved locally', 'Draft loaded from this device']);
+const SETTLED_NON_DURABLE = new Set(['Saved in preview memory (non-durable)', 'Loaded from preview memory (non-durable)']);
+
+const statusLine = computed(() => {
+  const status = props.status;
+  if (!status) return { text: 'Local draft · not sent', calm: true };
+  if (SETTLED_CALM.has(status)) return { text: `${status} · not sent`, calm: true };
+  if (SETTLED_NON_DURABLE.has(status)) return { text: `${status} · not sent`, calm: false };
+  // Saving, creating, unconfirmed and conflict states keep their own words, in Amber Notice.
+  return { text: status, calm: false };
+});
+
+// ---- Recipient / extra fields ---------------------------------------------
+
+const unpreparedReply = computed(() => props.source?.kind === 'reply' && (!props.activeRef?.draftId || props.creating));
+/** To still equals the default sender mailbox (or the reply is still being created). */
+const toIsDefault = computed(() => isReply.value
+  && ((!!props.recipientMailbox && props.content.to === props.recipientMailbox) || (props.content.to === '' && unpreparedReply.value)));
+const toEditing = ref(false);
+/** The reply shows a name only while it is true; anything else shows the raw To text. */
+const showToSummary = computed(() => isReply.value && !toEditing.value && toIsDefault.value);
+const toSummary = computed(() => (props.content.to === '' && !unpreparedReply.value ? 'No recipient' : (props.recipientLabel || props.content.to)));
+
+async function editTo(): Promise<void> {
+  toEditing.value = true;
   await nextTick();
-  if (field === 'to') toInput.value?.focus();
-  else if (field === 'body') bodyInput.value?.focus();
+  toInput.value?.focus();
+}
+
+const extrasOpen = ref(false);
+/** Content that must stay visible: a saved Cc, an edited To or a subject that is not the default "Re:". */
+const extrasForced = computed(() => props.content.cc !== ''
+  || (isReply.value && !toIsDefault.value && props.content.to !== '')
+  || (isReply.value && props.content.subject !== '' && !/^re:/i.test(props.content.subject)));
+const extrasShown = computed(() => extrasOpen.value || extrasForced.value);
+const ccShown = computed(() => extrasShown.value);
+const subjectShown = computed(() => !isReply.value || extrasShown.value);
+
+async function toggleExtras(): Promise<void> {
+  if (extrasForced.value) return;
+  extrasOpen.value = !extrasOpen.value;
+  if (!extrasOpen.value) return;
+  await nextTick();
+  ccInput.value?.focus();
+}
+
+// ---- Focus and body sizing --------------------------------------------------
+
+/** The body grows with its text (up to the CSS max-height); it never shrinks below the CSS minimum. */
+function fitBody(): void {
+  const el = bodyInput.value;
+  if (!el || !el.scrollHeight) return;
+  el.style.height = 'auto';
+  el.style.height = `${el.scrollHeight + (el.offsetHeight - el.clientHeight)}px`;
+}
+
+onMounted(fitBody);
+watch(() => props.content.bodyText, async () => {
+  await nextTick();
+  fitBody();
+});
+
+/**
+ * A disabled field cannot take focus, and a reply editor mounts while its draft
+ * is still being created (fields disabled). So the requested focus stays owed
+ * until the field is enabled, and is only taken from nothing (<body>) or from
+ * a button such as the Prepare reply control that opened this editor, never
+ * from a text field or surface the user moved to.
+ */
+let focusOwed = false;
+function takeFocus(): void {
+  const el = props.autofocus === 'to' ? toInput.value : props.autofocus === 'body' ? bodyInput.value : null;
+  if (!el) { focusOwed = false; return; }
+  const active = document.activeElement;
+  if (active && active !== document.body && !(active instanceof HTMLButtonElement)) { focusOwed = false; return; }
+  el.focus();
+  focusOwed = document.activeElement !== el;
+}
+
+watch(() => props.autofocus, async (field) => {
+  if (!field) return;
+  focusOwed = true;
+  await nextTick();
+  takeFocus();
 }, { immediate: true });
+
+watch(() => fieldsDisabled(), async (disabled) => {
+  if (disabled || !focusOwed) return;
+  await nextTick();
+  takeFocus();
+});
 
 // Move focus into a confirm dialog when it appears, and describe it, so the
 // prompt is announced instead of silently appearing.
@@ -85,31 +193,72 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
 </script>
 
 <template>
-  <div class="composer-body">
-    <slot name="header" />
-    <p class="draft-local-note" role="note">
-      Local-only plain text. No Send action exists. Recipient text is stored raw and is not validated or made ready to send.
-      Cc is optional; Bcc, reply-all, quoted text, and rich text are not supported.
-    </p>
-    <slot name="context" />
-    <p v-if="props.status" class="draft-status" data-test="draft-status" aria-live="polite">{{ props.status }}</p>
+  <div class="composer-body" :class="`composer-body-${props.variant ?? 'new'}`">
+    <div class="composer-top">
+      <div class="composer-top-main"><slot name="header" /></div>
+      <!-- The only place the local-only guarantee is stated: one status line.
+           Detail lives in the title and in the body's hidden description. -->
+      <p
+        class="draft-status"
+        :class="{ 'draft-status-calm': statusLine.calm }"
+        data-test="draft-status"
+        aria-live="polite"
+        :title="LOCAL_DETAIL"
+      >{{ statusLine.text }}</p>
+    </div>
     <p v-if="props.error" role="alert" data-test="draft-error">{{ describe(props.error) }}</p>
     <p v-if="props.createError" role="alert" data-test="draft-create-error">{{ describe(props.createError) }}</p>
     <p v-if="props.closeError" role="alert" data-test="draft-close-error">{{ props.closeError }}</p>
     <div class="composer-fields" :aria-busy="props.saving || props.creating">
-      <label>To
-        <input ref="toInput" data-test="draft-to" type="text" autocomplete="off" :value="props.content.to" :disabled="fieldsDisabled()" @input="emit('setField', 'to', ($event.target as HTMLInputElement).value)">
-      </label>
-      <label>Cc
-        <input data-test="draft-cc" type="text" autocomplete="off" :value="props.content.cc" :disabled="fieldsDisabled()" @input="emit('setField', 'cc', ($event.target as HTMLInputElement).value)">
-      </label>
-      <label>Subject
-        <input data-test="draft-subject" type="text" autocomplete="off" :value="props.content.subject" :disabled="fieldsDisabled()" @input="emit('setField', 'subject', ($event.target as HTMLInputElement).value)">
-      </label>
-      <label>Body
-        <textarea ref="bodyInput" data-test="draft-body" :value="props.content.bodyText" :disabled="fieldsDisabled()" @input="emit('setField', 'bodyText', ($event.target as HTMLTextAreaElement).value)"></textarea>
-      </label>
+      <div class="field-row" data-field="to">
+        <label class="field-label" :for="ids.to">To</label>
+        <button
+          v-if="showToSummary"
+          type="button"
+          :id="ids.to"
+          class="field-summary"
+          data-test="draft-to-row"
+          :title="props.content.to || undefined"
+          :disabled="fieldsDisabled()"
+          @click="editTo"
+        >{{ toSummary }}</button>
+        <input v-else :id="ids.to" ref="toInput" class="field-input" data-test="draft-to" type="text" autocomplete="off" :value="props.content.to" :disabled="fieldsDisabled()" @input="emit('setField', 'to', ($event.target as HTMLInputElement).value)">
+        <button
+          type="button"
+          class="field-toggle"
+          data-test="draft-fields-toggle"
+          :aria-expanded="isReply ? extrasShown : ccShown"
+          :aria-controls="ids.extras"
+          :disabled="fieldsDisabled() || (isReply ? extrasForced : props.content.cc !== '')"
+          @click="toggleExtras"
+        >{{ isReply ? 'Cc / Subject' : 'Cc' }}</button>
+      </div>
+      <div :id="ids.extras" class="field-extras">
+        <div v-if="ccShown" class="field-row" data-field="cc">
+          <label class="field-label" :for="ids.cc">Cc</label>
+          <input :id="ids.cc" ref="ccInput" class="field-input" data-test="draft-cc" type="text" autocomplete="off" :value="props.content.cc" :disabled="fieldsDisabled()" @input="emit('setField', 'cc', ($event.target as HTMLInputElement).value)">
+        </div>
+        <div v-if="subjectShown" class="field-row" data-field="subject">
+          <label class="field-label" :for="ids.subject">Subject</label>
+          <input :id="ids.subject" class="field-input" data-test="draft-subject" type="text" autocomplete="off" :value="props.content.subject" :disabled="fieldsDisabled()" @input="emit('setField', 'subject', ($event.target as HTMLInputElement).value)">
+        </div>
+      </div>
+      <div class="field-body">
+        <label class="visually-hidden" :for="ids.body">Body</label>
+        <textarea
+          :id="ids.body"
+          ref="bodyInput"
+          class="field-textarea"
+          data-test="draft-body"
+          :aria-describedby="ids.detail"
+          :value="props.content.bodyText"
+          :disabled="fieldsDisabled()"
+          @input="emit('setField', 'bodyText', ($event.target as HTMLTextAreaElement).value); fitBody()"
+        ></textarea>
+        <span :id="ids.detail" class="visually-hidden" data-test="draft-local-detail">{{ LOCAL_DETAIL }}</span>
+      </div>
     </div>
+    <slot name="context" />
     <div class="composer-actions" v-if="(props.error || props.createError) && !props.recoveryRequired">
       <button type="button" data-test="retry-draft-save" :disabled="props.closing || props.copyPending || props.transitioning" @click="emit('retry')">
         {{ props.deletePending ? 'Retry discard' : 'Retry save' }}
@@ -132,10 +281,14 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
       <button type="button" data-test="confirm-discard" :disabled="props.discardBusy || props.deleting || props.deletePending" @click="emit('confirmDiscard')">Confirm discard</button>
       <button type="button" data-test="cancel-discard" :disabled="props.deleting || props.deletePending" @click="emit('cancelDiscard')">Keep draft</button>
     </div>
+    <!-- Footer: one primary action. "Save and close" is the old Close editor: it
+         still waits for the protected flush and stays open with the error if the
+         flush fails. Esc does the same. There is no Send. -->
     <footer class="composer-footer">
-      <button type="button" data-test="close-composer" :disabled="props.closing || props.transitioning || props.deleting || props.deletePending" @click="emit('closeEditor')">Close editor</button>
-      <button v-if="props.canCancelReplyPreparation" type="button" data-test="cancel-reply-preparation" :disabled="props.closing || props.transitioning" @click="emit('cancelReplyPreparation')">Cancel reply preparation</button>
-      <button type="button" data-test="discard-draft" :disabled="props.closing || props.transitioning || props.discardBusy || props.deleting || props.deletePending || props.creating || props.conflict || !props.activeRef?.draftId" @click="emit('askDiscard')">Discard…</button>
+      <button type="button" class="composer-primary" data-test="close-composer" aria-keyshortcuts="Escape" :disabled="props.closing || props.transitioning || props.deleting || props.deletePending" @click="emit('closeEditor')">Save and close</button>
+      <kbd class="composer-kbd" aria-hidden="true">Esc</kbd>
+      <button v-if="props.canCancelReplyPreparation" type="button" class="composer-quiet" data-test="cancel-reply-preparation" :disabled="props.closing || props.transitioning" @click="emit('cancelReplyPreparation')">Cancel reply preparation</button>
+      <button type="button" class="composer-quiet composer-discard" data-test="discard-draft" :disabled="props.closing || props.transitioning || props.discardBusy || props.deleting || props.deletePending || props.creating || props.conflict || !props.activeRef?.draftId" @click="emit('askDiscard')">Discard…</button>
     </footer>
   </div>
 </template>

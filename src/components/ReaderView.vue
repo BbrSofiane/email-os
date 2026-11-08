@@ -26,10 +26,13 @@
 import { actionLabel } from '../lib/browsing-actions';
 import { compactDateLabel, fullDateLabel, machineDateTime } from '../lib/browsing-dates';
 import { messageSnippet } from '../lib/message-snippet';
-import { bodyNeedsMonospace } from '../lib/message-body-format';
+import { bodyNeedsMonospace, splitMessageBody, type MessageBodyParts } from '../lib/message-body-format';
 import { computed, nextTick, reactive, ref, useId, watch } from 'vue';
 import HeaderGlyph from './HeaderGlyph.vue';
-import type { Address, Conversation, ConversationRef, DraftSource, MailError, Message } from '../lib/ipc/client';
+import MessageAttachments from './MessageAttachments.vue';
+import { useAttachmentTransfer } from '../composables/useAttachmentTransfer';
+import type { Address, Conversation, ConversationRef, DraftSource, MailClient, MailError, Message } from '../lib/ipc/client';
+import type { AttachmentDescriptor } from '../lib/ipc/generated';
 import type { DetailState } from '../composables/useMailbox';
 
 const props = defineProps<{
@@ -60,6 +63,10 @@ const props = defineProps<{
   /** J/K availability; undefined hides the previous/next chevrons. */
   canMovePrev?: boolean;
   canMoveNext?: boolean;
+  /** Inline attachment rows: without a client the reader shows none. */
+  client?: MailClient;
+  /** Browser preview: saves are modelled in memory and say so. */
+  preview?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -143,6 +150,37 @@ const hasMetaRow = computed(() => {
   return !!(props.readOnly || props.showReadControls || bulkScope.value);
 });
 
+/** The one rule for whether Prepare reply may run (button, glyph and the R key). */
+function canPrepareReply(): boolean {
+  return actionable.value && !props.browsingOnly && !!latestMessage.value && replyBlockedReason.value === null;
+}
+
+/** Title for the reply controls: the action label with its key, plus the target. */
+const replyTitle = computed(() => {
+  if (!actionable.value) return actionLabel('reply');
+  return replyBlockedReason.value ?? `${actionLabel('reply')}. ${replyTargetLabel.value}`;
+});
+
+/** The standing guarantee behind the status line (hook per mode); null in Cached Trash, which has its own line. */
+const readerStatus = computed(() => {
+  if (props.browsingOnly) return null;
+  if (props.readOnly) {
+    return {
+      hook: 'reader-readonly',
+      word: 'Read-only',
+      sentence: 'Read-only Gmail view: messages are never marked as read. Opening this conversation does not change read state.',
+    };
+  }
+  if (props.showReadControls) {
+    return {
+      hook: 'reader-no-auto-read',
+      word: null,
+      sentence: 'Opening this conversation does not change read state; use an explicit read control.',
+    };
+  }
+  return null;
+});
+
 function prepareReply(): void {
   // Reply always targets the explicitly displayed latest message; focusing an
   // older message never changes the reply contract.
@@ -212,6 +250,8 @@ interface VisitState {
   activeMessageId: string | null;
   expandedIds: Set<string>;
   detailsOpenId: string | null;
+  /** Messages whose trailing quoted text is shown. */
+  quoteOpenIds: Set<string>;
   anchor: MessageAnchor | null;
   /** Message ordering this state was built against (for removed-ID resolution). */
   order: string[];
@@ -273,6 +313,7 @@ function pruneVisit(visit: VisitState, nextIds: string[]): void {
       : { messageId: '', offsetTop: 0, scrollTop: visit.anchor.scrollTop };
   }
   visit.expandedIds = new Set([...visit.expandedIds].filter((id) => present.has(id)));
+  visit.quoteOpenIds = new Set([...visit.quoteOpenIds].filter((id) => present.has(id)));
   visit.order = [...nextIds];
 }
 
@@ -442,6 +483,7 @@ watch(
         activeMessageId: newest,
         expandedIds: new Set(newest === null ? [] : [newest]),
         detailsOpenId: null,
+        quoteOpenIds: new Set<string>(),
         anchor: null,
         order: [...ids],
       });
@@ -567,6 +609,40 @@ function bodyId(message: Message): string {
   return `reader-body-${props.conversation?.ref.accountId}-${message.id}`.replace(/[^A-Za-z0-9_-]/g, '-');
 }
 
+function quoteId(message: Message): string {
+  return `reader-quote-${props.conversation?.ref.accountId}-${message.id}`.replace(/[^A-Za-z0-9_-]/g, '-');
+}
+
+/**
+ * Prose / signature / trailing quote of a body, split once per distinct text
+ * (reading a thread again after J/K never re-splits it).
+ */
+const bodyParts = new Map<string, { text: string; parts: MessageBodyParts }>();
+function partsOf(message: Message): MessageBodyParts {
+  const cached = bodyParts.get(message.id);
+  if (cached && cached.text === message.bodyText) return cached.parts;
+  const parts = splitMessageBody(message.bodyText);
+  bodyParts.set(message.id, { text: message.bodyText, parts });
+  return parts;
+}
+
+/** Line breaks that only separated the parts are not shown; every character stays in the DOM text otherwise. */
+function shown(text: string): string {
+  return text.replace(/(?:\r?\n)+$/, '');
+}
+
+function isQuoteOpen(message: Message): boolean {
+  return visitRef.value?.quoteOpenIds.has(message.id) ?? false;
+}
+
+function toggleQuote(message: Message): void {
+  const visit = visitRef.value;
+  if (!visit || !actionable.value) return;
+  setActive(message.id);
+  if (visit.quoteOpenIds.has(message.id)) visit.quoteOpenIds.delete(message.id);
+  else visit.quoteOpenIds.add(message.id);
+}
+
 function setActive(messageId: string): void {
   const visit = visitRef.value;
   if (visit && visit.activeMessageId !== messageId) visit.activeMessageId = messageId;
@@ -661,7 +737,92 @@ function dismissMessageDetails(): boolean {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// Inline attachment rows
+// ---------------------------------------------------------------------------
+
+type AttachmentLoad = { state: 'ready'; files: AttachmentDescriptor[] } | { state: 'failed' };
+
+/** Descriptor lists per conversation, kept for this reader session: J/K revisits never refetch. */
+const attachmentLoads = reactive(new Map<string, AttachmentLoad>());
+const attachmentRequests = new Map<string, number>();
+let attachmentSeq = 0;
+const displayedKey = computed(() => keyOfDisplayed());
+const attachmentTransfer = useAttachmentTransfer({
+  client: () => props.client!,
+  conversation: () => props.conversation!.ref,
+  preview: () => props.preview === true,
+});
+
+/** Set only for a ready, displayed conversation that claims attachments. */
+const attachmentKeyToLoad = computed(() => {
+  const conversation = props.conversation;
+  if (props.state !== 'ready' || !props.client || !conversation || displayedKey.value === null) return null;
+  return conversation.messages.some((message) => message.hasAttachment === true) ? visitKey(conversation.ref) : null;
+});
+
+async function loadAttachments(key: string, ref: ConversationRef): Promise<void> {
+  const client = props.client;
+  if (!client) return;
+  const known = attachmentLoads.get(key);
+  // A list already loaded (or loading) is final for this visit; only a failure is retried.
+  if ((known && known.state === 'ready') || (!known && attachmentRequests.has(key))) return;
+  const token = ++attachmentSeq;
+  attachmentRequests.set(key, token);
+  let result: AttachmentLoad;
+  try {
+    result = { state: 'ready', files: await client.listAttachments({ ...ref }) };
+  } catch {
+    result = { state: 'failed' };
+  }
+  // A newer request for this key owns the result. The result is stored under
+  // its own conversation key, so it can never show on another conversation.
+  if (attachmentRequests.get(key) !== token) return;
+  attachmentLoads.set(key, result);
+}
+
+// After the ready snapshot has rendered: never blocks the J/K hot path.
+watch(attachmentKeyToLoad, (key) => {
+  const conversation = props.conversation;
+  if (key && conversation) void loadAttachments(key, conversation.ref);
+}, { immediate: true, flush: 'post' });
+
+// A transfer belongs to the conversation it started in.
+watch(displayedKey, (key, previous) => {
+  if (previous === undefined || key === previous) return;
+  if (attachmentTransfer.pending.value) void attachmentTransfer.cancel();
+  attachmentTransfer.reset();
+});
+
+/**
+ * What a message's inline list shows. Only `hasAttachment === true` ever claims
+ * files (false and unknown show nothing); null while the list is still loading.
+ */
+function attachmentRow(message: Message): { loadState: 'ready' | 'failed'; files: AttachmentDescriptor[] } | null {
+  if (message.hasAttachment !== true || !props.conversation) return null;
+  const load = attachmentLoads.get(visitKey(props.conversation.ref));
+  if (!load) return null;
+  if (load.state === 'failed') return { loadState: 'failed', files: [] };
+  return { loadState: 'ready', files: load.files.filter((file) => file.messageId === message.id) };
+}
+
+const transferTargetKey = computed(() => attachmentTransfer.target.value);
+const pendingTransferKey = computed(() => (attachmentTransfer.pending.value ? transferTargetKey.value : null));
+
+/**
+ * Puts focus back on the active message toggle (or the reader article when no
+ * message exists). Used when an inline composer closes and focus fell to <body>.
+ */
+function focusActiveMessage(): void {
+  const visit = displayedVisit();
+  if (visit?.activeMessageId) focusMessageToggle(visit.activeMessageId, false);
+  else focusElement(container.value, false);
+}
+
 defineExpose({
+  canPrepareReply,
+  prepareReply,
+  focusActiveMessage,
   moveMessage,
   toggleActiveMessage,
   expandAllMessages,
@@ -713,7 +874,7 @@ defineExpose({
           class="header-glyph"
           :class="{ 'header-glyph-held': held }"
           data-test="prepare-reply"
-          :title="actionable ? (replyBlockedReason ?? replyTargetLabel) : 'Prepare reply'"
+          :title="replyTitle"
           :aria-describedby="actionable ? replySourceId : undefined"
           :disabled="!actionable || !!replyBlockedReason"
           @click="prepareReply"
@@ -739,7 +900,7 @@ defineExpose({
             <time v-if="props.loadingIdentity.at" :datetime="machineDateTime(props.loadingIdentity.at)" :title="fullDateLabel(props.loadingIdentity.at)">{{ compactDateLabel(props.loadingIdentity.at) }}</time>
           </p>
         </template>
-        <p data-test="reader-loading" :class="{ 'reader-loading-quiet': props.loadingIdentity }">Loading conversation…</p>
+        <p data-test="reader-loading" role="status" :class="{ 'reader-loading-quiet': props.loadingIdentity }">Loading conversation…</p>
       </template>
       <p v-else-if="props.state === 'error' && props.error" data-test="reader-error" role="alert">
         {{ describeError(props.error) }}
@@ -749,7 +910,18 @@ defineExpose({
         <!-- Honest-state text controls (read state, count-labelled selection
              actions) stay explicit, in one quiet line under the subject. -->
         <div v-if="hasMetaRow" class="reader-meta-row" data-test="reader-meta-row">
-          <span v-if="(props.readOnly || props.showReadControls)" data-test="reader-read-state">{{ props.conversation.isRead === undefined ? 'Read state unknown' : props.conversation.isRead ? 'Read' : 'Unread' }}</span>
+          <!-- One muted status line: the standing guarantee is its title and
+               visually hidden text (read once by assistive tech), not a paragraph. -->
+          <span
+            v-if="(props.readOnly || props.showReadControls)"
+            class="reader-status"
+            :data-test="readerStatus?.hook"
+            :title="readerStatus?.sentence"
+          >
+            <span v-if="readerStatus?.word" class="reader-status-word" data-test="reader-status-word">{{ readerStatus.word }}</span>
+            <span data-test="reader-read-state">{{ props.conversation.isRead === undefined ? 'Read state unknown' : props.conversation.isRead ? 'Read' : 'Unread' }}</span>
+            <span v-if="readerStatus" class="visually-hidden" data-test="reader-status-detail">{{ readerStatus.sentence }}</span>
+          </span>
           <template v-if="props.showReadControls && !bulkScope && props.conversation.isRead === undefined">
             <button type="button" :title="actionLabel('read')" data-test="reader-mark-read" :disabled="!actionable || props.commandInFlight || props.navigationUnavailable" @click="emit('setRead', true)">Mark read</button>
             <button type="button" :title="actionLabel('unread')" data-test="reader-mark-unread" :disabled="!actionable || props.commandInFlight || props.navigationUnavailable" @click="emit('setRead', false)">Mark unread</button>
@@ -788,13 +960,7 @@ defineExpose({
         <p v-if="props.conversation.retainedSnapshotAt" class="reader-recovery-snapshot" data-test="retained-snapshot-notice" role="note">
           Local recovery snapshot saved <time :datetime="machineDateTime(props.conversation.retainedSnapshotAt)">{{ fullDateLabel(props.conversation.retainedSnapshotAt) }}</time>; Gmail may have newer messages or mailbox changes.
         </p>
-        <p v-if="props.browsingOnly" class="reader-readonly" role="note">Cached Trash — read only. Recovery is not available here; use your provider client. Opening does not change read state.</p>
-        <p v-else-if="props.readOnly" class="reader-readonly" data-test="reader-readonly" role="note">
-          Read-only Gmail view: messages are never marked as read. Opening this conversation does not change read state.
-        </p>
-        <p v-else-if="props.showReadControls" class="reader-readonly" data-test="reader-no-auto-read" role="note">
-          Opening this conversation does not change read state; use an explicit read control.
-        </p>
+        <p v-if="props.browsingOnly" class="reader-readonly" role="note">Cached Trash — read only. Recovery is not available here; use your provider client.</p>
         <p
           v-if="props.conversation.unsupportedReason"
           data-test="unsupported-notice"
@@ -837,7 +1003,7 @@ defineExpose({
               >
                 <span class="message-from">{{ message.from.displayName ?? message.from.mailbox }}</span>
                 <span class="message-to">to {{ message.to.map((t) => t.displayName ?? t.mailbox).join(', ') }}</span>
-                <span v-if="!isExpanded(message) && messageSnippet(message.bodyText)" class="message-snippet">{{ messageSnippet(message.bodyText) }}</span>
+                <span v-if="!isExpanded(message) && messageSnippet(partsOf(message).main)" class="message-snippet">{{ messageSnippet(partsOf(message).main) }}</span>
                 <time class="message-time" :datetime="machineDateTime(message.sentAt)" :title="fullDateLabel(message.sentAt)">
                   <span aria-hidden="true">{{ compactDateLabel(message.sentAt) }}</span>
                   <span class="visually-hidden">{{ fullDateLabel(message.sentAt) }}</span>
@@ -851,7 +1017,7 @@ defineExpose({
                 class="message-reply"
                 :data-test="`message-reply-${message.id}`"
                 aria-label="Prepare reply"
-                title="Prepare reply"
+                :title="replyTitle"
                 :disabled="!actionable || !!replyBlockedReason"
                 @click="prepareReply"
               >
@@ -904,7 +1070,36 @@ defineExpose({
                 </div>
               </div>
             </details>
-            <div class="message-body" :class="{ 'message-body-mono': bodyNeedsMonospace(message.bodyText) }" :id="bodyId(message)" :hidden="!isExpanded(message)" data-test="message-body">{{ message.bodyText }}</div>
+            <div class="message-body" :class="{ 'message-body-mono': bodyNeedsMonospace(partsOf(message).main) }" :id="bodyId(message)" :hidden="!isExpanded(message)" data-test="message-body">{{ partsOf(message).signature !== null || partsOf(message).quoted !== null ? shown(partsOf(message).main) : partsOf(message).main }}</div>
+            <!-- Signature: the same reading face in Ash, always visible with the message. -->
+            <div v-if="partsOf(message).signature !== null" class="message-trail message-signature" :hidden="!isExpanded(message)" data-test="message-signature">{{ partsOf(message).quoted !== null ? shown(partsOf(message).signature!) : partsOf(message).signature }}</div>
+            <!-- Trailing quote: behind a real disclosure button, per message, kept in the visit state. -->
+            <template v-if="partsOf(message).quoted !== null">
+              <button
+                type="button"
+                class="message-quote-toggle"
+                :hidden="!isExpanded(message)"
+                :aria-expanded="isQuoteOpen(message) ? 'true' : 'false'"
+                :aria-controls="isQuoteOpen(message) ? quoteId(message) : undefined"
+                :aria-disabled="actionable ? undefined : 'true'"
+                :data-test="`message-quote-toggle-${message.id}`"
+                @click="toggleQuote(message)"
+              >{{ isQuoteOpen(message) ? 'Hide quoted text' : 'Show quoted text' }}</button>
+              <div v-if="isQuoteOpen(message) && isExpanded(message)" :id="quoteId(message)" class="message-trail message-quoted" data-test="message-quoted">{{ shown(partsOf(message).quoted!) }}</div>
+            </template>
+            <MessageAttachments
+              v-if="isExpanded(message) && attachmentRow(message)"
+              :message-id="message.id"
+              :files="attachmentRow(message)!.files"
+              :load-state="attachmentRow(message)!.loadState"
+              :retained="!!props.conversation.retainedSnapshotAt"
+              :pending="pendingTransferKey"
+              :target="transferTargetKey"
+              :status="attachmentTransfer.status.value"
+              :error="attachmentTransfer.error.value"
+              @save="attachmentTransfer.save"
+              @cancel="attachmentTransfer.cancel"
+            />
           </li>
         </ol>
       </template>
