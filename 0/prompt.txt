@@ -1,0 +1,47 @@
+Task: fix the follow-up issues found by an adversarial review of the just-merged reader/compose UX pass (PR #29, commits 114895e and 79d5486) in Email OS (Vue 3 desktop email client). The review was done from the diff, code and docs only (nothing was run or rendered, node_modules was absent), so VERIFY each issue by reading the code and reproducing it in a test before fixing. If an issue turns out to be wrong, say so and skip it.
+
+Read PRODUCT.md and DESIGN.md first (brand: focused, precise, trustworthy; keyboard-first; honest state; message content renders as safe literal plain text; drafts local-only; no Send by design). Read the PR diff (`git diff 720eac0 origin/main -- src tests DESIGN.md docs`) and the critique the author added under .impeccable/critique/.
+
+Issues, in priority order:
+
+1. P1 R reply shortcut opens the composer but focus never reaches the body. DraftEditorCore.vue takeFocus (~164-171) only takes focus from <body> or a <button>, while the R handler (App.vue ~1988) fires from any non-editable, non-button target. Scenario: click the message text (focus lands on the article[tabindex=-1], or on a Details <summary>, or a .participant span), press R: composer opens, focus stays on the article, and typed text is swallowed by the key handler (App.vue ~1885). Fix: make the hand-off robust (accept focus inside the reader / any non-editable element in takeFocus, or have prepareReply focus the body explicitly after mount). Add component tests that press R from the article, a summary and a participant span, and assert the body textarea is document.activeElement; also cover the IME path (isComposing) and discard-flow focus return (after discarding, focus returns somewhere sensible in the reader). Existing tests (reply-shortcut.component.test.ts ~54-81) only start from a toggle.
+
+2. P2 Spoofable recipient. DraftEditorCore.vue ~114-115, ~221: while To equals the sender mailbox, the row shows only the display name and the address is in a hover title. A sender named "Bank Support" can hide x@evil.test. Show the real address visibly (next to the name, e.g. name + <address> in the Ash/secondary colour) in the compact To row; keep it compact. Test with a display name that differs from the address.
+
+3. P2 Local-only caveats ("recipients not validated, no Bcc") are tooltip/sr-only only (DraftEditorCore ~92, ~206), so keyboard users never see them. Keep the visible status line terse ("Saved locally · not sent") but make the caveat reachable by keyboard: e.g. a focusable info toggle or a disclosure that reveals the one extra line on focus/Enter, not a tooltip.
+
+4. P2 The status line is aria-live="polite" and flips Saving…/Saved on every autosave (DraftEditorCore ~205), which is chatty for screen readers. Announce only meaningful transitions (error, conflict, first save, discard), or debounce; don't lose error announcements.
+
+5. P3 Limit message contradicts displayed size: a 5242881-byte file shows "5.0 MB" next to "Over the 5 MB limit" (MessageAttachments.vue ~59-60, format-bytes.ts). Make the display not round across the limit (e.g. show bytes or one more digit when within rounding of the limit).
+
+6. P3 Bidi control characters (e.g. U+202E RLO) in attachment file names render as-is (MessageAttachments.vue ~58). Strip or neutralise bidi controls from displayed names (keep the real name for the save path/title if safe). Add a test.
+
+7. P3 Signature dimming: a bare `--` line followed by up to 12 real lines is dimmed as a signature (message-body-format.ts ~44, ~103). Tighten it (e.g. require the standard `-- ` delimiter with trailing space, or only dim when it's the last block) so real content is not dimmed. Add tests. Also note: an interleaved `>` line in prose still forces the whole body to monospace (ReaderView ~15 / bodyNeedsMonospace); fix only if it's small and safe, otherwise document it as a known limitation in DESIGN.md or the critique.
+
+8. P3 Misc: DESIGN.md claims the chooser and reader "share the same transfer state", but AttachmentChooser.vue and ReaderView.vue each call useAttachmentTransfer (separate instances). Either lift to a shared instance if easy, or correct the doc. The shown() helper (ReaderView ~630) trims trailing newlines though a comment says every character stays in the DOM: fix the comment or the behaviour. Cached Trash read-only state renders the read-state span without a "Read-only" word (ReaderView ~916-922): add the word.
+
+Also, from the same review, still-open items from the original critique that were only PARTIAL: the 'Loading conversation…' state is still bare text (give it a stable-height skeleton or at least the subject/sender if known), and the .message-toggle/.message-from/.message-time styles (style.css ~1495-1540) still differ from the inbox list's type system (sender column width/weight, uppercased date). Align them with the list per DESIGN.md if it is a small CSS change; otherwise list them as not done.
+
+Constraints: honour PRODUCT.md "Standing constraints" and anti-references; no HTML rendering of message content, no auto-open of attachments, no optimistic UI. Don't regress editable/IME shortcut protection, announcements, focus handling, or J/K reader navigation smoothness. Keep copy terse, sentence-case. Scope is only the reader/compose/attachment files and their tests/docs. Another thread is concurrently reworking the drawer panels (DraftsPanel, ActivityPanel, RemindersPanel, CachedTrashPanel; branch impeccable/drawer-panels), and DraftsPanel embeds DraftEditorCore: keep your changes to DraftEditorCore minimal and API-compatible so the two merge cleanly, and do not touch the drawer panel components or their CSS. Do not touch account/first-run, bulk selection/notice dock, or search.
+
+Process: add a failing test first for each verified issue, then fix; run the project's checks (see mise.toml and docs/development.md; run pnpm install first if node_modules is missing); update DESIGN.md / docs where behaviour or claims changed; add a short follow-up note to the existing reader/compose critique in .impeccable/critique/. Commit on this branch and open a PR to main. Report back: what you fixed, what you verified and how, what you rejected or could not verify (e.g. no rendered screenshots), and anything you deferred.
+
+---
+
+<task-notification>
+<task-id>b9mplyyf3</task-id>
+<tool-use-id>toolu_01E2uaJMbcU7tDoharA8pJtN</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-fix-reader-compose-followups/c03debfd-36c3-40f3-9e18-4a1ca0a2b1c1/tasks/b9mplyyf3.output</output-file>
+<status>completed</status>
+<summary>Background command "python3 - &lt;&lt;'EOF'
+p='tests/compose-card.component.test.ts'
+s=open(p).read()
+s=s.replace("""    expect(status.attributes('aria-live')).toBe('polite');
+""","""    // Not a live region itself: the hidden status region announces only meaningful transitions.
+    expect(status.attributes('aria-live')).toBeUndefined();
+    expect(wrapper.get('[data-test="draft-status-announce"]').text()).toBe('Saved in preview memory (non-durable) · not sent');
+""",1)
+open(p,'w').write(s)
+EOF
+(pnpm typecheck 2&gt;&amp;1 | tail -2; pnpm test 2&gt;&amp;1 | grep -E "×|FAIL|Test Files|Tests ")" completed (exit code 0)</summary>
+</task-notification>

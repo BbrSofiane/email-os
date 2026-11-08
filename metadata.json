@@ -1,0 +1,45 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6XFCKPSJ86CDZ1Z2TNY7SXS",
+  "strategy": "manual-commit",
+  "branch": "fix/reader-compose-followups",
+  "checkpoints_count": 1,
+  "files_touched": [
+    ".impeccable/critique/2026-11-08T10-19-47Z__src-components-readerview-vue-and-reply-compose.md",
+    "DESIGN.md",
+    "src/assets/style.css",
+    "src/components/AttachmentChooser.vue",
+    "src/components/DraftEditorCore.vue",
+    "src/components/MessageAttachments.vue",
+    "src/components/ReaderView.vue",
+    "src/composables/useAttachmentTransfer.ts",
+    "src/lib/display-name.ts",
+    "src/lib/format-bytes.ts",
+    "src/lib/message-body-format.ts",
+    "tests/compose-card.component.test.ts",
+    "tests/display-name.test.ts",
+    "tests/draft-editor-core.component.test.ts",
+    "tests/drafts.component.test.ts",
+    "tests/format-bytes.test.ts",
+    "tests/message-body-format.test.ts",
+    "tests/reader.status-quote-attachments.component.test.ts",
+    "tests/reply-composer.component.test.ts",
+    "tests/reply-shortcut.component.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 104,
+    "cache_creation_tokens": 140628,
+    "cache_read_tokens": 6376037,
+    "output_tokens": 39908,
+    "api_call_count": 51
+  }
+}
