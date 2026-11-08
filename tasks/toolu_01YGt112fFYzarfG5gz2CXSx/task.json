@@ -1,0 +1,15 @@
+{
+  "tool_use_id": "toolu_01YGt112fFYzarfG5gz2CXSx",
+  "agent_id": "a4a211843072b7b2e",
+  "subagent_type": "persona-feature-engineer",
+  "task_description": "Drafts triage rows and discard",
+  "token_usage": {
+    "input_tokens": 146,
+    "cache_creation_tokens": 182930,
+    "cache_read_tokens": 9876005,
+    "output_tokens": 69216,
+    "api_call_count": 72
+  },
+  "started_at": "2026-11-08T18:35:06.451323556Z",
+  "completed_at": "2026-11-08T18:56:25.03026703Z"
+}
