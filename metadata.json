@@ -1,0 +1,58 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6XG6SJX9P9S7TKTVXFSPNT2",
+  "strategy": "manual-commit",
+  "branch": "impeccable/drawer-panels",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "DESIGN.md",
+    "src/App.vue",
+    "src/assets/style.css",
+    "src/components/ActivityPanel.vue",
+    "src/components/CachedTrashPanel.vue",
+    "src/components/DraftsPanel.vue",
+    "src/components/RemindersPanel.vue",
+    "src/composables/useDrawerRows.ts",
+    "src/lib/reminder-presets.ts",
+    "src/lib/subject-index.ts",
+    "tests/account.component.test.ts",
+    "tests/activity-panel.test.ts",
+    "tests/app.component.test.ts",
+    "tests/cached-trash.component.test.ts",
+    "tests/discovery.rendered.test.ts",
+    "tests/draft-recipient-label.component.test.ts",
+    "tests/drafts-panel.component.test.ts",
+    "tests/drafts.component.test.ts",
+    "tests/drawer-panels.app.test.ts",
+    "tests/reminder-presets.test.ts",
+    "tests/reminders.component.test.ts",
+    "tests/reminders.drawer.test.ts",
+    "tests/reminders.navigation.test.ts",
+    "tests/reminders.preparation.test.ts",
+    "tests/subject-index.test.ts",
+    "tests/use-drawer-rows.component.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 10,
+    "cache_creation_tokens": 32118,
+    "cache_read_tokens": 765370,
+    "output_tokens": 9304,
+    "api_call_count": 5,
+    "subagent_tokens": {
+      "input_tokens": 228,
+      "cache_creation_tokens": 383479,
+      "cache_read_tokens": 26464106,
+      "output_tokens": 141444,
+      "api_call_count": 113
+    }
+  }
+}
