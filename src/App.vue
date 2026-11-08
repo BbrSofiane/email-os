@@ -707,7 +707,8 @@ async function openDraftFromList(summary: DraftSummary): Promise<void> {
       openedReader = false;
     }
   }
-  const opened = await drafts.openDraft(summary.ref);
+  // `current` is checked inside `openDraft` too: an abandoned open never installs the editor.
+  const opened = await drafts.openDraft(summary.ref, current);
   if (!current()) return;
   if (!opened) fallbackReason = null;
   if (!opened && openedReader) {

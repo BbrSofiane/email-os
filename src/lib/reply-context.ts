@@ -11,10 +11,10 @@ export const REPLY_REASONS = {
   retainedSnapshot: { text: 'Reply preparation is blocked for a retained snapshot; current message headers cannot be verified.', label: 'retained snapshot' },
   incomplete: { text: 'Reply preparation is blocked because this cached conversation is incomplete.', label: 'incomplete cached conversation' },
   headerMismatch: { text: 'Reply preparation is blocked because cached reply headers do not match the displayed latest message.', label: 'reply headers do not match the latest message' },
-  otherAccount: { text: 'The source conversation belongs to another account.', label: 'belongs to another account' },
-  notOpen: { text: 'The source conversation is not open.', label: 'not open' },
-  stillLoading: { text: 'The source conversation is still loading.', label: 'still loading' },
-} as const;
+  otherAccount: { text: 'The source conversation belongs to another account.', label: 'belongs to another account', state: true },
+  notOpen: { text: 'The source conversation is not open.', label: 'not open', state: true },
+  stillLoading: { text: 'The source conversation is still loading.', label: 'still loading', state: true },
+} as const satisfies Record<string, { text: string; label: string; state?: true }>;
 
 const LOAD_ERROR_PREFIX = 'The source conversation could not be loaded';
 
@@ -35,6 +35,19 @@ export function replyReasonLabel(reason: string): string {
     return detail ? `could not be loaded: ${detail}` : 'could not be loaded';
   }
   return reason.replace(/\.$/, '');
+}
+
+/**
+ * The visible Amber sentence for a reply draft edited in the compose card.
+ * A navigation state of the source ("not open", "still loading", "belongs to
+ * another account") is stated as a fact about it: "Source conversation not
+ * open." Anything that failed or blocks a reply stays "unavailable: <reason>",
+ * so a conversation that is merely closed is never called unavailable.
+ */
+export function replyNoticeLine(reason: string): string {
+  const stateEntry = Object.values(REPLY_REASONS).find(entry => 'state' in entry && entry.text === reason);
+  if (stateEntry) return `Source conversation ${stateEntry.label}.`;
+  return `Source conversation unavailable: ${replyReasonLabel(reason)}.`;
 }
 
 /**

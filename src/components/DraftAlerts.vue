@@ -6,19 +6,10 @@
  * list, the app shows the list and subscription lines here so they stay
  * visible (close protection has its own banner then).
  */
-import type { MailError } from '../lib/ipc/client';
 import { describeDraftError } from '../lib/draft-errors';
+import type { DraftAlertProps } from './draft-alert-props';
 
-defineProps<{
-  suspendedEditor?: boolean;
-  closeError?: string | null;
-  closeSetupError?: string | null;
-  closeRetryAvailable?: boolean;
-  listError: MailError | null;
-  subscriptionError: MailError | null;
-  /** An unopenable or uncreatable draft (opening it failed). */
-  createError?: MailError | null;
-}>();
+defineProps<DraftAlertProps>();
 const emit = defineEmits<{ retryDraftSubscription: []; retryClose: []; retryCloseSetup: [] }>();
 </script>
 

@@ -505,12 +505,17 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
     return token === generation && !!activeRef.value && result;
   }
 
-  async function openDraft(ref: DraftRef): Promise<boolean> {
+  /**
+   * Open a saved draft in the editor. `stillWanted` lets the caller withdraw
+   * the request while `getDraft` is pending (Back, another context): a draft
+   * that is no longer wanted is never installed and sets no error.
+   */
+  async function openDraft(ref: DraftRef, stillWanted: () => boolean = () => true): Promise<boolean> {
     if (transitioning.value || ref.accountId !== accountId.value || !(await switchEditor()) || transitioning.value) return false;
     const token = ++generation;
     try {
       const draft: Draft = await client.getDraft(ref);
-      if (token !== generation || ref.accountId !== accountId.value) return false;
+      if (token !== generation || ref.accountId !== accountId.value || !stillWanted()) return false;
       activeRef.value = { ...draft.ref };
       activeSource.value = draft.source;
       content.value = copyContent(draft.content);
@@ -523,7 +528,7 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
       void refresh();
       return true;
     } catch (raw) {
-      if (token === generation) createError.value = normalizeError(raw);
+      if (token === generation && stillWanted()) createError.value = normalizeError(raw);
       return false;
     }
   }

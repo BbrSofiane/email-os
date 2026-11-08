@@ -459,18 +459,27 @@ describe('ComposeCard fallback reason (reply draft that cannot show its thread)'
   };
 
   it.each([
-    [REPLY_REASONS.noLatestMessage.text, 'no latest message'],
-    [REPLY_REASONS.retainedSnapshot.text, 'retained snapshot'],
-    [REPLY_REASONS.incomplete.text, 'incomplete cached conversation'],
-    [REPLY_REASONS.headerMismatch.text, 'reply headers do not match the latest message'],
-    [REPLY_REASONS.otherAccount.text, 'belongs to another account'],
-    [REPLY_REASONS.notOpen.text, 'not open'],
-    [REPLY_REASONS.stillLoading.text, 'still loading'],
-    [sourceLoadErrorReason('not found'), 'could not be loaded: not found'],
-    [sourceLoadErrorReason(null), 'could not be loaded'],
-  ])('shows the reason "%s" as visible text and keeps the sentence in the title', (reason, label) => {
+    [REPLY_REASONS.noLatestMessage.text, 'Source conversation unavailable: no latest message.'],
+    [REPLY_REASONS.retainedSnapshot.text, 'Source conversation unavailable: retained snapshot.'],
+    [REPLY_REASONS.incomplete.text, 'Source conversation unavailable: incomplete cached conversation.'],
+    [REPLY_REASONS.headerMismatch.text, 'Source conversation unavailable: reply headers do not match the latest message.'],
+    [sourceLoadErrorReason('not found'), 'Source conversation unavailable: could not be loaded: not found.'],
+    [sourceLoadErrorReason(null), 'Source conversation unavailable: could not be loaded.'],
+  ])('shows the failure "%s" as "unavailable: <reason>" and keeps the sentence in the title', (reason, line) => {
     const notice = noticeFor(reason);
-    expect(notice.text()).toBe(`Source conversation unavailable: ${label}. Editing locally; nothing is sent.`);
+    expect(notice.text()).toBe(`${line} Editing locally; nothing is sent.`);
+    expect(notice.attributes('title')).toBe(reason);
+    expect(notice.attributes('role')).toBe('note');
+  });
+
+  it.each([
+    [REPLY_REASONS.notOpen.text, 'Source conversation not open.'],
+    [REPLY_REASONS.stillLoading.text, 'Source conversation still loading.'],
+    [REPLY_REASONS.otherAccount.text, 'Source conversation belongs to another account.'],
+  ])('states the navigation reason "%s" as a fact, never as "unavailable"', (reason, line) => {
+    const notice = noticeFor(reason);
+    expect(notice.text()).toBe(`${line} Editing locally; nothing is sent.`);
+    expect(notice.text()).not.toContain('unavailable');
     expect(notice.attributes('title')).toBe(reason);
     expect(notice.attributes('role')).toBe('note');
   });

@@ -288,9 +288,9 @@ describe('DraftsList Discard', () => {
 
   /** A discard that, like the app, deletes the draft and lets the list refresh before it resolves. */
   function deleting(result: MailError | null = null) {
-    const calls: Array<{ draftId: string; requestId: string }> = [];
+    const calls: Array<{ draftId: string; revision: number; requestId: string }> = [];
     const discardDraft = async (draft: DraftSummary, requestId: string): Promise<MailError | null> => {
-      calls.push({ draftId: draft.ref.draftId, requestId });
+      calls.push({ draftId: draft.ref.draftId, revision: draft.revision, requestId });
       if (result) return result;
       await wrapper!.setProps({ summaries: (wrapper!.props() as { summaries: DraftSummary[] }).summaries.filter((item) => item.ref.draftId !== draft.ref.draftId) });
       return null;
@@ -423,8 +423,139 @@ describe('DraftsList Discard', () => {
     wrapper = mountList({ summaries: three, discardDraft });
     await discardBtn('d2').trigger('click'); await flushPromises();
     await wrapper.setProps({ activeRef: ref('d2') });
-    expect(wrapper.get('[data-test="confirm-discard-draft"]').attributes('disabled')).toBeDefined();
+    expect(wrapper.get('[data-test="confirm-discard-draft"]').attributes('aria-disabled')).toBe('true');
     await wrapper.get('[data-test="confirm-discard-draft"]').trigger('click');
     expect(calls).toHaveLength(0);
+  });
+
+  it('sends the draft and revision the confirmation was opened for, not a newer refresh of the row', async () => {
+    const { calls, discardDraft } = deleting({ kind: 'draft_conflict', currentRevision: 4 });
+    wrapper = mountList({ summaries: three, discardDraft });
+    await discardBtn('d2').trigger('click'); await flushPromises();
+    // The row refreshes to revision 4 while the revision-3 confirmation is open.
+    await wrapper.setProps({ summaries: [three[0]!, summary('d2', { subject: 'Two', revision: 4 }), three[2]!] });
+    await wrapper.get('[data-test="confirm-discard-draft"]').trigger('click'); await flushPromises();
+    expect(calls).toEqual([{ draftId: 'd2', revision: 3, requestId: expect.any(String) }]);
+  });
+
+  it('repeats the frozen envelope on retry: same revision and same request id', async () => {
+    const { calls, discardDraft } = deleting({ kind: 'storage_unavailable' });
+    wrapper = mountList({ summaries: three, discardDraft });
+    await discardBtn('d2').trigger('click'); await flushPromises();
+    await wrapper.get('[data-test="confirm-discard-draft"]').trigger('click'); await flushPromises();
+    await wrapper.setProps({ summaries: [three[0]!, summary('d2', { subject: 'Two', revision: 4 }), three[2]!] });
+    await wrapper.get('[data-test="confirm-discard-draft"]').trigger('click'); await flushPromises();
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toEqual(calls[0]);
+    expect(calls[1]!.revision).toBe(3);
+  });
+
+  it('keeps the confirmation buttons focusable (aria-disabled, not disabled) while the request runs', async () => {
+    let finish: (value: MailError | null) => void = () => {};
+    const discardDraft = () => new Promise<MailError | null>((resolve) => { finish = resolve; });
+    wrapper = mountList({ summaries: three, discardDraft });
+    await discardBtn('d2').trigger('click'); await flushPromises();
+    const confirm = wrapper.get('[data-test="confirm-discard-draft"]');
+    const cancel = wrapper.get('[data-test="cancel-discard-draft"]');
+    (confirm.element as HTMLElement).focus();
+    await confirm.trigger('click'); await flushPromises();
+    for (const button of [confirm, cancel]) {
+      expect(button.attributes('aria-disabled')).toBe('true');
+      expect(button.attributes('disabled')).toBeUndefined();
+    }
+    expect(document.activeElement).toBe(confirm.element);
+    // A second press and Keep draft do nothing while the request runs.
+    await confirm.trigger('click'); await cancel.trigger('click'); await flushPromises();
+    expect(wrapper.find('[data-test="draft-discard-confirm"]').exists()).toBe(true);
+    finish({ kind: 'storage_unavailable' }); await flushPromises();
+    expect(confirm.attributes('aria-disabled')).toBeUndefined();
+  });
+
+  it('keeps focus in the confirmation after a retryable failure, so Escape closes it and does not run Back', async () => {
+    const { discardDraft } = deleting({ kind: 'storage_unavailable' });
+    wrapper = mountList({ summaries: three, discardDraft });
+    const outside = vi.fn();
+    window.addEventListener('keydown', outside);
+    await discardBtn('d2').trigger('click'); await flushPromises();
+    const confirm = wrapper.get('[data-test="confirm-discard-draft"]');
+    await confirm.trigger('click'); await flushPromises();
+    expect(wrapper.find('[data-test="draft-discard-confirm"]').exists()).toBe(true);
+    expect(document.activeElement).toBe(confirm.element);
+    document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await flushPromises();
+    expect(wrapper.find('[data-test="draft-discard-confirm"]').exists()).toBe(false);
+    expect(document.activeElement).toBe(discardBtn('d2').element);
+    expect(outside).not.toHaveBeenCalled();
+    window.removeEventListener('keydown', outside);
+  });
+
+  it('restores focus to the confirmation after a retryable failure even when the button lost it', async () => {
+    const { discardDraft } = deleting({ kind: 'storage_unavailable' });
+    wrapper = mountList({ summaries: three, discardDraft });
+    await discardBtn('d2').trigger('click'); await flushPromises();
+    const confirm = wrapper.get('[data-test="confirm-discard-draft"]');
+    (document.activeElement as HTMLElement).blur();
+    await confirm.trigger('click'); await flushPromises();
+    expect(document.activeElement).toBe(confirm.element);
+  });
+
+  it('returns focus to Discard after Keep draft pressed as a button, with the focus on that button', async () => {
+    wrapper = mountList({ summaries: three, discardDraft: deleting().discardDraft });
+    await discardBtn('d2').trigger('click'); await flushPromises();
+    const keep = wrapper.get('[data-test="cancel-discard-draft"]');
+    (keep.element as HTMLElement).focus();
+    await keep.trigger('click'); await flushPromises();
+    expect(document.activeElement).toBe(discardBtn('d2').element);
+  });
+
+  it('does not take focus back from elsewhere in the page once the result arrives', async () => {
+    let finish: (value: MailError | null) => void = () => {};
+    const discardDraft = () => new Promise<MailError | null>((resolve) => { finish = resolve; });
+    wrapper = mountList({ summaries: three, discardDraft });
+    const elsewhere = document.createElement('input');
+    document.body.append(elsewhere);
+    await discardBtn('d2').trigger('click'); await flushPromises();
+    await wrapper.get('[data-test="confirm-discard-draft"]').trigger('click');
+    elsewhere.focus();
+    finish({ kind: 'storage_unavailable' }); await flushPromises();
+    expect(document.activeElement).toBe(elsewhere);
+    elsewhere.remove();
+  });
+
+  it('keeps the outcome line as a live region that is visually hidden, so it never pushes rows down', async () => {
+    const { discardDraft } = deleting();
+    wrapper = mountList({ summaries: three, discardDraft });
+    expect(status().classes()).toContain('visually-hidden');
+    expect(status().attributes('aria-live')).toBe('polite');
+    await discardBtn('d2').trigger('click'); await flushPromises();
+    await wrapper.get('[data-test="confirm-discard-draft"]').trigger('click'); await flushPromises();
+    expect(status().classes()).toContain('visually-hidden');
+    expect(status().text()).toBe('Local draft deleted');
+  });
+});
+
+describe('DraftsList row description', () => {
+  let wrapper: VueWrapper | null = null;
+  afterEach(() => { wrapper?.unmount(); wrapper = null; });
+  const describedBy = (id: string) => wrapper!.get(`[data-test="open-draft-${id}"]`).attributes('aria-describedby')!.split(' ');
+  const text = (ids: string[]) => ids.map((id) => document.getElementById(id)!.textContent?.trim());
+
+  it('describes the row button by subject, preview and the Reply word, with unique ids', async () => {
+    wrapper = mountList({ loadBody: async (r: DraftRef) => r.draftId === 'd1' ? 'Hello Ada' : '' });
+    await flushPromises();
+    expect(text(describedBy('d1'))).toEqual(['Plan', 'Hello Ada']);
+    expect(text(describedBy('d2'))).toEqual(['(no subject)', 'No text yet', 'Reply']);
+    const all = [...describedBy('d1'), ...describedBy('d2')];
+    expect(new Set(all).size).toBe(all.length);
+    expect(wrapper.get('[data-test="open-draft-d1"]').text()).toBe('Open ada@example.test');
+  });
+
+  it('omits the preview while the body is unknown and adds the Conflict word only for the draft in conflict', async () => {
+    wrapper = mountList({ summaries: [summary('d1'), summary('d3')] });
+    await flushPromises();
+    expect(text(describedBy('d1'))).toEqual(['Plan']);
+    await wrapper.setProps({ conflict: true, activeRef: ref('d3') });
+    expect(text(describedBy('d3'))).toEqual(['Plan', 'Conflict · revision 3']);
+    expect(text(describedBy('d1'))).toEqual(['Plan']);
   });
 });

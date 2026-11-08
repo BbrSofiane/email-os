@@ -14,7 +14,7 @@
  */
 import { computed } from 'vue';
 import type { DraftContent, DraftRef, DraftSource, MailError } from '../lib/ipc/client';
-import { replyReasonLabel } from '../lib/reply-context';
+import { replyNoticeLine } from '../lib/reply-context';
 import DraftEditorCore from './DraftEditorCore.vue';
 
 const props = defineProps<{
@@ -50,7 +50,7 @@ const title = computed(() => props.source?.kind !== 'reply' ? 'New Message'
 
 /** One Amber line: the terse reason is visible text; the full sentence stays in the title. */
 const noticeLine = computed(() => props.notice
-  ? `Source conversation unavailable: ${replyReasonLabel(props.notice)}. Editing locally; nothing is sent.`
+  ? `${replyNoticeLine(props.notice)} Editing locally; nothing is sent.`
   : '');
 
 const emit = defineEmits<{

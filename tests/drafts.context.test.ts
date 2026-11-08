@@ -246,6 +246,46 @@ describe('opening a draft', () => {
     expect(rows(w)).toHaveLength(2);
   });
 
+  it('Back while the draft itself loads never installs the editor, and the destination list stays', async () => {
+    const fake = createBrowserFakeMailClient();
+    const { plain } = await seed(fake);
+    const pending = deferred<Awaited<ReturnType<MailClient['getDraft']>>>();
+    const client: MailClient = { ...fake, getDraft: (ref) => ref.draftId === plain.ref.draftId ? pending.promise : fake.getDraft(ref) };
+    const w = await mountApp(fake, client);
+    await enter(w);
+    await w.get(`[data-test="open-draft-${plain.ref.draftId}"]`).trigger('click'); await flushPromises();
+    await key('Escape');
+    expect(title(w)).toBe('Inbox');
+    expect(w.find('[data-test="drafts-pane"]').exists()).toBe(false);
+    pending.resolve(await fake.getDraft(plain.ref));
+    await flushPromises();
+    expect(title(w)).toBe('Inbox');
+    expect(w.find('[data-test="compose-card"]').exists()).toBe(false);
+    expect(w.find('[data-test="reply-composer"]').exists()).toBe(false);
+    expect(w.find('[data-test="drafts-pane"]').exists()).toBe(false);
+    expect(w.find('[data-test="draft-open-error"]').exists()).toBe(false);
+  });
+
+  it('Back while the draft of a reply loads (source already open) never installs the editor either', async () => {
+    const fake = createBrowserFakeMailClient();
+    const { reply } = await seed(fake);
+    const pending = deferred<Awaited<ReturnType<MailClient['getDraft']>>>();
+    const client: MailClient = { ...fake, getDraft: (ref) => ref.draftId === reply.ref.draftId ? pending.promise : fake.getDraft(ref) };
+    const w = await mountApp(fake, client);
+    await enter(w);
+    await w.get(`[data-test="open-draft-${reply.ref.draftId}"]`).trigger('click');
+    await waitFor(() => w.find('[data-test="reader"]').exists());
+    await flushPromises();
+    await key('Escape');
+    expect(w.find('[data-test="reader"]').exists()).toBe(false);
+    pending.resolve(await fake.getDraft(reply.ref));
+    await flushPromises();
+    expect(w.find('[data-test="reply-composer"]').exists()).toBe(false);
+    expect(w.find('[data-test="compose-card"]').exists()).toBe(false);
+    expect(w.find('[data-test="drafts-pane"]').exists()).toBe(true);
+    expect(rows(w)).toHaveLength(2);
+  });
+
   it('a second open while the first is loading wins: the first never docks on the wrong conversation', async () => {
     const fake = createBrowserFakeMailClient();
     const { reply, plain } = await seed(fake);
@@ -298,7 +338,7 @@ describe('opening a draft', () => {
 
 describe('a reply draft whose source cannot host it', () => {
   /** The Amber line: the terse reason is visible text, the full sentence stays in the title. */
-  const notice = (label: string) => `Source conversation unavailable: ${label}. Editing locally; nothing is sent.`;
+  const notice = (phrase: string) => `${phrase} Editing locally; nothing is sent.`;
 
   async function openReply(fake: BrowserFake, client: MailClient = fake) {
     const { reply } = await seed(fake);
@@ -309,14 +349,14 @@ describe('a reply draft whose source cannot host it', () => {
     await flushPromises();
     return { w, reply };
   }
-  function expectEditableInCard(w: VueWrapper, reason: RegExp, label: string): void {
+  function expectEditableInCard(w: VueWrapper, reason: RegExp, phrase: string): void {
     // The same draft, in the Drafts context's card, titled as the reply, with one Amber line.
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect(w.find('[data-test="reply-composer"]').exists()).toBe(false);
     expect(title(w)).toBe('Drafts');
     expect(w.get('[data-test="compose-card"]').attributes('aria-label')).toBe('Reply draft to ada@example.test');
     const line = w.get('[data-test="compose-card-notice"]');
-    expect(line.text()).toBe(notice(label));
+    expect(line.text()).toBe(notice(phrase));
     expect(line.attributes('title')).toMatch(reason);
     expect(line.attributes('role')).toBe('note');
     expect(w.get('[data-test="reply-source"]').attributes('data-source-conversation')).toBe('conv-01');
@@ -329,7 +369,7 @@ describe('a reply draft whose source cannot host it', () => {
     const fake = createBrowserFakeMailClient();
     const client: MailClient = { ...fake, getConversation: (ref, ...rest) => ref.conversationId === 'conv-01' ? Promise.reject({ kind: 'not_found' }) : fake.getConversation(ref, ...rest) };
     const { w, reply } = await openReply(fake, client);
-    expectEditableInCard(w, /could not be loaded/, 'could not be loaded: not found');
+    expectEditableInCard(w, /could not be loaded/, 'Source conversation unavailable: could not be loaded: not found.');
     await typeBody(w, 'edited without the thread');
     await key('Escape');
     expect(w.find('[data-test="compose-card"]').exists()).toBe(false);
@@ -348,7 +388,7 @@ describe('a reply draft whose source cannot host it', () => {
     await w.get(`[data-test="open-draft-${reply.ref.draftId}"]`).trigger('click');
     await waitFor(() => w.find('[data-test="compose-card"]').exists());
     await flushPromises();
-    expectEditableInCard(w, /incomplete/, 'incomplete cached conversation');
+    expectEditableInCard(w, /incomplete/, 'Source conversation unavailable: incomplete cached conversation.');
   });
 
   it('opens in the card for a source in another account', async () => {
@@ -369,7 +409,7 @@ describe('a reply draft whose source cannot host it', () => {
     expect(loads).not.toHaveBeenCalled();
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect(w.get('[data-test="compose-card-notice"]').attributes('title')).toMatch(/another account/);
-    expect(w.get('[data-test="compose-card-notice"]').text()).toBe(notice('belongs to another account'));
+    expect(w.get('[data-test="compose-card-notice"]').text()).toBe(notice('Source conversation belongs to another account.'));
     expect(body(w)).toBe('');
   });
 });

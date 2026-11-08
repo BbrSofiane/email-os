@@ -1451,17 +1451,6 @@ button:focus-visible {
   color: var(--text-secondary);
 }
 
-/* Discard outcome: a polite live region, zero height until it has text. */
-.draft-discard-status {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: var(--type-body);
-}
-
-.draft-discard-status:not(:empty) {
-  padding: 0 24px 6px 50px;
-}
-
 /* The confirmation under its row: the editor's question, then two quiet 24px ghosts. */
 .draft-discard-confirm {
   display: flex;
@@ -1471,8 +1460,15 @@ button:focus-visible {
   color: var(--text-secondary);
 }
 
-.draft-discard-confirm .drawer-quiet:hover:not(:disabled) {
+.draft-discard-confirm .drawer-quiet:hover:not(:disabled):not([aria-disabled='true']) {
   box-shadow: inset 0 0 0 1px var(--text-secondary);
+}
+
+/* Busy, but still focusable (focus must not drop to the page while a request runs). */
+.draft-discard-confirm .drawer-quiet[aria-disabled='true'] {
+  color: var(--text-tertiary);
+  background: transparent;
+  cursor: default;
 }
 
 /* Reserve the room of the `Reply` word on every row so Discard keeps one column. */
