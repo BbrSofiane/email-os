@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import App from '../src/App.vue';
 import ReaderView from '../src/components/ReaderView.vue';
-import RemindersPanel from '../src/components/RemindersPanel.vue';
+import RemindersList from '../src/components/RemindersList.vue';
 import { createBrowserFakeMailClient } from '../src/lib/ipc/browser-fake';
 import type { Conversation, Reminder } from '../src/lib/ipc/client';
 import { deferred } from './helpers';
@@ -51,13 +51,13 @@ async function key(key: string) {
 }
 
 async function openReturnedReminder() {
-  await app!.findAll('button').find(button => button.text() === 'Reminders')!.trigger('click');
+  await app!.get('[data-test="reminders-trigger"]').trigger('click');
   await flushPromises();
-  const panel = app!.getComponent(RemindersPanel);
-  await panel.findAll('[role="tab"]').find(button => button.text().startsWith('Returned'))!.trigger('click');
+  const panel = app!.getComponent(RemindersList);
+  await app!.findAll('[role="tab"]').find(button => button.text().startsWith('Returned'))!.trigger('click');
   await panel.get('li button').trigger('click');
   await flushPromises();
-  expect(app!.findComponent(RemindersPanel).exists()).toBe(false);
+  expect(app!.findComponent(RemindersList).exists()).toBe(false);
   expect(app!.find('[data-test="reader-loading"]').exists()).toBe(true);
 }
 
@@ -74,16 +74,16 @@ describe('reminder reader navigation ownership', () => {
       // The transport is still pending: Back must already know its real origin.
       await key('Escape');
       expect(app!.findComponent(ReaderView).exists()).toBe(false);
-      expect(app!.findComponent(RemindersPanel).exists()).toBe(true);
-      const panel = app!.getComponent(RemindersPanel);
-      expect(panel.findAll('[role="tab"]').find(button => button.text().startsWith('Returned'))!.attributes('aria-selected')).toBe('true');
+      expect(app!.findComponent(RemindersList).exists()).toBe(true);
+      const panel = app!.getComponent(RemindersList);
+      expect(app!.findAll('[role="tab"]').find(button => button.text().startsWith('Returned'))!.attributes('aria-selected')).toBe('true');
       expect(panel.get('li button').text()).toBe(`Open ${detail.subject}`);
       expect(app!.get('[data-test="rail-activity"]').attributes('aria-expanded')).toBe('false');
 
       pending.resolve(detail);
       await flushPromises();
       expect(app!.findComponent(ReaderView).exists()).toBe(false);
-      expect(app!.findComponent(RemindersPanel).exists()).toBe(true);
+      expect(app!.findComponent(RemindersList).exists()).toBe(true);
       expect(getConversation).toHaveBeenCalledTimes(1);
       expect(setRead).not.toHaveBeenCalled();
     } finally {
@@ -109,7 +109,7 @@ describe('reminder reader navigation ownership', () => {
       pending.resolve(detail);
       await flushPromises();
       expect(app!.getComponent(ReaderView).props('conversation')?.ref).toEqual(entry);
-      expect(app!.findComponent(RemindersPanel).exists()).toBe(false);
+      expect(app!.findComponent(RemindersList).exists()).toBe(false);
       const before = getConversation.mock.calls.length;
       await key('j');
       // The prefetched neighbor swaps in from cache; one background revalidation
@@ -124,7 +124,7 @@ describe('reminder reader navigation ownership', () => {
 
       await key('Escape');
       expect(app!.findComponent(ReaderView).exists()).toBe(false);
-      expect(app!.findComponent(RemindersPanel).exists()).toBe(false);
+      expect(app!.findComponent(RemindersList).exists()).toBe(false);
       const row = app!.get(`[data-test="conversation-row-${entry.conversationId}"]`);
       expect(row.attributes('aria-current')).toBe('true');
       expect(document.activeElement).toBe(row.element);

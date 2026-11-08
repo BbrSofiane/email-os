@@ -27,7 +27,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { createSubjectIndex } from './lib/subject-index';
 import ActionOverlay from './components/ActionOverlay.vue';
-import RemindersPanel from './components/RemindersPanel.vue';
+import RemindersList from './components/RemindersList.vue';
+import { useReminders, REMINDER_TABS } from './composables/useReminders';
 import { formatReminderDateTime } from './lib/reminder-timezone';
 import ReminderSettings from './components/ReminderSettings.vue';
 import ActionNotice, { type GroupNoticeView } from './components/ActionNotice.vue';
@@ -70,7 +71,7 @@ const workspaceActive = computed(() => props.active !== false);
 /** Contact context breakpoint (supervisor-approved strict value). */
 const CONTACT_BREAKPOINT_PX = 1000;
 
-type UtilityDrawer = 'account' | 'activity' | 'drafts' | 'destinations' | 'reminders' | 'reminder-settings';
+type UtilityDrawer = 'account' | 'activity' | 'drafts' | 'destinations' | 'reminder-settings';
 type ContactContext = 'focused' | 'open';
 interface ContactInfo { displayName: string | null; mailbox: string }
 /** Visible-row anchor for the reader round trip. */
@@ -81,7 +82,7 @@ interface ListAnchor { ref: ConversationRef; offsetTop: number; scrollTop: numbe
  * recapture from an unmounted list.
  */
 interface ReaderOrigin {
-  surface: BrowseContext | 'activity' | 'reminders';
+  surface: BrowseContext | 'activity';
   /** Original entry focus reference; Back restores it (with fallbacks). */
   focusedRef: ConversationRef | null;
   /** Entry-time Inbox ordering, used to resolve a removed cursor. */
@@ -111,7 +112,7 @@ const listRows = computed<ConversationSummaryLike[]>(() =>
 const inboxList = ref<InstanceType<typeof InboxList> | null>(null);
 const editingSplit = ref(false);
 const splitEditor = ref<InstanceType<typeof SplitEditor> | null>(null);
-const contextTitle = computed(() => mailbox.context.value === 'search' ? 'Search' : mailbox.context.value === 'starred' ? 'Cached Starred' : mailbox.context.value === 'trash' ? 'Cached Trash' : mailbox.context.value === 'done' ? 'Cached Done' : mailbox.context.value === 'saved' ? mailbox.savedSplit.value?.name ?? 'Saved split' : 'Inbox');
+const contextTitle = computed(() => mailbox.context.value === 'search' ? 'Search' : mailbox.context.value === 'starred' ? 'Cached Starred' : mailbox.context.value === 'trash' ? 'Cached Trash' : mailbox.context.value === 'reminders' ? 'Reminders' : mailbox.context.value === 'done' ? 'Cached Done' : mailbox.context.value === 'saved' ? mailbox.savedSplit.value?.name ?? 'Saved split' : 'Inbox');
 const savedTabVisible = computed(() => mailbox.savedSplit.value?.enabled && !mailbox.splitError.value && (!mailbox.savedSplit.value.hideWhenEmpty || mailbox.savedTotal.value !== 0));
 async function closeSplitEditor(restoreFocus = true): Promise<void> {
   editingSplit.value = false;
@@ -447,7 +448,7 @@ const composeCardOpen = ref(false);
 defineExpose({ prepareWorkspaceSwitch: () => drafts.flushAndClose() });
 watch(() => [mailbox.context.value, mailbox.listState.value, mailbox.conversations.value.length, accountStatus.value?.account?.emailAddress], () => {
   const view = contextTitle.value;
-  const count = mailbox.listState.value === 'ready' ? ` — ${mailbox.conversations.value.length} loaded` : '';
+  const count = mailbox.listState.value === 'ready' && mailbox.context.value !== 'reminders' ? ` — ${mailbox.conversations.value.length} loaded` : '';
   emit('workspaceTitle', `${view}${count} — ${accountStatus.value?.account?.emailAddress ?? 'Loading account'}`);
 }, { immediate: true });
 watch(workspaceActive, () => { cancelGo(); });
@@ -461,7 +462,9 @@ watch(drawer, (next) => { if (next) editingSplit.value = false; });
 
 // Split header (DESIGN.md "Split Tabs"). The tabs render only for a ready
 // account's list; the context heading is shown on screen only when no rendered
-// tab is active, so Cached Done / Starred / Search / the reader stay named.
+// tab is active, so Cached Done / Starred / Trash / Search / the reader stay
+// named. Reminders is the exception: its tabs are sections of the list, so the
+// heading stays visible before them.
 const splitNavShown = computed(() => accountReady.value && !!accountId.value && !readerOpen.value && !drawer.value);
 const activeTabShown = computed(() => splitNavShown.value
   && (mailbox.context.value === 'inbox' || (mailbox.context.value === 'saved' && !!savedTabVisible.value)));
@@ -473,7 +476,7 @@ const TRASH_COVERAGE_DETAIL = 'Known cached Trash only, not your complete Gmail 
 const SPLIT_COVERAGE = 'Local Inbox cache only — counts are exact for cached conversations, not mailbox-wide totals. Split membership uses the latest message’s sender.';
 const splitCoverageShown = computed(() => splitNavShown.value && gmailMode.value
   && (mailbox.context.value === 'inbox' || mailbox.context.value === 'saved'));
-const starredFilterShown = computed(() => gmailMode.value && !readerOpen.value && mailbox.context.value !== 'starred');
+const starredFilterShown = computed(() => gmailMode.value && !readerOpen.value && mailbox.context.value !== 'starred' && mailbox.context.value !== 'reminders');
 /** Per-workspace DOM id prefix: two fixture workspaces mount two Apps at once. */
 const domIdPrefix = computed(() => props.switchAccountLabel ? accountId.value ?? '' : '');
 const drawerEl = ref<HTMLElement | null>(null);
@@ -492,7 +495,6 @@ const drawerTitles: Record<UtilityDrawer, string> = {
   destinations: 'Provider mail — read only',
   activity: 'Operation activity',
   drafts: 'Local drafts',
-  reminders: 'Reminders',
   'reminder-settings': 'Reminder settings',
 };
 /** The drawer's one visible heading; panels render no heading that repeats it. */
@@ -501,7 +503,6 @@ const drawerHeadings: Record<UtilityDrawer, string> = {
   destinations: 'Provider mail — read only',
   activity: 'Activity',
   drafts: 'Drafts',
-  reminders: 'Reminders',
   'reminder-settings': 'Reminder settings',
 };
 
@@ -549,9 +550,6 @@ async function openDrawer(name: UtilityDrawer, entry: 'drawer' | 'toggle' = 'dra
   else drawerToggles.get(name)?.focus();
 }
 
-const remindersPanel = ref<InstanceType<typeof RemindersPanel> | null>(null);
-const reminderTarget = ref<ConversationRef | null>(null);
-const reminderDestination = ref<'pending' | 'returned' | 'history'>('pending');
 const reminderConfirmation = ref('');
 let reminderViewAlive = true;
 let reminderAccountEpoch = 0;
@@ -573,26 +571,44 @@ const remindersSupported = computed(() => !!props.client.reminders);
 function reminderPreferencesSaved(): void {
   void closeDrawer();
 }
-async function openReminders(picker: boolean, explicit?: ConversationRef) {
-  if (!remindersSupported.value || (picker && (selectedCount.value > 0 || mailbox.commandInFlight.value || mailbox.bulkUnresolved.value))) return;
-  const target = actionTarget(explicit);
-  if (picker && !target) return;
-  reminderTarget.value = picker && target ? { ...target } : null;
-  if (picker) reminderDestination.value = 'pending';
-  await openDrawer('reminders');
+// Reminders is a list context: the rows, the tabs and the picker state live in
+// useReminders; the session runs while the context is active, so the selected
+// tab, the rows and an open picker survive the reader round trip.
+const reminders = useReminders(props.client, {
+  onScheduled: (receipt, rescheduled) => { void reminderScheduled(receipt, rescheduled); },
+  onDismissed: () => { void reminderDismissed(); },
+});
+const remindersContext = computed(() => remindersSupported.value && mailbox.context.value === 'reminders');
+/** The Reminders list itself (no reader): a browse surface where mailbox actions do not apply. */
+const remindersList = computed(() => remindersContext.value && !readerOpen.value);
+const remindersPane = ref<InstanceType<typeof RemindersList> | null>(null);
+watch(remindersContext, (active) => {
+  if (active) void reminders.activate();
+  else reminders.deactivate();
+}, { immediate: true });
+async function focusRemindersList(preventScroll = false): Promise<void> {
+  await nextTick();
+  if (!workspaceActive.value || !remindersList.value || overlay.value) return;
+  // An open picker already owns focus.
+  if (!reminders.source.value) await remindersPane.value?.focusRow({ preventScroll });
 }
-function openReminderConversation(target: ConversationRef): Promise<void> {
-  return openFromUtility(target, 'reminders');
+/** Open a reminder's conversation; the Reminders list is the reader's origin. */
+async function openReminderConversation(target: ConversationRef): Promise<void> {
+  // Capture the return surface synchronously, before loading: Back can happen
+  // while the detail is pending, and a late response must never rewrite the
+  // origin of a newer reader.
+  captureListOrigin('reminders');
+  await mailbox.openConversationByRef(target, 'activity');
 }
 async function reminderScheduled(receipt: Reminder, rescheduled: boolean): Promise<void> {
-  if (!reminderViewAlive || receipt.conversation.accountId !== accountId.value || drawer.value !== 'reminders' || (!rescheduled && reminderTarget.value === null)) return;
+  if (!reminderViewAlive || receipt.conversation.accountId !== accountId.value || !remindersContext.value || (!rescheduled && reminders.target.value === null)) return;
   const account = accountId.value;
   const epoch = reminderAccountEpoch;
   const token = navigationToken;
-  reminderTarget.value = null;
+  reminders.setTarget(null);
   await mailbox.refresh();
   if (!reminderViewAlive || epoch !== reminderAccountEpoch || account !== accountId.value) return;
-  if (token !== navigationToken || drawer.value !== 'reminders') {
+  if (token !== navigationToken || !remindersContext.value) {
     showReminderConfirmation(receipt, rescheduled);
     return;
   }
@@ -604,28 +620,20 @@ async function reminderScheduled(receipt: Reminder, rescheduled: boolean): Promi
   if (navigationOwner !== navigationToken) return;
   await focusFocusedRow(true);
 }
+/**
+ * A new picker (Remind me) was dismissed without scheduling: the request is
+ * over, so Back returns to the surface it was asked from. With no history the
+ * Reminders list stays and keeps focus.
+ */
 async function reminderDismissed(): Promise<void> {
-  if (drawer.value !== 'reminders' || reminderTarget.value === null) return;
-  const token = navigationToken;
-  const epoch = reminderAccountEpoch;
-  reminderTarget.value = null;
-  drawer.value = null;
-  await nextTick();
-  if (!reminderViewAlive || !workspaceActive.value || epoch !== reminderAccountEpoch || token !== navigationToken || drawer.value) return;
-  if (readerOpen.value) (readerView.value?.$el as HTMLElement | undefined)?.focus({ preventScroll: true });
-  else {
-    const focused = mailbox.focusedRef.value;
-    if (focused && inboxList.value) inboxList.value.focusRef(focused, { preventScroll: true });
-    else if (mailbox.conversations.value.length === 0) emptyState.value?.focus();
-  }
+  if (!remindersContext.value || reminders.target.value === null) return;
+  reminders.setTarget(null);
+  if (!actionAvailable('back')) { await focusRemindersList(); return; }
+  await executeAction('back');
 }
 
 async function closeDrawer(): Promise<void> {
   const closing = drawer.value;
-  if (closing === 'reminders') {
-    if (remindersPanel.value?.dismissBlocked) { remindersPanel.value.retainPickerFocus(); return; }
-    if (reminderTarget.value) { await reminderDismissed(); return; }
-  }
   if (closing === 'drafts' && !(await releaseDraftsDrawer())) return; // closure failed; keep drawer visible
   drawer.value = null;
   await nextTick();
@@ -1281,6 +1289,11 @@ async function navigateContext(context: BrowseContext, saved?: ContextEntry): Pr
     mailbox.focusConversation(resolveOriginFocus(saved));
     if (saved.anchor) await inboxList.value?.restoreAnchor(saved.anchor);
   }
+  if (mailbox.context.value === 'reminders') {
+    // The rows load after the context is active; focus the current row once they are there.
+    void reminders.whenLoaded().then(() => (token === navigationToken && account === accountId.value ? focusRemindersList(!!saved) : undefined));
+    return true;
+  }
   await focusFocusedRow(!!saved);
   return true;
 }
@@ -1342,6 +1355,7 @@ function captureListOrigin(surface: ReaderOrigin['surface']): void {
 async function focusFocusedRow(preventScroll = false): Promise<void> {
   await nextTick();
   if (!workspaceActive.value) return;
+  if (remindersList.value) { await focusRemindersList(preventScroll); return; }
   const focused = mailbox.focusedRef.value;
   if (focused && inboxList.value) inboxList.value.focusRef(focused, { preventScroll });
   else if (mailbox.conversations.value.length === 0) emptyState.value?.focus();
@@ -1426,8 +1440,10 @@ async function closeReader(explicitInbox = false): Promise<void> {
       const resolved = resolveOriginFocus(originState);
       if (resolved) mailbox.focusConversation(resolved);
     }
-    await focusFocusedRow(true);
-    if (!explicitInbox && (originState?.surface === 'activity' || originState?.surface === 'reminders')) await openDrawer(originState.surface);
+    // The Reminders list keeps its own current row; the reader returns to it.
+    if (remindersContext.value) await focusRemindersList(true);
+    else await focusFocusedRow(true);
+    if (!explicitInbox && originState?.surface === 'activity') await openDrawer('activity');
   })();
 }
 
@@ -1458,19 +1474,15 @@ const trashReader = computed(() => readerOpen.value && origin.value?.surface ===
 const trashList = computed(() => !readerOpen.value && mailbox.context.value === 'trash');
 const trashBrowsing = computed(() => trashReader.value || trashList.value);
 
-function openFromActivity(target: ConversationRef): Promise<void> {
-  return openFromUtility(target, 'activity');
-}
-
-async function openFromUtility(target: ConversationRef, surface: 'activity' | 'reminders'): Promise<void> {
+async function openFromActivity(target: ConversationRef): Promise<void> {
   // Capture the return surface synchronously, before loading: Back can happen
   // while the detail is pending, and a late response must never rewrite the
   // origin of a newer reader. Keep the saved list anchor/entry context when
   // opening from a utility over an existing reader (the list is unmounted).
   if (readerOpen.value) {
-    if (origin.value) origin.value = { ...origin.value, surface };
+    if (origin.value) origin.value = { ...origin.value, surface: 'activity' };
   } else {
-    captureListOrigin(surface);
+    captureListOrigin('activity');
   }
   drawer.value = null;
   await mailbox.openConversationByRef(target, 'activity');
@@ -1700,7 +1712,7 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   if (id === 'starred') return gmailMode.value && !!accountId.value;
   if (id === 'create-split') return !!accountId.value && !mailbox.savedSplit.value && !editingSplit.value;
   if (id === 'edit-split') return !!accountId.value && !!mailbox.savedSplit.value && !editingSplit.value;
-  if (id === 'toggle-unread-filter') return !!accountId.value && !editingSplit.value && !drawer.value && !contactDisclosure.value;
+  if (id === 'toggle-unread-filter') return !!accountId.value && !editingSplit.value && !drawer.value && !contactDisclosure.value && !remindersList.value;
   if (id === 'saved') return !!mailbox.savedSplit.value?.enabled && !mailbox.splitError.value;
   if (['inbox', 'done', 'activity'].includes(id)) return !!accountId.value;
   if (id === 'search') return !!accountId.value && !drawer.value && !contactDisclosure.value;
@@ -1711,7 +1723,7 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   if (id === 'reminders') return remindersSupported.value;
   if (id === 'reminder-settings') return remindersSupported.value && !!accountId.value;
   if (id === 'back') return readerOpen.value || history.value.length > 0;
-  if (id === 'select-all-loaded') return !trashList.value && !drafts.activeRef.value && !drawer.value && !contactDisclosure.value && !readerOpen.value && mailbox.listState.value === 'ready' && mailbox.conversations.value.length > 0;
+  if (id === 'select-all-loaded') return !trashList.value && !remindersList.value && !drafts.activeRef.value && !drawer.value && !contactDisclosure.value && !readerOpen.value && mailbox.listState.value === 'ready' && mailbox.conversations.value.length > 0;
   if (id === 'clear-selection') return !drafts.activeRef.value && !drawer.value && !contactDisclosure.value && selectedCount.value > 0;
   // Compose stays available while an editor is already open: it routes to the
   // existing surface instead of stacking a second draft.
@@ -1720,7 +1732,9 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   // inert behind another surface.
   if (id === 'compose') return !!accountId.value && !editingSplit.value && !drawer.value && !contactDisclosure.value;
   // Cached Trash is browse-only: opening a row is the one action it offers.
-  if (trashBrowsing.value && id !== 'open') return false;
+  // The Reminders list offers none from the keyboard: its own row actions are
+  // the only mutations, and mailbox shortcuts do not apply to its rows.
+  if ((trashBrowsing.value && id !== 'open') || remindersList.value) return false;
   if (drafts.activeRef.value || drawer.value || contactDisclosure.value) return false;
   // Reply is reader-only and uses ReaderView's own rule, the same one that
   // disables its buttons (blocked, incomplete or retained conversations, Trash).
@@ -1810,8 +1824,17 @@ async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): 
       return;
     case 'search': await revealSearch(); return;
     case 'reply': readerView.value?.prepareReply(); return;
-    case 'remind': await openReminders(true, explicit); return;
-    case 'reminders': await openReminders(false); return;
+    case 'remind': {
+      // Remind me: the picker opens in the Reminders list for this conversation.
+      // Back returns to the context (and row or reader) it was asked from.
+      if (!remindersSupported.value || selectedCount.value > 0 || mailbox.commandInFlight.value || mailbox.bulkUnresolved.value) return;
+      const target = actionTarget(explicit);
+      if (!target) return;
+      reminders.setTarget(target);
+      await navigateContext('reminders');
+      return;
+    }
+    case 'reminders': await navigateContext('reminders'); return;
     case 'reminder-settings': await openDrawer('reminder-settings'); return;
     case 'inbox': await navigateToInbox(); return;
     case 'saved': await navigateContext('saved'); return;
@@ -1900,11 +1923,11 @@ function actionShortcutBlocked(target: EventTarget | null): boolean {
 
 function onKeydown(event: KeyboardEvent): void {
   if (!workspaceActive.value) return;
-  if (drawer.value === 'reminders' && remindersPanel.value?.dismissBlocked) {
+  if (remindersList.value && reminders.dismissBlocked.value) {
     if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229) {
-      event.preventDefault(); remindersPanel.value.retainPickerFocus();
+      event.preventDefault(); remindersPane.value?.retainPickerFocus();
     } else if (event.key === 'Tab' && event.target === document.body) {
-      event.preventDefault(); remindersPanel.value.retainPickerFocus();
+      event.preventDefault(); remindersPane.value?.retainPickerFocus();
     }
     return;
   }
@@ -2026,7 +2049,11 @@ function onKeydown(event: KeyboardEvent): void {
     return;
   }
 
-  const browsingOwns = !readerIsOpen && !buttonOwns(event.target) && (event.target === document.body || (event.target instanceof Node && !!inboxList.value?.$el?.contains(event.target)) || event.target === emptyState.value);
+  // A Reminders row's open button is a real button but the list's own row, so
+  // the browsing keys (G chords, Left) work from it as they do from an Inbox row.
+  const remindersRowOwns = remindersList.value && event.target instanceof HTMLElement && event.target.hasAttribute('data-drawer-row')
+    && !!remindersPane.value?.el?.contains(event.target);
+  const browsingOwns = !readerIsOpen && (!buttonOwns(event.target) || remindersRowOwns) && (event.target === document.body || (event.target instanceof Node && (!!inboxList.value?.$el?.contains(event.target) || !!remindersPane.value?.el?.contains(event.target))) || event.target === emptyState.value);
   // Split navigation is deliberately nonwrapping and owns only the list,
   // not form fields, toolbar buttons, the reader, or other destinations.
   const splitListOwns = browsingOwns && event.target === document.activeElement
@@ -2132,6 +2159,7 @@ function onKeydown(event: KeyboardEvent): void {
   const targetIsNode = event.target instanceof Node;
   const selectionKeysOwned = !readerIsOpen
     && !trashList.value
+    && !remindersList.value
     && !buttonOwns(event.target)
     // A real Node must be the list surface (body, list, empty state); a
     // non-Node target (window-dispatched synthetic event) is list-owned too.
@@ -2310,10 +2338,29 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
                rendered tab is active (Cached Done, Starred, Search, reader). -->
           <span ref="readerBackHost" class="reader-back-host"></span>
           <h1 class="app-title" :class="{ 'visually-hidden': activeTabShown }" data-test="inbox-title">{{ contextTitle }}<template v-if="switchAccountLabel"><span class="app-title-account"> — {{ accountStatus?.account?.emailAddress }}</span></template></h1>
-          <nav v-if="splitNavShown" class="split-nav" aria-label="Inbox splits" :title="splitCoverageShown ? SPLIT_COVERAGE : undefined">
+          <nav v-if="splitNavShown && !remindersContext" class="split-nav" aria-label="Inbox splits" :title="splitCoverageShown ? SPLIT_COVERAGE : undefined">
             <button type="button" class="split-tab" data-test="split-inbox" :aria-current="mailbox.context.value === 'inbox' ? 'page' : undefined" :aria-describedby="splitCoverageShown ? `${domIdPrefix}split-coverage` : undefined" @click="navigateContext('inbox')"><span class="split-label">Inbox</span> <span v-if="splitBadge(mailbox.inboxTotal.value)" class="split-count">{{ splitBadge(mailbox.inboxTotal.value) }}</span></button>
             <button v-if="savedTabVisible" type="button" class="split-tab" data-test="split-saved" :aria-current="mailbox.context.value === 'saved' ? 'page' : undefined" :aria-describedby="splitCoverageShown ? `${domIdPrefix}split-coverage` : undefined" @click="navigateContext('saved')"><span class="split-label">{{ mailbox.savedSplit.value?.name }}</span> <span v-if="splitBadge(mailbox.savedTotal.value)" class="split-count">{{ splitBadge(mailbox.savedTotal.value) }}</span></button>
           </nav>
+          <!-- Reminders: the list's sections take the split-tab slot (Pending,
+               Returned, History, each with the count of its loaded rows),
+               after the context heading, which stays visible so the tabs are
+               named. -->
+          <div v-if="splitNavShown && remindersContext" class="split-nav" role="tablist" aria-label="Reminder membership" @keydown="reminders.onTabKeydown">
+            <button
+              v-for="tab in REMINDER_TABS"
+              :id="`reminder-tab-${tab.id}`"
+              :key="tab.id"
+              type="button"
+              role="tab"
+              class="split-tab"
+              :data-test="`reminder-tab-${tab.id}`"
+              :aria-selected="reminders.destination.value === tab.id"
+              aria-controls="reminder-tabpanel"
+              :tabindex="reminders.destination.value === tab.id ? 0 : -1"
+              @click="reminders.destination.value = tab.id"
+            ><span class="split-label">{{ tab.label }}</span> <span class="split-count">{{ reminders.counts.value[tab.id] }}</span></button>
+          </div>
           <!-- Coverage qualifies the counts, so it lives on them: the tabs'
                accessible description and the nav's hover title. -->
           <p v-if="splitCoverageShown" :id="`${domIdPrefix}split-coverage`" class="visually-hidden" role="note" data-test="split-coverage">{{ SPLIT_COVERAGE }}</p>
@@ -2333,7 +2380,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
           </p>
           <span ref="readerActionsHost" class="reader-actions-host"></span>
           <button v-if="history.length && !readerOpen" type="button" class="header-glyph" data-test="context-back" title="Back to previous context" @click="executeAction('back')"><HeaderGlyph name="back" /><span class="visually-hidden">Back to previous context</span></button>
-          <button v-if="remindersSupported" type="button" class="header-glyph" :ref="setToggleRef('reminders')" title="Reminders (G then H)" @click="executeAction('reminders')"><HeaderGlyph name="reminders" /><span class="visually-hidden">Reminders</span></button>
+          <button v-if="remindersSupported" type="button" class="header-glyph" data-test="reminders-trigger" title="Reminders (G then H)" :aria-current="remindersList ? 'page' : undefined" @click="executeAction('reminders')"><HeaderGlyph name="reminders" /><span class="visually-hidden">Reminders</span></button>
           <button v-if="starredFilterShown" type="button" class="header-glyph" data-test="starred-filter" title="Starred only (cached)" :aria-pressed="mailbox.starredOnly.value" :disabled="mailbox.listState.value !== 'ready'" @click="toggleStarFilter()"><HeaderGlyph name="star" :filled="mailbox.starredOnly.value" /><span class="visually-hidden">Starred only (cached)</span></button>
           <button type="button" class="header-glyph" data-test="palette-trigger" ref="paletteButton" title="Commands (Cmd+K in native app)" @click="openOverlay('palette')"><HeaderGlyph name="commands" /><span class="visually-hidden">Commands</span></button>
           <button v-if="accountId" type="button" class="header-glyph" :disabled="!actionAvailable('compose')" data-test="compose-trigger" :title="actionLabel('compose')" aria-label="Compose new local draft (C)" @click="executeAction('compose')"><HeaderGlyph name="compose" /><span class="visually-hidden">Compose new local draft</span></button>
@@ -2565,6 +2612,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             @save-as-new="drafts.saveAsNew()"
             @cancel-reply-preparation="drafts.cancelReplyPreparation()"
           />
+          <RemindersList v-else-if="remindersContext && !readerOpen" ref="remindersPane" :model="reminders" @open="openReminderConversation" />
           <template v-else-if="!readerOpen">
             <!-- Coverage and continuation errors stay visible in search context
                  even while the entry form is collapsed. -->
@@ -2765,7 +2813,6 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
                surface was open): the capability needs an account identity, so
                render an explicit account-required state instead of an empty drawer. -->
           <p v-else-if="drawer === 'destinations'" role="note" data-test="destinations-account-required">Provider mail needs a connected Gmail account. Connect one from Account first.</p>
-          <RemindersPanel ref="remindersPanel" v-if="drawer === 'reminders' && remindersSupported" :key="reminderTarget ? `${reminderTarget.accountId}:${reminderTarget.conversationId}` : 'destination'" :client="props.client" :target="reminderTarget" :initial-destination="reminderDestination" @destination-change="reminderDestination = $event" @open="openReminderConversation" @scheduled="reminderScheduled" @dismiss="reminderDismissed" />
           <section v-if="drawer === 'reminder-settings' && remindersSupported" class="utility-panel" data-test="reminder-settings-dialog">
             <ReminderSettings @close="closeDrawer" @saved="reminderPreferencesSaved" />
           </section>

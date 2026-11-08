@@ -1,5 +1,6 @@
 /**
- * Shared keyboard model for the rows of a utility drawer (Activity, Drafts,
+ * Shared keyboard model for the rows of a utility drawer (Activity, Drafts)
+ * and of the list contexts whose rows are not threads (`ContextRowList`:
  * Reminders).
  *
  * One marker, one handler:

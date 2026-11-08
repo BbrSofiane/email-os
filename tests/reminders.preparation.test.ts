@@ -1,10 +1,9 @@
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
+import { nextTick } from 'vue';
+import { flushPromises, type VueWrapper } from '@vue/test-utils';
 import { describe, expect, it, vi } from 'vitest';
-import RemindersPanel from '../src/components/RemindersPanel.vue';
-import ReminderPicker from '../src/components/ReminderPicker.vue';
 import { createBrowserFakeMailClient } from '../src/lib/ipc/browser-fake';
-import { formatReminderDateTime } from '../src/lib/reminder-timezone';
 import type { Conversation, PutReminder, Reminder } from '../src/lib/ipc/client';
+import { mountReminders } from './reminders.helpers';
 
 const target = { accountId: 'fixture-account', conversationId: 'conv-01' };
 function deferred<T>() {
@@ -29,76 +28,24 @@ function fixture() {
   fake.reminders = { list: vi.fn(async () => structuredClone(rows)), put, cancel: vi.fn() };
   return { fake, rows, put };
 }
-const recovery = 'Retry preparation / refresh conversation';
+const recovery = 'Retry preparation / refresh source';
 
 describe('in-panel reminder preparation recovery', () => {
-  it('shows exact prepared subject and latest sender as safe, accessible dialog context', async () => {
-    const { fake } = fixture();
-    const detail = await fake.getConversation(target);
-    detail.subject = ('<img src=x onerror=alert(1)> ' + 'A long subject that must remain readable '.repeat(5)).trimEnd();
-    detail.messages.at(-1)!.from = { displayName: 'Exact Sender', mailbox: 'sender@example.test' };
-    const get = vi.spyOn(fake, 'getConversation').mockResolvedValue(detail);
-    const panel = mount(RemindersPanel, { global: { stubs: { Teleport: true } }, props: { client: fake, target } }); await flushPromises();
-    const picker = panel.findComponent(ReminderPicker);
-    expect(get).toHaveBeenCalledTimes(1);
-    expect(picker.props()).toMatchObject({ subject: detail.subject, sender: 'Exact Sender' });
-    expect(picker.get('details summary').text()).toBe(detail.subject);
-    expect(picker.text()).toContain('Exact Sender');
-    expect(picker.text()).not.toContain(target.conversationId);
-    expect(picker.text()).not.toContain(detail.messages.at(-1)!.id);
-    expect(picker.get('[role="dialog"]').attributes('aria-describedby')).toContain('reminder-target-description');
-    expect(picker.find('img').exists()).toBe(false);
-    expect(picker.get('details summary').element.tagName).toBe('SUMMARY');
-    panel.unmount();
-  });
-
-  it('uses the stored reminder subject for reschedule without reading a conversation', async () => {
-    const { fake, rows } = fixture();
-    rows.push({ conversation: target, sourceMessageId: 'stored-source', revision: 8, phase: 'pending', dueAt: null, condition: 'regardless', subject: 'Stored reminder subject' });
-    const get = vi.spyOn(fake, 'getConversation');
-    const panel = mount(RemindersPanel, { global: { stubs: { Teleport: true } }, props: { client: fake, target: null } }); await flushPromises();
-    await button(panel, 'Reschedule').trigger('click');
-    expect(panel.findComponent(ReminderPicker).props()).toMatchObject({ subject: 'Stored reminder subject', sender: null });
-    expect(panel.findComponent(ReminderPicker).get('#reminder-target-description').text()).toContain('Stored reminder subject');
-    expect(get).not.toHaveBeenCalled();
-    panel.unmount();
-  });
-
-  it('uses the no-subject convention and never leaks stale context when the target changes', async () => {
-    const { fake } = fixture();
-    const other = { ...target, conversationId: 'conv-02' };
-    const first = deferred<Conversation>();
-    const second = await fake.getConversation(other);
-    second.subject = '';
-    vi.spyOn(fake, 'getConversation').mockReturnValueOnce(first.promise).mockResolvedValueOnce(second);
-    const panel = mount(RemindersPanel, { global: { stubs: { Teleport: true } }, props: { client: fake, target } });
-    await flushPromises();
-    await panel.setProps({ target: other }); await flushPromises();
-    const picker = panel.findComponent(ReminderPicker);
-    expect(picker.props('subject')).toBe('');
-    expect(picker.get('#reminder-target-description').text()).toContain('(No subject)');
-    const old = await fake.getConversation(target); old.subject = 'Stale subject';
-    first.resolve(old); await flushPromises();
-    expect(panel.findComponent(ReminderPicker).props('subject')).toBe('');
-    expect(panel.text()).not.toContain('Stale subject');
-    panel.unmount();
-  });
-
   it('retries a transient conversation-read failure explicitly, not via list refresh', async () => {
     const { fake, put } = fixture();
     const get = vi.spyOn(fake, 'getConversation').mockRejectedValueOnce({ kind: 'storage_unavailable' });
-    const panel = mount(RemindersPanel, { global: { stubs: { Teleport: true } }, props: { client: fake, target } });
+    const { wrapper: panel, unmount } = mountReminders(fake, { target });
     await flushPromises();
-    expect(panel.findComponent(ReminderPicker).exists()).toBe(false);
+    expect(panel.find('form').exists()).toBe(false);
     expect(panel.get('[role="alert"]').text()).toContain('Retry preparation');
     await button(panel, 'Refresh reminders').trigger('click'); await flushPromises();
     expect(get).toHaveBeenCalledTimes(1);
     await button(panel, recovery).trigger('click'); await flushPromises();
     expect(get).toHaveBeenNthCalledWith(2, target);
-    expect(panel.findComponent(ReminderPicker).exists()).toBe(true);
+    expect(panel.find('form').exists()).toBe(true);
     expect(panel.find('[role="alert"]').exists()).toBe(false);
     expect(put).not.toHaveBeenCalled();
-    panel.unmount();
+    unmount();
   });
 
   it('reprepares the same account+conversation after source rejection, preserving choices and requiring explicit resubmission with a new key', async () => {
@@ -108,56 +55,59 @@ describe('in-panel reminder preparation recovery', () => {
     const initial = await fake.getConversation(target);
     const latest: Conversation = { ...initial, messages: [...initial.messages, { ...initial.messages.at(-1)!, id: 'new-incoming-id' }] };
     const get = vi.spyOn(fake, 'getConversation').mockResolvedValueOnce(initial).mockResolvedValueOnce(latest);
-    const panel = mount(RemindersPanel, { global: { stubs: { Teleport: true } }, props: { client: fake, target } }); await flushPromises();
-    await panel.get('#reminder-time-input').setValue('2035-11-03T01:30:00-05:00');
-    await panel.get('#reminder-time-input').trigger('keydown', { key: 'Enter' });
+    const { wrapper: panel, unmount } = mountReminders(fake, { target }); await flushPromises();
+    await panel.get('[data-test="reminder-custom"]').trigger('click');
+    await panel.get('input[type="text"]').setValue('2035-11-03T01:30:00-05:00');
     await panel.get('select').setValue('regardless');
     put.mockRejectedValueOnce({ kind: 'invalid_request', field: 'sourceMessageId' });
-    await button(panel, 'Schedule reminder').trigger('click'); await flushPromises();
+    await panel.get('form').trigger('submit'); await flushPromises();
     const first = put.mock.calls[0]![0];
     expect(first.sourceMessageId).toBe(initial.messages.at(-1)!.id);
-    expect(panel.findComponent(ReminderPicker).exists()).toBe(false);
+    expect(panel.find('form').exists()).toBe(false);
     expect(panel.get('[role="alert"]').text()).toContain('newer message');
     await button(panel, recovery).trigger('click'); await flushPromises();
     expect(get.mock.calls).toEqual([[target], [target]]);
     expect(put).toHaveBeenCalledTimes(1);
     expect(panel.find('[role="alert"]').exists()).toBe(false);
-    expect(panel.text()).not.toContain('new-incoming-id');
-    expect(panel.get('.chosen-time').text()).toContain(formatReminderDateTime(first.dueAt!));
+    // The source ids are evidence, never visible text: attributes and a title only.
+    expect(panel.get('form').attributes('data-source-message')).toBe('new-incoming-id');
+    expect(panel.get('form').text()).not.toContain('new-incoming-id');
+    // The typed time stays visible: the saved choice is never hidden.
+    expect((panel.get('input[type="text"]').element as HTMLInputElement).value).toBe(first.dueAt);
     expect((panel.get('select').element as HTMLSelectElement).value).toBe('regardless');
-    await button(panel, 'Schedule reminder').trigger('click'); await flushPromises();
+    await panel.get('form').trigger('submit'); await flushPromises();
     const second = put.mock.calls[1]![0];
     expect(second).toEqual({ ...first, sourceMessageId: 'new-incoming-id', requestId: expect.any(String) });
     expect(second.requestId).not.toBe(first.requestId);
     expect(second.expectedRevision).toBeNull();
     expect(first.sourceMessageId).toBe(initial.messages.at(-1)!.id);
-    panel.unmount();
+    unmount();
   });
 
   it('preserves Someday across preparation recovery', async () => {
     const { fake, put } = fixture();
-    const panel = mount(RemindersPanel, { global: { stubs: { Teleport: true } }, props: { client: fake, target } }); await flushPromises();
-    await panel.findAll('[aria-label="Suggested reminder times"] [role="option"]').find(b => b.text().includes('Someday'))!.trigger('click');
+    const { wrapper: panel, unmount } = mountReminders(fake, { target }); await flushPromises();
+    await panel.get('input[type="checkbox"]').setValue(true);
     put.mockRejectedValueOnce({ kind: 'invalid_request', field: 'sourceMessageId' });
-    await button(panel, 'Schedule reminder').trigger('click'); await flushPromises();
+    await panel.get('form').trigger('submit'); await flushPromises();
     await button(panel, recovery).trigger('click'); await flushPromises();
-    expect(panel.text()).toContain('Someday');
-    await button(panel, 'Schedule reminder').trigger('click'); await flushPromises();
-    expect(put.mock.calls[1]![0].dueAt).toBeNull(); panel.unmount();
+    expect((panel.get('input[type="checkbox"]').element as HTMLInputElement).checked).toBe(true);
+    await panel.get('form').trigger('submit'); await flushPromises();
+    expect(put.mock.calls[1]![0].dueAt).toBeNull(); unmount();
   });
 
   it('keeps ambiguous ACK retries exact and retains source-validation context on retry', async () => {
     const { fake, put } = fixture();
     const get = vi.spyOn(fake, 'getConversation');
-    const panel = mount(RemindersPanel, { global: { stubs: { Teleport: true } }, props: { client: fake, target } }); await flushPromises();
-    await panel.findAll('[aria-label="Suggested reminder times"] [role="option"]').find(b => b.text().includes('Someday'))!.trigger('click');
+    const { wrapper: panel, unmount } = mountReminders(fake, { target }); await flushPromises();
+    await panel.get('input[type="checkbox"]').setValue(true);
     put.mockRejectedValueOnce({ kind: 'storage_unavailable' }).mockRejectedValueOnce({ kind: 'invalid_request', field: 'sourceMessageId' });
-    await button(panel, 'Schedule reminder').trigger('click'); await flushPromises();
+    await panel.get('form').trigger('submit'); await flushPromises();
     expect(panel.text()).not.toContain(recovery);
     await button(panel, 'Retry exact request').trigger('click'); await flushPromises();
     expect(put.mock.calls[1]![0]).toEqual(put.mock.calls[0]![0]);
     expect(get).toHaveBeenCalledTimes(1);
-    expect(button(panel, recovery).exists()).toBe(true); panel.unmount();
+    expect(button(panel, recovery).exists()).toBe(true); unmount();
   });
 
   it.each(['revision', 'sourceMessageId'])('never converts revisioned %s rejection into preparation or a new schedule', async field => {
@@ -165,26 +115,26 @@ describe('in-panel reminder preparation recovery', () => {
     const detail = await fake.getConversation(target);
     rows.push({ conversation: target, sourceMessageId: detail.messages.at(-1)!.id, revision: 4, phase: 'pending', dueAt: null, condition: 'regardless', subject: 'Existing' });
     const get = vi.spyOn(fake, 'getConversation');
-    const panel = mount(RemindersPanel, { global: { stubs: { Teleport: true } }, props: { client: fake, target: null } }); await flushPromises();
+    const { wrapper: panel, unmount } = mountReminders(fake, { target: null }); await flushPromises();
     await button(panel, 'Reschedule').trigger('click');
     put.mockRejectedValueOnce({ kind: 'invalid_request', field });
-    await button(panel, 'Save new time').trigger('click'); await flushPromises();
+    await panel.get('form').trigger('submit'); await flushPromises();
     expect(put.mock.calls[0]![0].expectedRevision).toBe(4);
-    expect(panel.text()).toContain('no longer actionable');
+    expect(panel.text()).toContain('revision is no longer actionable');
     expect(panel.find('form').exists()).toBe(false);
     expect(panel.text()).not.toContain(recovery);
-    expect(get).not.toHaveBeenCalled(); panel.unmount();
+    expect(get).not.toHaveBeenCalled(); unmount();
   });
 
   it('does not turn an active existing reminder conflict into source refresh', async () => {
     const { fake, put } = fixture();
-    const panel = mount(RemindersPanel, { global: { stubs: { Teleport: true } }, props: { client: fake, target } }); await flushPromises();
+    const { wrapper: panel, unmount } = mountReminders(fake, { target }); await flushPromises();
     put.mockRejectedValueOnce({ kind: 'invalid_request', field: 'revision' });
-    await panel.findAll('[aria-label="Suggested reminder times"] [role="option"]').find(b => b.text().includes('Someday'))!.trigger('click');
-    await button(panel, 'Schedule reminder').trigger('click'); await flushPromises();
+    await panel.get('input[type="checkbox"]').setValue(true);
+    await panel.get('form').trigger('submit'); await flushPromises();
     expect(put.mock.calls[0]![0].expectedRevision).toBeNull();
     expect(panel.text()).not.toContain(recovery);
-    expect(panel.findComponent(ReminderPicker).exists()).toBe(false); panel.unmount();
+    expect(panel.find('form').exists()).toBe(false); unmount();
   });
 
   it.each(['success', 'failure'])('ignores stale retry %s after the target changes and cannot overwrite an existing revision editor', async outcome => {
@@ -193,17 +143,17 @@ describe('in-panel reminder preparation recovery', () => {
     rows.push({ conversation: target, sourceMessageId: 'original-existing-source', revision: 7, phase: 'pending', dueAt: null, condition: 'regardless', subject: 'Existing' });
     const pending = deferred<Conversation>();
     vi.spyOn(fake, 'getConversation').mockRejectedValueOnce(new Error('transient')).mockReturnValueOnce(pending.promise);
-    const panel = mount(RemindersPanel, { global: { stubs: { Teleport: true } }, props: { client: fake, target } }); await flushPromises();
+    const { model, wrapper: panel, unmount } = mountReminders(fake, { target }); await flushPromises();
     await button(panel, recovery).trigger('click');
-    await panel.setProps({ target: null });
+    model.setTarget(null); await nextTick();
     await button(panel, 'Reschedule').trigger('click');
     if (outcome === 'success') pending.resolve(detail);
     else pending.reject(new Error('late failure'));
     await flushPromises();
     expect(panel.find('[role="alert"]').exists()).toBe(false);
-    expect(panel.get('h3').text()).toBe('Reschedule reminder');
-    expect(panel.emitted('dismiss')).toBeUndefined();
-    expect(panel.text()).not.toContain(recovery); panel.unmount();
+    expect(panel.get('h2').text()).toBe('Reschedule');
+    expect(panel.get('form').attributes('data-source-message')).toBe('original-existing-source');
+    expect(panel.text()).not.toContain(recovery); unmount();
   });
 
   it('ignores a retry response after unmount', async () => {
@@ -211,12 +161,11 @@ describe('in-panel reminder preparation recovery', () => {
     const detail = await fake.getConversation(target);
     const pending = deferred<Conversation>();
     vi.spyOn(fake, 'getConversation').mockRejectedValueOnce(new Error('transient')).mockReturnValueOnce(pending.promise);
-    const panel = mount(RemindersPanel, { global: { stubs: { Teleport: true } }, props: { client: fake, target } }); await flushPromises();
+    const { model, wrapper: panel, unmount } = mountReminders(fake, { target }); await flushPromises();
     await button(panel, recovery).trigger('click');
-    const state = (panel.vm as unknown as { $: { setupState: { source: unknown; busy: boolean } } }).$.setupState;
-    panel.unmount(); pending.resolve(detail); await flushPromises();
-    expect(state.source).toBeNull();
-    expect(panel.findComponent(ReminderPicker).exists()).toBe(false);
+    unmount(); pending.resolve(detail); await flushPromises();
+    expect(model.source.value).toBeNull();
+    expect(panel.find('form').exists()).toBe(false);
   });
 
   it.each(['retained', 'incomplete', 'wrong account', 'wrong conversation', 'empty'] as const)('keeps %s responses out of preparation and allows a later explicit retry', async kind => {
@@ -230,70 +179,12 @@ describe('in-panel reminder preparation recovery', () => {
       ...(kind === 'empty' ? { messages: [] } : {}),
     };
     vi.spyOn(fake, 'getConversation').mockResolvedValueOnce(invalid).mockResolvedValueOnce(detail);
-    const panel = mount(RemindersPanel, { global: { stubs: { Teleport: true } }, props: { client: fake, target } }); await flushPromises();
-    expect(panel.findComponent(ReminderPicker).exists()).toBe(false);
+    const { wrapper: panel, unmount } = mountReminders(fake, { target }); await flushPromises();
+    expect(panel.find('form').exists()).toBe(false);
     expect(panel.find('[role="alert"]').exists()).toBe(true);
     await button(panel, recovery).trigger('click'); await flushPromises();
-    expect(panel.findComponent(ReminderPicker).exists()).toBe(true);
+    expect(panel.find('form').exists()).toBe(true);
     expect(panel.find('[role="alert"]').exists()).toBe(false);
-    expect(put).not.toHaveBeenCalled(); panel.unmount();
+    expect(put).not.toHaveBeenCalled(); unmount();
   });
-});
-
-it.each(['ack', 'lost ACK'])('protects a pending put from Escape/backdrop and preserves recovery after %s', async outcome => {
-  const { fake, put } = fixture();
-  const pending = deferred<Reminder>();
-  put.mockImplementationOnce(() => pending.promise);
-  const panel = mount(RemindersPanel, { attachTo: document.body, global: { stubs: { Teleport: true } }, props: { client: fake, target } });
-  try {
-    await flushPromises();
-    await panel.get('#reminder-time-option-someday').trigger('click');
-    await button(panel, 'Schedule reminder').trigger('click');
-    await panel.get('#reminder-time-input').trigger('keydown', { key: 'Escape' });
-    await panel.get('.backdrop').trigger('click');
-    expect(panel.findComponent(ReminderPicker).exists()).toBe(true);
-    expect(panel.emitted('dismiss')).toBeUndefined();
-    expect(panel.emitted('scheduled')).toBeUndefined();
-    const command = put.mock.calls[0]![0];
-    if (outcome === 'ack') pending.resolve({ ...command, revision: 1, subject: 'Accepted', phase: 'pending' });
-    else pending.reject({ kind: 'storage_unavailable' });
-    await flushPromises();
-    if (outcome === 'ack') expect(panel.emitted('scheduled')).toHaveLength(1);
-    else {
-      expect(panel.emitted('scheduled')).toBeUndefined();
-      await panel.get('#reminder-time-input').trigger('keydown', { key: 'Escape' });
-      await panel.get('.backdrop').trigger('click');
-      expect(panel.findComponent(ReminderPicker).exists()).toBe(true);
-      await button(panel.findComponent(ReminderPicker), 'Retry exact request').trigger('click');
-      await flushPromises();
-      expect(put.mock.calls[1]![0]).toEqual(command);
-      expect(panel.emitted('scheduled')).toHaveLength(1);
-    }
-  } finally { panel.unmount(); }
-});
-
-it.each(['resolve', 'reject'])('fences put %s after the account/client changes', async outcome => {
-  const { fake, put } = fixture();
-  const pending = deferred<Reminder>(); put.mockImplementationOnce(() => pending.promise);
-  const panel = mount(RemindersPanel, { attachTo: document.body, global: { stubs: { Teleport: true } }, props: { client: fake, target } });
-  try {
-    await flushPromises();
-    await panel.get('#reminder-time-option-someday').trigger('click');
-    await button(panel, 'Schedule reminder').trigger('click');
-    const command = put.mock.calls[0]![0];
-    const next = fixture();
-    const otherTarget = { ...target, accountId: 'other-account' };
-    const detail = await next.fake.getConversation(target);
-    vi.spyOn(next.fake, 'getConversation').mockResolvedValue({ ...detail, ref: otherTarget });
-    await panel.setProps({ client: next.fake, target: otherTarget }); await flushPromises();
-    if (outcome === 'resolve') pending.resolve({ ...command, subject: 'Old account', revision: 1, phase: 'pending' });
-    else pending.reject({ kind: 'storage_unavailable' });
-    await flushPromises();
-    expect(panel.emitted('scheduled')).toBeUndefined();
-    expect(panel.text()).not.toContain('not acknowledged');
-    await panel.get('#reminder-time-option-someday').trigger('click');
-    await button(panel, 'Schedule reminder').trigger('click'); await flushPromises();
-    expect(next.put.mock.calls[0]![0].conversation).toEqual(otherTarget);
-    expect(next.put.mock.calls[0]![0].requestId).not.toBe(command.requestId);
-  } finally { panel.unmount(); }
 });

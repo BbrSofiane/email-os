@@ -1,5 +1,5 @@
 /**
- * Drawer panels mounted by App: one region name and one visible h2 per drawer,
+ * Drawer panels mounted by App (and the list contexts that left them): one region name and one visible h2 per drawer,
  * no nested landmark or repeated heading, the shared row keyboard model that
  * never reaches mailbox shortcuts, and Escape returning focus to the rail.
  */
@@ -54,13 +54,15 @@ describe('drawer headings and landmarks', () => {
     expect(drawerOf(w).get('.composer-heading h3').text()).toBe('New local draft');
   });
 
-  it('Reminders: one h2 (fixture mode)', async () => {
+  it('Reminders is a list context, not a drawer (fixture mode): no drawer opens and the one h1 names the list', async () => {
     const fake = createBrowserFakeMailClient();
     fake.reminders = { list: vi.fn(async () => [] as Reminder[]), put: vi.fn(async (c: PutReminder) => ({ ...c, subject: 's', revision: 1, phase: 'removing' as const }) as Reminder), cancel: vi.fn() };
     const w = await mountApp(fake, 'native');
-    await w.findAll('button').find((button) => button.text() === 'Reminders')!.trigger('click');
+    await w.get('[data-test="reminders-trigger"]').trigger('click');
     await waitFor(() => w.find('[data-test="reminders-panel"]').exists());
-    expectOneHeading(w, 'Reminders', 'Reminders');
+    expect(w.find('[data-test="utility-drawer"]').exists()).toBe(false);
+    expect(w.findAll('h1').map((h) => h.text())).toEqual(['Reminders']);
+    expect(w.get('[data-test="reminders-trigger"]').attributes('aria-current')).toBe('page');
   });
 
   it('Cached Trash is a list context, not a drawer: the rail opens no drawer and the one h1 names the list', async () => {
