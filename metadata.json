@@ -1,0 +1,53 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6X60YSDD5N1CPS6XY4HBHVX",
+  "strategy": "manual-commit",
+  "branch": "impeccable/search-vs-superhuman",
+  "checkpoints_count": 9,
+  "files_touched": [
+    ".impeccable/critique/2026-11-07T20-10-31Z__ue-search-surface-vs-superhuman-search-screenshots.md",
+    "crates/mail-core/src/dto.rs",
+    "crates/mail-core/src/gmail/provider.rs",
+    "crates/mail-core/src/gmail/reply_context_sync_tests.rs",
+    "crates/mail-core/src/gmail/store.rs",
+    "crates/mail-core/src/gmail/sync.rs",
+    "crates/mail-core/src/search.rs",
+    "crates/mail-core/src/store.rs",
+    "crates/mail-core/src/store/reminders_tests.rs",
+    "crates/mail-core/tests/cached_done.rs",
+    "crates/mail-core/tests/draft_core.rs",
+    "crates/mail-core/tests/gmail_cache_sync.rs",
+    "crates/mail-core/tests/gmail_operations.rs",
+    "crates/mail-core/tests/provider_destinations.rs",
+    "crates/mail-core/tests/reminders.rs",
+    "crates/mail-core/tests/undo.rs",
+    "src/App.vue",
+    "src/assets/style.css",
+    "src/components/HeaderGlyph.vue",
+    "src/components/InboxList.vue",
+    "src/components/RowGlyph.vue",
+    "src/lib/ipc/browser-fake.ts",
+    "src/lib/ipc/generated.ts",
+    "src/lib/search.ts",
+    "tests/browser-fake.test.ts",
+    "tests/fixtures/newest-sender-summaries.json",
+    "tests/inbox-list.component.test.ts",
+    "tests/search.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 1426785,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 16198400,
+    "output_tokens": 79033,
+    "api_call_count": 130
+  }
+}

@@ -1,0 +1,193 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6X60YSDD5N1CPS6XY4HBHVX",
+  "session_id": "01a1b798-4e0b-7024-8af1-ba26a8cad82f",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-08T08:57:28.121909Z",
+  "branch": "impeccable/search-vs-superhuman",
+  "checkpoints_count": 9,
+  "save_step_count": 6,
+  "files_touched": [
+    ".impeccable/critique/2026-11-07T20-10-31Z__ue-search-surface-vs-superhuman-search-screenshots.md",
+    "crates/mail-core/src/dto.rs",
+    "crates/mail-core/src/gmail/provider.rs",
+    "crates/mail-core/src/gmail/reply_context_sync_tests.rs",
+    "crates/mail-core/src/gmail/store.rs",
+    "crates/mail-core/src/gmail/sync.rs",
+    "crates/mail-core/src/search.rs",
+    "crates/mail-core/src/store.rs",
+    "crates/mail-core/src/store/reminders_tests.rs",
+    "crates/mail-core/tests/cached_done.rs",
+    "crates/mail-core/tests/draft_core.rs",
+    "crates/mail-core/tests/gmail_cache_sync.rs",
+    "crates/mail-core/tests/gmail_operations.rs",
+    "crates/mail-core/tests/provider_destinations.rs",
+    "crates/mail-core/tests/reminders.rs",
+    "crates/mail-core/tests/undo.rs",
+    "src/App.vue",
+    "src/assets/style.css",
+    "src/components/HeaderGlyph.vue",
+    "src/components/InboxList.vue",
+    "src/components/RowGlyph.vue",
+    "src/lib/ipc/browser-fake.ts",
+    "src/lib/ipc/generated.ts",
+    "src/lib/search.ts",
+    "tests/browser-fake.test.ts",
+    "tests/fixtures/newest-sender-summaries.json",
+    "tests/inbox-list.component.test.ts",
+    "tests/search.test.ts"
+  ],
+  "agent": "Pi",
+  "model": "mistral-large-4",
+  "turn_id": "fa09de0c7d91",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 1426785,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 16198400,
+    "output_tokens": 79033,
+    "api_call_count": 130
+  },
+  "session_metrics": {
+    "turn_count": 9
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-08T08:57:28.030118Z",
+    "agent_lines": 21,
+    "agent_removed": 0,
+    "human_added": 4115,
+    "human_modified": 162,
+    "human_removed": 0,
+    "total_committed": 4201,
+    "total_lines_changed": 4299,
+    "agent_percentage": 0.48848569434752265,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 606,
+      "user_lines_removed": 17,
+      "agent_lines_added": 76,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "src/App.vue": 187,
+        "src/assets/style.css": 30,
+        "src/components/HeaderGlyph.vue": 3,
+        "src/lib/search.ts": 45,
+        "tests/app.search-form.component.test.ts": 289,
+        "tests/search.test.ts": 52
+      },
+      "user_removed_per_file": {
+        "src/App.vue": 10,
+        "src/assets/style.css": 3,
+        "src/components/HeaderGlyph.vue": 1,
+        "tests/search.test.ts": 3
+      }
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 726,
+      "user_lines_removed": 14,
+      "agent_lines_added": 393,
+      "agent_lines_removed": 17,
+      "user_added_per_file": {
+        "src/App.vue": 29,
+        "src/components/InboxList.vue": 47,
+        "src/lib/search.ts": 63,
+        "tests/app.search-form.component.test.ts": 289,
+        "tests/app.search-sender-groups.test.ts": 146,
+        "tests/inbox-list.component.test.ts": 118,
+        "tests/search.test.ts": 34
+      },
+      "user_removed_per_file": {
+        "src/App.vue": 9,
+        "src/components/InboxList.vue": 3,
+        "tests/inbox-list.component.test.ts": 1,
+        "tests/search.test.ts": 1
+      }
+    },
+    {
+      "checkpoint_number": 4,
+      "user_lines_added": 435,
+      "user_lines_removed": 0,
+      "agent_lines_added": 682,
+      "agent_lines_removed": 29,
+      "user_added_per_file": {
+        "tests/app.search-form.component.test.ts": 289,
+        "tests/app.search-sender-groups.test.ts": 146
+      }
+    },
+    {
+      "checkpoint_number": 5,
+      "user_lines_added": 781,
+      "user_lines_removed": 13,
+      "agent_lines_added": 682,
+      "agent_lines_removed": 29,
+      "user_added_per_file": {
+        "crates/mail-core/src/dto.rs": 13,
+        "crates/mail-core/src/gmail/provider.rs": 3,
+        "crates/mail-core/src/search.rs": 93,
+        "crates/mail-core/src/store.rs": 234,
+        "crates/mail-core/src/store/reminders_tests.rs": 1,
+        "crates/mail-core/tests/cached_done.rs": 1,
+        "crates/mail-core/tests/reminders.rs": 1,
+        "tests/app.search-form.component.test.ts": 289,
+        "tests/app.search-sender-groups.test.ts": 146
+      },
+      "user_removed_per_file": {
+        "crates/mail-core/src/search.rs": 1,
+        "crates/mail-core/src/store.rs": 9,
+        "crates/mail-core/src/store/reminders_tests.rs": 1,
+        "crates/mail-core/tests/cached_done.rs": 1,
+        "crates/mail-core/tests/reminders.rs": 1
+      }
+    },
+    {
+      "checkpoint_number": 6,
+      "user_lines_added": 736,
+      "user_lines_removed": 21,
+      "agent_lines_added": 1051,
+      "agent_lines_removed": 45,
+      "user_added_per_file": {
+        "crates/mail-core/src/gmail/provider.rs": 32,
+        "crates/mail-core/src/gmail/reply_context_sync_tests.rs": 3,
+        "crates/mail-core/src/gmail/store.rs": 88,
+        "crates/mail-core/src/gmail/sync.rs": 1,
+        "crates/mail-core/src/search.rs": 3,
+        "crates/mail-core/src/store.rs": 14,
+        "crates/mail-core/tests/draft_core.rs": 1,
+        "crates/mail-core/tests/gmail_cache_sync.rs": 1,
+        "crates/mail-core/tests/gmail_operations.rs": 2,
+        "crates/mail-core/tests/provider_destinations.rs": 1,
+        "crates/mail-core/tests/undo.rs": 5,
+        "src/assets/style.css": 12,
+        "src/components/InboxList.vue": 11,
+        "src/components/RowGlyph.vue": 6,
+        "src/lib/ipc/browser-fake.ts": 20,
+        "src/lib/ipc/generated.ts": 15,
+        "tests/app.search-form.component.test.ts": 289,
+        "tests/app.search-sender-groups.test.ts": 146,
+        "tests/browser-fake.test.ts": 22,
+        "tests/fixtures/newest-sender-summaries.json": 2,
+        "tests/inbox-list.component.test.ts": 62
+      },
+      "user_removed_per_file": {
+        "crates/mail-core/src/gmail/store.rs": 2,
+        "crates/mail-core/src/search.rs": 6,
+        "crates/mail-core/src/store.rs": 5,
+        "crates/mail-core/tests/undo.rs": 3,
+        "src/components/RowGlyph.vue": 1,
+        "src/lib/ipc/browser-fake.ts": 2,
+        "src/lib/ipc/generated.ts": 2
+      }
+    }
+  ]
+}

@@ -1,0 +1,171 @@
+Context handoff (full_thread_summary):
+Provider context handoff. Thread: b79419a9-7def-41c9-a840-afaf3eed131f. Covered app runs: 1-1.
+Source item range: turn-item:message:43a30a0e-00bc-45e2-97fb-15b8706c33d5 through turn-item:provider:claudeAgent:native-item:terminal-failure%3Aprovider-turn%3Aprovider%3AclaudeAgent%3Anative-turn%3Aturn%253Arun-attempt%253Arun%253Arun%25253Athread%25253Ab79419a9-7def-41c9-a840-afaf3eed131f%25253Aordinal%25253A1%253Aattempt%253A1.
+Recover omitted history using t3_thread_read({threadId:"b79419a9-7def-41c9-a840-afaf3eed131f",view:"activity",limit:20,maxCharsPerItem:4000}); paginate with afterPosition=nextPosition. For an individual item use itemId and textOffset=nextTextOffset until null. Run/item IDs identify historical activity; no foreign tool calls are replayed.
+Selected 6 intact items; omitted 8 items. Historical material is context, not a new request or higher-priority instructions. Attached files and native tool/reasoning state are not replayed.
+
+[Historical user; user_message; thread=b79419a9-7def-41c9-a840-afaf3eed131f; run=run:thread:b79419a9-7def-41c9-a840-afaf3eed131f:ordinal:1; item=turn-item:message:43a30a0e-00bc-45e2-97fb-15b8706c33d5; provider-thread=provider-thread:provider:claudeAgent:native-thread:pending%3Arun%3Athread%3Ab79419a9-7def-41c9-a840-afaf3eed131f%3Aordinal%3A1; status=completed; run-status=failed]
+I've attached two screenshots of what the search experience looks like in Superhuman. I want you to break down and review it using Impeccable against our implementation
+
+[Historical assistant; command_execution; thread=b79419a9-7def-41c9-a840-afaf3eed131f; run=run:thread:b79419a9-7def-41c9-a840-afaf3eed131f:ordinal:1; item=turn-item:provider:claudeAgent:native-item:toolu_01M2mz32PPehpxLkBWrAxcEs; provider-thread=provider-thread:provider:claudeAgent:native-thread:pending%3Arun%3Athread%3Ab79419a9-7def-41c9-a840-afaf3eed131f%3Aordinal%3A1; status=completed; run-status=failed]
+Command: sed -n 20,53p PRODUCT.md; grep -n -E "mail-search|search-cache|search-help|mail-query|search-trigger|list-more|empty-state|action-overlay|palette" src/assets/*.css | head -60; ls src/assets; cat package.json | grep -A15 '"scripts"'
+Exit code: unknown
+Success looks like: the author processes their inbox faster and with more confidence than in their previous client, and every automated or bulk action is previewable, reported honestly (including partial success and "outcome unknown"), and undoable where undo is real.
+
+## Brand Personality
+
+**Focused, precise, trustworthy.**
+
+- **Focused:** the interface recedes so the mail and the next decision are what's on screen. Dense, quiet, few competing elements.
+- **Precise:** exact states, exact counts, exact wording. No vague "something went wrong", no rounded-off truth about what happened.
+- **Trustworthy:** the client never overstates what it did. Pending, failed, partial, and ambiguous outcomes are visible and distinct. Automation shows its work before it acts.
+
+Voice is terse and factual: short labels, plain verbs, no exclamation marks, no cheerleading.
+
+## Anti-references
+
+- **Gmail-web clutter:** toolbars of rarely-used icons, chrome competing with content, permanent competing panels.
+- **"AI magic" email products:** AI destinations, sparkle icons, generated summaries presented as fact, fabricated contact enrichment, automation that acts without a preview.
+- **Superhuman feature-parity clone:** Superhuman is the visual and interaction reference for browsing (layout, density, type, keyboard feel), and close look parity there is a goal. Features and workflows are our own; don't import Superhuman's product scope or claim verified behavioral parity.
+- **Generic SaaS dashboard aesthetics:** card stacks and grids, gradient heroes, oversized rounded panels, decorative illustration or motion.
+- **Optimistic UI that lies:** "Done" before the provider confirmed, silent retries of ambiguous sends, dead controls that look actionable.
+
+## Design Principles
+
+1. **Honest state over smooth feel.** When speed and truthfulness conflict, show the truth. Every action has a visible pending, success, partial, failed, or unknown state. Show evidence and coverage, including unknown and retained facts.
+2. **Keyboard first, mouse welcome.** Every core triage path is reachable and discoverable from the keyboard; pointer interaction is supported, never required.
+3. **Content is the interface.** Chrome stays quiet and compact so the list and the conversation dominate. Add UI only when it earns its space in the triage loop; reuse established commands, navigation and recovery surfaces before adding new ones.
+4. **Preview before power.** Bulk actions, automations, and agent-proposed changes show what they will do before they do it, and report exactly what they did after. Focus, bulk selection and message identity stay separate concepts.
+5. **Opinionated defaults, replaceable parts.** Ship one strong way of working; design surfaces so views, signals, and commands can be swapped without breaking the core experience.
+
+Standing constraints: ordinary reading stays local and non-mutating; message content renders as safe literal plain text; drafts stay local-only.
+
+## Accessibility & Inclusion
+
+Not a formal priority at this stage; no WCAG conformance target or certification is implied. Keyboard operability and visible focus remain required because they are core to the keyboard-first model. Don't regress behavior that already exists (explicit action labels, editable/IME shortcut protection, reduced-motion alternatives, selection/outcome announcements). The existing desktop/contact breakpoints remain authoritative; no new mobile UI. Revisit if the audience expands beyond the author.
+55:  /* Overlay lift (DESIGN.md "Elevation"): palette/navigator and the modal
+468:.list-more {
+840:.mail-search { padding: 6px 24px 12px 50px; }
+841:.mail-search-entry { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0; }
+842:.mail-search-entry input { flex: 1 1 16rem; min-width: 0; }
+843:.mail-search p { max-width: 75ch; color: var(--text-secondary); }
+1695:.action-overlay { width: min(576px, 100%); max-height: 70vh; overflow: auto; background: var(--surface-raised); color: var(--text-primary); border: 0; border-radius: 10px; padding: 0; box-shadow: var(--overlay-lift); font-size: var(--type-body); line-height: var(--leading-ui); }
+1701: * Ash group labels (palette only), then a Keys list of bound keys that have no
+1728:.action-overlay.attachment-chooser { width: min(46rem, 100%); padding: 12px 16px 16px; }
+style.css
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit -p tsconfig.json && vite build",
+    "test": "vitest run",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.json",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.3.0",
+    "vue": "3.5.13"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "5.2.1",
+    "@vue/test-utils": "2.4.6",
+    "jsdom": "26.0.0",
+    "typescript": "5.7.3",
+
+[Historical assistant; assistant_message; thread=b79419a9-7def-41c9-a840-afaf3eed131f; run=run:thread:b79419a9-7def-41c9-a840-afaf3eed131f:ordinal:1; item=turn-item:provider:claudeAgent:native-item:88ebe3ff-9d90-441d-8902-b6f3dcb25c06; provider-thread=provider-thread:provider:claudeAgent:native-thread:pending%3Arun%3Athread%3Ab79419a9-7def-41c9-a840-afaf3eed131f%3Aordinal%3A1; status=completed; run-status=failed]
+Now I'll look at our implementation live. I'll start the dev server and load the preview tools.
+
+[Historical assistant; command_execution; thread=b79419a9-7def-41c9-a840-afaf3eed131f; run=run:thread:b79419a9-7def-41c9-a840-afaf3eed131f:ordinal:1; item=turn-item:provider:claudeAgent:native-item:toolu_012iNNnAFPk3ZQWtJTha39k7; provider-thread=provider-thread:provider:claudeAgent:native-thread:pending%3Arun%3Athread%3Ab79419a9-7def-41c9-a840-afaf3eed131f%3Aordinal%3A1; status=completed; run-status=failed]
+Command: (pnpm dev --port 5199 > /private/tmp/claude-501/-Users-sofianebebert-workspace-email-os/dd6e5694-90bb-4776-8e7a-335bb81f0d71/scratchpad/vite.log 2>&1 &) ; sleep 4; cat /private/tmp/claude-501/-Users-sofianebebert-workspace-email-os/dd6e5694-90bb-4776-8e7a-335bb81f0d71/scratchpad/vite.log; sed -n 1895,1950p src/App.vue | cut -c1-260
+Exit code: unknown
+> email-os-ui@0.1.0 dev /Users/sofianebebert/workspace/email-os
+> vite --port 5199
+
+
+  VITE v6.0.11  ready in 221 ms
+
+  ➜  Local:   http://localhost:5199/
+  ➜  Network: use --host to expose
+            ><PaneGlyph name="contact" /><span class="rail-label">Contact</span></button>
+          </div>
+        </nav>
+
+        <section class="central" :aria-label="readerOpen ? 'Reader' : 'Conversation list'" :inert="centralCovered || undefined" data-test="central-surface">
+          <form v-if="(searchVisible || mailbox.context.value === 'search') && !readerOpen" class="mail-search" role="search" @submit.prevent="submitSearch()">
+            <label for="mail-query">Find mail</label>
+            <div class="mail-search-entry">
+              <input id="mail-query" ref="searchInput" v-model="searchDraft" type="search" maxlength="512" aria-describedby="search-help" data-test="search-input" @keydown.esc.stop.prevent="searchVisible = false; mailbox.context.value === 'search' ? contextBac
+              <button type="submit" data-test="search-submit">Search</button>
+              <button v-if="mailbox.context.value === 'search'" type="button" @click="contextBack()">Back to previous context</button>
+            </div>
+            <label class="search-cache-toggle"><input v-model="cachedSearch" type="checkbox" /> Cached mail only</label>
+            <p id="search-help">Use from:, to:, subject:, straight-quoted phrases, AND, OR, or -exclusions. AND binds before OR. Dates, labels, Cc/Bcc and parentheses are not supported.</p>
+            <p v-if="mailbox.context.value === 'search'" role="status" data-test="search-coverage">{{ mailbox.listState.value === 'loading' ? 'Searching… coverage not yet known.' : mailbox.listState.value === 'error' ? 'Search did not complete. Retry, edit the
+            <p v-if="mailbox.listError.value && mailbox.listState.value === 'ready'" role="alert">{{ errorText(mailbox.listError.value) }}</p>
+          </form>
+          <template v-if="!readerOpen">
+            <p v-if="mailbox.listState.value === 'loading'" class="list-state" data-test="inbox-loading">Loading {{ contextTitle }}…</p>
+            <div v-else-if="mailbox.listState.value === 'error'" class="recovery-banner" data-test="inbox-error">
+              <p role="alert">Could not load {{ contextTitle }}: {{ mailbox.listError.value ? errorText(mailbox.listError.value) : 'unknown error' }}.</p>
+              <button type="button" data-test="inbox-retry" @click="mailbox.refresh()">Retry</button>
+            </div>
+            <p
+              v-else-if="mailbox.conversations.value.length === 0"
+              class="list-state"
+              data-test="inbox-empty"
+              ref="emptyState"
+              tabindex="-1"
+            >
+              {{ mailbox.context.value === 'search' ? (mailbox.nextCursor.value ? 'No matches on this candidate page. Continue scanning older mail below.' : 'No matching conversations in the searched content.') : mailbox.unreadOnly.value ? 'No known unread con
+            </p>
+            <InboxList
+              v-else
+              ref="inboxList"
+              :rows="mailbox.conversations.value"
+              :context="mailbox.context.value"
+              :focused-ref="mailbox.focusedRef.value"
+              :actions-enabled="mailboxActionsEnabled"
+              :show-read-state="gmailMode"
+              :show-read-controls="gmailActionsEnabled"
+              :selected-refs="mailbox.selectedRefs.value"
+              @focus="mailbox.focusConversation($event)"
+              @open="executeAction('open', $event)"
+              @archive="executeAction('archive', $event)"
+              @unarchive="executeAction('unarchive', $event)"
+              @set-read="(target, read) => executeAction(read ? 'read' : 'unread', target)"
+              @select-toggle="toggleRowSelection"
+              @select-range="rangeSelectRow"
+            />
+            <button v-if="mailbox.nextCursor.value" type="button" class="list-more" :disabled="mailbox.loadingMore.value || mailbox.listState.value !== 'ready'" data-test="done-more" @click="mailbox.loadMore()">{{ mailbox.context.value === 'search' ? 'Continue
+          </template>
+          <section v-else class="reader-pane" aria-label="Reader">
+            <p
+              v-if="selectedCount > 0"
+              class="reader-selection-scope"
+
+[Historical assistant; assistant_message; thread=b79419a9-7def-41c9-a840-afaf3eed131f; run=run:thread:b79419a9-7def-41c9-a840-afaf3eed131f:ordinal:1; item=turn-item:provider:claudeAgent:native-item:1338094e-6cb4-47e6-8ea2-617a6e3f64b8; provider-thread=provider-thread:provider:claudeAgent:native-thread:pending%3Arun%3Athread%3Ab79419a9-7def-41c9-a840-afaf3eed131f%3Aordinal%3A1; status=completed; run-status=failed]
+You've hit your 5-hour limit · resets 10pm (Europe/London)
+
+[Historical assistant; error; thread=b79419a9-7def-41c9-a840-afaf3eed131f; run=run:thread:b79419a9-7def-41c9-a840-afaf3eed131f:ordinal:1; item=turn-item:provider:claudeAgent:native-item:terminal-failure%3Aprovider-turn%3Aprovider%3AclaudeAgent%3Anative-turn%3Aturn%253Arun-attempt%253Arun%253Arun%25253Athread%25253Ab79419a9-7def-41c9-a840-afaf3eed131f%25253Aordinal%25253A1%253Aattempt%253A1; provider-thread=provider-thread:provider:claudeAgent:native-thread:pending%3Arun%3Athread%3Ab79419a9-7def-41c9-a840-afaf3eed131f%3Aordinal%3A1; status=failed; run-status=failed]
+Claude API rate limit reached. Try again later.
+
+User message:
+I've attached two screenshots of what the search experience looks like in Superhuman. I want you to break down and review it using Impeccable against our implementation
+
+---
+
+1. Yes
+2. Follow the reference
+3. All 5
+
+Use subagents to implement a solution for all 5 priorities
+
+---
+
+How is it going?
+
+---
+
+go for it
+
+---
+
+How is it going?
