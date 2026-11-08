@@ -39,7 +39,8 @@ export function useDraftPreviews(
     const revision = summary.revision;
     try {
       const body = await load(summary.ref);
-      if (disposed) return;
+      // A read for an older revision can resolve last; it must not replace the current one.
+      if (disposed || requested.get(key) !== revision) return;
       entries.value[key] = { revision, text: previewText(body) };
     } catch {
       // Nothing is shown for this row; the next revision tries again.

@@ -53,7 +53,7 @@ describe('Reminders rows', () => {
     ]);
     panel = show(fake).wrapper;
     await flushPromises();
-    const a = panel.get('[data-test="reminder-row-pending"]');
+    const a = panel.get('[data-test="reminder-row-a"]');
     expect(a.get('.context-subject').text()).toBe('Subject a');
     expect(a.get('time').text()).toBe(fullDateLabel('2030-01-01T00:00:00Z'));
     expect(a.get('[data-test="reminder-phase-pending"]').text()).toBe('Pending');
@@ -61,13 +61,13 @@ describe('Reminders rows', () => {
     // Revision is evidence for a title, never text.
     expect(a.get('.context-row-main').attributes('title')).toBe('Revision 3');
     expect(a.text()).not.toMatch(/revision/i);
-    const b = panel.get('[data-test="reminder-row-removing"]');
+    const b = panel.get('[data-test="reminder-row-b"]');
     expect(b.find('time').exists()).toBe(false);
     expect(b.get('.context-date').text()).toBe('Someday');
     expect(b.get('[data-test="reminder-phase-removing"]').text()).toBe('Removing…');
     expect(b.get('[data-test="reminder-phase-removing"]').classes()).toContain('tone-warn');
     expect(b.find('[data-test="reminder-condition"]').exists()).toBe(false);
-    const c = panel.get('[data-test="reminder-row-failed"]');
+    const c = panel.get('[data-test="reminder-row-c"]');
     expect(c.get('[data-test="reminder-phase-failed"]').text()).toBe('Failed');
     expect(c.get('[data-test="reminder-phase-failed"]').classes()).toContain('tone-fault');
     // The failed explanation is an exception and stays inline.
@@ -134,12 +134,12 @@ describe('Reminders Needs attention group', () => {
     ]);
     const { model } = show(fake);
     await flushPromises();
-    expect(captions()).toEqual(['Needs attention 2']);
-    expect(order()).toEqual(['reminder-row-failed', 'reminder-row-removing', 'reminder-row-pending', 'reminder-row-pending']);
+    expect(captions()).toEqual(['Needs attention 2', 'Pending 2']);
+    expect(order()).toEqual(['reminder-row-d', 'reminder-row-b', 'reminder-row-a', 'reminder-row-c']);
     expect(panel!.findAll('li[data-test^="reminder-row-"]').map((el) => el.get('.context-subject').text())).toEqual(['Subject d', 'Subject b', 'Subject a', 'Subject c']);
-    // The caption comes first in the list and is not a row: one list, rows only in listitems.
-    const items = panel!.get('ul').element.children;
-    expect(items[0]!.getAttribute('role')).toBe('presentation');
+    // Captions are not rows: one list, rows only in listitems. The second caption ends the attention group.
+    const items = [...panel!.get('ul').element.children];
+    expect(items.map((el) => el.getAttribute('role'))).toEqual(['presentation', 'listitem', 'listitem', 'presentation', 'listitem', 'listitem']);
     expect(panel!.findAll('[role="listitem"]')).toHaveLength(4);
     expect(model.attentionCount.value).toBe(2);
     // J/K keep moving across the caption: the caption is no row stop.
@@ -152,7 +152,7 @@ describe('Reminders Needs attention group', () => {
     await flushPromises();
     expect(model.counts.value).toEqual({ pending: 1, returned: 1, history: 1 });
     expect(model.displayed.value).toHaveLength(5);
-    expect(captions()).toEqual(['Needs attention 4']);
+    expect(captions()).toEqual(['Needs attention 4', 'Pending 1']);
   });
 
   it('shows no caption when nothing needs attention, and none in the other tabs', async () => {
@@ -172,15 +172,23 @@ describe('Reminders Needs attention group', () => {
     const { fake } = fixture([reminder('a', 'failed')]);
     show(fake);
     await flushPromises();
+    // One group only: no second caption.
     expect(captions()).toEqual(['Needs attention 1']);
     expect(panel!.find('[data-test="reminders-empty"]').exists()).toBe(false);
+  });
+
+  it('gives each row a test id of its own, even when phases repeat', async () => {
+    const { fake } = fixture([reminder('a', 'pending'), reminder('b', 'pending'), reminder('c', 'failed')]);
+    show(fake);
+    await flushPromises();
+    expect(order()).toEqual(['reminder-row-c', 'reminder-row-a', 'reminder-row-b']);
   });
 
   it('names what is known on a failed row, claims no cause, and offers Cancel only', async () => {
     const { fake } = fixture([reminder('a', 'failed')]);
     show(fake);
     await flushPromises();
-    const row = panel!.get('[data-test="reminder-row-failed"]');
+    const row = panel!.get('[data-test="reminder-row-a"]');
     const note = row.get('.context-row-note');
     expect(note.classes()).toContain('tone-fault');
     expect(note.text()).toBe('A mailbox change failed or newer triage superseded it; which one is not recorded. Cancel does not override newer triage.');

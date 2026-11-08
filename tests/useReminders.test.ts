@@ -48,6 +48,16 @@ describe('useReminders session', () => {
     expect(model.attentionCount.value).toBe(0);
   });
 
+  it('totals the rows that need attention whichever tab is selected', async () => {
+    const { model, scope } = setup([row('a'), row('b', { phase: 'failed' }), row('c', { phase: 'removing' })]);
+    stop = () => scope.stop();
+    await model.activate();
+    expect(model.attentionTotal.value).toBe(2);
+    model.destination.value = 'history';
+    expect(model.attentionCount.value).toBe(0);
+    expect(model.attentionTotal.value).toBe(2);
+  });
+
   it('loads on activate, follows live changes, and unsubscribes when deactivated', async () => {
     const { rows, listeners, unsubscribe, list, model, scope } = setup([row('a')]);
     stop = () => scope.stop();

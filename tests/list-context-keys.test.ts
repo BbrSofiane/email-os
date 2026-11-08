@@ -204,6 +204,16 @@ describe('[ and ] step the Reminders tabs', () => {
     expect(status(w)).toBe('Pending, 1 reminder. Needs attention 1');
   });
 
+  it('does not say "no reminders" when only attention rows exist', async () => {
+    const { w } = await mountReminders([reminder('conv-02', 'failed'), reminder('conv-04', 'returned')]);
+    expect(tabState(w)).toBe('Pending 0');
+    await key(']', {}, active());
+    await key(']', {}, active());
+    await key(']', {}, active());
+    expect(status(w)).toBe('Pending, 1 needs attention');
+    expect(status(w)).not.toMatch(/no reminders/);
+  });
+
   it('leaves the tablist arrows, Home and End as they are', async () => {
     const { w } = await mountReminders();
     const pending = w.get('[data-test="reminder-tab-pending"]');

@@ -115,6 +115,11 @@ export function useReminders(client: MailClient, options: RemindersOptions = {})
   /** How many rows of the Pending tab need attention (the label's count). */
   const attentionCount = computed(() => (destination.value === 'pending' ? displayed.value.filter(needsAttention).length : 0));
   /**
+   * How many loaded rows need attention, whichever tab is selected. The Pending
+   * tab shows "· N needs attention" beside its count only when this is above 0.
+   */
+  const attentionTotal = computed(() => rows.value.filter(needsAttention).length);
+  /**
    * Counts of the currently loaded rows per tab. Returned and History count their
    * rows; Pending counts only rows waiting calmly (phase `pending`), because the
    * rows that need attention are counted by their own label.
@@ -138,10 +143,14 @@ export function useReminders(client: MailClient, options: RemindersOptions = {})
     const next = REMINDER_TABS[(index + delta + REMINDER_TABS.length) % REMINDER_TABS.length]!;
     destination.value = next.id;
     activeRow.value = null;
-    // The same numbers the tab shows: calm rows, then the separate attention count.
+    // The same numbers the tab shows. Attention rows are never "no reminders".
     const count = counts.value[next.id];
     const attention = attentionCount.value;
-    const words = `${next.label}, ${count === 0 ? 'no reminders' : `${count} ${count === 1 ? 'reminder' : 'reminders'}`}${attention > 0 ? `. ${NEEDS_ATTENTION_LABEL} ${attention}` : ''}`;
+    const calm = `${count} ${count === 1 ? 'reminder' : 'reminders'}`;
+    const flagged = `${attention} ${attention === 1 ? 'needs' : 'need'} attention`;
+    const words = attention === 0
+      ? `${next.label}, ${count === 0 ? 'no reminders' : calm}`
+      : count === 0 ? `${next.label}, ${flagged}` : `${next.label}, ${calm}. ${NEEDS_ATTENTION_LABEL} ${attention}`;
     // Clear first so the same words announce again after an unrelated tab change.
     tabAnnouncement.value = '';
     void nextTick(() => { tabAnnouncement.value = words; });
@@ -350,7 +359,7 @@ export function useReminders(client: MailClient, options: RemindersOptions = {})
   return {
     rows, error, preparationError, preparationTarget, busy, loading, source, due, presets, customOpen, someday, condition,
     destination, target, activeRow, retrying, dismissBlocked, tabAnnouncement,
-    displayed, attentionCount, counts, presetList, customForced, customShown,
+    displayed, attentionCount, attentionTotal, counts, presetList, customForced, customShown,
     onTabKeydown, stepDestination, refresh, prepare, dismissPicker, closePicker, setTarget, reschedule, choosePreset, submit, cancel, retryOrRefresh, inspectDurableState,
     activate, deactivate, whenLoaded: () => loaded,
   };

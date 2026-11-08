@@ -8,9 +8,10 @@
  *
  * In Pending, rows that are not calmly waiting (failed, removing, returning,
  * cancelling) come first under one Ash caption, "Needs attention N"; the tab
- * count covers only phase `pending`. The data carries no failure cause, so the
- * failed note says what is known and no more, and Cancel is the only action:
- * no retry of a failed reminder exists.
+ * count covers only phase `pending`. When calm reminders follow, they get their
+ * own caption, "Pending N", so the group has a visible end. The data carries no
+ * failure cause, so the failed note says what is known and no more, and Cancel
+ * is the only action: no retry of a failed reminder exists.
  *
  * Esc inside the picker dismisses the picker alone; anywhere else Esc is the
  * app's Back. Row keys come from ContextRowList (J/K, arrows, Home, End).
@@ -121,9 +122,13 @@ function onPickerKeydown(event: KeyboardEvent) {
   if (busy.value || retrying.value) return;
   dismiss();
 }
-/** One quiet caption before the first row, only when rows need attention. */
+/** Quiet captions: "Needs attention N" before the first row when rows need attention, and "Pending N" before the first calm row when both groups exist. */
 function groupCaption(_item: ReminderItem, index: number): string | null {
-  return index === 0 && attentionCount.value > 0 ? `${NEEDS_ATTENTION_LABEL} ${attentionCount.value}` : null;
+  const attention = attentionCount.value;
+  if (attention === 0) return null;
+  if (index === 0) return `${NEEDS_ATTENTION_LABEL} ${attention}`;
+  // The calm rows get their own caption, so the Needs attention group has a visible end.
+  return index === attention ? `Pending ${items.value.length - attention}` : null;
 }
 function rowTitle(item: ReminderItem): string { return `Revision ${item.reminder.revision}`; }
 </script>
@@ -209,7 +214,7 @@ function rowTitle(item: ReminderItem): string { return `Revision ${item.reminder
         :active-key="activeRow"
         :row-title="rowTitle"
         :group-caption="groupCaption"
-        :row-test-id="(item: ReminderItem) => `reminder-row-${item.reminder.phase}`"
+        :row-test-id="(item: ReminderItem) => `reminder-row-${item.key}`"
         @update:active-key="activeRow = $event"
         @open="emit('open', $event.reminder.conversation)"
       >
