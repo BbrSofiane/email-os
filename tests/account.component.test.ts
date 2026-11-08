@@ -309,7 +309,8 @@ describe('App (Slice 02 Gmail account states)', () => {
     await settle();
     const unknownRow = w.find(`[data-test="activity-outcome_unknown"]`);
     expect(unknownRow.exists()).toBe(true);
-    expect(unknownRow.text()).toContain('outcome unknown');
+    expect(unknownRow.get('.activity-status').text()).toBe('Unknown');
+    expect(unknownRow.get('.activity-status').attributes('title')).toContain('Outcome unknown');
     expect(unknownRow.text()).toContain('could not be confirmed');
     expect(unknownRow.find('[data-test="activity-unknown-warning"]').text()).toContain('may override');
     await unknownRow.find(`[data-test="activity-retry-${unknown.operationId}"]`).trigger('click');

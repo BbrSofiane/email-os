@@ -54,7 +54,7 @@ async function openReturnedReminder() {
   await app!.findAll('button').find(button => button.text() === 'Reminders')!.trigger('click');
   await flushPromises();
   const panel = app!.getComponent(RemindersPanel);
-  await panel.findAll('nav button').find(button => button.text() === 'returned')!.trigger('click');
+  await panel.findAll('[role="tab"]').find(button => button.text().startsWith('Returned'))!.trigger('click');
   await panel.get('li button').trigger('click');
   await flushPromises();
   expect(app!.findComponent(RemindersPanel).exists()).toBe(false);
@@ -76,7 +76,7 @@ describe('reminder reader navigation ownership', () => {
       expect(app!.findComponent(ReaderView).exists()).toBe(false);
       expect(app!.findComponent(RemindersPanel).exists()).toBe(true);
       const panel = app!.getComponent(RemindersPanel);
-      expect(panel.findAll('nav button').find(button => button.text() === 'returned')!.attributes('aria-pressed')).toBe('true');
+      expect(panel.findAll('[role="tab"]').find(button => button.text().startsWith('Returned'))!.attributes('aria-selected')).toBe('true');
       expect(panel.get('li button').text()).toBe(`Open ${detail.subject}`);
       expect(app!.get('[data-test="rail-activity"]').attributes('aria-expanded')).toBe('false');
 
