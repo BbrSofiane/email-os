@@ -1572,6 +1572,18 @@ button:focus-visible {
   min-width: 6em;
 }
 
+/* A quiet Ash caption before a run of rows (Reminders: Needs attention N): Body type on the 50px
+   inset, a 36px block, no rule. It is a presentation line, never a row or a stop. */
+.context-group {
+  display: flex;
+  align-items: flex-end;
+  min-height: 36px;
+  padding: 0 24px 6px 50px;
+  font-size: var(--type-body);
+  line-height: var(--leading-ui);
+  color: var(--text-secondary);
+}
+
 /* An exception under its row: Coral or Amber, on the content inset. */
 .context-row-note {
   margin: 0;

@@ -6,13 +6,19 @@
  * slot) and read the same `model`. All request semantics live in
  * `useReminders`; this component only renders them.
  *
+ * In Pending, rows that are not calmly waiting (failed, removing, returning,
+ * cancelling) come first under one Ash caption, "Needs attention N"; the tab
+ * count covers only phase `pending`. The data carries no failure cause, so the
+ * failed note says what is known and no more, and Cancel is the only action:
+ * no retry of a failed reminder exists.
+ *
  * Esc inside the picker dismisses the picker alone; anywhere else Esc is the
  * app's Back. Row keys come from ContextRowList (J/K, arrows, Home, End).
  */
 import { computed, nextTick, ref, watch } from 'vue';
 import type { Reminder } from '../lib/ipc/client';
 import { fullDateLabel } from '../lib/browsing-dates';
-import { REMINDER_PHASES, REMINDERS_FIXTURE_DETAIL, REMINDERS_FIXTURE_LINE, type RemindersModel } from '../composables/useReminders';
+import { NEEDS_ATTENTION_LABEL, REMINDER_PHASES, REMINDERS_FIXTURE_DETAIL, REMINDERS_FIXTURE_LINE, type RemindersModel } from '../composables/useReminders';
 import ContextRowList from './ContextRowList.vue';
 import FullDate from './FullDate.vue';
 
@@ -20,7 +26,7 @@ const props = defineProps<{ model: RemindersModel }>();
 const emit = defineEmits<{ open: [target: Reminder['conversation']] }>();
 const {
   error, preparationError, preparationTarget, busy, loading, source, due, someday, condition, destination,
-  displayed, activeRow, retrying, presetList, customForced, customShown, customOpen,
+  displayed, attentionCount, activeRow, retrying, presetList, customForced, customShown, customOpen,
 } = props.model;
 
 interface ReminderItem { key: string; reminder: Reminder }
@@ -61,6 +67,10 @@ function onPickerKeydown(event: KeyboardEvent) {
   event.stopPropagation(); event.preventDefault();
   if (busy.value || retrying.value) return;
   dismiss();
+}
+/** One quiet caption before the first row, only when rows need attention. */
+function groupCaption(_item: ReminderItem, index: number): string | null {
+  return index === 0 && attentionCount.value > 0 ? `${NEEDS_ATTENTION_LABEL} ${attentionCount.value}` : null;
 }
 function rowTitle(item: ReminderItem): string { return `Revision ${item.reminder.revision}`; }
 </script>
@@ -143,6 +153,7 @@ function rowTitle(item: ReminderItem): string { return `Revision ${item.reminder
         :label="`${destination[0]!.toUpperCase()}${destination.slice(1)} reminders`"
         :active-key="activeRow"
         :row-title="rowTitle"
+        :group-caption="groupCaption"
         :row-test-id="(item: ReminderItem) => `reminder-row-${item.reminder.phase}`"
         @update:active-key="activeRow = $event"
         @open="emit('open', $event.reminder.conversation)"
@@ -166,7 +177,7 @@ function rowTitle(item: ReminderItem): string { return `Revision ${item.reminder
           <span class="activity-status context-phase" :class="`tone-${REMINDER_PHASES[item.reminder.phase].tone}`" :data-test="`reminder-phase-${item.reminder.phase}`">{{ REMINDER_PHASES[item.reminder.phase].word }}</span>
         </template>
         <template #note="{ item }">
-          <p v-if="item.reminder.phase === 'failed'" class="context-row-note tone-fault">Removal or return failed, or a later mailbox action superseded this reminder. Cancel does not override newer triage.</p>
+          <p v-if="item.reminder.phase === 'failed'" class="context-row-note tone-fault">A mailbox change failed or newer triage superseded it; which one is not recorded. Cancel does not override newer triage.</p>
         </template>
       </ContextRowList>
     </div>

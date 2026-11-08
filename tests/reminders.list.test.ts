@@ -120,6 +120,75 @@ describe('Reminders rows', () => {
   });
 });
 
+describe('Reminders Needs attention group', () => {
+  const captions = () => panel!.findAll('[data-test="context-group"]').map((el) => el.text());
+  const order = () => panel!.findAll('li[data-test^="reminder-row-"]').map((el) => el.attributes('data-test'));
+
+  it('lists failed rows, then in-flight rows, before the calm pending rows, under one caption with its own count', async () => {
+    const { fake } = fixture([
+      reminder('a', 'pending'),
+      reminder('b', 'removing'),
+      reminder('c', 'pending'),
+      reminder('d', 'failed'),
+      reminder('e', 'returned'),
+    ]);
+    const { model } = show(fake);
+    await flushPromises();
+    expect(captions()).toEqual(['Needs attention 2']);
+    expect(order()).toEqual(['reminder-row-failed', 'reminder-row-removing', 'reminder-row-pending', 'reminder-row-pending']);
+    expect(panel!.findAll('li[data-test^="reminder-row-"]').map((el) => el.get('.context-subject').text())).toEqual(['Subject d', 'Subject b', 'Subject a', 'Subject c']);
+    // The caption comes first in the list and is not a row: one list, rows only in listitems.
+    const items = panel!.get('ul').element.children;
+    expect(items[0]!.getAttribute('role')).toBe('presentation');
+    expect(panel!.findAll('[role="listitem"]')).toHaveLength(4);
+    expect(model.attentionCount.value).toBe(2);
+    // J/K keep moving across the caption: the caption is no row stop.
+    expect(panel!.findAll('[data-drawer-row]')).toHaveLength(4);
+  });
+
+  it('counts only phase pending in the tab, and keeps failed and removing rows in the tab', async () => {
+    const { fake } = fixture([reminder('a', 'pending'), reminder('b', 'removing'), reminder('c', 'failed'), reminder('d', 'returning'), reminder('e', 'cancelling'), reminder('f', 'returned'), reminder('g', 'cancelled')]);
+    const { model } = show(fake);
+    await flushPromises();
+    expect(model.counts.value).toEqual({ pending: 1, returned: 1, history: 1 });
+    expect(model.displayed.value).toHaveLength(5);
+    expect(captions()).toEqual(['Needs attention 4']);
+  });
+
+  it('shows no caption when nothing needs attention, and none in the other tabs', async () => {
+    const { fake } = fixture([reminder('a', 'pending'), reminder('b', 'pending'), reminder('c', 'returned'), reminder('d', 'cancelled')]);
+    const { model } = show(fake);
+    await flushPromises();
+    expect(captions()).toEqual([]);
+    expect(panel!.find('[role="presentation"]').exists()).toBe(false);
+    expect(model.attentionCount.value).toBe(0);
+    model.destination.value = 'returned'; await flushPromises();
+    expect(captions()).toEqual([]);
+    model.destination.value = 'history'; await flushPromises();
+    expect(captions()).toEqual([]);
+  });
+
+  it('shows the caption alone when every pending-tab row needs attention', async () => {
+    const { fake } = fixture([reminder('a', 'failed')]);
+    show(fake);
+    await flushPromises();
+    expect(captions()).toEqual(['Needs attention 1']);
+    expect(panel!.find('[data-test="reminders-empty"]').exists()).toBe(false);
+  });
+
+  it('names what is known on a failed row, claims no cause, and offers Cancel only', async () => {
+    const { fake } = fixture([reminder('a', 'failed')]);
+    show(fake);
+    await flushPromises();
+    const row = panel!.get('[data-test="reminder-row-failed"]');
+    const note = row.get('.context-row-note');
+    expect(note.classes()).toContain('tone-fault');
+    expect(note.text()).toBe('A mailbox change failed or newer triage superseded it; which one is not recorded. Cancel does not override newer triage.');
+    expect(row.findAll('.context-row-actions button').map((button) => button.text())).toEqual(['Cancel reminder']);
+    expect(row.get('.context-row-actions button').attributes('aria-label')).toBe('Cancel reminder and recover original inbox messages');
+  });
+});
+
 describe('Reminders picker', () => {
   it('names the mail by subject and keeps the ids out of the text', async () => {
     const { fake } = fixture();

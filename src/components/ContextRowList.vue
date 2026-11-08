@@ -17,6 +17,9 @@
  *   and the row `actions` are not rows: they keep native Tab and Enter and
  *   stay Tab-reachable. Escape is the app's.
  * - Clicking the row outside any control opens it, like an Inbox row.
+ * - `groupCaption` may name a quiet Ash caption that precedes an item (a
+ *   non-actionable `presentation` line, as in the Inbox's date captions). It
+ *   sits in the same list, so row keys keep moving across it.
  * - `note` is an exception line under its row (Coral or Amber), only where one
  *   applies.
  */
@@ -34,6 +37,8 @@ const props = defineProps<{
   /** Hover title of the open button (for example a revision). */
   rowTitle?: (item: T) => string | undefined;
   rowTestId?: (item: T) => string | undefined;
+  /** A caption shown before this item, or null/undefined for none. */
+  groupCaption?: (item: T, index: number) => string | null | undefined;
   /** Test hook of the open button (the row's marker element). */
   openTestId?: (item: T) => string | undefined;
   /** Rows cannot be opened while true (an editor transition is running). */
@@ -76,34 +81,35 @@ defineExpose({ focusRow, el: listEl });
 
 <template>
   <ul ref="listEl" class="context-list" role="list" :aria-label="label" tabindex="-1" @keydown="rows.onKeydown">
-    <li
-      v-for="item in items"
-      :key="item.key"
-      class="context-item"
-      role="listitem"
-      :aria-current="currentKey === item.key ? 'true' : undefined"
-      :data-test="rowTestId?.(item)"
-    >
-      <div class="context-row" :class="{ focused: currentKey === item.key }" @click="onRowClick($event, item)">
-        <span class="context-row-lead"><slot name="lead" :item="item" /></span>
-        <button
-          type="button"
-          class="context-row-main"
-          v-bind="rows.rowAttrs(item.key)"
-          :title="rowTitle?.(item)"
-          :data-test="openTestId?.(item)"
-          :disabled="disabled || undefined"
-          @focus="emit('update:activeKey', item.key)"
-          @click="open(item)"
-        >
-          <span class="visually-hidden">{{ `${openVerb ?? 'Open'} ` }}</span>
-          <span class="context-row-primary"><slot name="primary" :item="item" /></span>
-        </button>
-        <span class="context-row-secondary"><slot name="secondary" :item="item" /></span>
-        <span class="context-row-actions"><slot name="actions" :item="item" /></span>
-        <span class="context-row-trailing"><slot name="trailing" :item="item" /></span>
-      </div>
-      <slot name="note" :item="item" />
-    </li>
+    <template v-for="(item, index) in items" :key="item.key">
+      <li v-if="groupCaption?.(item, index)" class="context-group" role="presentation" data-test="context-group">{{ groupCaption(item, index) }}</li>
+      <li
+        class="context-item"
+        role="listitem"
+        :aria-current="currentKey === item.key ? 'true' : undefined"
+        :data-test="rowTestId?.(item)"
+      >
+        <div class="context-row" :class="{ focused: currentKey === item.key }" @click="onRowClick($event, item)">
+          <span class="context-row-lead"><slot name="lead" :item="item" /></span>
+          <button
+            type="button"
+            class="context-row-main"
+            v-bind="rows.rowAttrs(item.key)"
+            :title="rowTitle?.(item)"
+            :data-test="openTestId?.(item)"
+            :disabled="disabled || undefined"
+            @focus="emit('update:activeKey', item.key)"
+            @click="open(item)"
+          >
+            <span class="visually-hidden">{{ `${openVerb ?? 'Open'} ` }}</span>
+            <span class="context-row-primary"><slot name="primary" :item="item" /></span>
+          </button>
+          <span class="context-row-secondary"><slot name="secondary" :item="item" /></span>
+          <span class="context-row-actions"><slot name="actions" :item="item" /></span>
+          <span class="context-row-trailing"><slot name="trailing" :item="item" /></span>
+        </div>
+        <slot name="note" :item="item" />
+      </li>
+    </template>
   </ul>
 </template>

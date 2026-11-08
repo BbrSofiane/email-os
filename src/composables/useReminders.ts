@@ -47,6 +47,16 @@ export const REMINDER_PHASES: Record<ReminderPhase, { word: string; tone: 'warn'
 export interface ReminderSource { conversation: ConversationRef; sourceMessageId: string; revision: number | null; subject: string }
 interface RetryRequest { action: () => Promise<unknown>; command?: PutReminder }
 
+/**
+ * Rows of the Pending tab that are not calm waiting: a failed reminder, and one
+ * still moving (removing, returning, cancelling). They list first under
+ * "Needs attention" and are not counted as Pending.
+ */
+export const NEEDS_ATTENTION_LABEL = 'Needs attention';
+function needsAttention(r: Reminder): boolean {
+  return bucketOf(r) === 'pending' && r.phase !== 'pending';
+}
+
 function bucketOf(r: Reminder): ReminderDestination {
   return r.phase === 'returned' ? 'returned' : r.phase === 'suppressed' || r.phase === 'cancelled' ? 'history' : 'pending';
 }
@@ -91,11 +101,27 @@ export function useReminders(client: MailClient, options: RemindersOptions = {})
   let unsubscribe: (() => void) | undefined;
   let loaded: Promise<void> = Promise.resolve();
 
-  const displayed = computed(() => rows.value.filter(r => bucketOf(r) === destination.value));
-  /** Counts of the currently loaded rows per bucket (the same filter as `displayed`). */
+  /**
+   * The rows of the selected tab. In Pending, rows that need attention come
+   * first (failed before in-flight), then the calm pending rows; the order the
+   * list gave is kept inside each part.
+   */
+  const displayed = computed(() => {
+    const inTab = rows.value.filter(r => bucketOf(r) === destination.value);
+    if (destination.value !== 'pending') return inTab;
+    const rank = (r: Reminder) => (r.phase === 'pending' ? 2 : r.phase === 'failed' ? 0 : 1);
+    return inTab.map((r, index) => ({ r, index })).sort((a, b) => rank(a.r) - rank(b.r) || a.index - b.index).map(({ r }) => r);
+  });
+  /** How many rows of the Pending tab need attention (the label's count). */
+  const attentionCount = computed(() => (destination.value === 'pending' ? displayed.value.filter(needsAttention).length : 0));
+  /**
+   * Counts of the currently loaded rows per tab. Returned and History count their
+   * rows; Pending counts only rows waiting calmly (phase `pending`), because the
+   * rows that need attention are counted by their own label.
+   */
   const counts = computed<Record<ReminderDestination, number>>(() => {
     const result: Record<ReminderDestination, number> = { pending: 0, returned: 0, history: 0 };
-    for (const r of rows.value) result[bucketOf(r)]++;
+    for (const r of rows.value) if (!needsAttention(r)) result[bucketOf(r)]++;
     return result;
   });
 
@@ -303,7 +329,7 @@ export function useReminders(client: MailClient, options: RemindersOptions = {})
   return {
     rows, error, preparationError, preparationTarget, busy, loading, source, due, presets, customOpen, someday, condition,
     destination, target, activeRow, retrying, dismissBlocked,
-    displayed, counts, presetList, customForced, customShown,
+    displayed, attentionCount, counts, presetList, customForced, customShown,
     onTabKeydown, refresh, prepare, dismissPicker, closePicker, setTarget, reschedule, choosePreset, submit, cancel, retryOrRefresh, inspectDurableState,
     activate, deactivate, whenLoaded: () => loaded,
   };

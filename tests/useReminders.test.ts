@@ -32,6 +32,22 @@ let stop: (() => void) | null = null;
 afterEach(() => { stop?.(); stop = null; });
 
 describe('useReminders session', () => {
+  it('counts a row in Pending only while it waits calmly; a row that fails leaves the count but stays in the tab', async () => {
+    const { rows, listeners, model, scope } = setup([row('a'), row('b')]);
+    stop = () => scope.stop();
+    await model.activate();
+    expect(model.counts.value.pending).toBe(2);
+    expect(model.attentionCount.value).toBe(0);
+    rows[1] = row('b', { phase: 'failed' });
+    listeners[0]!();
+    await flushPromises();
+    expect(model.counts.value).toEqual({ pending: 1, returned: 0, history: 0 });
+    expect(model.attentionCount.value).toBe(1);
+    expect(model.displayed.value.map((r) => r.conversation.conversationId)).toEqual(['b', 'a']);
+    model.destination.value = 'history';
+    expect(model.attentionCount.value).toBe(0);
+  });
+
   it('loads on activate, follows live changes, and unsubscribes when deactivated', async () => {
     const { rows, listeners, unsubscribe, list, model, scope } = setup([row('a')]);
     stop = () => scope.stop();
