@@ -1,0 +1,51 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6XXFAWE83B5H46T2KGBGQ4K",
+  "strategy": "manual-commit",
+  "branch": "impeccable/list-contexts",
+  "checkpoints_count": 3,
+  "files_touched": [
+    "DESIGN.md",
+    "src/App.vue",
+    "src/assets/style.css",
+    "src/components/ContextRowList.vue",
+    "src/components/RemindersList.vue",
+    "src/components/RemindersPanel.vue",
+    "src/composables/useDrawerRows.ts",
+    "src/composables/useMailbox.ts",
+    "src/composables/useReminders.ts",
+    "tests/context-row-list.component.test.ts",
+    "tests/drawer-panels.app.test.ts",
+    "tests/reminders.component.test.ts",
+    "tests/reminders.context.test.ts",
+    "tests/reminders.drawer.test.ts",
+    "tests/reminders.helpers.ts",
+    "tests/reminders.list.test.ts",
+    "tests/reminders.navigation.test.ts",
+    "tests/reminders.preparation.test.ts",
+    "tests/useReminders.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 164,
+    "cache_creation_tokens": 625028,
+    "cache_read_tokens": 13658473,
+    "output_tokens": 67185,
+    "api_call_count": 79,
+    "subagent_tokens": {
+      "input_tokens": 332,
+      "cache_creation_tokens": 998536,
+      "cache_read_tokens": 33606337,
+      "output_tokens": 182271,
+      "api_call_count": 164
+    }
+  }
+}

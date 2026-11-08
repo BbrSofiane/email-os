@@ -1,0 +1,125 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6XXFAWE83B5H46T2KGBGQ4K",
+  "session_id": "f985be7d-cba0-4fa8-a8b8-ec1d0f052dd4",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-08T15:47:17.590647153Z",
+  "branch": "impeccable/list-contexts",
+  "checkpoints_count": 3,
+  "save_step_count": 4,
+  "files_touched": [
+    "DESIGN.md",
+    "src/App.vue",
+    "src/assets/style.css",
+    "src/components/ContextRowList.vue",
+    "src/components/RemindersList.vue",
+    "src/components/RemindersPanel.vue",
+    "src/composables/useDrawerRows.ts",
+    "src/composables/useMailbox.ts",
+    "src/composables/useReminders.ts",
+    "tests/context-row-list.component.test.ts",
+    "tests/drawer-panels.app.test.ts",
+    "tests/reminders.component.test.ts",
+    "tests/reminders.context.test.ts",
+    "tests/reminders.drawer.test.ts",
+    "tests/reminders.helpers.ts",
+    "tests/reminders.list.test.ts",
+    "tests/reminders.navigation.test.ts",
+    "tests/reminders.preparation.test.ts",
+    "tests/useReminders.test.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "990cca66c37a",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 164,
+    "cache_creation_tokens": 625028,
+    "cache_read_tokens": 13658473,
+    "output_tokens": 67185,
+    "api_call_count": 79,
+    "subagent_tokens": {
+      "input_tokens": 332,
+      "cache_creation_tokens": 998536,
+      "cache_read_tokens": 33606337,
+      "output_tokens": 182271,
+      "api_call_count": 164
+    }
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "prompt-skill-claude-code-impeccable-2026-11-08T13:24:38.799411184Z",
+      "event_type": "prompt_invocation",
+      "skill": {
+        "name": "impeccable"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "prompt_slash_command",
+        "confidence": "explicit"
+      },
+      "turn_id": "2a229841a343",
+      "timestamp": "2026-11-08T13:24:38.799411184Z",
+      "native": {
+        "command": "/impeccable"
+      },
+      "collapse": {
+        "target": "user_message",
+        "label": "/impeccable",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 6
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-08T15:47:17.372968163Z",
+    "agent_lines": 1759,
+    "agent_removed": 701,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 1759,
+    "total_lines_changed": 2460,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 4,
+      "user_lines_added": 1,
+      "user_lines_removed": 0,
+      "agent_lines_added": 1785,
+      "agent_lines_removed": 701,
+      "user_added_per_file": {
+        ".impeccable/hook.cache.json": 1
+      }
+    },
+    {
+      "checkpoint_number": 5,
+      "user_lines_added": 1,
+      "user_lines_removed": 0,
+      "agent_lines_added": 1759,
+      "agent_lines_removed": 701,
+      "user_added_per_file": {
+        ".impeccable/hook.cache.json": 1
+      }
+    }
+  ]
+}
