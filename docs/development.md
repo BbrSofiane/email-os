@@ -38,6 +38,10 @@ a bounded destination browser for Sent, provider Drafts, All Mail, Spam, Trash
 and user labels. Search covers the loaded catalog; Show more expands it. It is
 not mailbox search. All Mail excludes Spam/Trash. Every page contains at most
 25 conversations, at most 16 MiB of serialized thread DTOs, and no exact total.
+Catalog and page rows are real buttons with one roving tab stop: ArrowDown/ArrowUp
+or J/K move between rows, Enter opens, and Escape steps back one level (reader,
+page list, catalog) before it closes the drawer. Errors use the same plain
+sentences as the Account drawer, never a raw error kind.
 The read-only drawer intentionally has no triage/reply controls. Its page remains
 mounted during a reader visit; closing the drawer returns to the prior inbox
 context. This is not yet the roadmap's integrated main-list destination context.
@@ -290,9 +294,11 @@ upgrade button is chosen. Verify both grant and deny/cancel paths:
 - With actions enabled, explicitly archive a conversation, then explicitly
   mark it read and unread. Confirm Activity distinguishes queued, applying,
   confirmed, failed and outcome-unknown; verify ordinary opening does not alter
-  read state. Disconnect warning must explain that local pending operations are
-  removed but confirmed remote Gmail changes are not undone and Google's grant
-  is not revoked.
+  read state. Asking to **Disconnect…** must reveal the warning in place (it is
+  not in the DOM before) with **Disconnect** and **Keep account**; it must
+  explain that local pending operations and the mail cache are removed, local
+  drafts stay, confirmed remote Gmail changes are not undone and Google's grant
+  is not revoked. Cancelling a sign-in stays one click.
 - Queue an archive while offline, restart, restore network, and verify durable
   Activity/recovery. Interrupted setter dispatch must be reconciled with a GET
   over its exact original message IDs before confirmation; it must not
@@ -480,6 +486,23 @@ trusted DOM or third-party viewer. Native build/bridge tests do not satisfy
 WKWebView key handling, VoiceOver, Downloads permissions, OS browser dispatch,
 or the PDF security spike. Disposable provider validation remains separately
 operator-gated, not authorized by implementation work.
+
+## Account, connection and first run (Gmail mode)
+
+With no usable account the Inbox says why instead of claiming it is empty: **Not
+connected** with an inline **Connect Gmail**, **Sign-in expired** with **Sign in
+again**, **Finish sign-in in your browser** with **Cancel**, **Syncing first
+mail… N cached**, **Sync failed: …** with **Retry**, **Initial sync has not
+finished** with **Sync now**, or (not configured) a link to Account. Only a
+connected, fully synced, empty account shows the real empty text. A header status
+note repeats the connection or sync fact (Not connected, Sign-in expired, Syncing…,
+Sync failed, Offline for a network_unavailable sync error) with an action; it is
+absent while connected and idle. **Connect Gmail** (or **Sign in again**) and
+**Sync now** are palette commands only while they can run, and `G` then `A` (within
+1 second, Gmail mode only) opens Account. None of these gates mailbox actions:
+actions depend on `mutationAccess`, not on the connection. All of it is verified
+with the synthetic in-memory fake; real OAuth, sync and Keychain behavior stay
+operator-gated.
 
 ## Desktop-local reminder increment (UX-11, fixture only)
 

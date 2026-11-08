@@ -185,12 +185,14 @@ button:focus-visible {
   color: var(--text-primary);
 }
 .workspace-header {
-  padding: 0.4rem 0.75rem;
+  padding: 6px 12px;
   border-bottom: 1px solid var(--divider);
   font-size: var(--type-body);
 }
-.workspace-header p { margin: 0 0 0.35rem; }
-.workspace-header nav { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.workspace-header p { margin: 0 0 6px; }
+/* One short line on screen; the full boundary is the nav's accessible description. */
+.workspace-header .workspace-boundary { display: flex; flex-wrap: wrap; gap: 0 12px; color: var(--text-secondary); }
+.workspace-header nav { display: flex; flex-wrap: wrap; gap: 6px; }
 .workspace-header button[aria-current] { background: var(--focus-fill); }
 .workspace-panel { flex: 1; min-height: 0; }
 .workspace-panel > .app { height: 100%; }
@@ -407,6 +409,15 @@ button:focus-visible {
   color: var(--warning);
 }
 
+/* Account status note (connection or sync). Words always carry the status; the tint only echoes them. */
+.header-note.tone-warning {
+  color: var(--warning);
+}
+
+.header-note.tone-danger {
+  color: var(--danger);
+}
+
 /* Armed g-chord: a quiet pending hint at the trail's leading edge. */
 .chord-hint {
   flex: 0 0 auto;
@@ -431,6 +442,34 @@ button:focus-visible {
 
 .header-link:hover {
   text-decoration: underline;
+}
+
+/* A link-style action inside an in-flow line (the empty inbox line). */
+.inline-action {
+  margin-left: 6px;
+  padding: 0 2px;
+  background: transparent;
+  border: 0;
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: var(--weight-strong);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.inline-action:hover {
+  background: transparent;
+}
+
+/* A ghost text button inside a utility drawer (drawers default to the bordered chip). */
+.drawer-ghost {
+  background: transparent;
+  border: 0;
+  padding: 4px 8px;
+}
+
+.drawer-ghost:not(:disabled):hover {
+  background: var(--surface-raised);
 }
 
 /*
@@ -2094,31 +2133,37 @@ button:focus-visible {
 }
 
 .account-panel {
-  border: 1px solid var(--rule);
-  border-radius: 6px;
-  padding: 0.6rem 0.8rem;
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  gap: 24px;
   font-size: var(--type-body);
 }
 
-.account-row {
+/* Sections are separated by space alone: no card, border or radius (DESIGN.md "Seams-Only"). */
+.account-section {
   display: flex;
-  gap: 0.8rem;
-  align-items: baseline;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
 }
 
-.account-mode {
+.account-label {
+  margin: 0;
   font-weight: var(--weight-strong);
 }
 
-.account-connection {
-  font-style: italic;
+.account-line {
+  margin: 0;
 }
 
-.account-email {
-  margin: 0;
+.account-mode {
+  color: var(--text-secondary);
+}
+
+.account-sync-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
 }
 
 .account-notice {
@@ -2127,23 +2172,174 @@ button:focus-visible {
 }
 
 .account-sync-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
   margin: 0;
   color: var(--danger);
   font-weight: var(--weight-strong);
 }
 
-.account-coverage,
-.account-cached,
-.account-disposable,
-.account-upgrade-disclosure,
-.account-disconnect-warning {
+.account-sync-error button {
+  font-weight: var(--weight-regular);
+}
+
+/* Ash facts: coverage, the scope disclosure and the disconnect warning. */
+.account-note {
   margin: 0;
   color: var(--text-secondary);
 }
 
 .account-actions {
   display: flex;
-  gap: 0.5rem;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.account-confirm {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.account-primary {
+  font-weight: var(--weight-strong);
+}
+
+/* Provider mail (catalog -> page -> reader): list-row look, no cards or borders. */
+.provider-destinations {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--type-body);
+}
+
+.provider-destinations > * {
+  max-width: 100%;
+}
+
+.destination-intro,
+.destination-meta,
+.destination-state {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.destination-error {
+  margin: 0;
+  color: var(--warning);
+}
+
+.destination-notice {
+  margin: 0;
+  color: var(--warning);
+}
+
+.destination-title {
+  margin: 0;
+}
+
+.destination-find {
+  display: block;
+  align-self: stretch;
+}
+
+/* A quiet Seam underline at rest so the field still reads as an input. */
+.destination-search {
+  width: 100%;
+  padding: 4px 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom-color: var(--divider);
+  border-radius: 4px;
+}
+
+.destination-search:hover:not(:disabled) {
+  border-color: var(--divider);
+}
+
+.destination-search:focus-visible {
+  border-color: var(--focus-accent);
+  outline: 1px solid var(--focus-accent);
+  outline-offset: -2px;
+}
+
+.destination-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.destination-catalog {
+  align-self: stretch;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.destination-list {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  max-height: 50vh;
+  overflow: auto;
+}
+
+.destination-list:focus {
+  outline: none;
+}
+
+/* Compact ghost rows, about 28px, left-aligned, no border. */
+.destination-item,
+.destination-row {
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  padding: 4px 8px;
+  text-align: left;
+  overflow-wrap: anywhere;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+}
+
+.destination-item:not(:disabled):hover,
+.destination-row:not(:disabled):hover {
+  background: var(--surface-raised);
+}
+
+.destination-item:focus-visible,
+.destination-row:focus-visible {
+  outline-offset: -2px;
+}
+
+.destination-reader {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  align-self: stretch;
+  min-width: 0;
+}
+
+.destination-message {
+  align-self: stretch;
+}
+
+.destination-message h4 {
+  margin: 12px 0 0;
+}
+
+.destination-reader pre {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+  line-height: var(--leading-reading);
 }
 
 .reader-notice,

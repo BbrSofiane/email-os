@@ -64,6 +64,9 @@ independently retrievable regardless of the browsing filter.
 
 - `G`, then `E`: 1000 ms timeout, cancelled by unrelated keys, modifiers,
   composition, overlays, blur, or context transitions. No `G`, then `H`.
+  Later passes added `G`, then `H` (Reminders, fixture only) and `G`, then `A`
+  (Go to Account, Gmail mode only) to the same chord machinery, timeout and grace
+  window; in the other mode that second key is an ordinary key.
 - Left reveals the destination navigator only when the list browsing surface
   owns navigation; never from editable controls or the reader.
 - Cmd+K is a Mac app binding, not permission to steal browser/system-reserved

@@ -4,6 +4,7 @@ import App from '../src/App.vue';
 import type { DraftReceipt, MailClient } from '../src/lib/ipc/client';
 import {
   closeUtilityDrawer,
+  confirmDisconnect,
   createBrowserFakeMailClient,
   deferred,
   fixtureRef,
@@ -1152,8 +1153,9 @@ describe('local plain-text drafts UI', () => {
         await openUtilityDrawer(w, 'account');
         // The flush succeeded, so the switch completes and the user can now
         // reach the disconnect controls on the Account surface.
-        await w.find('[data-test="account-disconnect"]').trigger('click');
-        await waitFor(() => w.find('[data-test="account-connect"]').exists());
+        await confirmDisconnect(w);
+        // Connect appears with the disconnected status but stays disabled until the transition ends.
+        await waitFor(() => w.find('[data-test="account-connect"]').exists() && w.find('[data-test="account-connect"]').attributes('disabled') === undefined);
       }
       else if (action === 'editor switch') await waitFor(() => creates.length === 2 && w.find('[data-test="composer"]').exists());
       else await waitFor(() => !w.find('[data-test="composer"]').exists());
@@ -1390,7 +1392,7 @@ describe('local plain-text drafts UI', () => {
     };
     const w = await mountApp(fake, client);
     await openUtilityDrawer(w, 'account');
-    await w.find('[data-test="account-disconnect"]').trigger('click');
+    await confirmDisconnect(w);
     await flushPromises();
     await openUtilityDrawer(w, 'drafts');
     expect(w.find('[data-test="new-draft"]').attributes('disabled')).toBeDefined();
@@ -1766,7 +1768,11 @@ describe('local plain-text drafts UI', () => {
     };
     const w = await mountApp(fake, client);
     await openUtilityDrawer(w, 'account');
-    expect(w.find('[data-test="disconnect-warning"]').text()).toContain('local drafts remain on this device');
+    // The warning is not in the DOM until Disconnect… is asked for.
+    expect(w.find('[data-test="disconnect-warning"]').exists()).toBe(false);
+    await w.find('[data-test="account-disconnect"]').trigger('click');
+    expect(w.find('[data-test="disconnect-warning"]').text()).toContain('Local drafts stay');
+    await w.find('[data-test="account-disconnect-cancel"]').trigger('click');
     await closeUtilityDrawer(w);
     await openUtilityDrawer(w, 'drafts');
     await startNew(w);
@@ -1784,7 +1790,7 @@ describe('local plain-text drafts UI', () => {
     await w.find('[data-test="retry-draft-save"]').trigger('click');
     await flushPromises();
     await openUtilityDrawer(w, 'account');
-    await w.find('[data-test="account-disconnect"]').trigger('click');
+    await confirmDisconnect(w);
     await flushPromises();
     expect(disconnects).toBe(1);
     await waitFor(() => w.find('[data-test="account-connect"]').exists());

@@ -84,6 +84,10 @@ describe('App: provider destinations drawer (native keyboard + account gate)', (
     key('Escape'); await flushPromises();
     expect(w.find('.destination-reader').exists()).toBe(false);
     expect(w.find('[data-test="utility-drawer"]').exists()).toBe(true);
+    // Escape now steps back one level at a time: page list -> catalog -> drawer.
+    key('Escape'); await flushPromises();
+    expect(w.find('.destination-list').exists()).toBe(false);
+    expect(w.find('[data-test="utility-drawer"]').exists()).toBe(true);
     key('Escape'); await flushPromises();
     expect(w.find('[data-test="utility-drawer"]').exists()).toBe(false);
 
@@ -131,6 +135,10 @@ describe('App: provider destinations drawer (native keyboard + account gate)', (
       // Unmodified Escape still owns reader Back, then closes the drawer.
       key('Escape'); await flushPromises();
       expect(w.find('.destination-reader').exists()).toBe(false);
+      expect(w.find('[data-test="utility-drawer"]').exists()).toBe(true);
+      // Page list -> catalog -> drawer: one level per Escape.
+      key('Escape'); await flushPromises();
+      expect(w.find('.destination-list').exists()).toBe(false);
       expect(w.find('[data-test="utility-drawer"]').exists()).toBe(true);
       key('Escape'); await flushPromises();
       expect(w.find('[data-test="utility-drawer"]').exists()).toBe(false);

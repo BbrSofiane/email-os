@@ -46,6 +46,7 @@ import SelectionBar from './components/SelectionBar.vue';
 import HeaderGlyph from './components/HeaderGlyph.vue';
 import PaneGlyph from './components/PaneGlyph.vue';
 import { browsingActions, actionLabel, type BrowsingActionId } from './lib/browsing-actions';
+import { CONNECTION_NOTICE_KINDS, INBOX_EMPTY_RECOVERABLE, accountNotice, inboxEmptyState, type AccountNoticeAction, type InboxEmptyAction } from './lib/account-status';
 import { groupRowsBySender, isSingleFromQuery, senderGroupKey, validateSearch } from './lib/search';
 import InboxList from './components/InboxList.vue';
 import SplitEditor from './components/SplitEditor.vue';
@@ -411,6 +412,24 @@ const accountReady = computed(() => mailbox.accountState.value === 'ready');
 const accountStatus = computed(() => mailbox.accountStatus.value);
 const accountId = computed(() => accountStatus.value?.account?.accountId ?? null);
 const drafts = useDrafts(props.client, accountId, props.mode);
+
+// Header status note: one fact about the connection or sync, null while connected and idle.
+const statusNotice = computed(() => accountNotice(accountStatus.value));
+// While a connection problem is showing, the Account drawer covers the older read-only hint.
+const connectionNoticeShown = computed(() => !!statusNotice.value && CONNECTION_NOTICE_KINDS.includes(statusNotice.value.kind));
+// Only the plain Inbox says anything about the account; search, filters, saved and other contexts keep their own text.
+const inboxEmpty = computed(() => mailbox.context.value === 'inbox' && !mailbox.unreadOnly.value && !mailbox.starredOnly.value
+  ? inboxEmptyState(accountStatus.value) : null);
+const emptyListText = computed(() => {
+  if (mailbox.context.value === 'search') return mailbox.nextCursor.value ? 'No matches on this candidate page. Continue scanning older mail below.' : 'No matching conversations in the searched content.';
+  if (mailbox.unreadOnly.value) return 'No known unread conversations in this view. Use Commands → Show all conversations to turn off the unread filter; unknown read states are not included.';
+  if (mailbox.starredOnly.value) return 'No known starred conversations in this cached view; unknown facts and uncached mail are not included.';
+  if (mailbox.context.value === 'saved') return 'No Inbox conversations match this saved split. Edit the sender or domain criteria, or return to Inbox.';
+  if (mailbox.context.value === 'inbox') return inboxEmpty.value?.text ?? INBOX_EMPTY_RECOVERABLE;
+  if (mailbox.nextCursor.value) return 'No conversations on this cache page; more cached candidates are available.';
+  if (mailbox.context.value === 'starred') return 'No known starred conversations in this local cache; unknown and uncached mail is not included.';
+  return 'No known archived conversations in this local cache.';
+});
 
 /**
  * Inline reply composer: a reply to the conversation the reader is currently
@@ -1100,7 +1119,7 @@ const overlayQuery = computed({
 const paletteButton = ref<HTMLElement | null>(null);
 let overlayOrigin: HTMLElement | null = null;
 let overlayRowOrigin: ConversationRef | null = null;
-// G-chord (g then e/h). The chord window is long enough for a hesitant second
+// G-chord (g then e/h, and a in Gmail mode). The chord window is long enough for a hesitant second
 // key; when it lapses the hint disappears and a short grace window swallows a
 // late e/h, so a slow "g e" can never fall through to the plain-key meaning of
 // e (Archive). Any other key, focus change or explicit cancel ends the grace.
@@ -1125,12 +1144,17 @@ function armGo(): void {
     goGraceTimer = setTimeout(endGoGrace, GO_CHORD_GRACE_MS);
   }, GO_CHORD_WINDOW_MS);
 }
-/** Keys whose chorded meaning (Done / Reminders) differs from the plain key. */
+/** Keys whose chorded meaning (Done / Reminders / Account) differs from the plain key. */
 function isGoSecondKey(event: KeyboardEvent): boolean {
-  return (event.key === 'e' || (event.key === 'h' && remindersSupported.value))
+  return (event.key === 'e' || (event.key === 'h' && remindersSupported.value) || (event.key === 'a' && gmailMode.value))
     && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey && !event.isComposing;
 }
-const goHintLabel = computed(() => `g pressed. Press E for Done${remindersSupported.value ? ' or H for Reminders' : ''}, Escape to cancel.`);
+const goHintLabel = computed(() => {
+  const keys = ['E for Done'];
+  if (remindersSupported.value) keys.push('H for Reminders');
+  if (gmailMode.value) keys.push('A for Account');
+  return `g pressed. Press ${keys.join(' or ')}, Escape to cancel.`;
+});
 function openOverlay(kind: 'palette' | 'navigator'): void {
   cancelGo();
   if (!accountReady.value) return;
@@ -1598,6 +1622,35 @@ async function connectAccount(): Promise<void> {
   }
 }
 
+/** Connect, sync and sign-in cancel buttons share the Account buttons' rule: never while one runs. */
+const accountActionsIdle = computed(() => mailbox.accountBusy.value === null && !drafts.transitioning.value);
+
+/** The same App-level paths the Account drawer uses (drafts flush before any account transition). */
+function runAccountAction(action: AccountNoticeAction): Promise<void> {
+  if (action === 'connect') return connectAccount();
+  if (action === 'sync') return mailbox.requestSync();
+  return disconnectAccount();
+}
+
+/**
+ * Inline account actions (header note, empty inbox line). The button that was
+ * clicked is replaced as soon as the state changes, so focus is parked on a
+ * surviving surface first and restored afterwards if it ended up on <body>.
+ */
+async function accountNoticeAction(action: AccountNoticeAction | InboxEmptyAction, source: 'header' | 'empty'): Promise<void> {
+  if (action === 'account') { await openDrawer('account'); return; }
+  if (!accountActionsIdle.value) return;
+  if (source === 'empty') emptyState.value?.focus({ preventScroll: true });
+  await runAccountAction(action);
+  await nextTick();
+  const active = document.activeElement;
+  if (!workspaceActive.value || (active && active !== document.body)) return;
+  if (overlay.value || drawer.value || readerOpen.value) return;
+  if (mailbox.listState.value === 'ready' && mailbox.conversations.value.length > 0) await focusFocusedRow(true);
+  else if (source === 'empty' && emptyState.value) emptyState.value.focus({ preventScroll: true });
+  else paletteButton.value?.focus({ preventScroll: true });
+}
+
 async function prepareReply(source: DraftSource): Promise<void> {
   if (trashReader.value) return;
   // The reader stays open after a successful preparation: the drafts watcher
@@ -1633,6 +1686,10 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   if (['inbox', 'done', 'activity'].includes(id)) return !!accountId.value;
   if (id === 'search') return !!accountId.value && !drawer.value && !contactDisclosure.value;
   if (id === 'account') return gmailMode.value;
+  if (id === 'connect') return gmailMode.value && accountActionsIdle.value
+    && ['not_configured', 'disconnected', 'auth_required'].includes(accountStatus.value?.connection ?? '');
+  if (id === 'sync') return gmailMode.value && accountActionsIdle.value
+    && accountStatus.value?.connection === 'connected' && accountStatus.value.sync.state !== 'syncing';
   if (id === 'destinations') return (gmailMode.value || props.mode === 'browser-preview') && !!accountId.value;
   if (id === 'trash') return gmailMode.value && !!accountId.value;
   if (id === 'drafts') return !!accountId.value;
@@ -1694,6 +1751,7 @@ const availableActions = computed(() => browsingActions
       ? `${action.label} — ${selectedCount.value} selected`
       : action.id === 'toggle-unread-filter' ? (mailbox.unreadOnly.value ? 'Show all conversations' : 'Show unread only')
       : action.id === 'switch-account' ? `Switch account — ${props.switchAccountLabel}`
+      : action.id === 'connect' && accountStatus.value?.connection === 'auth_required' ? 'Sign in again'
       : action.id === 'saved' ? `Go to ${mailbox.savedSplit.value?.name ?? 'saved split'}` : action.label,
   })));
 async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): Promise<void> {
@@ -1751,6 +1809,8 @@ async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): 
       return;
     }
     case 'destinations': case 'trash': case 'account': case 'activity': case 'drafts': await openDrawer(id); return;
+    case 'connect': await runAccountAction('connect'); return;
+    case 'sync': await runAccountAction('sync'); return;
     case 'back': if (readerOpen.value) closeReader(); else await contextBack(); return;
     case 'open': if (explicit) await openRowFromList(explicit); else await openFocusedFromList(); return;
     case 'archive':
@@ -1861,7 +1921,7 @@ function onKeydown(event: KeyboardEvent): void {
     // Escape cancels the armed chord and is consumed: one Escape, one dismissal.
     if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); return; }
     if (isGoSecondKey(event) && !isEditableTarget(event.target) && !drawer.value && !contactDisclosure.value && !readerOpen.value) {
-      event.preventDefault(); void executeAction(event.key === 'h' ? 'reminders' : 'done'); return;
+      event.preventDefault(); void executeAction(event.key === 'h' ? 'reminders' : event.key === 'a' ? 'account' : 'done'); return;
     }
   } else if (goGraceTimer) {
     // The window just lapsed: a late second key was almost certainly meant for
@@ -2240,7 +2300,15 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
                the trail, so the glyphs never move. -->
           <span class="chord-hint" role="status" data-test="chord-hint"><template v-if="goPending"><span aria-hidden="true">g…</span><span class="visually-hidden">{{ goHintLabel }}</span></template></span>
           <p v-if="props.mode === 'browser-preview'" class="header-note preview-tag" data-test="preview-banner" role="note" :title="BROWSER_PREVIEW_DISCLOSURE"><span aria-hidden="true">Preview · in-memory</span><span class="visually-hidden">{{ BROWSER_PREVIEW_DISCLOSURE }}</span></p>
-          <p v-if="gmailMode && !mailboxActionsEnabled" class="header-note" data-test="mailbox-access-hint">
+          <!-- One account fact (connection or sync), same pattern as the preview tag: terse
+               visible words, the full sentence as the title and visually hidden text. The hidden
+               text never carries the ticking cached count, so it is announced once. -->
+          <p v-if="statusNotice" class="header-note account-status-note" :class="`tone-${statusNotice.tone}`" role="status" data-test="account-status-note" :data-kind="statusNotice.kind" :title="statusNotice.title">
+            <span aria-hidden="true">{{ statusNotice.text }}</span><span class="visually-hidden">{{ statusNotice.title }}</span>
+            <template v-if="statusNotice.action && accountActionsIdle"><span aria-hidden="true"> · </span><button type="button" class="header-link" data-test="account-status-action" @click="accountNoticeAction(statusNotice.action, 'header')">{{ statusNotice.actionLabel }}</button></template>
+            <template v-else-if="statusNotice.kind === 'not_configured'"><span aria-hidden="true"> · </span><button type="button" class="header-link" data-test="account-status-action" @click="accountNoticeAction('account', 'header')">Account</button></template>
+          </p>
+          <p v-if="gmailMode && !mailboxActionsEnabled && !connectionNoticeShown" class="header-note" data-test="mailbox-access-hint">
             {{ accountStatus?.mutationAccess === 'upgrading' ? 'Mailbox permission pending' : 'Gmail is read-only' }}
             <button type="button" class="header-link" @click="openDrawer('account')">Review access<span class="visually-hidden"> in Account</span></button>
           </p>
@@ -2283,7 +2351,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
         <p
           v-if="mailbox.accountState.value === 'loading' && mailbox.listState.value !== 'error'"
           data-test="account-loading"
-        >Determining account mode…</p>
+        >Loading account…</p>
         <div v-else class="recovery-banner" data-test="account-error">
           <p v-if="mailbox.accountState.value === 'error'" role="alert">
             Could not determine the account status:
@@ -2494,7 +2562,14 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               ref="emptyState"
               tabindex="-1"
             >
-              {{ mailbox.context.value === 'search' ? (mailbox.nextCursor.value ? 'No matches on this candidate page. Continue scanning older mail below.' : 'No matching conversations in the searched content.') : mailbox.unreadOnly.value ? 'No known unread conversations in this view. Use Commands → Show all conversations to turn off the unread filter; unknown read states are not included.' : mailbox.starredOnly.value ? 'No known starred conversations in this cached view; unknown facts and uncached mail are not included.' : mailbox.context.value === 'saved' ? 'No Inbox conversations match this saved split. Edit the sender or domain criteria, or return to Inbox.' : mailbox.context.value === 'inbox' ? 'No conversations are currently in the inbox. Archived conversations stay recoverable from Activity.' : mailbox.nextCursor.value ? 'No conversations on this cache page; more cached candidates are available.' : mailbox.context.value === 'starred' ? 'No known starred conversations in this local cache; unknown and uncached mail is not included.' : 'No known archived conversations in this local cache.' }}
+              {{ emptyListText }}
+              <button
+                v-if="inboxEmpty?.action && (inboxEmpty.action === 'account' || accountActionsIdle)"
+                type="button"
+                class="inline-action"
+                data-test="inbox-empty-action"
+                @click="accountNoticeAction(inboxEmpty.action, 'empty')"
+              >{{ inboxEmpty.actionLabel }}</button>
             </p>
             <InboxList
               v-else

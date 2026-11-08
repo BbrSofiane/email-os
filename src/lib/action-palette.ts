@@ -5,13 +5,14 @@ import type { BrowsingActionId } from './browsing-actions';
  * the words people reach for besides its label, and the bound keys that have no
  * command behind them. Labels and shortcuts stay in browsing-actions.ts.
  */
-export type ActionGroup = 'conversation' | 'selection' | 'view' | 'goto';
+export type ActionGroup = 'conversation' | 'selection' | 'view' | 'goto' | 'account';
 
 export const actionGroups: ReadonlyArray<{ id: ActionGroup; label: string }> = [
   { id: 'conversation', label: 'Conversation' },
   { id: 'selection', label: 'Selection' },
   { id: 'view', label: 'View' },
   { id: 'goto', label: 'Go to' },
+  { id: 'account', label: 'Account' },
 ];
 
 export const actionGroupOf: Record<BrowsingActionId, ActionGroup> = {
@@ -23,6 +24,7 @@ export const actionGroupOf: Record<BrowsingActionId, ActionGroup> = {
   search: 'view', 'create-split': 'view', 'edit-split': 'view', 'toggle-unread-filter': 'view',
   inbox: 'goto', saved: 'goto', done: 'goto', starred: 'goto', destinations: 'goto', trash: 'goto', reminders: 'goto',
   drafts: 'goto', activity: 'goto', account: 'goto', 'switch-account': 'goto',
+  connect: 'account', sync: 'account',
 };
 
 /** Extra search words per action; the label and the bound key are always searchable. */
@@ -56,6 +58,8 @@ export const actionAliases: Record<BrowsingActionId, readonly string[]> = {
   activity: ['operations', 'history', 'log', 'queue', 'pending'],
   account: ['settings', 'google', 'gmail', 'permissions', 'access'],
   'switch-account': ['change account', 'workspace', 'mailbox'],
+  connect: ['sign in', 'login', 'log in', 'google', 'gmail', 'reconnect'],
+  sync: ['refresh', 'fetch', 'check mail', 'retry', 'update'],
 };
 
 /** Bound keys that move or select without being a command; shown, never executed. */

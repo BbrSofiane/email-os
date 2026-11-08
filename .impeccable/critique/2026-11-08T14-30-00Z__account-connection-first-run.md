@@ -69,3 +69,21 @@ P0 false empty state; P1 global status slot, AccountPanel, ProviderDestinations;
 
 ## Not verified (before implementation)
 No rendered check is possible (no Chrome). Real Gmail, OAuth and macOS Keychain are untouched: all states are exercised through the synthetic in-memory fake.
+
+## Implementation results (same day)
+Every change was written test-first; the new tests failed on the unchanged code (empty-state test saw the false "inbox" sentence on a failed first sync; AccountPanel 17/20 and ProviderDestinations 12/17 failed before) and pass after.
+
+| # | Verdict | Result |
+|---|---|---|
+| 1 | CONFIRMED | Gmail plain-Inbox empty line is derived from `AccountStatus` (`src/lib/account-status.ts`) with an inline action; the old sentence survives only for a connected, fully synced, empty inbox, and Gmail read-only no longer promises Activity recovery |
+| 2 | PARTLY WRONG | No gating change; a test now pins rail, palette and empty-state Connect with no account |
+| 3 | CONFIRMED, wording corrected | `account-status-note` in the header slot; no "actions off" claim; "Offline" only for `network_unavailable` |
+| 4 | CONFIRMED | Sections not a card; inline Disconnect confirm; permanent disposable note removed; "Finish sign-in in your browser" with Cancel primary; Retry inline with the sync error |
+| 5 | CONFIRMED | Classes, plain errors, loading line before the list, j/k + arrows + Enter + stepwise Esc |
+| 6 | CONFIRMED / 2 PARTLY WRONG | "Loading account…" (not "Connecting…": nothing is connecting); plural; "Unknown error."; banner shortened; switch button title names the palette (no shortcut exists) |
+| 7 | CONFIRMED | `Connect Gmail` / `Sign in again` and `Sync now` palette commands; `g a` -> Account |
+
+Checks on the final tree: `pnpm test` 1024 passed / 33 skipped (rendered Chrome gates are opt-in), `pnpm typecheck` clean, `pnpm build` clean. No Rust touched.
+
+## Not verified
+Nothing was rendered: header-note truncation at narrow widths, drawer spacing, and contrast are computed from tokens only. Screen-reader announcements are reasoned from markup. Real Google OAuth, real sync, native offline behaviour and the macOS Keychain were not exercised. Known limit (pre-existing, now documented in DESIGN.md): while `connectAccount` is in flight the Cancel sign-in controls are unavailable, so a browser flow that never completes cannot be cancelled from the UI.

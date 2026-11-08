@@ -147,7 +147,7 @@ describe('UX-08 synthetic star browsing (memory only)', () => {
     expect(w.find('[role="dialog"]').exists()).toBe(true);
     await w.get('[data-test="action-query"]').trigger('keydown',{key:'Escape'}); await flushPromises();
     await w.get('[data-test="conversation-row-conv-01"]').trigger('keydown',{key:'s'}); await settle(fake);
-    expect(w.get('[data-test="account-panel"]').text()).toContain(access === 'upgrading' ? 'upgrade in progress' : 'Enable mailbox actions');
+    expect(w.get('[data-test="account-panel"]').text()).toContain(access === 'upgrading' ? 'permission request pending' : 'Enable mailbox actions');
     expect(setter).not.toHaveBeenCalled(); expect(group).not.toHaveBeenCalled(); expect(upgrade).not.toHaveBeenCalled();
   });
 
