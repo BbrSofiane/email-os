@@ -68,6 +68,7 @@ pnpm 10.18.0, rust 1.89.0). First-time setup:
 ```sh
 mise trust           # after inspecting the repository's mise.toml
 mise install         # install the project-pinned runtimes/tools
+mise run setup:linux  # Debian/Ubuntu VMs only; installs OS packages with apt-get
 mise run install:ui   # locked frontend dependencies (pnpm install --frozen-lockfile)
 ```
 
@@ -526,23 +527,65 @@ directory. Do not run a second Gmail profile as a multi-account workaround.
 
 ## Native prerequisites and platform limits
 
-The Linux Tauri build needs GTK/WebKitGTK development packages and `pkg-config`,
-e.g. on Debian/Ubuntu:
+For a Debian/Ubuntu Linux VM, run the explicit setup task once:
 
 ```sh
-sudo apt install pkg-config libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev
+mise run setup:linux
 ```
 
-(Also linkable alternatives: `libsoup-3.0-dev` and
-`libjavascriptcoregtk-4.1-dev` are WebKitGTK dependencies; macOS uses Xcode
-command line tools and WKWebView.) Do not install OS packages as part of a
-headless integration check. During UX-05 integration the UX-05 core lane did
-install these prerequisites in the Linux integration VM (`pkg-config
-libglib2.0-dev librsvg2-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev
-libjavascriptcoregtk-4.1-dev libgtk-3-dev`), so native compile/bridge gates now
-run there; a fresh VM still needs the setup above. Native gates cannot validate
-macOS WKWebView/IME, Keychain prompts, system browser
-launch, loopback OAuth interaction, or Google TLS behavior.
+It runs `apt-get update`, then installs the compiler tools, `pkg-config`,
+GTK/WebKitGTK development libraries, `librsvg2-dev`, and `dbus-daemon`. WebKitGTK
+pulls in its Soup and JavaScriptCore dependencies. It also installs `xvfb`,
+`xauth`, `xdotool`, `openbox`, `x11-utils`, and `scrot` for native window capture.
+It uses `sudo` unless run as root. Re-running it keeps installed packages and
+installs any missing ones; apt may update the listed packages.
+
+The task rejects non-Linux hosts and hosts without `apt-get` before any package
+operation. Other Linux distributions need equivalent packages installed manually.
+It does not install mise runtimes or frontend dependencies. No build, check, or
+macOS task depends on it. Do not run OS setup as part of an integration check.
+macOS still uses Xcode command line tools and WKWebView, with the existing local
+signing setup above.
+
+### Native screenshots on a headless Linux VM
+
+Use synthetic fixture mode and an isolated temporary data directory. Start the
+app in a virtual X11 desktop from the repository root:
+
+```sh
+export EMAIL_OS_CAPTURE_DIR="$(mktemp -d /tmp/email-os-capture.XXXXXX)"
+echo "$EMAIL_OS_CAPTURE_DIR"  # use this path in the second terminal
+xvfb-run -a --server-args='-screen 0 1280x900x24 -nolisten tcp' sh -c '
+  printf "%s\n" "$DISPLAY" > "$EMAIL_OS_CAPTURE_DIR/display"
+  printf "%s\n" "$XAUTHORITY" > "$EMAIL_OS_CAPTURE_DIR/xauthority"
+  openbox &
+  export GDK_BACKEND=x11 EMAIL_OS_MODE=fixture
+  export XDG_DATA_HOME="$EMAIL_OS_CAPTURE_DIR/data"
+  exec dbus-run-session -- mise run dev:native
+'
+```
+
+Wait for the native window to load. In a second terminal, set the printed path:
+
+```sh
+export EMAIL_OS_CAPTURE_DIR=/tmp/email-os-capture.XXXXXX  # replace with printed path
+export DISPLAY="$(cat "$EMAIL_OS_CAPTURE_DIR/display")"
+export XAUTHORITY="$(cat "$EMAIL_OS_CAPTURE_DIR/xauthority")"
+xdotool windowactivate --sync "$(xdotool search --onlyvisible --class email-os | head -1)"
+scrot -u -b "$EMAIL_OS_CAPTURE_DIR/native-inbox.png"
+```
+
+Use `xdotool` mouse/keyboard actions to open a conversation or Commands, then
+capture another PNG. Stop the first terminal with Ctrl+C when finished. The
+temporary directory retains the screenshots and isolated fixture data.
+The default native task starts Vite on port 5173; free that port before launch.
+For browser captures, run `mise run dev:web` and open its URL in the browser;
+browser preview uses separate in-memory fixtures.
+
+Linux native screenshots exercise WebKitGTK and the Rust fixture backend.
+They do not validate macOS WKWebView/IME, Keychain prompts, system browser
+launch, loopback OAuth interaction, or Google TLS behavior. Keep those Mac gates
+separate. No sandbox or app security setting needs to be disabled for capture.
 
 ## Fixture data
 
