@@ -1,0 +1,111 @@
+Show me screenshots and recording so I can validate the changes
+
+---
+
+/impeccable Looks good overall but it feels like draft, reminders, trash views should be in the main part of UI that's used to display a list of threads. What do you think?
+
+---
+
+It makes sense to me that opening a draft navigate the user to its source thread and docks the composer there (same as the reply flow)
+
+Delegate the work to subagents to implement and once done take screenshots so I can validate the changes
+
+---
+
+Continue where you left off.
+
+---
+
+<task-notification>
+<task-id>a8ccba4632d7a806e</task-id>
+<tool-use-id>toolu_01JUVzthp4HbyjbLdbpEmXP6</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-impeccable-drawer-panels/f985be7d-cba0-4fa8-a8b8-ec1d0f052dd4/tasks/a8ccba4632d7a806e.output</output-file>
+<status>completed</status>
+<summary>Agent "Phase 2: Reminders as list context" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>**Status: complete.** Phase 2 is done and uncommitted. `pnpm typecheck` is clean, `pnpm test` gives 1034 passed and 33 skipped (the same 33 as baseline), and `pnpm build` passes.
+
+The harness files are deleted, my dev server on 5188 is stopped, the preview tab is closed, and `git status` shows only the intended changes. The deletion of `RemindersPanel.vue` and the old `reminders.drawer.test.ts` is unstaged.
+
+## Files
+
+**New**
+- `src/composables/useReminders.ts`
+- `src/components/ContextRowList.vue`
+- `src/components/RemindersList.vue`
+- `tests/reminders.helpers.ts`
+- `tests/reminders.context.test.ts`
+- `tests/context-row-list.component.test.ts`
+- `tests/useReminders.test.ts`
+- `tests/reminders.list.test.ts` (the old `reminders.drawer.test.ts`, migrated and renamed)
+
+**Changed**
+- `src/App.vue`
+- `src/composables/useMailbox.ts`
+- `src/composables/useDrawerRows.ts` (doc comment only)
+- `src/assets/style.css`
+- `DESIGN.md`
+- `tests/drawer-panels.app.test.ts`
+- `tests/reminders.component.test.ts`
+- `tests/reminders.navigation.test.ts`
+- `tests/reminders.preparation.test.ts`
+
+**Deleted**
+- `src/components/RemindersPanel.vue`
+- `tests/reminders.drawer.test.ts`
+
+## Per criterion
+
+1. **Context.** `'reminders'` is now a `BrowseContext`, and `useMailbox.refreshList` just reports it ready with no rows. The header glyph, `G H`, the palette and the navigator all call `navigateContext('reminders')`, which pushes history. The glyph shows `aria-current="page"` and Paper White while the list is up. All request logic moved to `useReminders` unchanged: generation and editor tokens, exact retry, lost ACK, the `dueAt` message, the newer-message preparation error. Its session runs while the context is active, so the selected tab, rows and an open picker survive a reader round trip.
+2. **Rows.** `ContextRowList` (generic, with slots) renders the Conversation Row geometry. `useDrawerRows` is reused for the keyboard model, with roving tabindex and `aria-current`. It shares the `.inbox-row` rules for geometry, focus bar and hover. Reminder rows, the phase words, the `regardless` line and `&lt;time&gt;` dates are as briefed. Reschedule and Cancel are quiet ghosts, revealed on the current or hovered row and always Tab-reachable, with the long restore wording as `aria-label` and `title`. Opening a row sets `origin.surface` to `'reminders'`, and Back returns to the same row.
+3. **Tabs.** Pending / Returned / History sit in the header split-tab slot (`role=tablist`, ArrowLeft/Right, Home, End) and replace the Inbox/saved strip. The selected tab is kept across navigation.
+4. **Coverage and states.** The Ash coverage line and the Refresh ghost are in `RemindersList`, with the loading, empty and error lines in flow. All button texts are kept.
+5. **Picker.** It is an in-flow block above the rows with the same content and `put` semantics. Esc in it dismisses only the picker, and focus returns to the row. `h` from the inbox or the reader sets the target, navigates, and opens the picker with focus on its first choice. Back returns to the inbox row.
+6. **Removed.** The drawer variant, `drawerTitles`/`drawerHeadings` entries, the toggle ref, the `openFromUtility` special case and the file `RemindersPanel.vue` are gone. `openFromUtility` is now `openFromActivity`.
+7. **Mutation safety.** `actionAvailable` returns false in the list for everything past the navigation ids, and the selection keys are gated. `H`, `E`, `Z`, `S`, `U`, `X`, `R` and `Shift+J` are verified inert by a test. `G` and Left still work from a row button.
+8. **Tests.** Migrated, plus new tests for the context entries, tabs, Back, `h` flows, inert shortcuts and the fixture-only gate, `ContextRowList`, and `useReminders`.
+9. **Docs.** DESIGN.md is updated: gap 1, gap 18, gap 19 (a Reminders group), a new Context Row component, Split Tabs and In-flow Notices. `docs/ux-11-local-reminders.md` and `docs/development.md` never literally call Reminders a drawer, so I left them alone.
+
+## Rendering evidence (1280x800 via a throwaway harness)
+
+- **List.** The header glyph opens the Reminders list with the tabs and counts (`Pending 3 · Returned 1 · History 0`) and the coverage line plus Refresh. The first row has the lavender bar and Focus Stone fill. The failed row shows its inline Coral line.
+- **Picker.** Reschedule opens the in-flow picker with the right content. Esc dismisses it and focus returns to the row.
+- **Reader round trip.** Enter opens the reader, Esc returns to the same row, and a second Esc goes back to the inbox.
+- **`h` from the inbox.** It opens the Reminders list with the `Remind me` picker and focus on its first choice.
+- **Defect found and fixed.** The picker kept the previous Reschedule's time. Each new picker now starts clean, while preparation recovery still keeps its choices.
+- **Defects found and fixed.** The active header tab was not styled (the CSS only keyed `aria-current`). The row's open button drew a second focus ring.
+- **Not rendered at the browser.** Returned-tab keyboard movement and the `h`-from-reader flow were not driven in the browser; both are covered by jsdom tests.
+
+## Assertions changed or removed
+
+- **Selectors and structure.**
+  - `.drawer-subject`, `.drawer-row-main`, `.drawer-date` and `.drawer-row-actions` became `.context-*`.
+  - `li.reminder-row` became `li[data-test^="reminder-row-"]`.
+  - The picker `h3` became `h2`.
+  - The `role="note"` lookup became `[data-test="reminders-coverage"]`.
+  - `RemindersPanel` became `RemindersList`.
+  - The `setupState` read became `model.source.value`.
+- **Props to the model.** `setProps({ target: null })` became `model.setTarget(null)` plus a `nextTick`, because VTU skips clicks on elements still `disabled` in a stale render.
+- **Drawer to context.**
+  - The glyph is found by `[data-test="reminders-trigger"]`.
+  - The drawer's Close became the header Back button.
+  - `findComponent(RemindersPanel).findAll('[role=tab]')` became the header's `[role=tab]`.
+  - The `drawer-panels` test "Reminders: one h2" became "list context, no drawer, one h1".
+- **Moved.** The tab tests moved to `reminders.context.test.ts` and now assert the same counts, tabindex, arrow/Home/End behaviour and `aria-labelledby`.
+- **Removed.** Only the `destinationChange` emit assertion went, replaced by reading `model.destination`. No behavioural assertion (put payloads, retry, lost ACK, source errors, revisions, phases, presets, Custom) was weakened.
+
+## Deviations and open questions
+
+- **Header h1.** The h1 `Reminders` stays visible before the tabs rather than visually hidden. With only the tabs, "Pending / Returned / History" had no name on screen. Its cost is that Reminders and the active tab are both Paper White. Hiding it is a one-line change in `activeTabShown`.
+- **Reserved space for row actions.** The row-action cell always takes its width, so the current row doesn't shift. At 968px a very long subject truncates earlier (about 262px in the harness). Collapsing the actions until revealed would trade that for ellipsis jitter.
+- **Error banners.** The preparation retry now only appears with its error banner, not as a disabled "Preparing…" button during preparation. "Inspect durable state" is on the error banner.
+- **Not wired in this phase.** If `remindersSupported` ever turned false while the context is active, the user would be left on an empty pane (Back and Esc still work). No such transition exists today.
+- **Palette label.** `browsing-actions.ts` still says "Go to local Reminders" rather than "Go to Reminders"; I left it alone.
+
+## Checks (final code)
+
+- `pnpm typecheck`: clean.
+- `pnpm test`: 64 files passed, 4 skipped; 1034 tests passed, 33 skipped.
+- `pnpm build`: `✓ built in 2.65s`.</result>
+<usage><subagent_tokens>385380</subagent_tokens><tool_uses>7</tool_uses><duration_ms>177200</duration_ms></usage>
+</task-notification>

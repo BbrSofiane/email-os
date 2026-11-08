@@ -1,0 +1,52 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6XZF4EQQ1DADE2MMAY3GX4T",
+  "strategy": "manual-commit",
+  "branch": "impeccable/list-contexts",
+  "checkpoints_count": 3,
+  "files_touched": [
+    ".impeccable/critique/2026-11-08T13-34-14Z__list-contexts-trash-reminders-drafts.md",
+    "DESIGN.md",
+    "docs/ux-01-compact-browsing-shell.md",
+    "src/App.vue",
+    "src/assets/style.css",
+    "src/components/ComposeCard.vue",
+    "src/components/ContextRowList.vue",
+    "src/components/DraftAlerts.vue",
+    "src/components/DraftEditorCore.vue",
+    "src/components/DraftsList.vue",
+    "src/components/DraftsPanel.vue",
+    "src/components/ReaderView.vue",
+    "src/components/RemindersList.vue",
+    "src/composables/useDrawerRows.ts",
+    "src/composables/useMailbox.ts",
+    "src/lib/draft-errors.ts",
+    "src/lib/reply-context.ts",
+    "tests/app.component.test.ts",
+    "tests/discovery.component.test.ts",
+    "tests/draft-recipient-label.component.test.ts",
+    "tests/drafts-list.component.test.ts",
+    "tests/drafts-panel.component.test.ts",
+    "tests/drafts.component.test.ts",
+    "tests/drafts.context.test.ts",
+    "tests/drawer-panels.app.test.ts",
+    "tests/helpers.ts",
+    "tests/reply-composer.component.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 170,
+    "cache_creation_tokens": 640900,
+    "cache_read_tokens": 14491523,
+    "output_tokens": 75250,
+    "api_call_count": 82
+  }
+}
