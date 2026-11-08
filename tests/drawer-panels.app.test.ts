@@ -63,14 +63,16 @@ describe('drawer headings and landmarks', () => {
     expectOneHeading(w, 'Reminders', 'Reminders');
   });
 
-  it('Cached Trash: one h2 (Gmail mode)', async () => {
+  it('Cached Trash is a list context, not a drawer: the rail opens no drawer and the one h1 names the list', async () => {
     const fake = createBrowserFakeMailClient();
     useGmailMode(fake, { mutationAccess: 'enabled' });
+    fake.controls.markTriage('conv-04', 'trash');
     const w = await mountApp(fake);
     await w.get('[data-test="rail-trash"]').trigger('click');
-    await waitFor(() => w.find('[data-test="cached-trash-panel"]').exists());
-    await flushPromises();
-    expectOneHeading(w, 'Cached Trash — read only', 'Cached Trash');
+    await waitFor(() => w.find('[data-test="conversation-row-conv-04"]').exists());
+    expect(w.find('[data-test="utility-drawer"]').exists()).toBe(false);
+    expect(w.findAll('h1').map((h) => h.text())).toEqual(['Cached Trash']);
+    expect(w.find('[data-test="inbox-title"]').classes()).not.toContain('visually-hidden');
   });
 });
 

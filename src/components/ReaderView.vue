@@ -34,7 +34,7 @@ import MessageAttachments from './MessageAttachments.vue';
 import { useAttachmentTransfer } from '../composables/useAttachmentTransfer';
 import type { Address, Conversation, ConversationRef, DraftSource, MailClient, MailError, Message } from '../lib/ipc/client';
 import type { AttachmentDescriptor } from '../lib/ipc/generated';
-import type { DetailState } from '../composables/useMailbox';
+import type { BrowseContext, DetailState } from '../composables/useMailbox';
 
 const props = defineProps<{
   conversation: Conversation | null;
@@ -58,7 +58,7 @@ const props = defineProps<{
    * offers explicit count-labelled desired-state controls instead of the open
    * conversation's single-state toggles (mixed selections included). */
   selectionCount?: number;
-  selectionContext?: 'inbox' | 'saved' | 'done' | 'starred' | 'search';
+  selectionContext?: BrowseContext;
   /** Header slots the quiet icon actions are teleported into; inline when null. */
   backHost?: HTMLElement | null;
   actionsHost?: HTMLElement | null;

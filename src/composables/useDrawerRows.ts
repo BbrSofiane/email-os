@@ -1,6 +1,6 @@
 /**
  * Shared keyboard model for the rows of a utility drawer (Activity, Drafts,
- * Reminders, Cached Trash).
+ * Reminders).
  *
  * One marker, one handler:
  * - A row is any focusable element that carries `data-drawer-row`. The primary
@@ -23,7 +23,7 @@ import { ref, type Ref } from 'vue';
 export interface DrawerRowsOptions {
   /** Row keys in render order; the first one owns the Tab stop when none is current. */
   keys: () => readonly string[];
-  /** The remembered current row (for example Cached Trash's last opened row). */
+  /** The remembered current row (for example a panel's last opened row). */
   initial?: () => string | null;
 }
 

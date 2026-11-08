@@ -25,8 +25,6 @@
  *   IME composition, and modifier keys. Drafts have no send path.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import CachedTrashPanel from './components/CachedTrashPanel.vue';
-import { emptyCachedTrash } from './lib/cached-trash';
 import { createSubjectIndex } from './lib/subject-index';
 import ActionOverlay from './components/ActionOverlay.vue';
 import RemindersPanel from './components/RemindersPanel.vue';
@@ -72,8 +70,7 @@ const workspaceActive = computed(() => props.active !== false);
 /** Contact context breakpoint (supervisor-approved strict value). */
 const CONTACT_BREAKPOINT_PX = 1000;
 
-type UtilityDrawer = 'account' | 'activity' | 'drafts' | 'destinations' | 'reminders' | 'reminder-settings' | 'trash';
-const trashState = ref(emptyCachedTrash());
+type UtilityDrawer = 'account' | 'activity' | 'drafts' | 'destinations' | 'reminders' | 'reminder-settings';
 type ContactContext = 'focused' | 'open';
 interface ContactInfo { displayName: string | null; mailbox: string }
 /** Visible-row anchor for the reader round trip. */
@@ -84,7 +81,7 @@ interface ListAnchor { ref: ConversationRef; offsetTop: number; scrollTop: numbe
  * recapture from an unmounted list.
  */
 interface ReaderOrigin {
-  surface: BrowseContext | 'activity' | 'reminders' | 'trash';
+  surface: BrowseContext | 'activity' | 'reminders';
   /** Original entry focus reference; Back restores it (with fallbacks). */
   focusedRef: ConversationRef | null;
   /** Entry-time Inbox ordering, used to resolve a removed cursor. */
@@ -94,11 +91,11 @@ interface ReaderOrigin {
 
 const mailbox = useMailbox(props.client);
 // Activity rows name mail by its cached subject. Operations carry only a ref, so
-// the UI remembers subjects it has already seen (list rows, Cached Trash rows,
+// the UI remembers subjects it has already seen (list rows, including Cached
+// Trash rows,
 // the open conversation); an unseen ref reads "Unknown conversation".
 const subjectIndex = createSubjectIndex();
 watch(() => [mailbox.conversations.value, mailbox.conversations.value.length], () => subjectIndex.rememberRows(mailbox.conversations.value), { immediate: true });
-watch(() => [trashState.value.rows, trashState.value.rows.length], () => subjectIndex.rememberRows(trashState.value.rows), { immediate: true });
 watch(() => mailbox.conversation.value, (open) => { if (open) subjectIndex.remember(open.ref, open.subject); }, { immediate: true });
 /**
  * P5b: rows in rendered order — sender-grouped when the search context's
@@ -114,7 +111,7 @@ const listRows = computed<ConversationSummaryLike[]>(() =>
 const inboxList = ref<InstanceType<typeof InboxList> | null>(null);
 const editingSplit = ref(false);
 const splitEditor = ref<InstanceType<typeof SplitEditor> | null>(null);
-const contextTitle = computed(() => mailbox.context.value === 'search' ? 'Search' : mailbox.context.value === 'starred' ? 'Cached Starred' : mailbox.context.value === 'done' ? 'Cached Done' : mailbox.context.value === 'saved' ? mailbox.savedSplit.value?.name ?? 'Saved split' : 'Inbox');
+const contextTitle = computed(() => mailbox.context.value === 'search' ? 'Search' : mailbox.context.value === 'starred' ? 'Cached Starred' : mailbox.context.value === 'trash' ? 'Cached Trash' : mailbox.context.value === 'done' ? 'Cached Done' : mailbox.context.value === 'saved' ? mailbox.savedSplit.value?.name ?? 'Saved split' : 'Inbox');
 const savedTabVisible = computed(() => mailbox.savedSplit.value?.enabled && !mailbox.splitError.value && (!mailbox.savedSplit.value.hideWhenEmpty || mailbox.savedTotal.value !== 0));
 async function closeSplitEditor(restoreFocus = true): Promise<void> {
   editingSplit.value = false;
@@ -468,6 +465,11 @@ watch(drawer, (next) => { if (next) editingSplit.value = false; });
 const splitNavShown = computed(() => accountReady.value && !!accountId.value && !readerOpen.value && !drawer.value);
 const activeTabShown = computed(() => splitNavShown.value
   && (mailbox.context.value === 'inbox' || (mailbox.context.value === 'saved' && !!savedTabVisible.value)));
+/** Cached Trash standing limits: one Ash line; the whole caveat is its title and hidden text. */
+const TRASH_COVERAGE_LINE = 'Cached Trash only, not your full Gmail Trash.';
+const TRASH_COVERAGE_DETAIL = 'Known cached Trash only, not your complete Gmail Trash; the total is unknown. '
+  + 'This is a loaded snapshot of the local cache. Reading does not mark mail read. '
+  + 'Trash is not Done. Move to Trash, Recover, permanent delete and Empty Trash are not available in this build; use your provider client for recovery.';
 const SPLIT_COVERAGE = 'Local Inbox cache only — counts are exact for cached conversations, not mailbox-wide totals. Split membership uses the latest message’s sender.';
 const splitCoverageShown = computed(() => splitNavShown.value && gmailMode.value
   && (mailbox.context.value === 'inbox' || mailbox.context.value === 'saved'));
@@ -492,7 +494,6 @@ const drawerTitles: Record<UtilityDrawer, string> = {
   drafts: 'Local drafts',
   reminders: 'Reminders',
   'reminder-settings': 'Reminder settings',
-  trash: 'Cached Trash — read only',
 };
 /** The drawer's one visible heading; panels render no heading that repeats it. */
 const drawerHeadings: Record<UtilityDrawer, string> = {
@@ -502,7 +503,6 @@ const drawerHeadings: Record<UtilityDrawer, string> = {
   drafts: 'Drafts',
   reminders: 'Reminders',
   'reminder-settings': 'Reminder settings',
-  trash: 'Cached Trash',
 };
 
 /**
@@ -541,7 +541,7 @@ async function openDrawer(name: UtilityDrawer, entry: 'drawer' | 'toggle' = 'dra
   // Disclosures are mutually exclusive: opening a utility surface dismisses
   // the contact disclosure so both fixed regions never coexist.
   contactDisclosure.value = false;
-  if (name === 'destinations' || name === 'trash') mailbox.clearSelection();
+  if (name === 'destinations') mailbox.clearSelection();
   drawer.value = name;
   await nextTick();
   if (!workspaceActive.value) return;
@@ -738,8 +738,6 @@ watch(readerOpen, (open) => {
 watch(accountId, (id) => {
   reminderAccountEpoch++;
   clearReminderConfirmation();
-  trashState.value = emptyCachedTrash();
-  if (drawer.value === 'trash') drawer.value = null;
   if (id === null && drawer.value === 'drafts') drawer.value = null;
 });
 
@@ -1424,12 +1422,12 @@ async function closeReader(explicitInbox = false): Promise<void> {
     if (token !== navigationToken || account !== accountId.value || readerOpen.value) return;
     const anchor = originState?.anchor ?? null;
     if (anchor && inboxList.value) await inboxList.value.restoreAnchor(anchor);
-    if (originState && originState.surface !== 'activity' && originState.surface !== 'reminders' && originState.surface !== 'trash' && !explicitInbox) {
+    if (originState && originState.surface !== 'activity' && originState.surface !== 'reminders' && !explicitInbox) {
       const resolved = resolveOriginFocus(originState);
       if (resolved) mailbox.focusConversation(resolved);
     }
     await focusFocusedRow(true);
-    if (!explicitInbox && (originState?.surface === 'activity' || originState?.surface === 'reminders' || originState?.surface === 'trash')) await openDrawer(originState.surface);
+    if (!explicitInbox && (originState?.surface === 'activity' || originState?.surface === 'reminders')) await openDrawer(originState.surface);
   })();
 }
 
@@ -1454,14 +1452,11 @@ async function openRowFromList(target: ConversationRef): Promise<void> {
   await openFocusedFromList();
 }
 
-async function openFromTrash(target: ConversationRef): Promise<void> {
-  if (target.accountId !== accountId.value) return;
-  mailbox.clearSelection();
-  captureListOrigin('trash');
-  drawer.value = null;
-  await mailbox.openConversationByRef(target);
-}
+/** A conversation opened from the Cached Trash list (its origin is the Trash context). */
 const trashReader = computed(() => readerOpen.value && origin.value?.surface === 'trash');
+/** The Cached Trash list itself (no reader). Both are browse-only surfaces. */
+const trashList = computed(() => !readerOpen.value && mailbox.context.value === 'trash');
+const trashBrowsing = computed(() => trashReader.value || trashList.value);
 
 function openFromActivity(target: ConversationRef): Promise<void> {
   return openFromUtility(target, 'activity');
@@ -1716,7 +1711,7 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   if (id === 'reminders') return remindersSupported.value;
   if (id === 'reminder-settings') return remindersSupported.value && !!accountId.value;
   if (id === 'back') return readerOpen.value || history.value.length > 0;
-  if (id === 'select-all-loaded') return !drafts.activeRef.value && !drawer.value && !contactDisclosure.value && !readerOpen.value && mailbox.listState.value === 'ready' && mailbox.conversations.value.length > 0;
+  if (id === 'select-all-loaded') return !trashList.value && !drafts.activeRef.value && !drawer.value && !contactDisclosure.value && !readerOpen.value && mailbox.listState.value === 'ready' && mailbox.conversations.value.length > 0;
   if (id === 'clear-selection') return !drafts.activeRef.value && !drawer.value && !contactDisclosure.value && selectedCount.value > 0;
   // Compose stays available while an editor is already open: it routes to the
   // existing surface instead of stacking a second draft.
@@ -1724,7 +1719,9 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   // disclosure covers the central pane, so the inline card can never mount
   // inert behind another surface.
   if (id === 'compose') return !!accountId.value && !editingSplit.value && !drawer.value && !contactDisclosure.value;
-  if (drafts.activeRef.value || drawer.value || contactDisclosure.value || trashReader.value) return false;
+  // Cached Trash is browse-only: opening a row is the one action it offers.
+  if (trashBrowsing.value && id !== 'open') return false;
+  if (drafts.activeRef.value || drawer.value || contactDisclosure.value) return false;
   // Reply is reader-only and uses ReaderView's own rule, the same one that
   // disables its buttons (blocked, incomplete or retained conversations, Trash).
   if (id === 'reply') return readerOpen.value && mailbox.detailState.value === 'ready' && readerView.value?.canPrepareReply() === true;
@@ -1753,7 +1750,7 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
 /** Keep permission-blocked star commands discoverable without allowing writes. */
 function starPermissionReason(id: BrowsingActionId): string | undefined {
   if ((id !== 'star' && id !== 'unstar') || !accountReady.value || !gmailMode.value || gmailActionsEnabled.value) return;
-  if (drafts.activeRef.value || drawer.value || contactDisclosure.value) return;
+  if (drafts.activeRef.value || drawer.value || contactDisclosure.value || trashBrowsing.value) return;
   if (!(selectedCount.value > 0 ? bulkMembers() : actionTarget())) return;
   return accountStatus.value?.mutationAccess === 'upgrading'
     ? 'Waiting for Google permission. Review access in Account.'
@@ -1820,6 +1817,7 @@ async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): 
     case 'saved': await navigateContext('saved'); return;
     case 'done': await navigateContext('done'); return;
     case 'starred': await navigateContext('starred'); return;
+    case 'trash': await navigateContext('trash'); return;
     case 'star': case 'unstar': {
       const members = !explicit ? bulkMembers() : null;
       if (members) { await mailbox.setStarredGroup(members, id === 'star'); return; }
@@ -1829,7 +1827,7 @@ async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): 
       else { await mailbox.setStarred(target, id === 'star'); if (!readerOpen.value) await focusFocusedRow(); }
       return;
     }
-    case 'destinations': case 'trash': case 'account': case 'activity': case 'drafts': await openDrawer(id); return;
+    case 'destinations': case 'account': case 'activity': case 'drafts': await openDrawer(id); return;
     case 'back': if (readerOpen.value) closeReader(); else await contextBack(); return;
     case 'open': if (explicit) await openRowFromList(explicit); else await openFocusedFromList(); return;
     case 'archive':
@@ -2133,6 +2131,7 @@ function onKeydown(event: KeyboardEvent): void {
   // list-owned keys.
   const targetIsNode = event.target instanceof Node;
   const selectionKeysOwned = !readerIsOpen
+    && !trashList.value
     && !buttonOwns(event.target)
     // A real Node must be the list surface (body, list, empty state); a
     // non-Node target (window-dispatched synthetic event) is list-owned too.
@@ -2366,6 +2365,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
         </div>
 
         <p v-if="mailbox.context.value === 'starred'" class="cached-coverage" role="note" data-test="starred-coverage">Local cache only — not provider-complete Starred. Total unknown. Unknown star facts are not treated as unstarred.</p>
+        <p v-if="mailbox.context.value === 'trash' && !readerOpen" class="cached-coverage" role="note" data-test="trash-coverage" :title="TRASH_COVERAGE_DETAIL">{{ TRASH_COVERAGE_LINE }}<span class="visually-hidden"> {{ TRASH_COVERAGE_DETAIL }}</span><template v-if="mailbox.listState.value === 'ready' && mailbox.conversations.value.length">{{ ' ' }}{{ mailbox.conversations.value.length }} cached · total unknown<template v-if="mailbox.lastSyncedAt.value">{{ ' · Last synced ' }}<FullDate :at="mailbox.lastSyncedAt.value" /></template>.</template></p>
         <p v-if="mailbox.context.value === 'done'" class="cached-coverage" role="note" data-test="done-coverage">Local cache only — not provider-complete Done or All Mail. {{ mailbox.exactTotal.value === null ? 'Total unknown.' : `${mailbox.exactTotal.value} known locally.` }} <template v-if="mailbox.lastSyncedAt.value">Last synced <FullDate :at="mailbox.lastSyncedAt.value" />.</template><template v-else>Last sync unknown.</template></p>
       </div>
       <section v-if="!accountReady" class="account-gate" aria-label="Account">
@@ -2404,7 +2404,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             <button v-if="accountId && gmailMode" type="button" class="rail-item" data-test="rail-starred" :title="actionLabel('starred')" :aria-current="mailbox.context.value === 'starred' && !readerOpen ? 'page' : undefined" @click="executeAction('starred')"><HeaderGlyph name="star" /><span class="rail-label">Starred</span></button>
             <button v-if="accountId" type="button" class="rail-item" data-test="rail-done" :title="actionLabel('done')" :aria-current="mailbox.context.value === 'done' && !readerOpen ? 'page' : undefined" @click="executeAction('done')"><PaneGlyph name="done" /><span class="rail-label">Cached Done</span></button>
             <button v-if="gmailMode || props.mode === 'browser-preview'" type="button" class="rail-item" data-test="rail-destinations" :ref="setToggleRef('destinations')" title="Provider mail (read only)" :aria-expanded="drawer === 'destinations'" @click="toggleDrawer('destinations')"><PaneGlyph name="provider" /><span class="rail-label">Provider mail</span></button>
-            <button v-if="gmailMode && accountId" type="button" class="rail-item" data-test="rail-trash" :ref="setToggleRef('trash')" :title="actionLabel('trash')" :aria-expanded="drawer === 'trash'" @click="toggleDrawer('trash')"><PaneGlyph name="trash" /><span class="rail-label">Cached Trash</span></button>
+            <button v-if="gmailMode && accountId" type="button" class="rail-item" data-test="rail-trash" :title="actionLabel('trash')" :aria-current="mailbox.context.value === 'trash' && !readerOpen && drawer === null ? 'page' : undefined" @click="executeAction('trash')"><PaneGlyph name="trash" /><span class="rail-label">Cached Trash</span></button>
           </div>
           <span class="rail-spacer" aria-hidden="true"></span>
           <div class="rail-utilities">
@@ -2583,7 +2583,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               ref="emptyState"
               tabindex="-1"
             >
-              {{ mailbox.context.value === 'search' ? (mailbox.nextCursor.value ? 'No matches on this candidate page. Continue scanning older mail below.' : 'No matching conversations in the searched content.') : mailbox.unreadOnly.value ? 'No known unread conversations in this view. Use Commands → Show all conversations to turn off the unread filter; unknown read states are not included.' : mailbox.starredOnly.value ? 'No known starred conversations in this cached view; unknown facts and uncached mail are not included.' : mailbox.context.value === 'saved' ? 'No Inbox conversations match this saved split. Edit the sender or domain criteria, or return to Inbox.' : mailbox.context.value === 'inbox' ? 'No conversations are currently in the inbox. Archived conversations stay recoverable from Activity.' : mailbox.nextCursor.value ? 'No conversations on this cache page; more cached candidates are available.' : mailbox.context.value === 'starred' ? 'No known starred conversations in this local cache; unknown and uncached mail is not included.' : 'No known archived conversations in this local cache.' }}
+              {{ mailbox.context.value === 'search' ? (mailbox.nextCursor.value ? 'No matches on this candidate page. Continue scanning older mail below.' : 'No matching conversations in the searched content.') : mailbox.unreadOnly.value ? 'No known unread conversations in this view. Use Commands → Show all conversations to turn off the unread filter; unknown read states are not included.' : mailbox.starredOnly.value ? 'No known starred conversations in this cached view; unknown facts and uncached mail are not included.' : mailbox.context.value === 'trash' ? 'No known cached Trash conversations. This does not mean your Gmail Trash is empty.' : mailbox.context.value === 'saved' ? 'No Inbox conversations match this saved split. Edit the sender or domain criteria, or return to Inbox.' : mailbox.context.value === 'inbox' ? 'No conversations are currently in the inbox. Archived conversations stay recoverable from Activity.' : mailbox.nextCursor.value ? 'No conversations on this cache page; more cached candidates are available.' : mailbox.context.value === 'starred' ? 'No known starred conversations in this local cache; unknown and uncached mail is not included.' : 'No known archived conversations in this local cache.' }}
             </p>
             <InboxList
               v-else
@@ -2596,6 +2596,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               :show-read-state="gmailMode"
               :show-read-controls="gmailActionsEnabled"
               :reminder-enabled="reminderActionEnabled"
+              :read-only="mailbox.context.value === 'trash'"
               :selected-refs="mailbox.selectedRefs.value"
               @focus="mailbox.focusConversation($event)"
               @open="executeAction('open', $event)"
@@ -2768,7 +2769,6 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
           <section v-if="drawer === 'reminder-settings' && remindersSupported" class="utility-panel" data-test="reminder-settings-dialog">
             <ReminderSettings @close="closeDrawer" @saved="reminderPreferencesSaved" />
           </section>
-          <CachedTrashPanel v-if="drawer === 'trash' && accountId && gmailMode" :key="accountId" :client="client" :account-id="accountId" :state="trashState" @open="openFromTrash" />
           <AccountPanel
             v-if="drawer === 'account' && accountStatus"
             :status="accountStatus"
@@ -2898,7 +2898,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
         <!-- Inert under a palette/navigator overlay exactly like header/main, so
              its Undo button cannot be reached while covered; drawer/disclosure
              guards apply through executeAction. -->
-        <ActionNotice v-if="!trashReader && drawer !== 'trash'" ref="actionNoticeComponent" :notice="actionNotice" :now="nowMs" :inert="!!overlay || !!attachmentConversation || undefined" @undo="executeAction('undo')" @undo-group="onNoticeGroupAction" @dismiss-group="mailbox.dismissGroupNotice()" />
+        <ActionNotice v-if="!trashBrowsing" ref="actionNoticeComponent" :notice="actionNotice" :now="nowMs" :inert="!!overlay || !!attachmentConversation || undefined" @undo="executeAction('undo')" @undo-group="onNoticeGroupAction" @dismiss-group="mailbox.dismissGroupNotice()" />
         <!-- The last command failure is an outcome the user must see: it sits
              in the same outcome slot as the action notice, as its own alert
              (not nested in the polite notice region, so it is announced once). -->

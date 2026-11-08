@@ -637,3 +637,90 @@ describe('InboxList attachment glyph (P5a truthful indicator)', () => {
     expect(w.find('[data-test="row-attachment"]').exists()).toBe(false);
   });
 });
+
+describe('InboxList read-only mode (Cached Trash)', () => {
+  let wrapper: VueWrapper | null = null;
+
+  beforeEach(() => {
+    vi.spyOn(Date, 'now').mockReturnValue(FROZEN_NOW);
+  });
+
+  afterEach(() => {
+    wrapper?.unmount();
+    wrapper = null;
+    vi.restoreAllMocks();
+  });
+
+  function mountList(
+    rows: ConversationSummary[],
+    focusedRef: ConversationRef | null = null,
+    options: { showReadState?: boolean; showReadControls?: boolean; actionsEnabled?: boolean; context?: 'done' | 'trash'; readOnly?: boolean; selectedRefs?: ConversationRef[] } = {},
+  ): VueWrapper {
+    const mounted = mount(InboxList, { props: { rows, focusedRef, ...options }, attachTo: document.body });
+    wrapper = mounted;
+    return mounted;
+  }
+
+  const readOnlyOptions = { context: 'trash' as const, readOnly: true, showReadState: true, showReadControls: true, actionsEnabled: true };
+
+  it('keeps the Done row anatomy but renders no action glyphs, disclosure, checkbox or read toggle', async () => {
+    const rows = [
+      row('a', { lastMessageAt: '2026-01-15T09:00:00Z', isRead: false, hasAttachments: true }),
+      row('b', { lastMessageAt: '2026-01-15T08:00:00Z', isRead: true }),
+      row('c', { lastMessageAt: '2026-01-15T07:00:00Z' }),
+    ];
+    const w = mountList(rows, { accountId: ACCOUNT, conversationId: 'a' }, readOnlyOptions);
+    await flushPromises();
+    const done = mount(InboxList, { props: { rows, focusedRef: { accountId: ACCOUNT, conversationId: 'a' }, context: 'done', showReadState: true, showReadControls: true, actionsEnabled: true }, attachTo: document.body });
+    for (const [id, text] of [['a', 'Sender a'], ['b', 'Sender b']] as const) {
+      const trashRow = w.get(`[data-test="conversation-row-${id}"]`);
+      const doneRow = done.get(`[data-test="conversation-row-${id}"]`);
+      expect(trashRow.get('.row-sender').text()).toBe(text);
+      expect(trashRow.get('.row-subject').text()).toBe(doneRow.get('.row-subject').text());
+      expect(trashRow.get('.row-preview').text()).toBe(doneRow.get('.row-preview').text());
+      expect(trashRow.get('.row-time').text()).toBe(doneRow.get('.row-time').text());
+    }
+    expect(w.find('[data-test="row-attachment"]').exists()).toBe(true);
+    expect(w.find('[data-test="row-unread"]').exists()).toBe(true);
+    done.unmount();
+    // Nothing in the list is a control except the rows themselves.
+    expect(w.find('input').exists()).toBe(false);
+    expect(w.find('button').exists()).toBe(false);
+    expect(w.find('.row-actions, .row-actions-toggle, .row-action').exists()).toBe(false);
+    expect(w.findAll('li.inbox-row.has-actions')).toHaveLength(0);
+    expect(w.get('ul').attributes('aria-label')).toBe('Cached Trash conversations (read only)');
+  });
+
+  it('ignores selected refs and selection gestures; plain, Cmd and Shift clicks only open', async () => {
+    const rows = [row('a', { lastMessageAt: '2026-01-15T09:00:00Z' }), row('b', { lastMessageAt: '2026-01-15T08:00:00Z' })];
+    const w = mountList(rows, null, { ...readOnlyOptions, selectedRefs: [{ accountId: ACCOUNT, conversationId: 'a' }] });
+    await flushPromises();
+    expect(w.get('ul').classes()).not.toContain('selecting');
+    expect(w.findAll('li.inbox-row.selected')).toHaveLength(0);
+    const target = w.get('[data-test="conversation-row-b"]');
+    await target.trigger('click', { metaKey: true });
+    await target.trigger('click', { shiftKey: true });
+    await target.trigger('click');
+    expect(w.emitted('selectToggle')).toBeUndefined();
+    expect(w.emitted('selectRange')).toBeUndefined();
+    expect(w.emitted('open')).toHaveLength(3);
+    expect(w.emitted('archive')).toBeUndefined();
+    expect(w.emitted('setRead')).toBeUndefined();
+  });
+
+  it('still focuses a row on focus-in and keeps the roving tab stop', async () => {
+    const rows = [row('a', { lastMessageAt: '2026-01-15T09:00:00Z' }), row('b', { lastMessageAt: '2026-01-15T08:00:00Z' })];
+    const w = mountList(rows, { accountId: ACCOUNT, conversationId: 'b' }, readOnlyOptions);
+    await flushPromises();
+    expect(w.findAll('li.inbox-row').map((li) => li.attributes('tabindex'))).toEqual(['-1', '0']);
+    await w.get('[data-test="conversation-row-a"]').trigger('focusin');
+    expect(w.emitted('focus')![0]).toEqual([{ accountId: ACCOUNT, conversationId: 'a' }]);
+  });
+
+  it('leaves the writable list unchanged when the flag is off', async () => {
+    const w = mountList([row('a', { lastMessageAt: '2026-01-15T09:00:00Z' })], null, { ...readOnlyOptions, readOnly: false, context: 'done' });
+    await flushPromises();
+    expect(w.find('[data-test="row-select-a"]').exists()).toBe(true);
+    expect(w.find('[data-test="row-actions-toggle-a"]').exists()).toBe(true);
+  });
+});

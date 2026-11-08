@@ -1190,14 +1190,6 @@ button:focus-visible {
   padding: 0 0 0 12px;
 }
 
-/* Cached Trash scrolls its own list; room for the row fill and the focus ring. */
-.cached-trash-list {
-  max-height: 55vh;
-  overflow-y: auto;
-  margin: 0 -6px;
-  padding: 3px 6px;
-}
-
 .reply-to {
   color: var(--text-secondary);
   font-weight: var(--weight-regular);

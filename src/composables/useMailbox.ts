@@ -2,6 +2,8 @@
 import { computed, onScopeDispose, ref, type ComputedRef, type Ref } from 'vue';
 import type {
   AccountStatus,
+  CachedDoneSnapshot,
+  CachedTrashSnapshot,
   SavedSplit,
   Conversation,
   ConversationRef,
@@ -67,7 +69,7 @@ export function sameConversation(a: ConversationRef | null, b: ConversationRef |
   return a !== null && b !== null && a.accountId === b.accountId && a.conversationId === b.conversationId;
 }
 
-export type BrowseContext = 'inbox' | 'saved' | 'done' | 'starred' | 'search';
+export type BrowseContext = 'inbox' | 'saved' | 'done' | 'starred' | 'trash' | 'search';
 
 /**
  * UX-05 product/safety bound for selection and groups (docs/ux-05-safe-bulk-
@@ -383,6 +385,18 @@ export function useMailbox(client: MailClient): Mailbox {
       && (!starredOnly.value || (row.stars?.starredMessages ?? 0) > 0);
   }
 
+  /** Cached Done, Starred and Trash share one paged, replayable list read. */
+  function isCachedList(source: BrowseContext): source is 'done' | 'starred' | 'trash' {
+    return source === 'done' || source === 'starred' || source === 'trash';
+  }
+
+  function readCachedPage(source: 'done' | 'starred' | 'trash', accountId: string, cursor: string | null): Promise<CachedDoneSnapshot | CachedTrashSnapshot> {
+    const request = { accountId, limit: 100, cursor };
+    return source === 'starred' ? client.listCachedStarred(request)
+      : source === 'trash' ? client.listCachedTrash(request)
+      : client.listCachedDone(request);
+  }
+
   async function refreshList(token: number): Promise<void> {
     const source = context.value;
     const account = accountStatus.value?.account?.accountId;
@@ -432,7 +446,7 @@ export function useMailbox(client: MailClient): Mailbox {
     };
     // Done owns its own list read. A delayed/failed Inbox or definition read must
     // not hold Done rows hostage; its badges still use a fenced projection pair.
-    const doneProjection = (source === 'done' || source === 'starred') ? projectionRead.then((projection) => {
+    const doneProjection = isCachedList(source) ? projectionRead.then((projection) => {
       if (current() && projection) publishProjection(projection);
     }, () => {
       if (current()) { inboxTotal.value = null; savedTotal.value = null; }
@@ -471,7 +485,7 @@ export function useMailbox(client: MailClient): Mailbox {
         return;
       }
       const projection = (source === 'inbox' || source === 'saved') ? await projectionRead : null;
-      const initial = (source === 'inbox' || source === 'saved') ? projection?.snap : await (source === 'starred' ? client.listCachedStarred : client.listCachedDone)({ accountId: account!, limit: 100, cursor: null });
+      const initial = (source === 'inbox' || source === 'saved') ? projection?.snap : await readCachedPage(source, account!, null);
       if (!current() || !initial) return;
       let snap = initial;
       if (projection) {
@@ -484,7 +498,7 @@ export function useMailbox(client: MailClient): Mailbox {
           snap = { ...snap, conversations: projection.matching };
         }
       }
-      if ((source === 'done' || source === 'starred') && 'nextCursor' in snap) {
+      if (isCachedList(source) && 'nextCursor' in snap) {
         // Recover the saved identity range even when new archives shift page edges.
         const pages = loadedDonePages.value;
         const boundary = loadedDoneBoundary.value;
@@ -494,7 +508,7 @@ export function useMailbox(client: MailClient): Mailbox {
           // Finite recovery budget beyond the user's explicitly loaded range.
           // Never misclassify an uninspected target as removed on budget exhaustion.
           if (replayed >= pages + 10) throw { kind: 'invalid_request', field: 'cachedDoneRestoreRange' } satisfies MailError;
-          const next = await (source === 'starred' ? client.listCachedStarred : client.listCachedDone)({ accountId: account!, limit: 100, cursor: snap.nextCursor });
+          const next = await readCachedPage(source, account!, snap.nextCursor);
           snap = { ...next, conversations: [...snap.conversations, ...next.conversations.filter((row) => !snap.conversations.some((old) => sameConversation(old.ref, row.ref)))] };
           replayed += 1;
         }
@@ -504,7 +518,7 @@ export function useMailbox(client: MailClient): Mailbox {
       if (detached || token !== listToken || source !== context.value) return;
       const previous = conversations.value;
       conversations.value = snap.conversations.filter(matchesCachedFilters);
-      if ((source === 'done' || source === 'starred') && 'nextCursor' in snap) {
+      if (isCachedList(source) && 'nextCursor' in snap) {
         nextCursor.value = snap.nextCursor;
         exactTotal.value = snap.exactTotal;
         lastSyncedAt.value = snap.lastSyncedAt;
@@ -638,7 +652,7 @@ export function useMailbox(client: MailClient): Mailbox {
     try {
       const snap = source === 'search'
         ? await client.searchMail({ accountId: account, query: searchQuery.value, cachedOnly: searchCachedOnly.value, cursor })
-        : await (source === 'starred' ? client.listCachedStarred : client.listCachedDone)({ accountId: account, limit: 100, cursor });
+        : await readCachedPage(source, account, cursor);
       if (detached || token !== listToken || context.value !== source) return;
       conversations.value = [...conversations.value, ...snap.conversations.filter((row: ConversationSummaryLike) => matchesCachedFilters(row) && !conversations.value.some((old) => sameConversation(old.ref, row.ref)))];
       focusedRef.value = resolveFocus(conversations.value, focusedRef.value, conversations.value);
