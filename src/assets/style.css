@@ -1957,14 +1957,17 @@ button:focus-visible {
   font: inherit;
 }
 
+/* A quiet Seam underline at rest so an empty row still shows where to type;
+   the full Seam border returns on hover (DESIGN.md "Inputs / Fields"). */
 .field-row .field-input {
   background: transparent;
   border: 1px solid transparent;
+  border-bottom-color: var(--divider);
   border-radius: 4px;
 }
 
 .field-row .field-input:hover:not(:disabled) {
-  border-color: var(--rule);
+  border-color: var(--divider);
 }
 
 .field-row .field-input:focus-visible {

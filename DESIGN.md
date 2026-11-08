@@ -359,7 +359,7 @@ The core of the product: dense, quiet and exact.
 ### Composer (reply and new message)
 - **Shell:** Lifted Charcoal with a 1px Seam border, docked at the bottom of the reader pane (6px radius, capped at 60% of the pane) or, for a new message with no reader, the in-flow card (10px radius). Never a modal.
 - **Heading line:** the title on the left (Title weight, `Reply draft to Ada Fixture` or `New Message`) and the one status line on the right (Body, Ash when settled, Amber Notice otherwise).
-- **Rows:** a 3.5rem Ash label column, then a borderless-looking input; the reply shows only `To  <name>` as a button until the user asks for more. Body: at least six lines, grows, bordered like a field.
+- **Rows:** a 3.5rem Ash label column, then an input with a quiet Seam underline at rest (full Seam border on hover); the reply shows only `To  <name>` as a button until the user asks for more. Body: at least six lines, grows, bordered like a field.
 - **Footer:** primary `Save and close` (Focus Stone, Title weight) with an Ash `Esc` hint, quiet Ash `Discard…`. The only buttons besides the confirm dialogs and retry actions. No Send.
 
 ### Reader Message Disclosures

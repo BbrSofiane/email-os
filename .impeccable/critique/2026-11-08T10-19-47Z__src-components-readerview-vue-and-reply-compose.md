@@ -70,5 +70,9 @@ Computed from the tokens (WCAG relative luminance): Graphite `#8e8a87` is 4.30:1
 - P3 — The two reply glyphs (header and per-message) overlap in function; after R lands, the per-message glyph could go. Left in place: removing a visible control is a separate decision.
 - P3 — Recipient autocompletion and validation do not exist by design (raw text, drafts local-only).
 
+## Rendered check (added after implementation)
+The fixture-only browser preview (Vite dev server, 1280×800, T3 browser) was driven through: open conversation → R → reply composer (body focused, `To  Ada Fixture`, status line, footer) → Cc / Subject → expand first message (inline attachment row, `27 B · text/plain`, Save) → Esc (focus back on the active message) → C (new-message card) → 20px root font. One defect only visible when rendered: empty Cc/To/Subject inputs had a transparent border, so the row looked like plain text; fixed with a Seam underline at rest. Seen but out of scope: the contact pane's "Composing to …" line pushes the contact name 33px off the tab line while a draft is open (ContactPane, untouched); closing the docked new-message card leaves focus on `<body>` (reply composer now restores it).
+Not rendered: the quote toggle (no fixture message has a quote), Gmail-mode status line, Cached Trash, blocked-reply states; those are covered by component tests only.
+
 ## Not verified
-No rendered output exists for any of this. Contrast numbers are computed from the tokens, not sampled from pixels. Real-Chrome journeys (`reader.rendered.test.ts`) are opt-in on `EMAIL_OS_RENDERED_LAYOUT_CHROME` and cannot run on this VM.
+Contrast numbers are computed from tokens, not sampled from pixels. Native/WKWebView is not exercised. Contrast numbers are computed from the tokens, not sampled from pixels. Real-Chrome journeys (`reader.rendered.test.ts`) are opt-in on `EMAIL_OS_RENDERED_LAYOUT_CHROME` and cannot run on this VM.
