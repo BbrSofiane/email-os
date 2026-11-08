@@ -1,0 +1,686 @@
+Show me screenshots and recording so I can validate the changes
+
+---
+
+/impeccable Looks good overall but it feels like draft, reminders, trash views should be in the main part of UI that's used to display a list of threads. What do you think?
+
+---
+
+It makes sense to me that opening a draft navigate the user to its source thread and docks the composer there (same as the reply flow)
+
+Delegate the work to subagents to implement and once done take screenshots so I can validate the changes
+
+---
+
+Continue where you left off.
+
+---
+
+<task-notification>
+<task-id>a8ccba4632d7a806e</task-id>
+<tool-use-id>toolu_01JUVzthp4HbyjbLdbpEmXP6</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-impeccable-drawer-panels/f985be7d-cba0-4fa8-a8b8-ec1d0f052dd4/tasks/a8ccba4632d7a806e.output</output-file>
+<status>completed</status>
+<summary>Agent "Phase 2: Reminders as list context" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>**Status: complete.** Phase 2 is done and uncommitted. `pnpm typecheck` is clean, `pnpm test` gives 1034 passed and 33 skipped (the same 33 as baseline), and `pnpm build` passes.
+
+The harness files are deleted, my dev server on 5188 is stopped, the preview tab is closed, and `git status` shows only the intended changes. The deletion of `RemindersPanel.vue` and the old `reminders.drawer.test.ts` is unstaged.
+
+## Files
+
+**New**
+- `src/composables/useReminders.ts`
+- `src/components/ContextRowList.vue`
+- `src/components/RemindersList.vue`
+- `tests/reminders.helpers.ts`
+- `tests/reminders.context.test.ts`
+- `tests/context-row-list.component.test.ts`
+- `tests/useReminders.test.ts`
+- `tests/reminders.list.test.ts` (the old `reminders.drawer.test.ts`, migrated and renamed)
+
+**Changed**
+- `src/App.vue`
+- `src/composables/useMailbox.ts`
+- `src/composables/useDrawerRows.ts` (doc comment only)
+- `src/assets/style.css`
+- `DESIGN.md`
+- `tests/drawer-panels.app.test.ts`
+- `tests/reminders.component.test.ts`
+- `tests/reminders.navigation.test.ts`
+- `tests/reminders.preparation.test.ts`
+
+**Deleted**
+- `src/components/RemindersPanel.vue`
+- `tests/reminders.drawer.test.ts`
+
+## Per criterion
+
+1. **Context.** `'reminders'` is now a `BrowseContext`, and `useMailbox.refreshList` just reports it ready with no rows. The header glyph, `G H`, the palette and the navigator all call `navigateContext('reminders')`, which pushes history. The glyph shows `aria-current="page"` and Paper White while the list is up. All request logic moved to `useReminders` unchanged: generation and editor tokens, exact retry, lost ACK, the `dueAt` message, the newer-message preparation error. Its session runs while the context is active, so the selected tab, rows and an open picker survive a reader round trip.
+2. **Rows.** `ContextRowList` (generic, with slots) renders the Conversation Row geometry. `useDrawerRows` is reused for the keyboard model, with roving tabindex and `aria-current`. It shares the `.inbox-row` rules for geometry, focus bar and hover. Reminder rows, the phase words, the `regardless` line and `&lt;time&gt;` dates are as briefed. Reschedule and Cancel are quiet ghosts, revealed on the current or hovered row and always Tab-reachable, with the long restore wording as `aria-label` and `title`. Opening a row sets `origin.surface` to `'reminders'`, and Back returns to the same row.
+3. **Tabs.** Pending / Returned / History sit in the header split-tab slot (`role=tablist`, ArrowLeft/Right, Home, End) and replace the Inbox/saved strip. The selected tab is kept across navigation.
+4. **Coverage and states.** The Ash coverage line and the Refresh ghost are in `RemindersList`, with the loading, empty and error lines in flow. All button texts are kept.
+5. **Picker.** It is an in-flow block above the rows with the same content and `put` semantics. Esc in it dismisses only the picker, and focus returns to the row. `h` from the inbox or the reader sets the target, navigates, and opens the picker with focus on its first choice. Back returns to the inbox row.
+6. **Removed.** The drawer variant, `drawerTitles`/`drawerHeadings` entries, the toggle ref, the `openFromUtility` special case and the file `RemindersPanel.vue` are gone. `openFromUtility` is now `openFromActivity`.
+7. **Mutation safety.** `actionAvailable` returns false in the list for everything past the navigation ids, and the selection keys are gated. `H`, `E`, `Z`, `S`, `U`, `X`, `R` and `Shift+J` are verified inert by a test. `G` and Left still work from a row button.
+8. **Tests.** Migrated, plus new tests for the context entries, tabs, Back, `h` flows, inert shortcuts and the fixture-only gate, `ContextRowList`, and `useReminders`.
+9. **Docs.** DESIGN.md is updated: gap 1, gap 18, gap 19 (a Reminders group), a new Context Row component, Split Tabs and In-flow Notices. `docs/ux-11-local-reminders.md` and `docs/development.md` never literally call Reminders a drawer, so I left them alone.
+
+## Rendering evidence (1280x800 via a throwaway harness)
+
+- **List.** The header glyph opens the Reminders list with the tabs and counts (`Pending 3 · Returned 1 · History 0`) and the coverage line plus Refresh. The first row has the lavender bar and Focus Stone fill. The failed row shows its inline Coral line.
+- **Picker.** Reschedule opens the in-flow picker with the right content. Esc dismisses it and focus returns to the row.
+- **Reader round trip.** Enter opens the reader, Esc returns to the same row, and a second Esc goes back to the inbox.
+- **`h` from the inbox.** It opens the Reminders list with the `Remind me` picker and focus on its first choice.
+- **Defect found and fixed.** The picker kept the previous Reschedule's time. Each new picker now starts clean, while preparation recovery still keeps its choices.
+- **Defects found and fixed.** The active header tab was not styled (the CSS only keyed `aria-current`). The row's open button drew a second focus ring.
+- **Not rendered at the browser.** Returned-tab keyboard movement and the `h`-from-reader flow were not driven in the browser; both are covered by jsdom tests.
+
+## Assertions changed or removed
+
+- **Selectors and structure.**
+  - `.drawer-subject`, `.drawer-row-main`, `.drawer-date` and `.drawer-row-actions` became `.context-*`.
+  - `li.reminder-row` became `li[data-test^="reminder-row-"]`.
+  - The picker `h3` became `h2`.
+  - The `role="note"` lookup became `[data-test="reminders-coverage"]`.
+  - `RemindersPanel` became `RemindersList`.
+  - The `setupState` read became `model.source.value`.
+- **Props to the model.** `setProps({ target: null })` became `model.setTarget(null)` plus a `nextTick`, because VTU skips clicks on elements still `disabled` in a stale render.
+- **Drawer to context.**
+  - The glyph is found by `[data-test="reminders-trigger"]`.
+  - The drawer's Close became the header Back button.
+  - `findComponent(RemindersPanel).findAll('[role=tab]')` became the header's `[role=tab]`.
+  - The `drawer-panels` test "Reminders: one h2" became "list context, no drawer, one h1".
+- **Moved.** The tab tests moved to `reminders.context.test.ts` and now assert the same counts, tabindex, arrow/Home/End behaviour and `aria-labelledby`.
+- **Removed.** Only the `destinationChange` emit assertion went, replaced by reading `model.destination`. No behavioural assertion (put payloads, retry, lost ACK, source errors, revisions, phases, presets, Custom) was weakened.
+
+## Deviations and open questions
+
+- **Header h1.** The h1 `Reminders` stays visible before the tabs rather than visually hidden. With only the tabs, "Pending / Returned / History" had no name on screen. Its cost is that Reminders and the active tab are both Paper White. Hiding it is a one-line change in `activeTabShown`.
+- **Reserved space for row actions.** The row-action cell always takes its width, so the current row doesn't shift. At 968px a very long subject truncates earlier (about 262px in the harness). Collapsing the actions until revealed would trade that for ellipsis jitter.
+- **Error banners.** The preparation retry now only appears with its error banner, not as a disabled "Preparing…" button during preparation. "Inspect durable state" is on the error banner.
+- **Not wired in this phase.** If `remindersSupported` ever turned false while the context is active, the user would be left on an empty pane (Back and Esc still work). No such transition exists today.
+- **Palette label.** `browsing-actions.ts` still says "Go to local Reminders" rather than "Go to Reminders"; I left it alone.
+
+## Checks (final code)
+
+- `pnpm typecheck`: clean.
+- `pnpm test`: 64 files passed, 4 skipped; 1034 tests passed, 33 skipped.
+- `pnpm build`: `✓ built in 2.65s`.</result>
+<usage><subagent_tokens>385380</subagent_tokens><tool_uses>7</tool_uses><duration_ms>177200</duration_ms></usage>
+</task-notification>
+
+---
+
+/impeccable critique the implemented changes
+
+---
+
+<task-notification>
+<task-id>ab8b277815f1733b9</task-id>
+<tool-use-id>toolu_01Nq3W48GSFcBTDyNS9WXATX</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-impeccable-drawer-panels/f985be7d-cba0-4fa8-a8b8-ec1d0f052dd4/tasks/ab8b277815f1733b9.output</output-file>
+<status>completed</status>
+<summary>Agent "Critique B: detector evidence" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>I ran the CLI scan and the browser flow on all three list contexts. No scanned `.vue` file has a finding. The only in-scope hits are six in `src/assets/style.css`, and the live overlay's one hit is outside the target files. Cleanup is done and `git status` is clean.
+
+## 1. CLI scan
+
+I ran `impeccable detect --json` on the seven target `.vue` files and on `src/components`. Both returned `[]` with exit 0, so the detector does scan `.vue`. It also scans CSS when a CSS file sits next to a `.vue` file: `detect --json src/App.vue src/assets/style.css` exited 2 with 6 findings, all in `/home/exedev/.t3/worktrees/email-os/impeccable-drawer-panels/src/assets/style.css`.
+
+| Rule | Line | Selector / value | Verdict |
+|---|---|---|---|
+| side-tab (warning) | 881 | `.search-suggestion.highlighted`, inset 4px stripe | Out of scope (search UI). By-design: it is the app's one focus signal. |
+| side-tab (warning) | 1201 | `.inbox-row.focused, .context-row.focused`, `inset 4px 0 0 var(--focus-accent)` | Detector-correct, but a false positive for design intent. DESIGN.md and the code comment specify "Focus Stone fill plus a 4px Dusk Lavender bar" as the single focus cue. This is the shared focus rule for Trash, Drafts and Reminders rows. |
+| side-tab (warning) | 2487 | `.command-overlay li.highlighted`, inset 3px stripe | Out of scope (command palette). |
+| design-system-radius (advisory) | 351 | `border-radius: 2px` | Real: 2px is outside the DESIGN.md scale (0, 4, 6, 10, full). Not a list-context rule. |
+| design-system-radius (advisory) | 840 | `border-radius: 2px`, 24px-high `width:100%` button | Real, same scale violation. Not a list-context rule. |
+| design-system-radius (advisory) | 1237 | `border-radius: 3px`, 14px checkbox | Real, same scale violation. Not a list-context rule. |
+
+## 2. Browser overlay
+
+- **Setup:** My own tab at 1280x800 on a vite dev server on port 5189. Mutable injection was allowed: setting `document.title` and appending a `&lt;script&gt;` both worked.
+- **Overlay run:** `live-server --background` ran on port 8400 and I injected `http://localhost:8400/detect.js`. I ran it on Trash, Drafts and Reminders, then ran `live-server stop --keep-inject`.
+- **Result:** Three scans reported one finding between them: `straggler` ("available." alone on the last of 2 lines, 30% of the measure) on `P.contact-unknown` ("No correspondent information is available."). That element is in the right-hand contact pane, so it is outside the target files.
+- **Not stable:** The straggler showed up on empty Trash, Drafts and Reminders, but one Trash rescan returned `[]` (no findings), and the 4px lavender row bar was not flagged by the overlay. The overlay flags only the contact-pane straggler.
+- **Harness:** The plain preview mounts `FixtureWorkspaces`, which gives no reminders and no Trash. I used a throwaway `harness-b.html` with `src/harness-b.ts` that adds a fake reminders client, Gmail mode for the Trash rail, and three trashed conversations. Both files are deleted.
+- **Drafts created:** I created a reply draft with R then Esc twice (the first Esc closed the composer, the second left the thread), and a new draft with C then Esc.
+- **Rendered rows:** Drafts showed 2 rows and Reminders showed 3 (Pending, Pending, Failed).
+
+## 3. Measured DOM evidence
+
+Backgrounds are Pane `41,40,38` and Focus Stone `71,70,68`. Contrast ratios are computed from the rendered colours.
+
+| Item | Measured | Ratio |
+|---|---|---|
+| h1 "Cached Trash", "Drafts", "Reminders" | 16px / 400, one `h1` per view, white on Pane | 14.73 |
+| Inactive tab ("Inbox 15", "Returned 1", "History 1") | 16px / 400, Smoke `160,156,154`, 61.8 to 84px wide, 20px high | 5.41 |
+| Tab count digit | 11px, Ash | 7.79 |
+| Coverage note (`p.cached-coverage`, `role=note`) | 12px, Ash `192,188,182`, 28.2px high | 7.79 |
+| Group label ("January 2025") | Ash | 7.79 |
+| Row height (Trash x3, Drafts x2, Reminders x3) | 36px every row | not applicable |
+| Row sender / primary | 12px / 600, white | 14.73 (9.43 on Focus Stone) |
+| Row secondary, date, status, "Reply" on Pane | Ash 12px | 7.79 |
+| Ash on the focused (Focus Stone) row: date, Reschedule, Cancel, "Pending" | Ash 12px | 4.99 |
+| Failed word and Failed note line | Coral `241,169,165` | 7.69 on Pane, 4.92 on Focus Stone |
+| Amber `--warning #e4c465` | token only; no amber text appeared in the fixture views | 8.68 on Pane, 5.56 on Focus Stone |
+| Smoke on Focus Stone | not used in these views | 3.46 |
+| Lavender bar `#bba5ed` | inset 4px bar | 4.36 on Focus Stone, 6.82 on Pane |
+| Exception-note row (Failed) | li is 58.2px: 36px row plus a 22.2px note | not applicable |
+| Reminders row action buttons | Reschedule 85x24, Cancel 115x24, Refresh 126x24 | not applicable |
+| Drafts "New draft" | 75x24 | not applicable |
+| Open button | 423x36, 262x36, 511x36 and 192x36 | not applicable |
+| Header icon buttons and rail items | 32x32 and 28x28 | not applicable |
+
+**Values that look off:**
+- Ash on the focused row is 4.99, only just over 4.5.
+- Coral on Focus Stone is 4.92. A Coral exception line sits outside the focused row, so only the inline "Failed" word on the focused row would hit it.
+- Reminders Reschedule and Cancel buttons are 24px high, under 32px.
+- The lavender bar is 4.36 on Focus Stone, below 4.5. That is acceptable for a 3:1 non-text mark.
+- The straggler appears in the contact pane in every view. I did not measure why. Its "Focused conversation" `h2` is 1px wide (visually hidden).
+
+**Focus ring:**
+- Focused rows on all three views have `outline: none` plus `box-shadow: rgb(187,165,237) 4px 0 0 0 inset` on `.context-row` or `.inbox-row`, and nothing else.
+- On the Reminders row, the focused `button.context-row-main` has `outline: none`, no shadow. The `li`, the `ul` and `.context-pane` have no outline or shadow. So it is one signal and the earlier double ring is gone.
+- When Tab moved focus to "Reschedule" (`:focus-visible`), it got `outline: solid 2px #bba5ed`, offset 1px, while the row bar stayed. That is two cues, but on two different elements.
+- In Drafts, ArrowDown moved the `.focused` class and `aria-current="true"` from row 1 to row 2, with roving `tabindex` 0 and -1.
+
+**Accessible names, roles and structure:**
+- **Headings:** One `h1` per view and one hidden `h2`, "Focused conversation".
+- **Tabs:** `tablist` "Reminder membership" with 3 `role=tab` (`aria-selected` true, false, false; `tabindex` 0, -1, -1; `aria-controls` and `aria-labelledby` pair up). The panel has `tabindex=-1`.
+- **Trash tab:** On Trash and Drafts, the "Inbox 15" split tab is a plain `button` in `nav "Inbox splits"` with no `aria-current` and no `aria-selected`.
+- **Rail:** `aria-current="page"` is on Cached Trash while in Trash and on Drafts while in Drafts. No rail item is current in Reminders. The header "Reminders" button has `aria-current="page"` there.
+- **Lists:** Trash is `ul` "Cached Trash conversations (read only)" with `li.inbox-row`, `tabindex` 0 on the focused row only. Drafts is `ul` "Local drafts". Reminders is `ul` "Pending reminders". Each `li` has `role=listitem`, and the current one has `aria-current="true"`.
+- **Row buttons:** Row open buttons are named "Open &lt;primary&gt;" via a visually hidden "Open ". The Cancel buttons carry `aria-label` "Cancel reminder and restore original inbox messages" or "...recover...", although their visible text is "Cancel reminder".
+- **Live regions:** Two `role=status` elements, one with `aria-live=polite`, both empty at rest.
+- **Tab order:** Header (Destinations, tab, back, Reminders, Commands, Compose, Search), then rail items, then "Refresh reminders" or "New draft", then one row open button (roving), then each row's actions. Trash lands on the focused `li.inbox-row` and then the contact pane's buttons.
+
+## 4. Skipped or not exercised
+
+- **Trash rows:** The default fixture has none. I used `markTriage` in the harness.
+- **Amber and "Removing now":** No amber or "removing" row was rendered. I measured only the token.
+- **DraftAlerts:** `DraftAlerts.vue` states (conflict, error) were not triggered. The only finding on it is the clean `.vue` scan.
+- **Reminders picker:** The in-flow picker was not opened.
+- **Not exercised in the browser:** Tab and arrow behaviour inside the tablist, and row clicks.
+- **Pointer-only hover states:** Not measured.
+- **`detect --cdp`:** Not used (not Electron).
+
+## 5. Cleanup
+
+- The live-server on 8400 is stopped (`stop --keep-inject`).
+- The dev server is killed by exact pids 1425300 (pnpm) and 1425311 (node). No process for port 5189 remains.
+- `harness-b.html` and `src/harness-b.ts` are deleted.
+- My tab `tab_d_1d4bf152-80e7-4d19-b042-54c7da36b56d` is closed.
+- `git status --short` reports 0 entries. `.impeccable/hook.cache.json` is git-ignored.
+- I did not touch the other assessor's tab on port 5188.</result>
+<usage><subagent_tokens>130752</subagent_tokens><tool_uses>69</tool_uses><duration_ms>297730</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a78f15edde6d73aa8</task-id>
+<tool-use-id>toolu_01JbsqWbago8ijKLWvYLeYVM</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-impeccable-drawer-panels/f985be7d-cba0-4fa8-a8b8-ec1d0f052dd4/tasks/a78f15edde6d73aa8.output</output-file>
+<status>completed</status>
+<summary>Agent "Critique A: design review" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>The three list contexts hold up in the render, but each has a handful of real gaps. Reminders and Drafts have no keyboard chord or tab-switch key, and Reminders' "Pending" tab mixes in failed rows. The Drafts source-unavailable reason is hover-only. I ran everything at 1280x800 against a Vite server on port 5188.
+
+I used two throwaway harnesses, `harness-a.html` with `src/harness-a.ts`: one in fixture mode with a fake `client.reminders` (Reminders), and one with `?gmail` (Trash and Drafts). I stopped the server by exact pid, deleted both harness files and closed my tab. Port 5188 is closed.
+
+`git status` is not fully clean, but not from my work. It shows `harness-b.html`, `src/harness-b.ts` and `.impeccable/live/server.json`, which belong to the other assessment sharing this worktree. My scratchpad `vite.pid` was overwritten by that agent, so I found my pids by port instead (1424899 and its parent 1424876).
+
+## Design specificity verdict
+Mostly authored for this product, with one visible interchangeable seam.
+
+- **Authored:**
+  - The honesty vocabulary is specific: the coverage lines "Cached Trash only, not your full Gmail Trash. 4 cached · total unknown." and "Local to this device · never sent", the phase words Pending, Removing…, Failed, and the Amber and Coral exception notes.
+  - The 36px row with the Focus Stone fill plus Dusk Lavender bar is shared with Inbox.
+  - Reply drafts route to their source thread.
+- **Interchangeable:**
+  - The Drafts and Reminders rows are plain text rows. Recipient-then-subject, or subject-then-date-then-status, could belong to any list app.
+  - The new-message draft opens a 668px-tall bordered card (shown with "New Message" or "Reply draft" in the header) that is mostly empty, a generic form panel next to an otherwise dense list.
+  - The headers "Cached Trash | Inbox 14" and "Drafts | Inbox 18" look like two sibling tabs, which is a generic-nav reading.
+
+## Nielsen heuristics (Operate surfaces, all 10 apply)
+
+| # | Heuristic | Score | Key issue |
+|---|---|---|---|
+| 1 | Visibility of system status | 3 | Phases are honest and distinct (Pending, Removing…, Failed, Returned). But "Pending 4" counts the failed and removing rows, so the tab count overstates what is pending. The Drafts fallback reason is only in a `title` (`ComposeCard.vue:115`). |
+| 2 | Match with real world | 3 | Copy is terse and exact. The failed-row note "Removal or return failed, or a later mailbox action superseded this reminder" does not say which. Empty states read "No history reminders." (template `No {{ destination }} reminders`, `RemindersList.vue`). |
+| 3 | User control and freedom | 3 | Esc and Back return to the exact row everywhere I tested. A reply draft takes two Escs to reach the list (composer closes, then reader closes); a new-message draft takes one. There is no discard from the Drafts list. |
+| 4 | Consistency and standards | 3 | Tab switches splits in Inbox (`App.vue:2081`) but just moves focus in Reminders. The "Inbox N" tab sits beside the context h1. Row actions are hover/focus-revealed (`style.css:1517-1531`), unlike Inbox's glyph. |
+| 5 | Error prevention | 3 | Trash read-only holds: `e` and `r` did nothing and no composer appeared. Cancel reminder runs with no confirmation, though it is reversible. |
+| 6 | Recognition over recall | 2 | Reminders row actions show only on the current or hovered row. Reminder tabs are Tab-reachable only. Drafts rows show no body text, so two drafts to the same person are indistinguishable. Rail labels are icon-only. |
+| 7 | Flexibility and efficiency | 2 | The only chords are G E and G H (`App.vue:1240`); `browsing-actions.ts:27,30` gives Trash and Drafts an empty shortcut. There is no key to switch Reminders tabs, and no key to Reschedule, Cancel or Discard from a row. J/K and Enter are good. |
+| 8 | Aesthetic and minimalist design | 3 | One quiet coverage line per context. The contact pane is dead chrome: "No correspondent information is available." beside Reminders and Drafts. |
+| 9 | Error recovery | 3 | Open errors show above the rows, so drafts are never hidden. Retry and Inspect durable state exist. No Retry on a failed reminder row, only Cancel. |
+| 10 | Help and documentation | 2 | Explanations live in hover titles. Inert keys in Trash give no feedback. |
+| **Total** | | **27/40** | Good, with real gaps. |
+
+## Cognitive-load failures
+- **Working memory:** the user has to remember that Drafts and Trash have no chord, that Tab means different things in Inbox and Reminders, and that Reminders tabs are reachable only by Shift+Tab to the header.
+- **More than 4 options at once:** the open reschedule picker shows 5 time choices (Later today, Tomorrow, Next week, Someday, Custom), the condition select (2 options) and 2 buttons. A focused Reminders row shows Open, Reschedule and Cancel reminder.
+- **Hidden affordances:** the Reminders row actions are invisible on non-current rows, so only row 1 shows them on entry.
+- **Layout shift:** the in-flow picker is about 158px tall and pushes the rows down while the user is rescheduling one of them.
+- **Chunking:** the Pending tab mixes pending, removing and failed rows.
+
+## Emotional journey
+- **Entry:** calm and quick. The ordinary rows are fast, and Back returns to the row you left.
+- **Valley:** the failed reminder. It is in coral with no recovery affordance beyond "Cancel reminder", and it carries an ambiguous explanation.
+- **Second valley:** a reply draft whose source is unavailable. The Amber line is clear, but the reason (retained snapshot, headers unverifiable) is hover-only.
+- **Exit:** peak-end is fine for Trash and Drafts. For Reminders the ending is flat: you return and nothing confirms the reschedule landed beyond the row text.
+
+## What is working
+1. **Honest state is built into the row.** Phase words keep Pending, Removing…, Failed and Returned separate in color and wording, and a draft is never made unopenable.
+2. **The shared machinery holds up.** On Esc, Trash returned focus to the exact row (`conversation-row-conv-05`). Drafts returned to the row I had opened, including after the reader round-trip, and Reminders returned to the Invoice row after the reader.
+3. **Trash is read-only by design:** the reader note "Cached Trash — read only. Recovery is not available here; use your provider client." is plain and correct.
+
+## Priority issues
+
+**[P1] Reminders keyboard model has no way to change tabs from the list.**
+- **Evidence:** `reminders.onTabKeydown` handles arrows only once a tab has focus (`useReminders.ts:95`). There is no list-level key, and Tab from a row moves into Reschedule (`App.vue:2081` applies split-switching only to inbox and saved).
+- **Why it matters:** this is the product's keyboard-first core, and Returned and History are effectively mouse-only.
+- **Fix:** list-level `[` and `]` (or `1`, `2`, `3`) for Reminders tabs; give Drafts and Trash G chords.
+- **Command:** `/impeccable shape`, then `/impeccable harden`.
+
+**[P1] Pending tab counts failed and removing rows.**
+- **Evidence:** the render shows "Pending 4" with a Failed row and a Removing… row, and the history bucket holds only cancelled.
+- **Why it matters:** the tab count overstates what is pending, which is against the honest-state principle.
+- **Fix:** surface a distinct "Needs attention" count or section for failed and removing rows. Give the failed row a Retry or a clear single cause.
+- **Command:** `/impeccable clarify`.
+
+**[P2] Drafts rows are not triageable.**
+- **Evidence:** a row is recipient, subject, a "Reply" word, and a time. Nothing shows body, size or save state. The reason a reply draft's source is unavailable is hover-only, and there is no row-level Discard.
+- **Why it matters:** opening each draft to tell them apart is the opposite of triage.
+- **Fix:** add a one-line quiet body preview as the row secondary. Expose the fallback reason as visible text. Offer a Discard row action behind the existing confirmation.
+- **Command:** `/impeccable layout`, then `/impeccable clarify`.
+
+**[P2] Header composition reads as two tabs.**
+- **Evidence:** "Cached Trash | Inbox 14" and "Drafts | Inbox 18" render with the h1 styled like an active tab and a live Inbox tab beside it.
+- **Why it matters:** Inbox 14 also falls as trash items are counted, which is confusing in context.
+- **Fix:** hide the split nav in list contexts (Reminders already does) or drop the count.
+- **Command:** `/impeccable quieter`.
+
+**[P3] Inconsistent Esc behaviour and dead states.**
+- **Evidence:**
+  - The reply draft takes two Escs; the new-message card takes one.
+  - After closing a compose card from the Inbox list, `document.activeElement` was `BODY`, not a row.
+  - The contact pane says "No correspondent information is available." in Reminders and Drafts.
+  - Keys that do nothing in Trash (`e`, `r`) give no feedback.
+- **Fix:** make Esc symmetric, restore row focus, hide or fill the contact pane, and give a one-line inert-key notice.
+- **Command:** `/impeccable polish`.
+
+## Persona red flags
+- **Alex (power user):** no chord for Drafts or Trash, no tab-switch key in Reminders, and no row keys for Reschedule, Cancel or Discard. The Tab model contradicts Inbox.
+- **Sam (accessibility):**
+  - The fallback reason is title-only, so keyboard and screen-reader users never see it.
+  - Rows are a roving-tabindex list, which is fine.
+  - Hidden row actions are Tab-reachable but invisible until focused (opacity 0, not `display: none`).
+  - The contact pane's heading, "Focused conversation", is noise in these contexts.
+- **Riley (stress tester):** the in-flow picker is the tallest element and shifts rows. Cancel executes immediately. A failed reminder has no retry, only cancel. Dead keys in Trash are silent.
+
+## Minor observations
+- The Reminders date column is a fixed 12em with full dates ("Tue 10 Nov 2026, 2:00 PM"), which is precise but wide, unlike the compact Inbox dates.
+- The reader opened from Reminders does not show reminder state (due time, reschedule). The h1 still says "Reminders" over an unrelated subject.
+- The new-message card is 668px tall for four fields.
+- Focus lands in the To field of an existing draft that already has a recipient.
+- The contact pane shows "Composing to ada@example.test ada@example.test" (name equals address).
+
+## Provocative questions
+- If a failed reminder is the one thing that needs the user, why does it live in a Pending tab?
+- Is a row-level Discard (with confirmation) safe enough to make Drafts a real triage surface?
+- Could Drafts and Reminders share a single "Needs attention" strip instead of each carrying its own error styling?
+
+## Not verified
+- Failed or unknown Reminders request recovery (retry exact request, inspect durable state). My fake `cancel` throws, but I did not exercise it.
+- Draft lifecycle alerts (suspended editor, close-protection, subscription errors) were read but not rendered.
+- Real Tauri and native-mode behaviour, and VoiceOver or screen-reader output.
+- The Starred context (only Trash, Drafts and Reminders were reviewed).
+- Contrast ratios (judged by eye, not measured).
+- Behaviour with more than a dozen rows or long subjects (only 2 to 6 rows).
+- The "one-frame list flash" on failed source load. I did not observe it, but I also did not frame-step.</result>
+<usage><subagent_tokens>225094</subagent_tokens><tool_uses>96</tool_uses><duration_ms>310609</duration_ms></usage>
+</task-notification>
+
+---
+
+Run them all in parallel (where applicable) using subagents
+
+---
+
+<task-notification>
+<task-id>a0dc9c617307ad062</task-id>
+<tool-use-id>toolu_01Ey3fzhH2DLNA57jbAj2ndc</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-impeccable-drawer-panels/f985be7d-cba0-4fa8-a8b8-ec1d0f052dd4/tasks/a0dc9c617307ad062.output</output-file>
+<status>completed</status>
+<summary>Agent "Hide Inbox tab in Trash/Drafts" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>**Status:** complete.
+
+- **Worktree:** `/home/exedev/email-os/.claude/worktrees/agent-a0dc9c617307ad062`
+- **Branch:** `worktree-agent-a0dc9c617307ad062`
+- **Commit:** `0012e35`
+- **Base:** the worktree started at `main` (4b58f66), which has no list contexts. I reset the branch to `impeccable/list-contexts` (763de08). The tree was clean, so nothing was lost.
+- **`node_modules`:** I symlinked it from the main checkout. It is untracked and not committed.
+
+**What changed**
+- `src/App.vue` has a new computed, `inboxSplitsShown`. It is `splitNavShown &amp;&amp; !remindersContext &amp;&amp; context !== 'trash' &amp;&amp; context !== 'drafts'`.
+- `nav "Inbox splits"` now uses it instead of `splitNavShown &amp;&amp; !remindersContext`. I reused the existing Reminders mechanism, so there is no new flag.
+- The comment above `splitNavShown` now says Trash and Drafts are lists of their own.
+- Inbox, Saved, Done, Starred and Search behave as before. `activeTabShown` and `splitCoverageShown` are unchanged.
+- The context h1 is the only title in Trash and Drafts. It is not `visually-hidden`, and the long names stay in the accessible description.
+- No CSS change was needed.
+
+**Files**
+- `/home/exedev/email-os/.claude/worktrees/agent-a0dc9c617307ad062/src/App.vue`
+- `/home/exedev/email-os/.claude/worktrees/agent-a0dc9c617307ad062/tests/list-context-header.test.ts` (new, 3 tests)
+
+**Changed assertions:** none. No existing test pinned the old header structure, so I changed no existing assertion.
+
+**New tests** (`tests/list-context-header.test.ts`)
+- **Inbox, Done, Starred:** the split nav is present, and `split-inbox` has `aria-current="page"` only in Inbox.
+- **Cached Trash:**
+  - The header has the visible h1 and no nav, no `split-inbox` and no `.split-count`.
+  - Esc from a Trash reader returns to the Trash row with focus. A second Esc returns to Inbox.
+  - The header Back button and the rail Inbox entry also return to Inbox, where `split-inbox` has `aria-current="page"`.
+- **Drafts:**
+  - The same header assertions pass.
+  - Esc from Drafts returns to Inbox on the previously current row, `conv-02`.
+  - The rail Inbox entry also returns to Inbox.
+- The existing `drafts.component` and `cached-trash.component` tests already cover Esc/Back in these contexts, and they still pass.
+
+**Checks** (all in the worktree)
+- `pnpm typecheck`: passed, both before and after the final edit.
+- `pnpm test`: 66 files passed, 4 skipped. 1054 tests passed, 33 skipped. The skipped files are the rendered tests, which were already skipped.
+- After the final restore edit I reran only `list-context-header` and `reminders.context`. 15 tests passed.
+- `pnpm build`: passed.
+
+**Verification** (vite on port 5203, 1280x800, plain browser preview)
+- **Before** (fix temporarily reverted): in Drafts the header showed `Drafts` plus an extra "Inbox 18" tab. `nav:true`, tabs `["Inbox 18"]`. Screenshot: `/home/exedev/.t3/userdata/browser-artifacts/browser-screenshot-localhost-mw86gl86-00eebb13.png`.
+- **After:** `nav:false`, no split tabs, h1 visible. Screenshot: `/home/exedev/.t3/userdata/browser-artifacts/browser-screenshot-localhost-mw86gqjn-fd805ab7.png`. An earlier after-capture, taken with the same fix, is at `/home/exedev/.t3/userdata/browser-artifacts/browser-screenshot-localhost-mw86gcol-3c7177a5.png`.
+- **Layout:** the Drafts h1 has `left` 90px. The Inbox h1 is at the same 90px, and the header height is 78px in both. Nothing shifts when the nav goes. The h1 uses the same `.header-tabs` flex line as Reminders, so it has the same inset.
+- **Cleanup:** the vite server (pid 1444723) is killed and the preview tab is closed.
+
+**Not done**
+- **Trash render:** I did not screenshot Trash. It needs Gmail-mode data, and I did not build a harness. The component test covers the Trash header and its Back routes.
+- **Reminders comparison:** the plain preview has no Reminders transport. I did not compare the Reminders inset in the browser, only by shared structure.
+
+**Doc-worthy for DESIGN.md**
+- In "Split Tabs", say that the Inbox split nav appears only in Inbox, Saved, Done, Starred and Search. Cached Trash and Drafts show the h1 alone. Reminders replaces the nav with its own tablist.
+- The routes back are the header Back, Esc and the rail Inbox entry.
+
+**Risk**
+- A future list context must be added to `inboxSplitsShown`, or it will show the Inbox tab again.</result>
+<usage><subagent_tokens>94196</subagent_tokens><tool_uses>40</tool_uses><duration_ms>383494</duration_ms></usage>
+<worktree><worktreePath>/home/exedev/email-os/.claude/worktrees/agent-a0dc9c617307ad062</worktreePath><worktreeBranch>worktree-agent-a0dc9c617307ad062</worktreeBranch></worktree>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a5f44572aa1f16bed</task-id>
+<tool-use-id>toolu_01KRodJXy2Q5PMZPA4rjvKyH</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-impeccable-drawer-panels/f985be7d-cba0-4fa8-a8b8-ec1d0f052dd4/tasks/a5f44572aa1f16bed.output</output-file>
+<status>completed</status>
+<summary>Agent "Reminders needs-attention state" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>**Status:** complete. Part of the brief (Retry) is not implemented, because no safe retry exists.
+
+- **Worktree:** `/home/exedev/email-os/.claude/worktrees/agent-a5f44572aa1f16bed`
+- **Branch:** `worktree-agent-a5f44572aa1f16bed`
+- **Commit:** `f619c95`. I did not push and did not open a PR.
+- **Base:** the worktree started on `main`. I reset this branch to `763de08`, the `impeccable/list-contexts` head. `RemindersList.vue` and `ContextRowList.vue` only exist there.
+
+## Implemented
+- **Tab count:** `counts.pending` in `src/composables/useReminders.ts` now counts only phase `pending` rows. Tab membership is unchanged. There is no DTO or backend change.
+- **Ordering:** `displayed` for the Pending tab lists failed rows first, then removing, returning and cancelling rows, then pending rows. The original order is kept inside each part.
+- **Caption:** I added an `attentionCount` computed and the `NEEDS_ATTENTION_LABEL` constant. The caption reads exactly `Needs attention 2` and appears only when that count is above zero.
+  - It is rendered by a new optional `groupCaption` prop on `ContextRowList.vue`. The prop emits an `li role="presentation"` in the same list, so J/K and arrows still move across it.
+  - Styling is a new `.context-group` rule in `src/assets/style.css`: Ash, 12px body type, 50px inset, 36px block, no rule.
+- **Failed note:** it now reads "A mailbox change failed or newer triage superseded it; which one is not recorded. Cancel does not override newer triage." The Coral tone is unchanged.
+
+## Decisions for you
+- **Returning and cancelling rows are in the group too.** You named only `failed` and `removing`. The Pending bucket also holds `returning` and `cancelling`. If they stayed in the list but not in "Pending N", they would be counted nowhere. The group is therefore every Pending-bucket row that is not phase `pending`. The rule is `needsAttention()` in `useReminders.ts` and is easy to narrow. Say so if you want it limited to failed and removing.
+- **Cause not named.** The `Reminder` DTO has only `phase`; the generated type shows no failure field. The Rust store (`store/reminders.rs`) sets `Failed` from two causes: a failed or cancelled operation, and "superseded". The wire data cannot tell them apart, so I did not guess. The note says the cause is not recorded.
+- **No Retry added.** `retryOrRefresh` replays the exact lost `put` or `cancel` request, which exists only while an unacknowledged request is held in memory. A `failed` reminder has no retained request, and the only backend actions are `put` and `cancel`. A re-put would be new backend behaviour, so I kept Cancel only. This was not verified against the Rust side.
+- **Pending rows have no label of their own.** They follow the group without a caption, as you specified. In the render they are still separated by their phase word, but there is no visual break between the two runs.
+
+## Tests
+Changed assertion (one):
+- **`tests/reminders.context.test.ts`:** the header tab text for pending, removing, failed, returned, cancelled, suppressed changed from `Pending 3` to `Pending 1`. This is the intended count change, and the 3 rows are still listed.
+
+Added:
+- **`tests/reminders.list.test.ts`**, a new `describe('Reminders Needs attention group')` with five tests:
+  - Order and caption: failed, then removing, then the two pending rows, under one caption "Needs attention 2". The caption is a `presentation` item and the 4 rows are still `listitem` with 4 `data-drawer-row`.
+  - Count: `{pending:1, returned:1, history:1}` with 5 rows displayed, and a group of 4 including returning and cancelling.
+  - No caption when nothing needs it, and none in the Returned or History tabs.
+  - A group with only a failed row, and the empty state hidden.
+  - The failed note text, its `tone-fault` class, Cancel as the only action, and its `aria-label`.
+- **`tests/useReminders.test.ts`:** a pending row that turns failed after a live refresh leaves the count but stays in the tab, with `attentionCount` 1.
+
+No other assertion changed. The existing 'Subject … Cancel does not override newer triage.' substring check still passes unmodified.
+
+## Checks
+- `pnpm typecheck`: passes.
+- `pnpm build`: passes.
+- `pnpm test`: 65 files passed, 4 skipped; 1057 tests passed, 33 skipped.
+
+## Verification
+I rendered it at 1280x800 in a throwaway harness on port 5201: pending, failed, pending with no due date, removing and returned rows. Before my change the tab read "Pending 4". After it reads "Pending 2", with "Needs attention 2" above Contract renewal (Failed), Invoice 1042 (Removing…), then the two pending rows.
+- **Before screenshot:** `/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-impeccable-drawer-panels/f985be7d-cba0-4fa8-a8b8-ec1d0f052dd4/scratchpad/reminders-before.png`
+- **After screenshot:** `/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-impeccable-drawer-panels/f985be7d-cba0-4fa8-a8b8-ec1d0f052dd4/scratchpad/reminders-after.png`
+
+I deleted the harness and killed vite by pid. The preview tab is closed and the tree is clean.
+
+## Files
+In `/home/exedev/email-os/.claude/worktrees/agent-a5f44572aa1f16bed`:
+- `src/composables/useReminders.ts`
+- `src/components/RemindersList.vue`
+- `src/components/ContextRowList.vue`
+- `src/assets/style.css`
+- `tests/reminders.list.test.ts`
+- `tests/reminders.context.test.ts`
+- `tests/useReminders.test.ts`
+
+I did not edit `App.vue`, `DESIGN.md` or `docs/`. The header tab reads `reminders.counts` unchanged.
+
+## For DESIGN.md (gap 19)
+- **Pending tab and count:** the Pending tab count is phase `pending` only. Failed, removing, returning and cancelling rows list first under a "Needs attention N" caption.
+- **Wording and the cause:** record the exact failed-note wording and that the failure cause is unknowable from the DTO. Record that no Retry exists, so a failed reminder offers only Cancel, and the reason.
+- **New Components entry:** the `ContextRowList` `groupCaption` / `.context-group` caption. Its rules are Ash, 12px, 50px inset, 36px block, a non-actionable `presentation` item, and no rule line.
+- **Tabs rule:** a tab count counts the calm rows. Rows that need attention are counted by their own caption.</result>
+<usage><subagent_tokens>119272</subagent_tokens><tool_uses>54</tool_uses><duration_ms>600423</duration_ms></usage>
+<worktree><worktreePath>/home/exedev/email-os/.claude/worktrees/agent-a5f44572aa1f16bed</worktreePath><worktreeBranch>worktree-agent-a5f44572aa1f16bed</worktreeBranch></worktree>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a4a211843072b7b2e</task-id>
+<tool-use-id>toolu_01YGt112fFYzarfG5gz2CXSx</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-impeccable-drawer-panels/f985be7d-cba0-4fa8-a8b8-ec1d0f052dd4/tasks/a4a211843072b7b2e.output</output-file>
+<status>completed</status>
+<summary>Agent "Drafts triage rows and discard" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>**Status: complete.** Worktree `/home/exedev/email-os/.claude/worktrees/agent-a4a211843072b7b2e`, branch `worktree-agent-a4a211843072b7b2e`, commit `773dfe9`. Nothing pushed, no PR.
+
+The worktree started on `main`, not `impeccable/list-contexts`. I reset my own branch to 763de08, the tip of `impeccable/list-contexts`, before any work. `node_modules` is a symlink to the main checkout and is not committed.
+
+## What changed
+
+- **Body preview.** `DraftSummary` has no body, so the summary list cannot show one. I read each body with the existing `getDraft` call instead. The new `src/composables/useDraftPreviews.ts` reads each body once per revision. It collapses whitespace and control characters, caps the text at 240 characters, and renders it only as a text node. If a read fails, that row shows nothing. An empty body shows "No text yet" in Ash.
+- **Empty subject.** `DraftsList` already shows "(no subject)", so I left it unchanged. The brief's "shared row shows blank" does not match this branch. Inbox rows are untouched.
+- **Visible fallback reason.** The Amber notice now reads "Source conversation unavailable: &lt;reason&gt;. Editing locally; nothing is sent." The full sentence stays in the title, and long reasons wrap rather than clip. `src/lib/reply-context.ts` now holds one `REPLY_REASONS` table (sentence plus terse label), plus `sourceLoadErrorReason` and `replyReasonLabel`. The labels are: no latest message, retained snapshot, incomplete cached conversation, reply headers do not match the latest message, belongs to another account, not open, still loading, and "could not be loaded: &lt;word&gt;". An unknown sentence is shown as written.
+- **Row Discard.** The button uses the Reminders row-action pattern: a `drawer-quiet` ghost, 24px high, Tab-reachable, and visible on the current, hovered or focused row. It opens a confirmation under the row with the editor's wording: "Discard this local draft? This cannot be undone." / "Confirm discard" / "Keep draft". Escape cancels the confirmation only.
+  - On success the list refreshes, a polite live region says "Local draft deleted", and focus moves to the next row, else the previous one, else the pane.
+  - On failure the draft stays and an alert shows "Draft not discarded: …". For a retryable error the confirmation stays open and a retry reuses the same request id. Definite rejections (conflict, not found) close the confirmation and return focus to Discard.
+  - Discard is disabled when the draft is open in the editor or the editor is busy.
+- **Extras.** `src/lib/draft-errors.ts` gained `describeDiscardError` and `isDefiniteDiscardFailure`. In `src/assets/style.css` I added the preview, status and confirmation styles, and reserved the Reply word's width on every row so Discard sits in one column. I found this misalignment while rendering.
+
+## Files changed
+
+- **Source:** `src/components/DraftsList.vue`, `src/components/ComposeCard.vue`, `src/composables/useDraftPreviews.ts` (new), `src/composables/useDrafts.ts`, `src/lib/reply-context.ts`, `src/lib/draft-errors.ts`, `src/assets/style.css`
+- **Tests:** `tests/drafts-list.component.test.ts`, `tests/drafts.context.test.ts`, `tests/compose-card.component.test.ts`, `tests/reply-composer.component.test.ts`, `tests/drafts.component.test.ts`
+
+## What I touched in `src/App.vue`
+
+1. The import line for `reply-context` now brings in `REPLY_REASONS` and `sourceLoadErrorReason`.
+2. In `replyHostBlock`, the four inline reason strings now use those constants. The wording is identical.
+3. On `&lt;DraftsList&gt;`, two new props: `:load-body="async (ref) =&gt; (await props.client.getDraft(ref)).content.bodyText"` and `:discard-draft="drafts.discardListed"`.
+
+## Changed assertions
+
+- `tests/reply-composer.component.test.ts:303` expected "Source conversation unavailable. Editing locally; nothing is sent." and now expects "Source conversation unavailable: not open. Editing locally; nothing is sent."
+- `tests/drafts.context.test.ts`: the `NOTICE` constant became `notice(label)`, and `expectEditableInCard` takes a `label` argument.
+  - The "could not be loaded" case expects `could not be loaded: not found`.
+  - The "incomplete" case expects `incomplete cached conversation`.
+  - The title `toMatch(reason)` checks and the role check are unchanged.
+- `tests/drafts.component.test.ts`, "ignores a late draft load after the active account changes": the list now reads each body once when it mounts, which would be counted as the first `getDraft`. I added an `armed` flag set after mount so only the opening read is held back and counted. The `reads` assertion is unchanged.
+- **Added:**
+  - `drafts-list.component.test.ts`: 17 new tests covering preview rendering, truncation, HTML-looking text staying literal, the empty placeholder, one read per revision, and the Discard confirm, cancel, failure, retry, focus and disabled cases.
+  - `drafts.context.test.ts`: 3 tests that run through the real fake client.
+  - `compose-card.component.test.ts`: one case per reason code, plus unknown reasons and no notice.
+  - `drafts.context.test.ts`: one added visible-text assertion for the other-account reason.
+
+## Checks
+
+- `pnpm typecheck` passes.
+- `pnpm test` passes: 65 files and 1080 tests, with 4 files and 33 tests skipped as before.
+- `pnpm build` passes.
+
+## Rendering
+
+I ran vite on port 5202 at 1280x800 and created two new drafts to the same recipient plus a reply draft. I then discarded one draft: the confirmation appeared, "Local draft deleted" was announced, and focus moved to the next row's open button. The server (pids 1455664 and 1455653) is killed and the tab is closed. I did not exercise the failure path in the browser; the tests cover it.
+
+- Drafts list with previews: `/home/exedev/.t3/userdata/browser-artifacts/browser-screenshot-127-0-0-1-mw86wys9-483aaa9b.png`
+- Discard confirmation: `/home/exedev/.t3/userdata/browser-artifacts/browser-screenshot-127-0-0-1-mw86xgoj-8b260a17.png`
+- After discard, with the status line and focus on the next row: `/home/exedev/.t3/userdata/browser-artifacts/browser-screenshot-127-0-0-1-mw86xlyx-4d58407a.png`
+
+The list screenshot predates the Reply-width fix, so its Discard column is misaligned. The other two show the fix.
+
+## Rejected or deviated
+
+- **A second discard implementation.** The brief said to reuse the existing discard path. That path (`askDiscard`, `discard`, `sendDelete`) acts on the open editor buffer and calls `clearEditor`, so it cannot serve a list row without opening the editor. I added `useDrafts.discardListed`. It sends the same revision-checked `DeleteDraft` through the same `client.deleteDraft` call, refreshes the list before it resolves, and refuses a draft that is open in the editor. The confirmation wording and test-id style match the editor's.
+- **A new `bodyPreview` field on `DraftSummary`.** This would be a Rust DTO and generated-type change, which is backend behaviour. It would remove the per-row `getDraft` reads, so it is a cleaner follow-up for you to decide on.
+- **Escape inside the confirmation.** This is a small scoped handler, the same pattern as the Reminders picker, so Escape does not also trigger the app's Back. It is not a row-action shortcut.
+
+## Worth adding to DESIGN.md
+
+- Drafts rows have a body preview (Ash, same line as the subject, "No text yet" when empty). It comes from `getDraft`, one read per revision.
+- The row action `Discard`, its confirmation line, and the focus handoff rule.
+- The `Discard` column is fixed by reserving the Reply word's width.
+- The compose-card Amber notice carries its terse reason, with the labels listed above.
+- The "Drafts (phase 3)" row description should add the preview, `Discard` and the status line.</result>
+<usage><subagent_tokens>208001</subagent_tokens><tool_uses>105</tool_uses><duration_ms>1278786</duration_ms></usage>
+<worktree><worktreePath>/home/exedev/email-os/.claude/worktrees/agent-a4a211843072b7b2e</worktreePath><worktreeBranch>worktree-agent-a4a211843072b7b2e</worktreeBranch></worktree>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a7e99ca8c2f70d76d</task-id>
+<tool-use-id>toolu_01HHvWdaTjDVRAie2Bn5Zhx9</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-impeccable-drawer-panels/f985be7d-cba0-4fa8-a8b8-ec1d0f052dd4/tasks/a7e99ca8c2f70d76d.output</output-file>
+<status>completed</status>
+<summary>Agent "Keyboard reach for list contexts" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>**Status:** complete. Commit `a322156869de3b9fb3490c324ffacd21a1182cf3` on `impeccable/list-contexts`. Not pushed, no PR, and the working tree is clean.
+
+## Final key map
+
+| Key | Where | Action |
+|---|---|---|
+| `G` then `T` | any list or row, when the Trash rail item exists | Go to cached Trash (navigation only) |
+| `G` then `D` | any list or row, always | Go to Drafts |
+| `G` then `E` / `G` then `H` | unchanged | Done / Reminders |
+| `[` / `]` | Reminders list, focus on a row, the pane or body | previous / next tab |
+| `H` | focused Reminders row, phase `pending` | open Reschedule |
+| `Shift+H` | focused Reminders row, phase removing, pending, returning or failed | Cancel reminder (immediate, as before) |
+| `Delete` or `Backspace` | focused Drafts row | open the Discard confirmation only |
+
+- **`G T` and `G D`:** neither letter was in use as a second key, and plain `t` and `d` have no meaning. Availability uses the same `actionAvailable` rules as the palette and rail. The hint reads, for example, "Press E for Done, T for Trash or D for Drafts, Escape to cancel." and only lists available keys.
+- **`[` / `]`:** no global meaning existed. They wrap, like the tablist arrows. Focus goes to the new tab's first row, or to the pane when the tab is empty. The old remembered row is dropped on the switch.
+- **Tab announcement:** a new always-mounted polite status line announces the tab and counts, for example "Returned, 1 reminder". It uses the same numbers as the tab, so a Pending tab with a failed row reads "Pending, 2 reminders. Needs attention 1".
+- **`H` and `Shift+H`:** `H` already means "Remind me" in the Inbox, and `Shift+E` is the inverse of `E`. So `H` reschedules and `Shift+H` removes. `Shift+H` is deliberate, so it is a safer immediate cancel than a bare Delete.
+- **`Delete` / `Backspace`:** the Inbox has no delete or `#` key, so I used the platform convention. It only opens the confirmation, which keeps its own Enter and Esc behaviour.
+- **Row keys only fire when the row's own button has focus.** They are ignored in editable targets, during IME composition, with Ctrl/Meta/Alt, with auto-repeat, from the picker or the confirmation buttons, and from the Reschedule or Cancel buttons. Unsupported rows ignore them with no feedback.
+- **Key display:** `aria-keyshortcuts` and a title suffix on Reschedule, Cancel and Discard. The palette "Keys" section lists the new keys only while that context is showing. The palette and rail now show `G then T` and `G then D`. There is no new visual hint.
+- **Cancel focus fix:** after a keyboard Cancel removes the focused row, focus moves to the next row, else the previous one, else the pane. Without this focus fell to `&lt;body&gt;`, where row keys stop working. It does not steal focus if you moved it elsewhere first.
+- **Trash:** it has no new mutating keys. A test confirms `Delete`, `Backspace`, `h`, `H`, `[` and `]` do nothing there.
+
+## Files changed
+All under `/home/exedev/.t3/worktrees/email-os/impeccable-drawer-panels/`:
+- `src/App.vue`
+- `src/components/RemindersList.vue`
+- `src/components/DraftsList.vue`
+- `src/components/ActionOverlay.vue`
+- `src/composables/useReminders.ts` (adds `stepDestination`, `tabAnnouncement`)
+- `src/lib/action-palette.ts`
+- `src/lib/browsing-actions.ts`
+- `tests/list-context-keys.test.ts` (new, 30 tests)
+- `tests/reminders.component.test.ts`
+- `tests/reminders.context.test.ts`
+- `tests/cached-trash.component.test.ts`
+
+## Changed assertions (no assertion weakened)
+1. `tests/reminders.component.test.ts` (~l.82): Cancel title is now `'Cancel and restore original inbox messages — Shift+H'`.
+2. `tests/cached-trash.component.test.ts` (l.91): rail-trash title is now `'Go to cached Trash (read only) — G then T (within 1 second)'`.
+3. `tests/reminders.context.test.ts` ("mailbox shortcuts do nothing in the Reminders list"): I removed `['h', {}]` from the keys that must do nothing. `H` is now Reschedule. The same test still asserts no picker opens for the other keys, and the new tests cover `H`.
+
+## New assertions
+`tests/list-context-keys.test.ts` has tests for each of these:
+- **Chords:**
+  - G T, G D, and chaining from a row.
+  - Unavailable T without the Trash rail item.
+  - Ignored in editable targets, with a modifier and during IME composition.
+  - Three hint-text variants.
+  - Palette and rail titles.
+- **Trash:** it stays read-only.
+- **`[` / `]`:**
+  - Wrap, focus handoff and status text.
+  - Tablist arrows, Home and End unchanged.
+  - Ignored in the picker, in inputs, with modifiers, during IME and on auto-repeat.
+  - No-op in the Inbox.
+- **`H` / `Shift+H`:**
+  - Act on the focused row only.
+  - Cancel is immediate, with no confirmation.
+  - Focus handoff after cancel.
+  - Ignored for returned, history and returning rows.
+  - Ignored with modifiers, IME, repeat, from a row button and from the picker.
+  - G H does not reschedule.
+  - Palette hints.
+- **Drafts `Delete` / `Backspace`:**
+  - Open the confirmation for the focused row only, with nothing deleted.
+  - Esc and Enter inside the confirmation behave as for the button.
+  - Ignored with Shift, modifiers, IME and repeat, and outside a row.
+  - Handler-level rules for a draft open in the editor, no discard handler and a busy list.
+
+## Verification
+- `pnpm build` passed (it includes `vue-tsc`, the same check as `pnpm typecheck`).
+- `pnpm test` passed: 67 files and 1119 tests passed; 4 files and 33 tests were skipped, as before.
+- Render check at 1280x800 on port 5204 with a throwaway harness. I deleted the harness, killed the server by pid and closed the tab. Observed:
+  - The hint reads "E for Done, D for Drafts or H for Reminders" in fixture mode and "E for Done, T for Trash or D for Drafts" in Gmail mode.
+  - `G D` opens Drafts and `G H` opens Reminders; `G T` opens Trash, and `Delete` there is not prevented.
+  - Drafts `Delete` opens one confirmation on the second row with focus on "Confirm discard".
+  - `]` goes Returned, then History (focus on the pane), then wraps to Pending.
+  - `H` opens Reschedule for the second row, and `Shift+H` cancelled that row with focus moving to the next one.
+- Screenshots (`/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-impeccable-drawer-panels/f985be7d-cba0-4fa8-a8b8-ec1d0f052dd4/scratchpad/shots/`):
+  - `g-hint-armed.png` shows only "g…" in the header, because the full sentence is visually hidden.
+  - `drafts-delete-confirm.png`
+  - `reminders-after-shift-h.png`
+
+## Rejected
+- **A second `h` handler inside the row component:** it would run before the app's G-chord logic, so `G H` on a Reminders row would have opened Reschedule. I handle everything in `App.vue` instead.
+- **A confirmation for Cancel:** you asked to keep it immediate.
+- **`#`, Shift+Delete or visible Ash `kbd` hints on rows:** these add noise without a matching Inbox convention.
+
+## Not verified and caveats
+- **Chord window:** the code uses 1500 ms plus a 600 ms grace period, not 1 second. The palette text "within 1 second" was already wrong and I left it alone. You may want to fix it or DESIGN.md.
+- **Non-US layouts:** `[` and `]` need AltGr on layouts such as German, and the app ignores Alt/Ctrl. Those users still have the tablist arrows. A fallback key is a product decision.
+- **Tab key:** Tab still moves between buttons in Reminders, unlike the Inbox. `[` / `]` give the list-side path, but I did not change Tab.
+- **Not checked:** native or WKWebView behaviour, VoiceOver, and the failed-cancel path with a real delay. The "Keys" palette section still shows Inbox-only `J/K` and `X` hints in these contexts, as before.</result>
+<usage><subagent_tokens>186151</subagent_tokens><tool_uses>63</tool_uses><duration_ms>864589</duration_ms></usage>
+</task-notification>
