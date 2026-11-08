@@ -1,0 +1,404 @@
+/**
+ * Reader design pass: one status line instead of standing paragraphs, trailing
+ * quote and signature disclosure, and inline attachment rows. Message content
+ * stays literal text throughout.
+ */
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
+import { nextTick } from 'vue';
+import ReaderView from '../src/components/ReaderView.vue';
+import type { Conversation, ConversationRef, MailClient } from '../src/lib/ipc/client';
+import type { AttachmentDescriptor } from '../src/lib/ipc/generated';
+import { deferred } from './helpers';
+
+const ACCOUNT = 'account-a';
+const ref = (conversationId: string): ConversationRef => ({ accountId: ACCOUNT, conversationId });
+
+function message(id: string, bodyText = `Body of ${id}.`, extra: Record<string, unknown> = {}) {
+  return {
+    id,
+    from: { displayName: 'Ada Fixture', mailbox: 'ada@example.test' },
+    to: [{ displayName: 'You', mailbox: 'you@example.test' }],
+    sentAt: '2026-02-02T09:00:00Z',
+    bodyText,
+    ...extra,
+  };
+}
+
+function conversationOf(conversationId: string, messages: ReturnType<typeof message>[], extra: Partial<Conversation> = {}): Conversation {
+  return {
+    ref: ref(conversationId),
+    subject: `Subject ${conversationId}`,
+    messages,
+    isInInbox: true,
+    pendingOperationId: null,
+    ...extra,
+  };
+}
+
+let wrapper: VueWrapper | null = null;
+afterEach(() => { wrapper?.unmount(); wrapper = null; document.body.innerHTML = ''; });
+
+function mountReader(conversation: Conversation, props: Record<string, unknown> = {}): VueWrapper {
+  wrapper = mount(ReaderView, {
+    props: { conversation, state: 'ready', error: null, commandInFlight: false, openRef: conversation.ref, ...props },
+    attachTo: document.body,
+  });
+  return wrapper;
+}
+
+async function settle(): Promise<void> {
+  await flushPromises();
+  await nextTick();
+  await flushPromises();
+}
+
+async function show(w: VueWrapper, conversation: Conversation): Promise<void> {
+  await w.setProps({ conversation, openRef: conversation.ref, state: 'ready' });
+  await settle();
+}
+
+describe('reader status line and exceptions', () => {
+  const ONE_LINE_AUTO = 'Opening this conversation does not change read state; use an explicit read control.';
+  const ONE_LINE_RO = 'Read-only Gmail view: messages are never marked as read. Opening this conversation does not change read state.';
+
+  it('replaces the explicit-read-control paragraph with one status line: title and hidden text, exact read-state word', async () => {
+    const w = mountReader(conversationOf('c1', [message('m1')], { isRead: false }), { showReadControls: true });
+    await settle();
+    const line = w.get('[data-test="reader-no-auto-read"]');
+    expect(line.element.closest('[data-test="reader-meta-row"]')).not.toBeNull();
+    expect(line.element.tagName).toBe('SPAN');
+    expect(line.attributes('title')).toBe(ONE_LINE_AUTO);
+    expect(w.get('[data-test="reader-status-detail"]').text()).toBe(ONE_LINE_AUTO);
+    expect(w.get('[data-test="reader-status-detail"]').classes()).toContain('visually-hidden');
+    expect(w.get('[data-test="reader-read-state"]').text()).toBe('Unread');
+    // The sentence is no longer a visible paragraph.
+    expect(w.find('p.reader-readonly').exists()).toBe(false);
+    expect(w.findAll('p').some((p) => p.text().includes(ONE_LINE_AUTO))).toBe(false);
+  });
+
+  it('shows Read-only and the read state in the same line for a read-only view', async () => {
+    const w = mountReader(conversationOf('c1', [message('m1')], { isRead: true }), { readOnly: true });
+    await settle();
+    const line = w.get('[data-test="reader-readonly"]');
+    expect(line.element.tagName).toBe('SPAN');
+    expect(line.get('[data-test="reader-status-word"]').text()).toBe('Read-only');
+    expect(line.get('[data-test="reader-read-state"]').text()).toBe('Read');
+    expect(line.attributes('title')).toBe(ONE_LINE_RO);
+    expect(line.get('[data-test="reader-status-detail"]').text()).toBe(ONE_LINE_RO);
+    expect(w.find('p.reader-readonly').exists()).toBe(false);
+    expect(w.find('[data-test="reader-no-auto-read"]').exists()).toBe(false);
+  });
+
+  it('keeps one Cached Trash line without the read-state sentence', async () => {
+    const w = mountReader(conversationOf('c1', [message('m1')], { isRead: true }), { readOnly: true, browsingOnly: true });
+    await settle();
+    const notes = w.findAll('p.reader-readonly');
+    expect(notes).toHaveLength(1);
+    expect(notes[0]!.text()).toBe('Cached Trash — read only. Recovery is not available here; use your provider client.');
+    expect(w.find('[data-test="reader-readonly"]').exists()).toBe(false);
+  });
+
+  it('adds nothing under the subject for a plain conversation without exceptions', async () => {
+    const w = mountReader(conversationOf('c1', [message('m1')], { isRead: true }));
+    await settle();
+    expect(w.find('[data-test="reader-meta-row"]').exists()).toBe(false);
+    expect(w.findAll('.reader-scroll p')).toHaveLength(0);
+  });
+
+  it('shows every exception once, inline, with unchanged wording', async () => {
+    const w = mountReader(
+      conversationOf('c1', [message('m1')], {
+        isRead: false,
+        stars: { starredMessages: 1, knownMessages: 1, totalMessages: 2 },
+        retainedSnapshotAt: '2025-02-03T04:05:06Z',
+        unsupportedReason: 'attachments omitted',
+        contextComplete: false,
+        pendingOperationId: 'op-1',
+      }),
+      { showReadControls: true },
+    );
+    await settle();
+    for (const hook of ['reader-stars', 'reply-blocked', 'retained-snapshot-notice', 'unsupported-notice', 'reader-pending', 'reader-no-auto-read']) {
+      expect(w.findAll(`[data-test="${hook}"]`), hook).toHaveLength(1);
+    }
+    // The incomplete-context notice is the else-branch of the unsupported notice.
+    expect(w.find('[data-test="context-incomplete"]').exists()).toBe(false);
+    expect(w.get('[data-test="unsupported-notice"]').text()).toBe('Some content is not shown: attachments omitted');
+    expect(w.get('[data-test="reader-pending"]').text()).toBe('A mailbox action is pending for this conversation.');
+    // Exactly the four exception paragraphs plus the star line: no standing sentences.
+    expect(w.findAll('.reader-scroll > p')).toHaveLength(5);
+  });
+
+  it('marks the bare loading line as a status without changing its text', async () => {
+    wrapper = mount(ReaderView, {
+      props: { conversation: null, state: 'loading', error: null, commandInFlight: false, openRef: ref('c1') },
+      attachTo: document.body,
+    });
+    const line = wrapper.get('[data-test="reader-loading"]');
+    expect(line.text()).toBe('Loading conversation…');
+    expect(line.attributes('role')).toBe('status');
+  });
+});
+
+describe('trailing quote and signature', () => {
+  const QUOTED = 'On Thu, Ada wrote:\n> can we ship?\n> <img src=x onerror="alert(1)">';
+  const BODY = `Shipping Friday.\n\n${QUOTED}`;
+
+  it('hides a trailing quote behind a real toggle and shows it as literal text', async () => {
+    const w = mountReader(conversationOf('c1', [message('m1', BODY)]));
+    await settle();
+    expect(w.get('[data-test="message-body"]').text()).toBe('Shipping Friday.');
+    expect(w.get('[data-test="message-body"]').classes()).not.toContain('message-body-mono');
+    expect(w.find('[data-test="message-quoted"]').exists()).toBe(false);
+    const toggle = w.get('[data-test="message-quote-toggle-m1"]');
+    expect(toggle.element.tagName).toBe('BUTTON');
+    expect(toggle.attributes('type')).toBe('button');
+    expect(toggle.text()).toBe('Show quoted text');
+    expect(toggle.attributes('aria-expanded')).toBe('false');
+
+    await toggle.trigger('click');
+    expect(toggle.text()).toBe('Hide quoted text');
+    expect(toggle.attributes('aria-expanded')).toBe('true');
+    const quoted = w.get('[data-test="message-quoted"]');
+    expect(toggle.attributes('aria-controls')).toBe(quoted.attributes('id'));
+    expect(quoted.text()).toBe(QUOTED);
+    expect(quoted.find('img').exists()).toBe(false);
+    expect(w.get('.reader-scroll').find('img').exists()).toBe(false);
+
+    await toggle.trigger('click');
+    expect(w.find('[data-test="message-quoted"]').exists()).toBe(false);
+    expect(toggle.attributes('aria-controls')).toBeUndefined();
+  });
+
+  it('renders the signature below the prose without a toggle, in its own block', async () => {
+    const w = mountReader(conversationOf('c1', [message('m1', 'Thanks.\n-- \nAda\nExample Co')]));
+    await settle();
+    expect(w.get('[data-test="message-body"]').text()).toBe('Thanks.');
+    expect(w.get('[data-test="message-signature"]').text()).toBe('-- \nAda\nExample Co');
+    expect(w.find('[data-test="message-quote-toggle-m1"]').exists()).toBe(false);
+  });
+
+  it('leaves a body without a trailing quote or signature exactly as before (and its interleaved quote mono)', async () => {
+    const plain = 'Hi,\n\nThanks > nothing.\n\nAda';
+    const inline = '> Are we on?\nYes.\n> And Friday?\nAlso yes.';
+    const w = mountReader(conversationOf('c1', [message('m1', plain), message('m2', inline)]));
+    await settle();
+    const bodies = w.findAll('[data-test="message-body"]');
+    expect(bodies[0]!.text()).toBe(plain);
+    expect(bodies[1]!.text()).toBe(inline);
+    expect(bodies[1]!.classes()).toContain('message-body-mono');
+    expect(w.find('.message-quote-toggle').exists()).toBe(false);
+    expect(w.find('[data-test="message-signature"]').exists()).toBe(false);
+  });
+
+  it('previews the prose, not the quote, in a collapsed row', async () => {
+    const w = mountReader(conversationOf('c1', [message('m1', BODY), message('m2')]));
+    await settle();
+    expect(w.get('[data-test="message-toggle-m1"]').get('.message-snippet').text()).toBe('Shipping Friday.');
+    expect(w.get('[data-test="message-quote-toggle-m1"]').attributes('hidden')).toBeDefined();
+  });
+
+  it('keeps the disclosure open across a J/K round trip', async () => {
+    const first = conversationOf('c1', [message('m1', BODY)]);
+    const neighbor = conversationOf('c2', [message('n1')]);
+    const w = mountReader(first);
+    await settle();
+    await w.get('[data-test="message-quote-toggle-m1"]').trigger('click');
+    expect(w.find('[data-test="message-quoted"]').exists()).toBe(true);
+    await show(w, neighbor);
+    await show(w, first);
+    expect(w.get('[data-test="message-quote-toggle-m1"]').attributes('aria-expanded')).toBe('true');
+    expect(w.get('[data-test="message-quoted"]').text()).toBe(QUOTED);
+  });
+});
+
+describe('inline attachments', () => {
+  const FILE: AttachmentDescriptor = { messageId: 'm1', attachmentId: 'a1', filename: 'example.txt', mimeType: 'text/plain', size: 27 };
+
+  function stubClient(files: AttachmentDescriptor[] | Promise<AttachmentDescriptor[]> = [FILE]) {
+    return {
+      listAttachments: vi.fn(() => Promise.resolve(files)),
+      saveAttachment: vi.fn(() => Promise.resolve({ filename: 'example.txt.download' })),
+      cancelAttachment: vi.fn(() => Promise.resolve()),
+    };
+  }
+  const asClient = (stub: ReturnType<typeof stubClient>) => stub as unknown as MailClient;
+  const withFile = (id = 'c1') => conversationOf(id, [message('m1', 'Body', { hasAttachment: true })]);
+
+  it('lists a known file with a human size, type and a Save button, loading once per conversation', async () => {
+    const client = stubClient();
+    const first = withFile();
+    const neighbor = conversationOf('c2', [message('n1', 'Body', { hasAttachment: false })]);
+    const w = mountReader(first, { client: asClient(client) });
+    await settle();
+    const row = w.get('[data-test="attachment-a1"]');
+    expect(row.text()).toContain('example.txt');
+    expect(row.text()).toContain('27 B · text/plain');
+    const save = row.get('[data-test="attachment-save"]');
+    expect(save.text()).toBe('Save');
+    expect(save.attributes('aria-label')).toBe('Save example.txt');
+    expect(client.listAttachments).toHaveBeenCalledExactlyOnceWith(first.ref);
+    expect(client.saveAttachment).not.toHaveBeenCalled();
+    // J/K to a conversation with no claim, and back: still one fetch, nothing refetched.
+    await show(w, neighbor);
+    expect(w.find('[data-test="message-attachments-n1"]').exists()).toBe(false);
+    await show(w, first);
+    expect(w.find('[data-test="attachment-a1"]').exists()).toBe(true);
+    expect(client.listAttachments).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows nothing and never fetches for hasAttachment false or unknown, and without a client', async () => {
+    const client = stubClient();
+    const none = conversationOf('c1', [message('m1', 'Body', { hasAttachment: false }), message('m2')]);
+    const w = mountReader(none, { client: asClient(client) });
+    await settle();
+    expect(w.find('[data-test="message-attachments-m1"]').exists()).toBe(false);
+    expect(w.find('[data-test="message-attachments-m2"]').exists()).toBe(false);
+    expect(client.listAttachments).not.toHaveBeenCalled();
+    w.unmount();
+    const plain = mountReader(withFile());
+    await settle();
+    expect(plain.find('.message-attachments').exists()).toBe(false);
+  });
+
+  it('saves on request and reports exactly what happened, including the preview wording', async () => {
+    const client = stubClient();
+    const w = mountReader(withFile(), { client: asClient(client) });
+    await settle();
+    await w.get('[data-test="attachment-save"]').trigger('click');
+    await settle();
+    expect(client.saveAttachment).toHaveBeenCalledWith({ conversation: ref('c1'), messageId: 'm1', attachmentId: 'a1', requestId: expect.any(String) });
+    const status = w.get('[data-test="attachment-status"]');
+    expect(status.text()).toBe('Saved to Downloads as example.txt.download. No file was opened.');
+    expect(status.attributes('role')).toBe('status');
+    w.unmount();
+
+    const previewClient = stubClient();
+    const preview = mountReader(withFile(), { client: asClient(previewClient), preview: true });
+    await settle();
+    await preview.get('[data-test="attachment-save"]').trigger('click');
+    await settle();
+    expect(preview.get('[data-test="attachment-status"]').text()).toBe('Modelled save in preview memory only; no file was written.');
+  });
+
+  it('shows a failed save as an alert with the chooser wording and allows an explicit retry', async () => {
+    const client = stubClient();
+    client.saveAttachment.mockRejectedValueOnce({ kind: 'network_unavailable' });
+    const w = mountReader(withFile(), { client: asClient(client) });
+    await settle();
+    await w.get('[data-test="attachment-save"]').trigger('click');
+    await settle();
+    const alert = w.get('[data-test="attachment-error"]');
+    expect(alert.attributes('role')).toBe('alert');
+    expect(alert.text()).toContain('File not saved: unavailable offline, missing, cancelled, too large, or invalid content.');
+    expect(w.find('[data-test="attachment-status"]').exists()).toBe(false);
+    await w.get('[data-test="attachment-save"]').trigger('click');
+    await settle();
+    expect(client.saveAttachment).toHaveBeenCalledTimes(2);
+    expect(w.find('[data-test="attachment-error"]').exists()).toBe(false);
+  });
+
+  it('shows Saving… with Cancel while transferring, disables other saves, and requests cancellation', async () => {
+    const second: AttachmentDescriptor = { ...FILE, attachmentId: 'a2', filename: 'b.txt' };
+    const client = stubClient([FILE, second]);
+    const transfer = deferred<{ filename: string }>();
+    client.saveAttachment.mockReturnValueOnce(transfer.promise as never);
+    const w = mountReader(withFile(), { client: asClient(client) });
+    await settle();
+    await w.get('[data-test="attachment-a1"] [data-test="attachment-save"]').trigger('click');
+    await settle();
+    const request = (client.saveAttachment.mock.calls[0] as unknown as [{ requestId: string }])[0];
+    expect(w.get('[data-test="attachment-a1"]').text()).toContain('Saving…');
+    expect(w.get('[data-test="attachment-a2"] [data-test="attachment-save"]').attributes('disabled')).toBeDefined();
+    await w.get('[data-test="attachment-cancel"]').trigger('click');
+    await settle();
+    expect(client.cancelAttachment).toHaveBeenCalledWith(request.requestId);
+    expect(w.get('[data-test="attachment-status"]').text()).toBe('Cancellation requested; waiting for transfer to stop.');
+    transfer.reject({ kind: 'cancelled' });
+    await settle();
+    expect(w.find('[data-test="attachment-saving"]').exists()).toBe(false);
+    expect(w.get('[data-test="attachment-a1"] [data-test="attachment-save"]').attributes('disabled')).toBeUndefined();
+  });
+
+  it('cancels an in-flight transfer when the conversation changes or the reader closes', async () => {
+    const client = stubClient();
+    client.saveAttachment.mockReturnValue(new Promise(() => {}) as never);
+    const first = withFile();
+    const w = mountReader(first, { client: asClient(client) });
+    await settle();
+    await w.get('[data-test="attachment-save"]').trigger('click');
+    await settle();
+    await show(w, conversationOf('c2', [message('n1')]));
+    expect(client.cancelAttachment).toHaveBeenCalledTimes(1);
+    w.unmount();
+    wrapper = null;
+  });
+
+  it('refuses files over 5 MB and disables saving for a retained snapshot', async () => {
+    const big: AttachmentDescriptor = { ...FILE, attachmentId: 'big', filename: 'big.bin', mimeType: 'application/octet-stream', size: 6 * 1024 * 1024 };
+    const client = stubClient([FILE, big]);
+    const w = mountReader({ ...withFile(), retainedSnapshotAt: '2025-02-03T04:05:06Z' }, { client: asClient(client) });
+    await settle();
+    expect(w.get('[data-test="attachment-big"]').text()).toContain('6.0 MB · application/octet-stream');
+    expect(w.get('[data-test="attachment-big"]').text()).toContain('Over the 5 MB limit; cannot download.');
+    expect(w.find('[data-test="attachment-big"] [data-test="attachment-save"]').exists()).toBe(false);
+    const save = w.get('[data-test="attachment-a1"] [data-test="attachment-save"]');
+    expect(save.attributes('disabled')).toBeDefined();
+    expect(save.attributes('title')).toContain('unavailable');
+    await save.trigger('click');
+    expect(client.saveAttachment).not.toHaveBeenCalled();
+  });
+
+  it('says so plainly when a message claims files but none are cached, and when the list cannot load', async () => {
+    const client = stubClient([]);
+    const w = mountReader(withFile(), { client: asClient(client) });
+    await settle();
+    expect(w.get('[data-test="attachments-not-cached"]').text()).toBe('Attachment details are not cached. Sync to fetch.');
+    w.unmount();
+
+    const failing = stubClient();
+    failing.listAttachments.mockRejectedValue({ kind: 'storage_unavailable' });
+    const failed = mountReader(withFile(), { client: asClient(failing) });
+    await settle();
+    expect(failed.get('[data-test="attachments-load-error"]').text()).toBe('Could not load file details.');
+    expect(failed.get('.reader-scroll').text()).toContain('Body');
+  });
+
+  it('ignores a late response for a conversation that is no longer displayed', async () => {
+    const late = deferred<AttachmentDescriptor[]>();
+    const client = stubClient();
+    const forB: AttachmentDescriptor = { messageId: 'n1', attachmentId: 'b1', filename: 'for-b.txt', mimeType: 'text/plain', size: 5 };
+    client.listAttachments.mockImplementation(((target: ConversationRef) =>
+      (target.conversationId === 'c1' ? late.promise : Promise.resolve([forB]))) as never);
+    const a = withFile('c1');
+    const b = conversationOf('c2', [message('n1', 'Body', { hasAttachment: true })]);
+    const w = mountReader(a, { client: asClient(client) });
+    await settle();
+    await show(w, b);
+    expect(w.get('[data-test="attachment-b1"]').text()).toContain('for-b.txt');
+    late.resolve([FILE]);
+    await settle();
+    // A's late list must not appear on B.
+    expect(w.find('[data-test="attachment-a1"]').exists()).toBe(false);
+    expect(w.get('[data-test="attachment-b1"]').text()).toContain('for-b.txt');
+    // It is kept for A, so the revisit shows it without another fetch.
+    await show(w, a);
+    expect(w.get('[data-test="attachment-a1"]').text()).toContain('example.txt');
+    expect(client.listAttachments).toHaveBeenCalledTimes(2);
+  });
+
+  it('renders file names as literal text and only inside expanded messages', async () => {
+    const hostile: AttachmentDescriptor = { ...FILE, filename: '<img src=x onerror=alert(1)>.txt' };
+    const client = stubClient([hostile, { ...FILE, messageId: 'm0', attachmentId: 'old', filename: 'older.txt' }]);
+    const conversation = conversationOf('c1', [message('m0', 'Older', { hasAttachment: true }), message('m1', 'Body', { hasAttachment: true })]);
+    const w = mountReader(conversation, { client: asClient(client) });
+    await settle();
+    expect(w.get('[data-test="attachment-a1"]').text()).toContain('<img src=x onerror=alert(1)>.txt');
+    expect(w.get('.reader-scroll').find('img').exists()).toBe(false);
+    // The collapsed older message shows no list until it is expanded.
+    expect(w.find('[data-test="attachment-old"]').exists()).toBe(false);
+    await w.get('[data-test="message-toggle-m0"]').trigger('click');
+    expect(w.get('[data-test="attachment-old"]').text()).toContain('older.txt');
+  });
+});

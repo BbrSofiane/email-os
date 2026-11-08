@@ -1406,7 +1406,21 @@ button:focus-visible {
 }
 
 .reader-pending {
-  font-style: italic;
+  margin: 0.2rem 0;
+  color: var(--warning);
+  font-size: var(--type-body);
+}
+
+/* The standing read-state guarantee: one muted status line in the meta row.
+   The sentence itself is its title and visually hidden text. */
+.reader-status {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35em;
+}
+
+.reader-status-word::after {
+  content: ' ·';
 }
 
 .messages {
@@ -1553,6 +1567,29 @@ button:focus-visible {
   max-width: 88ch;
 }
 
+/* Signature and trailing quote: the same reading face as the prose, in Ash. The
+   text is literal (pre-wrap, ">" kept); only the colour steps back. */
+.message-trail {
+  white-space: pre-wrap;
+  font-family: var(--font-ui);
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+  max-width: 65ch;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+  margin: 0.4rem 0;
+}
+
+.message-quote-toggle {
+  margin: 0 0 0.2rem;
+  color: var(--text-secondary);
+}
+
+.message-quote-toggle:hover:not(:disabled) {
+  background: var(--focus-fill);
+  color: var(--text-primary);
+}
+
 /* Per-message participant details disclosure (native details/summary). Only
    rendered visible inside an expanded message: the summary is a quiet line
    under the header (in flow, so it can never collide with the date or the reply
@@ -1565,7 +1602,8 @@ button:focus-visible {
   width: max-content;
   margin-left: 0.2rem;
   cursor: pointer;
-  color: var(--icon-muted);
+  /* Ash: Graphite text is 3.79:1 on the active message's raised fill. */
+  color: var(--text-secondary);
   list-style: none;
 }
 
@@ -1749,11 +1787,36 @@ button:focus-visible {
   color: var(--text-secondary);
 }
 
-.reply-source,
 .draft-status {
   margin: 0.3rem 0;
   font-size: var(--type-body);
   color: var(--warning);
+}
+
+/* Settled and idle: Ash. Saving, unconfirmed, conflict and non-durable states
+   keep Amber Notice because they are not settled facts. */
+.draft-status.draft-status-calm {
+  color: var(--text-secondary);
+}
+
+/* Heading line: the title on the left, the one status line on the right. */
+.composer-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.25rem 0.75rem;
+  flex-wrap: wrap;
+}
+
+.composer-top-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.composer-top .draft-status {
+  flex: 0 1 auto;
+  margin: 0.25rem 0;
+  overflow-wrap: anywhere;
 }
 
 /* Shared composer body (DraftEditorCore) inside any surface. */
@@ -1776,12 +1839,55 @@ button:focus-visible {
 .composer-footer {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   gap: 0.5rem;
   flex-wrap: wrap;
-  margin-top: 0.6rem;
-  padding-top: 0.6rem;
+  margin-top: 0.4rem;
+  padding-top: 0.5rem;
   border-top: 1px solid var(--rule);
+}
+
+/* Primary: Focus Stone fill, Title weight, 4px radius, 24px tall. Hover adds an
+   Ash inset ring (the fill alone is invisible against the raised surface). */
+.composer-footer .composer-primary {
+  background: var(--focus-fill);
+  color: var(--text-primary);
+  border: 0;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-weight: var(--weight-strong);
+}
+
+.composer-footer .composer-primary:hover:not(:disabled) {
+  background: var(--focus-fill);
+  box-shadow: inset 0 0 0 1px var(--text-secondary);
+}
+
+.composer-footer .composer-primary:active:not(:disabled) {
+  background: var(--rail-button);
+  box-shadow: inset 0 0 0 1px var(--text-secondary);
+}
+
+.composer-kbd {
+  margin-left: -0.25rem;
+  color: var(--text-secondary);
+  font: inherit;
+}
+
+/* Secondary actions: quiet Ash ghosts. */
+.composer-footer .composer-quiet {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 0;
+  padding: 4px 8px;
+}
+
+.composer-footer .composer-quiet:hover:not(:disabled) {
+  background: var(--focus-fill);
+  color: var(--text-primary);
+}
+
+.composer-footer .composer-discard {
+  margin-left: auto;
 }
 
 /* Inline confirm dialog (discard / reload) on any composer surface. */
@@ -1816,36 +1922,97 @@ button:focus-visible {
   overflow-wrap: anywhere;
 }
 
+/* One-line field rows: a label column and a borderless-looking input. The
+   body is the dominant field. */
 .composer-fields {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.5rem;
-}
-
-.composer-fields label {
   display: flex;
   flex-direction: column;
+  gap: 2px;
   min-width: 0;
-  gap: 0.2rem;
+}
+
+.field-extras {
+  display: contents;
+}
+
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  min-height: 28px;
   font-size: var(--type-body);
 }
 
-.composer-fields input,
-.composer-fields textarea {
-  width: 100%;
+.field-label {
+  flex: 0 0 3.5rem;
+  color: var(--text-secondary);
+}
+
+.field-row .field-input,
+.field-row .field-summary {
+  flex: 1 1 auto;
   min-width: 0;
+  padding: 3px 6px;
   font: inherit;
 }
 
-.composer-fields textarea {
-  min-height: 8rem;
-  resize: vertical;
-  white-space: pre-wrap;
-  grid-column: 1 / -1;
+.field-row .field-input {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
 }
 
-.composer-fields label:has(textarea) {
-  grid-column: 1 / -1;
+.field-row .field-input:hover:not(:disabled) {
+  border-color: var(--rule);
+}
+
+.field-row .field-input:focus-visible {
+  border-color: var(--focus-accent);
+  outline: 1px solid var(--focus-accent);
+  outline-offset: -2px;
+}
+
+/* The collapsed reply recipient: a real button that opens the To input. */
+.field-row .field-summary {
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.field-row .field-summary:hover:not(:disabled) {
+  background: var(--focus-fill);
+}
+
+.field-toggle {
+  flex: none;
+  color: var(--text-secondary);
+}
+
+.field-toggle:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.field-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin-top: 0.25rem;
+}
+
+.field-textarea {
+  width: 100%;
+  min-width: 0;
+  /* At least six lines at the 12px body size; grows with its text up to the pane. */
+  min-height: 7.5rem;
+  max-height: 50vh;
+  padding: 6px 8px;
+  resize: vertical;
+  white-space: pre-wrap;
+  font: inherit;
+  line-height: var(--leading-ui);
 }
 
 @media (max-width: 760px) {
@@ -1914,10 +2081,16 @@ button:focus-visible {
 }
 
 .reader-notice,
-.reader-readonly,
 .reader-recovery-snapshot {
   margin: 0.2rem 0;
   color: var(--warning);
+  font-size: var(--type-body);
+}
+
+/* Cached Trash restriction: a standing fact, not an exception, so Ash. */
+.reader-readonly {
+  margin: 0.2rem 0;
+  color: var(--text-secondary);
   font-size: var(--type-body);
 }
 
@@ -2060,13 +2233,9 @@ button:focus-visible {
    stripe, so the reader's active-message bar keeps the single accent signal. */
 .reader-pane > .compose-card {
   flex: 0 0 auto;
-  max-height: 45%;
+  max-height: 60%;
   margin: 0.5rem 0 0;
   border: 1px solid var(--divider);
   border-radius: 6px;
 }
 
-/* Docked composers get a shorter body so the thread stays visible above. */
-.reader-pane .composer-fields textarea {
-  min-height: 5rem;
-}

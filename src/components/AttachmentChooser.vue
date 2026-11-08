@@ -2,15 +2,19 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import type { Conversation, MailClient } from '../lib/ipc/client';
 import type { AttachmentDescriptor } from '../lib/ipc/generated';
+import { useAttachmentTransfer } from '../composables/useAttachmentTransfer';
+import { ATTACHMENT_LIMIT_BYTES, formatBytes } from '../lib/format-bytes';
 const props = defineProps<{ client: MailClient; conversation: Conversation; preview: boolean; idPrefix?: string }>();
 const titleId = `${props.idPrefix ? `${props.idPrefix}-` : ''}attachment-title`;
 const emit = defineEmits<{ close: [] }>();
 const panel = ref<HTMLElement | null>(null);
 const files = ref<AttachmentDescriptor[]>([]);
 const loading = ref(true);
-const error = ref('');
-const status = ref('');
-const pending = ref<string | null>(null);
+const { pending, status, error, save, cancel } = useAttachmentTransfer({
+  client: () => props.client,
+  conversation: () => props.conversation.ref,
+  preview: () => props.preview,
+});
 const confirmUrl = ref<string | null>(null);
 let live = true;
 let loadGeneration = 0;
@@ -37,21 +41,6 @@ async function load() {
   } catch { if (live && generation === loadGeneration) error.value = 'Could not load cached file descriptors. Reading remains available.'; }
   finally { if (live && generation === loadGeneration) loading.value = false; }
 }
-async function save(file: AttachmentDescriptor) {
-  if (pending.value) return;
-  const id = crypto.randomUUID(); pending.value = id; error.value = ''; status.value = '';
-  try {
-    const saved = await props.client.saveAttachment({ conversation: { ...props.conversation.ref }, messageId: file.messageId,
-      attachmentId: file.attachmentId, requestId: id });
-    if (live) status.value = props.preview ? 'Modelled save in preview memory only; no file was written.' : `Saved to Downloads as ${saved.filename}. No file was opened.`;
-  } catch { if (live) error.value = 'File not saved: unavailable offline, missing, cancelled, too large, or invalid content. Retry explicitly; a lost response may have left a unique file in Downloads.'; }
-  finally { if (live && pending.value === id) pending.value = null; }
-}
-async function cancel() {
-  if (!pending.value) return;
-  try { await props.client.cancelAttachment(pending.value); if (live) status.value = 'Cancellation requested; waiting for transfer to stop.'; }
-  catch { if (live) error.value = 'Could not confirm cancellation. A completed download may remain in Downloads.'; }
-}
 async function openLink() {
   if (!confirmUrl.value) return;
   try {
@@ -75,21 +64,21 @@ function keydown(event: KeyboardEvent) {
   }
 }
 onMounted(async () => { void load(); await nextTick(); panel.value?.querySelector('button')?.focus(); });
-onBeforeUnmount(() => { live = false; if (pending.value) void props.client.cancelAttachment(pending.value).catch(() => {}); });
+onBeforeUnmount(() => { live = false; });
 </script>
 <template>
   <div class="action-backdrop" @click.self="emit('close')">
     <section ref="panel" class="action-overlay attachment-chooser" role="dialog" aria-modal="true" :aria-labelledby="titleId" @keydown="keydown">
       <header><h2 :id="titleId">Files and links</h2><button type="button" @click="emit('close')">Back to message</button></header>
-      <p>Up to 32 cached files and 32 plain-text links. Download only — PDF preview is unavailable pending a macOS security review. Files are saved inert with a .download suffix; nothing executes or loads remote resources here.</p>
+      <p class="chooser-note" title="Up to 32 cached files and 32 plain-text links. PDF preview is unavailable pending a macOS security review.">Download only. Files save inert with a .download suffix; nothing is opened.</p>
       <p v-if="conversation.retainedSnapshotAt" role="note">Retained recovery snapshot: attachment fetch is unavailable.</p>
       <p v-if="loading" role="status">Loading cached files…</p>
       <p v-if="error" role="alert">{{ error }} <button type="button" :disabled="loading || !!pending" @click="load">Reload file list</button></p>
       <p v-if="status" role="status">{{ status }}</p>
       <ul aria-label="Known files">
         <li v-for="file in files" :key="`${file.messageId}:${file.attachmentId}`">
-          <span>{{ file.filename || 'Unnamed attachment' }} — {{ file.mimeType }}, {{ file.size }} bytes</span>
-          <span v-if="file.size > 5242880">Exceeds 5 MiB limit; cannot download.</span>
+          <span>{{ file.filename || 'Unnamed attachment' }} — {{ file.mimeType }}, {{ formatBytes(file.size) }}</span>
+          <span v-if="file.size > ATTACHMENT_LIMIT_BYTES">Over the 5 MB limit; cannot download.</span>
           <button v-else type="button" :disabled="!!pending || !!conversation.retainedSnapshotAt" @click="save(file)">Save to Downloads</button>
         </li>
       </ul>
@@ -111,4 +100,5 @@ header { display: flex; justify-content: space-between; align-items: center; gap
 h2 { font-size: var(--type-headline); font-weight: var(--weight-regular); }
 li { border: 0; cursor: default; padding-block: .5rem; display: flex; gap: .5rem; flex-wrap: wrap; }
 p { line-height: 1.5; }
+.chooser-note { color: var(--text-secondary); }
 </style>

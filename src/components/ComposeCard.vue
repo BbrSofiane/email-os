@@ -57,6 +57,7 @@ function onSetField(field: keyof DraftContent, value: string): void {
   <section class="compose-card" aria-label="New Message" data-test="compose-card">
     <DraftEditorCore
       autofocus="to"
+      variant="new"
       :active-ref="activeRef"
       :source="source"
       :content="content"
