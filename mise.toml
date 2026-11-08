@@ -3,6 +3,30 @@ node = "24.4.1"
 pnpm = "10.18.0"
 rust = "1.89.0"
 
+[tasks."setup:linux"]
+description = "Install Debian/Ubuntu VM prerequisites for native builds and screenshots (uses apt-get)"
+run = '''
+set -eu
+if [ "$(uname -s)" != Linux ]; then
+  echo "setup:linux requires Linux with apt-get (Debian/Ubuntu); macOS setup is unchanged." >&2
+  exit 1
+fi
+if ! command -v apt-get >/dev/null 2>&1; then
+  echo "setup:linux requires apt-get. Install the prerequisites for your distribution manually; see docs/development.md." >&2
+  exit 1
+fi
+set -- apt-get
+if [ "$(id -u)" != 0 ]; then
+  if ! command -v sudo >/dev/null 2>&1; then
+    echo "setup:linux requires root or sudo to install OS packages." >&2
+    exit 1
+  fi
+  set -- sudo apt-get
+fi
+"$@" update
+"$@" install -y build-essential pkg-config libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev librsvg2-dev dbus-daemon xvfb xauth xdotool openbox x11-utils scrot
+'''
+
 [tasks."install:ui"]
 description = "Install locked frontend dependencies"
 run = "pnpm install --frozen-lockfile"
