@@ -1,0 +1,101 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6YKS8TZDYD2Z0BQ52TY5MY2",
+  "session_id": "a84d11fd-b201-44b6-9f70-207afb25eaa3",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-08T22:17:11.607555895Z",
+  "branch": "impeccable/account-first-run",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "DESIGN.md",
+    "docs/development.md",
+    "docs/ux-03-command-discovery.md",
+    "src/App.vue",
+    "src/FixtureWorkspaces.vue",
+    "src/assets/style.css",
+    "src/components/AccountPanel.vue",
+    "src/components/CommandGlyph.vue",
+    "src/components/ProviderDestinations.vue",
+    "src/lib/account-status.ts",
+    "src/lib/action-palette.ts",
+    "src/lib/browsing-actions.ts",
+    "tests/account-panel.component.test.ts",
+    "tests/account-status.test.ts",
+    "tests/account.component.test.ts",
+    "tests/account.first-run.component.test.ts",
+    "tests/discovery.component.test.ts",
+    "tests/drafts.component.test.ts",
+    "tests/g-chord.component.test.ts",
+    "tests/helpers.ts",
+    "tests/provider-destinations.app.test.ts",
+    "tests/provider-destinations.component.test.ts",
+    "tests/stars.component.test.ts",
+    "tests/workspaces.component.test.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "cedc0800bdf0",
+  "checkpoint_transcript_start": 188,
+  "transcript_lines_at_start": 188,
+  "compact_transcript_start": 25,
+  "token_usage": {
+    "input_tokens": 10,
+    "cache_creation_tokens": 26343,
+    "cache_read_tokens": 766338,
+    "output_tokens": 7576,
+    "api_call_count": 5,
+    "subagent_tokens": {
+      "input_tokens": 166,
+      "cache_creation_tokens": 320910,
+      "cache_read_tokens": 18270084,
+      "output_tokens": 122280,
+      "api_call_count": 83
+    }
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-toolu_01G9DA28gJFDAeJapeHGaeqw",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "implement"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "cedc0800bdf0",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 152,
+        "end": 153,
+        "entry_ids": [
+          "da3b48c9-6eff-474c-84ba-a95557010d42"
+        ],
+        "tool_use_id": "toolu_01G9DA28gJFDAeJapeHGaeqw"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_01G9DA28gJFDAeJapeHGaeqw"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: implement",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "initial_attribution": {
+    "calculated_at": "2026-11-08T22:17:11.545719153Z",
+    "agent_lines": 2025,
+    "agent_removed": 291,
+    "human_added": 18,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 2043,
+    "total_lines_changed": 2334,
+    "agent_percentage": 99.22879177377892,
+    "metric_version": 2
+  }
+}
