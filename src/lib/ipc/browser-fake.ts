@@ -308,6 +308,19 @@ function seedConversations(accountId = ACCOUNT_ID, mailbox = FIXTURE_MAILBOX): F
   return conversations;
 }
 
+/**
+ * P5a fixture attachment model: exactly one synthetic 'fixture-text'
+ * attachment on each conversation's first message. `listAttachments` and
+ * every summary derive from this one model, so the row glyph (hasAttachments)
+ * can never contradict the reader's Files and links.
+ */
+function fixtureAttachments(conv: FakeConversation): Array<{
+  messageId: string, attachmentId: string, filename: string, mimeType: string, size: number,
+}> {
+  return conv.messages.slice(0, 1).map((m) => ({ messageId: m.id, attachmentId: 'fixture-text',
+    filename: 'example.txt', mimeType: 'text/plain', size: 27 }));
+}
+
 function summarize(conv: FakeConversation, pendingOperationId: string | null): ConversationSummary {
   const last = conv.messages[conv.messages.length - 1];
   if (!last) throw new Error(`fixture conversation ${conv.ref.conversationId} has no messages`);
@@ -331,6 +344,9 @@ function summarize(conv: FakeConversation, pendingOperationId: string | null): C
     preview: last.bodyText.replace(/\s+/g, ' ').slice(0, 120),
     lastMessageAt: last.sentAt,
     ...(readStates.every((read) => read !== null) ? { isRead: readStates.every(Boolean) } : {}),
+    // Known fact from the same model listAttachments serves: the glyph only
+    // ever claims attachments the fake can actually list.
+    hasAttachments: fixtureAttachments(conv).length > 0,
     pendingOperationId,
   };
 }
@@ -1228,8 +1244,7 @@ export function createBrowserFakeMailClient(
     async listAttachments(target) {
       const conv = byId(target.conversationId);
       if (!conv || conv.ref.accountId !== target.accountId) throw failNotShown();
-      return conv.messages.slice(0, 1).map(m => ({ messageId: m.id, attachmentId: 'fixture-text',
-        filename: 'example.txt', mimeType: 'text/plain', size: 27 }));
+      return fixtureAttachments(conv);
     },
     async saveAttachment(request) {
       const conv = byId(request.conversation.conversationId);
@@ -1250,12 +1265,15 @@ export function createBrowserFakeMailClient(
       const conv = byId(ref.conversationId);
       if (!conv || conv.ref.accountId !== ref.accountId) throw failNotShown();
       const flags = effectiveInInbox(conv);
+      // P5a: per-message attachment facts mirror the listAttachments model.
+      const attachments = fixtureAttachments(conv);
       const messages: Message[] = conv.messages.map((m) => ({
         id: m.id,
         from: m.from,
         to: m.to,
         sentAt: m.sentAt,
         bodyText: m.bodyText,
+        hasAttachment: attachments.some((a) => a.messageId === m.id),
       }));
       const readStates = effectiveRead(conv);
       const result: Conversation = {

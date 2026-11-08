@@ -313,7 +313,7 @@ The browsing shell is flat. Depth comes from tonal layering: Warm Charcoal for t
 ### Conversation Row (signature)
 The core of the product: dense, quiet and exact.
 - **Shape:** square corners (0), a fixed 36px height, inset 6px from both pane edges.
-- **Layout:** a 44px gutter (unread dot, or the checkbox in selection mode), then a 132px sender (Title, Paper White, ellipsis), then the subject (Body, Paper White) and snippet (Body, Ash) on one line with 12px gaps, then the trailing date (Label, Ash) about 25px from the pane edge. An attachment glyph (Graphite, 16px) sits before the date when present.
+- **Layout:** a 44px gutter (unread dot, or the checkbox in selection mode), then a 132px sender (Title, Paper White, ellipsis), then the subject (Body, Paper White) and snippet (Body, Ash) on one line with 12px gaps, then the trailing date (Label, Ash) about 25px from the pane edge. An attachment glyph (Graphite, 16px) sits before the date, three-state like the read marker: a solid paperclip when attachments are known present, a quieter outline paperclip when the attachment state is unknown, and nothing when known absent. Done (2026-11-07 P3 three-state glyph; the unknown state is named "Attachment state unknown" in the accessible name and title, never rendered as silence).
 - **Focused:** Focus Stone fill plus a 4px Dusk Lavender bar on the fill's own left edge. The date gives way to three action glyphs (done, snooze, more) at a 32px pitch.
 - **Hover:** a barely-there lift (`rgba(255,255,255,0.03)`). Action glyphs appear; focus and read state never change.
 - **Pending / unknown:** an Amber Notice word ("Pending…") in the meta region, never just a tint.

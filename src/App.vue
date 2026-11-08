@@ -46,6 +46,7 @@ import SelectionBar from './components/SelectionBar.vue';
 import HeaderGlyph from './components/HeaderGlyph.vue';
 import PaneGlyph from './components/PaneGlyph.vue';
 import { browsingActions, actionLabel, type BrowsingActionId } from './lib/browsing-actions';
+import { groupRowsBySender, isSingleFromQuery, senderGroupKey, validateSearch } from './lib/search';
 import InboxList from './components/InboxList.vue';
 import SplitEditor from './components/SplitEditor.vue';
 import { splitBadge } from './lib/saved-split';
@@ -63,7 +64,7 @@ import FullDate from './components/FullDate.vue';
 import { BROWSER_PREVIEW_DISCLOSURE } from './lib/ipc/browser-fake';
 import type { ClientMode } from './lib/ipc';
 import type { ConversationRef, DraftRef, DraftSource, MailClient } from './lib/ipc/client';
-import { sameConversation, useMailbox, type BrowseContext, type DoneBoundary, type SearchVisit, type LastActionId } from './composables/useMailbox';
+import { sameConversation, useMailbox, type BrowseContext, type ConversationSummaryLike, type DoneBoundary, type SearchVisit, type LastActionId } from './composables/useMailbox';
 import { useDrafts } from './composables/useDrafts';
 
 const props = withDefaults(defineProps<{
@@ -100,6 +101,17 @@ interface ReaderOrigin {
 }
 
 const mailbox = useMailbox(props.client);
+/**
+ * P5b: rows in rendered order — sender-grouped when the search context's
+ * submitted query is a single non-excluded from: (InboxList renders exactly
+ * this order), backend order everywhere else. Keyboard navigation, reader
+ * J/K and the Back/anchor orderings all read this one definition so focus
+ * walks the visible rows and never jumps across a sender caption.
+ */
+const listRows = computed<ConversationSummaryLike[]>(() =>
+  mailbox.context.value === 'search' && isSingleFromQuery(mailbox.searchQuery.value) !== null
+    ? groupRowsBySender(mailbox.conversations.value, senderGroupKey)
+    : mailbox.conversations.value);
 const inboxList = ref<InstanceType<typeof InboxList> | null>(null);
 const editingSplit = ref(false);
 const splitEditor = ref<InstanceType<typeof SplitEditor> | null>(null);
@@ -846,15 +858,88 @@ const searchVisible = ref(false);
 const searchDraft = ref('');
 const searchInput = ref<HTMLInputElement | null>(null);
 const cachedSearch = ref(false);
+// Session-only by design: recently submitted queries live in memory for this
+// app instance and account only — never persisted to disk, localStorage or
+// the provider. Recorded on successful submitSearch only.
+const recentQueries = ref<string[]>([]);
+const RECENT_QUERY_LIMIT = 8;
+const CORRESPONDENT_LIMIT = 6;
+const suggestionsOpen = ref(false);
+const suggestionIndex = ref(-1);
+const searchAttemptedEmpty = ref(false);
+const suggestionsId = 'mail-query-suggestions';
+const suggestionId = (index: number) => `mail-query-suggestion-${index}`;
+interface SearchSuggestion { kind: 'query' | 'correspondent'; label: string; detail: string; value: string }
+// Cached correspondent name/address pairs derived from the currently loaded
+// conversations' senders/recipients, bounded so a long list stays cheap.
+const cachedCorrespondents = computed(() => {
+  const seen = new Map<string, { displayName: string | null; mailbox: string }>();
+  for (const row of mailbox.conversations.value.slice(0, 100)) {
+    const people = row.primaryCorrespondent ? [row.primaryCorrespondent, ...row.participants] : row.participants;
+    for (const person of people) if (person.mailbox) seen.set(person.mailbox.toLowerCase(), person);
+  }
+  return [...seen.values()];
+});
+const searchSuggestions = computed<SearchSuggestion[]>(() => {
+  const input = searchDraft.value.trim().toLowerCase();
+  const out: SearchSuggestion[] = [];
+  if (!input) {
+    // Empty input: recent submitted queries as selectable rows.
+    for (const query of recentQueries.value) out.push({ kind: 'query', label: query, detail: '', value: query });
+    return out;
+  }
+  for (const person of cachedCorrespondents.value) {
+    if (out.length >= CORRESPONDENT_LIMIT) break;
+    if ((person.displayName ?? '').toLowerCase().includes(input) || person.mailbox.toLowerCase().includes(input)) {
+      out.push({ kind: 'correspondent', label: person.displayName ?? person.mailbox, detail: person.displayName ? person.mailbox : '', value: 'from:"' + person.mailbox + '"' });
+    }
+  }
+  for (const query of recentQueries.value) {
+    if (query.toLowerCase().startsWith(input)) out.push({ kind: 'query', label: query, detail: '', value: query });
+  }
+  return out;
+});
+// Inline mirror of the Rust-owned grammar (src/lib/search.ts): while typing,
+// name the exact problem; an invalid query is never submitted to searchMail.
+const searchProblem = computed(() => validateSearch(searchDraft.value));
+const searchError = computed(() => {
+  const problem = searchProblem.value;
+  if (!problem) return null;
+  // An untouched empty input shows suggestions instead of an error; an empty
+  // submit attempt does show it.
+  if (!searchDraft.value.trim() && !searchAttemptedEmpty.value) return null;
+  return problem;
+});
+const activeSuggestionId = computed(() => {
+  const suggestion = suggestionsOpen.value ? searchSuggestions.value[suggestionIndex.value] : undefined;
+  return suggestion ? suggestionId(suggestionIndex.value) : undefined;
+});
+watch(searchDraft, () => {
+  searchAttemptedEmpty.value = false;
+  suggestionIndex.value = -1;
+  suggestionsOpen.value = true;
+});
+function recordRecentQuery(query: string): void {
+  const trimmed = query.trim();
+  if (!trimmed) return;
+  recentQueries.value = [trimmed, ...recentQueries.value.filter((q) => q !== trimmed)].slice(0, RECENT_QUERY_LIMIT);
+}
 async function revealSearch(): Promise<void> {
   if (!accountReady.value || drawer.value || contactDisclosure.value || replyComposerOpen.value || composeCardOpen.value) return;
   searchVisible.value = true;
   searchDraft.value = mailbox.searchQuery.value;
+  suggestionsOpen.value = true;
+  suggestionIndex.value = -1;
   await nextTick();
   searchInput.value?.focus();
 }
 async function submitSearch(query = searchDraft.value): Promise<void> {
   if (!accountId.value) return;
+  // An invalid query never reaches the provider; the inline error names why.
+  if (validateSearch(query) !== null) {
+    if (!query.trim()) searchAttemptedEmpty.value = true;
+    return;
+  }
   // Entering search closes the reader (and with it the docked inline reply
   // composer or compose card), so the active editor flushes through the
   // protected path first; a failed close keeps the reader and composer visible.
@@ -870,8 +955,76 @@ async function submitSearch(query = searchDraft.value): Promise<void> {
   const token = ++navigationToken;
   await mailbox.search(query, cachedSearch.value);
   if (token !== navigationToken) return;
+  recordRecentQuery(query);
   cachedSearch.value = mailbox.searchCachedOnly.value;
+  suggestionsOpen.value = false;
+  // Auto-collapse (results-first chrome): a successful submit leaves the slim
+  // header + coverage + list and moves focus to the first result row. The form
+  // stays open when the submit errored (the banner points at it) or when the
+  // user already typed a different draft while the search was in flight.
+  // Reopen paths: /, the header Search glyph, the palette command and the
+  // results-header query button — all go through revealSearch().
+  const submitted = mailbox.context.value === 'search' && mailbox.searchQuery.value === query && mailbox.listState.value !== 'error';
+  if (submitted && searchDraft.value === query) searchVisible.value = false;
   await focusFocusedRow();
+}
+function applySuggestion(suggestion: SearchSuggestion): void {
+  suggestionIndex.value = -1;
+  suggestionsOpen.value = false;
+  void submitSearch(suggestion.value);
+}
+// The listbox is capped (CSS max-height), so a highlight outside the visible
+// band must scroll its option into view — on arrow keys and pointer moves.
+// The optional call keeps jsdom (no scrollIntoView) and odd hosts safe; the
+// command palette uses the same pattern.
+function scrollSuggestionIntoView(index: number): void {
+  document.getElementById(suggestionId(index))?.scrollIntoView?.({ block: 'nearest' });
+}
+function highlightSuggestion(index: number): void {
+  suggestionIndex.value = index;
+  // Deferred: on a reopen (v-show just flipped back) the ul is still hidden in
+  // this tick, and scrollIntoView on a display:none subtree is a no-op.
+  void nextTick(() => scrollSuggestionIntoView(suggestionIndex.value));
+}
+function onSearchInputKeydown(event: KeyboardEvent): void {
+  if (event.isComposing || event.keyCode === 229) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    // Esc in two steps: first close the suggestion list, then hide the form
+    // WITHOUT leaving the search context (list + query header remain); a
+    // second Esc, once focus is on the list, exits via the normal Back path.
+    if (suggestionsOpen.value && searchSuggestions.value.length) { suggestionsOpen.value = false; return; }
+    searchVisible.value = false;
+    void focusFocusedRow();
+    return;
+  }
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+  // The global handler ignores editable targets, so single-letter shortcuts
+  // (BROWSE-10) stay inert while typing here; only the keys below are consumed.
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    if (!searchSuggestions.value.length) return; // native caret movement
+    event.preventDefault();
+    event.stopPropagation();
+    // A closed listbox with available suggestions reopens on the arrow keys
+    // (e.g. after Esc closed it) and restarts the highlight; with no
+    // suggestions, the arrows keep the native caret movement.
+    const wasClosed = !suggestionsOpen.value;
+    suggestionsOpen.value = true;
+    const count = searchSuggestions.value.length;
+    suggestionIndex.value = wasClosed || suggestionIndex.value < 0
+      ? (event.key === 'ArrowDown' ? 0 : count - 1)
+      : (suggestionIndex.value + (event.key === 'ArrowDown' ? 1 : count - 1)) % count;
+    void nextTick(() => scrollSuggestionIntoView(suggestionIndex.value));
+    return;
+  }
+  if (event.key === 'Enter' && suggestionsOpen.value && searchSuggestions.value[suggestionIndex.value]) {
+    // Enter applies the highlighted suggestion (fill + submit); with no
+    // highlight it falls through to the native submit of the typed query.
+    event.preventDefault();
+    event.stopPropagation();
+    applySuggestion(searchSuggestions.value[suggestionIndex.value]!);
+  }
 }
 async function senderSearch(address: string): Promise<void> {
   await submitSearch('from:"' + address + '"');
@@ -1001,7 +1154,7 @@ function captureContext(): ContextEntry | null {
     loadedDonePages: mailbox.loadedDonePages.value,
     doneBoundary: mailbox.loadedDoneBoundary.value ? { ...mailbox.loadedDoneBoundary.value } : null,
     focusedRef: entry?.focusedRef ?? mailbox.focusedRef.value,
-    ordering: entry?.ordering ?? mailbox.conversations.value.map((row) => ({ ...row.ref })),
+    ordering: entry?.ordering ?? listRows.value.map((row) => ({ ...row.ref })),
     anchor: entry?.anchor ?? inboxList.value?.captureAnchor() ?? null,
   };
 }
@@ -1026,6 +1179,9 @@ async function navigateContext(context: BrowseContext, saved?: ContextEntry): Pr
   if (readerOpen.value) mailbox.closeReader();
   if (saved?.search && context === 'search') {
     await mailbox.restoreSearch(saved.search);
+    // The restored results view stays collapsed (header + coverage + list,
+    // focus and anchor restored); revealSearch() seeds the draft from the
+    // restored query when the user reopens the form to edit it.
     searchDraft.value = saved.search.query;
     cachedSearch.value = saved.search.cachedOnly;
   } else await mailbox.setContext(context, saved?.loadedDonePages, saved?.doneBoundary, saved?.starredOnly ?? (context === mailbox.context.value && mailbox.starredOnly.value));
@@ -1057,6 +1213,8 @@ watch(accountId, () => {
   history.value = [];
   searchVisible.value = false;
   searchDraft.value = '';
+  // Recent queries are per-account and session-only.
+  recentQueries.value = [];
   origin.value = null;
   overlay.value = null;
   // Group detail is account-scoped: never keep an old-account expansion.
@@ -1086,7 +1244,7 @@ function captureListOrigin(surface: ReaderOrigin['surface']): void {
       ? { accountId: mailbox.focusedRef.value.accountId, conversationId: mailbox.focusedRef.value.conversationId }
       : null,
     ordering: mailbox.listState.value === 'ready'
-      ? mailbox.conversations.value.map((row) => ({ accountId: row.ref.accountId, conversationId: row.ref.conversationId }))
+      ? listRows.value.map((row) => ({ accountId: row.ref.accountId, conversationId: row.ref.conversationId }))
       : [],
     anchor: inboxList.value?.captureAnchor() ?? null,
   };
@@ -1101,7 +1259,15 @@ async function focusFocusedRow(preventScroll = false): Promise<void> {
 }
 
 function moveFocus(delta: number): void {
-  mailbox.moveFocus(delta);
+  // Same contract as mailbox.moveFocus, over the RENDERED row order (P5b
+  // sender grouping), so j/k walks the visible rows and skips captions.
+  const rows = listRows.value;
+  if (rows.length === 0) return;
+  const currentIndex = rows.findIndex((row) => sameConversation(row.ref, mailbox.focusedRef.value));
+  const targetIndex = currentIndex < 0
+    ? 0
+    : Math.min(rows.length - 1, Math.max(0, currentIndex + delta));
+  mailbox.focusConversation(rows[targetIndex]!.ref);
   void focusFocusedRow();
 }
 
@@ -1112,7 +1278,7 @@ function moveFocus(delta: number): void {
  * empty result restores no row (the empty state receives focus).
  */
 function resolveOriginFocus(originState: ReaderOrigin): ConversationRef | null {
-  const snapshot = mailbox.conversations.value;
+  const snapshot = listRows.value;
   if (snapshot.length === 0) return null;
   const survives = (target: ConversationRef | null): boolean =>
     target !== null && snapshot.some((row) => sameConversation(row.ref, target));
@@ -1233,7 +1399,7 @@ async function openFromUtility(target: ConversationRef, surface: 'activity' | 'r
 function resolveReaderNeighbor(delta: number): ConversationRef | null {
   const opened = mailbox.openRef.value;
   if (!opened) return null;
-  const snapshot = mailbox.conversations.value;
+  const snapshot = listRows.value;
   const survives = (target: ConversationRef): boolean => snapshot.some((row) => sameConversation(row.ref, target));
   const snapIndex = snapshot.findIndex((row) => sameConversation(row.ref, opened));
   const order: ConversationRef[] = snapIndex >= 0
@@ -1350,7 +1516,7 @@ async function archiveFromReader(starred?: boolean): Promise<void> {
   // conversation. Back/Escape still resolves through the immutable ENTRY
   // ordering (origin), and J/K keeps its own snapshot/entry resolution; the
   // three orderings stay separate.
-  const actionOrdering: ConversationRef[] = mailbox.conversations.value
+  const actionOrdering: ConversationRef[] = listRows.value
     .filter((row) => row.ref.accountId === target.accountId)
     .map((row) => ({ accountId: row.ref.accountId, conversationId: row.ref.conversationId }));
   const receipt = starred === undefined ? await mailbox.setArchived(target, true) : await mailbox.setStarred(target, starred);
@@ -1941,12 +2107,29 @@ const commandError = computed(() => {
   return error;
 });
 
+/**
+ * A deterministic parse error from the provider (field searchQuery) would
+ * re-fail identically on Retry, so the results banner hides Retry for it and
+ * tells the user to edit the query instead. Real provider/load errors keep it.
+ */
+const listErrorIsSearchSyntax = computed(() => mailbox.listError.value?.kind === 'invalid_request' && mailbox.listError.value.field === 'searchQuery');
+/**
+ * The syntax-error banner must not point at a collapsed form: when the entry
+ * form is visible it says "above"; when hidden it names the reopen paths
+ * instead (/, the header Search glyph, or the results-header query button).
+ */
+const searchSyntaxEditHint = computed(() =>
+  searchVisible.value
+    ? '. Edit the query above — the same query fails again.'
+    : '. Press / or choose the query in the results header to edit it — the same query fails again.');
+
 function errorText(error: { kind: string; field?: string; reason?: string }): string {
   switch (error.kind) {
     case 'not_found':
       return 'not found';
     case 'invalid_request':
-      if (error.field === 'searchQuery') return 'unsupported search syntax. Use text, straight-quoted phrases, from:, to:, subject:, AND, OR and -exclusions.';
+      // No trailing period here: the banner templates append one themselves.
+      if (error.field === 'searchQuery') return 'unsupported search syntax. Use text, straight-quoted phrases, from:, to:, subject:, AND, OR and -exclusions';
       if (error.field === 'cachedDoneRestoreRange') return 'cached Done changed beyond the restoration limit; retry or return to Inbox';
       return `invalid request (field: ${error.field ?? '?'})`;
     case 'request_id_conflict':
@@ -2159,17 +2342,75 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
         </nav>
 
         <section class="central" :aria-label="readerOpen ? 'Reader' : composeCardOpen ? 'New Message' : 'Conversation list'" :inert="centralCovered || undefined" data-test="central-surface">
-          <form v-if="(searchVisible || mailbox.context.value === 'search') && !readerOpen && !composeCardOpen" class="mail-search" role="search" @submit.prevent="submitSearch()">
-            <label for="mail-query">Find mail</label>
+          <!-- Search results header (UX-07): the query echoes at active-tab
+               size and the X is the visible exit (same as the header Back
+               glyph, which is reachable in search context). -->
+          <div v-if="mailbox.context.value === 'search' && !readerOpen && !composeCardOpen" class="search-results-header" data-test="search-results-header">
+            <!-- The query echo is the edit affordance: activating it reopens the
+                 entry form (revealSearch) with the current query, focused. -->
+            <button
+              type="button"
+              class="search-results-query"
+              data-test="search-results-query"
+              title="Edit search query"
+              :aria-label="`Edit search query: ${mailbox.searchQuery.value}`"
+              @click="revealSearch()"
+            >Search: {{ mailbox.searchQuery.value }}</button>
+            <button type="button" class="header-glyph" data-test="search-clear" title="Clear search and return to the previous context" @click="contextBack()"><HeaderGlyph name="x" /><span class="visually-hidden">Clear search and return to the previous context</span></button>
+          </div>
+          <form v-if="searchVisible && !readerOpen && !composeCardOpen" class="mail-search" role="search" @submit.prevent="submitSearch()">
+            <label for="mail-query" class="visually-hidden">Find mail</label>
             <div class="mail-search-entry">
-              <input id="mail-query" ref="searchInput" v-model="searchDraft" type="search" maxlength="512" aria-describedby="search-help" data-test="search-input" @keydown.esc.stop.prevent="searchVisible = false; mailbox.context.value === 'search' ? contextBack() : focusFocusedRow()" />
+              <input
+                id="mail-query"
+                ref="searchInput"
+                v-model="searchDraft"
+                type="search"
+                maxlength="512"
+                role="combobox"
+                aria-autocomplete="list"
+                :aria-expanded="suggestionsOpen && searchSuggestions.length > 0 ? 'true' : 'false'"
+                :aria-controls="suggestionsId"
+                :aria-activedescendant="activeSuggestionId"
+                :aria-describedby="searchError ? 'search-help search-error' : 'search-help'"
+                data-test="search-input"
+                placeholder='from:ada "weekly status" -invoice'
+                autocomplete="off"
+                @keydown="onSearchInputKeydown"
+              />
               <button type="submit" data-test="search-submit">Search</button>
-              <button v-if="mailbox.context.value === 'search'" type="button" @click="contextBack()">Back to previous context</button>
             </div>
+            <!-- v-show (not v-if) keeps the listbox mounted so aria-controls on
+                 the input never references an unmounted node. -->
+            <ul v-show="suggestionsOpen && searchSuggestions.length" :id="suggestionsId" class="search-suggestions" role="listbox" aria-label="Search suggestions" data-test="search-suggestions">
+              <li
+                v-for="(suggestion, index) in searchSuggestions"
+                :id="suggestionId(index)"
+                :key="suggestion.value"
+                role="option"
+                :aria-selected="index === suggestionIndex"
+                class="search-suggestion"
+                :class="{ highlighted: index === suggestionIndex }"
+                data-test="search-suggestion"
+                @pointermove="highlightSuggestion(index)"
+                @mousedown.prevent
+                @click="applySuggestion(suggestion)"
+              >
+                <template v-if="suggestion.kind === 'correspondent'"><span class="suggestion-name">{{ suggestion.label }}</span><span class="suggestion-detail">{{ suggestion.detail }}</span></template>
+                <span v-else class="suggestion-query">{{ suggestion.value }}</span>
+              </li>
+            </ul>
+            <p v-if="searchError" id="search-error" class="search-error" role="alert" data-test="search-error">{{ searchError }}</p>
             <label class="search-cache-toggle"><input v-model="cachedSearch" type="checkbox" /> Cached mail only</label>
-            <p id="search-help">Use from:, to:, subject:, straight-quoted phrases, AND, OR, or -exclusions. AND binds before OR. Dates, labels, Cc/Bcc and parentheses are not supported.</p>
-            <p v-if="mailbox.context.value === 'search'" role="status" data-test="search-coverage">{{ mailbox.listState.value === 'loading' ? 'Searching… coverage not yet known.' : mailbox.listState.value === 'error' ? 'Search did not complete. Retry, edit the query, or choose cached mail only.' : mailbox.searchCoverage.value === 'cached_incomplete' ? 'Cached content only — incomplete mailbox coverage. Missing or HTML-only content may not match.' : 'Online · scans 20 mailbox candidates per page, including older archived mail. Spam/Trash excluded. A page can have no matches; continue to scan older mail.' }}</p>
-            <p v-if="mailbox.listError.value && mailbox.listState.value === 'ready'" role="alert">{{ errorText(mailbox.listError.value) }}</p>
+            <ul id="search-help" class="search-help" data-test="search-help">
+              <li><strong class="search-op">from:</strong><span class="search-gloss">from sender</span></li>
+              <li><strong class="search-op">to:</strong><span class="search-gloss">to recipient</span></li>
+              <li><strong class="search-op">subject:</strong><span class="search-gloss">in subject</span></li>
+              <li><strong class="search-op">"…"</strong><span class="search-gloss">exact phrase in straight quotes</span></li>
+              <li><strong class="search-op">AND / OR</strong><span class="search-gloss">combine terms — AND binds before OR</span></li>
+              <li><strong class="search-op">-term</strong><span class="search-gloss">exclude a term or field</span></li>
+            </ul>
+            <p class="search-unsupported">Not supported: dates, labels, Cc/Bcc, parentheses.</p>
           </form>
           <!-- Inline compose card: while a new-message editor is active and no
                reader is open, the card replaces the list in the central surface
@@ -2211,10 +2452,15 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             @cancel-reply-preparation="drafts.cancelReplyPreparation()"
           />
           <template v-else-if="!readerOpen">
+            <!-- Coverage and continuation errors stay visible in search context
+                 even while the entry form is collapsed. -->
+            <p v-if="mailbox.context.value === 'search'" class="search-coverage" role="status" data-test="search-coverage">{{ mailbox.listState.value === 'loading' ? 'Searching… coverage not yet known.' : mailbox.listState.value === 'error' ? 'Search did not complete. Retry, edit the query, or choose cached mail only.' : mailbox.searchCoverage.value === 'cached_incomplete' ? 'Cached content only — incomplete mailbox coverage. Missing or HTML-only content may not match.' : 'Online · scans 20 mailbox candidates per page, including older archived mail. Spam/Trash excluded. A page can have no matches; continue to scan older mail.' }}</p>
+            <p v-if="mailbox.listError.value && mailbox.listState.value === 'ready'" class="search-inline-error" role="alert" data-test="search-inline-error">{{ errorText(mailbox.listError.value) }}</p>
             <p v-if="mailbox.listState.value === 'loading'" class="list-state" data-test="inbox-loading">Loading {{ contextTitle }}…</p>
             <div v-else-if="mailbox.listState.value === 'error'" class="recovery-banner" data-test="inbox-error">
-              <p role="alert">Could not load {{ contextTitle }}: {{ mailbox.listError.value ? errorText(mailbox.listError.value) : 'unknown error' }}.</p>
-              <button type="button" data-test="inbox-retry" @click="mailbox.refresh()">Retry</button>
+              <p role="alert">Could not load {{ contextTitle }}: {{ mailbox.listError.value ? errorText(mailbox.listError.value) : 'unknown error' }}{{ listErrorIsSearchSyntax ? searchSyntaxEditHint : '.' }}</p>
+              <!-- A deterministic syntax error re-fails identically, so Retry is a dead control there; provider/load errors keep it. -->
+              <button v-if="!listErrorIsSearchSyntax" type="button" data-test="inbox-retry" @click="mailbox.refresh()">Retry</button>
             </div>
             <p
               v-else-if="mailbox.conversations.value.length === 0"
@@ -2228,8 +2474,9 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             <InboxList
               v-else
               ref="inboxList"
-              :rows="mailbox.conversations.value"
+              :rows="listRows"
               :context="mailbox.context.value"
+              :search-query="mailbox.context.value === 'search' ? mailbox.searchQuery.value : undefined"
               :focused-ref="mailbox.focusedRef.value"
               :actions-enabled="mailboxActionsEnabled"
               :show-read-state="gmailMode"

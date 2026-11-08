@@ -1577,6 +1577,9 @@ fn parse_message(id: &str, message: &Value) -> Result<(Message, String), String>
             to,
             sent_at,
             body_text,
+            // P5a: the parse already knows per-message attachment presence;
+            // persist it with the cached message instead of guessing later.
+            has_attachment: Some(payload_has_attachment(payload, 0)),
         },
         subject,
     ))
@@ -4613,6 +4616,38 @@ pub(crate) mod tests {
             thread.conversation.unsupported_reason.as_deref(),
             Some("additional inline MIME content is not displayed")
         );
+    }
+
+    /// P5a: the parse records per-message attachment presence (known fact)
+    /// alongside the body, so summaries can report it without guessing.
+    #[test]
+    fn parse_thread_records_per_message_attachment_presence() {
+        let with_attachment = json!({
+            "mimeType": "multipart/mixed",
+            "headers": payload_headers(&[("From", "s@example.test"), ("Subject", "file")]),
+            "parts": [
+                text_payload("text/plain", &[], Some(b"see attached")),
+                {"mimeType": "application/pdf", "filename": "report.pdf",
+                 "body": {"size": 9, "attachmentId": "handle-1"}}
+            ]
+        });
+        let plain = text_payload(
+            "text/plain",
+            &[("From", "s@example.test"), ("Subject", "file")],
+            Some(b"no attachment here"),
+        );
+        let body = thread_response(
+            "t-att",
+            "7",
+            vec![
+                gmail_message("m-att", &["INBOX"], with_attachment),
+                gmail_message("m-plain", &["INBOX"], plain),
+            ],
+        );
+        let thread = parse_thread("acct", "t-att", &body).unwrap();
+        assert_eq!(thread.conversation.messages.len(), 2);
+        assert_eq!(thread.conversation.messages[0].has_attachment, Some(true));
+        assert_eq!(thread.conversation.messages[1].has_attachment, Some(false));
     }
 
     #[test]

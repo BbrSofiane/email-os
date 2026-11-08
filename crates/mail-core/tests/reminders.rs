@@ -78,7 +78,7 @@ fn serial_fake_provider_fires_future_reminder_once_while_worker_stays_alive() {
     // New mail must stay in Inbox and never widen the original restore targets.
     conn.execute(
         "INSERT INTO messages SELECT account_id,conversation_id,'new-mail',NULL,
-         'friend@example.test',to_json,'2030-01-01T00:00:30Z','new plain text',1
+         'friend@example.test',to_json,'2030-01-01T00:00:30Z','new plain text',1,0
          FROM messages WHERE conversation_id='conv-01' LIMIT 1",
         [],
     )

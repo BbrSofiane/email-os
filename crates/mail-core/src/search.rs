@@ -1,6 +1,6 @@
 //! UX-07: one deliberately small grammar and evaluator for every search mode.
 use crate::{
-    dto::{Conversation, ConversationSummary},
+    dto::{Conversation, ConversationSummary, Message},
     MailError,
 };
 use serde::{Deserialize, Serialize};
@@ -161,7 +161,31 @@ impl Query {
         })
     }
 }
+/// Whether any cached message of the conversation has attachments.
+///
+/// `None` when no cached message carries the attachment fact (legacy cache
+/// rows); `Some(any)` otherwise. Never inferred, so a row glyph is only ever
+/// shown for a known `Some(true)` (PRODUCT.md: never overstate).
+pub fn has_attachments(c: &Conversation) -> Option<bool> {
+    messages_have_attachments(&c.messages)
+}
+
+/// Same fact over a bare message list, for summary builders that hold the
+/// cached messages without a full `Conversation`.
+pub fn messages_have_attachments(messages: &[Message]) -> Option<bool> {
+    let mut any_known = false;
+    let mut any = false;
+    for message in messages {
+        if let Some(present) = message.has_attachment {
+            any_known = true;
+            any |= present;
+        }
+    }
+    any_known.then_some(any)
+}
+
 pub fn summary(c: Conversation) -> ConversationSummary {
+    let has_attachments = has_attachments(&c);
     ConversationSummary {
         stars: c.stars,
         conversation_ref: c.conversation_ref,
@@ -179,6 +203,7 @@ pub fn summary(c: Conversation) -> ConversationSummary {
             .map(|m| m.sent_at.clone())
             .unwrap_or_default(),
         is_read: c.is_read,
+        has_attachments,
         pending_operation_id: c.pending_operation_id,
     }
 }
@@ -249,5 +274,69 @@ mod tests {
         ] {
             assert!(parse(q).is_err(), "{q}");
         }
+    }
+
+    fn message(id: &str, has_attachment: Option<bool>) -> Message {
+        Message {
+            id: id.to_string(),
+            from: crate::dto::Address {
+                display_name: None,
+                mailbox: "a@example.test".to_string(),
+            },
+            to: vec![],
+            sent_at: "2026-01-01T00:00:00Z".to_string(),
+            body_text: String::new(),
+            has_attachment,
+        }
+    }
+
+    #[test]
+    fn has_attachments_is_none_only_when_no_message_carries_the_fact() {
+        // Legacy cache rows carry no per-message fact: unknown, never guessed.
+        assert_eq!(messages_have_attachments(&[]), None);
+        assert_eq!(
+            messages_have_attachments(&[message("m1", None), message("m2", None)]),
+            None
+        );
+        // Known facts aggregate with OR, in both directions.
+        assert_eq!(
+            messages_have_attachments(&[message("m1", Some(false)), message("m2", None)]),
+            Some(false)
+        );
+        assert_eq!(
+            messages_have_attachments(&[message("m1", Some(false)), message("m2", Some(false))]),
+            Some(false)
+        );
+        assert_eq!(
+            messages_have_attachments(&[message("m1", None), message("m2", Some(true))]),
+            Some(true)
+        );
+        assert_eq!(
+            messages_have_attachments(&[message("m1", Some(true)), message("m2", Some(false))]),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn summary_carries_the_attachment_fact_verbatim() {
+        let mut c = Conversation {
+            stars: None,
+            conversation_ref: crate::dto::ConversationRef {
+                account_id: "acct".to_string(),
+                conversation_id: "conv".to_string(),
+            },
+            subject: "s".to_string(),
+            messages: vec![message("m1", Some(true)), message("m2", Some(false))],
+            is_in_inbox: true,
+            is_read: None,
+            context_complete: None,
+            unsupported_reason: None,
+            retained_snapshot_at: None,
+            reply_context: None,
+            pending_operation_id: None,
+        };
+        assert_eq!(summary(c.clone()).has_attachments, Some(true));
+        c.messages = vec![message("m1", None)];
+        assert_eq!(summary(c).has_attachments, None);
     }
 }

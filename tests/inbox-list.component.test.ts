@@ -38,7 +38,7 @@ describe('InboxList (UX-01 compact rows)', () => {
   function mountList(
     rows: ConversationSummary[],
     focusedRef: ConversationRef | null = null,
-    options: { showReadState?: boolean; showReadControls?: boolean; actionsEnabled?: boolean } = {},
+    options: { showReadState?: boolean; showReadControls?: boolean; actionsEnabled?: boolean; context?: 'inbox' | 'saved' | 'done' | 'starred' | 'search'; searchQuery?: string } = {},
   ): VueWrapper {
     const mounted = mount(InboxList, {
       props: { rows, focusedRef, actionsEnabled: true, ...options },
@@ -350,5 +350,290 @@ describe('InboxList (UX-01 compact rows)', () => {
     await flushPromises();
     expect(w.find('[data-test="row-actions-toggle-today-1"]').exists()).toBe(false);
     expect(w.find('.row-actions').exists()).toBe(false);
+  });
+
+  describe('sender grouping in search results (P5b)', () => {
+    const ada = { displayName: 'Ada Fixture', mailbox: 'ada@example.test' };
+    const bob = { displayName: 'Bob Fixture', mailbox: 'bob@example.test' };
+
+    // Interleaved senders, all today: date captions would collapse to one
+    // hidden Today, so any visible caption here is a sender caption.
+    const senderRows = (): ConversationSummary[] => [
+      row('s1', { lastMessageAt: '2026-01-15T09:00:00Z', primaryCorrespondent: ada }),
+      row('s2', { lastMessageAt: '2026-01-15T10:00:00Z', primaryCorrespondent: bob }),
+      row('s3', { lastMessageAt: '2026-01-15T11:00:00Z', primaryCorrespondent: ada }),
+      row('s4', { lastMessageAt: '2026-01-15T08:00:00Z', primaryCorrespondent: undefined, participants: [{ displayName: null, mailbox: 'anon@example.test' }] }),
+      row('s5', { lastMessageAt: '2026-01-15T07:00:00Z', primaryCorrespondent: undefined, participants: [] }),
+      row('s6', { lastMessageAt: '2026-01-15T06:00:00Z', primaryCorrespondent: { displayName: null, mailbox: 'bare@example.test' } }),
+    ];
+
+    const mountSearch = (rows: ConversationSummary[], searchQuery: string, focusedRef: ConversationRef | null = null) =>
+      mountList(rows, focusedRef, { context: 'search', searchQuery });
+
+    it('renders one "Name (count)" caption per exact sender with date captions nested inside each group, keeping row order inside each group', async () => {
+      const w = mountSearch(senderRows(), 'from:"example.test"');
+      await flushPromises();
+      const headings = w.findAll('.row-group');
+      // First-seen group order; counts are per exact sender mailbox; the date
+      // caption continues inside each sender group (all rows here are today).
+      expect(headings.map((h) => h.text())).toEqual([
+        'Ada Fixture (2)', 'Today',
+        'Bob Fixture (1)', 'Today',
+        'anon@example.test (1)', 'Today',
+        'Unknown sender (1)', 'Today',
+        'bare@example.test (1)', 'Today',
+      ]);
+      // Leading-Today rule on the very first caption in the list, whether
+      // sender or date: the list opens with today's mail, so the leading
+      // sender caption is visually hidden (kept for assistive technology).
+      expect(headings.map((h) => h.classes().includes('visually-hidden'))).toEqual([
+        true, false, false, false, false, false, false, false, false, false,
+      ]);
+      // Rows keep backend order inside each group: Ada's rows stay s1, s3.
+      expect(w.findAll('[role="listitem"]').map((r) => r.attributes('data-test'))).toEqual([
+        'conversation-row-s1',
+        'conversation-row-s3',
+        'conversation-row-s2',
+        'conversation-row-s4',
+        'conversation-row-s5',
+        'conversation-row-s6',
+      ]);
+      // Captions use the existing non-actionable group mechanism.
+      for (const heading of headings) {
+        expect(heading.attributes('role')).toBe('presentation');
+        expect((heading.element as HTMLElement).tabIndex).toBe(-1);
+        expect(heading.find('button').exists()).toBe(false);
+        expect(heading.find('input').exists()).toBe(false);
+      }
+    });
+
+    it('nests date captions inside a sender group on every bucket change, with the leading rule on the first caption', async () => {
+      const rows = [
+        row('m1', { lastMessageAt: '2026-01-15T09:00:00Z', primaryCorrespondent: ada }), // today
+        row('m2', { lastMessageAt: '2026-01-14T09:00:00Z', primaryCorrespondent: ada }), // yesterday
+        row('m3', { lastMessageAt: '2026-01-15T08:00:00Z', primaryCorrespondent: bob }), // today
+        row('m4', { lastMessageAt: '2026-01-13T09:00:00Z', primaryCorrespondent: bob }), // earlier this month
+      ];
+      const w = mountSearch(rows, 'from:"example.test"');
+      await flushPromises();
+      const headings = w.findAll('.row-group');
+      expect(headings.map((h) => h.text())).toEqual([
+        'Ada Fixture (2)', 'Today', 'Yesterday',
+        'Bob Fixture (2)', 'Today', 'Earlier this month',
+      ]);
+      // The very first caption (the leading sender caption) is visually
+      // hidden because the list opens with today's mail; all others stay visible.
+      expect(headings.map((h) => h.classes().includes('visually-hidden'))).toEqual([true, false, false, false, false, false]);
+      // Rows keep backend order inside each group.
+      expect(w.findAll('[role="listitem"]').map((r) => r.attributes('data-test'))).toEqual([
+        'conversation-row-m1', 'conversation-row-m2', 'conversation-row-m3', 'conversation-row-m4',
+      ]);
+    });
+
+    it('keeps the leading sender caption visible when the list does not open with today', async () => {
+      const rows = [
+        row('p1', { lastMessageAt: '2026-01-14T09:00:00Z', primaryCorrespondent: ada }),
+        row('p2', { lastMessageAt: '2026-01-13T09:00:00Z', primaryCorrespondent: bob }),
+      ];
+      const w = mountSearch(rows, 'from:"example.test"');
+      await flushPromises();
+      const headings = w.findAll('.row-group');
+      expect(headings.map((h) => h.text())).toEqual([
+        'Ada Fixture (1)', 'Yesterday',
+        'Bob Fixture (1)', 'Earlier this month',
+      ]);
+      expect(headings.some((h) => h.classes().includes('visually-hidden'))).toBe(false);
+    });
+
+    it.each([
+      'subject:fixture',
+      'fixture',
+      'from:ada@example.test OR from:bob@example.test',
+      'from:ada@example.test AND subject:x',
+      '-from:ada@example.test',
+      'from:ada@example.test -subject:x',
+      'from:',
+    ])('keeps date captions (no sender captions) for the non-single-from query %j', async (query) => {
+      const w = mountSearch(senderRows(), query);
+      await flushPromises();
+      const headings = w.findAll('.row-group');
+      expect(headings.map((h) => h.text())).toEqual(['Today']);
+      expect(headings[0]!.classes().includes('visually-hidden')).toBe(true);
+      expect(headings.some((h) => /\(\d+\)$/.test(h.text()))).toBe(false);
+    });
+
+    it('ignores searchQuery outside the search context', async () => {
+      for (const context of ['inbox', 'done', undefined] as const) {
+        const w = mountList(senderRows(), null, { context, searchQuery: 'from:"ada@example.test"' });
+        await flushPromises();
+        const headings = w.findAll('.row-group');
+        expect(headings.map((h) => h.text()), String(context)).toEqual(['Today']);
+        expect(headings.some((h) => /\(\d+\)$/.test(h.text()))).toBe(false);
+      }
+    });
+
+    it('keeps focus and navigation on conversation rows only, skipping sender captions', async () => {
+      const w = mountSearch(senderRows(), 'from:"example.test"', { accountId: ACCOUNT, conversationId: 's1' });
+      await flushPromises();
+      const list = w.vm as unknown as { focusRef(ref: ConversationRef): void };
+      // focusRef addresses a row in the second sender group, past a caption.
+      list.focusRef({ accountId: ACCOUNT, conversationId: 's2' });
+      await flushPromises();
+      expect(document.activeElement?.getAttribute('data-test')).toBe('conversation-row-s2');
+      expect(w.emitted('focus')).toEqual([[{ accountId: ACCOUNT, conversationId: 's2' }]]);
+      // The parent applies the emitted focus reference, as App does.
+      await w.setProps({ focusedRef: { accountId: ACCOUNT, conversationId: 's2' } });
+      // Captions are not focusable: focusing one leaves focus on the row.
+      (w.findAll('.row-group')[0]!.element as HTMLElement).focus();
+      expect(document.activeElement?.getAttribute('data-test')).toBe('conversation-row-s2');
+      // Roving tabindex: only the focused row is the tab stop.
+      const rows = w.findAll('[role="listitem"]');
+      expect((rows[2]!.element as HTMLElement).tabIndex).toBe(0);
+      expect((rows[0]!.element as HTMLElement).tabIndex).toBe(-1);
+      expect(rows[0]!.attributes('aria-current')).toBeUndefined();
+      expect(rows[2]!.attributes('aria-current')).toBe('true');
+    });
+
+    it('keeps selection, open and row actions working under sender captions', async () => {
+      const w = mountSearch(senderRows(), 'from:"example.test"', { accountId: ACCOUNT, conversationId: 's1' });
+      await w.setProps({ selectedRefs: [{ accountId: ACCOUNT, conversationId: 's3' }] });
+      await flushPromises();
+      const selected = w.get('[data-test="conversation-row-s3"]');
+      expect(selected.classes()).toContain('selected');
+      expect((w.get('[data-test="row-select-s3"]').element as HTMLInputElement).checked).toBe(true);
+      await w.get('[data-test="row-select-s3"]').trigger('change');
+      expect(w.emitted('selectToggle')).toEqual([[{ accountId: ACCOUNT, conversationId: 's3' }]]);
+      await w.get('[data-test="conversation-row-s2"]').trigger('click');
+      expect(w.emitted('open')).toEqual([[{ accountId: ACCOUNT, conversationId: 's2' }]]);
+      await w.get('[data-test="row-archive-s2"]').trigger('click');
+      expect(w.emitted('archive')).toEqual([[{ accountId: ACCOUNT, conversationId: 's2' }]]);
+      expect(w.emitted('open')).toHaveLength(1);
+    });
+  });
+});
+
+describe('InboxList attachment glyph (P5a truthful indicator)', () => {
+  let wrapper: VueWrapper | null = null;
+
+  beforeEach(() => {
+    vi.spyOn(Date, 'now').mockReturnValue(FROZEN_NOW);
+  });
+
+  afterEach(() => {
+    wrapper?.unmount();
+    wrapper = null;
+    vi.restoreAllMocks();
+  });
+
+  function mountList(rows: ConversationSummary[]): VueWrapper {
+    const mounted = mount(InboxList, {
+      props: { rows, focusedRef: null, actionsEnabled: true },
+      attachTo: document.body,
+    });
+    wrapper = mounted;
+    return mounted;
+  }
+
+  it('renders the solid paperclip before the date only when hasAttachments is known true', async () => {
+    const w = mountList([
+      row('with-att', { lastMessageAt: '2026-01-15T09:00:00Z', hasAttachments: true }),
+      row('no-att', { lastMessageAt: '2026-01-15T10:00:00Z', hasAttachments: false }),
+      row('unknown-att', { lastMessageAt: '2026-01-15T11:00:00Z' }),
+    ]);
+    await flushPromises();
+    const rows = w.findAll('[role="listitem"]');
+    expect(rows).toHaveLength(3);
+    // Known true: glyph present, with accessible name and tooltip.
+    const glyph = rows[0]!.get('[data-test="row-attachment"]');
+    expect(glyph.attributes('role')).toBe('img');
+    expect(glyph.attributes('aria-label')).toBe('Has attachments');
+    expect(glyph.attributes('title')).toBe('Has attachments');
+    expect(glyph.find('svg').exists()).toBe(true);
+    // It sits before the date inside the row's metadata, and the date stays.
+    const metaChildren = rows[0]!.get('.row-meta').element.children;
+    const names = Array.from(metaChildren).map((el) => (el as HTMLElement).className);
+    expect(names.indexOf('row-attachment')).toBeGreaterThanOrEqual(0);
+    expect(names.indexOf('row-attachment')).toBeLessThan(names.indexOf('row-trailing'));
+    expect(rows[0]!.find('.row-time').exists()).toBe(true);
+    // Known false: no glyph at all (no muted "no attachments" marker).
+    expect(rows[1]!.find('[data-test="row-attachment"]').exists()).toBe(false);
+    expect(rows[1]!.find('[data-test="row-attachment-unknown"]').exists()).toBe(false);
+    expect(rows[1]!.find('.row-time').exists()).toBe(true);
+    // Unknown (key absent): the outline glyph, not silence (detailed below).
+    expect(rows[2]!.find('[data-test="row-attachment"]').exists()).toBe(false);
+    expect(rows[2]!.get('[data-test="row-attachment-unknown"]').attributes('aria-label')).toBe('Attachment state unknown');
+    expect(rows[2]!.find('.row-time').exists()).toBe(true);
+  });
+
+  it('renders the outline paperclip for an unknown attachment state (undefined or absent), before the date', async () => {
+    const w = mountList([
+      row('explicit-undefined', { lastMessageAt: '2026-01-15T09:00:00Z', hasAttachments: undefined }),
+      row('key-absent', { lastMessageAt: '2026-01-15T10:00:00Z' }),
+    ]);
+    await flushPromises();
+    const rows = w.findAll('[role="listitem"]');
+    expect(rows).toHaveLength(2);
+    for (const rowEl of rows) {
+      const glyph = rowEl.get('[data-test="row-attachment-unknown"]');
+      expect(glyph.attributes('role')).toBe('img');
+      expect(glyph.attributes('aria-label')).toBe('Attachment state unknown');
+      expect(glyph.attributes('title')).toBe('Attachment state unknown');
+      expect(glyph.classes()).toContain('row-attachment-unknown');
+      expect(glyph.find('svg').exists()).toBe(true);
+      // No solid glyph in the unknown state.
+      expect(rowEl.find('[data-test="row-attachment"]').exists()).toBe(false);
+      // Same position as the solid glyph: inside the row's metadata, before
+      // the trailing slot (and so before the date), which stays in the DOM.
+      const metaChildren = Array.from(rowEl.get('.row-meta').element.children) as HTMLElement[];
+      const glyphIndex = metaChildren.findIndex((el) => el.classList.contains('row-attachment-unknown'));
+      const trailingIndex = metaChildren.findIndex((el) => el.classList.contains('row-trailing'));
+      expect(glyphIndex).toBeGreaterThanOrEqual(0);
+      expect(glyphIndex).toBeLessThan(trailingIndex);
+      expect(rowEl.find('.row-time').exists()).toBe(true);
+    }
+  });
+
+  it('flips reactively between solid, unknown and none as hasAttachments changes', async () => {
+    const sample = row('flip', { lastMessageAt: '2026-01-15T09:00:00Z' });
+    const w = mountList([sample]);
+    await flushPromises();
+    // Absent key starts in the unknown state.
+    expect(w.find('[data-test="row-attachment"]').exists()).toBe(false);
+    expect(w.get('[data-test="row-attachment-unknown"]').attributes('aria-label')).toBe('Attachment state unknown');
+    // Known true: solid glyph, named, still before the trailing date.
+    await w.setProps({ rows: [{ ...sample, hasAttachments: true }] });
+    const solid = w.get('[data-test="row-attachment"]');
+    expect(solid.attributes('aria-label')).toBe('Has attachments');
+    expect(solid.attributes('title')).toBe('Has attachments');
+    expect(w.find('[data-test="row-attachment-unknown"]').exists()).toBe(false);
+    let metaChildren = Array.from(w.get('.row-meta').element.children) as HTMLElement[];
+    expect(metaChildren.findIndex((el) => el.classList.contains('row-attachment'))).toBeLessThan(
+      metaChildren.findIndex((el) => el.classList.contains('row-trailing')),
+    );
+    // Known false: no glyph at all.
+    await w.setProps({ rows: [{ ...sample, hasAttachments: false }] });
+    expect(w.find('[data-test="row-attachment"]').exists()).toBe(false);
+    expect(w.find('[data-test="row-attachment-unknown"]').exists()).toBe(false);
+    expect(w.find('.row-time').exists()).toBe(true);
+    // Back to unknown: the outline glyph returns in the same position.
+    await w.setProps({ rows: [{ ...sample, hasAttachments: undefined }] });
+    expect(w.find('[data-test="row-attachment"]').exists()).toBe(false);
+    const unknown = w.get('[data-test="row-attachment-unknown"]');
+    expect(unknown.attributes('aria-label')).toBe('Attachment state unknown');
+    metaChildren = Array.from(w.get('.row-meta').element.children) as HTMLElement[];
+    expect(metaChildren.findIndex((el) => el.classList.contains('row-attachment-unknown'))).toBeLessThan(
+      metaChildren.findIndex((el) => el.classList.contains('row-trailing')),
+    );
+  });
+
+  it('updates the glyph when the row fact changes', async () => {
+    const sample = row('flip', { lastMessageAt: '2026-01-15T09:00:00Z' });
+    const w = mountList([sample]);
+    await flushPromises();
+    expect(w.find('[data-test="row-attachment"]').exists()).toBe(false);
+    await w.setProps({ rows: [{ ...sample, hasAttachments: true }] });
+    expect(w.get('[data-test="row-attachment"]').attributes('aria-label')).toBe('Has attachments');
+    await w.setProps({ rows: [{ ...sample, hasAttachments: false }] });
+    expect(w.find('[data-test="row-attachment"]').exists()).toBe(false);
   });
 });

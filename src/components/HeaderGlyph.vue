@@ -5,7 +5,7 @@
  * carries the accessible name in visually hidden text.
  */
 defineProps<{
-  name: 'menu' | 'search' | 'commands' | 'star' | 'back' | 'reminders' | 'compose' | 'done' | 'files' | 'reply' | 'read' | 'unread' | 'prev' | 'next';
+  name: 'menu' | 'search' | 'commands' | 'star' | 'back' | 'reminders' | 'x' | 'compose' | 'done' | 'files' | 'reply' | 'read' | 'unread' | 'prev' | 'next';
   /** Star only: a filled star for the pressed (filter on) state. */
   filled?: boolean;
 }>();
@@ -73,6 +73,8 @@ defineProps<{
     <!-- Previous / next conversation: chevrons. -->
     <path v-else-if="name === 'prev'" d="M3.75 10l4.25-4.25L12.25 10" />
     <path v-else-if="name === 'next'" d="M3.75 6l4.25 4.25L12.25 6" />
+    <!-- Close/clear: an X. -->
+    <path v-else-if="name === 'x'" d="M4 4l8 8M12 4l-8 8" />
     <!-- Local reminders: a clock. -->
     <template v-else>
       <circle cx="8" cy="8" r="5.25" />

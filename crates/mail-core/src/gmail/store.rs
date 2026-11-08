@@ -313,6 +313,17 @@ impl GmailStore {
             }
         }
 
+        // P5a: per-message attachment presence, known at provider parse time.
+        // Nullable: legacy cached message rows stay NULL = unknown (never a
+        // guessed false), freshly parsed rows store the observed 0/1.
+        if !has_column(&tx, "gmail_messages", "has_attachment")? {
+            tx.execute(
+                "ALTER TABLE gmail_messages ADD COLUMN has_attachment INTEGER",
+                [],
+            )
+            .map_err(|_| MailError::StorageUnavailable)?;
+        }
+
         let has_attachments = {
             let mut stmt = tx
                 .prepare("PRAGMA table_info(gmail_conversations)")
@@ -809,6 +820,7 @@ impl GmailStore {
                 participants: participants_of(&built.messages),
                 primary_correspondent: built.newest_sender,
                 is_read,
+                has_attachments: crate::search::messages_have_attachments(&built.messages),
                 preview: preview_of(&built.messages),
                 last_message_at: built
                     .messages
@@ -910,6 +922,7 @@ impl GmailStore {
                 .map(|json| serde_json::from_str(&json))
                 .transpose()
                 .map_err(|_| MailError::StorageUnavailable)?;
+            let has_attachments = crate::search::has_attachments(&conversation);
             summaries.push(ConversationSummary {
                 stars: conversation.stars,
                 conversation_ref: conversation.conversation_ref,
@@ -923,6 +936,7 @@ impl GmailStore {
                     .map(|m| m.sent_at.clone())
                     .unwrap_or_default(),
                 is_read: conversation.is_read,
+                has_attachments,
                 pending_operation_id: conversation.pending_operation_id,
             });
         }
@@ -1098,6 +1112,7 @@ impl GmailStore {
                 participants: participants_of(&built.messages),
                 primary_correspondent: built.newest_sender,
                 is_read,
+                has_attachments: crate::search::messages_have_attachments(&built.messages),
                 preview: preview_of(&built.messages),
                 last_message_at: built
                     .messages
@@ -1171,6 +1186,7 @@ impl GmailStore {
                 Err(MailError::NotFound) => continue,
                 Err(error) => return Err(error),
             };
+            let has_attachments = crate::search::has_attachments(&conversation);
             conversations.push(ConversationSummary {
                 stars: conversation.stars,
                 conversation_ref: conversation.conversation_ref,
@@ -1184,6 +1200,7 @@ impl GmailStore {
                     .map(|m| m.sent_at.clone())
                     .unwrap_or_default(),
                 is_read: conversation.is_read,
+                has_attachments,
                 pending_operation_id: conversation.pending_operation_id,
             });
         }
@@ -4505,8 +4522,8 @@ fn upsert_thread(
         conn.execute(
             "INSERT OR REPLACE INTO gmail_messages
                 (account_id, conversation_id, message_id, from_display, from_mailbox,
-                 to_json, sent_at, body_text, in_inbox)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                 to_json, sent_at, body_text, in_inbox, has_attachment)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 account_id,
                 conversation_id,
@@ -4517,6 +4534,7 @@ fn upsert_thread(
                 message.sent_at,
                 message.body_text,
                 in_inbox as i64,
+                message.has_attachment.map(|present| present as i64),
             ],
         )
         .map_err(|_| MailError::StorageUnavailable)?;
@@ -4725,7 +4743,8 @@ fn build_conversation(
     };
     let mut stmt = conn
         .prepare(
-            "SELECT message_id, from_display, from_mailbox, to_json, sent_at, body_text, in_inbox
+            "SELECT message_id, from_display, from_mailbox, to_json, sent_at, body_text, in_inbox,
+                    has_attachment
              FROM gmail_messages
              WHERE account_id = ?1 AND conversation_id = ?2
              ORDER BY sent_at ASC, message_id ASC",
@@ -4735,6 +4754,8 @@ fn build_conversation(
         .query_map(params![account_id, conversation_id], |row| {
             let from_display: Option<String> = row.get(1)?;
             let to_json: String = row.get(3)?;
+            // NULL (legacy cache rows) stays unknown; 0/1 are observed facts.
+            let has_attachment = row.get::<_, Option<i64>>(7)?.map(|value| value != 0);
             Ok((
                 Message {
                     id: row.get(0)?,
@@ -4751,6 +4772,7 @@ fn build_conversation(
                     })?,
                     sent_at: row.get(4)?,
                     body_text: row.get(5)?,
+                    has_attachment,
                 },
                 row.get::<_, i64>(6)? != 0,
             ))
@@ -4861,6 +4883,7 @@ mod tests {
             to: Vec::new(),
             sent_at: sent_at.to_string(),
             body_text: "plain text body".to_string(),
+            has_attachment: None,
         }
     }
 
@@ -4908,6 +4931,89 @@ mod tests {
 
     fn cached(thread: GmailThread) -> ThreadFetch {
         ThreadFetch::Cached(Box::new(thread))
+    }
+
+    /// P5a: per-message attachment facts parse -> persist -> summary. Known
+    /// facts aggregate to the conversation row; a NULL column (legacy cache)
+    /// stays unknown and never guesses.
+    #[test]
+    fn attachment_facts_persist_per_message_and_drive_summaries() {
+        let (store, dir) = open_store("attachment-facts");
+        store
+            .begin_account(&profile("acct", "test@example.test", "h1"), 0)
+            .unwrap();
+        let mut attached = message("m-att", "2026-01-01T00:00:00Z");
+        attached.has_attachment = Some(true);
+        let mut plain = message("m-plain", "2026-01-02T00:00:00Z");
+        plain.has_attachment = Some(false);
+        let attached_thread = thread(
+            "acct",
+            "thr-att",
+            "h2",
+            vec![attached.clone(), plain.clone()],
+            &["m-att", "m-plain"],
+        );
+        let plain_thread = thread("acct", "thr-plain", "h2", vec![plain.clone()], &["m-plain"]);
+        store
+            .apply_discovery_page(
+                &[cached(attached_thread), cached(plain_thread)],
+                None,
+                true,
+                false,
+                0,
+            )
+            .unwrap();
+        let rows = store.list_snapshot().unwrap().conversations;
+        let att_row = rows
+            .iter()
+            .find(|c| c.conversation_ref.conversation_id == "thr-att")
+            .unwrap();
+        let plain_row = rows
+            .iter()
+            .find(|c| c.conversation_ref.conversation_id == "thr-plain")
+            .unwrap();
+        assert_eq!(att_row.has_attachments, Some(true), "any known attachment");
+        assert_eq!(plain_row.has_attachments, Some(false), "known absent");
+        let detail = store
+            .get_conversation(&att_row.conversation_ref.clone())
+            .unwrap();
+        assert_eq!(detail.messages[0].has_attachment, Some(true));
+        assert_eq!(detail.messages[1].has_attachment, Some(false));
+
+        // The facts are durable across reopen (column, not just parse state).
+        drop(store);
+        let store = open_store_in(&dir);
+        let rows = store.list_snapshot().unwrap().conversations;
+        let att_row = rows
+            .iter()
+            .find(|c| c.conversation_ref.conversation_id == "thr-att")
+            .unwrap();
+        assert_eq!(att_row.has_attachments, Some(true), "survives reopen");
+
+        // A legacy cached row (NULL column) reports unknown, never false.
+        store
+            .lock_conn()
+            .unwrap()
+            .execute(
+                "UPDATE gmail_messages SET has_attachment = NULL
+                 WHERE conversation_id = 'thr-plain'",
+                [],
+            )
+            .unwrap();
+        let rows = store.list_snapshot().unwrap().conversations;
+        let legacy_row = rows
+            .iter()
+            .find(|c| c.conversation_ref.conversation_id == "thr-plain")
+            .unwrap();
+        assert_eq!(
+            legacy_row.has_attachments, None,
+            "legacy cache stays unknown"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn open_store_in(dir: &std::path::Path) -> GmailStore {
+        GmailStore::open(dir, Arc::new(SystemClock)).expect("store reopens")
     }
 
     #[test]

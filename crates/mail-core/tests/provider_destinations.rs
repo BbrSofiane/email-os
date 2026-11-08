@@ -201,6 +201,7 @@ impl Provider {
                     to: vec![],
                     sent_at: "2025-01-01T00:00:00Z".into(),
                     body_text: "<script>literal</script>".into(),
+                    has_attachment: None,
                 }],
                 is_in_inbox: true,
                 is_read: Some(false),

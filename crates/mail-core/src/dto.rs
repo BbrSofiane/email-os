@@ -139,6 +139,12 @@ pub struct Message {
     pub sent_at: String,
     /// Literal fixture text; hostile markup is data, never rendered.
     pub body_text: String,
+    /// Whether this cached message carries attachments, when that fact is
+    /// known (provider parse or a v4+ cache write). Absent when unknown
+    /// (legacy cache rows); never inferred.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub has_attachment: Option<bool>,
 }
 
 /// Full conversation for the reader.
@@ -202,6 +208,13 @@ pub struct ConversationSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub is_read: Option<bool>,
+    /// Whether any cached message of the conversation has attachments:
+    /// `Some(true)`/`Some(false)` when attachment facts are known for the
+    /// cached messages, `None` when unknown (legacy cache rows). Never
+    /// inferred; the row glyph renders only on a known `Some(true)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub has_attachments: Option<bool>,
     pub pending_operation_id: Option<String>,
 }
 

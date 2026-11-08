@@ -2467,6 +2467,7 @@ mod worker_halt_tests {
                     to: vec![],
                     sent_at: "2026-01-01T00:00:00Z".to_string(),
                     body_text: "synthetic body".to_string(),
+                    has_attachment: None,
                 }],
                 is_in_inbox: true,
                 is_read: Some(true),

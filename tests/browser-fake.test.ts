@@ -199,6 +199,28 @@ describe('browser fake MailClient (core-like semantics, memory-only)', () => {
     expect(ops.every((o) => o.status === 'confirmed')).toBe(true);
   });
 
+  it('mirrors the fixture attachment model into summaries and message facts (P5a)', async () => {
+    const fake = createBrowserFakeMailClient();
+    const snap = await fake.listConversations();
+    expect(snap.conversations.length).toBeGreaterThan(0);
+    for (const row of snap.conversations) {
+      // Every fixture conversation's first message carries the synthetic
+      // 'fixture-text' attachment, so the known fact is true — and it must
+      // agree with what listAttachments serves for the same conversation.
+      expect(row.hasAttachments).toBe(true);
+      const attachments = await fake.listAttachments(row.ref);
+      expect(attachments.length).toBeGreaterThan(0);
+      expect(row.hasAttachments).toBe(attachments.length > 0);
+      const detail = await fake.getConversation(row.ref);
+      expect(detail.messages[0]!.hasAttachment).toBe(true);
+      expect(detail.messages.slice(1).every((m) => m.hasAttachment === false)).toBe(true);
+    }
+    // Search rows carry the same fact.
+    const page = await fake.searchMail({ accountId: 'fixture-account', query: 'fixture', cursor: null, cachedOnly: true });
+    expect(page.conversations.length).toBeGreaterThan(0);
+    expect(page.conversations.every((c) => c.hasAttachments === true)).toBe(true);
+  });
+
   it('notifies subscribers on every state transition and detaches cleanly', async () => {
     const fake = createBrowserFakeMailClient();
     const events: number[] = [];
