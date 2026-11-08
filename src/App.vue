@@ -467,8 +467,11 @@ watch(drawer, (next) => { if (next) editingSplit.value = false; });
 // account's list; the context heading is shown on screen only when no rendered
 // tab is active, so Cached Done / Starred / Trash / Search / the reader stay
 // named. Reminders is the exception: its tabs are sections of the list, so the
-// heading stays visible before them.
+// heading stays visible before them. Cached Trash and Drafts are lists of their
+// own, not Inbox splits: the Inbox split nav gives way to the heading alone.
 const splitNavShown = computed(() => accountReady.value && !!accountId.value && !readerOpen.value && !drawer.value);
+const inboxSplitsShown = computed(() => splitNavShown.value
+  && !remindersContext.value && mailbox.context.value !== 'trash' && mailbox.context.value !== 'drafts');
 const activeTabShown = computed(() => splitNavShown.value
   && (mailbox.context.value === 'inbox' || (mailbox.context.value === 'saved' && !!savedTabVisible.value)));
 /** Cached Trash standing limits: one Ash line; the whole caveat is its title and hidden text. */
@@ -2425,7 +2428,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
                rendered tab is active (Cached Done, Starred, Search, reader). -->
           <span ref="readerBackHost" class="reader-back-host"></span>
           <h1 class="app-title" :class="{ 'visually-hidden': activeTabShown }" data-test="inbox-title">{{ contextTitle }}<template v-if="switchAccountLabel"><span class="app-title-account"> — {{ accountStatus?.account?.emailAddress }}</span></template></h1>
-          <nav v-if="splitNavShown && !remindersContext" class="split-nav" aria-label="Inbox splits" :title="splitCoverageShown ? SPLIT_COVERAGE : undefined">
+          <nav v-if="inboxSplitsShown" class="split-nav" aria-label="Inbox splits" :title="splitCoverageShown ? SPLIT_COVERAGE : undefined">
             <button type="button" class="split-tab" data-test="split-inbox" :aria-current="mailbox.context.value === 'inbox' ? 'page' : undefined" :aria-describedby="splitCoverageShown ? `${domIdPrefix}split-coverage` : undefined" @click="navigateContext('inbox')"><span class="split-label">Inbox</span> <span v-if="splitBadge(mailbox.inboxTotal.value)" class="split-count">{{ splitBadge(mailbox.inboxTotal.value) }}</span></button>
             <button v-if="savedTabVisible" type="button" class="split-tab" data-test="split-saved" :aria-current="mailbox.context.value === 'saved' ? 'page' : undefined" :aria-describedby="splitCoverageShown ? `${domIdPrefix}split-coverage` : undefined" @click="navigateContext('saved')"><span class="split-label">{{ mailbox.savedSplit.value?.name }}</span> <span v-if="splitBadge(mailbox.savedTotal.value)" class="split-count">{{ splitBadge(mailbox.savedTotal.value) }}</span></button>
           </nav>
