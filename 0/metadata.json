@@ -1,0 +1,62 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6ZMYFJV6S5KYGAHTG0FR8SM",
+  "session_id": "8f4d5ca6-57cb-4c84-ae4f-cde2bd9d7ccb",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-09T07:56:45.235807814Z",
+  "branch": "impeccable/reader-compose-critique-2",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "DESIGN.md",
+    "docs/ux-02-conversation-reader.md",
+    "docs/vertical-slice-04.md",
+    "src/assets/style.css",
+    "src/components/AttachmentChooser.vue",
+    "src/components/DraftEditorCore.vue",
+    "src/components/HeaderGlyph.vue",
+    "src/components/ReaderView.vue",
+    "src/components/ReplyComposer.vue",
+    "src/lib/browsing-actions.ts",
+    "tests/attachments.component.test.ts",
+    "tests/draft-editor-core.component.test.ts",
+    "tests/reader.component.test.ts",
+    "tests/reader.rendered.test.ts",
+    "tests/reply-composer.component.test.ts",
+    "tests/reply-shortcut.component.test.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "c075046fa80e",
+  "checkpoint_transcript_start": 311,
+  "transcript_lines_at_start": 311,
+  "compact_transcript_start": 35,
+  "token_usage": {
+    "input_tokens": 6,
+    "cache_creation_tokens": 15119,
+    "cache_read_tokens": 633877,
+    "output_tokens": 5939,
+    "api_call_count": 3,
+    "subagent_tokens": {
+      "input_tokens": 102,
+      "cache_creation_tokens": 115291,
+      "cache_read_tokens": 5212787,
+      "output_tokens": 33230,
+      "api_call_count": 51
+    }
+  },
+  "session_metrics": {
+    "turn_count": 1
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-09T07:56:45.164421069Z",
+    "agent_lines": 297,
+    "agent_removed": 49,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 297,
+    "total_lines_changed": 346,
+    "agent_percentage": 100,
+    "metric_version": 2
+  }
+}
