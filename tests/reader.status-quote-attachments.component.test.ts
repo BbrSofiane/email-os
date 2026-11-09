@@ -183,7 +183,7 @@ describe('trailing quote and signature', () => {
     expect(w.find('[data-test="message-quote-toggle-m1"]').exists()).toBe(false);
   });
 
-  it('leaves a body without a trailing quote or signature exactly as before (and its interleaved quote mono)', async () => {
+  it('leaves a body without a trailing quote or signature exactly as before (an interleaved quote no longer forces mono)', async () => {
     const plain = 'Hi,\n\nThanks > nothing.\n\nAda';
     const inline = '> Are we on?\nYes.\n> And Friday?\nAlso yes.';
     const w = mountReader(conversationOf('c1', [message('m1', plain), message('m2', inline)]));
@@ -191,7 +191,8 @@ describe('trailing quote and signature', () => {
     const bodies = w.findAll('[data-test="message-body"]');
     expect(bodies[0]!.text()).toBe(plain);
     expect(bodies[1]!.text()).toBe(inline);
-    expect(bodies[1]!.classes()).toContain('message-body-mono');
+    expect(bodies[0]!.classes()).not.toContain('message-body-mono');
+    expect(bodies[1]!.classes()).not.toContain('message-body-mono');
     expect(w.find('.message-quote-toggle').exists()).toBe(false);
     expect(w.find('[data-test="message-signature"]').exists()).toBe(false);
   });
@@ -201,6 +202,20 @@ describe('trailing quote and signature', () => {
     await settle();
     expect(w.get('[data-test="message-toggle-m1"]').get('.message-snippet').text()).toBe('Shipping Friday.');
     expect(w.get('[data-test="message-quote-toggle-m1"]').attributes('hidden')).toBeDefined();
+  });
+
+  it('collapses a localized quote, previews only the prose, and keeps an aligned prose block mono', async () => {
+    const french = 'Merci, c’est bon.\n\nLe jeudi 6 nov. 2026, Ada a écrit\u00a0:\n> Peut-on livrer ?\n> Vendredi.';
+    const aligned = 'Lancer :\n    $ pnpm test\n    ok\n\nAm Montag schrieb Ada:\n> Passt?\n> Ja.';
+    const w = mountReader(conversationOf('c1', [message('m1', french), message('m2', aligned)]));
+    await settle();
+    expect(w.get('[data-test="message-toggle-m1"]').get('.message-snippet').text()).toBe('Merci, c’est bon.');
+    expect(w.get('[data-test="message-quote-toggle-m1"]').text()).toBe('Show quoted text');
+    const bodies = w.findAll('[data-test="message-body"]');
+    expect(bodies[0]!.text()).toBe('Merci, c’est bon.');
+    expect(bodies[0]!.classes()).not.toContain('message-body-mono');
+    expect(bodies[1]!.classes()).toContain('message-body-mono');
+    expect(w.find('[data-test="message-quote-toggle-m2"]').exists()).toBe(true);
   });
 
   it('keeps the disclosure open across a J/K round trip', async () => {

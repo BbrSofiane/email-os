@@ -143,6 +143,34 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
     expect(w.find('[data-test="reply-quoted-context"]').text()).toBe(latest.bodyText);
   });
 
+  it('quotes only the prose of the latest message, cut on a character boundary, and still never saves it', async () => {
+    const fake = createBrowserFakeMailClient();
+    const prose = `${'a'.repeat(199)}\u{1F600}tail`;
+    const withLatest = async (bodyText: string): Promise<MailClient> => ({
+      ...fake,
+      getConversation: async (ref) => {
+        const conversation = await fake.getConversation(ref);
+        const messages = conversation.messages.map((m, i, all) => (i === all.length - 1 ? { ...m, bodyText } : m));
+        return { ...conversation, messages };
+      },
+    });
+
+    // A trailing localized quote is left out of the preview.
+    let w = await mountApp(fake, await withLatest('Merci, c’est bon.\n\nLe jeudi 6 nov. 2026, Ada a écrit :\n> Peut-on livrer ?\n> Vendredi.'));
+    await openReaderAndPrepareReply(w);
+    expect(w.find('[data-test="reply-quoted-context"]').text()).toBe('Merci, c’est bon.');
+    expect((w.find('[data-test="draft-body"]').element as HTMLTextAreaElement).value).toBe('');
+    w.unmount();
+    wrapper = null;
+
+    // The 200-unit cap never leaves half of an emoji.
+    w = await mountApp(fake, await withLatest(prose));
+    await openReaderAndPrepareReply(w);
+    const text = w.find('[data-test="reply-quoted-context"]').text();
+    expect(text).toBe(`${'a'.repeat(199)}…`);
+    expect(text).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+  });
+
   it('flushes through the protected path on Escape: a failed close keeps reader+composer, success hides only the composer', async () => {
     const fake = createBrowserFakeMailClient();
     const gate = deferred<DraftReceipt>();
