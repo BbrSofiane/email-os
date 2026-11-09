@@ -1,0 +1,15 @@
+{
+  "tool_use_id": "toolu_01FsQ1wEy5YocPCqovge2LRX",
+  "agent_id": "a50bda67063b6fd9a",
+  "subagent_type": "general-purpose",
+  "task_description": "Critique B: detector + browser evidence",
+  "token_usage": {
+    "input_tokens": 114,
+    "cache_creation_tokens": 83230,
+    "cache_read_tokens": 4196349,
+    "output_tokens": 24739,
+    "api_call_count": 57
+  },
+  "started_at": "2026-11-09T19:54:37.74882196Z",
+  "completed_at": "2026-11-09T20:00:45.969282227Z"
+}

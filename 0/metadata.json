@@ -1,0 +1,62 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M70YP5B2KQ0YPA1KZJW8TRSB",
+  "session_id": "8f4d5ca6-57cb-4c84-ae4f-cde2bd9d7ccb",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-09T20:06:14.376609521Z",
+  "branch": "impeccable/reader-compose-critique-2",
+  "checkpoints_count": 5,
+  "save_step_count": 1,
+  "files_touched": [],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "c21ddbe8dee2",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 164,
+    "cache_creation_tokens": 570797,
+    "cache_read_tokens": 15868187,
+    "output_tokens": 81349,
+    "api_call_count": 73
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "prompt-skill-claude-code-impeccable-2026-11-09T19:53:25.688412293Z",
+      "event_type": "prompt_invocation",
+      "skill": {
+        "name": "impeccable"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "prompt_slash_command",
+        "confidence": "explicit"
+      },
+      "turn_id": "58e8e0dc2152",
+      "timestamp": "2026-11-09T19:53:25.688412293Z",
+      "native": {
+        "command": "/impeccable"
+      },
+      "collapse": {
+        "target": "user_message",
+        "label": "/impeccable",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 6
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 1,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".impeccable/hook.cache.json": 1
+      }
+    }
+  ]
+}
