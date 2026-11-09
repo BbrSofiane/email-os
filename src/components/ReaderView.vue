@@ -1008,7 +1008,7 @@ defineExpose({
         >
           This cached conversation may be incomplete; some context was unavailable in plain text.
         </p>
-        <p v-if="props.conversation.pendingOperationId" data-test="reader-pending" class="reader-pending">
+        <p v-if="props.conversation.pendingOperationId" data-test="reader-pending" class="reader-pending" role="status">
           A mailbox action is pending for this conversation.
         </p>
         <ol class="messages" data-test="reader-messages">

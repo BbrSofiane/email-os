@@ -134,6 +134,24 @@ describe('reader status line and exceptions', () => {
     expect(w.findAll('.reader-scroll > p')).toHaveLength(5);
   });
 
+  it('exposes the pending line as the reader\'s one status; the other exceptions stay notes, not live regions', async () => {
+    const w = mountReader(
+      conversationOf('c1', [message('m1')], {
+        isRead: false,
+        retainedSnapshotAt: '2025-02-03T04:05:06Z',
+        unsupportedReason: 'attachments omitted',
+        pendingOperationId: 'op-1',
+      }),
+      { showReadControls: true },
+    );
+    await settle();
+    expect(w.get('[data-test="reader-pending"]').attributes('role')).toBe('status');
+    expect(w.get('[data-test="retained-snapshot-notice"]').attributes('role')).toBe('note');
+    expect(w.get('[data-test="unsupported-notice"]').attributes('role')).toBe('note');
+    // Quiet: exactly one live region in the reader body.
+    expect(w.findAll('.reader-scroll [role="status"], .reader-scroll [role="alert"], .reader-scroll [aria-live]')).toHaveLength(1);
+  });
+
   it('marks the bare loading line as a status without changing its text', async () => {
     wrapper = mount(ReaderView, {
       props: { conversation: null, state: 'loading', error: null, commandInFlight: false, openRef: ref('c1') },
