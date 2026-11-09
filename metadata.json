@@ -1,0 +1,37 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6ZMF2XB8AAP7933RY11TAEQ",
+  "strategy": "manual-commit",
+  "branch": "impeccable/reader-compose-critique-2",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "DESIGN.md",
+    "src/assets/style.css",
+    "src/components/ReplyComposer.vue",
+    "tests/reader-geometry.test.ts",
+    "tests/reader.rendered.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 60,
+    "cache_creation_tokens": 180005,
+    "cache_read_tokens": 3922834,
+    "output_tokens": 24524,
+    "api_call_count": 29,
+    "subagent_tokens": {
+      "input_tokens": 70,
+      "cache_creation_tokens": 122669,
+      "cache_read_tokens": 3150348,
+      "output_tokens": 22512,
+      "api_call_count": 33
+    }
+  }
+}
