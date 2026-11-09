@@ -137,22 +137,54 @@ a fresh OAuth flow. Never paste credentials into the app, logs, screenshots, or 
 
 ## Validation gates
 
+See [current status](current-status.md) for the maintained feature and validation
+matrix. The commands below describe what each gate checks; the baseline recorded
+there is evidence supplied for `main` at `f361f57c4051c0af578af43277bed8170905548a`,
+not a rerun by this documentation update. That baseline reports `mise run check`
+passing (315 Rust core tests, 1,162 frontend tests, 34 skipped),
+`mise run test:native` passing (11 tests), and `mise run build:web` passing in
+this VM. It does not establish macOS, provider, browser-rendered, or native app
+runtime behavior.
+
 Core and frontend gates run independently of native GTK/WebKit prerequisites:
 
 | Task | What it does |
 |---|---|
 | `mise run check` | Core tests, generated-contract check, core lint, UI tests and typecheck |
-| `mise run test:core` | `cargo test -p mail-core` — synthetic fixture and Gmail auth/cache/sync tests; no real accounts or Google network |
+| `mise run test:core` | `cargo test --locked -p mail-core` — synthetic fixture and Gmail auth/cache/sync tests; no real accounts or Google network |
 | `mise run check:contract` | Regenerates the TS wire contract to a temp file and **fails on drift** against `src/lib/ipc/generated.ts` |
 | `mise run gen:ts` | Regenerates `src/lib/ipc/generated.ts` from Rust DTOs |
 | `mise run lint:core` | Workspace formatting and `clippy -D warnings` for mail-core |
 | `mise run test:ui` | Vitest component/transport tests |
 | `mise run typecheck` | `vue-tsc --noEmit` |
 | `mise run build:web` | Frontend production build to `dist/` |
-| `mise run check:native` | Locked compile-check of the Tauri shell and native tests |
-| `mise run test:native` | Native shell bridge tests |
+| `mise run check:native` | `cargo check --locked -p email-os --all-targets` — compiles the Tauri shell and native test targets; requires Linux GTK/WebKit development prerequisites |
+| `mise run test:native` | `cargo test --locked -p email-os` — command/event bridge tests; these do not launch a native window or prove OS integration |
 | `mise run dev:native` | Tauri dev app; GTK/WebKit development packages are required on Linux |
 | `mise run build:native` | Bundled native app |
+
+`mise run check` does not include native shell checks or `build:web`. The native
+bridge tests exercise command and event behavior through test doubles. They do
+not validate a running Tauri window, GTK/WebKit, macOS WKWebView, Keychain,
+OAuth, or Gmail provider behavior. Native runtime, macOS, and disposable-account
+provider checks remain separate operator gates. The previously recorded Linux
+native compile attempt stopped because `pkg-config` and GTK development packages
+were missing; this is historical environment evidence, not a result from the
+baseline above. Do not install OS packages as part of a routine validation run.
+
+Rendered Chromium suites are opt-in tests included in `mise run test:ui`; the
+default fast run skips them without their browser environment. Each suite starts its
+own Vite server and synthetic in-memory fixture. For example:
+
+```sh
+EMAIL_OS_RENDERED_LAYOUT_CHROME=/path/to/chromium \
+  mise exec -- pnpm exec vitest run tests/discovery.rendered.test.ts
+```
+
+Use the suite's environment variable and command shown in its source for other
+rendered suites; some use `EMAIL_OS_DISCLOSURE_FOCUS_CHROME`. A passing rendered
+suite is browser interaction evidence only. It does not validate native IPC,
+WKWebView, real mail, or provider behavior.
 
 ## Running the app
 
@@ -377,10 +409,9 @@ disposable Mac/profile and no production account:
 - Verify fixture native restart recovery and that browser preview continues to
   label its memory-only drafts as non-durable.
 
-Slice 04 synthetic core/UI checks pass in this VM. Native Tauri compile-check
-currently stops at the missing `pkg-config`/GTK prerequisites described below;
-no OS packages were installed. Native close handling and this Mac checkpoint
-remain pending operator validation.
+Slice 04 native close handling and this Mac checkpoint remain pending operator
+validation. The historical Linux compile attempt stopped at missing
+`pkg-config`/GTK prerequisites; no OS packages were installed for that attempt.
 
 ### Safe bulk selection and processing (UX-05)
 

@@ -1,10 +1,13 @@
-# Architecture: proposed implementation for the first build
+# Architecture: historical proposal for the first build
 
-**Status:** broader proposed implementation plan, not a current implementation inventory. The
-repository has completed the narrower Slice 01 fixture baseline and integrated Slice 02's explicit,
-read-only Gmail path; see `docs/development.md` and the slice contracts for implemented behavior and
-pending platform validation. This document's fuller composition/search/view recommendations remain
-proposals and are not claims about working code.
+**Status:** Historical design proposal. This document is not a current implementation inventory.
+For source-backed architecture, use [current architecture](docs/current-architecture.md). For feature
+availability and validation, use [current status](docs/current-status.md). The accepted scope remains
+in [ADR 0001](docs/adr/0001-single-account-desktop-email-client.md). The recommendations below retain
+their original planning context; they do not describe current behavior unless confirmed by the current
+architecture inventory.
+
+**Original proposal context and decisions at the time:**
 
 - **Governing scope:** [ADR 0001: first desktop build](docs/adr/0001-single-account-desktop-email-client.md)
   (accepted). The ADR defines *what* the first build does; this document proposes *how*.
@@ -22,18 +25,19 @@ proposals and are not claims about working code.
 
 ## 1. Selected and open decisions
 
-| Decision | Status |
+| Original proposal decision | Status at proposal time; current implementation status is documented separately |
 |---|---|
 | Single-account desktop client scope (read/reply/archive/search/one view) | **Selected** — ADR 0001 |
 | Tauri 2 + Vue 3 + TypeScript frontend | **Selected** by the user |
 | Greenfield build (no fork of reviewed candidates) | **Selected** direction; final call at scaffolding |
-| macOS-first Gmail read-only pilot | Approved and implemented in Slice 02; platform gates pending |
+| macOS-first Gmail read-only pilot | Approved for the pilot; platform gates pending at proposal time |
 | Exact crate/npm dependencies and versions | Not yet approved; choose at scaffolding |
 | `tauri-specta` for TS IPC generation | Evaluate at scaffolding; compatibility/version not claimed here |
 | SQLite library (e.g. `rusqlite` vs alternatives) | Not prescribed here; evaluate at scaffolding |
-| Android, multi-account, plugins, AI/automation | Out of scope for first build (ADR 0001) |
+| Android, multi-account, plugins, AI/automation | Out of scope for first build at proposal time (ADR 0001) |
 
-Everything below is a recommendation to validate in the staged build (§9), not a claim that it works.
+The remaining rows record unresolved proposal decisions. Everything below this table records
+recommendations from the proposal. It is not a claim that it works today.
 
 ## 2. Architectural overview
 
