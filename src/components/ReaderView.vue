@@ -152,7 +152,7 @@ const hasMetaRow = computed(() => {
   return !!(props.readOnly || props.showReadControls || bulkScope.value);
 });
 
-/** The one rule for whether Prepare reply may run (button, glyph and the R key). */
+/** The one rule for whether Reply may run (button, glyph and the R key). */
 function canPrepareReply(): boolean {
   return actionable.value && !props.browsingOnly && !!latestMessage.value && replyBlockedReason.value === null;
 }
@@ -203,9 +203,9 @@ function describeError(error: MailError): string {
     case 'not_found':
       return 'That conversation is no longer available.';
     case 'invalid_request':
-      return `The request was rejected (invalid field: ${error.field}).`;
+      return 'The request was rejected.';
     case 'request_id_conflict':
-      return 'The request conflicted with an earlier request ID.';
+      return 'The request conflicted with an earlier one.';
     case 'storage_unavailable':
       return 'Local storage is unavailable. The operation was not confirmed.';
     case 'profile_in_use':
@@ -887,7 +887,7 @@ defineExpose({
           :aria-describedby="actionable ? replySourceId : undefined"
           :disabled="!actionable || !!replyBlockedReason"
           @click="prepareReply"
-        ><HeaderGlyph name="reply" /><span class="visually-hidden">Prepare reply</span></button>
+        ><HeaderGlyph name="reply" /><span class="visually-hidden">Reply</span></button>
         <span
           v-if="!props.browsingOnly && actionable && latestMessage"
           :id="replySourceId"
@@ -1025,13 +1025,13 @@ defineExpose({
                 </time>
               </button>
               <!-- Quiet reply glyph: only on the displayed latest message while it is
-                   active; same gating and event as the toolbar Prepare reply. -->
+                   active; same gating and event as the toolbar Reply. -->
               <button
                 v-if="!props.browsingOnly && isActive(message) && message.id === latestMessage?.id"
                 type="button"
                 class="message-reply"
                 :data-test="`message-reply-${message.id}`"
-                aria-label="Prepare reply"
+                aria-label="Reply"
                 :title="replyTitle"
                 :disabled="!actionable || !!replyBlockedReason"
                 @click="prepareReply"
@@ -1078,6 +1078,15 @@ defineExpose({
                       @blur="onParticipantBlur(message, participant)"
                     >{{ participant.displayName ?? participant.mailbox }} &lt;{{ participant.mailbox }}&gt;</span>
                   </span>
+                </div>
+                <!-- The cached Message has no Cc: say so instead of implying there is none. -->
+                <div class="message-field">
+                  <span class="message-field-label">Cc</span>
+                  <span
+                    class="message-field-note"
+                    :data-test="`message-cc-${message.id}`"
+                    title="Cc is not stored in the local cache; reply recipients are not inferred from it."
+                  >Not cached</span>
                 </div>
                 <div class="message-field">
                   <span class="message-field-label">Sent</span>

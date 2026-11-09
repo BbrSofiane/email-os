@@ -35,7 +35,7 @@ describe('UX-12 download-only chooser', () => {
     expect(note.attributes('title')).toContain('32 cached files and 32 plain-text links');
     expect(wrapper!.text()).toContain('text/html, 29 B');
     expect(wrapper!.text()).not.toContain('bytes');
-    expect(wrapper!.findAll('[aria-label="Known links"] li')).toHaveLength(2);
+    expect(wrapper!.findAll('[aria-label="Links"] li')).toHaveLength(2);
     await wrapper!.findAll('button').find(b => b.text() === 'Open link…')!.trigger('click');
     expect(open).not.toHaveBeenCalled();
     await button('Open in browser').trigger('click');
@@ -43,6 +43,25 @@ describe('UX-12 download-only chooser', () => {
     await button('Save to Downloads').trigger('click'); await flushPromises();
     expect(save).toHaveBeenCalledWith({ conversation: conversation.ref, messageId: 'm1', attachmentId: 'a1', requestId: expect.any(String) });
     expect(wrapper!.text()).toContain('No file was opened');
+  });
+  it('names the lists Files and Links, with no empty-files line while a file is listed', async () => {
+    await chooser();
+    expect(wrapper!.find('[aria-label="Files"]').exists()).toBe(true);
+    expect(wrapper!.find('[aria-label="Links"]').exists()).toBe(true);
+    expect(wrapper!.find('[aria-label^="Known"]').exists()).toBe(false);
+    expect(wrapper!.text()).not.toContain('No cached files');
+  });
+  it('says one short sentence when no files are cached, and leaves the links sentence alone', async () => {
+    const client = createBrowserFakeMailClient();
+    vi.spyOn(client, 'listAttachments').mockResolvedValue([]);
+    const bare: Conversation = { ...conversation, messages: [{ ...conversation.messages[0]!, bodyText: 'No links here.' }] };
+    wrapper = mount(AttachmentChooser, { props: { client, conversation: bare, preview: false }, attachTo: document.body });
+    await flushPromises();
+    const empty = wrapper.findAll('p').filter((p) => p.text().startsWith('No cached files'));
+    expect(empty).toHaveLength(1);
+    expect(empty[0]!.text()).toBe('No cached files. Sync to fetch any that are missing.');
+    expect(wrapper.text()).not.toMatch(/inventory|Legacy|fetchable/);
+    expect(wrapper.text()).toContain('No HTTP(S) links found in cached plain text. Email addresses are not browser links.');
   });
   it.each(['not_found', 'network_unavailable', 'invalid_request'])('keeps a dismissal/retry path on %s', async (kind) => {
     const { save } = await chooser(); save.mockRejectedValue({ kind });

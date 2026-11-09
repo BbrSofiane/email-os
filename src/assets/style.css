@@ -1711,6 +1711,10 @@ button:focus-visible {
   color: var(--text-secondary);
 }
 
+.message-field-note {
+  color: var(--text-secondary);
+}
+
 .message-field-recipients {
   display: flex;
   flex-direction: column;

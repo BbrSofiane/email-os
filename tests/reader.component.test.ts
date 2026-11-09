@@ -115,7 +115,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
     await settle(wrapper);
     const reply = wrapper.find('[data-test="message-reply-m3"]');
     expect(reply.exists()).toBe(true);
-    expect(reply.attributes('aria-label')).toBe('Prepare reply');
+    expect(reply.attributes('aria-label')).toBe('Reply');
     expect(reply.element.closest('.message-toggle')).toBeNull();
     expect(wrapper.findAll('.message-reply')).toHaveLength(1);
     await reply.trigger('click');
@@ -750,5 +750,46 @@ describe('ReaderView scroll anchoring with controlled geometry (UX-02)', () => {
     await settle(wrapper!);
     expect(scroller.scrollTop).toBe(150);
     expect(wrapper!.find('[data-test="message-read-m2"]').element.getBoundingClientRect().top).toBe(-60);
+  });
+});
+
+describe('ReaderView Details Cc row', () => {
+  let wrapper: VueWrapper | null = null;
+  afterEach(() => { wrapper?.unmount(); wrapper = null; document.body.innerHTML = ''; });
+
+  it('says Cc is not cached after To and before Sent, without inferring any Cc', async () => {
+    wrapper = mountReader(conversationOf(ACCOUNT_A, ['read-m1', 'read-m2']));
+    await settle(wrapper!);
+    const details = wrapper!.get('[data-test="message-details-read-m2"]');
+    const labels = details.findAll('.message-field-label').map((el) => el.text());
+    expect(labels).toEqual(['From', 'To', 'Cc', 'Sent']);
+    const cc = details.get('[data-test="message-cc-read-m2"]');
+    expect(cc.text()).toBe('Not cached');
+    expect(cc.attributes('title')).toBe('Cc is not stored in the local cache; reply recipients are not inferred from it.');
+    expect(cc.find('.participant').exists()).toBe(false);
+    expect(cc.element.closest('.message-field')?.querySelector('.message-field-label')?.textContent).toBe('Cc');
+    // The collapsed line and the participant elements do not mention Cc.
+    expect(wrapper!.get('.message-to').text()).not.toContain('Cc');
+    expect(wrapper!.findAll('[data-test^="participant-"]').every((el) => !el.text().includes('Cc'))).toBe(true);
+    // One row per message.
+    expect(wrapper!.findAll('[data-test^="message-cc-"]')).toHaveLength(2);
+  });
+});
+
+describe('ReaderView error wording', () => {
+  let wrapper: VueWrapper | null = null;
+  afterEach(() => { wrapper?.unmount(); wrapper = null; document.body.innerHTML = ''; });
+
+  it.each<[MailError, string]>([
+    [{ kind: 'invalid_request', field: 'conversationId' } as MailError, 'The request was rejected.'],
+    [{ kind: 'request_id_conflict' } as MailError, 'The request conflicted with an earlier one.'],
+  ])('describes %j without internal field names or IDs', async (error, expected) => {
+    wrapper = mountReader(conversationOf(ACCOUNT_A, []));
+    await settle(wrapper!);
+    await wrapper!.setProps({ conversation: null, state: 'error', error });
+    await settle(wrapper!);
+    const text = wrapper!.get('[data-test="reader-error"]').text();
+    expect(text).toBe(expected);
+    expect(text).not.toMatch(/field|request ID/i);
   });
 });

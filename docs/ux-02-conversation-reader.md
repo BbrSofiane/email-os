@@ -91,7 +91,9 @@ Implemented behavior:
   mail.
 - **Participant details and context.** Each message exposes a native
   `<details>` disclosure with the complete known From/To addresses and sent
-  timestamp; unknown Cc/Bcc and other headers are omitted, never fabricated.
+  timestamp; unknown Cc/Bcc and other headers are omitted, never fabricated. The
+  Cc row states `Not cached` (the cached message carries no Cc) instead of
+  implying that there is none.
   Participant names/addresses are keyboard-focusable context controls separate
   from the expansion toggle (no nested buttons). The active message's sender is
   the baseline reader contact; participant hover and keyboard focus each
@@ -102,9 +104,9 @@ Implemented behavior:
   contact. Direct focus on a new message's participant preserves its valid
   identity-matching override across the active-message handoff instead of
   accidentally clearing it. A visible "Reply targets the latest message from …" label sits near
-  Prepare reply so focusing an older message cannot imply a different reply
+  Reply so focusing an older message cannot imply a different reply
   target.
-  Update (2026-11-08): `R` runs Prepare reply from the open reader under the same
+  Update (2026-11-08): `R` runs Reply from the open reader under the same
   rule as the buttons (ready, not Cached Trash, not blocked), and the standing
   read-state sentences are now the title and hidden text of one status line in
   the meta row instead of visible paragraphs; exception notices are unchanged.

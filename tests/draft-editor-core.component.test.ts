@@ -104,3 +104,36 @@ describe('draft status announcements', () => {
     expect(wrapper.find('[data-test="draft-error"]').attributes('role')).toBe('alert');
   });
 });
+
+describe('reply extras (Cc / Subject)', () => {
+  const toggle = (w: VueWrapper) => w.get('[data-test="draft-fields-toggle"]');
+
+  it('stays closed when To differs from the sender, because the To row is already an input', () => {
+    wrapper = mount(DraftEditorCore, { props: props({ content: { ...CONTENT, to: 'list@lists.example' } }) });
+    expect(wrapper.find('[data-test="draft-to-row"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="draft-to"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="draft-cc"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="draft-subject"]').exists()).toBe(false);
+    expect(toggle(wrapper).attributes('aria-expanded')).toBe('false');
+    expect(toggle(wrapper).attributes('disabled')).toBeUndefined();
+  });
+
+  it('does not open while To is being typed', async () => {
+    wrapper = mount(DraftEditorCore, { props: props() });
+    await wrapper.get('[data-test="draft-to-row"]').trigger('click');
+    await wrapper.setProps({ content: { ...CONTENT, to: 'ada@example.test, ' } });
+    expect(wrapper.find('[data-test="draft-cc"]').exists()).toBe(false);
+    expect(toggle(wrapper).attributes('aria-expanded')).toBe('false');
+  });
+
+  it.each([
+    ['Cc text', { cc: 'cc@example.test' }],
+    ['a subject that is not Re:', { subject: 'Other topic' }],
+  ])('stays open and locked for %s, even with a differing To', (_name, extra) => {
+    wrapper = mount(DraftEditorCore, { props: props({ content: { ...CONTENT, to: 'list@lists.example', ...extra } }) });
+    expect(wrapper.find('[data-test="draft-cc"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="draft-subject"]').exists()).toBe(true);
+    expect(toggle(wrapper).attributes('aria-expanded')).toBe('true');
+    expect(toggle(wrapper).attributes('disabled')).toBeDefined();
+  });
+});

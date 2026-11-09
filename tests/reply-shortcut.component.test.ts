@@ -1,6 +1,6 @@
 /**
- * R prepares a reply from the open reader (keyboard-first). The key and the
- * "Prepare reply" palette entry use the same rule as the reader's buttons, the
+ * R opens a reply from the open reader (keyboard-first). The key and the
+ * "Reply" palette entry use the same rule as the reader's buttons, the
  * source is always the displayed latest message, and the key is inert wherever
  * another surface or a text field owns the keyboard.
  */
@@ -50,16 +50,16 @@ async function closePalette(w: VueWrapper): Promise<void> {
   expect(w.find('[data-test="action-query"]').exists()).toBe(false);
 }
 
-describe('R: Prepare reply from the reader', () => {
+describe('R: Reply from the reader', () => {
   it('opens the docked composer for the displayed latest message, like the button, and focuses the body', async () => {
     const fake = createBrowserFakeMailClient();
     const w = await mountApp(fake);
     await openReader(w);
-    // The button hint shows the key; the hidden name stays "Prepare reply".
-    expect(w.get('[data-test="prepare-reply"]').attributes('title')).toContain('Prepare reply — R');
-    expect(w.get('[data-test="prepare-reply"]').text()).toBe('Prepare reply');
-    expect(w.get('[data-test="message-reply-conv-01-m3"]').attributes('title')).toBe('Prepare reply — R. Reply targets the latest message from Ada Fixture');
-    expect(w.get('[data-test="message-reply-conv-01-m3"]').attributes('aria-label')).toBe('Prepare reply');
+    // The button hint shows the key; the hidden name stays "Reply".
+    expect(w.get('[data-test="prepare-reply"]').attributes('title')).toContain('Reply — R');
+    expect(w.get('[data-test="prepare-reply"]').text()).toBe('Reply');
+    expect(w.get('[data-test="message-reply-conv-01-m3"]').attributes('title')).toBe('Reply — R. Reply targets the latest message from Ada Fixture');
+    expect(w.get('[data-test="message-reply-conv-01-m3"]').attributes('aria-label')).toBe('Reply');
 
     // Focus an older message first: the source must still be the latest one.
     await w.get('[data-test="message-toggle-conv-01-m1"]').trigger('focusin');
@@ -255,7 +255,7 @@ describe('R: Prepare reply from the reader', () => {
     expect(await drafts(fake)).toHaveLength(0);
     // The palette is open and working (other commands are found), reply just is not among them.
     expect(await paletteIds(w, 'mark done')).toContain('action-archive');
-    expect(await paletteIds(w, 'prepare reply')).not.toContain('action-reply');
+    expect(await paletteIds(w, 'reply')).not.toContain('action-reply');
   });
 
   it('is inert in cached Trash', async () => {
@@ -273,10 +273,10 @@ describe('R: Prepare reply from the reader', () => {
     press({ key: 'r' });
     await flushPromises();
     expect(await drafts(fake)).toHaveLength(0);
-    expect(await paletteIds(w, 'prepare reply')).not.toContain('action-reply');
+    expect(await paletteIds(w, 'reply')).not.toContain('action-reply');
   });
 
-  it('lists "Prepare reply" with R in the palette only while the reader is open and reply is allowed', async () => {
+  it('lists "Reply" with R in the palette only while the reader is open and reply is allowed', async () => {
     const fake = createBrowserFakeMailClient();
     const w = await mountApp(fake);
     // List view: absent, with the palette demonstrably open.
@@ -284,12 +284,12 @@ describe('R: Prepare reply from the reader', () => {
     expect(await paletteIds(w, 'new message')).toContain('action-compose');
     await closePalette(w);
     await openReader(w);
-    for (const query of ['prepare reply', 'respond', 'write back', 'r']) {
+    for (const query of ['reply', 'respond', 'write back', 'r']) {
       expect(await paletteIds(w, query), query).toContain('action-reply');
     }
-    await w.get('[data-test="action-query"]').setValue('prepare reply');
+    await w.get('[data-test="action-query"]').setValue('reply');
     const option = w.get('#action-reply');
-    expect(option.text()).toContain('Prepare reply');
+    expect(option.text()).toContain('Reply');
     expect(option.get('kbd').text()).toBe('R');
     // Running it from the palette uses the same path as the key.
     press({ key: 'Enter' }, w.get('[data-test="action-query"]').element);

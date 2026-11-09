@@ -292,7 +292,7 @@ describe.skipIf(chromePath === '')('Reader journey (real Chrome, opt-in)', () =>
     expect(await cdp!.js('window.__attachmentRequests.length')).toBe(0);
     expect(await cdp!.js(`document.querySelectorAll('iframe,object,embed,img').length`)).toBe(0);
     expect(await cdp!.js(`document.querySelector('[role="dialog"]').textContent.includes('PDF preview is unavailable')`)).toBe(true);
-    await click('.attachment-chooser [aria-label="Known files"] button');
+    await click('.attachment-chooser [aria-label="Files"] button');
     await cdp!.js('window.__h.wait(100)');
     expect(await cdp!.js('window.__attachmentRequests.length')).toBe(1);
     await press('Escape'); await cdp!.js('window.__h.wait(100)');
@@ -520,7 +520,7 @@ describe.skipIf(chromePath === '')('Reader journey (real Chrome, opt-in)', () =>
     expect(sender.left).toBeCloseTo(subject.left, 0);
   });
 
-  it('exits through Prepare reply into the inline reply composer and leaves no mailbox writes', async () => {
+  it('exits through Reply into the inline reply composer and leaves no mailbox writes', async () => {
     // Fresh fixture; open read-03 explicitly.
     await freshMount();
     await click('[data-test="conversation-row-read-03"]');
