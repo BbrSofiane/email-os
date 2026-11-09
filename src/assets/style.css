@@ -46,6 +46,17 @@
   --icon-muted: #8e8a87;
   /* DESIGN.md split-header height: content top to the first row. */
   --split-header-height: 78px;
+  /* DESIGN.md content inset: where text starts in the list and the reader
+     (split tabs, sender names, captions, notices, dock, reader subject and
+     message text). --content-inset-end is the matching right inset (dock,
+     notices, composer, reader). The older literal 50px/24px uses elsewhere
+     agree with these values; new reader geometry reads the tokens. */
+  --content-inset: 50px;
+  --content-inset-end: 24px;
+  /* One collapsed message line (12px type: 24px). The reader's message toggle
+     takes this as its minimum height and the loading skeleton rows are sized
+     from it, so the pane does not jump when the conversation arrives. */
+  --message-row-height: calc(var(--type-body) * 2);
   --unread-marker: #ce9ece;
   /* DESIGN.md Seam: the 1px vertical separators between rail, list and
      contact pane (and the drawer's leading edge), utility-chip and input
@@ -458,9 +469,9 @@ button:focus-visible {
   color: var(--warning);
 }
 
-/* Inside surfaces that already carry their own inset. */
-.account-gate .recovery-banner,
-.reader-pane .recovery-banner {
+/* Inside surfaces that already carry their own inset. The reader pane has no
+   side padding of its own, so its banner keeps the default 50px/24px inset. */
+.account-gate .recovery-banner {
   padding: 0 0 6px;
 }
 
@@ -1321,10 +1332,14 @@ button:focus-visible {
   min-width: 0;
 }
 
+/* No side padding: the content inset (50px start, 24px end) is owned by the
+   scroller and by the notes above it, so the reader's text sits on the same x
+   as the list's. No bottom padding: a docked composer brings its own 12px
+   bottom margin. */
 .reader-pane {
   display: flex;
   flex-direction: column;
-  padding: 0.5rem 0.75rem;
+  padding: 0.5rem 0 0;
 }
 
 .reader {
@@ -1375,6 +1390,8 @@ button:focus-visible {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  padding-inline: var(--content-inset) var(--content-inset-end);
+  padding-block-end: 0.5rem;
 }
 
 /* Headline at the strong weight: the subject leads the reader without a third size. */
@@ -1398,31 +1415,43 @@ button:focus-visible {
   color: var(--text-secondary);
 }
 
-/* Static placeholder bars in the Rule colour: the subject line, then rows at the
-   collapsed message height (2em). No shimmer: nothing moves while loading. */
+/* Static placeholder bars in the Rule colour: the subject line, then one row
+   per collapsed message. A row occupies the real collapsed .message pitch (1px
+   top border + 1rem vertical padding + the shared row height + the .5rem
+   bottom margin), so the gap is 0 and the pane does not jump when the
+   conversation arrives. The bar is drawn inside the row. No shimmer: nothing
+   moves while loading. */
 .reader-skeleton {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0;
   margin-top: 0.5rem;
 }
 
-.reader-skeleton-subject,
-.reader-skeleton-row {
+.reader-skeleton-subject {
   display: block;
+  height: var(--type-headline);
+  width: 40%;
+  margin-bottom: 0.5rem;
   background: var(--rule);
   border-radius: 4px;
   opacity: 0.6;
 }
 
-.reader-skeleton-subject {
-  height: var(--type-headline);
-  width: 40%;
+.reader-skeleton-row {
+  display: block;
+  width: 100%;
+  height: calc(1px + 1rem + var(--message-row-height) + 0.5rem);
+  padding: calc(1px + 0.4rem) 0 calc(0.6rem + 0.5rem);
 }
 
-.reader-skeleton-row {
-  height: 1.4em;
-  width: 100%;
+.reader-skeleton-row::before {
+  content: '';
+  display: block;
+  height: 100%;
+  background: var(--rule);
+  border-radius: 4px;
+  opacity: 0.6;
 }
 
 .reader-context-note {
@@ -1455,16 +1484,21 @@ button:focus-visible {
   content: ' ·';
 }
 
+/* Like a list row: the message fill reaches 6px from both pane edges while its
+   text stays on the content inset. The negative margin pulls the stack out of
+   the scroller's padding to 6px from each pane edge; the message padding gives
+   it back, so text starts at 50px and the right-aligned date ends 24px from the
+   right edge. */
 .messages {
   list-style: none;
   padding: 0;
-  margin: 0;
+  margin: 0 calc(6px - var(--content-inset-end)) 0 calc(6px - var(--content-inset));
 }
 
 .message {
   position: relative;
   border-top: 1px solid var(--rule);
-  padding: 0.4rem 0.4rem 0.6rem;
+  padding: 0.4rem calc(var(--content-inset-end) - 6px) 0.6rem calc(var(--content-inset) - 6px);
   margin-bottom: 0.5rem;
 }
 
@@ -1531,13 +1565,14 @@ button:focus-visible {
   gap: 0.75rem;
   flex: 1;
   min-width: 0;
-  min-height: 2em;
+  min-height: var(--message-row-height);
   text-align: left;
   font-size: var(--type-body);
   color: var(--text-secondary);
   background: transparent;
   border: 0;
-  padding: 0.1rem 0.2rem;
+  /* No inline padding: the sender, body, signature and Details share one x. */
+  padding: 0.1rem 0;
 }
 
 .message-from,
@@ -1632,7 +1667,6 @@ button:focus-visible {
 
 .message-details summary {
   width: max-content;
-  margin-left: 0.2rem;
   cursor: pointer;
   /* Ash: Graphite text is 3.79:1 on the active message's raised fill. */
   color: var(--text-secondary);
@@ -2263,7 +2297,7 @@ button:focus-visible {
 .selection-actions { display: flex; flex-wrap: wrap; gap: 2px; margin-left: -8px; }
 .selection-limit { margin: 0; flex-basis: 100%; color: var(--warning); }
 .reader-selection-scope {
-  margin: 0 0 6px;
+  margin: 0 var(--content-inset-end) 6px var(--content-inset);
   color: var(--text-secondary);
   font-size: var(--type-body);
 }
@@ -2301,11 +2335,12 @@ button:focus-visible {
 }
 /* Docked at the bottom of the reader pane (editor active while a reader is
    open): same raised-surface card, compact. Full 1px border — no accent side
-   stripe, so the reader's active-message bar keeps the single accent signal. */
+   stripe, so the reader's active-message bar keeps the single accent signal.
+   The margin is inherited from .compose-card (6px 24px 12px 50px), so the
+   docked and undocked cards share one inset. */
 .reader-pane > .compose-card {
   flex: 0 0 auto;
   max-height: 60%;
-  margin: 0.5rem 0 0;
   border: 1px solid var(--divider);
   border-radius: 6px;
 }

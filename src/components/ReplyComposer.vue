@@ -136,7 +136,9 @@ function onSetField(field: keyof DraftContent, value: string): void {
 .reply-composer {
   flex: 0 0 auto;
   min-height: 0;
-  margin-top: 0.5rem;
+  /* Same inline margins as the undocked .compose-card (50px start, 24px end,
+     12px bottom), so a docked reply sits on the content inset. */
+  margin: 6px var(--content-inset-end) 12px var(--content-inset);
   border: 1px solid var(--divider);
   border-radius: 6px;
   background: var(--surface-raised);

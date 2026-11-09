@@ -508,6 +508,18 @@ describe.skipIf(chromePath === '')('Reader journey (real Chrome, opt-in)', () =>
     expect(await cdp!.js(`window.__h.exists('[data-test="contact-column"]')`)).toBe(true);
   });
 
+  it('puts the subject and the first message sender on the 50px content inset of the reader pane', async () => {
+    // Not run in CI or on the VM that wrote it (no Chrome): opt-in like the rest.
+    await freshMount();
+    await click('[data-test="conversation-row-read-01"]');
+    await cdp!.js('window.__h.wait(200)');
+    const pane = await cdp!.js<Rect>(`window.__h.rect('section.reader-pane')`);
+    const subject = await cdp!.js<Rect>(`window.__h.rect('.reader-subject')`);
+    const sender = await cdp!.js<Rect>(`window.__h.rect('.message-from')`);
+    expect(subject.left - pane.left).toBeCloseTo(50, 0);
+    expect(sender.left).toBeCloseTo(subject.left, 0);
+  });
+
   it('exits through Prepare reply into the inline reply composer and leaves no mailbox writes', async () => {
     // Fresh fixture; open read-03 explicitly.
     await freshMount();
