@@ -522,6 +522,19 @@ describe('DraftsList Discard', () => {
     elsewhere.remove();
   });
 
+  it('leaves focus on another row inside the pane when a retryable failure arrives', async () => {
+    let finish: (value: MailError | null) => void = () => {};
+    const discardDraft = () => new Promise<MailError | null>((resolve) => { finish = resolve; });
+    wrapper = mountList({ summaries: three, discardDraft });
+    await discardBtn('d2').trigger('click'); await flushPromises();
+    await wrapper.get('[data-test="confirm-discard-draft"]').trigger('click');
+    (rowButton('d3') as HTMLElement).focus();
+    expect(document.activeElement).toBe(rowButton('d3'));
+    finish({ kind: 'storage_unavailable' }); await flushPromises();
+    expect(wrapper.find('[data-test="draft-discard-confirm"]').exists()).toBe(true);
+    expect(document.activeElement).toBe(rowButton('d3'));
+  });
+
   it('keeps the outcome line as a live region that is visually hidden, so it never pushes rows down', async () => {
     const { discardDraft } = deleting();
     wrapper = mountList({ summaries: three, discardDraft });

@@ -192,10 +192,13 @@ function onConfirmKeydown(event: KeyboardEvent, item: DraftItem): void {
   void cancelDiscard(item);
 }
 
-/** Put focus back on `target` unless the user moved it somewhere else while the request ran. */
-function refocus(target: HTMLElement | null): void {
+/**
+ * Put focus back on `target` only when the request left it nowhere (body or none) or still in the
+ * confirmation it started in. Focus the user moved to any other control stays there.
+ */
+function refocus(target: HTMLElement | null, confirmation: HTMLElement | null): void {
   const active = document.activeElement;
-  if (active && active !== document.body && !paneEl.value?.contains(active)) return;
+  if (active && active !== document.body && !confirmation?.contains(active)) return;
   target?.focus();
 }
 
@@ -205,6 +208,7 @@ async function confirmDiscard(item: DraftItem): Promise<void> {
   if (!send || !frozen || frozen.key !== item.key || confirmKey.value !== item.key || discarding.value || editorOwns(frozen.draft.ref)) return;
   const index = items.value.findIndex((candidate) => candidate.key === item.key);
   const neighbour = items.value[index + 1]?.key ?? items.value[index - 1]?.key ?? null;
+  const confirmation = rowEl(item, '[data-test="draft-discard-confirm"]');
   discarding.value = true;
   discardError.value = null;
   discardStatus.value = 'Discarding draft…';
@@ -231,7 +235,7 @@ async function confirmDiscard(item: DraftItem): Promise<void> {
   }
   await nextTick();
   // Definite: back to this row's Discard. Retryable: the confirmation stays, so focus stays in it and Escape closes it.
-  refocus(rowEl(item, definite ? '[data-test="discard-draft"]' : '[data-test="confirm-discard-draft"]'));
+  refocus(rowEl(item, definite ? '[data-test="discard-draft"]' : '[data-test="confirm-discard-draft"]'), confirmation);
 }
 
 /** Focus the current row, or the pane itself when there is no row to take it. */
@@ -264,7 +268,7 @@ defineExpose({ focusRow, discardRow, el: paneEl });
       <button type="button" class="drawer-quiet" data-test="new-draft" :disabled="busy" @click="emit('newDraft')">New draft</button>
     </div>
 
-    <!-- Discard outcome: the live region stays mounted (zero height when empty) so each result is announced. -->
+    <!-- Discard outcome: the live region stays mounted and visually hidden so each result is announced. -->
     <p class="draft-discard-status visually-hidden" role="status" aria-live="polite" data-test="draft-discard-status">{{ discardStatus }}</p>
     <div v-if="discardError" class="draft-notices">
       <p role="alert" class="drawer-alert" data-test="draft-discard-error">{{ describeDiscardError(discardError) }}</p>
