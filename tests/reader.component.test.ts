@@ -776,6 +776,103 @@ describe('ReaderView Details Cc row', () => {
   });
 });
 
+describe('ReaderView participants and Details disclosure (polish)', () => {
+  let wrapper: VueWrapper | null = null;
+  afterEach(() => { wrapper?.unmount(); wrapper = null; document.body.innerHTML = ''; });
+
+  /** A browser does not render, and so cannot focus, anything inside a closed <details> (or a hidden one). */
+  function tabbable(root: ParentNode): HTMLElement[] {
+    return [...root.querySelectorAll<HTMLElement>('.participant')].filter((el) => {
+      if (el.tabIndex < 0) return false;
+      for (let node = el.parentElement; node; node = node.parentElement) {
+        if (node.hidden) return false;
+        if (node instanceof HTMLDetailsElement && !node.open) return false;
+      }
+      return true;
+    });
+  }
+
+  /** jsdom queues the `toggle` event as a task after the click. */
+  const toggled = async () => { await new Promise((resolve) => setTimeout(resolve, 20)); await nextTick(); };
+
+  it('exposes the disclosure state natively: a real <details>/<summary> whose open follows the toggle', async () => {
+    wrapper = mountReader(conversationOf(ACCOUNT_A, ['read-m1', 'read-m2']));
+    await settle(wrapper!);
+    const details = wrapper!.get('[data-test="message-details-read-m2"]').element as HTMLDetailsElement;
+    const summary = wrapper!.get('[data-test="message-details-summary-read-m2"]').element as HTMLElement;
+    expect(details.tagName).toBe('DETAILS');
+    expect(summary.tagName).toBe('SUMMARY');
+    expect(summary.parentElement).toBe(details);
+    expect(summary.textContent).toBe('Details');
+    expect(details.open).toBe(false);
+    summary.click();
+    await toggled();
+    expect(details.open).toBe(true);
+    expect((wrapper!.vm as unknown as { hasOpenDetails: () => boolean }).hasOpenDetails()).toBe(true);
+    summary.click();
+    await toggled();
+    expect(details.open).toBe(false);
+    // The visible glyph is generated content, never text, and no ARIA state is layered on top.
+    expect(summary.hasAttribute('aria-expanded')).toBe(false);
+  });
+
+  it('has no tabbable participant while Details is closed, and exactly From plus each To once it opens', async () => {
+    const conversation = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2']);
+    wrapper = mountReader(conversation);
+    await settle(wrapper!);
+    const participants = wrapper!.findAll('.participant');
+    expect(participants).toHaveLength(2 * 2);
+    for (const participant of participants) expect(participant.element.closest('summary')).toBeNull();
+    expect(tabbable(wrapper!.element)).toEqual([]);
+    // m2 is expanded: opening its Details makes only its own participants reachable.
+    ((wrapper!.get('[data-test="message-details-read-m2"]').element) as HTMLDetailsElement).open = true;
+    expect(tabbable(wrapper!.element).map((el) => el.dataset['test'])).toEqual([
+      'participant-from-read-m2',
+      'participant-to-read-m2-you@example.test',
+    ]);
+  });
+
+  it('gives each participant a group role and one accessible name with the full address, and keeps the tab stop', async () => {
+    const named = { displayName: 'Ada Fixture', mailbox: 'ada@example.test' };
+    const bare = { displayName: null, mailbox: 'bare@example.test' };
+    const conversation = conversationOf(ACCOUNT_A, ['read-m1'], {
+      messages: [{ ...message('read-m1'), from: bare, to: [named, bare] }],
+    });
+    wrapper = mountReader(conversation);
+    await settle(wrapper!);
+    const from = wrapper!.get('[data-test="participant-from-read-m1"]');
+    const toNamed = wrapper!.get('[data-test="participant-to-read-m1-ada@example.test"]');
+    const toBare = wrapper!.get('[data-test="participant-to-read-m1-bare@example.test"]');
+    for (const participant of [from, toNamed, toBare]) {
+      expect(participant.attributes('role')).toBe('group');
+      expect(participant.attributes('tabindex')).toBe('0');
+    }
+    // Name plus address once; a bare mailbox is not repeated.
+    expect(toNamed.attributes('aria-label')).toBe('Ada Fixture, ada@example.test');
+    expect(from.attributes('aria-label')).toBe('bare@example.test');
+    expect(toBare.attributes('aria-label')).toBe('bare@example.test');
+    // The visible text is unchanged and is not read a second time.
+    expect(toNamed.text()).toBe('Ada Fixture <ada@example.test>');
+    expect(toNamed.get('[aria-hidden="true"]').text()).toBe('Ada Fixture <ada@example.test>');
+  });
+
+  it('still drives the contact override from participant hover and focus', async () => {
+    wrapper = mountReader(conversationOf(ACCOUNT_A, ['read-m1', 'read-m2']));
+    await settle(wrapper!);
+    const participant = wrapper!.get('[data-test="participant-to-read-m2-you@example.test"]');
+    await participant.trigger('mouseenter');
+    expect(wrapper!.emitted('contactOverride')?.at(-1)?.[0]).toMatchObject({ messageId: 'read-m2', mailbox: 'you@example.test' });
+    await participant.trigger('mouseleave');
+    expect(wrapper!.emitted('contactOverride')?.at(-1)).toEqual([null]);
+    participant.element.dispatchEvent(new FocusEvent('focus'));
+    await nextTick();
+    expect(wrapper!.emitted('contactOverride')?.at(-1)?.[0]).toMatchObject({ messageId: 'read-m2', mailbox: 'you@example.test' });
+    participant.element.dispatchEvent(new FocusEvent('blur'));
+    await nextTick();
+    expect(wrapper!.emitted('contactOverride')?.at(-1)).toEqual([null]);
+  });
+});
+
 describe('ReaderView error wording', () => {
   let wrapper: VueWrapper | null = null;
   afterEach(() => { wrapper?.unmount(); wrapper = null; document.body.innerHTML = ''; });

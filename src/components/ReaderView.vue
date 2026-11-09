@@ -551,6 +551,15 @@ watch(
   },
 );
 
+/**
+ * The one accessible name of a participant: the display name and the real
+ * address once, or the bare mailbox when there is no name (never repeated).
+ * The visible `Name <mailbox>` text is aria-hidden so it is not read again.
+ */
+function participantName(address: Address): string {
+  return address.displayName && address.displayName !== address.mailbox ? `${address.displayName}, ${address.mailbox}` : address.mailbox;
+}
+
 function sameParticipant(
   current: { messageId: string; address: Address } | null,
   messageId: string,
@@ -753,8 +762,8 @@ type AttachmentLoad = { state: 'ready'; files: AttachmentDescriptor[] } | { stat
 
 /** Descriptor lists per conversation, kept for this reader session: J/K revisits never refetch. */
 const attachmentLoads = reactive(new Map<string, AttachmentLoad>());
-const attachmentRequests = new Map<string, number>();
-let attachmentSeq = 0;
+/** Conversation keys with a descriptor request in flight (at most one per key). */
+const attachmentLoading = reactive(new Set<string>());
 const displayedKey = computed(() => keyOfDisplayed());
 const attachmentTransfer = useAttachmentTransfer({
   client: () => props.client!,
@@ -773,20 +782,26 @@ async function loadAttachments(key: string, ref: ConversationRef): Promise<void>
   const client = props.client;
   if (!client) return;
   const known = attachmentLoads.get(key);
-  // A list already loaded (or loading) is final for this visit; only a failure is retried.
-  if ((known && known.state === 'ready') || (!known && attachmentRequests.has(key))) return;
-  const token = ++attachmentSeq;
-  attachmentRequests.set(key, token);
+  // A list already loaded is final for this visit, and one request per key is
+  // enough while it is in flight; only a failure is asked for again.
+  if (known?.state === 'ready' || attachmentLoading.has(key)) return;
+  attachmentLoading.add(key);
   let result: AttachmentLoad;
   try {
     result = { state: 'ready', files: await client.listAttachments({ ...ref }) };
   } catch {
     result = { state: 'failed' };
   }
-  // A newer request for this key owns the result. The result is stored under
-  // its own conversation key, so it can never show on another conversation.
-  if (attachmentRequests.get(key) !== token) return;
+  // The result is stored under its own conversation key, so it can never show
+  // on another conversation.
   attachmentLoads.set(key, result);
+  attachmentLoading.delete(key);
+}
+
+/** The Retry button of a failed file-details note. */
+function retryAttachments(): void {
+  const conversation = props.conversation;
+  if (conversation) void loadAttachments(visitKey(conversation.ref), conversation.ref);
 }
 
 // After the ready snapshot has rendered: never blocks the J/K hot path.
@@ -806,12 +821,13 @@ watch(displayedKey, (key, previous) => {
  * What a message's inline list shows. Only `hasAttachment === true` ever claims
  * files (false and unknown show nothing); null while the list is still loading.
  */
-function attachmentRow(message: Message): { loadState: 'ready' | 'failed'; files: AttachmentDescriptor[] } | null {
+function attachmentRow(message: Message): { loadState: 'ready' | 'failed'; retrying: boolean; files: AttachmentDescriptor[] } | null {
   if (message.hasAttachment !== true || !props.conversation) return null;
-  const load = attachmentLoads.get(visitKey(props.conversation.ref));
+  const key = visitKey(props.conversation.ref);
+  const load = attachmentLoads.get(key);
   if (!load) return null;
-  if (load.state === 'failed') return { loadState: 'failed', files: [] };
-  return { loadState: 'ready', files: load.files.filter((file) => file.messageId === message.id) };
+  if (load.state === 'failed') return { loadState: 'failed', retrying: attachmentLoading.has(key), files: [] };
+  return { loadState: 'ready', retrying: false, files: load.files.filter((file) => file.messageId === message.id) };
 }
 
 const transferTargetKey = computed(() => attachmentTransfer.target.value);
@@ -1056,12 +1072,14 @@ defineExpose({
                   <span
                     class="participant"
                     :data-test="`participant-from-${message.id}`"
+                    role="group"
+                    :aria-label="participantName(message.from)"
                     tabindex="0"
                     @mouseenter="onParticipantEnter(message, message.from)"
                     @mouseleave="onParticipantLeave(message, message.from)"
                     @focus="onParticipantFocus(message, message.from)"
                     @blur="onParticipantBlur(message, message.from)"
-                  >{{ message.from.displayName ?? message.from.mailbox }} &lt;{{ message.from.mailbox }}&gt;</span>
+                  ><span aria-hidden="true">{{ message.from.displayName ?? message.from.mailbox }} &lt;{{ message.from.mailbox }}&gt;</span></span>
                 </div>
                 <div class="message-field">
                   <span class="message-field-label">To</span>
@@ -1071,12 +1089,14 @@ defineExpose({
                       :key="participant.mailbox"
                       class="participant"
                       :data-test="`participant-to-${message.id}-${participant.mailbox}`"
+                      role="group"
+                      :aria-label="participantName(participant)"
                       tabindex="0"
                       @mouseenter="onParticipantEnter(message, participant)"
                       @mouseleave="onParticipantLeave(message, participant)"
                       @focus="onParticipantFocus(message, participant)"
                       @blur="onParticipantBlur(message, participant)"
-                    >{{ participant.displayName ?? participant.mailbox }} &lt;{{ participant.mailbox }}&gt;</span>
+                    ><span aria-hidden="true">{{ participant.displayName ?? participant.mailbox }} &lt;{{ participant.mailbox }}&gt;</span></span>
                   </span>
                 </div>
                 <!-- The cached Message has no Cc: say so instead of implying there is none. -->
@@ -1116,6 +1136,7 @@ defineExpose({
               :message-id="message.id"
               :files="attachmentRow(message)!.files"
               :load-state="attachmentRow(message)!.loadState"
+              :retrying="attachmentRow(message)!.retrying"
               :retained="!!props.conversation.retainedSnapshotAt"
               :pending="pendingTransferKey"
               :target="transferTargetKey"
@@ -1123,6 +1144,7 @@ defineExpose({
               :error="attachmentTransfer.error.value"
               @save="attachmentTransfer.save"
               @cancel="attachmentTransfer.cancel"
+              @retry="retryAttachments"
             />
           </li>
         </ol>

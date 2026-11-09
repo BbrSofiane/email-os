@@ -40,9 +40,23 @@ describe('UX-12 download-only chooser', () => {
     expect(open).not.toHaveBeenCalled();
     await button('Open in browser').trigger('click');
     expect(open).toHaveBeenCalledExactlyOnceWith('https://example.test/document');
-    await button('Save to Downloads').trigger('click'); await flushPromises();
+    await button('Save').trigger('click'); await flushPromises();
     expect(save).toHaveBeenCalledWith({ conversation: conversation.ref, messageId: 'm1', attachmentId: 'a1', requestId: expect.any(String) });
     expect(wrapper!.text()).toContain('No file was opened');
+  });
+  it('labels each file button `Save` with the file name in its accessible name, like the inline list', async () => {
+    const client = createBrowserFakeMailClient();
+    vi.spyOn(client, 'listAttachments').mockResolvedValue([
+      file,
+      { ...file, attachmentId: 'a2', filename: 'invoice\u202Efdp.exe', mimeType: 'application/octet-stream' },
+    ]);
+    wrapper = mount(AttachmentChooser, { props: { client, conversation, preview: false }, attachTo: document.body });
+    await flushPromises();
+    const saves = wrapper.findAll('[aria-label="Files"] button');
+    expect(saves.map((b) => b.text())).toEqual(['Save', 'Save']);
+    // displayFileName strips bidi controls (the name is otherwise literal); the format matches MessageAttachments.
+    expect(saves.map((b) => b.attributes('aria-label'))).toEqual(['Save ../../evil.html', 'Save invoicefdp.exe']);
+    expect(wrapper.text()).not.toContain('Save to Downloads');
   });
   it('names the lists Files and Links, with no empty-files line while a file is listed', async () => {
     await chooser();
@@ -65,7 +79,7 @@ describe('UX-12 download-only chooser', () => {
   });
   it.each(['not_found', 'network_unavailable', 'invalid_request'])('keeps a dismissal/retry path on %s', async (kind) => {
     const { save } = await chooser(); save.mockRejectedValue({ kind });
-    await button('Save to Downloads').trigger('click'); await flushPromises();
+    await button('Save').trigger('click'); await flushPromises();
     expect(wrapper!.find('[role="alert"]').text()).toContain('File not saved');
     await wrapper!.find('[role="dialog"]').trigger('keydown', { key: 'Escape' });
     expect(wrapper!.emitted('close')).toHaveLength(1);
@@ -74,7 +88,7 @@ describe('UX-12 download-only chooser', () => {
     const { client, save } = await chooser();
     const result = deferred<{ filename: string }>(); save.mockReturnValue(result.promise);
     const cancel = vi.spyOn(client, 'cancelAttachment');
-    await button('Save to Downloads').trigger('click');
+    await button('Save').trigger('click');
     const request = save.mock.calls[0]![0];
     await button('Cancel transfer').trigger('click');
     expect(cancel).toHaveBeenCalledWith(request.requestId);
@@ -85,7 +99,7 @@ describe('UX-12 download-only chooser', () => {
   it('discloses oversized and retained files without an active save control', async () => {
     const { save } = await chooser();
     await wrapper!.setProps({ conversation: { ...conversation, retainedSnapshotAt: '2026-01-01' } });
-    expect(button('Save to Downloads').attributes('disabled')).toBeDefined();
+    expect(button('Save').attributes('disabled')).toBeDefined();
     expect(save).not.toHaveBeenCalled();
   });
   it('shows human sizes and the 5 MB limit message instead of a Save button for large files', async () => {
@@ -95,7 +109,7 @@ describe('UX-12 download-only chooser', () => {
     await flushPromises();
     expect(wrapper.text()).toContain('big.bin — application/octet-stream, 6.0 MB');
     expect(wrapper.text()).toContain('Over the 5 MB limit; cannot download.');
-    expect(wrapper.findAll('button').some((b) => b.text() === 'Save to Downloads')).toBe(false);
+    expect(wrapper.findAll('button').some((b) => b.text() === 'Save')).toBe(false);
   });
   it('native Cmd+O opens a chooser rather than choosing a resource; browser Cmd+O stays reserved', async () => {
     for (const mode of ['native', 'browser-preview'] as const) {

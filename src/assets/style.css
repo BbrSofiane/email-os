@@ -1677,12 +1677,17 @@ button:focus-visible {
   display: none;
 }
 
+/* The second declaration is the CSS alt-text form: browsers that support it give
+   the glyph an empty alt, so "Details" is not announced as "black right-pointing
+   small triangle Details". The first stays as the fallback. */
 .message-details summary::before {
   content: '▸ ';
+  content: '▸ ' / '';
 }
 
 .message-details[open] summary::before {
   content: '▾ ';
+  content: '▾ ' / '';
 }
 
 .message-details summary:hover {
@@ -1731,6 +1736,13 @@ button:focus-visible {
 .participant:hover,
 .participant:focus-visible {
   color: var(--text-primary);
+}
+
+/* A real ring, not a colour change alone: these are tab stops. */
+.participant:focus-visible {
+  outline: 2px solid var(--focus-accent);
+  outline-offset: 1px;
+  border-radius: 4px;
 }
 
 /* Contact copy glyphs: revealed per line on hover/focus, always keyboard
@@ -1884,7 +1896,10 @@ button:focus-visible {
   flex: none;
   align-self: center;
   display: inline-flex;
-  padding: 2px;
+  /* A 24px hit area around the 14px glyph. The equal negative margin keeps the
+     layout box at 18px, so the heading row does not grow. */
+  padding: 5px;
+  margin: -3px;
   color: var(--text-secondary);
 }
 
@@ -2058,17 +2073,21 @@ button:focus-visible {
   font: inherit;
 }
 
-/* A quiet Seam underline at rest so an empty row still shows where to type;
-   the full Seam border returns on hover (DESIGN.md "Inputs / Fields"). */
+/* The resting underline is the only cue that an empty row is an input, so it
+   is a non-text indicator with a 3:1 floor. Seam is 1.36:1 on Lifted Charcoal;
+   Graphite is 3.79:1 there and 4.87:1 on Deep Umber (the drafts drawer). This
+   is the one documented place Graphite is allowed outside a glyph: a field
+   boundary carries no text (DESIGN.md "Inputs / Fields"). The full border
+   returns on hover in the same colour. */
 .field-row .field-input {
   background: transparent;
   border: 1px solid transparent;
-  border-bottom-color: var(--divider);
+  border-bottom-color: var(--icon-muted);
   border-radius: 4px;
 }
 
 .field-row .field-input:hover:not(:disabled) {
-  border-color: var(--divider);
+  border-color: var(--icon-muted);
 }
 
 .field-row .field-input:focus-visible {
@@ -2111,7 +2130,9 @@ button:focus-visible {
   margin-top: 0.25rem;
 }
 
+/* The composer body is the same field boundary as the rows above it. */
 .field-textarea {
+  border-color: var(--icon-muted);
   width: 100%;
   min-width: 0;
   /* At least six lines at the 12px body size; grows with its text up to the pane. */
@@ -2122,6 +2143,10 @@ button:focus-visible {
   white-space: pre-wrap;
   font: inherit;
   line-height: var(--leading-ui);
+}
+
+.field-textarea:focus-visible {
+  border-color: var(--focus-accent);
 }
 
 @media (max-width: 760px) {

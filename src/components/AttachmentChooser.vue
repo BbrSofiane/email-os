@@ -80,7 +80,7 @@ onBeforeUnmount(() => { live = false; });
         <li v-for="file in files" :key="`${file.messageId}:${file.attachmentId}`">
           <span>{{ displayFileName(file.filename) }} — {{ file.mimeType }}, {{ formatBytes(file.size) }}</span>
           <span v-if="file.size > ATTACHMENT_LIMIT_BYTES">Over the 5 MB limit; cannot download.</span>
-          <button v-else type="button" :disabled="!!pending || !!conversation.retainedSnapshotAt" @click="save(file)">Save to Downloads</button>
+          <button v-else type="button" :aria-label="`Save ${displayFileName(file.filename)}`" :disabled="!!pending || !!conversation.retainedSnapshotAt" @click="save(file)">Save</button>
         </li>
       </ul>
       <p v-if="!loading && !files.length">No cached files. Sync to fetch any that are missing.</p>

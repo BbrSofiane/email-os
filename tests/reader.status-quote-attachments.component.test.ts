@@ -369,6 +369,96 @@ describe('inline attachments', () => {
     expect(failed.get('.reader-scroll').text()).toContain('Body');
   });
 
+  describe('retrying file details', () => {
+    const retryButton = (w: VueWrapper) => w.get('[data-test="attachments-retry"]');
+    const group = (w: VueWrapper) => w.get('[data-test="message-attachments-m1"]').element as HTMLElement;
+
+    it('offers a ghost Retry beside the failure note, with a full accessible name', async () => {
+      const client = stubClient();
+      client.listAttachments.mockRejectedValue({ kind: 'storage_unavailable' });
+      const w = mountReader(withFile(), { client: asClient(client) });
+      await settle();
+      expect(w.get('[data-test="attachments-load-error"]').text()).toBe('Could not load file details.');
+      const retry = retryButton(w);
+      expect(retry.text()).toBe('Retry');
+      expect(retry.attributes('aria-label')).toBe('Retry loading file details');
+      expect(retry.attributes('type')).toBe('button');
+      expect(retry.attributes('aria-disabled')).toBeUndefined();
+      // No new live region: the group holds only the existing note and the button.
+      expect(w.get('[data-test="message-attachments-m1"]').findAll('[role="status"], [role="alert"], [aria-live]')).toHaveLength(0);
+      expect(client.listAttachments).toHaveBeenCalledTimes(1);
+    });
+
+    it('asks again on click, stays mounted and aria-disabled while it waits, then replaces the note with the list and keeps focus in the group', async () => {
+      const client = stubClient();
+      client.listAttachments.mockRejectedValueOnce({ kind: 'storage_unavailable' });
+      const w = mountReader(withFile(), { client: asClient(client) });
+      await settle();
+      const second = deferred<AttachmentDescriptor[]>();
+      client.listAttachments.mockReturnValueOnce(second.promise);
+      (retryButton(w).element as HTMLButtonElement).focus();
+      expect(document.activeElement).toBe(retryButton(w).element);
+      await retryButton(w).trigger('click');
+      expect(client.listAttachments).toHaveBeenCalledTimes(2);
+      expect(client.listAttachments).toHaveBeenLastCalledWith(withFile().ref);
+      // Still the same mounted button, so focus does not drop to <body>.
+      expect(retryButton(w).element).toBe(document.activeElement);
+      expect(retryButton(w).attributes('aria-disabled')).toBe('true');
+      expect(retryButton(w).attributes('disabled')).toBeUndefined();
+      expect(retryButton(w).text()).toBe('Retrying…');
+      expect(retryButton(w).attributes('aria-label')).toBe('Retrying…');
+      // A click while retrying does not send a second request.
+      await retryButton(w).trigger('click');
+      expect(client.listAttachments).toHaveBeenCalledTimes(2);
+
+      second.resolve([FILE]);
+      await settle();
+      expect(w.find('[data-test="attachments-retry"]').exists()).toBe(false);
+      expect(w.find('[data-test="attachments-load-error"]').exists()).toBe(false);
+      expect(w.get('[data-test="attachment-a1"]').text()).toContain('example.txt');
+      expect(document.activeElement).not.toBe(document.body);
+      expect(document.activeElement).toBe(group(w));
+      expect(group(w).getAttribute('tabindex')).toBe('-1');
+      // Programmatic focus only: the group is not a tab stop.
+      expect(group(w).tabIndex).toBe(-1);
+      expect(client.listAttachments).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps the failure and the Retry when the retry fails too, and allows another try', async () => {
+      const client = stubClient();
+      client.listAttachments.mockRejectedValue({ kind: 'storage_unavailable' });
+      const w = mountReader(withFile(), { client: asClient(client) });
+      await settle();
+      (retryButton(w).element as HTMLButtonElement).focus();
+      await retryButton(w).trigger('click');
+      await settle();
+      expect(client.listAttachments).toHaveBeenCalledTimes(2);
+      expect(w.get('[data-test="attachments-load-error"]').text()).toBe('Could not load file details.');
+      expect(retryButton(w).text()).toBe('Retry');
+      expect(retryButton(w).attributes('aria-disabled')).toBeUndefined();
+      expect(retryButton(w).attributes('aria-label')).toBe('Retry loading file details');
+      expect(document.activeElement).toBe(retryButton(w).element);
+      await retryButton(w).trigger('click');
+      await settle();
+      expect(client.listAttachments).toHaveBeenCalledTimes(3);
+    });
+
+    it('does not take focus when the user moved elsewhere before the retry came back', async () => {
+      const client = stubClient();
+      client.listAttachments.mockRejectedValueOnce({ kind: 'storage_unavailable' });
+      const w = mountReader(withFile(), { client: asClient(client) });
+      await settle();
+      const second = deferred<AttachmentDescriptor[]>();
+      client.listAttachments.mockReturnValueOnce(second.promise);
+      await retryButton(w).trigger('click');
+      (w.get('[data-test="message-toggle-m1"]').element as HTMLElement).focus();
+      second.resolve([FILE]);
+      await settle();
+      expect(w.find('[data-test="attachment-a1"]').exists()).toBe(true);
+      expect(document.activeElement).toBe(w.get('[data-test="message-toggle-m1"]').element);
+    });
+  });
+
   it('ignores a late response for a conversation that is no longer displayed', async () => {
     const late = deferred<AttachmentDescriptor[]>();
     const client = stubClient();
