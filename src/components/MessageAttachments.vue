@@ -6,7 +6,7 @@
  * state as the Cmd+O chooser (`useAttachmentTransfer`), owned by the reader.
  * Everything is interpolated text; file names are never trusted as markup.
  */
-import { computed } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import type { AttachmentDescriptor } from '../lib/ipc/generated';
 import { attachmentKey } from '../composables/useAttachmentTransfer';
 import { ATTACHMENT_LIMIT_BYTES, formatBytes } from '../lib/format-bytes';
@@ -19,6 +19,8 @@ const props = defineProps<{
   files: AttachmentDescriptor[];
   /** `failed`: the descriptor list could not be loaded. */
   loadState: 'ready' | 'failed';
+  /** A retry of a failed load is in flight: the Retry button stays mounted but inert. */
+  retrying?: boolean;
   /** Retained recovery snapshot: attachment fetch is unavailable. */
   retained: boolean;
   /** Key of the file being transferred, if any (one transfer at a time). */
@@ -32,6 +34,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   save: [file: AttachmentDescriptor];
   cancel: [];
+  retry: [];
 }>();
 
 const RETAINED_TITLE = 'Attachment fetch is unavailable for a retained recovery snapshot.';
@@ -40,6 +43,24 @@ const RETAINED_TITLE = 'Attachment fetch is unavailable for a retained recovery 
 function nameOf(file: AttachmentDescriptor): string {
   return displayFileName(file.filename);
 }
+
+const group = ref<HTMLElement | null>(null);
+
+function retry(): void {
+  // aria-disabled, not disabled: the button keeps focus, so it ignores clicks itself.
+  if (!props.retrying) emit('retry');
+}
+
+// A successful retry swaps the note (and the focused Retry button) for the list.
+// This watcher runs before that DOM update, while the button can still hold
+// focus; the group then takes it so focus never falls to <body>. Focus that
+// moved elsewhere in the meantime is left alone.
+watch(() => props.loadState, async (state, previous) => {
+  if (previous !== 'failed' || state !== 'ready') return;
+  const hadFocus = !!group.value?.contains(document.activeElement);
+  await nextTick();
+  if (hadFocus) group.value?.focus();
+});
 
 const rows = computed(() => props.files.map((file) => ({
   file,
@@ -50,8 +71,18 @@ const rows = computed(() => props.files.map((file) => ({
 </script>
 
 <template>
-  <div class="message-attachments" role="group" aria-label="Attachments" :data-test="`message-attachments-${props.messageId}`">
-    <p v-if="props.loadState === 'failed'" class="attachment-note" data-test="attachments-load-error">Could not load file details.</p>
+  <div ref="group" class="message-attachments" role="group" aria-label="Attachments" tabindex="-1" :data-test="`message-attachments-${props.messageId}`">
+    <div v-if="props.loadState === 'failed'" class="attachment-line">
+      <p class="attachment-note" data-test="attachments-load-error">Could not load file details.</p>
+      <button
+        type="button"
+        class="attachment-action"
+        :aria-label="props.retrying ? 'Retrying…' : 'Retry loading file details'"
+        :aria-disabled="props.retrying ? 'true' : undefined"
+        data-test="attachments-retry"
+        @click="retry"
+      >{{ props.retrying ? 'Retrying…' : 'Retry' }}</button>
+    </div>
     <p v-else-if="rows.length === 0" class="attachment-note" data-test="attachments-not-cached">Attachment details are not cached. Sync to fetch.</p>
     <ul v-else class="attachment-list">
       <li v-for="row in rows" :key="row.key" class="attachment-row" :data-test="`attachment-${row.file.attachmentId}`">
@@ -89,6 +120,13 @@ const rows = computed(() => props.files.map((file) => ({
   margin: 0.4rem 0 0.2rem;
   font-size: var(--type-body);
   line-height: var(--leading-ui);
+}
+
+/* Programmatic focus only (after a successful retry): the same ring as every control. */
+.message-attachments:focus-visible {
+  outline: 2px solid var(--focus-accent);
+  outline-offset: 1px;
+  border-radius: 4px;
 }
 
 .attachment-list {
@@ -152,13 +190,19 @@ const rows = computed(() => props.files.map((file) => ({
   color: var(--text-secondary);
 }
 
-.attachment-action:hover:not(:disabled),
+.attachment-action:hover:not(:disabled, [aria-disabled='true']),
 .attachment-action:focus-visible {
   color: var(--text-primary);
 }
 
 /* The active message is already Lifted Charcoal, so the default ghost hover would not show. */
-.attachment-action:hover:not(:disabled) {
+.attachment-action:hover:not(:disabled, [aria-disabled='true']) {
   background: var(--focus-fill);
+}
+
+/* Retrying: dimmed like a disabled button, but still focusable. */
+.attachment-action[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: default;
 }
 </style>

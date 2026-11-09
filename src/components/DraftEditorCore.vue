@@ -155,9 +155,8 @@ async function editTo(): Promise<void> {
 }
 
 const extrasOpen = ref(false);
-/** Content that must stay visible: a saved Cc, an edited To or a subject that is not the default "Re:". */
+/** Content that must stay visible: a saved Cc or a subject that is not the default "Re:". An edited To is already a visible input. */
 const extrasForced = computed(() => props.content.cc !== ''
-  || (isReply.value && !toIsDefault.value && props.content.to !== '')
   || (isReply.value && props.content.subject !== '' && !/^re:/i.test(props.content.subject)));
 const extrasShown = computed(() => extrasOpen.value || extrasForced.value);
 const ccShown = computed(() => extrasShown.value);

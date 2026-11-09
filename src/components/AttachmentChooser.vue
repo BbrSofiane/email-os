@@ -76,16 +76,16 @@ onBeforeUnmount(() => { live = false; });
       <p v-if="loading" role="status">Loading cached files…</p>
       <p v-if="error" role="alert">{{ error }} <button type="button" :disabled="loading || !!pending" @click="load">Reload file list</button></p>
       <p v-if="status" role="status">{{ status }}</p>
-      <ul aria-label="Known files">
+      <ul aria-label="Files">
         <li v-for="file in files" :key="`${file.messageId}:${file.attachmentId}`">
           <span>{{ displayFileName(file.filename) }} — {{ file.mimeType }}, {{ formatBytes(file.size) }}</span>
           <span v-if="file.size > ATTACHMENT_LIMIT_BYTES">Over the 5 MB limit; cannot download.</span>
-          <button v-else type="button" :disabled="!!pending || !!conversation.retainedSnapshotAt" @click="save(file)">Save to Downloads</button>
+          <button v-else type="button" :aria-label="`Save ${displayFileName(file.filename)}`" :disabled="!!pending || !!conversation.retainedSnapshotAt" @click="save(file)">Save</button>
         </li>
       </ul>
-      <p v-if="!loading && !files.length">No fetchable files in this cache. Legacy or omitted inline attachments require a sync; this is not a complete mailbox inventory.</p>
+      <p v-if="!loading && !files.length">No cached files. Sync to fetch any that are missing.</p>
       <button v-if="pending" type="button" @click="cancel">Cancel transfer</button>
-      <ul aria-label="Known links"><li v-for="url in links" :key="url"><span>{{ url }}</span> <button type="button" @click="copyLink(url)">Copy link</button> <button type="button" @click="confirmUrl = url">Open link…</button></li></ul>
+      <ul aria-label="Links"><li v-for="url in links" :key="url"><span>{{ url }}</span> <button type="button" @click="copyLink(url)">Copy link</button> <button type="button" @click="confirmUrl = url">Open link…</button></li></ul>
       <p v-if="!links.length">No HTTP(S) links found in cached plain text. Email addresses are not browser links.</p>
       <div v-if="confirmUrl" role="group" aria-label="Confirm external browser">
         <p>Leave Email OS and open this link in your system browser? {{ confirmUrl }}</p>

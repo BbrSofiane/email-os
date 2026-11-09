@@ -52,6 +52,7 @@ import { groupRowsBySender, isSingleFromQuery, senderGroupKey, validateSearch } 
 import InboxList from './components/InboxList.vue';
 import SplitEditor from './components/SplitEditor.vue';
 import { splitBadge } from './lib/saved-split';
+import { quotedPreview } from './lib/message-snippet';
 import type { SavedSplit } from './lib/ipc/client';
 import ReaderView from './components/ReaderView.vue';
 import AttachmentChooser from './components/AttachmentChooser.vue';
@@ -434,14 +435,12 @@ const replyRecipientLabel = computed(() => {
   return latest ? (latest.from.displayName ?? latest.from.mailbox) : '';
 });
 /**
- * Read-only quoted snippet of the latest message plain-text body (~200 chars).
+ * Read-only quoted snippet of the latest message: its prose (not its trailing
+ * quote or signature), at most 200 UTF-16 units, cut on a character boundary.
  * Display-only: it is never inserted into bodyText, which stays blank on
  * prepare (frozen slice-04 contract).
  */
-const quotedSnippet = computed(() => {
-  const body = replyLatestMessage.value?.bodyText ?? '';
-  return body.length > 200 ? `${body.slice(0, 200)}…` : body;
-});
+const quotedSnippet = computed(() => quotedPreview(replyLatestMessage.value?.bodyText));
 /**
  * Inline compose card: a new-message editor renders as an in-flow card in the
  * central pane (replacing the list) — or docked at the bottom of the reader

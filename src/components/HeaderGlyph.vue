@@ -57,7 +57,7 @@ defineProps<{
     <path v-else-if="name === 'done'" d="M3.25 8.5l3.1 3.1 6.4-7.2" />
     <!-- Files and links: a paperclip. -->
     <path v-else-if="name === 'files'" d="M12.4 7.3l-4.6 4.6a2.6 2.6 0 01-3.7-3.7l5-5a1.75 1.75 0 012.5 2.5L6.9 10.5a.9.9 0 01-1.3-1.3L9.8 5" />
-    <!-- Prepare reply: a reply arrow. -->
+    <!-- Reply: a reply arrow. -->
     <path v-else-if="name === 'reply'" d="M6.75 3.5L2.75 7.5l4 4M2.75 7.5h5.5a5 5 0 015 5" />
     <!-- Mark read: an opened envelope. -->
     <template v-else-if="name === 'read'">

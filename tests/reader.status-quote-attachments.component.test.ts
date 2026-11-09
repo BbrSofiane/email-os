@@ -134,6 +134,24 @@ describe('reader status line and exceptions', () => {
     expect(w.findAll('.reader-scroll > p')).toHaveLength(5);
   });
 
+  it('exposes the pending line as the reader\'s one status; the other exceptions stay notes, not live regions', async () => {
+    const w = mountReader(
+      conversationOf('c1', [message('m1')], {
+        isRead: false,
+        retainedSnapshotAt: '2025-02-03T04:05:06Z',
+        unsupportedReason: 'attachments omitted',
+        pendingOperationId: 'op-1',
+      }),
+      { showReadControls: true },
+    );
+    await settle();
+    expect(w.get('[data-test="reader-pending"]').attributes('role')).toBe('status');
+    expect(w.get('[data-test="retained-snapshot-notice"]').attributes('role')).toBe('note');
+    expect(w.get('[data-test="unsupported-notice"]').attributes('role')).toBe('note');
+    // Quiet: exactly one live region in the reader body.
+    expect(w.findAll('.reader-scroll [role="status"], .reader-scroll [role="alert"], .reader-scroll [aria-live]')).toHaveLength(1);
+  });
+
   it('marks the bare loading line as a status without changing its text', async () => {
     wrapper = mount(ReaderView, {
       props: { conversation: null, state: 'loading', error: null, commandInFlight: false, openRef: ref('c1') },
@@ -183,7 +201,7 @@ describe('trailing quote and signature', () => {
     expect(w.find('[data-test="message-quote-toggle-m1"]').exists()).toBe(false);
   });
 
-  it('leaves a body without a trailing quote or signature exactly as before (and its interleaved quote mono)', async () => {
+  it('leaves a body without a trailing quote or signature exactly as before (an interleaved quote no longer forces mono)', async () => {
     const plain = 'Hi,\n\nThanks > nothing.\n\nAda';
     const inline = '> Are we on?\nYes.\n> And Friday?\nAlso yes.';
     const w = mountReader(conversationOf('c1', [message('m1', plain), message('m2', inline)]));
@@ -191,7 +209,8 @@ describe('trailing quote and signature', () => {
     const bodies = w.findAll('[data-test="message-body"]');
     expect(bodies[0]!.text()).toBe(plain);
     expect(bodies[1]!.text()).toBe(inline);
-    expect(bodies[1]!.classes()).toContain('message-body-mono');
+    expect(bodies[0]!.classes()).not.toContain('message-body-mono');
+    expect(bodies[1]!.classes()).not.toContain('message-body-mono');
     expect(w.find('.message-quote-toggle').exists()).toBe(false);
     expect(w.find('[data-test="message-signature"]').exists()).toBe(false);
   });
@@ -201,6 +220,20 @@ describe('trailing quote and signature', () => {
     await settle();
     expect(w.get('[data-test="message-toggle-m1"]').get('.message-snippet').text()).toBe('Shipping Friday.');
     expect(w.get('[data-test="message-quote-toggle-m1"]').attributes('hidden')).toBeDefined();
+  });
+
+  it('collapses a localized quote, previews only the prose, and keeps an aligned prose block mono', async () => {
+    const french = 'Merci, c’est bon.\n\nLe jeudi 6 nov. 2026, Ada a écrit\u00a0:\n> Peut-on livrer ?\n> Vendredi.';
+    const aligned = 'Lancer :\n    $ pnpm test\n    ok\n\nAm Montag schrieb Ada:\n> Passt?\n> Ja.';
+    const w = mountReader(conversationOf('c1', [message('m1', french), message('m2', aligned)]));
+    await settle();
+    expect(w.get('[data-test="message-toggle-m1"]').get('.message-snippet').text()).toBe('Merci, c’est bon.');
+    expect(w.get('[data-test="message-quote-toggle-m1"]').text()).toBe('Show quoted text');
+    const bodies = w.findAll('[data-test="message-body"]');
+    expect(bodies[0]!.text()).toBe('Merci, c’est bon.');
+    expect(bodies[0]!.classes()).not.toContain('message-body-mono');
+    expect(bodies[1]!.classes()).toContain('message-body-mono');
+    expect(w.find('[data-test="message-quote-toggle-m2"]').exists()).toBe(true);
   });
 
   it('keeps the disclosure open across a J/K round trip', async () => {
@@ -367,6 +400,96 @@ describe('inline attachments', () => {
     await settle();
     expect(failed.get('[data-test="attachments-load-error"]').text()).toBe('Could not load file details.');
     expect(failed.get('.reader-scroll').text()).toContain('Body');
+  });
+
+  describe('retrying file details', () => {
+    const retryButton = (w: VueWrapper) => w.get('[data-test="attachments-retry"]');
+    const group = (w: VueWrapper) => w.get('[data-test="message-attachments-m1"]').element as HTMLElement;
+
+    it('offers a ghost Retry beside the failure note, with a full accessible name', async () => {
+      const client = stubClient();
+      client.listAttachments.mockRejectedValue({ kind: 'storage_unavailable' });
+      const w = mountReader(withFile(), { client: asClient(client) });
+      await settle();
+      expect(w.get('[data-test="attachments-load-error"]').text()).toBe('Could not load file details.');
+      const retry = retryButton(w);
+      expect(retry.text()).toBe('Retry');
+      expect(retry.attributes('aria-label')).toBe('Retry loading file details');
+      expect(retry.attributes('type')).toBe('button');
+      expect(retry.attributes('aria-disabled')).toBeUndefined();
+      // No new live region: the group holds only the existing note and the button.
+      expect(w.get('[data-test="message-attachments-m1"]').findAll('[role="status"], [role="alert"], [aria-live]')).toHaveLength(0);
+      expect(client.listAttachments).toHaveBeenCalledTimes(1);
+    });
+
+    it('asks again on click, stays mounted and aria-disabled while it waits, then replaces the note with the list and keeps focus in the group', async () => {
+      const client = stubClient();
+      client.listAttachments.mockRejectedValueOnce({ kind: 'storage_unavailable' });
+      const w = mountReader(withFile(), { client: asClient(client) });
+      await settle();
+      const second = deferred<AttachmentDescriptor[]>();
+      client.listAttachments.mockReturnValueOnce(second.promise);
+      (retryButton(w).element as HTMLButtonElement).focus();
+      expect(document.activeElement).toBe(retryButton(w).element);
+      await retryButton(w).trigger('click');
+      expect(client.listAttachments).toHaveBeenCalledTimes(2);
+      expect(client.listAttachments).toHaveBeenLastCalledWith(withFile().ref);
+      // Still the same mounted button, so focus does not drop to <body>.
+      expect(retryButton(w).element).toBe(document.activeElement);
+      expect(retryButton(w).attributes('aria-disabled')).toBe('true');
+      expect(retryButton(w).attributes('disabled')).toBeUndefined();
+      expect(retryButton(w).text()).toBe('Retrying…');
+      expect(retryButton(w).attributes('aria-label')).toBe('Retrying…');
+      // A click while retrying does not send a second request.
+      await retryButton(w).trigger('click');
+      expect(client.listAttachments).toHaveBeenCalledTimes(2);
+
+      second.resolve([FILE]);
+      await settle();
+      expect(w.find('[data-test="attachments-retry"]').exists()).toBe(false);
+      expect(w.find('[data-test="attachments-load-error"]').exists()).toBe(false);
+      expect(w.get('[data-test="attachment-a1"]').text()).toContain('example.txt');
+      expect(document.activeElement).not.toBe(document.body);
+      expect(document.activeElement).toBe(group(w));
+      expect(group(w).getAttribute('tabindex')).toBe('-1');
+      // Programmatic focus only: the group is not a tab stop.
+      expect(group(w).tabIndex).toBe(-1);
+      expect(client.listAttachments).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps the failure and the Retry when the retry fails too, and allows another try', async () => {
+      const client = stubClient();
+      client.listAttachments.mockRejectedValue({ kind: 'storage_unavailable' });
+      const w = mountReader(withFile(), { client: asClient(client) });
+      await settle();
+      (retryButton(w).element as HTMLButtonElement).focus();
+      await retryButton(w).trigger('click');
+      await settle();
+      expect(client.listAttachments).toHaveBeenCalledTimes(2);
+      expect(w.get('[data-test="attachments-load-error"]').text()).toBe('Could not load file details.');
+      expect(retryButton(w).text()).toBe('Retry');
+      expect(retryButton(w).attributes('aria-disabled')).toBeUndefined();
+      expect(retryButton(w).attributes('aria-label')).toBe('Retry loading file details');
+      expect(document.activeElement).toBe(retryButton(w).element);
+      await retryButton(w).trigger('click');
+      await settle();
+      expect(client.listAttachments).toHaveBeenCalledTimes(3);
+    });
+
+    it('does not take focus when the user moved elsewhere before the retry came back', async () => {
+      const client = stubClient();
+      client.listAttachments.mockRejectedValueOnce({ kind: 'storage_unavailable' });
+      const w = mountReader(withFile(), { client: asClient(client) });
+      await settle();
+      const second = deferred<AttachmentDescriptor[]>();
+      client.listAttachments.mockReturnValueOnce(second.promise);
+      await retryButton(w).trigger('click');
+      (w.get('[data-test="message-toggle-m1"]').element as HTMLElement).focus();
+      second.resolve([FILE]);
+      await settle();
+      expect(w.find('[data-test="attachment-a1"]').exists()).toBe(true);
+      expect(document.activeElement).toBe(w.get('[data-test="message-toggle-m1"]').element);
+    });
   });
 
   it('ignores a late response for a conversation that is no longer displayed', async () => {

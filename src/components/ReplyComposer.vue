@@ -4,8 +4,8 @@
  * reply shot). The thread stays visible above it; this pane only edits the
  * local plain-text draft through the shared `useDrafts` state wired by App.
  * The editor body is the shared DraftEditorCore; this surface supplies the
- * docked shell, the compact "Reply draft to {sender}" heading and the
- * read-only quoted context.
+ * docked shell, the compact "Reply draft to {recipient}" heading (from the
+ * actual To) and the read-only quoted context.
  *
  * Frozen draft contract (vertical-slice-04): the quoted latest message is a
  * READ-ONLY context block — it is never inserted into `bodyText`, which stays
@@ -14,11 +14,12 @@
  * through interpolation; no v-html. The fixed reply source is exposed to tests
  * and tools as data attributes only; opaque provider IDs are never shown.
  */
+import { computed } from 'vue';
 import type { DraftContent, DraftRef, DraftSource, MailError } from '../lib/ipc/client';
 import DraftEditorCore from './DraftEditorCore.vue';
 
 const props = defineProps<{
-  /** "Reply draft to {sender}" label: displayName ?? mailbox of the latest message. */
+  /** Heading name while To is the default sender: displayName ?? mailbox of the latest message. */
   recipientLabel: string;
   /** The latest message sender's mailbox: the default To. The recipient row shows the name only while To still equals it. */
   recipientMailbox?: string | null;
@@ -64,6 +65,25 @@ const emit = defineEmits<{
 function onSetField(field: keyof DraftContent, value: string): void {
   emit('setField', field, value);
 }
+
+/**
+ * The heading names who the reply goes to NOW, from the actual `content.to`,
+ * not from the latest message's sender (Reply-To can differ on list mail).
+ * - The sender's display name while To is empty and the draft is being
+ *   created, or while To equals the sender mailbox (case-insensitive).
+ * - Otherwise the first non-empty entry of To (split on `,` or `;`), plus
+ *   ` +N` for N more entries. The full To goes in the title.
+ * - Nothing (`null`) for a ready draft with no recipient.
+ */
+const headingTarget = computed<{ text: string } | null>(() => {
+  const to = props.content.to.trim();
+  const entries = to.split(/[,;]/).map((entry) => entry.trim()).filter((entry) => entry !== '');
+  const unprepared = props.creating || !props.activeRef?.draftId;
+  const sender = props.recipientMailbox?.trim().toLowerCase() ?? '';
+  if (entries.length === 0) return unprepared ? { text: props.recipientLabel } : null;
+  if (sender !== '' && to.toLowerCase() === sender) return { text: props.recipientLabel };
+  return { text: entries.length > 1 ? `${entries[0]} +${entries.length - 1}` : entries[0]! };
+});
 </script>
 
 <template>
@@ -108,7 +128,7 @@ function onSetField(field: keyof DraftContent, value: string): void {
       >
         <template #header>
           <header class="composer-heading">
-            <h2>Reply draft <span class="reply-to">to <span data-test="draft-recipient-label">{{ props.recipientLabel }}</span></span></h2>
+            <h2>Reply draft<span v-if="headingTarget" class="reply-to" :title="props.content.to.trim() === '' ? undefined : props.content.to"> to <span data-test="draft-recipient-label">{{ headingTarget.text }}</span></span></h2>
           </header>
         </template>
         <template #context>
@@ -136,7 +156,9 @@ function onSetField(field: keyof DraftContent, value: string): void {
 .reply-composer {
   flex: 0 0 auto;
   min-height: 0;
-  margin-top: 0.5rem;
+  /* Same inline margins as the undocked .compose-card (50px start, 24px end,
+     12px bottom), so a docked reply sits on the content inset. */
+  margin: 6px var(--content-inset-end) 12px var(--content-inset);
   border: 1px solid var(--divider);
   border-radius: 6px;
   background: var(--surface-raised);
