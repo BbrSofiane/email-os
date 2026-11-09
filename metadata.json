@@ -1,0 +1,43 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6ZNHDN20F7P25WE2HV6NEC8",
+  "strategy": "manual-commit",
+  "branch": "impeccable/reader-compose-critique-2",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "DESIGN.md",
+    "docs/ux-12-safe-attachments.md",
+    "src/assets/style.css",
+    "src/components/AttachmentChooser.vue",
+    "src/components/MessageAttachments.vue",
+    "src/components/ReaderView.vue",
+    "tests/attachments.component.test.ts",
+    "tests/css-contract.ts",
+    "tests/polish-affordances.css.test.ts",
+    "tests/reader.component.test.ts",
+    "tests/reader.status-quote-attachments.component.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 6,
+    "cache_creation_tokens": 17952,
+    "cache_read_tokens": 680641,
+    "output_tokens": 8890,
+    "api_call_count": 3,
+    "subagent_tokens": {
+      "input_tokens": 86,
+      "cache_creation_tokens": 136515,
+      "cache_read_tokens": 4911622,
+      "output_tokens": 41766,
+      "api_call_count": 43
+    }
+  }
+}
