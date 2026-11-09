@@ -1,0 +1,55 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6ZP3TMBXZJA2PD9ENJ0ZTF7",
+  "session_id": "8f4d5ca6-57cb-4c84-ae4f-cde2bd9d7ccb",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-09T08:17:08.893407649Z",
+  "branch": "impeccable/reader-compose-critique-2",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "DESIGN.md",
+    "src/App.vue",
+    "src/lib/message-body-format.ts",
+    "src/lib/message-snippet.ts",
+    "tests/design-typography.contract.test.ts",
+    "tests/message-body-format.test.ts",
+    "tests/message-snippet.test.ts",
+    "tests/reader.status-quote-attachments.component.test.ts",
+    "tests/reply-composer.component.test.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "c075046fa80e",
+  "checkpoint_transcript_start": 366,
+  "transcript_lines_at_start": 366,
+  "compact_transcript_start": 41,
+  "token_usage": {
+    "input_tokens": 6,
+    "cache_creation_tokens": 16941,
+    "cache_read_tokens": 734709,
+    "output_tokens": 7214,
+    "api_call_count": 3,
+    "subagent_tokens": {
+      "input_tokens": 68,
+      "cache_creation_tokens": 116115,
+      "cache_read_tokens": 3566868,
+      "output_tokens": 40756,
+      "api_call_count": 34
+    }
+  },
+  "session_metrics": {
+    "turn_count": 1
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-09T08:17:08.818372194Z",
+    "agent_lines": 556,
+    "agent_removed": 42,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 556,
+    "total_lines_changed": 598,
+    "agent_percentage": 100,
+    "metric_version": 2
+  }
+}
