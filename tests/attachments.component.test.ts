@@ -96,6 +96,46 @@ describe('UX-12 download-only chooser', () => {
     result.resolve({ filename: 'late.download' }); await flushPromises();
     expect(cancel).toHaveBeenCalledTimes(2);
   });
+  describe('keeps keyboard focus inside the modal while a transfer runs', () => {
+    it('keeps the focused Save mounted and aria-disabled as Saving…, then idle again with focus unchanged', async () => {
+      const { save } = await chooser();
+      const result = deferred<{ filename: string }>(); save.mockReturnValue(result.promise);
+      const saveButton = button('Save'); const element = saveButton.element as HTMLButtonElement;
+      element.focus();
+      await saveButton.trigger('click');
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(document.activeElement).toBe(element);
+      expect(element.hasAttribute('disabled')).toBe(false);
+      expect(element.getAttribute('aria-disabled')).toBe('true');
+      expect(element.textContent?.trim()).toBe('Saving…');
+      expect(element.getAttribute('aria-label')).toBe('Saving ../../evil.html');
+      await saveButton.trigger('click');
+      expect(save).toHaveBeenCalledTimes(1);
+      result.resolve({ filename: 'unique.download' }); await flushPromises();
+      expect(document.activeElement).toBe(element);
+      expect(element.getAttribute('aria-disabled')).toBeNull();
+      expect(element.textContent?.trim()).toBe('Save');
+    });
+    it('hands focus to the Save button when the focused Cancel transfer button goes away', async () => {
+      const { save } = await chooser();
+      const result = deferred<{ filename: string }>(); save.mockReturnValue(result.promise);
+      await button('Save').trigger('click');
+      const cancel = button('Cancel transfer').element as HTMLButtonElement;
+      cancel.focus();
+      result.reject({ kind: 'cancelled' }); await flushPromises();
+      expect(wrapper!.findAll('button').some((b) => b.text() === 'Cancel transfer')).toBe(false);
+      expect(document.activeElement).toBe(button('Save').element);
+    });
+    it('keeps Escape and the Tab trap alive by never dropping focus to <body> after a failed save', async () => {
+      const { save } = await chooser();
+      save.mockRejectedValue({ kind: 'network_unavailable' });
+      const element = button('Save').element as HTMLButtonElement; element.focus();
+      await button('Save').trigger('click'); await flushPromises();
+      expect(document.activeElement).toBe(element);
+      await wrapper!.get('[role="dialog"]').trigger('keydown', { key: 'Escape' });
+      expect(wrapper!.emitted('close')).toHaveLength(1);
+    });
+  });
   it('discloses oversized and retained files without an active save control', async () => {
     const { save } = await chooser();
     await wrapper!.setProps({ conversation: { ...conversation, retainedSnapshotAt: '2026-01-01' } });

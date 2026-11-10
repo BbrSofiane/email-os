@@ -46,6 +46,11 @@ function nameOf(file: AttachmentDescriptor): string {
 
 const group = ref<HTMLElement | null>(null);
 
+function save(file: AttachmentDescriptor): void {
+  // Like Retry: aria-disabled, not disabled, so the button keeps focus while it works.
+  if (!props.pending) emit('save', file);
+}
+
 function retry(): void {
   // aria-disabled, not disabled: the button keeps focus, so it ignores clicks itself.
   if (!props.retrying) emit('retry');
@@ -61,6 +66,19 @@ watch(() => props.loadState, async (state, previous) => {
   await nextTick();
   if (hadFocus) group.value?.focus();
 });
+
+// The Cancel button exists only while this row transfers. If it holds focus when
+// the transfer stops, the row's Save takes focus before the DOM update removes
+// it, so focus never falls to <body>. Focus that moved elsewhere is left alone.
+watch(() => props.pending, async (now, previous) => {
+  if (now || !previous) return;
+  const active = document.activeElement;
+  const row = active instanceof HTMLElement && active.matches('[data-test="attachment-cancel"]') ? active.closest('li') : null;
+  await nextTick();
+  row?.querySelector<HTMLElement>('[data-test="attachment-save"]')?.focus();
+}, { flush: 'pre' });
+
+const isSaving = (key: string): boolean => !!props.pending && props.target === key;
 
 const rows = computed(() => props.files.map((file) => ({
   file,
@@ -91,20 +109,19 @@ const rows = computed(() => props.files.map((file) => ({
           <span class="attachment-name" :title="row.name">{{ row.name }}</span>
           <span class="attachment-meta">{{ formatBytes(row.file.size) }} · {{ row.file.mimeType }}</span>
           <span v-if="row.tooLarge" class="attachment-meta" data-test="attachment-too-large">Over the 5 MB limit; cannot download.</span>
-          <template v-else-if="props.pending && props.target === row.key">
-            <span class="attachment-meta" data-test="attachment-saving">Saving…</span>
-            <button type="button" class="attachment-action" :aria-label="`Cancel saving ${row.name}`" data-test="attachment-cancel" @click="emit('cancel')">Cancel</button>
+          <template v-else>
+            <button
+              type="button"
+              class="attachment-action"
+              :aria-label="isSaving(row.key) ? `Saving ${row.name}` : `Save ${row.name}`"
+              :aria-disabled="isSaving(row.key) ? 'true' : undefined"
+              :title="props.retained ? RETAINED_TITLE : undefined"
+              :disabled="(!!props.pending && !isSaving(row.key)) || props.retained"
+              data-test="attachment-save"
+              @click="save(row.file)"
+            >{{ isSaving(row.key) ? 'Saving…' : 'Save' }}</button>
+            <button v-if="isSaving(row.key)" type="button" class="attachment-action" :aria-label="`Cancel saving ${row.name}`" data-test="attachment-cancel" @click="emit('cancel')">Cancel</button>
           </template>
-          <button
-            v-else
-            type="button"
-            class="attachment-action"
-            :aria-label="`Save ${row.name}`"
-            :title="props.retained ? RETAINED_TITLE : undefined"
-            :disabled="!!props.pending || props.retained"
-            data-test="attachment-save"
-            @click="emit('save', row.file)"
-          >Save</button>
         </span>
         <template v-if="props.target === row.key">
           <p v-if="props.error" class="attachment-error" role="alert" data-test="attachment-error">{{ props.error }}</p>

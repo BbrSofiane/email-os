@@ -1512,10 +1512,14 @@ button:focus-visible {
   box-shadow: inset 3px 0 0 var(--focus-accent);
 }
 
-/* The active bar is the focus indicator for the message toggle: no second ring.
-   The fill, bold sender and bar remain; other controls keep the global ring. */
+/* Active and focused are different facts: the lavender bar says "this message",
+   the ring says "the keyboard is here". The active toggle gets a Paper White ring
+   (not lavender, so the One Signal Rule holds) only on :focus-visible; other
+   controls keep the global lavender ring. */
 .message.message-active .message-toggle:focus-visible {
-  outline: none;
+  outline: 2px solid var(--text-primary);
+  outline-offset: 1px;
+  border-radius: 4px;
 }
 
 .message.message-active .message-from {
