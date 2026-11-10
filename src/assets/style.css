@@ -1402,37 +1402,65 @@ button:focus-visible {
   overflow-wrap: anywhere;
 }
 
-/* Loading identity: the list row's sender and date under the subject, then one
-   quiet line. No motion; same type scale as the loaded reader. */
-.reader-loading-identity {
-  display: flex;
-  gap: 12px;
-  margin: 0.2rem 0;
+/* Loading line: the list row's sender and date and the status, one quiet line in
+   the same type scale as the loaded reader. Where the loaded reader has a meta
+   row the line is that row (`.reader-meta-row` supplies its metrics). Otherwise
+   (`.is-overlay`) it is out of flow, centred on the first placeholder row's
+   toggle box (border + top padding of `.message`, one shared row height), so it
+   never pushes the rows down. No motion. */
+.reader-loading-stage {
+  position: relative;
+}
+
+.reader-loading-line {
+  margin: 0;
   color: var(--text-secondary);
+}
+
+.reader-loading-stage.is-overlay > .reader-loading-line {
+  position: absolute;
+  top: calc(1px + 0.4rem);
+  left: 0;
+  right: 0;
+  height: var(--message-row-height);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  white-space: nowrap;
+}
+
+.reader-loading-sender {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .reader-loading-quiet {
   color: var(--text-secondary);
 }
 
-/* Static placeholder bars in the Rule colour: the subject line, then one row
-   per collapsed message. A row occupies the real collapsed .message pitch (1px
-   top border + 1rem vertical padding + the shared row height + the .5rem
-   bottom margin), so the gap is 0 and the pane does not jump when the
-   conversation arrives. The bar is drawn inside the row. No shimmer: nothing
-   moves while loading. */
+/* The overlay line stands where the first row's bar would be. */
+.reader-loading-stage.is-overlay .reader-skeleton-row:first-child::before {
+  visibility: hidden;
+}
+
+/* Static placeholder bars in the Rule colour: one row per collapsed message. A
+   row occupies the real collapsed .message pitch (1px top border + 1rem
+   vertical padding + the shared row height + the .5rem bottom margin), so the
+   gap is 0 and the rows start where the first message will (the subject, real
+   or its hidden `.reader-subject` placeholder, supplies the same margins). The
+   bar is drawn inside the row. No shimmer: nothing moves while loading. */
 .reader-skeleton {
   display: flex;
   flex-direction: column;
   gap: 0;
-  margin-top: 0.5rem;
 }
 
 .reader-skeleton-subject {
-  display: block;
+  display: inline-block;
+  vertical-align: middle;
   height: var(--type-headline);
   width: 40%;
-  margin-bottom: 0.5rem;
   background: var(--rule);
   border-radius: 4px;
   opacity: 0.6;

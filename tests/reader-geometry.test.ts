@@ -202,4 +202,21 @@ describe('reader and composer geometry (declared CSS)', () => {
     expect(ring.outline).not.toContain('focus-accent');
     expect(declarationsOf(css, '.message.message-active')['box-shadow']).toBe('inset 3px 0 0 var(--focus-accent)');
   });
+
+  it('lays the loading line out so the first skeleton row sits where the first message will (no jump)', () => {
+    // The skeleton adds no margin of its own: the subject (or its bar) and the meta slot decide where rows start.
+    expect(px(declarationsOf(css, '.reader-skeleton')['margin-top'] ?? '0px')).toBe(0);
+    // Overlay variant: the line is out of flow and centred on the first row's toggle box.
+    const overlay = declarationsOf(css, '.reader-loading-stage.is-overlay > .reader-loading-line');
+    expect(overlay.position).toBe('absolute');
+    const message = declarationsOf(css, '.message');
+    const rowTop = px(message['border-top']?.split(' ')[0]) + box(message.padding)[0];
+    expect(px(overlay.top)).toBe(rowTop);
+    expect(px(overlay.height)).toBe(px('var(--message-row-height)'));
+    // The subject placeholder is an h2 with the real subject's class, so margins and line box match by construction;
+    // the bar only paints inside that line box.
+    const bar = declarationsOf(css, '.reader-skeleton-subject');
+    expect(px(bar.height)).toBeLessThanOrEqual(px(declarationsOf(css, '.reader-subject')['font-size']) * Number(rootToken('--leading-headline')));
+    expect(bar.margin ?? '0').toMatch(/^0/);
+  });
 });
