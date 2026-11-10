@@ -1,19 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import App from '../src/App.vue';
+
 import CachedTrashPanel from '../src/components/CachedTrashPanel.vue';
 import { emptyCachedTrash } from '../src/lib/cached-trash';
 import { createBrowserFakeMailClient } from '../src/lib/ipc/browser-fake';
-import { deferred, useGmailMode } from './helpers';
+import { deferred, useGmailMode, mountApp, press } from './helpers';
 import type { CachedTrashSnapshot } from '../src/lib/ipc/client';
 
 let wrapper: VueWrapper | null = null;
 afterEach(() => { wrapper?.unmount(); wrapper = null; });
-const key = (value: string) => (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }));
 async function goTrash(w: VueWrapper) {
   await w.get('[data-test="palette-trigger"]').trigger('click');
   await w.get('[data-test="action-query"]').setValue('Go to cached Trash');
-  key('Enter');
+  press('Enter', { bubbles: true, cancelable: true });
   await flushPromises();
 }
 
@@ -27,7 +26,7 @@ describe('UX-10 A read-only cached Trash', () => {
     const archive = vi.spyOn(fake, 'setArchived');
     const read = vi.spyOn(fake, 'setRead');
     const group = vi.spyOn(fake, 'setArchivedGroup');
-    wrapper = mount(App, { props: { client: fake, mode: 'browser-preview' }, attachTo: document.body });
+    wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
     await flushPromises();
     expect(wrapper.find('[data-test="conversation-row-conv-04"]').exists()).toBe(false);
     expect(wrapper.find('[data-test="conversation-row-conv-07"]').exists()).toBe(false);
@@ -40,11 +39,11 @@ describe('UX-10 A read-only cached Trash', () => {
     expect(get).toHaveBeenLastCalledWith({ accountId: 'gmail-account', conversationId: 'conv-04' }, false);
     expect(wrapper.find('[data-test="prepare-reply"]').exists()).toBe(false);
     const calls = get.mock.calls.length;
-    for (const value of ['e', 'E', 'U', 'z', 'j', 'k']) key(value);
+    for (const value of ['e', 'E', 'U', 'z', 'j', 'k']) press(value, { bubbles: true, cancelable: true });
     await flushPromises();
     expect(get).toHaveBeenCalledTimes(calls);
     expect(archive).not.toHaveBeenCalled(); expect(read).not.toHaveBeenCalled(); expect(group).not.toHaveBeenCalled();
-    key('Escape'); await flushPromises();
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
     expect(wrapper.get('[data-test="utility-drawer"]').text()).toContain('Cached Trash');
     expect(document.activeElement?.getAttribute('data-id')).toBe('conv-04');
     await wrapper.get('[data-test="drawer-close"]').trigger('click'); await flushPromises();
@@ -55,7 +54,7 @@ describe('UX-10 A read-only cached Trash', () => {
   it('omits the destination for unsupported fixture mode and rejects direct fake calls', async () => {
     const fake = createBrowserFakeMailClient();
     await expect(fake.listCachedTrash({ accountId: 'gmail-account', limit: 10, cursor: null })).rejects.toEqual({ kind: 'invalid_request', field: 'mode' });
-    wrapper = mount(App, { props: { client: fake, mode: 'browser-preview' } }); await flushPromises();
+    wrapper = mountApp(fake, 'browser-preview', {  }); await flushPromises();
     await wrapper.get('[data-test="palette-trigger"]').trigger('click');
     await wrapper.get('[data-test="action-query"]').setValue('Trash');
     expect(wrapper.find('[role="option"]').exists()).toBe(false);

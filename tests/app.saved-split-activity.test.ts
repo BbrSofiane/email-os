@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import App from '../src/App.vue';
-import { createBrowserFakeMailClient, useGmailMode } from './helpers';
+import { flushPromises, type VueWrapper } from '@vue/test-utils';
+
+import { createBrowserFakeMailClient, useGmailMode, mountApp } from './helpers';
 
 let wrapper: VueWrapper | null = null;
 afterEach(() => { wrapper?.unmount(); wrapper = null; });
@@ -30,7 +30,7 @@ it.each(['matching', 'nonmatching', 'unread-filtered', 'unavailable'] as const)(
       getSavedSplit: (account: string) => unavailable
         ? Promise.reject({ kind: 'storage_unavailable' }) : fake.getSavedSplit(account),
     };
-    wrapper = mount(App, { props: { client, mode: 'browser-preview' }, attachTo: document.body });
+    wrapper = mountApp(client, 'browser-preview', { attachTo: document.body });
     await flushPromises();
     if (projection === 'unread-filtered') {
       // Restoring Inbox membership must not change this known-read target.
@@ -71,7 +71,7 @@ it('opens an archived Activity target from a saved split and restores it without
   await fake.saveSavedSplit(target.ref.accountId, { name: 'Clients', criterion: 'sender', value: target.primaryCorrespondent!.mailbox, enabled: true, hideWhenEmpty: false });
   const archived = await fake.setArchived({ conversation: target.ref, archived: true, requestId: 'activity-target' });
   await fake.controls.flush();
-  wrapper = mount(App, { props: { client: fake, mode: 'browser-preview' }, attachTo: document.body });
+  wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
   await flushPromises();
   await wrapper.get('[data-test="split-saved"]').trigger('click');
   await flushPromises();

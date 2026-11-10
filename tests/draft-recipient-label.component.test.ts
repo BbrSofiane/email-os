@@ -9,17 +9,11 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import App from '../src/App.vue';
+
 import DraftsPanel from '../src/components/DraftsPanel.vue';
 import ContactPane, { type ContactInfo } from '../src/components/ContactPane.vue';
 import type { DraftContent, DraftSource, MailClient } from '../src/lib/ipc/client';
-import {
-  closeUtilityDrawer,
-  createBrowserFakeMailClient,
-  fixtureRef,
-  waitFor,
-  type BrowserFake,
-} from './helpers';
+import { closeUtilityDrawer, createBrowserFakeMailClient, fixtureRef, waitFor, type BrowserFake, mountApp as sharedMountApp } from './helpers';
 
 const REPLY_SOURCE: DraftSource = { kind: 'reply', conversation: fixtureRef('conv-01'), sourceMessageId: 'conv-01-m3' };
 const CONTENT: DraftContent = { to: 'ada@example.test', cc: '', subject: 'Re: Fixture thread 1: weekly status', bodyText: '' };
@@ -114,8 +108,8 @@ describe('ContactPane while a reply editor is active', () => {
 describe('App wiring: drawer label and contact-pane compose context for an active reply editor', () => {
   let wrapper: VueWrapper | null = null;
 
-  async function mountApp(fake: BrowserFake, client: MailClient = fake): Promise<VueWrapper> {
-    const mounted = mount(App, { props: { client, mode: 'browser-preview' }, attachTo: document.body });
+  async function mountDraftsDrawer(fake: BrowserFake, client: MailClient = fake): Promise<VueWrapper> {
+    const mounted = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
     wrapper = mounted;
     await flushPromises();
     await mounted.find('[data-test="rail-drafts"]').trigger('click');
@@ -128,7 +122,7 @@ describe('App wiring: drawer label and contact-pane compose context for an activ
 
   it('shows "Draft to <sender>" in the inline reply composer and leaves the contact pane unchanged after preparing a reply (reader stays open)', async () => {
     const fake = createBrowserFakeMailClient();
-    const w = await mountApp(fake);
+    const w = await mountDraftsDrawer(fake);
     if (w.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
@@ -151,7 +145,7 @@ describe('App wiring: drawer label and contact-pane compose context for an activ
 
   it('prefers the open source conversation latest sender ("Ada Fixture") while the reader is open on the reply source', async () => {
     const fake = createBrowserFakeMailClient();
-    const w = await mountApp(fake);
+    const w = await mountDraftsDrawer(fake);
     if (w.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
@@ -182,7 +176,7 @@ describe('App wiring: drawer label and contact-pane compose context for an activ
 
   it('shows no compose-target line in the contact pane when no reply editor is active', async () => {
     const fake = createBrowserFakeMailClient();
-    const w = await mountApp(fake);
+    const w = await mountDraftsDrawer(fake);
     expect(w.find('[data-test="compose-target"]').exists()).toBe(false);
     expect(w.find('[data-test="draft-recipient-label"]').exists()).toBe(false);
     await w.find('[data-test="new-draft"]').trigger('click');

@@ -3,10 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 import RemindersPanel from '../src/components/RemindersPanel.vue';
 import ReminderPicker from '../src/components/ReminderPicker.vue';
 import { fullDateLabel } from '../src/lib/browsing-dates';
-import App from '../src/App.vue';
+
 import { createBrowserFakeMailClient } from '../src/lib/ipc/browser-fake';
 import type { PutReminder, Reminder } from '../src/lib/ipc/client';
-import { deferred, useGmailMode } from './helpers';
+import { deferred, useGmailMode, mountApp } from './helpers';
 
 function fixture() {
   const fake = createBrowserFakeMailClient();
@@ -155,7 +155,7 @@ describe('bounded local reminder journey', () => {
     const detail = await fake.getConversation(target);
     rows.push({ conversation: target, subject: 'Returned fixture', revision: 4, sourceMessageId: detail.messages.at(-1)!.id, dueAt: '2030-01-01T00:00:00Z', condition: 'regardless', phase: 'returned' });
     const setRead = vi.spyOn(fake, 'setRead');
-    const app = mount(App, { props: { client: fake, mode: 'native' }, global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
+    const app = mountApp(fake, 'native', { global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
     await app.findAll('button').find(b => b.text() === 'Reminders')!.trigger('click'); await flushPromises();
     await app.findComponent(RemindersPanel).findAll('nav button')[1]!.trigger('click'); await flushPromises();
     // Due times are the full viewer-local form with a machine-readable datetime.
@@ -170,7 +170,7 @@ describe('bounded local reminder journey', () => {
 
   it('H opens a capable fixture or Gmail picker and guards bulk, text input, IME, and absent transport', async () => {
     const { fake } = fixture();
-    const app = mount(App, { props: { client: fake, mode: 'native' }, global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
+    const app = mountApp(fake, 'native', { global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', bubbles: true })); await flushPromises();
     expect(app.findComponent(RemindersPanel).exists()).toBe(true);
     expect(app.findComponent(RemindersPanel).findComponent(ReminderPicker).exists()).toBe(true);
@@ -186,18 +186,18 @@ describe('bounded local reminder journey', () => {
     expect(app.findComponent(RemindersPanel).exists()).toBe(false);
     app.unmount();
     const gmail = fixture(); useGmailMode(gmail.fake);
-    const gated = mount(App, { props: { client: gmail.fake, mode: 'native' } }); await flushPromises();
+    const gated = mountApp(gmail.fake, 'native', {  }); await flushPromises();
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h' })); await flushPromises();
     expect(gated.findComponent(RemindersPanel).exists()).toBe(true); gated.unmount();
     const unsupported = createBrowserFakeMailClient();
     delete unsupported.reminders;
-    const preview = mount(App, { props: { client: unsupported, mode: 'browser-preview' } }); await flushPromises();
+    const preview = mountApp(unsupported, 'browser-preview', {  }); await flushPromises();
     expect(preview.text()).not.toContain('Remind me'); preview.unmount();
   });
 
   it('returns an acknowledged schedule from list and reader to Inbox with receipt-based status', async () => {
     const { fake, put } = fixture();
-    const app = mount(App, { props: { client: fake, mode: 'native' }, global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
+    const app = mountApp(fake, 'native', { global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
     const row = app.find('[data-test^="conversation-row-"]');
     const rowTestId = row.attributes('data-test');
     await row.trigger('click'); await flushPromises();
@@ -220,7 +220,7 @@ describe('bounded local reminder journey', () => {
     const target = { accountId: 'fixture-account', conversationId: 'conv-01' };
     const detail = await fake.getConversation(target);
     rows.push({ conversation: target, subject: 'Existing reminder', revision: 3, sourceMessageId: detail.messages.at(-1)!.id, dueAt: '2030-11-03T01:30:00-05:00', condition: 'regardless', phase: 'pending' });
-    const app = mount(App, { props: { client: fake, mode: 'native' }, global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
+    const app = mountApp(fake, 'native', { global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
     await app.findAll('button').find(button => button.text() === 'Reminders')!.trigger('click'); await flushPromises();
     await app.findAll('button').find(button => button.text() === 'Reschedule')!.trigger('click'); await flushPromises();
     await app.findAll('button').find(button => button.text() === 'Save new time')!.trigger('click'); await flushPromises();
@@ -235,7 +235,7 @@ describe('bounded local reminder journey', () => {
   it('keeps failure and dismissal silent, then confirms Someday only after exact retry succeeds', async () => {
     const { fake, put } = fixture();
     put.mockRejectedValueOnce({ kind: 'storage_unavailable' });
-    const app = mount(App, { props: { client: fake, mode: 'native' }, global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
+    const app = mountApp(fake, 'native', { global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', bubbles: true })); await flushPromises();
     const picker = app.findComponent(RemindersPanel);
     const input = picker.get('#reminder-time-input');
@@ -251,7 +251,7 @@ describe('bounded local reminder journey', () => {
     app.unmount();
 
     const dismissed = fixture();
-    const second = mount(App, { props: { client: dismissed.fake, mode: 'native' }, global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
+    const second = mountApp(dismissed.fake, 'native', { global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', bubbles: true })); await flushPromises();
     await second.get('#reminder-time-input').trigger('keydown', { key: 'Escape' }); await flushPromises();
     expect(second.find('[data-test="reminder-confirmation"]').exists()).toBe(false);
@@ -263,7 +263,7 @@ describe('bounded local reminder journey', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const timeout = vi.spyOn(globalThis, 'setTimeout');
     const { fake } = fixture();
-    const app = mount(App, { props: { client: fake, mode: 'native' }, global: { stubs: { Teleport: true } }, attachTo: document.body });
+    const app = mountApp(fake, 'native', { global: { stubs: { Teleport: true } }, attachTo: document.body });
     try {
       await flushPromises();
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', bubbles: true })); await flushPromises();
@@ -292,7 +292,7 @@ describe('bounded local reminder journey', () => {
 
   it('does not let a late acknowledged schedule replace newer Inbox navigation', async () => {
     const { fake } = fixture();
-    const app = mount(App, { props: { client: fake, mode: 'native' }, global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
+    const app = mountApp(fake, 'native', { global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
     const originalList = fake.listConversations.bind(fake);
     const pendingList = deferred<Awaited<ReturnType<typeof fake.listConversations>>>();
     const list = vi.spyOn(fake, 'listConversations').mockImplementationOnce(() => pendingList.promise);

@@ -1,11 +1,12 @@
+import { flushVueNextTick } from './support/ui-settle';
 /**
  * Reader design pass: one status line instead of standing paragraphs, trailing
  * quote and signature disclosure, and inline attachment rows. Message content
  * stays literal text throughout.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { flushPromises, type VueWrapper } from '@vue/test-utils';
-import { nextTick } from 'vue';
+import { type VueWrapper } from '@vue/test-utils';
+
 import type { Conversation, ConversationRef, MailClient } from '../src/lib/ipc/client';
 import { mountReaderView } from './reader.mount';
 import type { AttachmentDescriptor } from '../src/lib/ipc/generated';
@@ -44,15 +45,9 @@ function mountReader(conversation: Conversation, props: Record<string, unknown> 
   return wrapper;
 }
 
-async function settle(): Promise<void> {
-  await flushPromises();
-  await nextTick();
-  await flushPromises();
-}
-
 async function show(w: VueWrapper, conversation: Conversation): Promise<void> {
   await w.setProps({ conversation, openRef: conversation.ref, state: 'ready' });
-  await settle();
+  await flushVueNextTick();
 }
 
 describe('reader status line and exceptions', () => {
@@ -61,7 +56,7 @@ describe('reader status line and exceptions', () => {
 
   it('replaces the explicit-read-control paragraph with one status line: title and hidden text, exact read-state word', async () => {
     const w = mountReader(conversationOf('c1', [message('m1')], { isRead: false }), { showReadControls: true });
-    await settle();
+    await flushVueNextTick();
     const line = w.get('[data-test="reader-no-auto-read"]');
     expect(line.element.closest('[data-test="reader-meta-row"]')).not.toBeNull();
     expect(line.element.tagName).toBe('SPAN');
@@ -76,7 +71,7 @@ describe('reader status line and exceptions', () => {
 
   it('shows Read-only and the read state in the same line for a read-only view', async () => {
     const w = mountReader(conversationOf('c1', [message('m1')], { isRead: true }), { readOnly: true });
-    await settle();
+    await flushVueNextTick();
     const line = w.get('[data-test="reader-readonly"]');
     expect(line.element.tagName).toBe('SPAN');
     expect(line.get('[data-test="reader-status-word"]').text()).toBe('Read-only');
@@ -89,7 +84,7 @@ describe('reader status line and exceptions', () => {
 
   it('keeps one Cached Trash line without the read-state sentence', async () => {
     const w = mountReader(conversationOf('c1', [message('m1')], { isRead: true }), { readOnly: true, browsingOnly: true });
-    await settle();
+    await flushVueNextTick();
     const notes = w.findAll('p.reader-readonly');
     expect(notes).toHaveLength(1);
     expect(notes[0]!.text()).toBe('Cached Trash — read only. Recovery is not available here; use your provider client.');
@@ -102,7 +97,7 @@ describe('reader status line and exceptions', () => {
 
   it('adds nothing under the subject for a plain conversation without exceptions', async () => {
     const w = mountReader(conversationOf('c1', [message('m1')], { isRead: true }));
-    await settle();
+    await flushVueNextTick();
     expect(w.find('[data-test="reader-meta-row"]').exists()).toBe(false);
     expect(w.findAll('.reader-scroll p')).toHaveLength(0);
   });
@@ -119,7 +114,7 @@ describe('reader status line and exceptions', () => {
       }),
       { showReadControls: true },
     );
-    await settle();
+    await flushVueNextTick();
     for (const hook of ['reader-stars', 'reply-blocked', 'retained-snapshot-notice', 'unsupported-notice', 'reader-pending', 'reader-no-auto-read']) {
       expect(w.findAll(`[data-test="${hook}"]`), hook).toHaveLength(1);
     }
@@ -141,7 +136,7 @@ describe('reader status line and exceptions', () => {
       }),
       { showReadControls: true },
     );
-    await settle();
+    await flushVueNextTick();
     expect(w.get('[data-test="reader-pending"]').attributes('role')).toBe('status');
     expect(w.get('[data-test="retained-snapshot-notice"]').attributes('role')).toBe('note');
     expect(w.get('[data-test="unsupported-notice"]').attributes('role')).toBe('note');
@@ -163,7 +158,7 @@ describe('trailing quote and signature', () => {
 
   it('hides a trailing quote behind a real toggle and shows it as literal text', async () => {
     const w = mountReader(conversationOf('c1', [message('m1', BODY)]));
-    await settle();
+    await flushVueNextTick();
     expect(w.get('[data-test="message-body"]').text()).toBe('Shipping Friday.');
     expect(w.get('[data-test="message-body"]').classes()).not.toContain('message-body-mono');
     expect(w.find('[data-test="message-quoted"]').exists()).toBe(false);
@@ -189,7 +184,7 @@ describe('trailing quote and signature', () => {
 
   it('renders the signature below the prose without a toggle, in its own block', async () => {
     const w = mountReader(conversationOf('c1', [message('m1', 'Thanks.\n-- \nAda\nExample Co')]));
-    await settle();
+    await flushVueNextTick();
     expect(w.get('[data-test="message-body"]').text()).toBe('Thanks.');
     expect(w.get('[data-test="message-signature"]').text()).toBe('-- \nAda\nExample Co');
     expect(w.find('[data-test="message-quote-toggle-m1"]').exists()).toBe(false);
@@ -199,7 +194,7 @@ describe('trailing quote and signature', () => {
     const plain = 'Hi,\n\nThanks > nothing.\n\nAda';
     const inline = '> Are we on?\nYes.\n> And Friday?\nAlso yes.';
     const w = mountReader(conversationOf('c1', [message('m1', plain), message('m2', inline)]));
-    await settle();
+    await flushVueNextTick();
     const bodies = w.findAll('[data-test="message-body"]');
     expect(bodies[0]!.text()).toBe(plain);
     expect(bodies[1]!.text()).toBe(inline);
@@ -211,7 +206,7 @@ describe('trailing quote and signature', () => {
 
   it('previews the prose, not the quote, in a collapsed row', async () => {
     const w = mountReader(conversationOf('c1', [message('m1', BODY), message('m2')]));
-    await settle();
+    await flushVueNextTick();
     expect(w.get('[data-test="message-toggle-m1"]').get('.message-snippet').text()).toBe('Shipping Friday.');
     expect(w.get('[data-test="message-quote-toggle-m1"]').attributes('hidden')).toBeDefined();
   });
@@ -220,7 +215,7 @@ describe('trailing quote and signature', () => {
     const french = 'Merci, c’est bon.\n\nLe jeudi 6 nov. 2026, Ada a écrit\u00a0:\n> Peut-on livrer ?\n> Vendredi.';
     const aligned = 'Lancer :\n    $ pnpm test\n    ok\n\nAm Montag schrieb Ada:\n> Passt?\n> Ja.';
     const w = mountReader(conversationOf('c1', [message('m1', french), message('m2', aligned)]));
-    await settle();
+    await flushVueNextTick();
     expect(w.get('[data-test="message-toggle-m1"]').get('.message-snippet').text()).toBe('Merci, c’est bon.');
     expect(w.get('[data-test="message-quote-toggle-m1"]').text()).toBe('Show quoted text');
     const bodies = w.findAll('[data-test="message-body"]');
@@ -234,7 +229,7 @@ describe('trailing quote and signature', () => {
     const first = conversationOf('c1', [message('m1', BODY)]);
     const neighbor = conversationOf('c2', [message('n1')]);
     const w = mountReader(first);
-    await settle();
+    await flushVueNextTick();
     await w.get('[data-test="message-quote-toggle-m1"]').trigger('click');
     expect(w.find('[data-test="message-quoted"]').exists()).toBe(true);
     await show(w, neighbor);
@@ -262,7 +257,7 @@ describe('inline attachments', () => {
     const first = withFile();
     const neighbor = conversationOf('c2', [message('n1', 'Body', { hasAttachment: false })]);
     const w = mountReader(first, { client: asClient(client) });
-    await settle();
+    await flushVueNextTick();
     const row = w.get('[data-test="attachment-a1"]');
     expect(row.text()).toContain('example.txt');
     expect(row.text()).toContain('27 B · text/plain');
@@ -283,22 +278,22 @@ describe('inline attachments', () => {
     const client = stubClient();
     const none = conversationOf('c1', [message('m1', 'Body', { hasAttachment: false }), message('m2')]);
     const w = mountReader(none, { client: asClient(client) });
-    await settle();
+    await flushVueNextTick();
     expect(w.find('[data-test="message-attachments-m1"]').exists()).toBe(false);
     expect(w.find('[data-test="message-attachments-m2"]').exists()).toBe(false);
     expect(client.listAttachments).not.toHaveBeenCalled();
     w.unmount();
     const plain = mountReader(withFile());
-    await settle();
+    await flushVueNextTick();
     expect(plain.find('.message-attachments').exists()).toBe(false);
   });
 
   it('saves on request and reports exactly what happened, including the preview wording', async () => {
     const client = stubClient();
     const w = mountReader(withFile(), { client: asClient(client) });
-    await settle();
+    await flushVueNextTick();
     await w.get('[data-test="attachment-save"]').trigger('click');
-    await settle();
+    await flushVueNextTick();
     expect(client.saveAttachment).toHaveBeenCalledWith({ conversation: ref('c1'), messageId: 'm1', attachmentId: 'a1', requestId: expect.any(String) });
     const status = w.get('[data-test="attachment-status"]');
     expect(status.text()).toBe('Saved to Downloads as example.txt.download. No file was opened.');
@@ -307,9 +302,9 @@ describe('inline attachments', () => {
 
     const previewClient = stubClient();
     const preview = mountReader(withFile(), { client: asClient(previewClient), preview: true });
-    await settle();
+    await flushVueNextTick();
     await preview.get('[data-test="attachment-save"]').trigger('click');
-    await settle();
+    await flushVueNextTick();
     expect(preview.get('[data-test="attachment-status"]').text()).toBe('Modelled save in preview memory only; no file was written.');
   });
 
@@ -317,15 +312,15 @@ describe('inline attachments', () => {
     const client = stubClient();
     client.saveAttachment.mockRejectedValueOnce({ kind: 'network_unavailable' });
     const w = mountReader(withFile(), { client: asClient(client) });
-    await settle();
+    await flushVueNextTick();
     await w.get('[data-test="attachment-save"]').trigger('click');
-    await settle();
+    await flushVueNextTick();
     const alert = w.get('[data-test="attachment-error"]');
     expect(alert.attributes('role')).toBe('alert');
     expect(alert.text()).toContain('File not saved: unavailable offline, missing, cancelled, too large, or invalid content.');
     expect(w.find('[data-test="attachment-status"]').exists()).toBe(false);
     await w.get('[data-test="attachment-save"]').trigger('click');
-    await settle();
+    await flushVueNextTick();
     expect(client.saveAttachment).toHaveBeenCalledTimes(2);
     expect(w.find('[data-test="attachment-error"]').exists()).toBe(false);
   });
@@ -336,19 +331,19 @@ describe('inline attachments', () => {
     const transfer = deferred<{ filename: string }>();
     client.saveAttachment.mockReturnValueOnce(transfer.promise as never);
     const w = mountReader(withFile(), { client: asClient(client) });
-    await settle();
+    await flushVueNextTick();
     await w.get('[data-test="attachment-a1"] [data-test="attachment-save"]').trigger('click');
-    await settle();
+    await flushVueNextTick();
     const request = (client.saveAttachment.mock.calls[0] as unknown as [{ requestId: string }])[0];
     expect(w.get('[data-test="attachment-a1"]').text()).toContain('Saving…');
     expect(w.get('[data-test="attachment-a1"] [data-test="attachment-save"]').attributes('aria-disabled')).toBe('true');
     expect(w.get('[data-test="attachment-a2"] [data-test="attachment-save"]').attributes('disabled')).toBeDefined();
     await w.get('[data-test="attachment-cancel"]').trigger('click');
-    await settle();
+    await flushVueNextTick();
     expect(client.cancelAttachment).toHaveBeenCalledWith(request.requestId);
     expect(w.get('[data-test="attachment-status"]').text()).toBe('Cancellation requested; waiting for transfer to stop.');
     transfer.reject({ kind: 'cancelled' });
-    await settle();
+    await flushVueNextTick();
     expect(w.find('[data-test="attachment-cancel"]').exists()).toBe(false);
     expect(w.get('[data-test="attachment-a1"]').text()).not.toContain('Saving…');
     expect(w.get('[data-test="attachment-a1"] [data-test="attachment-save"]').attributes('disabled')).toBeUndefined();
@@ -359,9 +354,9 @@ describe('inline attachments', () => {
     client.saveAttachment.mockReturnValue(new Promise(() => {}) as never);
     const first = withFile();
     const w = mountReader(first, { client: asClient(client) });
-    await settle();
+    await flushVueNextTick();
     await w.get('[data-test="attachment-save"]').trigger('click');
-    await settle();
+    await flushVueNextTick();
     await show(w, conversationOf('c2', [message('n1')]));
     expect(client.cancelAttachment).toHaveBeenCalledTimes(1);
     w.unmount();
@@ -372,7 +367,7 @@ describe('inline attachments', () => {
     const big: AttachmentDescriptor = { ...FILE, attachmentId: 'big', filename: 'big.bin', mimeType: 'application/octet-stream', size: 6 * 1024 * 1024 };
     const client = stubClient([FILE, big]);
     const w = mountReader({ ...withFile(), retainedSnapshotAt: '2025-02-03T04:05:06Z' }, { client: asClient(client) });
-    await settle();
+    await flushVueNextTick();
     expect(w.get('[data-test="attachment-big"]').text()).toContain('6.0 MB · application/octet-stream');
     expect(w.get('[data-test="attachment-big"]').text()).toContain('Over the 5 MB limit; cannot download.');
     expect(w.find('[data-test="attachment-big"] [data-test="attachment-save"]').exists()).toBe(false);
@@ -386,14 +381,14 @@ describe('inline attachments', () => {
   it('says so plainly when a message claims files but none are cached, and when the list cannot load', async () => {
     const client = stubClient([]);
     const w = mountReader(withFile(), { client: asClient(client) });
-    await settle();
+    await flushVueNextTick();
     expect(w.get('[data-test="attachments-not-cached"]').text()).toBe('Attachment details are not cached. Sync to fetch.');
     w.unmount();
 
     const failing = stubClient();
     failing.listAttachments.mockRejectedValue({ kind: 'storage_unavailable' });
     const failed = mountReader(withFile(), { client: asClient(failing) });
-    await settle();
+    await flushVueNextTick();
     expect(failed.get('[data-test="attachments-load-error"]').text()).toBe('Could not load file details.');
     expect(failed.get('.reader-scroll').text()).toContain('Body');
   });
@@ -407,11 +402,11 @@ describe('inline attachments', () => {
       const transfer = deferred<{ filename: string }>();
       client.saveAttachment.mockReturnValueOnce(transfer.promise as never);
       const w = mountReader(withFile(), { client: asClient(client) });
-      await settle();
+      await flushVueNextTick();
       const button = saveButton(w).element as HTMLButtonElement;
       button.focus();
       await saveButton(w).trigger('click');
-      await settle();
+      await flushVueNextTick();
       expect(client.saveAttachment).toHaveBeenCalledTimes(1);
       expect(saveButton(w).element).toBe(button);
       expect(document.activeElement).toBe(button);
@@ -426,7 +421,7 @@ describe('inline attachments', () => {
       expect(w.get('[data-test="message-attachments-m1"]').findAll('[role="status"], [role="alert"], [aria-live]')).toHaveLength(0);
 
       transfer.resolve({ filename: 'example.txt.download' });
-      await settle();
+      await flushVueNextTick();
       expect(document.activeElement).toBe(saveButton(w).element);
       expect(document.activeElement).not.toBe(document.body);
       expect(saveButton(w).text()).toBe('Save');
@@ -440,11 +435,11 @@ describe('inline attachments', () => {
       const transfer = deferred<{ filename: string }>();
       client.saveAttachment.mockReturnValueOnce(transfer.promise as never);
       const w = mountReader(withFile(), { client: asClient(client) });
-      await settle();
+      await flushVueNextTick();
       (saveButton(w).element as HTMLButtonElement).focus();
       await saveButton(w).trigger('click');
       transfer.reject({ kind: 'network_unavailable' });
-      await settle();
+      await flushVueNextTick();
       expect(document.activeElement).toBe(saveButton(w).element);
       expect(w.get('[data-test="attachment-error"]').attributes('role')).toBe('alert');
     });
@@ -454,17 +449,17 @@ describe('inline attachments', () => {
       const transfer = deferred<{ filename: string }>();
       client.saveAttachment.mockReturnValueOnce(transfer.promise as never);
       const w = mountReader(withFile(), { client: asClient(client) });
-      await settle();
+      await flushVueNextTick();
       (saveButton(w).element as HTMLButtonElement).focus();
       await saveButton(w).trigger('click');
-      await settle();
+      await flushVueNextTick();
       (cancelButton(w).element as HTMLButtonElement).focus();
       await cancelButton(w).trigger('click');
-      await settle();
+      await flushVueNextTick();
       // Cancel is a request: it stays (and keeps focus) until the transfer stops.
       expect(document.activeElement).toBe(cancelButton(w).element);
       transfer.reject({ kind: 'cancelled' });
-      await settle();
+      await flushVueNextTick();
       expect(w.find('[data-test="attachment-cancel"]').exists()).toBe(false);
       expect(document.activeElement).toBe(saveButton(w).element);
     });
@@ -474,13 +469,13 @@ describe('inline attachments', () => {
       const transfer = deferred<{ filename: string }>();
       client.saveAttachment.mockReturnValueOnce(transfer.promise as never);
       const w = mountReader(withFile(), { client: asClient(client) });
-      await settle();
+      await flushVueNextTick();
       (saveButton(w).element as HTMLButtonElement).focus();
       await saveButton(w).trigger('click');
-      await settle();
+      await flushVueNextTick();
       (w.get('[data-test="message-toggle-m1"]').element as HTMLElement).focus();
       transfer.resolve({ filename: 'example.txt.download' });
-      await settle();
+      await flushVueNextTick();
       expect(document.activeElement).toBe(w.get('[data-test="message-toggle-m1"]').element);
     });
   });
@@ -493,7 +488,7 @@ describe('inline attachments', () => {
       const client = stubClient();
       client.listAttachments.mockRejectedValue({ kind: 'storage_unavailable' });
       const w = mountReader(withFile(), { client: asClient(client) });
-      await settle();
+      await flushVueNextTick();
       expect(w.get('[data-test="attachments-load-error"]').text()).toBe('Could not load file details.');
       const retry = retryButton(w);
       expect(retry.text()).toBe('Retry');
@@ -509,7 +504,7 @@ describe('inline attachments', () => {
       const client = stubClient();
       client.listAttachments.mockRejectedValueOnce({ kind: 'storage_unavailable' });
       const w = mountReader(withFile(), { client: asClient(client) });
-      await settle();
+      await flushVueNextTick();
       const second = deferred<AttachmentDescriptor[]>();
       client.listAttachments.mockReturnValueOnce(second.promise);
       (retryButton(w).element as HTMLButtonElement).focus();
@@ -528,7 +523,7 @@ describe('inline attachments', () => {
       expect(client.listAttachments).toHaveBeenCalledTimes(2);
 
       second.resolve([FILE]);
-      await settle();
+      await flushVueNextTick();
       expect(w.find('[data-test="attachments-retry"]').exists()).toBe(false);
       expect(w.find('[data-test="attachments-load-error"]').exists()).toBe(false);
       expect(w.get('[data-test="attachment-a1"]').text()).toContain('example.txt');
@@ -544,10 +539,10 @@ describe('inline attachments', () => {
       const client = stubClient();
       client.listAttachments.mockRejectedValue({ kind: 'storage_unavailable' });
       const w = mountReader(withFile(), { client: asClient(client) });
-      await settle();
+      await flushVueNextTick();
       (retryButton(w).element as HTMLButtonElement).focus();
       await retryButton(w).trigger('click');
-      await settle();
+      await flushVueNextTick();
       expect(client.listAttachments).toHaveBeenCalledTimes(2);
       expect(w.get('[data-test="attachments-load-error"]').text()).toBe('Could not load file details.');
       expect(retryButton(w).text()).toBe('Retry');
@@ -555,7 +550,7 @@ describe('inline attachments', () => {
       expect(retryButton(w).attributes('aria-label')).toBe('Retry loading file details');
       expect(document.activeElement).toBe(retryButton(w).element);
       await retryButton(w).trigger('click');
-      await settle();
+      await flushVueNextTick();
       expect(client.listAttachments).toHaveBeenCalledTimes(3);
     });
 
@@ -563,13 +558,13 @@ describe('inline attachments', () => {
       const client = stubClient();
       client.listAttachments.mockRejectedValueOnce({ kind: 'storage_unavailable' });
       const w = mountReader(withFile(), { client: asClient(client) });
-      await settle();
+      await flushVueNextTick();
       const second = deferred<AttachmentDescriptor[]>();
       client.listAttachments.mockReturnValueOnce(second.promise);
       await retryButton(w).trigger('click');
       (w.get('[data-test="message-toggle-m1"]').element as HTMLElement).focus();
       second.resolve([FILE]);
-      await settle();
+      await flushVueNextTick();
       expect(w.find('[data-test="attachment-a1"]').exists()).toBe(true);
       expect(document.activeElement).toBe(w.get('[data-test="message-toggle-m1"]').element);
     });
@@ -584,11 +579,11 @@ describe('inline attachments', () => {
     const a = withFile('c1');
     const b = conversationOf('c2', [message('n1', 'Body', { hasAttachment: true })]);
     const w = mountReader(a, { client: asClient(client) });
-    await settle();
+    await flushVueNextTick();
     await show(w, b);
     expect(w.get('[data-test="attachment-b1"]').text()).toContain('for-b.txt');
     late.resolve([FILE]);
-    await settle();
+    await flushVueNextTick();
     // A's late list must not appear on B.
     expect(w.find('[data-test="attachment-a1"]').exists()).toBe(false);
     expect(w.get('[data-test="attachment-b1"]').text()).toContain('for-b.txt');
@@ -603,7 +598,7 @@ describe('inline attachments', () => {
     const client = stubClient([hostile, { ...FILE, messageId: 'm0', attachmentId: 'old', filename: 'older.txt' }]);
     const conversation = conversationOf('c1', [message('m0', 'Older', { hasAttachment: true }), message('m1', 'Body', { hasAttachment: true })]);
     const w = mountReader(conversation, { client: asClient(client) });
-    await settle();
+    await flushVueNextTick();
     expect(w.get('[data-test="attachment-a1"]').text()).toContain('<img src=x onerror=alert(1)>.txt');
     expect(w.get('.reader-scroll').find('img').exists()).toBe(false);
     // The collapsed older message shows no list until it is expanded.
@@ -622,7 +617,7 @@ describe('reader loading placeholder', () => {
 
   it('keeps the exact status text and adds a static, hidden placeholder of the loaded shape', async () => {
     const w = mountLoading();
-    await settle();
+    await flushVueNextTick();
     expect(w.get('[data-test="reader-loading"]').text()).toBe('Loading conversation…');
     expect(w.get('[data-test="reader-loading"]').attributes('role')).toBe('status');
     const skeleton = w.get('[data-test="reader-skeleton"]');
@@ -641,7 +636,7 @@ describe('reader loading placeholder', () => {
 
   it('with a known row identity shows the subject and sender, and only the rows as placeholder', async () => {
     const w = mountLoading({ loadingIdentity: { subject: 'Quarterly plan', sender: 'Ada Fixture', at: '2026-11-06T10:00:00Z' } });
-    await settle();
+    await flushVueNextTick();
     expect(w.get('[data-test="reader-loading-subject"]').text()).toBe('Quarterly plan');
     expect(w.get('[data-test="reader-loading-sender"]').text()).toBe('Ada Fixture');
     const skeleton = w.get('[data-test="reader-skeleton"]');
@@ -655,7 +650,7 @@ describe('reader loading placeholder', () => {
 
     it('folds the sender, date and status into ONE line inside the stage, before the rows, with one role=status', async () => {
       const w = mountLoading({ loadingIdentity: identity });
-      await settle();
+      await flushVueNextTick();
       const stage = w.get('[data-test="reader-loading-stage"]');
       expect(stage.element.firstElementChild).toBe(line(w).element);
       expect(stage.element.lastElementChild).toBe(w.get('[data-test="reader-skeleton"]').element);
@@ -671,18 +666,18 @@ describe('reader loading placeholder', () => {
 
     it('without read controls the line is an overlay on the first row (no flow height)', async () => {
       const w = mountLoading({ loadingIdentity: identity });
-      await settle();
+      await flushVueNextTick();
       expect(w.get('[data-test="reader-loading-stage"]').classes()).toContain('is-overlay');
       expect(line(w).classes()).not.toContain('reader-meta-row');
     });
 
     it('with read controls the line takes the meta row slot the loaded reader will use', async () => {
       const w = mountLoading({ loadingIdentity: identity, showReadControls: true });
-      await settle();
+      await flushVueNextTick();
       expect(w.get('[data-test="reader-loading-stage"]').classes()).not.toContain('is-overlay');
       expect(line(w).classes()).toContain('reader-meta-row');
       const readOnly = mountLoading({ loadingIdentity: identity, readOnly: true });
-      await settle();
+      await flushVueNextTick();
       expect(readOnly.get('[data-test="reader-loading-line"]').classes()).toContain('reader-meta-row');
     });
   });

@@ -1,5 +1,6 @@
+import { flushVueNextTick } from './support/ui-settle';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { flushPromises, type VueWrapper } from '@vue/test-utils';
+import { type VueWrapper } from '@vue/test-utils';
 import { nextTick } from 'vue';
 import type { Conversation, ConversationRef, MailError } from '../src/lib/ipc/client';
 import { mountReaderView } from './reader.mount';
@@ -46,13 +47,6 @@ function toggleFor(wrapper: VueWrapper, messageId: string) {
   return wrapper.find(`[data-test="message-toggle-${messageId}"]`);
 }
 
-async function settle(wrapper: VueWrapper): Promise<void> {
-  await flushPromises();
-  await nextTick();
-  await flushPromises();
-  void wrapper;
-}
-
 describe('ReaderView visit-scoped message state (UX-02)', () => {
   let wrapper: VueWrapper | null = null;
 
@@ -67,7 +61,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
     [{ starredMessages: 0, knownMessages: 1, totalMessages: 3 }, 'Star state unknown'],
   ])('keeps the star line short and moves coverage into the title and description (%j)', async (stars, visible) => {
     wrapper = mountReader(conversationOf(ACCOUNT_A, ['read-m1'], { stars }));
-    await settle(wrapper!);
+    await flushVueNextTick();
     const line = wrapper!.get('[data-test="reader-stars"]');
     const detail = wrapper!.get('[data-test="reader-stars-detail"]');
     // Visible text is the state alone; the precise caveat is title + hidden description.
@@ -82,7 +76,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
 
   it('renders no star line when the conversation is not starred, fully known and nothing is pending', async () => {
     wrapper = mountReader(conversationOf(ACCOUNT_A, ['read-m1'], { stars: { starredMessages: 0, knownMessages: 3, totalMessages: 3 } }));
-    await settle(wrapper!);
+    await flushVueNextTick();
     expect(wrapper!.find('[data-test="reader-stars"]').exists()).toBe(false);
     expect(wrapper!.find('[data-test="reader-stars-detail"]').exists()).toBe(false);
   });
@@ -92,7 +86,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
     [{ starredMessages: 1, knownMessages: 3, totalMessages: 3 }, 'Starred (unconfirmed)'],
   ])('keeps the star line visible while a mailbox action is pending (%j)', async (stars, visible) => {
     wrapper = mountReader(conversationOf(ACCOUNT_A, ['read-m1'], { stars, pendingOperationId: 'op-1' }));
-    await settle(wrapper!);
+    await flushVueNextTick();
     const line = wrapper!.get('[data-test="reader-stars"]');
     const detail = wrapper!.get('[data-test="reader-stars-detail"]');
     expect(line.text().replace(detail.text(), '').trim()).toBe(visible);
@@ -103,7 +97,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
   it('shows a quiet reply glyph only on the active latest message and emits the same prepareReply', async () => {
     const conversation = conversationOf(ACCOUNT_A, ['m1', 'm2', 'm3']);
     const wrapper = mountReader(conversation);
-    await settle(wrapper);
+    await flushVueNextTick();
     const reply = wrapper.find('[data-test="message-reply-m3"]');
     expect(reply.exists()).toBe(true);
     // Two controls do the same thing; their names differ so a screen reader can tell them apart.
@@ -116,7 +110,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
     ]);
     // Focusing an earlier message hides the glyph; reply still targets the latest.
     await toggleFor(wrapper, 'm1').trigger('focusin');
-    await settle(wrapper);
+    await flushVueNextTick();
     expect(wrapper.find('.message-reply').exists()).toBe(false);
     wrapper.unmount();
   });
@@ -124,7 +118,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
   it('opens focused on the newest message toggle with only the newest message expanded', async () => {
     const conversation = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2', 'read-m3']);
     wrapper = mountReader(conversation);
-    await settle(wrapper!);
+    await flushVueNextTick();
     expect(document.activeElement?.getAttribute('data-test')).toBe('message-toggle-read-m3');
     expect(toggleFor(wrapper!, 'read-m3').attributes('aria-expanded')).toBe('true');
     expect(toggleFor(wrapper!, 'read-m1').attributes('aria-expanded')).toBe('false');
@@ -140,7 +134,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
   it('moves message focus with N/P without implicitly expanding', async () => {
     const conversation = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2', 'read-m3']);
     wrapper = mountReader(conversation);
-    await settle(wrapper!);
+    await flushVueNextTick();
     const vm = wrapper!.vm as unknown as { moveMessage: (delta: number) => void };
     vm.moveMessage(-1); // P: to the middle message
     await nextTick();
@@ -165,7 +159,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
   it('expands/collapses the focused message with O and expands all idempotently with Shift+O', async () => {
     const conversation = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2', 'read-m3']);
     wrapper = mountReader(conversation);
-    await settle(wrapper!);
+    await flushVueNextTick();
     const vm = wrapper!.vm as unknown as {
       moveMessage: (delta: number) => void;
       toggleActiveMessage: () => void;
@@ -197,7 +191,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
       ],
     });
     wrapper = mountReader(conversation);
-    await settle(wrapper!);
+    await flushVueNextTick();
     const first = toggleFor(wrapper!, 'read-m1');
     expect(first.attributes('aria-expanded')).toBe('false');
     const snippet = first.find('.message-snippet');
@@ -212,7 +206,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
     // An empty body shows no snippet rather than invented text.
     expect(toggleFor(wrapper!, 'read-m2').find('.message-snippet').exists()).toBe(false);
     await first.trigger('click');
-    await settle(wrapper!);
+    await flushVueNextTick();
     expect(toggleFor(wrapper!, 'read-m1').attributes('aria-expanded')).toBe('true');
     expect(toggleFor(wrapper!, 'read-m1').find('.message-snippet').exists()).toBe(false);
     expect(toggleFor(wrapper!, 'read-m1').find('time.message-time').exists()).toBe(true);
@@ -221,7 +215,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
   it('updates message identity when any message control receives focus', async () => {
     const conversation = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2', 'read-m3']);
     wrapper = mountReader(conversation);
-    await settle(wrapper!);
+    await flushVueNextTick();
     (toggleFor(wrapper!, 'read-m1').element as HTMLElement).focus();
     await nextTick();
     expect(wrapper!.find('[data-test="message-read-m1"]').classes()).toContain('message-active');
@@ -243,7 +237,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
   it('dismisses an open details disclosure and reports it to Escape handling', async () => {
     const conversation = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2', 'read-m3']);
     wrapper = mountReader(conversation);
-    await settle(wrapper!);
+    await flushVueNextTick();
     const vm = wrapper!.vm as unknown as {
       hasOpenDetails: () => boolean;
       dismissMessageDetails: () => boolean;
@@ -266,7 +260,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
   it('shows Details only in expanded messages and closes it when the message collapses', async () => {
     const conversation = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2', 'read-m3']);
     wrapper = mountReader(conversation);
-    await settle(wrapper!);
+    await flushVueNextTick();
     const hiddenOf = (id: string) => (wrapper!.find(`[data-test="message-details-${id}"]`).element as HTMLElement).hidden;
     expect(hiddenOf('read-m1')).toBe(true);
     expect(hiddenOf('read-m3')).toBe(false);
@@ -285,7 +279,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
   it('preserves per-conversation state across J/K round trips and same-reference replacements', async () => {
     const conversation = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2', 'read-m3']);
     wrapper = mountReader(conversation);
-    await settle(wrapper!);
+    await flushVueNextTick();
     const vm = wrapper!.vm as unknown as {
       moveMessage: (delta: number) => void;
       toggleActiveMessage: () => void;
@@ -296,10 +290,10 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
     // J/K round trip: the visit leaves and comes back through prop changes.
     const neighbor = { ...conversation, ref: refOf(ACCOUNT_A, 'read-02'), subject: 'Neighbor', messages: [message('read-02-m1')] };
     await wrapper!.setProps({ conversation: neighbor, openRef: neighbor.ref });
-    await settle(wrapper!);
+    await flushVueNextTick();
     expect(document.activeElement?.getAttribute('data-test')).toBe('message-toggle-read-02-m1');
     await wrapper!.setProps({ conversation, openRef: conversation.ref });
-    await settle(wrapper!);
+    await flushVueNextTick();
     // State survived the round trip: m2 still active AND still expanded.
     expect(document.activeElement?.getAttribute('data-test')).toBe('message-toggle-read-m2');
     expect(toggleFor(wrapper!, 'read-m2').attributes('aria-expanded')).toBe('true');
@@ -308,7 +302,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
     (wrapper!.find('[data-test="reader-close"]').element as HTMLElement).focus();
     const replacement = { ...conversation, messages: conversation.messages.map((m) => ({ ...m })) };
     await wrapper!.setProps({ conversation: replacement, openRef: conversation.ref });
-    await settle(wrapper!);
+    await flushVueNextTick();
     expect(document.activeElement?.getAttribute('data-test')).toBe('reader-close');
     expect(toggleFor(wrapper!, 'read-m2').attributes('aria-expanded')).toBe('true');
     expect(wrapper!.find('.message.message-active .message-toggle').attributes('data-test')).toBe('message-toggle-read-m2');
@@ -317,7 +311,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
   it('prunes removed message IDs and resolves a removed active ID to a surviving old neighbor', async () => {
     const conversation = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2', 'read-m3']);
     wrapper = mountReader(conversation);
-    await settle(wrapper!);
+    await flushVueNextTick();
     const vm = wrapper!.vm as unknown as { moveMessage: (delta: number) => void; toggleActiveMessage: () => void };
     vm.moveMessage(-1); // focus m2, expand it
     const toggle = toggleFor(wrapper!, 'read-m2');
@@ -327,7 +321,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
     // m2 is removed remotely: active moves to the next surviving old neighbor (m3).
     const replacement = conversationOf(ACCOUNT_A, ['read-m1', 'read-m3']);
     await wrapper!.setProps({ conversation: replacement, openRef: replacement.ref });
-    await settle(wrapper!);
+    await flushVueNextTick();
     expect(wrapper!.findAll('[data-test="message-body"]')).toHaveLength(2);
     expect(document.activeElement?.getAttribute('data-test')).toBe('message-toggle-read-m3');
     expect(wrapper!.find('[data-test="message-read-m3"]').classes()).toContain('message-active');
@@ -343,7 +337,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
       messages: [message('read-m1'), message('read-m2', `Body of read-m2.`, ravi), message('read-m3', `Body of read-m3.`, grace)],
     };
     wrapper = mountReader(conversation);
-    await settle(wrapper!);
+    await flushVueNextTick();
     const vm = wrapper!.vm as unknown as { moveMessage: (delta: number) => void };
     vm.moveMessage(-1); // focus m2 (Ravi)
     await nextTick();
@@ -355,7 +349,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
       messages: [message('read-m1'), message('read-m3', `Body of read-m3.`, grace)],
     };
     await wrapper!.setProps({ conversation: replacement, openRef: replacement.ref });
-    await settle(wrapper!);
+    await flushVueNextTick();
     // The resolved identity must be published to App, not just shown in DOM.
     const emissions = wrapper!.emitted('activeMessage') ?? [];
     expect(emissions.length).toBeGreaterThan(emissionsBefore);
@@ -368,11 +362,11 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
   it('keeps reader-owned focus on the reader article when loading removes the focused message', async () => {
     const conversation = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2', 'read-m3']);
     wrapper = mountReader(conversation);
-    await settle(wrapper!);
+    await flushVueNextTick();
     (toggleFor(wrapper!, 'read-m2').element as HTMLElement).focus();
     await nextTick();
     await wrapper!.setProps({ conversation: null, state: 'loading' as const });
-    await settle(wrapper!);
+    await flushVueNextTick();
     expect(wrapper!.find('[data-test="reader-loading"]').exists()).toBe(true);
     // Not <body>: the persistent reader article keeps reader-owned focus.
     expect(document.activeElement).toBe(wrapper!.find('[data-test="reader"]').element);
@@ -381,11 +375,11 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
   it('does not steal toolbar or outside focus during loading or reversal restoration', async () => {
     const conversation = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2', 'read-m3']);
     wrapper = mountReader(conversation);
-    await settle(wrapper!);
+    await flushVueNextTick();
     // Persistent toolbar focus survives loading untouched.
     (wrapper!.find('[data-test="reader-close"]').element as HTMLElement).focus();
     await wrapper!.setProps({ conversation: null, state: 'loading' as const });
-    await settle(wrapper!);
+    await flushVueNextTick();
     expect(document.activeElement?.getAttribute('data-test')).toBe('reader-close');
     // Focus moved outside the reader (rail/overlay surface) while loading:
     // the returning snapshot must not yank it back either.
@@ -393,7 +387,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
     document.body.appendChild(outside);
     outside.focus();
     await wrapper!.setProps({ conversation, state: 'ready' as const, openRef: conversation.ref });
-    await settle(wrapper!);
+    await flushVueNextTick();
     expect(document.activeElement).toBe(outside);
     outside.remove();
   });
@@ -401,7 +395,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
   it('does not steal focus from an outside button focused before the loading transition', async () => {
     const conversation = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2', 'read-m3']);
     wrapper = mountReader(conversation);
-    await settle(wrapper!);
+    await flushVueNextTick();
     // Rail/overlay/outside focus exists BEFORE the loading transition: the
     // reader never owned focus, so loading must not schedule the article over it.
     const outside = document.createElement('button');
@@ -409,7 +403,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
     outside.focus();
     await nextTick();
     await wrapper!.setProps({ conversation: null, state: 'loading' as const });
-    await settle(wrapper!);
+    await flushVueNextTick();
     expect(wrapper!.find('[data-test="reader-loading"]').exists()).toBe(true);
     expect(document.activeElement).toBe(outside);
     outside.remove();
@@ -418,7 +412,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
   it('does not override a user who moves outside before delayed loading focus executes', async () => {
     const conversation = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2', 'read-m3']);
     wrapper = mountReader(conversation);
-    await settle(wrapper!);
+    await flushVueNextTick();
     (toggleFor(wrapper!, 'read-m2').element as HTMLElement).focus();
     await nextTick();
     const outside = document.createElement('button');
@@ -428,7 +422,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
     // flight; the delayed park must not yank focus back to the article.
     void Promise.resolve().then(() => outside.focus());
     await loading;
-    await settle(wrapper!);
+    await flushVueNextTick();
     expect(document.activeElement).toBe(outside);
     outside.remove();
   });
@@ -436,12 +430,12 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
   it('respects inert ancestors when parking loading focus', async () => {
     const conversation = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2', 'read-m3']);
     wrapper = mountReader(conversation);
-    await settle(wrapper!);
+    await flushVueNextTick();
     (toggleFor(wrapper!, 'read-m2').element as HTMLElement).focus();
     await nextTick();
     wrapper!.element.setAttribute('inert', '');
     await wrapper!.setProps({ conversation: null, state: 'loading' as const });
-    await settle(wrapper!);
+    await flushVueNextTick();
     // The article could not take focus (inert subtree); focus stays on <body>
     // instead of being forced inside the inert reader.
     expect(document.activeElement).toBe(document.body);
@@ -451,17 +445,17 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
   it('restores message focus on an immediate ready -> loading -> same-visit reversal', async () => {
     const conversation = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2', 'read-m3']);
     wrapper = mountReader(conversation);
-    await settle(wrapper!);
+    await flushVueNextTick();
     const vm = wrapper!.vm as unknown as { moveMessage: (delta: number) => void };
     vm.moveMessage(-1); // focus m2
     await nextTick();
     await wrapper!.setProps({ conversation: null, state: 'loading' as const });
-    await settle(wrapper!);
+    await flushVueNextTick();
     expect(document.activeElement?.getAttribute('data-test')).toBe('reader');
     // Reversal: the last successful data key is still A, yet the visit's
     // message focus must be restored, independent of that key.
     await wrapper!.setProps({ conversation, state: 'ready' as const, openRef: conversation.ref });
-    await settle(wrapper!);
+    await flushVueNextTick();
     expect(document.activeElement?.getAttribute('data-test')).toBe('message-toggle-read-m2');
     expect(wrapper!.find('[data-test="message-read-m2"]').classes()).toContain('message-active');
     // Saved expansion state survived untouched: m3 still expanded, m2 not
@@ -473,16 +467,16 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
   it('keeps toolbar or outside ownership on an empty same-key return after loading', async () => {
     const conversation = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2', 'read-m3']);
     wrapper = mountReader(conversation);
-    await settle(wrapper!);
+    await flushVueNextTick();
     (toggleFor(wrapper!, 'read-m2').element as HTMLElement).focus();
     await nextTick();
     await wrapper!.setProps({ conversation: null, state: 'loading' as const });
-    await settle(wrapper!);
+    await flushVueNextTick();
     // The user moves while loading; the returning visit is now EMPTY.
     (wrapper!.find('[data-test="reader-close"]').element as HTMLElement).focus();
     const emptyReturn: Conversation = { ...conversation, messages: [] };
     await wrapper!.setProps({ conversation: emptyReturn, state: 'ready' as const, openRef: conversation.ref });
-    await settle(wrapper!);
+    await flushVueNextTick();
     // The empty-visit article fallback must not bypass the ownership guard.
     expect(document.activeElement?.getAttribute('data-test')).toBe('reader-close');
     expect(wrapper!.findAll('[data-test="message-body"]')).toHaveLength(0);
@@ -491,14 +485,14 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
     const outside = document.createElement('button');
     document.body.appendChild(outside);
     await wrapper!.setProps({ conversation, state: 'ready' as const, openRef: conversation.ref });
-    await settle(wrapper!);
+    await flushVueNextTick();
     (toggleFor(wrapper!, 'read-m2').element as HTMLElement).focus();
     await nextTick();
     await wrapper!.setProps({ conversation: null, state: 'loading' as const });
-    await settle(wrapper!);
+    await flushVueNextTick();
     outside.focus();
     await wrapper!.setProps({ conversation: emptyReturn, state: 'ready' as const, openRef: conversation.ref });
-    await settle(wrapper!);
+    await flushVueNextTick();
     expect(document.activeElement).toBe(outside);
     outside.remove();
   });
@@ -506,15 +500,15 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
   it('keeps the owned article fallback on an empty same-key return after loading', async () => {
     const conversation = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2', 'read-m3']);
     wrapper = mountReader(conversation);
-    await settle(wrapper!);
+    await flushVueNextTick();
     (toggleFor(wrapper!, 'read-m2').element as HTMLElement).focus();
     await nextTick();
     await wrapper!.setProps({ conversation: null, state: 'loading' as const });
-    await settle(wrapper!);
+    await flushVueNextTick();
     // Reader-owned focus fell to the parked article and stays there: the
     // empty return promotes it to the empty-visit article fallback.
     await wrapper!.setProps({ conversation: { ...conversation, messages: [] }, state: 'ready' as const, openRef: conversation.ref });
-    await settle(wrapper!);
+    await flushVueNextTick();
     expect(wrapper!.findAll('[data-test="message-body"]')).toHaveLength(0);
     expect(document.activeElement).toBe(wrapper!.find('[data-test="reader"]').element);
   });
@@ -522,22 +516,22 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
   it('does not force reversal focus back over a surface the user moved to', async () => {
     const conversation = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2', 'read-m3']);
     wrapper = mountReader(conversation);
-    await settle(wrapper!);
+    await flushVueNextTick();
     (toggleFor(wrapper!, 'read-m2').element as HTMLElement).focus();
     await nextTick();
     await wrapper!.setProps({ conversation: null, state: 'loading' as const });
-    await settle(wrapper!);
+    await flushVueNextTick();
     // The user moves to the reader toolbar while loading.
     (wrapper!.find('[data-test="reader-close"]').element as HTMLElement).focus();
     await wrapper!.setProps({ conversation, state: 'ready' as const, openRef: conversation.ref });
-    await settle(wrapper!);
+    await flushVueNextTick();
     expect(document.activeElement?.getAttribute('data-test')).toBe('reader-close');
   });
 
   it('ignores O/Shift+O/N during loading instead of mutating the outgoing visit', async () => {
     const conversation = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2', 'read-m3']);
     wrapper = mountReader(conversation);
-    await settle(wrapper!);
+    await flushVueNextTick();
     const vm = wrapper!.vm as unknown as {
       moveMessage: (delta: number) => void;
       toggleActiveMessage: () => void;
@@ -548,7 +542,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
     await nextTick();
     expect(toggleFor(wrapper!, 'read-m2').attributes('aria-expanded')).toBe('true');
     await wrapper!.setProps({ conversation: null, state: 'loading' as const });
-    await settle(wrapper!);
+    await flushVueNextTick();
     // O during loading: must not modify the outgoing visit's saved expansion.
     vm.toggleActiveMessage();
     // Shift+O during loading: must not expand the outgoing visit either.
@@ -556,7 +550,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
     // N during loading: no message target exists.
     vm.moveMessage(1);
     await wrapper!.setProps({ conversation, state: 'ready' as const, openRef: conversation.ref });
-    await settle(wrapper!);
+    await flushVueNextTick();
     expect(toggleFor(wrapper!, 'read-m2').attributes('aria-expanded')).toBe('true');
     expect(toggleFor(wrapper!, 'read-m1').attributes('aria-expanded')).toBe('false');
     expect(document.activeElement?.getAttribute('data-test')).toBe('message-toggle-read-m2');
@@ -565,7 +559,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
   it('gates details commands on a ready displayed visit but retains saved details state', async () => {
     const conversation = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2', 'read-m3']);
     wrapper = mountReader(conversation);
-    await settle(wrapper!);
+    await flushVueNextTick();
     const vm = wrapper!.vm as unknown as { hasOpenDetails: () => boolean; dismissMessageDetails: () => boolean };
     const details = wrapper!.find('[data-test="message-details-read-m3"]');
     (details.element as HTMLDetailsElement).open = true;
@@ -573,12 +567,12 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
     await nextTick();
     expect(vm.hasOpenDetails()).toBe(true);
     await wrapper!.setProps({ conversation: null, state: 'loading' as const });
-    await settle(wrapper!);
+    await flushVueNextTick();
     // Stale hidden details must not become a loading command target.
     expect(vm.hasOpenDetails()).toBe(false);
     expect(vm.dismissMessageDetails()).toBe(false);
     await wrapper!.setProps({ conversation, state: 'ready' as const, openRef: conversation.ref });
-    await settle(wrapper!);
+    await flushVueNextTick();
     // Saved details state survived loading for restoration.
     expect(vm.hasOpenDetails()).toBe(true);
     expect((wrapper!.find('[data-test="message-details-read-m3"]').element as HTMLDetailsElement).open).toBe(true);
@@ -590,11 +584,11 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
   it('falls back to the article for empty and error states', async () => {
     const conversation = conversationOf(ACCOUNT_A, []);
     wrapper = mountReader(conversation);
-    await settle(wrapper!);
+    await flushVueNextTick();
     expect(document.activeElement).toBe(wrapper!.find('[data-test="reader"]').element);
 
     await wrapper!.setProps({ conversation: null, state: 'error', error: NOT_FOUND });
-    await settle(wrapper!);
+    await flushVueNextTick();
     expect(wrapper!.find('[data-test="reader-error"]').exists()).toBe(true);
     expect(document.activeElement).toBe(wrapper!.find('[data-test="reader"]').element);
   });
@@ -602,7 +596,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
   it('keeps equal message IDs from different accounts isolated', async () => {
     const accountA = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2', 'read-m3']);
     wrapper = mountReader(accountA);
-    await settle(wrapper!);
+    await flushVueNextTick();
     const vm = wrapper!.vm as unknown as { moveMessage: (delta: number) => void; toggleActiveMessage: () => void };
     vm.moveMessage(-1);
     vm.toggleActiveMessage(); // account A: m2 focused and expanded
@@ -610,7 +604,7 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
     // Account switch with identical conversation/message IDs: state starts fresh.
     const accountB = conversationOf(ACCOUNT_B, ['read-m1', 'read-m2', 'read-m3']);
     await wrapper!.setProps({ conversation: accountB, openRef: accountB.ref });
-    await settle(wrapper!);
+    await flushVueNextTick();
     expect(document.activeElement?.getAttribute('data-test')).toBe('message-toggle-read-m3');
     expect(toggleFor(wrapper!, 'read-m3').attributes('aria-expanded')).toBe('true');
     expect(toggleFor(wrapper!, 'read-m2').attributes('aria-expanded')).toBe('false');
@@ -663,7 +657,7 @@ describe('ReaderView scroll anchoring with controlled geometry (UX-02)', () => {
     // m3 180–500); the scroller viewport is 0–300.
     const conversation = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2', 'read-m3']);
     wrapper = mountReader(conversation);
-    await settle(wrapper!);
+    await flushVueNextTick();
     const scroller = wrapper!.find('[data-test="reader-scroll"]').element as HTMLElement;
     Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 300 });
     scroller.scrollTop = 100; // m3 sits at viewport offset 80
@@ -673,7 +667,7 @@ describe('ReaderView scroll anchoring with controlled geometry (UX-02)', () => {
     // Background replacement that removes m1: everything after it shifts up by 90px.
     const replacement = conversationOf(ACCOUNT_A, ['read-m2', 'read-m3']);
     await wrapper!.setProps({ conversation: replacement, openRef: replacement.ref });
-    await settle(wrapper!);
+    await flushVueNextTick();
     // The anchor (m3 at viewport offset 80) must be restored relative to the
     // shifted layout, keeping m3's viewport position unchanged.
     expect(scroller.scrollTop).toBe(10);
@@ -685,7 +679,7 @@ describe('ReaderView scroll anchoring with controlled geometry (UX-02)', () => {
     const conversationA = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2', 'read-m3']);
     const conversationB = conversationOf(ACCOUNT_B, ['read-m1', 'read-m2', 'read-m3']);
     wrapper = mountReader(conversationA);
-    await settle(wrapper!);
+    await flushVueNextTick();
     const vm = wrapper!.vm as unknown as { moveMessage: (delta: number) => void };
     vm.moveMessage(-1); // focus m2 without expanding it; m3 stays expanded
     await nextTick();
@@ -698,7 +692,7 @@ describe('ReaderView scroll anchoring with controlled geometry (UX-02)', () => {
 
     // Foreground J: useMailbox clears the conversation (null) while loading.
     await wrapper!.setProps({ conversation: null, state: 'loading' as const });
-    await settle(wrapper!);
+    await flushVueNextTick();
     expect(wrapper!.find('[data-test="reader-loading"]').exists()).toBe(true);
     // A real browser clamps scrollTop to 0 once the content collapses; the
     // saved anchor must survive that teardown untouched.
@@ -706,15 +700,15 @@ describe('ReaderView scroll anchoring with controlled geometry (UX-02)', () => {
 
     // Neighbor ready.
     await wrapper!.setProps({ conversation: conversationB, state: 'ready' as const, openRef: conversationB.ref });
-    await settle(wrapper!);
+    await flushVueNextTick();
     expect(document.activeElement?.getAttribute('data-test')).toBe('message-toggle-read-m3');
 
     // Foreground K through loading again, back to the original visit.
     await wrapper!.setProps({ conversation: null, state: 'loading' as const });
-    await settle(wrapper!);
+    await flushVueNextTick();
     scroller.scrollTop = 0;
     await wrapper!.setProps({ conversation: conversationA, state: 'ready' as const, openRef: conversationA.ref });
-    await settle(wrapper!);
+    await flushVueNextTick();
 
     // Reading progress is restored exactly: same scrollTop and same
     // viewport-relative message geometry, focus back on the visit's active
@@ -729,17 +723,17 @@ describe('ReaderView scroll anchoring with controlled geometry (UX-02)', () => {
   it('does not overwrite the saved anchor while the loading DOM replaces the messages', async () => {
     const conversationA = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2', 'read-m3']);
     wrapper = mountReader(conversationA);
-    await settle(wrapper!);
+    await flushVueNextTick();
     const scroller = wrapper!.find('[data-test="reader-scroll"]').element as HTMLElement;
     Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 300 });
     scroller.scrollTop = 150; // m2 at offset 60 (90 - 150 clamped into view)
     await wrapper!.setProps({ conversation: null, state: 'loading' as const });
-    await settle(wrapper!);
+    await flushVueNextTick();
     scroller.scrollTop = 0;
     // Same-reference reload after the loading teardown: the anchor captured
     // before the teardown must still govern the restore.
     await wrapper!.setProps({ conversation: conversationA, state: 'ready' as const, openRef: conversationA.ref });
-    await settle(wrapper!);
+    await flushVueNextTick();
     expect(scroller.scrollTop).toBe(150);
     expect(wrapper!.find('[data-test="message-read-m2"]').element.getBoundingClientRect().top).toBe(-60);
   });
@@ -751,7 +745,7 @@ describe('ReaderView Details Cc row', () => {
 
   it('says Cc is not cached after To and before Sent, without inferring any Cc', async () => {
     wrapper = mountReader(conversationOf(ACCOUNT_A, ['read-m1', 'read-m2']));
-    await settle(wrapper!);
+    await flushVueNextTick();
     const details = wrapper!.get('[data-test="message-details-read-m2"]');
     const labels = details.findAll('.message-field-label').map((el) => el.text());
     expect(labels).toEqual(['From', 'To', 'Cc', 'Sent']);
@@ -789,7 +783,7 @@ describe('ReaderView participants and Details disclosure (polish)', () => {
 
   it('exposes the disclosure state natively: a real <details>/<summary> whose open follows the toggle', async () => {
     wrapper = mountReader(conversationOf(ACCOUNT_A, ['read-m1', 'read-m2']));
-    await settle(wrapper!);
+    await flushVueNextTick();
     const details = wrapper!.get('[data-test="message-details-read-m2"]').element as HTMLDetailsElement;
     const summary = wrapper!.get('[data-test="message-details-summary-read-m2"]').element as HTMLElement;
     expect(details.tagName).toBe('DETAILS');
@@ -811,7 +805,7 @@ describe('ReaderView participants and Details disclosure (polish)', () => {
   it('has no tabbable participant while Details is closed, and exactly From plus each To once it opens', async () => {
     const conversation = conversationOf(ACCOUNT_A, ['read-m1', 'read-m2']);
     wrapper = mountReader(conversation);
-    await settle(wrapper!);
+    await flushVueNextTick();
     const participants = wrapper!.findAll('.participant');
     expect(participants).toHaveLength(2 * 2);
     for (const participant of participants) expect(participant.element.closest('summary')).toBeNull();
@@ -831,7 +825,7 @@ describe('ReaderView participants and Details disclosure (polish)', () => {
       messages: [{ ...message('read-m1'), from: bare, to: [named, bare] }],
     });
     wrapper = mountReader(conversation);
-    await settle(wrapper!);
+    await flushVueNextTick();
     const from = wrapper!.get('[data-test="participant-from-read-m1"]');
     const toNamed = wrapper!.get('[data-test="participant-to-read-m1-ada@example.test"]');
     const toBare = wrapper!.get('[data-test="participant-to-read-m1-bare@example.test"]');
@@ -850,7 +844,7 @@ describe('ReaderView participants and Details disclosure (polish)', () => {
 
   it('still drives the contact override from participant hover and focus', async () => {
     wrapper = mountReader(conversationOf(ACCOUNT_A, ['read-m1', 'read-m2']));
-    await settle(wrapper!);
+    await flushVueNextTick();
     const participant = wrapper!.get('[data-test="participant-to-read-m2-you@example.test"]');
     await participant.trigger('mouseenter');
     expect(wrapper!.emitted('contactOverride')?.at(-1)?.[0]).toMatchObject({ messageId: 'read-m2', mailbox: 'you@example.test' });
@@ -874,9 +868,9 @@ describe('ReaderView error wording', () => {
     [{ kind: 'request_id_conflict' } as MailError, 'The request conflicted with an earlier one.'],
   ])('describes %j without internal field names or IDs', async (error, expected) => {
     wrapper = mountReader(conversationOf(ACCOUNT_A, []));
-    await settle(wrapper!);
+    await flushVueNextTick();
     await wrapper!.setProps({ conversation: null, state: 'error', error });
-    await settle(wrapper!);
+    await flushVueNextTick();
     const text = wrapper!.get('[data-test="reader-error"]').text();
     expect(text).toBe(expected);
     expect(text).not.toMatch(/field|request ID/i);

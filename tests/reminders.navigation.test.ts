@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import App from '../src/App.vue';
+import { flushPromises, type VueWrapper } from '@vue/test-utils';
+
 import ReaderView from '../src/components/ReaderView.vue';
 import RemindersPanel from '../src/components/RemindersPanel.vue';
 import { createBrowserFakeMailClient } from '../src/lib/ipc/browser-fake';
 import type { Conversation, Reminder } from '../src/lib/ipc/client';
-import { deferred } from './helpers';
+import { deferred, mountApp, press } from './helpers';
 
 let app: VueWrapper | undefined;
 
@@ -40,14 +40,9 @@ async function fixture() {
   const pending = deferred<Conversation>();
   const getConversation = vi.spyOn(client, 'getConversation').mockImplementationOnce(() => pending.promise);
   const setRead = vi.spyOn(client, 'setRead');
-  app = mount(App, { props: { client, mode: 'native' }, attachTo: document.body });
+  app = mountApp(client, 'native', { attachTo: document.body });
   await flushPromises();
   return { reminded, entry, neighbor, detail, pending, getConversation, setRead };
-}
-
-async function key(key: string) {
-  window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
-  await flushPromises();
 }
 
 async function openReturnedReminder() {
@@ -67,12 +62,12 @@ describe('reminder reader navigation ownership', () => {
     try {
       await openReturnedReminder();
       expect(getConversation).toHaveBeenCalledExactlyOnceWith(reminded, false);
-      await key('j');
-      await key('k');
+      press('j', { bubbles: true, cancelable: true }, window); await flushPromises();
+      press('k', { bubbles: true, cancelable: true }, window); await flushPromises();
       expect(getConversation).toHaveBeenCalledTimes(1);
 
       // The transport is still pending: Back must already know its real origin.
-      await key('Escape');
+      press('Escape', { bubbles: true, cancelable: true }, window); await flushPromises();
       expect(app!.findComponent(ReaderView).exists()).toBe(false);
       expect(app!.findComponent(RemindersPanel).exists()).toBe(true);
       const panel = app!.getComponent(RemindersPanel);
@@ -111,18 +106,18 @@ describe('reminder reader navigation ownership', () => {
       expect(app!.getComponent(ReaderView).props('conversation')?.ref).toEqual(entry);
       expect(app!.findComponent(RemindersPanel).exists()).toBe(false);
       const before = getConversation.mock.calls.length;
-      await key('j');
+      press('j', { bubbles: true, cancelable: true }, window); await flushPromises();
       // The prefetched neighbor swaps in from cache; one background revalidation
       // follows, then the next prefetch. The late reminder detail was never reused.
       expect(getConversation.mock.calls.slice(before)[0]).toEqual([neighbor, false]);
       expect(getConversation.mock.calls.slice(before).every(([target]) => target.conversationId !== reminded.conversationId)).toBe(true);
       expect(app!.getComponent(ReaderView).props('conversation')?.ref).toEqual(neighbor);
       const beforeK = getConversation.mock.calls.length;
-      await key('k');
+      press('k', { bubbles: true, cancelable: true }, window); await flushPromises();
       expect(getConversation.mock.calls.slice(beforeK)[0]).toEqual([entry, false]);
       expect(app!.getComponent(ReaderView).props('conversation')?.ref).toEqual(entry);
 
-      await key('Escape');
+      press('Escape', { bubbles: true, cancelable: true }, window); await flushPromises();
       expect(app!.findComponent(ReaderView).exists()).toBe(false);
       expect(app!.findComponent(RemindersPanel).exists()).toBe(false);
       const row = app!.get(`[data-test="conversation-row-${entry.conversationId}"]`);
@@ -139,20 +134,20 @@ describe('reminder reader navigation ownership', () => {
 it.each(['list', 'reader'])('restores %s shortcut focus after H then Escape', async surface => {
   const client = createBrowserFakeMailClient();
   const archive = vi.spyOn(client, 'setArchived');
-  app = mount(App, { props: { client, mode: 'native' }, attachTo: document.body });
+  app = mountApp(client, 'native', { attachTo: document.body });
   await flushPromises();
   const row = app.find('[data-test^="conversation-row-"]');
   if (surface === 'reader') { await row.trigger('click'); await flushPromises(); }
   else (row.element as HTMLElement).focus();
-  await key('h');
+  press('h', { bubbles: true, cancelable: true }, window); await flushPromises();
   const input = document.querySelector('#reminder-time-input')!;
   expect(input).not.toBeNull();
-  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  press('Escape', { bubbles: true }, input);
   await flushPromises();
   expect(app.findComponent(RemindersPanel).exists()).toBe(false);
   if (surface === 'list') expect(document.activeElement).toBe(row.element);
   else expect(app.getComponent(ReaderView).element.contains(document.activeElement)).toBe(true);
-  document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', bubbles: true }));
+  press('e', { bubbles: true }, document.activeElement!);
   await flushPromises();
   expect(archive).toHaveBeenCalledTimes(1);
 });
@@ -161,9 +156,9 @@ it.each(['ack', 'lost ACK', 'unmount'])('keeps BODY Escape and drawer Close from
   const client = createBrowserFakeMailClient();
   const pending = deferred<Reminder>();
   const put = vi.spyOn(client.reminders!, 'put').mockImplementationOnce(() => pending.promise);
-  app = mount(App, { props: { client, mode: 'native' }, attachTo: document.body });
+  app = mountApp(client, 'native', { attachTo: document.body });
   await flushPromises();
-  await key('h');
+  press('h', { bubbles: true, cancelable: true }, window); await flushPromises();
   (document.querySelector('#reminder-time-option-someday') as HTMLElement).click();
   await flushPromises();
   const schedule = [...document.querySelectorAll('button')].find(b => b.textContent === 'Schedule reminder')!;
@@ -173,7 +168,7 @@ it.each(['ack', 'lost ACK', 'unmount'])('keeps BODY Escape and drawer Close from
   expect(input.disabled).toBe(true);
   expect(document.querySelector('[data-reminder-picker]')!.contains(document.activeElement)).toBe(true);
   (document.activeElement as HTMLElement).blur();
-  document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  press('Escape', { bubbles: true, cancelable: true }, document.body);
   await flushPromises();
   await app.get('[data-test="drawer-close"]').trigger('click');
   expect(document.querySelector('[data-reminder-picker]')).not.toBeNull();
@@ -196,7 +191,7 @@ it.each(['ack', 'lost ACK', 'unmount'])('keeps BODY Escape and drawer Close from
     expect(document.querySelector('[data-reminder-picker]')).toBeNull();
   } else {
     (document.activeElement as HTMLElement).blur();
-    await key('Escape');
+    press('Escape', { bubbles: true, cancelable: true }, window); await flushPromises();
     await app.get('[data-test="drawer-close"]').trigger('click');
     expect(document.querySelector('[data-reminder-picker]')).not.toBeNull();
     expect(app.find('[data-test="reminder-confirmation"]').exists()).toBe(false);
@@ -210,10 +205,10 @@ it.each(['ack', 'lost ACK', 'unmount'])('keeps BODY Escape and drawer Close from
 
 it.each(['inactive workspace', 'new drawer'])('does not restore origin focus after dismissal when a %s takes ownership', async owner => {
   const client = createBrowserFakeMailClient();
-  app = mount(App, { props: { client, mode: 'native' }, attachTo: document.body });
-  await flushPromises(); await key('h');
+  app = mountApp(client, 'native', { attachTo: document.body });
+  await flushPromises(); press('h', { bubbles: true, cancelable: true }, window); await flushPromises();
   const input = document.querySelector('#reminder-time-input')!;
-  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  press('Escape', { bubbles: true }, input);
   if (owner === 'inactive workspace') {
     const other = document.createElement('button'); document.body.append(other); other.focus();
     await app.setProps({ active: false });

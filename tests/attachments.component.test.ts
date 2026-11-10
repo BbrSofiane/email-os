@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import AttachmentChooser from '../src/components/AttachmentChooser.vue';
-import App from '../src/App.vue';
+
 import { createBrowserFakeMailClient } from '../src/lib/ipc/browser-fake';
 import { createReaderFixtureClient } from './reader.fixture';
-import { deferred } from './helpers';
+import { deferred, mountApp } from './helpers';
 import type { Conversation } from '../src/lib/ipc/client';
 
 const conversation: Conversation = { ref: { accountId: 'fixture-account', conversationId: 'c1' }, subject: 'Files', isInInbox: true, pendingOperationId: null,
@@ -154,7 +154,7 @@ describe('UX-12 download-only chooser', () => {
   it('native Cmd+O opens a chooser rather than choosing a resource; browser Cmd+O stays reserved', async () => {
     for (const mode of ['native', 'browser-preview'] as const) {
       const fixture = createReaderFixtureClient();
-      wrapper = mount(App, { props: { client: fixture.client, mode }, attachTo: document.body });
+      wrapper = mountApp(fixture.client, mode, { attachTo: document.body });
       await flushPromises();
       await wrapper.find('[data-test="conversation-row-read-01"]').trigger('click');
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
@@ -171,7 +171,7 @@ describe('UX-12 download-only chooser', () => {
   });
   it('preserves mounted reader expansion, scroll and origin focus after chooser dismissal', async () => {
     const fixture = createReaderFixtureClient();
-    wrapper = mount(App, { props: { client: fixture.client, mode: 'browser-preview' }, attachTo: document.body });
+    wrapper = mountApp(fixture.client, 'browser-preview', { attachTo: document.body });
     await flushPromises();
     await wrapper!.find('[data-test="conversation-row-read-01"]').trigger('dblclick');
     // Reader opens via Enter on focused row in the existing journey.

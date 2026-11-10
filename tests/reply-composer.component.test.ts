@@ -13,30 +13,13 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import App from '../src/App.vue';
+
 import ReplyComposer from '../src/components/ReplyComposer.vue';
 import type { DraftContent, DraftReceipt, DraftSource, MailClient } from '../src/lib/ipc/client';
-import {
-  createBrowserFakeMailClient,
-  deferred,
-  fixtureRef,
-  waitFor,
-  type BrowserFake,
-} from './helpers';
-
-function keydown(key: string, init: KeyboardEventInit = {}): KeyboardEvent {
-  return new KeyboardEvent('keydown', { key, bubbles: true, ...init });
-}
+import { createBrowserFakeMailClient, deferred, fixtureRef, waitFor, mountApp as sharedMountApp, createKeyEvent } from './helpers';
 
 describe('inline reply composer docked in the open reader (TASK B)', () => {
   let wrapper: VueWrapper | null = null;
-
-  async function mountApp(fake: BrowserFake, client: MailClient = fake): Promise<VueWrapper> {
-    const mounted = mount(App, { props: { client, mode: 'browser-preview' }, attachTo: document.body });
-    wrapper = mounted;
-    await flushPromises();
-    return mounted;
-  }
 
   /** Opens conv-01 in the reader and clicks Reply. */
   async function openReaderAndPrepareReply(w: VueWrapper): Promise<void> {
@@ -55,7 +38,7 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
 
   it('keeps the reader open and docks the composer at the bottom of the reader pane on Reply', async () => {
     const fake = createBrowserFakeMailClient();
-    const w = await mountApp(fake);
+    const w = sharedMountApp(fake, 'browser-preview', { attachTo: document.body }); wrapper = w; await flushPromises();
     await openReaderAndPrepareReply(w);
 
     // The reader stays open; the thread is still visible above the composer.
@@ -78,7 +61,7 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
 
   it('shows the "Draft to {sender}" label and the prefilled reply fields with a blank body', async () => {
     const fake = createBrowserFakeMailClient();
-    const w = await mountApp(fake);
+    const w = sharedMountApp(fake, 'browser-preview', { attachTo: document.body }); wrapper = w; await flushPromises();
     await openReaderAndPrepareReply(w);
 
     // One compact heading line: no separate "Draft" flag (the status line says "not sent").
@@ -116,7 +99,7 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
 
   it('renders the latest message as a read-only quoted snippet that never enters bodyText', async () => {
     const fake = createBrowserFakeMailClient();
-    const w = await mountApp(fake);
+    const w = sharedMountApp(fake, 'browser-preview', { attachTo: document.body }); wrapper = w; await flushPromises();
     await openReaderAndPrepareReply(w);
 
     const quoted = w.find('[data-test="reply-quoted-context"]');
@@ -156,7 +139,7 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
     });
 
     // A trailing localized quote is left out of the preview.
-    let w = await mountApp(fake, await withLatest('Merci, c’est bon.\n\nLe jeudi 6 nov. 2026, Ada a écrit :\n> Peut-on livrer ?\n> Vendredi.'));
+    let w = sharedMountApp(await withLatest('Merci, c’est bon.\n\nLe jeudi 6 nov. 2026, Ada a écrit :\n> Peut-on livrer ?\n> Vendredi.'), 'browser-preview', { attachTo: document.body }); wrapper = w; await flushPromises();
     await openReaderAndPrepareReply(w);
     expect(w.find('[data-test="reply-quoted-context"]').text()).toBe('Merci, c’est bon.');
     expect((w.find('[data-test="draft-body"]').element as HTMLTextAreaElement).value).toBe('');
@@ -164,7 +147,7 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
     wrapper = null;
 
     // The 200-unit cap never leaves half of an emoji.
-    w = await mountApp(fake, await withLatest(prose));
+    w = sharedMountApp(await withLatest(prose), 'browser-preview', { attachTo: document.body }); wrapper = w; await flushPromises();
     await openReaderAndPrepareReply(w);
     const text = w.find('[data-test="reply-quoted-context"]').text();
     expect(text).toBe(`${'a'.repeat(199)}…`);
@@ -182,11 +165,11 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
         return saves === 1 ? gate.promise : fake.saveDraft(command);
       },
     };
-    const w = await mountApp(fake, client);
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body }); wrapper = w; await flushPromises();
     await openReaderAndPrepareReply(w);
     await w.find('[data-test="draft-body"]').setValue('last keystroke');
 
-    window.dispatchEvent(keydown('Escape'));
+    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true }));
     await flushPromises();
     // The flush is in flight: the composer must stay open.
     expect(w.find('[data-test="reply-composer"]').exists()).toBe(true);
@@ -202,7 +185,7 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
     // flush; the reader itself stays open.
     await w.find('[data-test="retry-draft-save"]').trigger('click');
     await flushPromises();
-    window.dispatchEvent(keydown('Escape'));
+    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true }));
     await flushPromises();
     await waitFor(() => !w.find('[data-test="reply-composer"]').exists());
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
@@ -213,7 +196,7 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
 
   it('closes the inline composer through the Save and close control and keeps the reader open', async () => {
     const fake = createBrowserFakeMailClient();
-    const w = await mountApp(fake);
+    const w = sharedMountApp(fake, 'browser-preview', { attachTo: document.body }); wrapper = w; await flushPromises();
     await openReaderAndPrepareReply(w);
     await w.find('[data-test="draft-body"]').setValue('typed reply');
     await w.find('[data-test="reply-composer"]').find('[data-test="close-composer"]').trigger('click');
@@ -231,7 +214,7 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
       ...fake,
       saveDraft: (command) => (failSaves ? Promise.reject({ kind: 'storage_unavailable' }) : fake.saveDraft(command)),
     };
-    const w = await mountApp(fake, client);
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body }); wrapper = w; await flushPromises();
     await openReaderAndPrepareReply(w);
     await w.find('[data-test="draft-body"]').setValue('unacknowledged buffer');
 
@@ -264,7 +247,7 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
 
   it('offers no Send path: the footer has only Save and close and Discard… (the Esc hint is not a button)', async () => {
     const fake = createBrowserFakeMailClient();
-    const w = await mountApp(fake);
+    const w = sharedMountApp(fake, 'browser-preview', { attachTo: document.body }); wrapper = w; await flushPromises();
     await openReaderAndPrepareReply(w);
     const composer = w.find('[data-test="reply-composer"]');
     expect(composer.findAll('button').every((button) => !/send/i.test(button.text()))).toBe(true);
@@ -293,11 +276,11 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
         return fake.setArchived(command);
       },
     };
-    const w = await mountApp(fake, client);
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body }); wrapper = w; await flushPromises();
     await openReaderAndPrepareReply(w);
     await w.find('[data-test="draft-body"]').setValue('e j k stay text');
 
-    for (const key of ['e', 'j', 'k', 'Enter', 'x', 'g', 'E']) window.dispatchEvent(keydown(key, key === 'E' ? { shiftKey: true } : {}));
+    for (const key of ['e', 'j', 'k', 'Enter', 'x', 'g', 'E']) window.dispatchEvent(createKeyEvent(key, { bubbles: true, ...(key === 'E' ? { shiftKey: true } : {}) }));
     await flushPromises();
     await new Promise((resolve) => setTimeout(resolve, 50));
 
@@ -314,7 +297,7 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
 
   it('re-docks into the drafts drawer when the reader moves off the reply source (contact recent row)', async () => {
     const fake = createBrowserFakeMailClient();
-    const w = await mountApp(fake);
+    const w = sharedMountApp(fake, 'browser-preview', { attachTo: document.body }); wrapper = w; await flushPromises();
     await openReaderAndPrepareReply(w);
     expect(w.find('[data-test="reply-composer"]').exists()).toBe(true);
     // Click a different conversation in the contact pane's "Recent cached mail"

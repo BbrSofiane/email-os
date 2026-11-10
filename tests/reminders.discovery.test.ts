@@ -1,6 +1,7 @@
+import { mountApp } from './helpers';
 import { afterEach, expect, it } from 'vitest';
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import App from '../src/App.vue';
+import { flushPromises, type VueWrapper } from '@vue/test-utils';
+
 import RemindersPanel from '../src/components/RemindersPanel.vue';
 import ReminderSettings from '../src/components/ReminderSettings.vue';
 import { createBrowserFakeMailClient } from '../src/lib/ipc/browser-fake';
@@ -13,7 +14,7 @@ it('opens the clicked row reminder in read-only Gmail mode without provider writ
   client.controls.setAccount({ mode: 'gmail', connection: 'connected' });
   const rows = (await client.listConversations()).conversations;
   const target = rows[1]!.ref;
-  app = mount(App, { props: { client, mode: 'native' }, attachTo: document.body });
+  app = mountApp(client, 'native', { attachTo: document.body });
   await flushPromises();
   await app.get(`[data-test="row-remind-${target.conversationId}"]`).trigger('click');
   await flushPromises();
@@ -23,7 +24,7 @@ it('opens the clicked row reminder in read-only Gmail mode without provider writ
 
 it('opens settings through the palette and persists chosen preset time', async () => {
   const client = createBrowserFakeMailClient();
-  app = mount(App, { props: { client, mode: 'native' }, attachTo: document.body });
+  app = mountApp(client, 'native', { attachTo: document.body });
   await flushPromises();
   await app.get('[data-test="palette-trigger"]').trigger('click');
   await flushPromises();
@@ -38,11 +39,10 @@ it('opens settings through the palette and persists chosen preset time', async (
   expect(JSON.parse(localStorage.getItem('email-os.reminder-preferences.v1')!).hour).toBe(17);
 });
 
-
 it('schedules from the picker and returns focus to a surviving Inbox row', async () => {
   const client = createBrowserFakeMailClient();
   const target = (await client.listConversations()).conversations[0]!.ref;
-  app = mount(App, { props: { client, mode: 'native' }, global: { stubs: { Teleport: true } }, attachTo: document.body });
+  app = mountApp(client, 'native', { global: { stubs: { Teleport: true } }, attachTo: document.body });
   await flushPromises();
   await app.get(`[data-test="row-remind-${target.conversationId}"]`).trigger('click');
   await flushPromises();

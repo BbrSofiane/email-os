@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import App from '../src/App.vue';
-import { createBrowserFakeMailClient } from './helpers';
+import { flushPromises, type VueWrapper } from '@vue/test-utils';
+
+import { createBrowserFakeMailClient, mountApp } from './helpers';
 
 let wrapper: VueWrapper | null = null;
 afterEach(() => { wrapper?.unmount(); wrapper = null; });
@@ -16,7 +16,7 @@ async function createCommand(w: VueWrapper): Promise<void> {
 it('creates only through Commands, focuses the editor and returns Cancel to Commands', async () => {
   const fake = createBrowserFakeMailClient();
   const archive = vi.spyOn(fake, 'setArchived');
-  wrapper = mount(App, { props: { client: fake, mode: 'browser-preview' }, attachTo: document.body });
+  wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
   await flushPromises();
   expect(wrapper.find('[data-test="split-settings"]').exists()).toBe(false);
   expect(wrapper.findAll('button').some((button) => /create split/i.test(button.text()))).toBe(false);
@@ -38,7 +38,7 @@ it('creates only through Commands, focuses the editor and returns Cancel to Comm
 
 it('saves one split, switches to the Edit split command, and returns focus to Commands', async () => {
   const fake = createBrowserFakeMailClient();
-  wrapper = mount(App, { props: { client: fake, mode: 'browser-preview' }, attachTo: document.body });
+  wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
   await flushPromises();
   await createCommand(wrapper);
   await wrapper.get('[data-test="split-name"]').setValue('Ada');
@@ -69,7 +69,7 @@ it.each(['disabled', 'hidden'] as const)('edits a %s existing split through Comm
     enabled: state !== 'disabled', hideWhenEmpty: true,
   });
   const archive = vi.spyOn(fake, 'setArchived');
-  wrapper = mount(App, { props: { client: fake, mode: 'browser-preview' }, attachTo: document.body });
+  wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
   await flushPromises();
   expect(wrapper.find('[data-test="split-saved"]').exists()).toBe(false);
   expect(wrapper.find('[data-test="split-settings"]').exists()).toBe(false);
@@ -92,7 +92,7 @@ it.each(['disabled', 'hidden'] as const)('edits a %s existing split through Comm
 
 it.each(['reader', 'activity', 'done'] as const)('opens creation from %s without retaining a covered editor or stealing its input focus', async (surface) => {
   const fake = createBrowserFakeMailClient();
-  wrapper = mount(App, { props: { client: fake, mode: 'browser-preview' }, attachTo: document.body });
+  wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
   await flushPromises();
   if (surface === 'reader') await wrapper.get('.inbox-row').trigger('click');
   if (surface === 'activity') await wrapper.get('[data-test="rail-activity"]').trigger('click');
@@ -107,7 +107,7 @@ it.each(['reader', 'activity', 'done'] as const)('opens creation from %s without
 
 it('supports native Cmd+K followed by typed Create split and Enter', async () => {
   const fake = createBrowserFakeMailClient();
-  wrapper = mount(App, { props: { client: fake, mode: 'native' }, attachTo: document.body });
+  wrapper = mountApp(fake, 'native', { attachTo: document.body });
   await flushPromises();
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true, cancelable: true }));
   await flushPromises();

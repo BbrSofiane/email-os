@@ -1,17 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import App from '../src/App.vue';
+import { flushPromises, type VueWrapper } from '@vue/test-utils';
+
 import { createBrowserFakeMailClient } from '../src/lib/ipc/browser-fake';
 import { validateSearch } from '../src/lib/search';
 import type { MailClient, SearchPage, SearchRequest } from '../src/lib/ipc/client';
-import { deferred } from './helpers';
+import { deferred, mountApp, press } from './helpers';
 
 let wrapper: VueWrapper | null = null;
 afterEach(() => { wrapper?.unmount(); wrapper = null; });
-
-const key = (value: string, target?: Element) =>
-  (target ?? document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }));
 
 type SearchMailImpl = (request: SearchRequest, fake: ReturnType<typeof createBrowserFakeMailClient>) => ReturnType<MailClient['searchMail']>;
 
@@ -21,7 +18,7 @@ async function setup(options: { searchMail?: SearchMailImpl } = {}) {
     options.searchMail ? options.searchMail(request, fake) : fake.searchMail(request));
   const setArchived = vi.spyOn(fake, 'setArchived');
   const client: MailClient = { ...fake, searchMail };
-  wrapper = mount(App, { props: { client, mode: 'browser-preview' }, attachTo: document.body });
+  wrapper = mountApp(client, 'browser-preview', { attachTo: document.body });
   await flushPromises();
   // The contact pane also calls searchMail (from:"…", cachedOnly); filter by
   // query for submitted-query assertions, or by cachedOnly for provider
@@ -203,7 +200,7 @@ describe('search suggestions (P3)', () => {
     await input.setValue('');
     expect(h.w.get('[data-test="search-suggestions"]').isVisible()).toBe(true);
     await input.trigger('keydown', { key: 'ArrowDown' });
-    for (const k of ['e', 'z', 'j', 'k', 's', '/']) key(k, input.element);
+    for (const k of ['e', 'z', 'j', 'k', 's', '/']) press(k, { bubbles: true, cancelable: true }, input.element);
     expect(h.setArchived).not.toHaveBeenCalled();
     expect(h.w.get('[data-test="inbox-title"]').text()).toBe('Search');
   });
@@ -226,14 +223,14 @@ describe('search suggestions (P3)', () => {
     expect(h.w.get('[data-test="search-results-query"]').text()).toBe('Search: Fixture');
     // Second Esc while the input is still focused: the form collapses, the
     // search context (list + query header) remains, focus moves to the list.
-    key('Escape');
+    press('Escape', { bubbles: true, cancelable: true });
     await flushPromises();
     expect(h.w.find('form[role="search"]').exists()).toBe(false);
     expect(h.w.get('[data-test="inbox-title"]').text()).toBe('Search');
     expect(h.w.get('[data-test="search-results-query"]').text()).toBe('Search: Fixture');
     expect(document.activeElement?.getAttribute('data-test')).toMatch(/^conversation-row-/);
     // Third Esc on the list: exits the search context via the Back path.
-    key('Escape');
+    press('Escape', { bubbles: true, cancelable: true });
     await flushPromises();
     expect(h.w.get('[data-test="inbox-title"]').text()).toBe('Inbox');
   });
@@ -343,7 +340,7 @@ describe('search form auto-collapse and reopen paths (re-run P2)', () => {
     await h.openSearch();
     await h.submit('subject:Fixture');
     const reopeners: Record<string, () => Promise<void>> = {
-      'slash key': async () => { key('/'); await flushPromises(); },
+      'slash key': async () => { press('/', { bubbles: true, cancelable: true }); await flushPromises(); },
       'header search glyph': async () => { await h.w.get('[data-test="search-trigger"]').trigger('click'); await flushPromises(); },
       'palette command': async () => {
         await h.w.get('[data-test="palette-trigger"]').trigger('click'); await flushPromises();
@@ -363,7 +360,7 @@ describe('search form auto-collapse and reopen paths (re-run P2)', () => {
       expect(document.activeElement, name).toBe(input.element);
       // Collapse again (Esc closes the listbox, then the form) for the next path.
       await input.trigger('keydown', { key: 'Escape' });
-      key('Escape'); await flushPromises();
+      press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
       expect(h.w.find('form[role="search"]').exists(), name).toBe(false);
       expect(document.activeElement?.getAttribute('data-test'), name).toMatch(/^conversation-row-/);
     }
@@ -375,7 +372,7 @@ describe('search form auto-collapse and reopen paths (re-run P2)', () => {
     await h.submit('Fixture');
     expect(h.w.find('form[role="search"]').exists()).toBe(false);
     expect(document.activeElement?.getAttribute('data-test')).toMatch(/^conversation-row-/);
-    key('Escape'); await flushPromises();
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
     expect(h.w.get('[data-test="inbox-title"]').text()).toBe('Inbox');
     expect(h.w.find('[data-test="search-results-header"]').exists()).toBe(false);
   });

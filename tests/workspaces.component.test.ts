@@ -1,21 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import FixtureWorkspaces from '../src/FixtureWorkspaces.vue';
-import App from '../src/App.vue';
+
 import { createBrowserFakeMailClient } from '../src/lib/ipc/browser-fake';
 import type { Conversation, MailClient, OperationReceipt } from '../src/lib/ipc/client';
-import { deferred, flushMacrotasks } from './helpers';
+import { deferred, flushMacrotasks, mountApp, press } from './helpers';
 
 let wrapper: VueWrapper | null = null;
 afterEach(() => { wrapper?.unmount(); wrapper = null; vi.restoreAllMocks(); });
 const identity = (accountId: string) => ({ accountId, emailAddress: `${accountId}@example.test` });
 const aId = 'fixture-a';
 const bId = 'fixture-b';
-function key(value: string, options: KeyboardEventInit = {}) {
-  const event = new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true, ...options });
-  (document.activeElement ?? document.body).dispatchEvent(event);
-  return event;
-}
 async function setup(adaptA: (client: MailClient) => MailClient = (c) => c) {
   const a = createBrowserFakeMailClient(undefined, identity(aId));
   const b = createBrowserFakeMailClient(undefined, identity(bId));
@@ -35,7 +30,7 @@ describe('UX-13A independent synthetic sessions', () => {
   it('keeps identical IDs, focus, selection, reader, Back and scroll independent; hidden keys do nothing', async () => {
     const { w, a, b, pa, pb } = await setup();
     const rowA = pa.get('[data-test="conversation-row-conv-03"]').element as HTMLElement;
-    rowA.focus(); key('x'); await flushPromises();
+    rowA.focus(); press('x', { bubbles: true, cancelable: true }); await flushPromises();
     const scroller = pa.get('.inbox-list').element as HTMLElement;
     scroller.scrollTop = 120;
     await switchTo(w, bId);
@@ -44,7 +39,7 @@ describe('UX-13A independent synthetic sessions', () => {
     expect(pa.attributes('inert')).toBeDefined();
     expect(pb.findAll('[aria-checked="true"]')).toHaveLength(0);
     const rowB = pb.get('[data-test="conversation-row-conv-01"]').element as HTMLElement;
-    rowB.focus(); key('j'); await flushPromises();
+    rowB.focus(); press('j', { bubbles: true, cancelable: true }); await flushPromises();
     expect(pb.get('[aria-current="true"]').attributes('data-test')).toBe('conversation-row-conv-02');
     await pb.get('[data-test="conversation-row-conv-02"]').trigger('click'); await flushPromises();
     expect(pb.get('[data-test="reader"]').text()).toContain('Fixture thread 2');
@@ -55,7 +50,7 @@ describe('UX-13A independent synthetic sessions', () => {
     expect((pa.get('[data-test="row-select-conv-03"]').element as HTMLInputElement).checked).toBe(true);
     expect(pa.get('[aria-current="true"]').attributes('data-test')).toBe('conversation-row-conv-03');
     await switchTo(w, bId);
-    key('Escape'); await flushPromises();
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
     expect(pb.get('[aria-current="true"]').attributes('data-test')).toBe('conversation-row-conv-02');
     expect((await a.listConversations()).conversations).toHaveLength(18);
     expect((await b.listConversations()).conversations).toHaveLength(18);
@@ -138,8 +133,8 @@ describe('UX-13A independent synthetic sessions', () => {
     expect(document.activeElement).toBe(focusB);
     expect(pb.find('[data-test="reader"]').exists()).toBe(false);
     await switchTo(w, aId);
-    key('Escape'); await flushPromises();
-    (pa.get('[data-test="conversation-row-conv-01"]').element as HTMLElement).focus(); key('e');
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
+    (pa.get('[data-test="conversation-row-conv-01"]').element as HTMLElement).focus(); press('e', { bubbles: true, cancelable: true });
     await flushPromises();
     await switchTo(w, bId);
     focusB.focus();
@@ -176,7 +171,7 @@ describe('UX-13A independent synthetic sessions', () => {
     await switchTo(w, bId);
     await pb.get('[data-test="palette-trigger"]').trigger('click'); await flushPromises();
     await pb.get('[data-test="action-query"]').setValue('cached');
-    key('Escape'); await flushPromises();
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
     expect(pb.find('[data-test="action-query"]').exists()).toBe(false);
     await switchTo(w, aId);
     await pa.get('[data-test="palette-trigger"]').trigger('click'); await flushPromises();
@@ -184,22 +179,22 @@ describe('UX-13A independent synthetic sessions', () => {
     await pa.get('[data-test="action-query"]').setValue('local Drafts');
     const ids = [...document.querySelectorAll('[id]')].map((el) => el.id);
     expect(new Set(ids).size).toBe(ids.length);
-    key('Escape'); await flushPromises();
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
     await pa.get('[data-test="navigator-trigger"]').trigger('click'); await flushPromises();
     expect((pa.get('[data-test="action-query"]').element as HTMLInputElement).value).toBe('');
     await pa.get('[data-test="action-query"]').setValue('Inbox');
-    key('Escape'); await flushPromises();
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
     await switchTo(w, bId);
     await pb.get('[data-test="palette-trigger"]').trigger('click'); await flushPromises();
     const retained = pb.get('[data-test="action-query"]').element as HTMLInputElement;
     expect(retained.value).toBe('cached');
     expect([retained.selectionStart, retained.selectionEnd]).toEqual([0, 'cached'.length]);
     await pb.get('[data-test="action-query"]').setValue('Switch account');
-    key('Enter'); await flushPromises();
+    press('Enter', { bubbles: true, cancelable: true }); await flushPromises();
     expect(pa.attributes('style') ?? '').not.toContain('display: none');
     await pa.get('[data-test="palette-trigger"]').trigger('click'); await flushPromises();
     expect((pa.get('[data-test="action-query"]').element as HTMLInputElement).value).toBe('local Drafts');
-    key('Escape'); await flushPromises();
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
     await switchTo(w, bId);
     await pb.get('[data-test="palette-trigger"]').trigger('click'); await flushPromises();
     expect((pb.get('[data-test="action-query"]').element as HTMLInputElement).value).toBe('Switch account');
@@ -276,16 +271,16 @@ describe('UX-13A independent synthetic sessions', () => {
     await pa.get('[data-test="palette-trigger"]').trigger('click'); await flushPromises();
     await pa.get('[data-test="action-query"]').setValue('Switch account');
     expect(pa.get('[role="option"]').text()).toContain(`${bId}@example.test`);
-    key('Enter'); await flushPromises();
+    press('Enter', { bubbles: true, cancelable: true }); await flushPromises();
     expect(pb.attributes('style') ?? '').not.toContain('display: none');
     expect(document.title).toContain(`${bId}@example.test`);
     expect(document.title).toContain('18 loaded');
     expect(w.text()).toContain('not native tabs');
     for (const options of [{ key: 't', metaKey: true }, { key: '1', metaKey: true }, { key: 'Tab', metaKey: true }, { key: ']', metaKey: true, shiftKey: true }]) {
-      expect(key(options.key, options).defaultPrevented).toBe(false);
+      expect(press(options.key, { ...options, bubbles: true, cancelable: true }).defaultPrevented).toBe(false);
     }
     // Standalone/native has no account-switch command despite the shared catalog.
-    const single = mount(App, { props: { client: createBrowserFakeMailClient(), mode: 'native' } });
+    const single = mountApp(createBrowserFakeMailClient(), 'native', {  });
     await flushPromises();
     await single.get('[data-test="palette-trigger"]').trigger('click'); await flushPromises();
     expect(single.text()).not.toContain('Switch account');

@@ -1,18 +1,13 @@
+import { flushFakeClientAndVueUpdates } from './helpers';
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import App from '../src/App.vue';
+
 import ComposeCard from '../src/components/ComposeCard.vue';
 import { browsingActions } from '../src/lib/browsing-actions';
 import { actionAliases, actionGroupOf, matchesQuery } from '../src/lib/action-palette';
-import { createBrowserFakeMailClient, deferred, waitFor, type BrowserFake } from './helpers';
+import { createBrowserFakeMailClient, deferred, waitFor, type BrowserFake, mountApp as sharedMountApp, createKeyEvent } from './helpers';
 import type { DraftContent, DraftReceipt, MailClient } from '../src/lib/ipc/client';
-
-function keydown(key: string, init: KeyboardEventInit & { keyCode?: number } = {}): KeyboardEvent {
-  const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init });
-  if (init.keyCode !== undefined) Object.defineProperty(event, 'keyCode', { value: init.keyCode });
-  return event;
-}
 
 type CardProps = InstanceType<typeof ComposeCard>['$props'];
 
@@ -220,17 +215,8 @@ describe('compose entry points in App (inline card in the central pane)', () => 
   let fake: BrowserFake;
   afterEach(() => { wrapper?.unmount(); wrapper = null; });
 
-  async function mountApp(client: MailClient = fake): Promise<VueWrapper> {
-    const mounted = mount(App, { props: { client, mode: 'browser-preview' }, attachTo: document.body });
-    wrapper = mounted;
-    await flushPromises();
-    await fake.controls.flush();
-    await flushPromises();
-    return mounted;
-  }
-
   async function openCardFromList(w: VueWrapper): Promise<void> {
-    document.body.dispatchEvent(keydown('c'));
+    document.body.dispatchEvent(createKeyEvent('c', { bubbles: true, cancelable: true }));
     await waitFor(() => w.find('[data-test="compose-card"]').exists());
     await flushPromises();
   }
@@ -265,7 +251,8 @@ describe('compose entry points in App (inline card in the central pane)', () => 
 
   it('has a split-header compose glyph with the C aria-label', async () => {
     fake = createBrowserFakeMailClient();
-    const w = await mountApp();
+    const w = wrapper = sharedMountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
     const glyph = w.get('[data-test="compose-trigger"]');
     expect(glyph.attributes('aria-label')).toBe('Compose new local draft (C)');
     expect(glyph.attributes('title')).toBe('Compose new local draft — C');
@@ -274,7 +261,8 @@ describe('compose entry points in App (inline card in the central pane)', () => 
 
   it('opens the inline card in the central pane when pressing c in the list, edits the draft, and closes through the protected flush', async () => {
     fake = createBrowserFakeMailClient();
-    const w = await mountApp();
+    const w = wrapper = sharedMountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
     expect(w.find('[data-test="compose-card"]').exists()).toBe(false);
     await openCardFromList(w);
     expectInlineCardInCentral(w);
@@ -282,7 +270,7 @@ describe('compose entry points in App (inline card in the central pane)', () => 
     expect((await fake.listDrafts())).toHaveLength(1);
     expect((await fake.listDrafts())[0]?.source).toEqual({ kind: 'new_message' });
     // A second c must not stack another editor surface or draft.
-    document.body.dispatchEvent(keydown('c'));
+    document.body.dispatchEvent(createKeyEvent('c', { bubbles: true, cancelable: true }));
     await flushPromises();
     expect(w.findAll('[data-test="compose-card"]')).toHaveLength(1);
     expect((await fake.listDrafts())).toHaveLength(1);
@@ -301,7 +289,8 @@ describe('compose entry points in App (inline card in the central pane)', () => 
 
   it('opens the inline card in the central pane when clicking the header compose glyph', async () => {
     fake = createBrowserFakeMailClient();
-    const w = await mountApp();
+    const w = wrapper = sharedMountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
     await w.get('[data-test="compose-trigger"]').trigger('click');
     await flushPromises();
     await waitFor(() => w.find('[data-test="compose-card"]').exists());
@@ -320,11 +309,12 @@ describe('compose entry points in App (inline card in the central pane)', () => 
         return saves === 1 ? gate.promise : fake.saveDraft(command);
       },
     };
-    const w = await mountApp(client);
+    const w = wrapper = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
     await openCardFromList(w);
     await w.find('[data-test="draft-body"]').setValue('last keystroke');
 
-    window.dispatchEvent(keydown('Escape'));
+    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true, cancelable: true }));
     await flushPromises();
     // The flush is in flight: the card must stay open.
     expect(w.find('[data-test="compose-card"]').exists()).toBe(true);
@@ -339,7 +329,7 @@ describe('compose entry points in App (inline card in the central pane)', () => 
     // Retry the save, then Escape closes the card through the protected flush.
     await w.find('[data-test="retry-draft-save"]').trigger('click');
     await flushPromises();
-    window.dispatchEvent(keydown('Escape'));
+    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true, cancelable: true }));
     await flushPromises();
     await waitFor(() => !w.find('[data-test="compose-card"]').exists());
     expect(w.find('.inbox-list').exists()).toBe(true);
@@ -349,11 +339,12 @@ describe('compose entry points in App (inline card in the central pane)', () => 
 
   it('docks the inline card at the bottom of the reader pane when pressing c in the reader (no backdrop, reader stays visible)', async () => {
     fake = createBrowserFakeMailClient();
-    const w = await mountApp();
+    const w = wrapper = sharedMountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
     await waitFor(() => w.find('[data-test="reader"]').exists());
-    document.body.dispatchEvent(keydown('c'));
+    document.body.dispatchEvent(createKeyEvent('c', { bubbles: true, cancelable: true }));
     await waitFor(() => w.find('[data-test="compose-card"]').exists());
     // The reader stays open; the card docks at the BOTTOM of the reader pane.
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
@@ -371,17 +362,18 @@ describe('compose entry points in App (inline card in the central pane)', () => 
 
   it('ignores c with modifiers, during IME, and in editable targets', async () => {
     fake = createBrowserFakeMailClient();
-    const w = await mountApp();
-    document.body.dispatchEvent(keydown('c', { ctrlKey: true }));
-    document.body.dispatchEvent(keydown('c', { metaKey: true }));
-    document.body.dispatchEvent(keydown('c', { altKey: true }));
-    document.body.dispatchEvent(keydown('C', { shiftKey: true }));
-    document.body.dispatchEvent(keydown('c', { keyCode: 229 }));
+    const w = wrapper = sharedMountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+    document.body.dispatchEvent(createKeyEvent('c', { bubbles: true, cancelable: true, ...{ ctrlKey: true } }));
+    document.body.dispatchEvent(createKeyEvent('c', { bubbles: true, cancelable: true, ...{ metaKey: true } }));
+    document.body.dispatchEvent(createKeyEvent('c', { bubbles: true, cancelable: true, ...{ altKey: true } }));
+    document.body.dispatchEvent(createKeyEvent('C', { bubbles: true, cancelable: true, ...{ shiftKey: true } }));
+    document.body.dispatchEvent(createKeyEvent('c', { bubbles: true, cancelable: true, ...{ keyCode: 229 } }));
     await flushPromises();
     expect(w.find('[data-test="compose-card"]').exists()).toBe(false);
     const input = document.createElement('input');
     document.body.appendChild(input);
-    input.dispatchEvent(keydown('c'));
+    input.dispatchEvent(createKeyEvent('c', { bubbles: true, cancelable: true }));
     await flushPromises();
     expect(w.find('[data-test="compose-card"]').exists()).toBe(false);
     input.remove();
@@ -390,7 +382,8 @@ describe('compose entry points in App (inline card in the central pane)', () => 
 
   it('runs the palette action "Compose new local draft" found by "new message"', async () => {
     fake = createBrowserFakeMailClient();
-    const w = await mountApp();
+    const w = wrapper = sharedMountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
     await w.get('[data-test="palette-trigger"]').trigger('click');
     await flushPromises();
     await w.get('[data-test="action-query"]').setValue('new message');
@@ -407,19 +400,20 @@ describe('compose entry points in App (inline card in the central pane)', () => 
 
   it('gates compose while another utility drawer is open (no hidden key-owning card)', async () => {
     fake = createBrowserFakeMailClient();
-    const w = await mountApp();
+    const w = wrapper = sharedMountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
     await w.find('[data-test="rail-activity"]').trigger('click');
     await waitFor(() => w.find('[data-test="utility-drawer"]').exists());
     // The glyph is disabled and the C key does nothing while the drawer covers central.
     expect(w.get('[data-test="compose-trigger"]').attributes('disabled')).toBeDefined();
-    document.body.dispatchEvent(keydown('c'));
+    document.body.dispatchEvent(createKeyEvent('c', { bubbles: true, cancelable: true }));
     await flushPromises();
     expect(w.find('[data-test="compose-card"]').exists()).toBe(false);
     expect((await fake.listDrafts())).toHaveLength(0);
     // With the drawer closed, compose works again.
     await w.find('[data-test="drawer-close"]').trigger('click');
     await waitFor(() => !w.find('[data-test="utility-drawer"]').exists());
-    document.body.dispatchEvent(keydown('c'));
+    document.body.dispatchEvent(createKeyEvent('c', { bubbles: true, cancelable: true }));
     await waitFor(() => w.find('[data-test="compose-card"]').exists());
     expectInlineCardInCentral(w);
   });
@@ -434,10 +428,11 @@ describe('compose entry points in App (inline card in the central pane)', () => 
         return fake.setArchived(command);
       },
     };
-    const w = await mountApp(client);
+    const w = wrapper = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
     await openCardFromList(w);
     await w.find('[data-test="draft-body"]').setValue('e j k stay text');
-    for (const key of ['e', 'j', 'k', 'Enter', 'x', 'g', 'E']) window.dispatchEvent(keydown(key, key === 'E' ? { shiftKey: true } : {}));
+    for (const key of ['e', 'j', 'k', 'Enter', 'x', 'g', 'E']) window.dispatchEvent(createKeyEvent(key, key === 'E' ? { shiftKey: true } : {}));
     await flushPromises();
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(archives).toBe(0);

@@ -1,18 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import App from '../src/App.vue';
+import { flushPromises, type VueWrapper } from '@vue/test-utils';
 import type { InboxSnapshot } from '../src/lib/ipc/client';
 import { createDiscoveryFixture } from './discovery.fixture';
+import { mountApp, press } from './helpers';
 
 let wrapper: VueWrapper | null = null;
 afterEach(() => { wrapper?.unmount(); wrapper = null; });
-function key(key: string, options: KeyboardEventInit = {}) {
-  (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key, ...options }));
-}
 async function setup() {
   const fixture = createDiscoveryFixture();
   await fixture.seedDone();
-  wrapper = mount(App, { props: { client: fixture.client, mode: 'browser-preview' }, attachTo: document.body });
+  wrapper = mountApp(fixture.client, 'browser-preview', { attachTo: document.body });
   await flushPromises();
   return { fixture, w: wrapper };
 }
@@ -30,13 +27,13 @@ describe('UX-03 discovery and context history', () => {
     await palette(w);
     expect(document.activeElement).toBe(w.get('[data-test="action-query"]').element);
     await w.get('[data-test="action-query"]').setValue('e/s/h');
-    for (const value of ['e', 's', 'h', 'ArrowLeft', 'Enter']) key(value);
+    for (const value of ['e', 's', 'h', 'ArrowLeft', 'Enter']) press(value, { bubbles: true, cancelable: true });
     await flushPromises();
     expect(w.get('[data-test="action-query"]').element).toBe(document.activeElement);
     expect(fixture.controls.archiveCommands).toEqual([]);
     expect(fixture.controls.readCommands).toEqual([]);
     expect(w.get('.app-main').attributes('inert')).toBeDefined();
-    key('Escape');
+    press('Escape', { bubbles: true, cancelable: true });
     await flushPromises();
     expect(document.activeElement).toBe(row);
   });
@@ -46,7 +43,7 @@ describe('UX-03 discovery and context history', () => {
     (w.get('[data-test="conversation-row-read-02"]').element as HTMLElement).focus();
     await palette(w);
     fixture.controls.removeFromInbox('read-02'); await flushPromises();
-    key('Escape'); await flushPromises();
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
     expect(document.activeElement?.getAttribute('data-test')).toBe('conversation-row-read-03');
   });
 
@@ -55,13 +52,13 @@ describe('UX-03 discovery and context history', () => {
     (w.get('[data-test="conversation-row-read-03"]').element as HTMLElement).focus();
     await palette(w, 'Go to cached Done');
     expect(w.get('[role="option"]').attributes('aria-selected')).toBe('true');
-    key('Enter'); await flushPromises();
+    press('Enter', { bubbles: true, cancelable: true }); await flushPromises();
     expect(w.get('[data-test="inbox-title"]').text()).toBe('Cached Done');
     expect(w.get('[data-test="done-coverage"]').text()).toContain('Total unknown');
     await w.get('[data-test="conversation-row-read-01"]').trigger('click'); await flushPromises();
-    key('Escape'); await flushPromises();
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
     expect(w.find('[data-test="conversation-row-read-01"]').exists()).toBe(true);
-    key('Escape'); await flushPromises();
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
     expect(w.get('[data-test="inbox-title"]').text()).toBe('Inbox');
     expect(w.get('[aria-current="true"]').attributes('data-test')).toBe('conversation-row-read-03');
     expect(fixture.controls.archiveCommands).toEqual([]);
@@ -71,24 +68,24 @@ describe('UX-03 discovery and context history', () => {
   it('supports Left and pointer navigator, Arrow highlight/Enter, and Escape without leaving the reader', async () => {
     const { w } = await setup();
     const row = w.get('[data-test="conversation-row-read-02"]').element as HTMLElement;
-    row.focus(); key('ArrowLeft'); await flushPromises();
+    row.focus(); press('ArrowLeft', { bubbles: true, cancelable: true }); await flushPromises();
     expect(w.get('[role="dialog"]').attributes('aria-label')).toBe('Destination navigator');
-    key('ArrowDown'); await flushPromises();
+    press('ArrowDown', { bubbles: true, cancelable: true }); await flushPromises();
     expect(w.get('[aria-selected="true"]').text()).toContain('cached Done');
-    key('Escape'); await flushPromises(); expect(document.activeElement).toBe(row);
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises(); expect(document.activeElement).toBe(row);
     await w.get('[data-test="conversation-row-read-02"]').trigger('click'); await flushPromises();
-    key('ArrowLeft'); await flushPromises(); expect(w.find('[role="dialog"]').exists()).toBe(false);
+    press('ArrowLeft', { bubbles: true, cancelable: true }); await flushPromises(); expect(w.find('[role="dialog"]').exists()).toBe(false);
     await w.get('[data-test="navigator-trigger"]').trigger('click'); await flushPromises();
-    key('Escape'); await flushPromises(); expect(w.find('[data-test="reader"]').exists()).toBe(true);
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises(); expect(w.find('[data-test="reader"]').exists()).toBe(true);
   });
 
   it('lists Provider mail in the navigator like the rail and opens its drawer', async () => {
     const { w } = await setup();
     (w.get('[data-test="conversation-row-read-02"]').element as HTMLElement).focus();
-    key('ArrowLeft'); await flushPromises();
+    press('ArrowLeft', { bubbles: true, cancelable: true }); await flushPromises();
     await w.get('[data-test="action-query"]').setValue('provider'); await flushPromises();
     expect(w.findAll('[role="option"]').map((o) => o.text())).toEqual([expect.stringContaining('Go to Provider mail (read only)')]);
-    key('Enter'); await flushPromises();
+    press('Enter', { bubbles: true, cancelable: true }); await flushPromises();
     expect(w.find('[role="dialog"]').exists()).toBe(false);
     expect(w.get('[data-test="utility-drawer"]').attributes('aria-label')).toBe('Provider mail — read only');
   });
@@ -106,17 +103,17 @@ describe('UX-03 discovery and context history', () => {
     focus();
     // 'x' is now the UX-05 selection toggle; use a non-shortcut key as the
     // plain-typing cancel scenario.
-    for (const cancel of [() => key('h'), () => key('m'), () => key('Control', { ctrlKey: true }), () => key('Process', { isComposing: true }), () => window.dispatchEvent(new Event('blur'))]) {
-      key('g'); cancel(); key('e', { ctrlKey: true }); key('h');
+    for (const cancel of [() => press('h', { bubbles: true, cancelable: true }), () => press('m', { bubbles: true, cancelable: true }), () => press('Control', { bubbles: true, cancelable: true,  ctrlKey: true  }), () => press('Process', { bubbles: true, cancelable: true,  isComposing: true  }), () => window.dispatchEvent(new Event('blur'))]) {
+      press('g', { bubbles: true, cancelable: true }); cancel(); press('e', { bubbles: true, cancelable: true,  ctrlKey: true  }); press('h', { bubbles: true, cancelable: true });
     }
-    key('g'); await palette(w); key('Escape'); await flushPromises();
-    key('e', { ctrlKey: true });
+    press('g', { bubbles: true, cancelable: true }); await palette(w); press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
+    press('e', { bubbles: true, cancelable: true,  ctrlKey: true  });
     // Past the chord window AND the swallow grace, a plain e is Archive again.
     focus(); vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    key('g'); vi.advanceTimersByTime(2200); vi.useRealTimers(); key('e'); await flushPromises();
+    press('g', { bubbles: true, cancelable: true }); vi.advanceTimersByTime(2200); vi.useRealTimers(); press('e', { bubbles: true, cancelable: true }); await flushPromises();
     expect(fixture.doneCalls()).toBe(0);
     expect(fixture.controls.archiveCommands.map((command) => command.conversation.conversationId)).toEqual(['read-02']);
-    key('g'); key('e'); await flushPromises();
+    press('g', { bubbles: true, cancelable: true }); press('e', { bubbles: true, cancelable: true }); await flushPromises();
     expect(w.get('[data-test="inbox-title"]').text()).toBe('Cached Done');
   });
 
@@ -143,18 +140,18 @@ describe('UX-03 discovery and context history', () => {
     expect(w.find('#action-archive').exists()).toBe(true);
     fixture.setEnabled(false); await flushPromises();
     expect(w.find('#action-archive').exists()).toBe(false);
-    key('Escape'); await flushPromises();
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
     fixture.controls.delayNextDetail(50);
     await w.get('[data-test="conversation-row-read-02"]').trigger('click');
     await palette(w);
     expect(w.find('#action-unread').exists()).toBe(false);
-    key('Escape'); await flushPromises();
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
     await new Promise((resolve) => setTimeout(resolve, 60)); await flushPromises();
     await w.get('[data-test="rail-activity"]').trigger('click'); await flushPromises();
     await w.get('[data-test^="activity-open-"]').trigger('click');
     await flushPromises();
     const calls = fixture.controls.detailCalls.length;
-    key('j'); key('k'); await flushPromises();
+    press('j', { bubbles: true, cancelable: true }); press('k', { bubbles: true, cancelable: true }); await flushPromises();
     expect(fixture.controls.detailCalls).toHaveLength(calls);
   });
 });
@@ -170,7 +167,7 @@ describe('UX-03 query and lifecycle guarantees', () => {
       if (request.cursor === null) return { conversations: [], nextCursor: 'next', coverage: 'local_cache', exactTotal: null, lastSyncedAt: null };
       return original(request);
     };
-    wrapper = mount(App, { props: { client: fixture.client, mode: 'browser-preview' }, attachTo: document.body });
+    wrapper = mountApp(fixture.client, 'browser-preview', { attachTo: document.body });
     await flushPromises();
     await wrapper.get('[data-test="rail-done"]').trigger('click'); await flushPromises();
     expect(wrapper.get('[data-test="inbox-empty"]').text()).toContain('more cached candidates');
@@ -202,10 +199,10 @@ describe('UX-03 query and lifecycle guarantees', () => {
     await w.get('[data-test="rail-done"]').trigger('click'); await flushPromises();
     await w.get('[data-test="conversation-row-read-01"]').trigger('click'); await flushPromises();
     const before = fixture.controls.detailCalls.length;
-    key('j'); await flushPromises();
+    press('j', { bubbles: true, cancelable: true }); await flushPromises();
     expect(w.get('.reader-subject').text()).toContain('read-04');
     expect(fixture.controls.detailCalls.slice(before).map((ref) => ref.conversationId)).toEqual(['read-04']);
-    key('k'); await flushPromises();
+    press('k', { bubbles: true, cancelable: true }); await flushPromises();
     expect(w.get('.reader-subject').text()).toBe('Reader journey thread');
     expect(fixture.controls.archiveCommands).toEqual([]);
   });
@@ -215,16 +212,16 @@ describe('UX-03 query and lifecycle guarantees', () => {
     await w.get('[data-test="conversation-row-read-03"]').trigger('click'); await flushPromises();
     // The next neighbor (read-04) is prefetched; K targets the uncached read-02.
     fixture.controls.delayNextDetail(50);
-    key('k');
+    press('k', { bubbles: true, cancelable: true });
     await palette(w);
     expect(w.find('#action-archive').exists()).toBe(false);
     expect(w.find('#action-unread').exists()).toBe(false);
-    await w.get('[data-test="action-query"]').setValue('e/s/h'); key('e'); key('Enter'); await flushPromises();
+    await w.get('[data-test="action-query"]').setValue('e/s/h'); press('e', { bubbles: true, cancelable: true }); press('Enter', { bubbles: true, cancelable: true }); await flushPromises();
     expect(fixture.controls.archiveCommands).toEqual([]);
     expect(fixture.controls.readCommands).toEqual([]);
     // Real timers: the delayed detail resolves after 50ms. Wait well past it (and past the 120ms hold) so a loaded machine cannot race it.
     await new Promise((resolve) => setTimeout(resolve, 250)); await flushPromises();
-    await w.get('[data-test="action-query"]').setValue('Mark done'); key('Enter'); await flushPromises();
+    await w.get('[data-test="action-query"]').setValue('Mark done'); press('Enter', { bubbles: true, cancelable: true }); await flushPromises();
     expect(fixture.controls.archiveCommands.map((command) => command.conversation.conversationId)).toEqual(['read-02']);
   });
 
@@ -234,7 +231,7 @@ describe('UX-03 query and lifecycle guarantees', () => {
     await w.get('[data-test="new-draft"]').trigger('click'); await flushPromises();
     await w.get('[data-test="draft-body"]').setValue('Exact unsaved buffer ✓');
     fixture.client.saveDraft = async () => { throw { kind: 'storage_unavailable' }; };
-    await palette(w, 'Go to cached Done'); key('Enter'); await flushPromises();
+    await palette(w, 'Go to cached Done'); press('Enter', { bubbles: true, cancelable: true }); await flushPromises();
     expect(w.get('[data-test="inbox-title"]').text()).toBe('Inbox');
     expect((w.get('[data-test="draft-body"]').element as HTMLTextAreaElement).value).toBe('Exact unsaved buffer ✓');
     expect(w.get('[data-test="utility-drawer"]').attributes('aria-label')).toBe('Local drafts');
@@ -278,10 +275,10 @@ describe('UX-03 query and lifecycle guarantees', () => {
     await w.get('[data-test="conversation-row-read-04"]').trigger('click'); await flushPromises();
     fixture.controls.notify(); await flushPromises();
     const callsBeforeK = fixture.controls.detailCalls.length;
-    key('k'); await flushPromises();
+    press('k', { bubbles: true, cancelable: true }); await flushPromises();
     // K requests read-01 first; a neighbor prefetch may follow it.
     expect(fixture.controls.detailCalls[callsBeforeK]?.conversationId).toBe('read-01');
-    key('Escape'); await flushPromises();
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
     await w.get('[data-test="rail-inbox"]').trigger('click'); await flushPromises();
     await w.get('[data-test="context-back"]').trigger('click'); await flushPromises();
     expect(requests.slice(-2)).toEqual([null, 'page-two']);
@@ -313,10 +310,10 @@ describe('UX-03 query and lifecycle guarantees', () => {
     await w.get('[data-test="conversation-row-read-04"]').trigger('click'); await flushPromises();
     fixture.controls.notify(); await flushPromises();
     const callsBeforeK = fixture.controls.detailCalls.length;
-    key('k'); await flushPromises();
+    press('k', { bubbles: true, cancelable: true }); await flushPromises();
     // K requests read-01 first; a neighbor prefetch may follow it.
     expect(fixture.controls.detailCalls[callsBeforeK]?.conversationId).toBe('read-01');
-    key('Escape'); await flushPromises();
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
     await w.get('[data-test="rail-inbox"]').trigger('click'); await flushPromises();
     insertions = 2;
     await w.get('[data-test="context-back"]').trigger('click'); await flushPromises();
@@ -346,7 +343,7 @@ describe('UX-03 query and lifecycle guarantees', () => {
       expect(w.get('[data-test="reader-archive-toggle"]').attributes('disabled')).toBeDefined();
       expect(w.get('[data-test="reader-toggle-read"]').attributes('disabled')).toBeDefined();
       const calls = fixture.controls.detailCalls.length;
-      key('j'); key('k'); key('E', { shiftKey: true }); key('U', { shiftKey: true }); await flushPromises();
+      press('j', { bubbles: true, cancelable: true }); press('k', { bubbles: true, cancelable: true }); press('E', { bubbles: true, cancelable: true,  shiftKey: true  }); press('U', { bubbles: true, cancelable: true,  shiftKey: true  }); await flushPromises();
       expect(fixture.controls.detailCalls).toHaveLength(calls);
     }
     await palette(w);
@@ -380,9 +377,9 @@ describe('UX-03 query and lifecycle guarantees', () => {
     let reveals = 0;
     row.scrollIntoView = () => { reveals += 1; };
     row.focus(); reveals = 0;
-    key('k', { metaKey: true }); await flushPromises();
+    press('k', { bubbles: true, cancelable: true,  metaKey: true  }); await flushPromises();
     expect(document.activeElement).toBe(w.get('[data-test="action-query"]').element);
-    key('Escape'); await flushPromises();
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
     expect(document.activeElement).toBe(row);
     expect(reveals).toBe(0);
   });
@@ -390,14 +387,14 @@ describe('UX-03 query and lifecycle guarantees', () => {
   it('supports native Cmd+K without capturing the browser-reserved command and dismisses only the top overlay', async () => {
     const { w } = await setup();
     const row = w.get('[data-test="conversation-row-read-02"]').element as HTMLElement;
-    row.focus(); key('k', { metaKey: true }); await flushPromises();
+    row.focus(); press('k', { bubbles: true, cancelable: true,  metaKey: true  }); await flushPromises();
     expect(w.find('[role="dialog"]').exists()).toBe(false);
     await w.setProps({ mode: 'native' });
-    key('k', { metaKey: true }); await flushPromises();
+    press('k', { bubbles: true, cancelable: true,  metaKey: true  }); await flushPromises();
     expect(document.activeElement).toBe(w.get('[data-test="action-query"]').element);
-    key('Escape'); await flushPromises(); expect(document.activeElement).toBe(row);
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises(); expect(document.activeElement).toBe(row);
     await w.get('[data-test="conversation-row-read-02"]').trigger('click'); await flushPromises();
-    key('k', { metaKey: true }); await flushPromises(); key('Escape'); await flushPromises();
+    press('k', { bubbles: true, cancelable: true,  metaKey: true  }); await flushPromises(); press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
   });
 });

@@ -1,52 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import App from '../src/App.vue';
+import { flushPromises, type VueWrapper } from '@vue/test-utils';
 import type { AccountStatus, MailClient } from '../src/lib/ipc/client';
-import {
-  accountMethods,
-  groupMethods,
-  closeUtilityDrawer,
-  conversationRows,
-  countingClient,
-  createBrowserFakeMailClient,
-  createSixConversationClient,
-  flushMacrotasks,
-  deferred,
-  fixtureRef,
-  focusedRow,
-  openUtilityDrawer,
-  type BrowserFake,
-} from './helpers';
+import { accountMethods, groupMethods, closeUtilityDrawer, conversationRows, countingClient, createBrowserFakeMailClient, createSixConversationClient, flushMacrotasks, deferred, fixtureRef, focusedRow, openUtilityDrawer, type BrowserFake, mountApp as sharedMountApp, createKeyEvent } from './helpers';
 import { createReaderFixtureClient, readerRef, type ReaderFixture } from './reader.fixture';
 import { READER_LOADING_DELAY_MS } from '../src/composables/useMailbox';
-
-function keydown(init: KeyboardEventInit & { keyCode?: number }): KeyboardEvent {
-  const event = new KeyboardEvent('keydown', { bubbles: true, ...init });
-  if (init.keyCode !== undefined) {
-    Object.defineProperty(event, 'keyCode', { value: init.keyCode });
-  }
-  return event;
-}
+import { flushFakeClientAndVueUpdates, flushVueMacrotasks } from './support/ui-settle';
 
 describe('App (Slice 01 shell)', () => {
   let fake: BrowserFake;
   let counted: ReturnType<typeof countingClient>;
   let wrapper: VueWrapper | null = null;
-
-  function mountApp(client: MailClient = counted.client): VueWrapper {
-    const w = mount(App, {
-      props: { client, mode: 'browser-preview' },
-      attachTo: document.body, // focus()/activeElement only work in an attached tree
-    });
-    wrapper = w;
-    return w;
-  }
-
-  async function settle(): Promise<void> {
-    await flushPromises();
-    await fake.controls.flush();
-    await flushPromises();
-  }
 
   beforeEach(() => {
     fake = createBrowserFakeMailClient();
@@ -63,7 +26,7 @@ describe('App (Slice 01 shell)', () => {
       ...fake,
       subscribe: async () => { throw { kind: 'storage_unavailable' }; },
     };
-    const w = mountApp(broken);
+    const w = sharedMountApp(broken, 'browser-preview', { attachTo: document.body });
     await flushPromises();
     expect(w.find('[data-test="account-loading"]').exists()).toBe(false);
     expect(w.find('[data-test="account-error"]').text()).toContain('Could not subscribe to or load the inbox');
@@ -75,18 +38,18 @@ describe('App (Slice 01 shell)', () => {
   });
 
   it('discloses memory-only preview and renders the seeded inbox', async () => {
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
     expect(w.find('[data-test="preview-banner"]').text()).toContain('in-memory');
     expect(w.find('[data-test="preview-banner"]').text()).toContain('native core is not connected');
     expect(conversationRows(w)).toHaveLength(18);
   });
 
   it('offers quiet icon-only reader actions in the header, with previous/next wired like J/K', async () => {
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
-    await settle();
+    await flushFakeClientAndVueUpdates(fake);
     const header = w.find('.app-header');
     // No toolbar row: every reader action is an icon button in the header with a hidden text name and a shortcut title.
     expect(w.find('.reader .reader-toolbar').exists()).toBe(false);
@@ -99,16 +62,16 @@ describe('App (Slice 01 shell)', () => {
     const subject = (): string => w.find('.reader-subject').text();
     expect(subject()).toContain('Fixture thread 1');
     await header.find('[data-test="reader-next"]').trigger('click');
-    await settle();
+    await flushFakeClientAndVueUpdates(fake);
     expect(subject()).toContain('Fixture thread 2');
     await header.find('[data-test="reader-prev"]').trigger('click');
-    await settle();
+    await flushFakeClientAndVueUpdates(fake);
     expect(subject()).toContain('Fixture thread 1');
   });
 
   it('navigates with j/k and arrow keys, moving DOM focus with conversation focus', async () => {
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
     const rows = conversationRows(w);
     (rows[0]!.element as HTMLElement).focus();
     rows[0]!.trigger('focusin');
@@ -116,62 +79,62 @@ describe('App (Slice 01 shell)', () => {
     expect(document.activeElement).toBe(rows[0]!.element);
     expect(rows[0]!.attributes('aria-current')).toBe('true');
 
-    window.dispatchEvent(keydown({ key: 'j' }));
+    window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
     await flushPromises();
     expect(document.activeElement).toBe(rows[1]!.element);
     expect(rows[1]!.attributes('aria-current')).toBe('true');
     expect(rows[0]!.attributes('aria-current')).toBeUndefined();
 
-    window.dispatchEvent(keydown({ key: 'ArrowDown' }));
+    window.dispatchEvent(createKeyEvent('ArrowDown', { bubbles: true  }));
     await flushPromises();
     expect(document.activeElement).toBe(rows[2]!.element);
 
-    window.dispatchEvent(keydown({ key: 'k' }));
+    window.dispatchEvent(createKeyEvent('k', { bubbles: true  }));
     await flushPromises();
     expect(document.activeElement).toBe(rows[1]!.element);
 
-    window.dispatchEvent(keydown({ key: 'ArrowUp' }));
+    window.dispatchEvent(createKeyEvent('ArrowUp', { bubbles: true  }));
     await flushPromises();
     expect(document.activeElement).toBe(rows[0]!.element);
 
     // at the top edge, ArrowUp clamps and focus stays put
-    window.dispatchEvent(keydown({ key: 'ArrowUp' }));
+    window.dispatchEvent(createKeyEvent('ArrowUp', { bubbles: true  }));
     await flushPromises();
     expect(document.activeElement).toBe(rows[0]!.element);
     expect(rows[0]!.attributes('aria-current')).toBe('true');
   });
 
   it('opens with Enter, closes with Escape, and restores list focus', async () => {
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
     const rows = conversationRows(w);
     (rows[1]!.element as HTMLElement).focus();
     rows[1]!.trigger('focusin');
     await flushPromises();
 
-    window.dispatchEvent(keydown({ key: 'Enter' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
+    await flushFakeClientAndVueUpdates(fake);
     const reader = w.find('[data-test="reader"]');
     expect(reader.exists()).toBe(true);
     expect(reader.text()).toContain('Fixture thread 2');
 
-    window.dispatchEvent(keydown({ key: 'Escape' }));
+    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
     await flushPromises();
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect(document.activeElement).toBe(conversationRows(w)[1]!.element);
   });
 
   it('archives with e: row leaves the inbox, focus stays on the resolved survivor', async () => {
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
     const rows = conversationRows(w);
     expect(rows[0]!.text()).toContain('conv-01');
     (rows[0]!.element as HTMLElement).focus();
     rows[0]!.trigger('focusin');
     await flushPromises();
 
-    window.dispatchEvent(keydown({ key: 'e' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    await flushFakeClientAndVueUpdates(fake);
 
     const after = conversationRows(w);
     expect(after).toHaveLength(17);
@@ -185,11 +148,11 @@ describe('App (Slice 01 shell)', () => {
   });
 
   it('shows a pending operation on a restored row and completes after release', async () => {
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
     // archive conv-01 to completion
-    window.dispatchEvent(keydown({ key: 'e' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    await flushFakeClientAndVueUpdates(fake);
     expect(conversationRows(w)).toHaveLength(17);
 
     // pause the fake provider, then unarchive: the row must reappear while the
@@ -204,17 +167,17 @@ describe('App (Slice 01 shell)', () => {
     expect(w.text()).toContain('applying…');
 
     fake.controls.release();
-    await settle();
+    await flushFakeClientAndVueUpdates(fake);
     expect(w.find('[data-test="row-pending"]').exists()).toBe(false);
     expect(conversationRows(w)).toHaveLength(18);
   });
 
   it('renders failed operations in activity and reverts the row to the inbox', async () => {
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
     fake.controls.behavior.failNext = 1;
-    window.dispatchEvent(keydown({ key: 'e' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    await flushFakeClientAndVueUpdates(fake);
     await openUtilityDrawer(w, 'activity');
     expect(w.find('[data-test="activity-failed"]').exists()).toBe(true);
     expect(w.find('[data-test="activity-failed"]').text()).toContain('failed (provider_rejected)');
@@ -222,16 +185,16 @@ describe('App (Slice 01 shell)', () => {
   });
 
   it('unarchives from activity and opens archived conversations from activity', async () => {
-    const w = mountApp();
-    await settle();
-    window.dispatchEvent(keydown({ key: 'e' }));
-    await settle();
+    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    await flushFakeClientAndVueUpdates(fake);
     expect(conversationRows(w)).toHaveLength(17);
 
     await openUtilityDrawer(w, 'activity');
     await w.find('[data-test^="activity-unarchive-"]').trigger('click');
     await closeUtilityDrawer(w);
-    await settle();
+    await flushFakeClientAndVueUpdates(fake);
     expect(conversationRows(w)).toHaveLength(18);
 
     // Explicitly focus the restored row: background insertion preserves conversation focus.
@@ -239,39 +202,39 @@ describe('App (Slice 01 shell)', () => {
     (restored.element as HTMLElement).focus();
     await restored.trigger('focusin');
     // archive again, then Open from activity must still show the archived thread
-    window.dispatchEvent(keydown({ key: 'e' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    await flushFakeClientAndVueUpdates(fake);
     await openUtilityDrawer(w, 'activity');
     await w.find('[data-test^="activity-open-"]').trigger('click');
-    await settle();
+    await flushFakeClientAndVueUpdates(fake);
     const reader = w.find('[data-test="reader"]');
     expect(reader.exists()).toBe(true);
     expect(reader.text()).toContain('conv-01');
   });
 
   it('ignores shortcuts with modifiers, during IME composition, in text fields, and when a button owns the key', async () => {
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
     const baseline = fake.controls.activity().length;
 
-    window.dispatchEvent(keydown({ key: 'e', ctrlKey: true }));
-    window.dispatchEvent(keydown({ key: 'j', metaKey: true }));
-    window.dispatchEvent(keydown({ key: 'j', altKey: true }));
-    const ime = keydown({ key: 'j' });
+    window.dispatchEvent(createKeyEvent('e', { bubbles: true , ctrlKey: true }));
+    window.dispatchEvent(createKeyEvent('j', { bubbles: true , metaKey: true }));
+    window.dispatchEvent(createKeyEvent('j', { bubbles: true , altKey: true }));
+    const ime = createKeyEvent('j', { bubbles: true  });
     Object.defineProperty(ime, 'isComposing', { value: true });
     window.dispatchEvent(ime);
-    window.dispatchEvent(keydown({ key: 'j', keyCode: 229 }));
+    window.dispatchEvent(createKeyEvent('j', { bubbles: true , keyCode: 229 }));
 
     const input = document.createElement('input');
     document.body.appendChild(input);
-    input.dispatchEvent(keydown({ key: 'j' }));
-    input.dispatchEvent(keydown({ key: 'e' }));
+    input.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
+    input.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
     input.remove();
 
     const button = document.createElement('button');
     document.body.appendChild(button);
-    button.dispatchEvent(keydown({ key: 'e' }));
-    button.dispatchEvent(keydown({ key: 'Enter' }));
+    button.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    button.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
     button.remove();
 
     await flushMacrotasks();
@@ -283,15 +246,15 @@ describe('App (Slice 01 shell)', () => {
   });
 
   it('renders hostile markup as literal text with no script/img/link elements or remote assets', async () => {
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
     // conv-06 is the hostile fixture; move focus to it and open
     for (let i = 0; i < 5; i += 1) {
-      window.dispatchEvent(keydown({ key: 'j' }));
+      window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
       await flushPromises();
     }
-    window.dispatchEvent(keydown({ key: 'Enter' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
+    await flushFakeClientAndVueUpdates(fake);
 
     const reader = w.find('[data-test="reader"]');
     expect(reader.exists()).toBe(true);
@@ -304,11 +267,11 @@ describe('App (Slice 01 shell)', () => {
   });
 
   it('shows the inbox empty state when everything is archived', async () => {
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
     for (let i = 0; i < 18; i += 1) {
-      window.dispatchEvent(keydown({ key: 'e' }));
-      await settle();
+      window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+      await flushFakeClientAndVueUpdates(fake);
     }
     expect(w.find('[data-test="inbox-empty"]').exists()).toBe(true);
     expect(w.find('[data-test="inbox-empty"]').text()).toContain('recoverable from Activity');
@@ -328,11 +291,11 @@ describe('App (Slice 01 shell)', () => {
       setArchived: fake.setArchived.bind(fake),
       subscribe: (l) => fake.subscribe(l),
     };
-    const w = mountApp(client);
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
     await flushPromises();
     expect(w.find('[data-test="inbox-loading"]').exists()).toBe(true);
     resolveList((await fake.listConversations()) as Awaited<ReturnType<MailClient['listConversations']>>);
-    await settle();
+    await flushFakeClientAndVueUpdates(fake);
     expect(w.find('[data-test="inbox-loading"]').exists()).toBe(false);
   });
 
@@ -347,25 +310,25 @@ describe('App (Slice 01 shell)', () => {
       setArchived: fake.setArchived.bind(fake),
       subscribe: (l) => fake.subscribe(l),
     };
-    const w = mountApp(client);
-    await settle();
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
     const errorPane = w.find('[data-test="inbox-error"]');
     expect(errorPane.exists()).toBe(true);
     expect(errorPane.text()).toContain('storage unavailable');
     fail = false;
     await w.find('[data-test="inbox-retry"]').trigger('click');
-    await settle();
+    await flushFakeClientAndVueUpdates(fake);
     expect(w.find('[data-test="inbox-error"]').exists()).toBe(false);
     expect(conversationRows(w)).toHaveLength(18);
   });
 
   it('advances from an archived reader to the next conversation', async () => {
-    const w = mountApp();
-    await settle();
-    window.dispatchEvent(keydown({ key: 'Enter' }));
-    await settle();
+    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
+    await flushFakeClientAndVueUpdates(fake);
     await w.find('[data-test="reader-archive-toggle"]').trigger('click');
-    await settle();
+    await flushFakeClientAndVueUpdates(fake);
     expect(w.find('[data-test="reader"]').text()).toContain('Fixture thread 2');
     expect(conversationRows(w)).toHaveLength(0); // reader replaces the list
     // UX-02: the newly opened conversation focuses its newest message toggle.
@@ -378,55 +341,55 @@ describe('App (Slice 01 shell)', () => {
       ...counted.client,
       getConversation: (target) => target.conversationId === 'conv-02' ? pending.promise : fake.getConversation(target),
     };
-    const w = mountApp(client);
-    await settle();
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
-    await settle();
+    await flushFakeClientAndVueUpdates(fake);
     // Back to the list (the reader replaces it), then open the next conversation.
-    window.dispatchEvent(keydown({ key: 'Escape' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    await flushFakeClientAndVueUpdates(fake);
     await w.find('[data-test="conversation-row-conv-02"]').trigger('click');
     await flushPromises();
     expect(w.find('[data-test="reader-loading"]').exists()).toBe(true);
     // The header action stays mounted but disabled: it supplies no target while loading.
     expect(w.find('[data-test="reader-archive-toggle"]').attributes('disabled')).toBeDefined();
-    window.dispatchEvent(keydown({ key: 'e' }));
+    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
     await flushPromises();
     expect(counted.commands).toHaveLength(0);
     pending.resolve(await fake.getConversation(fixtureRef('conv-02')));
-    await settle();
+    await flushFakeClientAndVueUpdates(fake);
   });
 
   it('keeps keyboard commands aligned with the focused row after a delayed rejection', async () => {
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
     fake.controls.behavior.hold = true;
     fake.controls.behavior.failNext = 1;
     const first = conversationRows(w)[0]!;
     (first.element as HTMLElement).focus();
     await first.trigger('focusin');
-    window.dispatchEvent(keydown({ key: 'e' }));
+    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
     await flushPromises();
     const focused = document.activeElement;
     expect(focused?.textContent).toContain('conv-02');
     fake.controls.release();
-    await settle();
+    await flushFakeClientAndVueUpdates(fake);
     expect(document.activeElement).toBe(focused);
     expect(conversationRows(w)[1]!.attributes('aria-current')).toBe('true');
-    window.dispatchEvent(keydown({ key: 'Enter' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
+    await flushFakeClientAndVueUpdates(fake);
     expect(w.find('[data-test="reader"]').text()).toContain('Fixture thread 2');
   });
 
   it('does not steal toolbar focus during a background reader refresh', async () => {
-    const w = mountApp();
-    await settle();
-    window.dispatchEvent(keydown({ key: 'Enter' }));
-    await settle();
+    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
+    await flushFakeClientAndVueUpdates(fake);
     const close = w.find('[data-test="reader-close"]').element as HTMLElement;
     close.focus();
     window.dispatchEvent(new Event('focus'));
-    await settle();
+    await flushFakeClientAndVueUpdates(fake);
     expect(document.activeElement).toBe(close);
   });
 
@@ -440,21 +403,21 @@ describe('App (Slice 01 shell)', () => {
         return accepted.promise;
       },
     };
-    const w = mountApp(client);
-    await settle();
-    window.dispatchEvent(keydown({ key: 'Enter' }));
-    await settle();
-    window.dispatchEvent(keydown({ key: 'e' }));
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
+    await flushFakeClientAndVueUpdates(fake);
+    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
     await flushPromises();
-    window.dispatchEvent(keydown({ key: 'Escape' }));
+    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
     accepted.resolve(receipt!);
-    await settle();
+    await flushFakeClientAndVueUpdates(fake);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
   });
 
   it('detaches the subscription and window listeners on unmount', async () => {
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
     expect(fake.controls.listenerCount()).toBe(1);
     const calls = counted.listCalls();
     w.unmount();
@@ -517,24 +480,6 @@ describe('App (UX-01 compact browsing shell journey)', () => {
     await row.trigger('focusin');
   }
 
-  function mountSix(): VueWrapper {
-    const w = mount(App, { props: { client: six.client, mode: 'browser-preview' }, attachTo: document.body });
-    wrapper = w;
-    return w;
-  }
-
-  function mountApp(client: MailClient = six.client): VueWrapper {
-    const w = mount(App, { props: { client, mode: 'browser-preview' }, attachTo: document.body });
-    wrapper = w;
-    return w;
-  }
-
-  async function settle(): Promise<void> {
-    await flushPromises();
-    await flushMacrotasks(2);
-    await flushPromises();
-  }
-
   beforeEach(() => {
     six = createSixConversationClient();
     rowDocTops.clear();
@@ -555,8 +500,8 @@ describe('App (UX-01 compact browsing shell journey)', () => {
   });
 
   it('renders compact rows with non-selectable date group headings and no AI/calendar controls', async () => {
-    const w = mountSix();
-    await settle();
+    const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     const rows = conversationRows(w);
     expect(rows).toHaveLength(6);
     // Every row is a single compact line: sender, subject/snippet, trailing date.
@@ -584,40 +529,40 @@ describe('App (UX-01 compact browsing shell journey)', () => {
   });
 
   it('moves focus row to row, skipping group headings, with j/k', async () => {
-    const w = mountSix();
-    await settle();
+    const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     const rows = conversationRows(w);
     (rows[0]!.element as HTMLElement).focus();
     rows[0]!.trigger('focusin');
     await flushPromises();
     for (let i = 1; i < rows.length; i += 1) {
-      window.dispatchEvent(keydown({ key: 'j' }));
+      window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
       await flushPromises();
       expect(document.activeElement).toBe(rows[i]!.element);
     }
-    window.dispatchEvent(keydown({ key: 'k' }));
+    window.dispatchEvent(createKeyEvent('k', { bubbles: true  }));
     await flushPromises();
     expect(document.activeElement).toBe(rows[rows.length - 2]!.element);
   });
 
   it('focuses the fourth row, opens it, and returns to the same row with a restored anchor', async () => {
-    const w = mountSix();
-    await settle();
+    const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     await focusRowById(w, 'six-d');
     await flushPromises();
     expect(focusedRow(w).attributes('data-test')).toBe('conversation-row-six-d');
 
-    window.dispatchEvent(keydown({ key: 'Enter' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
 
     // While reading, a newer conversation arrives above six-d in the inbox.
     six.insertNewerConversation('six-new', { displayName: 'Newer Sender', mailbox: 'newer@example.test' });
-    await settle();
+    await flushVueMacrotasks(2);
     seedRowTops(1); // six-d moved one row down
 
-    window.dispatchEvent(keydown({ key: 'Escape' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     // The surviving anchor row is focused again without scrolling it away.
     expect(document.activeElement?.getAttribute('data-test')).toBe('conversation-row-six-d');
@@ -627,25 +572,25 @@ describe('App (UX-01 compact browsing shell journey)', () => {
   });
 
   it('keeps an action targeted at the original id when a newer row is inserted (BROWSE-17)', async () => {
-    const w = mountSix();
-    await settle();
+    const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     await focusRowById(w, 'six-d');
     await flushPromises();
 
     six.insertNewerConversation('six-new', { displayName: 'Newer Sender', mailbox: 'newer@example.test' });
-    await settle();
+    await flushVueMacrotasks(2);
     // focus survives the insertion, still addressing the original conversation
     expect(focusedRow(w).attributes('data-test')).toBe('conversation-row-six-d');
 
-    window.dispatchEvent(keydown({ key: 'e' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(six.commands).toHaveLength(1);
     expect(six.commands[0]!.conversation.conversationId).toBe('six-d');
   });
 
   it('shows exact known contact context and never guesses a missing correspondent', async () => {
-    const w = mountSix();
-    await settle();
+    const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     // six-a: long display name plus mailbox
     await focusRowById(w, 'six-a');
     await flushPromises();
@@ -660,14 +605,14 @@ describe('App (UX-01 compact browsing shell journey)', () => {
     // Reader mode uses the loaded latest message's From for the open ref only.
     await focusRowById(w, 'six-a');
     await flushPromises();
-    window.dispatchEvent(keydown({ key: 'Enter' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(w.find('[data-test="contact-name"]').text()).toBe('Anastasia Vasquez-Romanov of the Northern Reaches');
   });
 
   it('keeps hover inert and inline row actions row-scoped', async () => {
-    const w = mountSix();
-    await settle();
+    const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     await focusRowById(w, 'six-f');
     await flushPromises();
 
@@ -679,7 +624,7 @@ describe('App (UX-01 compact browsing shell journey)', () => {
 
     // The inline archive button stops propagation: no row open, one archive.
     await w.find('[data-test="row-archive-six-b"]').trigger('click');
-    await settle();
+    await flushVueMacrotasks(2);
     expect(six.commands.map((c) => c.conversation.conversationId)).toEqual(['six-b']);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
   });
@@ -691,23 +636,23 @@ describe('App (UX-01 compact browsing shell journey)', () => {
       ...six.client,
       listConversations: () => new Promise((resolve) => { resolveList = resolve; }),
     };
-    let w: VueWrapper = mount(App, { props: { client: loadingClient, mode: 'browser-preview' }, attachTo: document.body });
+    let w: VueWrapper = sharedMountApp(loadingClient, 'browser-preview', { attachTo: document.body });
     wrapper = w;
     await flushPromises();
     expect(w.find('[data-test="inbox-loading"]').exists()).toBe(true);
     resolveList(await six.client.listConversations());
-    await settle();
+    await flushVueMacrotasks(2);
     w.unmount();
     wrapper = null;
 
     // Error with retry
     six.failNextList({ kind: 'storage_unavailable' });
-    w = mountSix();
-    await settle();
+    w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     expect(w.find('[data-test="inbox-error"]').exists()).toBe(true);
     expect(w.find('[data-test="inbox-error"]').text()).toContain('storage unavailable');
     await w.find('[data-test="inbox-retry"]').trigger('click');
-    await settle();
+    await flushVueMacrotasks(2);
     expect(w.find('[data-test="inbox-error"]').exists()).toBe(false);
     expect(conversationRows(w)).toHaveLength(6);
     w.unmount();
@@ -715,15 +660,15 @@ describe('App (UX-01 compact browsing shell journey)', () => {
 
     // Empty: archive every row through the keyboard; the last archive focuses
     // the empty state instead of a removed row.
-    w = mountSix();
-    await settle();
+    w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     const rows = conversationRows(w);
     (rows[0]!.element as HTMLElement).focus();
     rows[0]!.trigger('focusin');
     await flushPromises();
     for (let i = 0; i < 6; i += 1) {
-      window.dispatchEvent(keydown({ key: 'e' }));
-      await settle();
+      window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+      await flushVueMacrotasks(2);
     }
     expect(w.find('[data-test="inbox-empty"]').exists()).toBe(true);
     expect(w.find('[data-test="inbox-empty"]').text()).toContain('recoverable from Activity');
@@ -743,8 +688,8 @@ describe('App (UX-01 compact browsing shell journey)', () => {
       dispatchEvent: () => false,
     })) as unknown as typeof window.matchMedia;
     try {
-      const w = mountSix();
-      await settle();
+      const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+      await flushVueMacrotasks(2);
       expect(w.find('[data-test="contact-pane"]').exists()).toBe(false);
       expect(w.find('[data-test="contact-disclosure"]').exists()).toBe(true);
 
@@ -756,7 +701,7 @@ describe('App (UX-01 compact browsing shell journey)', () => {
       expect(w.find('[data-test="contact-unknown"]').exists()).toBe(true);
 
       // Escape closes the disclosure with precedence and restores focus.
-      window.dispatchEvent(keydown({ key: 'Escape' }));
+      window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
       await flushPromises();
       expect(w.find('[data-test="contact-disclosure-panel"]').exists()).toBe(false);
       expect(document.activeElement).toBe(w.find('[data-test="contact-disclosure"]').element);
@@ -768,8 +713,8 @@ describe('App (UX-01 compact browsing shell journey)', () => {
   });
 
   it('restores an anchor relative to the current scroll position, not the captured one (P2)', async () => {
-    const w = mountSix();
-    await settle();
+    const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     // Simulate a scrolled inbox: the sixth row is at absolute position 300.
     rowDocTops.set('six-e', 300);
     const list = w.find('ul.inbox-scroll').element as HTMLElement;
@@ -777,13 +722,13 @@ describe('App (UX-01 compact browsing shell journey)', () => {
     await focusRowById(w, 'six-e');
     await flushPromises();
 
-    window.dispatchEvent(keydown({ key: 'Enter' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
 
     // Opening a reader unmounts the list; returning recreates it at scrollTop 0.
-    window.dispatchEvent(keydown({ key: 'Escape' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     // The restored scroller must return the row to its captured viewport offset (100),
     // not 100 + (300 - 100) = 300 (double-counting the original offset).
@@ -794,8 +739,8 @@ describe('App (UX-01 compact browsing shell journey)', () => {
   });
 
   it('suppresses revealRow during preventScroll focus restoration (P2)', async () => {
-    const w = mountSix();
-    await settle();
+    const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     // Focus a row and simulate an off-screen scroll position for it.
     await focusRowById(w, 'six-c');
     await flushPromises();
@@ -803,14 +748,14 @@ describe('App (UX-01 compact browsing shell journey)', () => {
     const list = w.find('ul.inbox-scroll').element as HTMLElement;
     list.scrollTop = 0; // six-c is off-screen (docTop 500, viewport 0-360).
 
-    window.dispatchEvent(keydown({ key: 'Enter' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
 
     // The reader closed and focus restoration uses preventScroll: the row must
     // not be yanked back into view by an automatic reveal.
-    window.dispatchEvent(keydown({ key: 'Escape' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect(document.activeElement?.getAttribute('data-test')).toBe('conversation-row-six-c');
     // The row remains off-screen (focus restoration must not undo scroll positioning).
@@ -819,18 +764,18 @@ describe('App (UX-01 compact browsing shell journey)', () => {
   });
 
   it('leaves the reader when the Inbox rail control is activated (P2)', async () => {
-    const w = mountSix();
-    await settle();
+    const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     await focusRowById(w, 'six-b');
     await flushPromises();
-    window.dispatchEvent(keydown({ key: 'Enter' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
 
     // The rail Inbox button must route through the reader close path, not just
     // try to focus an unmounted list.
     await w.find('[data-test="rail-inbox"]').trigger('click');
-    await settle();
+    await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect(w.find('[data-test="inbox-empty"]').exists()).toBe(false);
     expect(w.find('[data-test="conversation-row-six-b"]').exists()).toBe(true);
@@ -849,8 +794,8 @@ describe('App (UX-01 compact browsing shell journey)', () => {
       dispatchEvent: () => false,
     })) as unknown as typeof window.matchMedia;
     try {
-      const w = mountSix();
-      await settle();
+      const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+      await flushVueMacrotasks(2);
       await w.find('[data-test="contact-disclosure"]').trigger('click');
       await flushPromises();
       expect(w.find('[data-test="contact-disclosure-panel"]').exists()).toBe(true);
@@ -889,8 +834,8 @@ describe('App (UX-01 compact browsing shell journey)', () => {
       dispatchEvent: () => false,
     })) as unknown as typeof window.matchMedia;
     try {
-      const w = mountSix();
-      await settle();
+      const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+      await flushVueMacrotasks(2);
       expect(w.find('[data-test="contact-disclosure"]').exists()).toBe(true);
       await w.find('[data-test="contact-disclosure"]').trigger('click');
       await flushPromises();
@@ -916,9 +861,9 @@ describe('App (UX-01 compact browsing shell journey)', () => {
 
   it('does not let a hidden draft editor own all mailbox shortcuts (P2)', async () => {
     const fake = createBrowserFakeMailClient();
-    const w = mount(App, { props: { client: fake, mode: 'browser-preview' }, attachTo: document.body });
+    const w = sharedMountApp(fake, 'browser-preview', { attachTo: document.body });
     wrapper = w;
-    await settle();
+    await flushVueMacrotasks(2);
     await openUtilityDrawer(w, 'drafts');
     await w.find('[data-test="new-draft"]').trigger('click');
     await flushPromises();
@@ -941,9 +886,9 @@ describe('App (UX-01 compact browsing shell journey)', () => {
       ...fake,
       saveDraft: () => Promise.reject({ kind: 'storage_unavailable' }),
     };
-    const w = mount(App, { props: { client, mode: 'browser-preview' }, attachTo: document.body });
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
     wrapper = w;
-    await settle();
+    await flushVueMacrotasks(2);
     await openUtilityDrawer(w, 'drafts');
     await w.find('[data-test="new-draft"]').trigger('click');
     await flushPromises();
@@ -978,8 +923,8 @@ describe('App (UX-01 compact browsing shell journey)', () => {
       dispatchEvent: () => false,
     })) as unknown as typeof window.matchMedia;
     try {
-      const w = mountSix();
-      await settle();
+      const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+      await flushVueMacrotasks(2);
       expect(w.find('[data-test="contact-column"]').exists()).toBe(true);
       (w.find('[data-test="contact-column"]').element as HTMLElement).focus();
       expect(document.activeElement?.getAttribute('data-test')).toBe('contact-column');
@@ -1014,8 +959,8 @@ describe('App (UX-01 compact browsing shell journey)', () => {
       dispatchEvent: () => false,
     })) as unknown as typeof window.matchMedia;
     try {
-      const w = mountSix();
-      await settle();
+      const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+      await flushVueMacrotasks(2);
       // Focus lives in the list, not the contact column.
       await focusRowById(w, 'six-a');
       expect(document.activeElement?.getAttribute('data-test')).toBe('conversation-row-six-a');
@@ -1045,8 +990,8 @@ describe('App (UX-01 compact browsing shell journey)', () => {
       dispatchEvent: () => false,
     })) as unknown as typeof window.matchMedia;
     try {
-      const w = mountSix();
-      await settle();
+      const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+      await flushVueMacrotasks(2);
       await w.find('[data-test="contact-disclosure"]').trigger('click');
       await flushPromises();
       expect(w.find('[data-test="contact-disclosure-panel"]').exists()).toBe(true);
@@ -1064,20 +1009,20 @@ describe('App (UX-01 compact browsing shell journey)', () => {
   });
 
   it('returns to Inbox (not Activity) when navigating from an Activity-origin reader (P2)', async () => {
-    const w = mountApp(createBrowserFakeMailClient());
-    await settle();
-    window.dispatchEvent(keydown({ key: 'e' }));
-    await settle();
+    const w = sharedMountApp(createBrowserFakeMailClient(), 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
+    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     await openUtilityDrawer(w, 'activity');
     await w.find('[data-test^="activity-open-"]').trigger('click');
-    await settle();
+    await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
 
     // Explicit Inbox destination clears the utility drawer and restores the
     // Inbox list rather than reopening the Activity drawer from the origin.
     // conv-01 was archived at the start, so conv-02 is the surviving list row.
     await w.find('[data-test="rail-inbox"]').trigger('click');
-    await settle();
+    await flushVueMacrotasks(2);
     expect(w.find('[data-test="utility-drawer"]').exists()).toBe(false);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect(w.find('[data-test="conversation-row-conv-02"]').exists()).toBe(true);
@@ -1086,19 +1031,19 @@ describe('App (UX-01 compact browsing shell journey)', () => {
   });
 
   it('still returns to Activity after an ordinary Escape from an Activity-origin reader (P2)', async () => {
-    const w = mountApp(createBrowserFakeMailClient());
-    await settle();
-    window.dispatchEvent(keydown({ key: 'e' }));
-    await settle();
+    const w = sharedMountApp(createBrowserFakeMailClient(), 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
+    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     await openUtilityDrawer(w, 'activity');
     await w.find('[data-test^="activity-open-"]').trigger('click');
-    await settle();
+    await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
 
     // An ordinary Escape from the reader restores the originating Activity
     // surface, keeping the drawer visible alongside the saved list anchor.
-    window.dispatchEvent(keydown({ key: 'Escape' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect(w.find('[data-test="utility-drawer"]').exists()).toBe(true);
     w.unmount();
@@ -1117,9 +1062,9 @@ describe('App (UX-01 compact browsing shell journey)', () => {
         return fake.saveDraft(command);
       },
     };
-    const w = mount(App, { props: { client, mode: 'browser-preview' }, attachTo: document.body });
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
     wrapper = w;
-    await settle();
+    await flushVueMacrotasks(2);
     await openUtilityDrawer(w, 'drafts');
     await w.find('[data-test="new-draft"]').trigger('click');
     await flushPromises();
@@ -1148,18 +1093,6 @@ describe('App covered central surface (P1)', () => {
   let fake: BrowserFake;
   let wrapper: VueWrapper | null = null;
 
-  function mountFakeApp(): VueWrapper {
-    const w = mount(App, { props: { client: fake, mode: 'browser-preview' }, attachTo: document.body });
-    wrapper = w;
-    return w;
-  }
-
-  async function settleFake(): Promise<void> {
-    await flushPromises();
-    await fake.controls.flush();
-    await flushPromises();
-  }
-
   function archiveConfirmed(conversationId: string): boolean {
     return fake.controls.activity().some(
       (op) => op.conversation.conversationId === conversationId
@@ -1178,8 +1111,8 @@ describe('App covered central surface (P1)', () => {
   });
 
   it('marks the central surface inert while a utility drawer is open and restores interaction after dismissal', async () => {
-    const w = mountFakeApp();
-    await settleFake();
+    const w = sharedMountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
     const central = w.find('[data-test="central-surface"]').element as HTMLElement;
     expect(central.hasAttribute('inert')).toBe(false);
 
@@ -1194,7 +1127,7 @@ describe('App covered central surface (P1)', () => {
 
     // Normal central interaction works after dismissal.
     await w.find('[data-test="row-archive-conv-01"]').trigger('click');
-    await settleFake();
+    await flushFakeClientAndVueUpdates(fake);
     expect(archiveConfirmed('conv-01')).toBe(true);
   });
 
@@ -1213,8 +1146,8 @@ describe('App covered central surface (P1)', () => {
       dispatchEvent: () => false,
     })) as unknown as typeof window.matchMedia;
     try {
-      const w = mountFakeApp();
-      await settleFake();
+      const w = sharedMountApp(fake, 'browser-preview', { attachTo: document.body });
+      await flushFakeClientAndVueUpdates(fake);
       expect(w.find('[data-test="contact-disclosure"]').exists()).toBe(true);
       const central = w.find('[data-test="central-surface"]').element as HTMLElement;
       expect(central.hasAttribute('inert')).toBe(false);
@@ -1289,22 +1222,10 @@ describe('App UX-02 reader session', () => {
     await row.trigger('focusin');
   }
 
-  function mountReaderApp(): VueWrapper {
-    const w = mount(App, { props: { client: fixture.client, mode: 'browser-preview' }, attachTo: document.body });
-    wrapper = w;
-    return w;
-  }
-
-  async function settle(): Promise<void> {
-    await flushPromises();
-    await flushMacrotasks(2);
-    await flushPromises();
-  }
-
   async function openReader(w: VueWrapper, conversationId: string): Promise<void> {
     await focusRowById(w, conversationId);
-    window.dispatchEvent(keydown({ key: 'Enter' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
+    await flushVueMacrotasks(2);
   }
 
   function readerSubject(w: VueWrapper): string | null {
@@ -1333,8 +1254,8 @@ describe('App UX-02 reader session', () => {
   });
 
   it('opens focused on the newest message toggle and keeps N/P distinct from J/K', async () => {
-    const w = mountReaderApp();
-    await settle();
+    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
     expect(readerSubject(w)).toBe('Reader journey thread');
     // Initial focus/expansion: newest message toggle, only the newest expanded.
@@ -1343,50 +1264,50 @@ describe('App UX-02 reader session', () => {
     expect(w.find('[data-test="message-toggle-read-01-m1"]').attributes('aria-expanded')).toBe('false');
 
     // P moves message focus without expanding.
-    window.dispatchEvent(keydown({ key: 'p' }));
+    window.dispatchEvent(createKeyEvent('p', { bubbles: true  }));
     await flushPromises();
     expect(activeMessageToggle()).toBe('message-toggle-read-01-m2');
     expect(w.find('[data-test="message-toggle-read-01-m2"]').attributes('aria-expanded')).toBe('false');
     // N moves back, still without expanding.
-    window.dispatchEvent(keydown({ key: 'n' }));
+    window.dispatchEvent(createKeyEvent('n', { bubbles: true  }));
     await flushPromises();
     expect(activeMessageToggle()).toBe('message-toggle-read-01-m3');
     expect(w.find('[data-test="message-toggle-read-01-m2"]').attributes('aria-expanded')).toBe('false');
 
     // J is conversation movement, not message movement: the conversation changes.
-    window.dispatchEvent(keydown({ key: 'j' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(readerSubject(w)).toBe('Neighbor thread read-02');
     expect(fixture.controls.detailCalls.map((ref) => ref.conversationId)).toContain('read-02');
     // K returns to the previous conversation with its visit state preserved.
-    window.dispatchEvent(keydown({ key: 'k' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('k', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(readerSubject(w)).toBe('Reader journey thread');
     expect(activeMessageToggle()).toBe('message-toggle-read-01-m3');
   });
 
   it('expands all with Shift+O idempotently and collapses only the focused message with O', async () => {
-    const w = mountReaderApp();
-    await settle();
+    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
-    window.dispatchEvent(keydown({ key: 'O', shiftKey: true }));
+    window.dispatchEvent(createKeyEvent('O', { bubbles: true , shiftKey: true }));
     await flushPromises();
     expect(w.findAll('.message-toggle').map((t) => t.attributes('aria-expanded'))).toEqual(['true', 'true', 'true']);
-    window.dispatchEvent(keydown({ key: 'O', shiftKey: true }));
+    window.dispatchEvent(createKeyEvent('O', { bubbles: true , shiftKey: true }));
     await flushPromises();
     expect(w.findAll('.message-toggle').map((t) => t.attributes('aria-expanded'))).toEqual(['true', 'true', 'true']);
-    window.dispatchEvent(keydown({ key: 'o' }));
+    window.dispatchEvent(createKeyEvent('o', { bubbles: true  }));
     await flushPromises();
     expect(w.findAll('.message-toggle').map((t) => t.attributes('aria-expanded'))).toEqual(['true', 'true', 'false']);
   });
 
   it('renders hostile markup literally inside expanded message bodies', async () => {
-    const w = mountReaderApp();
-    await settle();
+    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
-    window.dispatchEvent(keydown({ key: 'p' })); // focus the hostile middle message
+    window.dispatchEvent(createKeyEvent('p', { bubbles: true  })); // focus the hostile middle message
     await flushPromises();
-    window.dispatchEvent(keydown({ key: 'o' })); // expand it
+    window.dispatchEvent(createKeyEvent('o', { bubbles: true  })); // expand it
     await flushPromises();
     expect(w.find('[data-test="reader"]').text()).toContain('<script>alert("body")</script>');
     expect(w.find('[data-test="reader"]').text()).toContain('<img src=x onerror=alert(1)> subject with <b>markup</b>');
@@ -1397,22 +1318,22 @@ describe('App UX-02 reader session', () => {
   });
 
   it('restores the ORIGINAL entry reference and anchor at nonzero scroll on Back', async () => {
-    const w = mountReaderApp();
-    await settle();
+    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     const list = w.find('ul.inbox-scroll').element as HTMLElement;
     list.scrollTop = 36; // read-03 sits at doc top 72 → viewport offset 36
     await focusRowById(w, 'read-03');
-    window.dispatchEvent(keydown({ key: 'Enter' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
 
     // Move the reader cursor away, then Back: the ORIGINAL entry reference
     // (read-03) and the captured viewport anchor must be restored.
-    window.dispatchEvent(keydown({ key: 'j' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(readerSubject(w)).toBe('Neighbor thread read-04');
-    window.dispatchEvent(keydown({ key: 'Escape' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect(focusedRow(w).attributes('data-test')).toBe('conversation-row-read-03');
     const scroller = w.find('ul.inbox-scroll').element as HTMLElement;
@@ -1422,115 +1343,115 @@ describe('App UX-02 reader session', () => {
   });
 
   it('resolves a removed entry reference to the next surviving old neighbor on Back', async () => {
-    const w = mountReaderApp();
-    await settle();
+    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
     // Both the entry row and its next neighbor vanish while reading.
     fixture.controls.removeFromInbox('read-01');
-    await settle();
+    await flushVueMacrotasks(2);
     fixture.controls.removeFromInbox('read-02');
-    await settle();
-    window.dispatchEvent(keydown({ key: 'Escape' }));
-    await settle();
+    await flushVueMacrotasks(2);
+    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect(focusedRow(w).attributes('data-test')).toBe('conversation-row-read-03');
   });
 
   it('resolves a removed J/K cursor through the entry ordering without wrapping', async () => {
-    const w = mountReaderApp();
-    await settle();
+    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
     fixture.controls.removeFromInbox('read-01');
-    await settle();
+    await flushVueMacrotasks(2);
     // The cursor (read-01) is no longer in the snapshot; the entry ordering
     // resolves J to the next surviving neighbor (read-02).
-    window.dispatchEvent(keydown({ key: 'j' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(readerSubject(w)).toBe('Neighbor thread read-02');
     // K from the first snapshot row clamps (no wrap, no access to removed rows).
-    window.dispatchEvent(keydown({ key: 'k' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('k', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(readerSubject(w)).toBe('Neighbor thread read-02');
   });
 
   it('archives the actioned conversation (not the entry origin) and advances to its surviving neighbor', async () => {
-    const w = mountReaderApp();
-    await settle();
+    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
-    window.dispatchEvent(keydown({ key: 'j' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(readerSubject(w)).toBe('Neighbor thread read-02');
-    window.dispatchEvent(keydown({ key: 'e' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(fixture.controls.archiveCommands).toHaveLength(1);
     expect(fixture.controls.archiveCommands[0]!.conversation.conversationId).toBe('read-02');
     // The reader advanced to read-03 (surviving neighbor of the actioned
     // conversation), and the origin (read-01) was untouched.
     expect(readerSubject(w)).toBe('Neighbor thread read-03');
-    window.dispatchEvent(keydown({ key: 'Escape' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(focusedRow(w).attributes('data-test')).toBe('conversation-row-read-01');
   });
 
   it('advances through the ACTION-TIME ordering after a concurrent reorder, while Back keeps the entry ordering (P2)', async () => {
-    const w = mountReaderApp();
-    await settle();
+    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
     // Entry ordering [01,02,03,04]; move the reader cursor to read-03.
-    window.dispatchEvent(keydown({ key: 'j' }));
-    await settle();
-    window.dispatchEvent(keydown({ key: 'j' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
+    await flushVueMacrotasks(2);
+    window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(readerSubject(w)).toBe('Neighbor thread read-03');
     // A backend reorder lands BEFORE the archive: action-time ordering is
     // [01,03,02,04], so the next surviving neighbor of read-03 is read-02.
     fixture.controls.reorderInbox(['read-01', 'read-03', 'read-02', 'read-04']);
-    await settle();
-    window.dispatchEvent(keydown({ key: 'e' }));
-    await settle();
+    await flushVueMacrotasks(2);
+    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(fixture.controls.archiveCommands).toHaveLength(1);
     expect(fixture.controls.archiveCommands[0]!.conversation.conversationId).toBe('read-03');
     // Advancement follows the action-time ordering: read-02, not read-04.
     expect(readerSubject(w)).toBe('Neighbor thread read-02');
     // Back still restores the ORIGINAL entry reference through the immutable
     // entry ordering — the archived read-03 and the reorder do not affect it.
-    window.dispatchEvent(keydown({ key: 'Escape' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect(focusedRow(w).attributes('data-test')).toBe('conversation-row-read-01');
   });
 
   it('archives the open conversation with E from the initial message-toggle focus (bubbling target)', async () => {
-    const w = mountReaderApp();
-    await settle();
+    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
     // The default reader focus is the newest message toggle — navigation
     // context, not a toolbar button — so E must still archive the CURRENT
     // open conversation.
     expect(activeMessageToggle()).toBe('message-toggle-read-01-m3');
     const toggle = document.querySelector('[data-test="message-toggle-read-01-m3"]');
-    toggle!.dispatchEvent(keydown({ key: 'e' })); // bubbles from the real target
-    await settle();
+    toggle!.dispatchEvent(createKeyEvent('e', { bubbles: true  })); // bubbles from the real target
+    await flushVueMacrotasks(2);
     expect(fixture.controls.archiveCommands).toHaveLength(1);
     expect(fixture.controls.archiveCommands[0]!.conversation.conversationId).toBe('read-01');
     expect(readerSubject(w)).toBe('Neighbor thread read-02');
   });
 
   it('keeps E usable after N/P moves message focus, and still blocks toolbar buttons', async () => {
-    const w = mountReaderApp();
-    await settle();
+    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
     // A focused toolbar button keeps the generic exclusion.
     (w.find('[data-test="reader-archive-toggle"]').element as HTMLElement).focus();
-    (w.find('[data-test="reader-archive-toggle"]').element as HTMLElement).dispatchEvent(keydown({ key: 'e' }));
-    await settle();
+    (w.find('[data-test="reader-archive-toggle"]').element as HTMLElement).dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(fixture.controls.archiveCommands).toHaveLength(0);
-    window.dispatchEvent(keydown({ key: 'p' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('p', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(activeMessageToggle()).toBe('message-toggle-read-01-m2');
     const toggle = document.querySelector('[data-test="message-toggle-read-01-m2"]');
-    toggle!.dispatchEvent(keydown({ key: 'e' }));
-    await settle();
+    toggle!.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     // The action targets the current open conversation, never the focused message.
     expect(fixture.controls.archiveCommands).toHaveLength(1);
     expect(fixture.controls.archiveCommands[0]!.conversation.conversationId).toBe('read-01');
@@ -1549,14 +1470,14 @@ describe('App UX-02 reader session', () => {
         mutationAccess: 'enabled',
       }),
     };
-    const w = mount(App, { props: { client, mode: 'browser-preview' }, attachTo: document.body });
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
     wrapper = w;
-    await settle();
+    await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
     expect(activeMessageToggle()).toBe('message-toggle-read-01-m3');
     const toggle = document.querySelector('[data-test="message-toggle-read-01-m3"]');
-    toggle!.dispatchEvent(keydown({ key: 'U', shiftKey: true }));
-    await settle();
+    toggle!.dispatchEvent(createKeyEvent('U', { bubbles: true , shiftKey: true }));
+    await flushVueMacrotasks(2);
     expect(fixture.controls.readCommands).toHaveLength(1);
     expect(fixture.controls.readCommands[0]!.conversation.conversationId).toBe('read-01');
     expect(fixture.controls.readCommands[0]!.read).toBe(false);
@@ -1564,8 +1485,8 @@ describe('App UX-02 reader session', () => {
   });
 
   it('keeps a stale delayed detail from replacing a newer cursor and refuses actions while loading', async () => {
-    const w = mountReaderApp();
-    await settle();
+    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     // read-02 is prefetched after read-01 became ready; make that in-flight
     // response slow so J has to wait for it (the neighbor is not cached yet).
     const real = fixture.client.getConversation.bind(fixture.client);
@@ -1577,37 +1498,37 @@ describe('App UX-02 reader session', () => {
       return real(target, searchContext);
     };
     await openReader(w, 'read-01');
-    window.dispatchEvent(keydown({ key: 'j' })); // read-02 → response pending
+    window.dispatchEvent(createKeyEvent('j', { bubbles: true  })); // read-02 → response pending
     await flushPromises();
     // Within the loading delay the previous conversation stays on screen but supplies no action target.
     expect(readerSubject(w)).toBe('Reader journey thread');
     expect(w.find('[data-test="reader-loading"]').exists()).toBe(false);
-    window.dispatchEvent(keydown({ key: 'e' }));
+    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
     await flushPromises();
     expect(fixture.controls.archiveCommands).toHaveLength(0);
     // Past the delay the loading presentation shows the target's list identity, never the old body.
     await new Promise((resolve) => setTimeout(resolve, READER_LOADING_DELAY_MS + 30));
     await flushPromises();
     expect(w.find('[data-test="reader-loading"]').exists()).toBe(true);
-    window.dispatchEvent(keydown({ key: 'e' }));
+    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
     await flushPromises();
     expect(fixture.controls.archiveCommands).toHaveLength(0);
     // Move on: read-03 resolves immediately and becomes the current cursor.
-    window.dispatchEvent(keydown({ key: 'j' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(readerSubject(w)).toBe('Neighbor thread read-03');
     // Make read-02 distinguishable while the stale (delayed) read-02 response
     // from the first J is still pending, so a stale replacement is observable.
     fixture.controls.replaceDetail('read-02', { subject: 'Changed neighbor read-02' });
-    await settle();
+    await flushVueMacrotasks(2);
     // Go back to read-02: the fresh fetch returns the CHANGED content.
-    window.dispatchEvent(keydown({ key: 'k' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('k', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(readerSubject(w)).toBe('Changed neighbor read-02');
     // Now let the stale read-02 response (old subject) settle: it must not
     // replace the newer cursor's state.
     slow.resolve(staleRead02);
-    await settle();
+    await flushVueMacrotasks(2);
     expect(readerSubject(w)).toBe('Changed neighbor read-02');
     expect(w.find('[data-test="reader-loading"]').exists()).toBe(false);
   });
@@ -1622,54 +1543,54 @@ describe('App UX-02 reader session', () => {
         return accepted.promise;
       },
     };
-    const w = mount(App, { props: { client, mode: 'browser-preview' }, attachTo: document.body });
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
     wrapper = w;
-    await settle();
+    await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
-    window.dispatchEvent(keydown({ key: 'e' }));
+    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
     await flushPromises();
-    window.dispatchEvent(keydown({ key: 'Escape' }));
+    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
     accepted.resolve(receipt!);
-    await settle();
+    await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
   });
 
   it('leaves reader ArrowUp/ArrowDown to native behavior with no fetch (inbox origin, P2)', async () => {
-    const w = mountReaderApp();
-    await settle();
+    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
     const callsBefore = fixture.controls.detailCalls.length;
-    const down = keydown({ key: 'ArrowDown', cancelable: true });
+    const down = createKeyEvent('ArrowDown', { bubbles: true , cancelable: true });
     window.dispatchEvent(down);
-    await settle();
-    const up = keydown({ key: 'ArrowUp', cancelable: true });
+    await flushVueMacrotasks(2);
+    const up = createKeyEvent('ArrowUp', { bubbles: true , cancelable: true });
     window.dispatchEvent(up);
-    await settle();
+    await flushVueMacrotasks(2);
     // Native default: no preventDefault, no conversation fetch, no cursor move.
     expect(down.defaultPrevented).toBe(false);
     expect(up.defaultPrevented).toBe(false);
     expect(fixture.controls.detailCalls.length).toBe(callsBefore);
     expect(readerSubject(w)).toBe('Reader journey thread');
     // j/k still switch conversations inside the reader.
-    window.dispatchEvent(keydown({ key: 'j' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(readerSubject(w)).toBe('Neighbor thread read-02');
   });
 
   it('leaves reader ArrowUp/ArrowDown to native behavior with no fetch (Activity origin, P2)', async () => {
-    const w = mountReaderApp();
-    await settle();
+    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     await openUtilityDrawer(w, 'activity');
     await w.find('[data-test="activity-open-read-op-1"]').trigger('click');
-    await settle();
+    await flushVueMacrotasks(2);
     expect(readerSubject(w)).toBe('Neighbor thread read-02');
     const callsBefore = fixture.controls.detailCalls.length;
-    const down = keydown({ key: 'ArrowDown', cancelable: true });
+    const down = createKeyEvent('ArrowDown', { bubbles: true , cancelable: true });
     window.dispatchEvent(down);
-    await settle();
-    const up = keydown({ key: 'ArrowUp', cancelable: true });
+    await flushVueMacrotasks(2);
+    const up = createKeyEvent('ArrowUp', { bubbles: true , cancelable: true });
     window.dispatchEvent(up);
-    await settle();
+    await flushVueMacrotasks(2);
     expect(down.defaultPrevented).toBe(false);
     expect(up.defaultPrevented).toBe(false);
     expect(fixture.controls.detailCalls.length).toBe(callsBefore);
@@ -1677,30 +1598,30 @@ describe('App UX-02 reader session', () => {
   });
 
   it('treats J/K as a no-op for Activity-origin readers (duplicate references included) and returns to Activity on Back', async () => {
-    const w = mountReaderApp();
-    await settle();
+    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     await openUtilityDrawer(w, 'activity');
     // The fixture carries duplicate Activity references to read-02.
     await w.find('[data-test="activity-open-read-op-1"]').trigger('click');
-    await settle();
+    await flushVueMacrotasks(2);
     expect(readerSubject(w)).toBe('Neighbor thread read-02');
     const callsBefore = fixture.controls.detailCalls.length;
-    window.dispatchEvent(keydown({ key: 'j' }));
-    await settle();
-    window.dispatchEvent(keydown({ key: 'k' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
+    await flushVueMacrotasks(2);
+    window.dispatchEvent(createKeyEvent('k', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     // No navigation and no getConversation calls for an Activity origin.
     expect(fixture.controls.detailCalls.length).toBe(callsBefore);
     expect(readerSubject(w)).toBe('Neighbor thread read-02');
-    window.dispatchEvent(keydown({ key: 'Escape' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(w.find('[data-test="utility-drawer"]').exists()).toBe(true);
     expect(w.find('[data-test="reader"]').exists()).false;
   });
 
   it('keeps Escape precedence: drawer first, then message details, then the reader', async () => {
-    const w = mountReaderApp();
-    await settle();
+    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
     const details = w.find('[data-test="message-details-read-01-m3"]');
     (details.element as HTMLDetailsElement).open = true;
@@ -1708,55 +1629,55 @@ describe('App UX-02 reader session', () => {
     await flushPromises();
     // A drawer opened over the reader takes Escape precedence.
     await openUtilityDrawer(w, 'activity');
-    window.dispatchEvent(keydown({ key: 'Escape' }));
+    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
     await flushPromises();
     expect(w.find('[data-test="utility-drawer"]').exists()).toBe(false);
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
     expect((w.find('[data-test="message-details-read-01-m3"]').element as HTMLDetailsElement).open).toBe(true);
     // Next Escape dismisses the open details disclosure, keeping the reader.
-    window.dispatchEvent(keydown({ key: 'Escape' }));
+    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
     await flushPromises();
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
     expect((w.find('[data-test="message-details-read-01-m3"]').element as HTMLDetailsElement).open).toBe(false);
     // Final Escape closes the reader.
-    window.dispatchEvent(keydown({ key: 'Escape' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
   });
 
   it('suppresses reader message commands under the modifier, IME, editable, and overlay guards', async () => {
-    const w = mountReaderApp();
-    await settle();
+    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
     const before = activeMessageToggle();
-    window.dispatchEvent(keydown({ key: 'n', ctrlKey: true }));
-    const ime = keydown({ key: 'n' });
+    window.dispatchEvent(createKeyEvent('n', { bubbles: true , ctrlKey: true }));
+    const ime = createKeyEvent('n', { bubbles: true  });
     Object.defineProperty(ime, 'isComposing', { value: true });
     window.dispatchEvent(ime);
-    window.dispatchEvent(keydown({ key: 'n', keyCode: 229 }));
+    window.dispatchEvent(createKeyEvent('n', { bubbles: true , keyCode: 229 }));
     const input = document.createElement('input');
     document.body.appendChild(input);
-    input.dispatchEvent(keydown({ key: 'n' }));
+    input.dispatchEvent(createKeyEvent('n', { bubbles: true  }));
     input.remove();
     await flushPromises();
     expect(activeMessageToggle()).toBe(before);
     // J under modifiers is equally suppressed.
-    window.dispatchEvent(keydown({ key: 'j', metaKey: true }));
+    window.dispatchEvent(createKeyEvent('j', { bubbles: true , metaKey: true }));
     await flushPromises();
     expect(readerSubject(w)).toBe('Reader journey thread');
     // With a drawer open, reader commands are suppressed underneath it.
     await openUtilityDrawer(w, 'activity');
     const callsBefore = fixture.controls.detailCalls.length;
-    window.dispatchEvent(keydown({ key: 'n' }));
-    window.dispatchEvent(keydown({ key: 'j' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('n', { bubbles: true  }));
+    window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(activeMessageToggle()).not.toBe('message-toggle-read-01-m2');
     expect(fixture.controls.detailCalls.length).toBe(callsBefore);
   });
 
   it('keeps a participant override when focus lands directly on a newly focused message participant (P2)', async () => {
-    const w = mountReaderApp();
-    await settle();
+    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
     // Baseline: newest message sender (m3, Ada).
     expect(w.find('[data-test="contact-name"]').text()).toBe('Ada Fixture');
@@ -1773,7 +1694,7 @@ describe('App UX-02 reader session', () => {
     expect(w.find('[data-test="contact-name"]').text()).toBe('Ravi Longname');
     // The override survives the active-message event that the same focus also
     // produced, including a full settle of background work.
-    await settle();
+    await flushVueMacrotasks(2);
     expect(w.find('[data-test="contact-name"]').text()).toBe('Ravi Longname');
     // Focus moved to the newly focused message identity (read-01-m1).
     expect(w.find('[data-test="message-read-01-m1"]').classes()).toContain('message-active');
@@ -1784,8 +1705,8 @@ describe('App UX-02 reader session', () => {
   });
 
   it('temporarily overrides the reader contact from participant hover/focus and restores the baseline', async () => {
-    const w = mountReaderApp();
-    await settle();
+    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
     // Baseline: the active (newest) message sender.
     expect(w.find('[data-test="contact-name"]').text()).toBe('Ada Fixture');
@@ -1815,23 +1736,23 @@ describe('App UX-02 reader session', () => {
     await participant.trigger('mouseenter');
     await flushPromises();
     fixture.controls.removeMessage('read-01', 'read-01-m2');
-    await settle();
+    await flushVueMacrotasks(2);
     expect(w.find('[data-test="contact-name"]').text()).toBe('Ada Fixture');
   });
 
   it('keeps the reply source fixed to the latest message even when an older message is focused', async () => {
-    const w = mountReaderApp();
-    await settle();
+    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
     expect(w.find('[data-test="reply-source-label"]').text()).toContain('Ada Fixture');
-    window.dispatchEvent(keydown({ key: 'p' }));
-    window.dispatchEvent(keydown({ key: 'p' }));
+    window.dispatchEvent(createKeyEvent('p', { bubbles: true  }));
+    window.dispatchEvent(createKeyEvent('p', { bubbles: true  }));
     await flushPromises();
     expect(activeMessageToggle()).toBe('message-toggle-read-01-m1');
     // The label still names the latest source.
     expect(w.find('[data-test="reply-source-label"]').text()).toContain('Ada Fixture');
     await w.find('[data-test="prepare-reply"]').trigger('click');
-    await settle();
+    await flushVueMacrotasks(2);
     expect(fixture.controls.draftCreations).toHaveLength(1);
     expect(fixture.controls.draftCreations[0]!.source).toEqual({
       kind: 'reply',
@@ -1842,35 +1763,35 @@ describe('App UX-02 reader session', () => {
   });
 
   it('preserves expansion, focus, and message identity through background replacement and message removal', async () => {
-    const w = mountReaderApp();
-    await settle();
+    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
-    window.dispatchEvent(keydown({ key: 'p' }));
-    window.dispatchEvent(keydown({ key: 'p' }));
-    window.dispatchEvent(keydown({ key: 'o' })); // expand the oldest message
+    window.dispatchEvent(createKeyEvent('p', { bubbles: true  }));
+    window.dispatchEvent(createKeyEvent('p', { bubbles: true  }));
+    window.dispatchEvent(createKeyEvent('o', { bubbles: true  })); // expand the oldest message
     await flushPromises();
     expect(w.find('[data-test="message-toggle-read-01-m1"]').attributes('aria-expanded')).toBe('true');
     // Same-reference background replacement: no focus theft, expansion kept.
     fixture.controls.replaceDetail('read-01');
-    await settle();
+    await flushVueMacrotasks(2);
     expect(activeMessageToggle()).toBe('message-toggle-read-01-m1');
     expect(w.find('[data-test="message-toggle-read-01-m1"]').attributes('aria-expanded')).toBe('true');
     // Focused message removed remotely: identity resolves to the next survivor.
-    window.dispatchEvent(keydown({ key: 'n' }));
-    window.dispatchEvent(keydown({ key: 'n' }));
+    window.dispatchEvent(createKeyEvent('n', { bubbles: true  }));
+    window.dispatchEvent(createKeyEvent('n', { bubbles: true  }));
     await flushPromises(); // focus is back on the newest toggle
     fixture.controls.removeMessage('read-01', 'read-01-m3');
-    await settle();
+    await flushVueMacrotasks(2);
     expect(document.activeElement?.getAttribute('data-test')).toBe('message-toggle-read-01-m2');
     expect(w.find('[data-test="message-read-01-m2"]').classes()).toContain('message-active');
   });
 
   it('adds no mailbox writes during a pure reading journey (copy, hover, details, navigation)', async () => {
-    const w = mountReaderApp();
-    await settle();
+    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
-    window.dispatchEvent(keydown({ key: 'p' }));
-    window.dispatchEvent(keydown({ key: 'O', shiftKey: true }));
+    window.dispatchEvent(createKeyEvent('p', { bubbles: true  }));
+    window.dispatchEvent(createKeyEvent('O', { bubbles: true , shiftKey: true }));
     const details = w.find('[data-test="message-details-read-01-m2"]');
     (details.element as HTMLDetailsElement).open = true;
     details.element.dispatchEvent(new Event('toggle'));
@@ -1878,12 +1799,12 @@ describe('App UX-02 reader session', () => {
     await w.find('[data-test="participant-from-read-01-m2"]').trigger('mouseleave');
     await w.find('[data-test="copy-email"]').trigger('click');
     await flushPromises();
-    window.dispatchEvent(keydown({ key: 'j' }));
-    await settle();
-    window.dispatchEvent(keydown({ key: 'k' }));
-    await settle();
-    window.dispatchEvent(keydown({ key: 'Escape' }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
+    await flushVueMacrotasks(2);
+    window.dispatchEvent(createKeyEvent('k', { bubbles: true  }));
+    await flushVueMacrotasks(2);
+    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    await flushVueMacrotasks(2);
     expect(fixture.controls.archiveCommands).toHaveLength(0);
     expect(fixture.controls.readCommands).toHaveLength(0);
     expect(fixture.controls.draftCreations).toHaveLength(0);
@@ -1893,12 +1814,6 @@ describe('App UX-02 reader session', () => {
 describe('App UX-02 contact copy controls', () => {
   let fixture: ReaderFixture;
   let wrapper: VueWrapper | null = null;
-
-  async function settle(): Promise<void> {
-    await flushPromises();
-    await flushMacrotasks(2);
-    await flushPromises();
-  }
 
   beforeEach(() => {
     fixture = createReaderFixtureClient();
@@ -1910,24 +1825,18 @@ describe('App UX-02 contact copy controls', () => {
     delete (navigator as { clipboard?: unknown }).clipboard;
   });
 
-  function mountReaderApp(): VueWrapper {
-    const w = mount(App, { props: { client: fixture.client, mode: 'browser-preview' }, attachTo: document.body });
-    wrapper = w;
-    return w;
-  }
-
   async function openReader(w: VueWrapper): Promise<void> {
     const row = w.find('[data-test="conversation-row-read-01"]');
     (row.element as HTMLElement).focus();
     await row.trigger('focusin');
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    await settle();
+    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true }));
+    await flushVueMacrotasks(2);
   }
 
   it('reports unavailable clipboard APIs with an honest manual-copy notice and no side effects', async () => {
     expect(navigator.clipboard).toBeUndefined();
-    const w = mountReaderApp();
-    await settle();
+    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     await openReader(w);
     await w.find('[data-test="copy-email"]').trigger('click');
     await flushPromises();
@@ -1948,8 +1857,8 @@ describe('App UX-02 contact copy controls', () => {
       configurable: true,
       value: { writeText: async (text: string) => { writes.push(text); } },
     });
-    const w = mountReaderApp();
-    await settle();
+    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     await openReader(w);
     await w.find('[data-test="copy-email"]').trigger('click');
     await flushPromises();
@@ -1963,8 +1872,8 @@ describe('App UX-02 contact copy controls', () => {
       configurable: true,
       value: { writeText: async () => { throw new Error('denied'); } },
     });
-    const w = mountReaderApp();
-    await settle();
+    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     await openReader(w);
     await w.find('[data-test="copy-email"]').trigger('click');
     await flushPromises();
@@ -1975,8 +1884,8 @@ describe('App UX-02 contact copy controls', () => {
   });
 
   it('hides the copy-name control when no display name is known', async () => {
-    const w = mountReaderApp();
-    await settle();
+    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    await flushVueMacrotasks(2);
     await openReader(w);
     // The reader baseline contact (newest message sender) has a display name.
     expect(w.find('[data-test="copy-name"]').exists()).toBe(true);
