@@ -1,11 +1,13 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { advanceUiUntil, useUiTestClock } from './support/timers';
+import { mountApp, press, deferred } from './helpers';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, type VueWrapper } from '@vue/test-utils';
-import type { InboxSnapshot } from '../src/lib/ipc/client';
+import type { Conversation, InboxSnapshot } from '../src/lib/ipc/client';
 import { createDiscoveryFixture } from './discovery.fixture';
-import { mountApp, press } from './helpers';
 
 let wrapper: VueWrapper | null = null;
-afterEach(() => { wrapper?.unmount(); wrapper = null; });
+beforeEach(useUiTestClock);
+afterEach(() => { wrapper?.unmount(); wrapper = null; vi.useRealTimers(); });
 async function setup() {
   const fixture = createDiscoveryFixture();
   await fixture.seedDone();
@@ -103,14 +105,14 @@ describe('UX-03 discovery and context history', () => {
     focus();
     // 'x' is now the UX-05 selection toggle; use a non-shortcut key as the
     // plain-typing cancel scenario.
-    for (const cancel of [() => press('h', { bubbles: true, cancelable: true }), () => press('m', { bubbles: true, cancelable: true }), () => press('Control', { bubbles: true, cancelable: true,  ctrlKey: true  }), () => press('Process', { bubbles: true, cancelable: true,  isComposing: true  }), () => window.dispatchEvent(new Event('blur'))]) {
-      press('g', { bubbles: true, cancelable: true }); cancel(); press('e', { bubbles: true, cancelable: true,  ctrlKey: true  }); press('h', { bubbles: true, cancelable: true });
+    for (const cancel of [() => press('h', { bubbles: true, cancelable: true }), () => press('m', { bubbles: true, cancelable: true }), () => press('Control', { bubbles: true, cancelable: true, ...{ ctrlKey: true } }), () => press('Process', { bubbles: true, cancelable: true, ...{ isComposing: true } }), () => window.dispatchEvent(new Event('blur'))]) {
+      press('g', { bubbles: true, cancelable: true }); cancel(); press('e', { bubbles: true, cancelable: true, ...{ ctrlKey: true } }); press('h', { bubbles: true, cancelable: true });
     }
     press('g', { bubbles: true, cancelable: true }); await palette(w); press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
-    press('e', { bubbles: true, cancelable: true,  ctrlKey: true  });
+    press('e', { bubbles: true, cancelable: true, ...{ ctrlKey: true } });
     // Past the chord window AND the swallow grace, a plain e is Archive again.
-    focus(); vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    press('g', { bubbles: true, cancelable: true }); vi.advanceTimersByTime(2200); vi.useRealTimers(); press('e', { bubbles: true, cancelable: true }); await flushPromises();
+    focus();
+    press('g', { bubbles: true, cancelable: true }); vi.advanceTimersByTime(2200); press('e', { bubbles: true, cancelable: true }); await flushPromises();
     expect(fixture.doneCalls()).toBe(0);
     expect(fixture.controls.archiveCommands.map((command) => command.conversation.conversationId)).toEqual(['read-02']);
     press('g', { bubbles: true, cancelable: true }); press('e', { bubbles: true, cancelable: true }); await flushPromises();
@@ -122,11 +124,11 @@ describe('UX-03 discovery and context history', () => {
     fixture.delayDone(50); fixture.failDone({ kind: 'storage_unavailable' });
     await w.get('[data-test="rail-done"]').trigger('click');
     await w.get('[data-test="rail-inbox"]').trigger('click'); await flushPromises();
-    await new Promise((resolve) => setTimeout(resolve, 70)); await flushPromises();
+    await vi.advanceTimersByTimeAsync(70); await flushPromises();
     expect(w.get('[data-test="inbox-title"]').text()).toBe('Inbox');
     expect(w.find('[data-test="inbox-error"]').exists()).toBe(false);
     fixture.failDone({ kind: 'storage_unavailable' });
-    await w.get('[data-test="rail-done"]').trigger('click'); await new Promise((resolve) => setTimeout(resolve, 70)); await flushPromises();
+    await w.get('[data-test="rail-done"]').trigger('click'); await vi.advanceTimersByTimeAsync(70); await flushPromises();
     expect(w.get('[data-test="inbox-error"]').text()).toContain('storage unavailable');
     await palette(w);
     expect(w.find('#action-archive').exists()).toBe(false);
@@ -146,7 +148,7 @@ describe('UX-03 discovery and context history', () => {
     await palette(w);
     expect(w.find('#action-unread').exists()).toBe(false);
     press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
-    await new Promise((resolve) => setTimeout(resolve, 60)); await flushPromises();
+    await vi.advanceTimersByTimeAsync(60); await flushPromises();
     await w.get('[data-test="rail-activity"]').trigger('click'); await flushPromises();
     await w.get('[data-test^="activity-open-"]').trigger('click');
     await flushPromises();
@@ -209,18 +211,30 @@ describe('UX-03 query and lifecycle guarantees', () => {
 
   it('revalidates targets across slow reader navigation so palette cannot mutate the previous thread', async () => {
     const { fixture, w } = await setup();
+    const pendingDetail = deferred<Conversation>();
+    const getConversation = fixture.client.getConversation.bind(fixture.client);
+    let read02Requested = false;
+    fixture.client.getConversation = (ref, loadMissingSearchResult) => {
+      if (ref.conversationId === 'read-02') {
+        read02Requested = true;
+        return pendingDetail.promise;
+      }
+      return getConversation(ref, loadMissingSearchResult);
+    };
     await w.get('[data-test="conversation-row-read-03"]').trigger('click'); await flushPromises();
     // The next neighbor (read-04) is prefetched; K targets the uncached read-02.
-    fixture.controls.delayNextDetail(50);
     press('k', { bubbles: true, cancelable: true });
+    await advanceUiUntil(() => read02Requested);
     await palette(w);
     expect(w.find('#action-archive').exists()).toBe(false);
     expect(w.find('#action-unread').exists()).toBe(false);
     await w.get('[data-test="action-query"]').setValue('e/s/h'); press('e', { bubbles: true, cancelable: true }); press('Enter', { bubbles: true, cancelable: true }); await flushPromises();
     expect(fixture.controls.archiveCommands).toEqual([]);
     expect(fixture.controls.readCommands).toEqual([]);
-    // Real timers: the delayed detail resolves after 50ms. Wait well past it (and past the 120ms hold) so a loaded machine cannot race it.
-    await new Promise((resolve) => setTimeout(resolve, 250)); await flushPromises();
+    pendingDetail.resolve(await getConversation({ accountId: 'reader-account', conversationId: 'read-02' }));
+    await flushPromises();
+    // Reader loading presentation has a 120ms minimum hold after detail arrives.
+    await vi.advanceTimersByTimeAsync(120); await flushPromises();
     await w.get('[data-test="action-query"]').setValue('Mark done'); press('Enter', { bubbles: true, cancelable: true }); await flushPromises();
     expect(fixture.controls.archiveCommands.map((command) => command.conversation.conversationId)).toEqual(['read-02']);
   });
@@ -246,7 +260,7 @@ describe('UX-03 query and lifecycle guarantees', () => {
     fixture.client.getAccountStatus = async () => ({ ...previousStatus, account: { accountId: 'replacement-account', emailAddress: 'replacement@example.test' } });
     fixture.client.listConversations = async () => ({ conversations: [], activity: [] });
     fixture.controls.notify();
-    await new Promise((resolve) => setTimeout(resolve, 70)); await flushPromises();
+    await vi.advanceTimersByTimeAsync(70); await flushPromises();
     expect(w.get('[data-test="inbox-title"]').text()).toBe('Inbox');
     expect(w.find('[data-test="context-back"]').exists()).toBe(false);
     expect(w.find('[data-test="conversation-row-read-01"]').exists()).toBe(false);
@@ -343,7 +357,7 @@ describe('UX-03 query and lifecycle guarantees', () => {
       expect(w.get('[data-test="reader-archive-toggle"]').attributes('disabled')).toBeDefined();
       expect(w.get('[data-test="reader-toggle-read"]').attributes('disabled')).toBeDefined();
       const calls = fixture.controls.detailCalls.length;
-      press('j', { bubbles: true, cancelable: true }); press('k', { bubbles: true, cancelable: true }); press('E', { bubbles: true, cancelable: true,  shiftKey: true  }); press('U', { bubbles: true, cancelable: true,  shiftKey: true  }); await flushPromises();
+      press('j', { bubbles: true, cancelable: true }); press('k', { bubbles: true, cancelable: true }); press('E', { bubbles: true, cancelable: true, ...{ shiftKey: true } }); press('U', { bubbles: true, cancelable: true, ...{ shiftKey: true } }); await flushPromises();
       expect(fixture.controls.detailCalls).toHaveLength(calls);
     }
     await palette(w);
@@ -377,7 +391,7 @@ describe('UX-03 query and lifecycle guarantees', () => {
     let reveals = 0;
     row.scrollIntoView = () => { reveals += 1; };
     row.focus(); reveals = 0;
-    press('k', { bubbles: true, cancelable: true,  metaKey: true  }); await flushPromises();
+    press('k', { bubbles: true, cancelable: true, ...{ metaKey: true } }); await flushPromises();
     expect(document.activeElement).toBe(w.get('[data-test="action-query"]').element);
     press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
     expect(document.activeElement).toBe(row);
@@ -387,14 +401,14 @@ describe('UX-03 query and lifecycle guarantees', () => {
   it('supports native Cmd+K without capturing the browser-reserved command and dismisses only the top overlay', async () => {
     const { w } = await setup();
     const row = w.get('[data-test="conversation-row-read-02"]').element as HTMLElement;
-    row.focus(); press('k', { bubbles: true, cancelable: true,  metaKey: true  }); await flushPromises();
+    row.focus(); press('k', { bubbles: true, cancelable: true, ...{ metaKey: true } }); await flushPromises();
     expect(w.find('[role="dialog"]').exists()).toBe(false);
     await w.setProps({ mode: 'native' });
-    press('k', { bubbles: true, cancelable: true,  metaKey: true  }); await flushPromises();
+    press('k', { bubbles: true, cancelable: true, ...{ metaKey: true } }); await flushPromises();
     expect(document.activeElement).toBe(w.get('[data-test="action-query"]').element);
     press('Escape', { bubbles: true, cancelable: true }); await flushPromises(); expect(document.activeElement).toBe(row);
     await w.get('[data-test="conversation-row-read-02"]').trigger('click'); await flushPromises();
-    press('k', { bubbles: true, cancelable: true,  metaKey: true  }); await flushPromises(); press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
+    press('k', { bubbles: true, cancelable: true, ...{ metaKey: true } }); await flushPromises(); press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
   });
 });
