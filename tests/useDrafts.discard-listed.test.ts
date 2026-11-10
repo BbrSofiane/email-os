@@ -86,6 +86,73 @@ describe('discardListed', () => {
   });
 });
 
+describe('Open and Discard of one draft exclude each other', () => {
+  it('refuses a discard of a draft whose open is pending, without calling the client, and opens it afterwards', async () => {
+    const fake = createBrowserFakeMailClient();
+    const summary = await seed(fake);
+    const pending = deferred<Awaited<ReturnType<MailClient['getDraft']>>>();
+    const deleteDraft = vi.fn(fake.deleteDraft.bind(fake));
+    const drafts = await setup({ ...fake, deleteDraft, getDraft: () => pending.promise });
+    const opening = drafts.openDraft(summary.ref);
+    await flushPromises();
+    expect(drafts.openingRefs.value.map((claim) => claim.ref)).toEqual([summary.ref]);
+    expect(await drafts.discardListed(summary, 'req-opening')).toEqual({ kind: 'busy' });
+    expect(deleteDraft).not.toHaveBeenCalled();
+    pending.resolve(await fake.getDraft(summary.ref));
+    expect(await opening).toBe(true);
+    expect(drafts.activeRef.value).toEqual(summary.ref);
+    expect(drafts.openingRefs.value).toEqual([]);
+    expect(await fake.listDrafts()).toHaveLength(1);
+  });
+
+  it('refuses to open a draft whose list delete is in flight, without calling getDraft', async () => {
+    const fake = createBrowserFakeMailClient();
+    const summary = await seed(fake);
+    const pending = deferred<void>();
+    const getDraft = vi.fn(fake.getDraft.bind(fake));
+    const deleteDraft: MailClient['deleteDraft'] = async (command) => { await pending.promise; return fake.deleteDraft(command); };
+    const drafts = await setup({ ...fake, deleteDraft, getDraft });
+    const discarding = drafts.discardListed(summary, 'req-flight');
+    await flushPromises();
+    expect(drafts.discardingRefs.value.map((claim) => claim.ref)).toEqual([summary.ref]);
+    expect(await drafts.openDraft(summary.ref)).toBe(false);
+    expect(getDraft).not.toHaveBeenCalled();
+    expect(drafts.activeRef.value).toBeNull();
+    expect(drafts.openingRefs.value).toEqual([]);
+    pending.resolve();
+    expect(await discarding).toBeNull();
+    expect(drafts.discardingRefs.value).toEqual([]);
+    expect(await fake.listDrafts()).toHaveLength(0);
+  });
+
+  it('releases both claims after a failed open and a failed delete, so the draft can be opened and discarded again', async () => {
+    const fake = createBrowserFakeMailClient();
+    const summary = await seed(fake);
+    const getDraft = vi.fn().mockRejectedValueOnce({ kind: 'storage_unavailable' }).mockImplementation(fake.getDraft.bind(fake));
+    const deleteDraft = vi.fn().mockRejectedValueOnce({ kind: 'storage_unavailable' }).mockImplementation(fake.deleteDraft.bind(fake));
+    const drafts = await setup({ ...fake, getDraft, deleteDraft });
+    expect(await drafts.openDraft(summary.ref)).toBe(false);
+    expect(drafts.openingRefs.value).toEqual([]);
+    expect(await drafts.discardListed(summary, 'req-fail')).toEqual({ kind: 'storage_unavailable' });
+    expect(drafts.discardingRefs.value).toEqual([]);
+    expect(await drafts.discardListed(summary, 'req-fail')).toBeNull();
+  });
+
+  it('does not block another draft', async () => {
+    const fake = createBrowserFakeMailClient();
+    const first = await seed(fake);
+    await fake.createDraft({ requestId: 'seed-2', source: { kind: 'new_message' }, initialContent: { to: 'b@example.test', cc: '', subject: 'Two', bodyText: 'body' } });
+    const second = (await fake.listDrafts()).find((draft) => draft.ref.draftId !== first.ref.draftId)!;
+    const pending = deferred<Awaited<ReturnType<MailClient['getDraft']>>>();
+    const drafts = await setup({ ...fake, getDraft: (ref) => ref.draftId === first.ref.draftId ? pending.promise : fake.getDraft(ref) });
+    const opening = drafts.openDraft(first.ref);
+    await flushPromises();
+    expect(await drafts.discardListed(second, 'req-other')).toBeNull();
+    pending.resolve(await fake.getDraft(first.ref));
+    expect(await opening).toBe(true);
+  });
+});
+
 describe('openDraft withdrawal', () => {
   it('does not install a draft that is no longer wanted when getDraft resolves, and sets no error', async () => {
     const fake = createBrowserFakeMailClient();

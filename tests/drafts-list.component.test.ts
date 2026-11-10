@@ -418,6 +418,89 @@ describe('DraftsList Discard', () => {
     expect(discardBtn('d1').attributes('disabled')).toBeDefined();
   });
 
+  it('titles Discard with both of its keys, matching aria-keyshortcuts', () => {
+    wrapper = mountList({ summaries: three, discardDraft: deleting().discardDraft });
+    expect(discardBtn('d1').attributes('title')).toBe('Discard this local draft — Delete or Backspace');
+    expect(discardBtn('d1').attributes('aria-keyshortcuts')).toBe('Delete Backspace');
+  });
+
+  it('cannot discard a draft that is being opened, by button or by key, and says so', async () => {
+    const { calls, discardDraft } = deleting();
+    wrapper = mountList({ summaries: three, discardDraft, openingRefs: [ref('d2')] });
+    expect(discardBtn('d2').attributes('disabled')).toBeDefined();
+    expect(discardBtn('d2').attributes('title')).toBe('This draft is being opened');
+    expect(discardBtn('d1').attributes('disabled')).toBeUndefined();
+    expect((wrapper.vm as unknown as { discardRow(key: string): boolean }).discardRow('acct-fixture:d2')).toBe(false);
+    expect(wrapper.find('[data-test="draft-discard-confirm"]').exists()).toBe(false);
+    await wrapper.setProps({ openingRefs: [] });
+    expect(discardBtn('d2').attributes('disabled')).toBeUndefined();
+    expect(calls).toHaveLength(0);
+  });
+
+  it('does not open the row whose delete is running, keeps it focusable, and opens it again once the delete fails', async () => {
+    let finish: (value: MailError | null) => void = () => {};
+    const discardDraft = vi.fn(() => new Promise<MailError | null>((resolve) => { finish = resolve; }));
+    wrapper = mountList({ summaries: three, discardDraft });
+    await discardBtn('d2').trigger('click'); await flushPromises();
+    await wrapper.get('[data-test="confirm-discard-draft"]').trigger('click'); await flushPromises();
+    const open = wrapper.get('[data-test="open-draft-d2"]');
+    expect(open.attributes('aria-disabled')).toBe('true');
+    expect(open.attributes('disabled')).toBeUndefined();
+    await open.trigger('click');
+    await wrapper.get('[data-test="draft-row-d2"] .context-row').trigger('click');
+    expect(wrapper.emitted('open')).toBeUndefined();
+    // Another row is not affected.
+    await wrapper.get('[data-test="open-draft-d1"]').trigger('click');
+    expect(wrapper.emitted('open')).toHaveLength(1);
+    finish({ kind: 'storage_unavailable' }); await flushPromises();
+    expect(wrapper.get('[data-test="open-draft-d2"]').attributes('aria-disabled')).toBeUndefined();
+    await wrapper.get('[data-test="open-draft-d2"]').trigger('click');
+    expect(wrapper.emitted('open')).toHaveLength(2);
+  });
+
+  describe('failure wording', () => {
+    async function failWith(error: MailError, props: Record<string, unknown> = {}): Promise<string> {
+      wrapper = mountList({ summaries: three, discardDraft: deleting(error).discardDraft, ...props });
+      await discardBtn('d2').trigger('click'); await flushPromises();
+      // Props can change while the request runs (the editor starts opening or closing meanwhile).
+      await wrapper.get('[data-test="confirm-discard-draft"]').trigger('click'); await flushPromises();
+      return wrapper.get('[data-test="draft-discard-error"]').text();
+    }
+
+    it('says something specific, and closes the confirmation, for invalid_request and request_id_conflict', async () => {
+      expect(await failWith({ kind: 'invalid_request', field: 'ref' })).toBe('Draft not discarded: the delete request was invalid.');
+      expect(wrapper!.find('[data-test="draft-discard-confirm"]').exists()).toBe(false);
+      wrapper!.unmount();
+      expect(await failWith({ kind: 'request_id_conflict' })).toBe('Draft not discarded: the delete request conflicted with an earlier one. Discard again to retry.');
+      expect(wrapper!.find('[data-test="draft-discard-confirm"]').exists()).toBe(false);
+    });
+
+    it('keeps the retry wording only for failures that are retryable', async () => {
+      expect(await failWith({ kind: 'outcome_unknown' })).toBe('Draft not discarded: the local delete was not confirmed. Retry is safe.');
+      expect(wrapper!.find('[data-test="draft-discard-confirm"]').exists()).toBe(true);
+    });
+
+    it('gives busy an honest reason: opening, switching, window closing', async () => {
+      const busy: MailError = { kind: 'busy' };
+      let finish: (value: MailError | null) => void = () => {};
+      const discardDraft = () => new Promise<MailError | null>((resolve) => { finish = resolve; });
+      wrapper = mountList({ summaries: three, discardDraft });
+      const text = async (patch: Record<string, unknown>): Promise<string> => {
+        await discardBtn('d2').trigger('click'); await flushPromises();
+        await wrapper!.get('[data-test="confirm-discard-draft"]').trigger('click'); await flushPromises();
+        await wrapper!.setProps(patch);
+        finish(busy); await flushPromises();
+        const message = wrapper!.get('[data-test="draft-discard-error"]').text();
+        await wrapper!.setProps({ busy: false, closingForWindow: false, openingRefs: [], activeRef: null });
+        return message;
+      };
+      expect(await text({ activeRef: ref('d2') })).toBe('Draft not discarded: it is open in an editor. Close the editor first.');
+      expect(await text({ openingRefs: [ref('d2')] })).toBe('Draft not discarded: it is being opened. Close the editor once it has opened.');
+      expect(await text({ busy: true })).toBe('Draft not discarded: the editor is switching drafts. Try again in a moment.');
+      expect(await text({ busy: true, closingForWindow: true })).toBe('Draft not discarded: the window is closing.');
+    });
+  });
+
   it('disables a pending confirmation when its draft opens in the editor', async () => {
     const { calls, discardDraft } = deleting();
     wrapper = mountList({ summaries: three, discardDraft });
@@ -452,7 +535,7 @@ describe('DraftsList Discard', () => {
 
   it('keeps the confirmation buttons focusable (aria-disabled, not disabled) while the request runs', async () => {
     let finish: (value: MailError | null) => void = () => {};
-    const discardDraft = () => new Promise<MailError | null>((resolve) => { finish = resolve; });
+    const discardDraft = vi.fn(() => new Promise<MailError | null>((resolve) => { finish = resolve; }));
     wrapper = mountList({ summaries: three, discardDraft });
     await discardBtn('d2').trigger('click'); await flushPromises();
     const confirm = wrapper.get('[data-test="confirm-discard-draft"]');
@@ -467,6 +550,7 @@ describe('DraftsList Discard', () => {
     // A second press and Keep draft do nothing while the request runs.
     await confirm.trigger('click'); await cancel.trigger('click'); await flushPromises();
     expect(wrapper.find('[data-test="draft-discard-confirm"]').exists()).toBe(true);
+    expect(discardDraft).toHaveBeenCalledTimes(1);
     finish({ kind: 'storage_unavailable' }); await flushPromises();
     expect(confirm.attributes('aria-disabled')).toBeUndefined();
   });

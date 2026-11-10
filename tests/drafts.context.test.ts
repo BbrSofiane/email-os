@@ -305,6 +305,44 @@ describe('opening a draft', () => {
     expect(w.get('[data-test="compose-card"]').attributes('aria-label')).toBe('New Message');
   });
 
+  it('opening Activity while the source conversation loads cancels the open: no editor is installed and Activity stays usable', async () => {
+    const fake = createBrowserFakeMailClient();
+    const { reply } = await seed(fake);
+    const pending = deferred<Awaited<ReturnType<MailClient['getConversation']>>>();
+    const client: MailClient = { ...fake, getConversation: (ref, ...rest) => ref.conversationId === 'conv-01' ? pending.promise : fake.getConversation(ref, ...rest) };
+    const w = await mountApp(fake, client);
+    await enter(w);
+    await w.get(`[data-test="open-draft-${reply.ref.draftId}"]`).trigger('click'); await flushPromises();
+    await w.get('[data-test="rail-activity"]').trigger('click'); await flushPromises();
+    expect(w.find('[data-test="utility-drawer"]').exists()).toBe(true);
+    pending.resolve(await fake.getConversation(fixtureRef('conv-01')));
+    await flushPromises();
+    expect(w.find('[data-test="reply-composer"]').exists()).toBe(false);
+    expect(w.find('[data-test="compose-card"]').exists()).toBe(false);
+    expect(w.find('[data-test="utility-drawer"]').exists()).toBe(true);
+    expect(w.find('[data-test="draft-body"]').exists()).toBe(false);
+    // Activity still closes and opens.
+    await w.get('[data-test="rail-activity"]').trigger('click'); await flushPromises();
+    expect(w.find('[data-test="utility-drawer"]').exists()).toBe(false);
+    await w.get('[data-test="rail-activity"]').trigger('click'); await flushPromises();
+    expect(w.find('[data-test="utility-drawer"]').exists()).toBe(true);
+  });
+
+  it('opening Activity while the draft itself loads never installs the editor under the drawer', async () => {
+    const fake = createBrowserFakeMailClient();
+    const { plain } = await seed(fake);
+    const pending = deferred<Awaited<ReturnType<MailClient['getDraft']>>>();
+    const client: MailClient = { ...fake, getDraft: (ref) => ref.draftId === plain.ref.draftId ? pending.promise : fake.getDraft(ref) };
+    const w = await mountApp(fake, client);
+    await enter(w);
+    await w.get(`[data-test="open-draft-${plain.ref.draftId}"]`).trigger('click'); await flushPromises();
+    await w.get('[data-test="rail-activity"]').trigger('click'); await flushPromises();
+    pending.resolve(await fake.getDraft(plain.ref));
+    await flushPromises();
+    expect(w.find('[data-test="compose-card"]').exists()).toBe(false);
+    expect(w.find('[data-test="utility-drawer"]').exists()).toBe(true);
+  });
+
   it('opening another draft flushes the active editor first; a failed flush keeps it open with its error and navigates nowhere', async () => {
     const fake = createBrowserFakeMailClient();
     const { reply, plain } = await seed(fake);
@@ -466,6 +504,50 @@ describe('triaging drafts in the list', () => {
     expect(await fake.listDrafts()).toHaveLength(2);
     expect(rows(w)).toHaveLength(2);
     expect(w.get('[data-test="draft-discard-status"]').text()).toBe('');
+  });
+});
+
+describe('Open and Discard of the same draft', () => {
+  const discardOf = (w: VueWrapper, draftId: string) => w.get(`[data-test="draft-row-${draftId}"] [data-test="discard-draft"]`);
+
+  it('Delete while the draft is still opening is refused: the editor opens and the draft is not deleted', async () => {
+    const fake = createBrowserFakeMailClient();
+    const { plain } = await seed(fake);
+    const pending = deferred<Awaited<ReturnType<MailClient['getDraft']>>>();
+    const deleteDraft = vi.fn(fake.deleteDraft.bind(fake));
+    const client: MailClient = { ...fake, deleteDraft, getDraft: (ref) => ref.draftId === plain.ref.draftId ? pending.promise : fake.getDraft(ref) };
+    const w = await mountApp(fake, client);
+    await enter(w);
+    const open = w.get(`[data-test="open-draft-${plain.ref.draftId}"]`);
+    await open.trigger('click'); await flushPromises();
+    expect(discardOf(w, plain.ref.draftId).attributes('disabled')).toBeDefined();
+    await key('Delete', {}, open.element);
+    expect(w.find('[data-test="draft-discard-confirm"]').exists()).toBe(false);
+    expect(deleteDraft).not.toHaveBeenCalled();
+    pending.resolve(await fake.getDraft(plain.ref));
+    await flushPromises();
+    expect(body(w)).toBe('plain body');
+    expect(await fake.listDrafts()).toHaveLength(2);
+  });
+
+  it('opening a row whose delete is pending does nothing: no editor opens on the draft being deleted', async () => {
+    const fake = createBrowserFakeMailClient();
+    const { plain } = await seed(fake);
+    const pending = deferred<void>();
+    const getDraft = vi.fn(fake.getDraft.bind(fake));
+    const deleteDraft: MailClient['deleteDraft'] = async (command) => { await pending.promise; return fake.deleteDraft(command); };
+    const w = await mountApp(fake, { ...fake, deleteDraft, getDraft });
+    await enter(w);
+    await discardOf(w, plain.ref.draftId).trigger('click'); await flushPromises();
+    await w.get('[data-test="confirm-discard-draft"]').trigger('click'); await flushPromises();
+    getDraft.mockClear();
+    await w.get(`[data-test="open-draft-${plain.ref.draftId}"]`).trigger('click'); await flushPromises();
+    expect(getDraft).not.toHaveBeenCalled();
+    expect(w.find('[data-test="compose-card"]').exists()).toBe(false);
+    pending.resolve(); await flushPromises();
+    expect(await fake.listDrafts()).toHaveLength(1);
+    expect(w.find('[data-test="compose-card"]').exists()).toBe(false);
+    expect(rows(w)).toHaveLength(1);
   });
 });
 

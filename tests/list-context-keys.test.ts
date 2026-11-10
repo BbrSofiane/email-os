@@ -450,7 +450,7 @@ describe('Delete and Backspace on a Drafts row', () => {
     const { w } = await mountDrafts();
     const button = w.get('[data-test="discard-draft"]');
     expect(button.attributes('aria-keyshortcuts')).toBe('Delete Backspace');
-    expect(button.attributes('title')).toBe('Discard this local draft — Delete');
+    expect(button.attributes('title')).toBe('Discard this local draft — Delete or Backspace');
     expect(button.attributes('aria-label')).toMatch(/^Discard draft /);
   });
 

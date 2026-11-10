@@ -44,7 +44,7 @@
 import { computed, nextTick, ref, useId, watchPostEffect } from 'vue';
 import type { DraftRef, DraftSummary, MailError } from '../lib/ipc/client';
 import { compactDateLabel, fullDateLabel, machineDateTime } from '../lib/browsing-dates';
-import { describeDiscardError, isDefiniteDiscardFailure } from '../lib/draft-errors';
+import { describeDiscardError, isDefiniteDiscardFailure, type DiscardBusyReason } from '../lib/draft-errors';
 import { useDraftPreviews } from '../composables/useDraftPreviews';
 import ContextRowList from './ContextRowList.vue';
 import DraftAlerts from './DraftAlerts.vue';
@@ -64,6 +64,10 @@ const props = defineProps<DraftAlertProps & {
   conflict: boolean;
   /** Opening or creating is disabled while the editor is closing or switching. */
   busy: boolean;
+  /** The window is closing; only used to word a refused Discard. */
+  closingForWindow?: boolean;
+  /** Drafts whose open is pending (`getDraft` in flight): they cannot be discarded meanwhile. */
+  openingRefs?: readonly DraftRef[];
   /** Reads one draft's body for its preview; without it rows show no preview. */
   loadBody?: (ref: DraftRef) => Promise<string>;
   /** Deletes one draft after the list's confirmation; resolves to null once confirmed, else the error. Without it rows offer no Discard. */
@@ -125,13 +129,19 @@ const paneEl = ref<HTMLElement | null>(null);
 // description is set on the button after each render.
 watchPostEffect(() => {
   for (const item of items.value) {
-    paneEl.value?.querySelector(`[data-test="open-draft-${item.draft.ref.draftId}"]`)?.setAttribute('aria-describedby', describedBy(item));
+    const button = paneEl.value?.querySelector(`[data-test="open-draft-${item.draft.ref.draftId}"]`);
+    button?.setAttribute('aria-describedby', describedBy(item));
+    // Stays focusable: a row being deleted is not opened, but focus must not fall off it.
+    if (openLocked(item)) button?.setAttribute('aria-disabled', 'true'); else button?.removeAttribute('aria-disabled');
   }
 });
 
 // Discard from the list: one confirmation at a time, under its row.
 const confirmKey = ref<string | null>(null);
 const discarding = ref(false);
+/** The row whose delete is running: it cannot be opened meanwhile. */
+const discardingKey = ref<string | null>(null);
+const discardBusyReason = ref<DiscardBusyReason>('editor');
 const discardError = ref<MailError | null>(null);
 const discardStatus = ref('');
 /**
@@ -151,8 +161,25 @@ function newRequestId(): string {
 function editorOwns(ref: DraftRef): boolean {
   return !!props.activeRef && props.activeRef.accountId === ref.accountId && props.activeRef.draftId === ref.draftId;
 }
+/** The draft is being opened (its `getDraft` is pending), so the list must not delete it. */
+function openPending(ref: DraftRef): boolean {
+  return !!props.openingRefs?.some((opening) => opening.accountId === ref.accountId && opening.draftId === ref.draftId);
+}
 function discardDisabled(item: DraftItem): boolean {
-  return props.busy || discarding.value || editorOwns(item.draft.ref);
+  return props.busy || discarding.value || editorOwns(item.draft.ref) || openPending(item.draft.ref);
+}
+/** A row whose delete is running is not opened. */
+function openLocked(item: DraftItem): boolean {
+  return discardingKey.value === item.key;
+}
+/** Why a refused Discard was refused, read when the failure arrives. */
+function busyReason(ref: DraftRef): DiscardBusyReason {
+  if (editorOwns(ref)) return 'editor';
+  if (openPending(ref)) return 'opening';
+  return props.closingForWindow ? 'closing_window' : props.busy ? 'switching' : 'editor';
+}
+function onOpen(item: DraftItem): void {
+  if (!openLocked(item)) emit('open', item.draft);
 }
 
 function rowEl(item: DraftItem, selector: string): HTMLElement | null {
@@ -210,10 +237,12 @@ async function confirmDiscard(item: DraftItem): Promise<void> {
   const neighbour = items.value[index + 1]?.key ?? items.value[index - 1]?.key ?? null;
   const confirmation = rowEl(item, '[data-test="draft-discard-confirm"]');
   discarding.value = true;
+  discardingKey.value = item.key;
   discardError.value = null;
   discardStatus.value = 'Discarding draft…';
   const error = await send(frozen.draft, frozen.requestId);
   discarding.value = false;
+  discardingKey.value = null;
   if (!error) {
     confirmKey.value = null;
     pending = null;
@@ -228,6 +257,7 @@ async function confirmDiscard(item: DraftItem): Promise<void> {
   // The draft stays in the list, and the failure stays visible until the next attempt.
   discardStatus.value = '';
   discardError.value = error;
+  discardBusyReason.value = busyReason(frozen.draft.ref);
   const definite = isDefiniteDiscardFailure(error);
   if (definite) {
     confirmKey.value = null;
@@ -271,7 +301,7 @@ defineExpose({ focusRow, discardRow, el: paneEl });
     <!-- Discard outcome: the live region stays mounted and visually hidden so each result is announced. -->
     <p class="draft-discard-status visually-hidden" role="status" aria-live="polite" data-test="draft-discard-status">{{ discardStatus }}</p>
     <div v-if="discardError" class="draft-notices">
-      <p role="alert" class="drawer-alert" data-test="draft-discard-error">{{ describeDiscardError(discardError) }}</p>
+      <p role="alert" class="drawer-alert" data-test="draft-discard-error">{{ describeDiscardError(discardError, discardBusyReason) }}</p>
     </div>
 
     <p v-if="!items.length" class="list-state" data-test="draft-list-empty">No local drafts.</p>
@@ -287,7 +317,7 @@ defineExpose({ focusRow, discardRow, el: paneEl });
       :row-test-id="(item: DraftItem) => `draft-row-${item.draft.ref.draftId}`"
       :open-test-id="(item: DraftItem) => `open-draft-${item.draft.ref.draftId}`"
       @update:active-key="emit('update:activeKey', $event)"
-      @open="emit('open', $event.draft)"
+      @open="onOpen($event)"
     >
       <template #primary="{ item }"><span class="context-subject" :class="{ 'drawer-empty': !item.draft.to }">{{ item.draft.to || '(no recipient)' }}</span></template>
       <template #secondary="{ item }">
@@ -302,7 +332,7 @@ defineExpose({ focusRow, discardRow, el: paneEl });
           class="drawer-quiet"
           data-test="discard-draft"
           :aria-label="`Discard draft ${rowLabel(item.draft)}`"
-          :title="editorOwns(item.draft.ref) ? 'This draft is open in an editor' : 'Discard this local draft — Delete'"
+          :title="editorOwns(item.draft.ref) ? 'This draft is open in an editor' : openPending(item.draft.ref) ? 'This draft is being opened' : 'Discard this local draft — Delete or Backspace'"
           aria-keyshortcuts="Delete Backspace"
           :aria-expanded="confirmKey === item.key"
           :disabled="discardDisabled(item)"

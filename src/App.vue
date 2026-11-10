@@ -529,6 +529,9 @@ async function releaseEditorSurface(): Promise<boolean> {
 }
 
 async function openDrawer(name: UtilityDrawer, entry: 'drawer' | 'toggle' = 'drawer'): Promise<void> {
+  // A drawer replaces the surface a pending draft open was heading for: a late
+  // response must not install an editor under it (the drawer would cover it).
+  cancelDraftOpen();
   // A drawer covers the central pane, so it would hide the inline compose card
   // or the docked reply composer while the editor silently owns shortcuts:
   // release the editor through the same protected flush first.
@@ -777,6 +780,8 @@ function routeDraftSurface(visible: boolean): void {
   }
   const block = replyHostBlock(source);
   if (source?.kind === 'reply' && block === null) {
+    // The drawer covers the central pane, and the reply composer lives in the reader pane: close it.
+    drawer.value = null;
     replyComposerOpen.value = true;
     composeCardOpen.value = false;
     cardNotice.value = null;
@@ -2766,6 +2771,8 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             :conflict="drafts.conflict.value"
             :suspended-editor="!!drafts.activeRef.value && !drafts.isVisible.value"
             :busy="drafts.closingForWindow.value || drafts.transitioning.value"
+            :closing-for-window="drafts.closingForWindow.value"
+            :opening-refs="drafts.openingRefs.value.map((claim) => claim.ref)"
             :create-error="drafts.createError.value"
             :list-error="drafts.listError.value"
             :subscription-error="drafts.draftSubscriptionError.value"
