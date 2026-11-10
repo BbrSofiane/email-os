@@ -2631,6 +2631,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               :can-move-next="canMoveReaderNext"
               :client="props.client"
               :preview="props.mode === 'browser-preview'"
+              :reply-docked="replyComposerOpen && readerOpen"
               @close="executeAction('back')"
               @move="moveReaderConversation"
               @archive="executeAction('archive')"

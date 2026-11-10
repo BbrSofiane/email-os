@@ -26,8 +26,9 @@
 import { actionLabel } from '../lib/browsing-actions';
 import { compactDateLabel, fullDateLabel, machineDateTime } from '../lib/browsing-dates';
 import { messageSnippet } from '../lib/message-snippet';
+import { revealDelta } from '../lib/reveal-in-view';
 import { bodyNeedsMonospace, splitMessageBody, type MessageBodyParts } from '../lib/message-body-format';
-import { computed, nextTick, reactive, ref, useId, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, useId, watch } from 'vue';
 import HeaderGlyph from './HeaderGlyph.vue';
 import MessageAttachments from './MessageAttachments.vue';
 import { useAttachmentTransfer } from '../composables/useAttachmentTransfer';
@@ -68,6 +69,8 @@ const props = defineProps<{
   client?: MailClient;
   /** Browser preview: saves are modelled in memory and say so. */
   preview?: boolean;
+  /** A reply composer is docked under the thread: keep the message being answered (the latest) in view. */
+  replyDocked?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -323,6 +326,41 @@ function pruneVisit(visit: VisitState, nextIds: string[]): void {
   visit.quoteOpenIds = new Set([...visit.quoteOpenIds].filter((id) => present.has(id)));
   visit.order = [...nextIds];
 }
+
+// While a reply is docked the card shrinks this scroller, which would leave the
+// message being answered behind it. The latest message is brought fully into view
+// when the reply opens and kept there as the card grows (Cc / Subject), until the
+// user scrolls or moves through the thread themselves. Scroll only: focus stays.
+let followLatest = false;
+let resizeObserver: ResizeObserver | null = null;
+
+function revealLatest(): void {
+  const scroller = scrollerEl.value;
+  const id = latestMessage.value?.id;
+  const el = id ? messageEls.get(id) : undefined;
+  if (!scroller || !el) return;
+  const delta = revealDelta(scroller.getBoundingClientRect(), el.getBoundingClientRect());
+  if (delta !== 0) scroller.scrollTop += delta;
+}
+
+function stopFollowing(): void {
+  followLatest = false;
+}
+
+watch(() => props.replyDocked, async (docked) => {
+  followLatest = !!docked;
+  if (!docked) return;
+  await nextTick();
+  if (followLatest) revealLatest();
+}, { immediate: true });
+
+onMounted(() => {
+  if (typeof ResizeObserver === 'undefined' || !scrollerEl.value) return;
+  resizeObserver = new ResizeObserver(() => { if (followLatest && props.replyDocked) revealLatest(); });
+  resizeObserver.observe(scrollerEl.value);
+  if (followLatest) revealLatest();
+});
+onBeforeUnmount(() => { resizeObserver?.disconnect(); resizeObserver = null; });
 
 function captureScrollAnchor(visit: VisitState): MessageAnchor | null {
   const scroller = scrollerEl.value;
@@ -711,6 +749,7 @@ function onDetailsToggle(event: Event, message: Message): void {
 
 /** N/P: move message focus without implicitly expanding (no wrap). */
 function moveMessage(delta: number): void {
+  followLatest = false;
   const visit = displayedVisit();
   const messages = props.conversation?.messages ?? [];
   if (!visit || messages.length === 0) return;
@@ -918,7 +957,7 @@ defineExpose({
       </div>
     </Teleport>
 
-    <div class="reader-scroll" ref="scrollerEl" data-test="reader-scroll">
+    <div class="reader-scroll" ref="scrollerEl" data-test="reader-scroll" @wheel.passive="stopFollowing" @touchmove.passive="stopFollowing" @pointerdown="stopFollowing">
       <template v-if="props.state === 'loading' && !held">
         <!-- The list row's own subject: truthful while the detail loads. Without one, a hidden
              placeholder with the real subject's class (same margins and line box). -->
