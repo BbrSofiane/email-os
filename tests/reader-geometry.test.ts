@@ -150,4 +150,13 @@ describe('reader and composer geometry (declared CSS)', () => {
     const pitch = borderTop + paddingTop + px('var(--message-row-height)') + paddingBottom + px(message['margin-bottom']);
     expect(px(row.height)).toBe(pitch);
   });
+
+  it('gives the focused active message toggle its own non-lavender ring, so active and focused are told apart', () => {
+    const ring = declarationsOf(css, '.message.message-active .message-toggle:focus-visible');
+    // The 3px lavender bar stays the only "active" signal (One Signal Rule); keyboard focus is Paper White.
+    expect(ring.outline).toBe('2px solid var(--text-primary)');
+    expect(ring['outline-offset']).toBe('1px');
+    expect(ring.outline).not.toContain('focus-accent');
+    expect(declarationsOf(css, '.message.message-active')['box-shadow']).toBe('inset 3px 0 0 var(--focus-accent)');
+  });
 });

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { Conversation, MailClient } from '../lib/ipc/client';
 import type { AttachmentDescriptor } from '../lib/ipc/generated';
-import { useAttachmentTransfer } from '../composables/useAttachmentTransfer';
+import { attachmentKey, useAttachmentTransfer } from '../composables/useAttachmentTransfer';
 import { displayFileName } from '../lib/display-name';
 import { ATTACHMENT_LIMIT_BYTES, formatBytes } from '../lib/format-bytes';
 const props = defineProps<{ client: MailClient; conversation: Conversation; preview: boolean; idPrefix?: string }>();
@@ -11,12 +11,28 @@ const emit = defineEmits<{ close: [] }>();
 const panel = ref<HTMLElement | null>(null);
 const files = ref<AttachmentDescriptor[]>([]);
 const loading = ref(true);
-const { pending, status, error, save, cancel } = useAttachmentTransfer({
+const { pending, status, error, target, save: startSave, cancel } = useAttachmentTransfer({
   client: () => props.client,
   conversation: () => props.conversation.ref,
   preview: () => props.preview,
 });
 const confirmUrl = ref<string | null>(null);
+const isSaving = (file: AttachmentDescriptor): boolean => !!pending.value && target.value === attachmentKey(file);
+// aria-disabled, not disabled: a button that is disabled while it holds focus drops
+// focus to <body>, and this modal's Escape and Tab trap only hear keys inside the panel.
+function save(file: AttachmentDescriptor) { if (!pending.value) void startSave(file); }
+function reload() { if (!loading.value && !pending.value) void load(); }
+// The Cancel transfer button exists only while a transfer runs. If it holds focus when the
+// transfer stops, the file's Save takes focus instead; focus that moved elsewhere is left alone.
+watch(pending, async (now, previous) => {
+  if (now || !previous) return;
+  const hadFocus = document.activeElement instanceof HTMLElement && document.activeElement.matches('[data-test="chooser-cancel"]');
+  const key = target.value;
+  await nextTick();
+  if (!hadFocus) return;
+  const saves = [...(panel.value?.querySelectorAll<HTMLElement>('[data-test="chooser-save"]') ?? [])];
+  (saves.find((b) => b.dataset.key === key) ?? saves[0] ?? panel.value?.querySelector<HTMLElement>('button'))?.focus();
+}, { flush: 'pre' });
 let live = true;
 let loadGeneration = 0;
 const links = computed(() => {
@@ -74,17 +90,17 @@ onBeforeUnmount(() => { live = false; });
       <p class="chooser-note" title="Up to 32 cached files and 32 plain-text links. PDF preview is unavailable pending a macOS security review.">Download only. Files save inert with a .download suffix; nothing is opened.</p>
       <p v-if="conversation.retainedSnapshotAt" role="note">Retained recovery snapshot: attachment fetch is unavailable.</p>
       <p v-if="loading" role="status">Loading cached files…</p>
-      <p v-if="error" role="alert">{{ error }} <button type="button" :disabled="loading || !!pending" @click="load">Reload file list</button></p>
+      <p v-if="error" role="alert">{{ error }} <button type="button" :aria-disabled="loading || !!pending ? 'true' : undefined" @click="reload">Reload file list</button></p>
       <p v-if="status" role="status">{{ status }}</p>
       <ul aria-label="Files">
         <li v-for="file in files" :key="`${file.messageId}:${file.attachmentId}`">
           <span>{{ displayFileName(file.filename) }} — {{ file.mimeType }}, {{ formatBytes(file.size) }}</span>
           <span v-if="file.size > ATTACHMENT_LIMIT_BYTES">Over the 5 MB limit; cannot download.</span>
-          <button v-else type="button" :aria-label="`Save ${displayFileName(file.filename)}`" :disabled="!!pending || !!conversation.retainedSnapshotAt" @click="save(file)">Save</button>
+          <button v-else type="button" data-test="chooser-save" :data-key="attachmentKey(file)" :aria-label="`${isSaving(file) ? 'Saving' : 'Save'} ${displayFileName(file.filename)}`" :aria-disabled="pending ? 'true' : undefined" :disabled="!!conversation.retainedSnapshotAt" @click="save(file)">{{ isSaving(file) ? 'Saving…' : 'Save' }}</button>
         </li>
       </ul>
       <p v-if="!loading && !files.length">No cached files. Sync to fetch any that are missing.</p>
-      <button v-if="pending" type="button" @click="cancel">Cancel transfer</button>
+      <button v-if="pending" type="button" data-test="chooser-cancel" @click="cancel">Cancel transfer</button>
       <ul aria-label="Links"><li v-for="url in links" :key="url"><span>{{ url }}</span> <button type="button" @click="copyLink(url)">Copy link</button> <button type="button" @click="confirmUrl = url">Open link…</button></li></ul>
       <p v-if="!links.length">No HTTP(S) links found in cached plain text. Email addresses are not browser links.</p>
       <div v-if="confirmUrl" role="group" aria-label="Confirm external browser">
