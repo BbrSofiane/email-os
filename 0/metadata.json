@@ -1,0 +1,73 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M6XCA63R12SM4N8KNAKV7JRY",
+  "session_id": "04b288ce-fae6-4da4-be66-78d914fe1325",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-10T21:54:47.815297414Z",
+  "checkpoints_count": 16,
+  "files_touched": [],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "6c67a9c7eccf",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 106,
+    "cache_creation_tokens": 538453,
+    "cache_read_tokens": 3352242,
+    "output_tokens": 44909,
+    "api_call_count": 39,
+    "subagent_tokens": {
+      "input_tokens": 186,
+      "cache_creation_tokens": 624286,
+      "cache_read_tokens": 6268676,
+      "output_tokens": 65221,
+      "api_call_count": 93
+    }
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-toolu_01WcUzTCRTKBKGecuYGErznu",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "impeccable"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "6c67a9c7eccf",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 280,
+        "end": 281,
+        "entry_ids": [
+          "fd631357-223e-49fa-8d89-8ef94705d8e0"
+        ],
+        "tool_use_id": "toolu_01WcUzTCRTKBKGecuYGErznu"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_01WcUzTCRTKBKGecuYGErznu"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: impeccable",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 16
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}

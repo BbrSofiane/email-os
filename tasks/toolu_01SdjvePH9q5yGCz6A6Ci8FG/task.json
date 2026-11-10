@@ -1,0 +1,15 @@
+{
+  "tool_use_id": "toolu_01SdjvePH9q5yGCz6A6Ci8FG",
+  "agent_id": "a323cbc6416b3b562",
+  "subagent_type": "general-purpose",
+  "task_description": "Review account and onboarding surfaces",
+  "token_usage": {
+    "input_tokens": 14,
+    "cache_creation_tokens": 45248,
+    "cache_read_tokens": 309503,
+    "output_tokens": 2294,
+    "api_call_count": 7
+  },
+  "started_at": "2026-11-08T09:51:01.018380008Z",
+  "completed_at": "2026-11-08T09:51:41.397515637Z"
+}

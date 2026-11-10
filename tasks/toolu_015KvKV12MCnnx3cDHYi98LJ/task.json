@@ -1,0 +1,15 @@
+{
+  "tool_use_id": "toolu_015KvKV12MCnnx3cDHYi98LJ",
+  "agent_id": "ae22e3755627d851a",
+  "subagent_type": "general-purpose",
+  "task_description": "Review reader and compose surfaces",
+  "token_usage": {
+    "input_tokens": 14,
+    "cache_creation_tokens": 61870,
+    "cache_read_tokens": 383246,
+    "output_tokens": 1794,
+    "api_call_count": 7
+  },
+  "started_at": "2026-11-08T09:51:05.669352629Z",
+  "completed_at": "2026-11-08T09:51:44.698767959Z"
+}

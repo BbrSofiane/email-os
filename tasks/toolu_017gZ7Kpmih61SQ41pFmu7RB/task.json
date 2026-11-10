@@ -1,0 +1,15 @@
+{
+  "tool_use_id": "toolu_017gZ7Kpmih61SQ41pFmu7RB",
+  "agent_id": "a99dd01cbc7e07113",
+  "subagent_type": "general-purpose",
+  "task_description": "Review design-system consistency",
+  "token_usage": {
+    "input_tokens": 22,
+    "cache_creation_tokens": 40908,
+    "cache_read_tokens": 495499,
+    "output_tokens": 5580,
+    "api_call_count": 11
+  },
+  "started_at": "2026-11-08T09:51:16.146716909Z",
+  "completed_at": "2026-11-08T09:52:20.918448965Z"
+}
