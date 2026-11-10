@@ -70,15 +70,15 @@ description = "Build the frontend assets for browser preview and native shell"
 run = "pnpm build"
 
 [tasks."dev:web"]
-description = "Run the fixture-only browser preview"
+description = "Run the synthetic in-memory browser preview"
 run = "pnpm dev"
 
 [tasks."dev:native"]
-description = "Run the native shell (fixture default; EMAIL_OS_MODE=gmail opts into read-only Gmail)"
+description = "Run the native shell (synthetic fixture default; Gmail starts read-only until mailbox actions are enabled)"
 run = "pnpm tauri dev"
 
 [tasks."build:native"]
-description = "Build the native fixture shell bundle (needs native prerequisites)"
+description = "Build the native shell bundle for fixture and Gmail profiles (needs native prerequisites)"
 run = "pnpm tauri build"
 
 [tasks."check:native"]

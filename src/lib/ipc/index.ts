@@ -1,5 +1,5 @@
 /**
- * Client selection for Slice 01.
+ * Client selection for native IPC and synthetic browser preview.
  *
  * - Native Tauri runtime: narrow adapter over the approved named commands/event.
  * - Plain browser: clearly labelled in-memory fake. The UI must render the

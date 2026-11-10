@@ -1,10 +1,9 @@
-//! `mail-core`: headless fixture mail core for vertical slice 01.
+//! `mail-core`: headless fixture and Gmail mail core.
 //!
-//! Owns the frozen wire DTOs, a concrete SQLite store with a seed-once
-//! synthetic inbox, durable receipts with request-key dedup, a single serial
-//! cancellable archive worker, an injectable clock, an OS-backed profile
-//! lock, and change subscription. No Tauri, no OAuth, no network, no mail
-//! beyond the synthetic fixture account. See `docs/vertical-slice-01.md`.
+//! Owns the frozen wire DTOs, fixture and Gmail SQLite stores, durable receipts,
+//! request-key deduplication, cancellable workers, OAuth/profile lifecycle,
+//! provider sync and mailbox operations. The fixture profile uses a seed-once
+//! synthetic inbox. The Gmail profile uses bounded provider reads and sync.
 
 pub mod attachments;
 mod cached_done;

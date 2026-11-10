@@ -13,28 +13,16 @@
  * explicit labelled utility disclosures instead of permanent competing columns;
  * the contact pane shows only exact known fields.
  *
- * Keyboard contract (window-level, one handler):
- * - j / ArrowDown, k / ArrowUp: move conversation focus in the list (row focus
- *   follows). Inside the reader only j/k switch conversations; ArrowUp/Down
- *   keep native scrolling there.
- * - Enter: open the focused conversation. Escape: close the active utility or
- *   contact disclosure first, then the reader.
- * - e: archive the focused (or reader-open) conversation when actions are enabled.
- * - Shift+E: restore to Inbox; G then E (within 1000ms): cached Done.
- * - Left from list navigation: destination navigator; pointer Commands opens palette.
- * - Cmd+K opens the palette in native mode only (browser reservations stay native).
- * - c: compose a new local draft in the inline compose card in the central pane (works from list and reader).
- * - Shift+U: explicitly mark the focused/open conversation unread.
- * - z: undo the last accepted conversation action (single level, 10 s window;
- *   the backend's eligibility decision is authoritative). Cmd/Ctrl+Z is left
- *   to native text editing.
- * - Ignored with Ctrl/Meta/Alt held, during IME composition, inside text fields, and
- *   Enter/e are ignored when a button owns the key (it activates itself).
- * - While a visible draft editor exists, every mailbox shortcut is suppressed;
- *   a suspended editor behind another disclosure must not own keys. While a
- *   utility/contact disclosure is open, Escape closes it and mailbox shortcuts
- *   underneath are suppressed. Draft text has no submit/send path and is
- *   rendered only as ordinary text.
+ * Keyboard contract: this comment is a short index. The action catalog in
+ * `src/lib/browsing-actions.ts` and `onKeydown` below define the full contract.
+ * - j/k and Arrow keys navigate; Enter opens; Escape returns/closes.
+ * - / opens search; e archives, Shift+E restores, s toggles stars,
+ *   r prepares a local reply,
+ *   c composes a local draft, h schedules a local reminder, and z undoes.
+ * - x selects; Shift+J/K extends selection; Tab switches Inbox/saved split.
+ *   G then E opens cached Done; G then H opens Reminders when supported.
+ * - Cmd+K opens Commands in native mode. Mailbox shortcuts yield to editors,
+ *   IME composition, and modifier keys. Drafts have no send path.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import CachedTrashPanel from './components/CachedTrashPanel.vue';
