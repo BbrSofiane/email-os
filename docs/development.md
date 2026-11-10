@@ -66,7 +66,7 @@ for evidence and remaining gates.
 ## Tooling
 
 All commands run through [mise](https://mise.jdx.dev) (pinned: node 24.4.1,
-pnpm 10.18.0, rust 1.89.0). First-time setup:
+pnpm 10.18.0, rust 1.89.0 with `rustfmt` and `clippy`). First-time setup:
 
 ```sh
 mise trust           # after inspecting the repository's mise.toml
@@ -74,6 +74,11 @@ mise install         # install the project-pinned runtimes/tools
 mise run setup:linux  # Debian/Ubuntu VMs only; installs OS packages with apt-get
 mise run install:ui   # locked frontend dependencies (pnpm install --frozen-lockfile)
 ```
+
+The Rust entry in `mise.toml` selects the minimal toolchain profile and explicitly
+installs `rustfmt` and `clippy`, so a fresh `mise install` supplies both lint tools.
+CI pins the mise installer action and mise version; it uses the same tool declaration.
+Verify with `mise exec -- cargo fmt --version` and `mise exec -- cargo clippy --version`.
 
 Rust dependencies resolve via the committed `Cargo.lock` on first `cargo`/`mise` use;
 no global configuration is needed.

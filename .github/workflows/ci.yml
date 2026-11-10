@@ -14,14 +14,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install mise
-        run: curl https://mise.run | sh
-
-      - name: Add mise to PATH
-        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
-      - name: Install project tools
-        run: mise install
+      - name: Install pinned mise and project tools
+        uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
+        with:
+          version: "2026.11.3"
+          # Rustup lives outside mise's tool cache. Install it fresh on each runner.
+          cache: false
 
       - name: Find pnpm store
         id: pnpm-store
