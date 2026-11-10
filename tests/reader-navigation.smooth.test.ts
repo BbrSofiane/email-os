@@ -161,7 +161,7 @@ describe('delayed loading presentation (J/K)', () => {
     await settle();
     expect(loadingShown()).toBe(false);
     expect(subject()).toBe('Neighbor thread read-02');
-    expect(w.find('[data-test="reader-loading-identity"]').exists()).toBe(false);
+    expect(w.find('[data-test="reader-loading-line"]').exists()).toBe(false);
   });
 
   it('keeps the loading presentation without an identity when no list row matches', async () => {

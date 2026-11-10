@@ -341,6 +341,7 @@ describe('inline attachments', () => {
     await settle();
     const request = (client.saveAttachment.mock.calls[0] as unknown as [{ requestId: string }])[0];
     expect(w.get('[data-test="attachment-a1"]').text()).toContain('Saving…');
+    expect(w.get('[data-test="attachment-a1"] [data-test="attachment-save"]').attributes('aria-disabled')).toBe('true');
     expect(w.get('[data-test="attachment-a2"] [data-test="attachment-save"]').attributes('disabled')).toBeDefined();
     await w.get('[data-test="attachment-cancel"]').trigger('click');
     await settle();
@@ -348,7 +349,8 @@ describe('inline attachments', () => {
     expect(w.get('[data-test="attachment-status"]').text()).toBe('Cancellation requested; waiting for transfer to stop.');
     transfer.reject({ kind: 'cancelled' });
     await settle();
-    expect(w.find('[data-test="attachment-saving"]').exists()).toBe(false);
+    expect(w.find('[data-test="attachment-cancel"]').exists()).toBe(false);
+    expect(w.get('[data-test="attachment-a1"]').text()).not.toContain('Saving…');
     expect(w.get('[data-test="attachment-a1"] [data-test="attachment-save"]').attributes('disabled')).toBeUndefined();
   });
 
@@ -394,6 +396,93 @@ describe('inline attachments', () => {
     await settle();
     expect(failed.get('[data-test="attachments-load-error"]').text()).toBe('Could not load file details.');
     expect(failed.get('.reader-scroll').text()).toContain('Body');
+  });
+
+  describe('saving keeps keyboard focus', () => {
+    const saveButton = (w: VueWrapper) => w.get('[data-test="attachment-save"]');
+    const cancelButton = (w: VueWrapper) => w.get('[data-test="attachment-cancel"]');
+
+    it('keeps the same Save button mounted, focused and aria-disabled as Saving… while the transfer runs', async () => {
+      const client = stubClient();
+      const transfer = deferred<{ filename: string }>();
+      client.saveAttachment.mockReturnValueOnce(transfer.promise as never);
+      const w = mountReader(withFile(), { client: asClient(client) });
+      await settle();
+      const button = saveButton(w).element as HTMLButtonElement;
+      button.focus();
+      await saveButton(w).trigger('click');
+      await settle();
+      expect(client.saveAttachment).toHaveBeenCalledTimes(1);
+      expect(saveButton(w).element).toBe(button);
+      expect(document.activeElement).toBe(button);
+      expect(button.getAttribute('aria-disabled')).toBe('true');
+      expect(button.hasAttribute('disabled')).toBe(false);
+      expect(button.textContent?.trim()).toBe('Saving…');
+      expect(button.getAttribute('aria-label')).toBe('Saving example.txt');
+      // A click or Enter while saving does not start a second transfer.
+      await saveButton(w).trigger('click');
+      expect(client.saveAttachment).toHaveBeenCalledTimes(1);
+      // No new live region: only the existing saved/failed lines are status/alert.
+      expect(w.get('[data-test="message-attachments-m1"]').findAll('[role="status"], [role="alert"], [aria-live]')).toHaveLength(0);
+
+      transfer.resolve({ filename: 'example.txt.download' });
+      await settle();
+      expect(document.activeElement).toBe(saveButton(w).element);
+      expect(document.activeElement).not.toBe(document.body);
+      expect(saveButton(w).text()).toBe('Save');
+      expect(saveButton(w).attributes('aria-disabled')).toBeUndefined();
+      expect(saveButton(w).attributes('aria-label')).toBe('Save example.txt');
+      expect(w.get('[data-test="attachment-status"]').attributes('role')).toBe('status');
+    });
+
+    it('keeps focus on Save when the transfer fails, and the alert still appears', async () => {
+      const client = stubClient();
+      const transfer = deferred<{ filename: string }>();
+      client.saveAttachment.mockReturnValueOnce(transfer.promise as never);
+      const w = mountReader(withFile(), { client: asClient(client) });
+      await settle();
+      (saveButton(w).element as HTMLButtonElement).focus();
+      await saveButton(w).trigger('click');
+      transfer.reject({ kind: 'network_unavailable' });
+      await settle();
+      expect(document.activeElement).toBe(saveButton(w).element);
+      expect(w.get('[data-test="attachment-error"]').attributes('role')).toBe('alert');
+    });
+
+    it('hands focus back to Save when Cancel had it and the transfer stops', async () => {
+      const client = stubClient();
+      const transfer = deferred<{ filename: string }>();
+      client.saveAttachment.mockReturnValueOnce(transfer.promise as never);
+      const w = mountReader(withFile(), { client: asClient(client) });
+      await settle();
+      (saveButton(w).element as HTMLButtonElement).focus();
+      await saveButton(w).trigger('click');
+      await settle();
+      (cancelButton(w).element as HTMLButtonElement).focus();
+      await cancelButton(w).trigger('click');
+      await settle();
+      // Cancel is a request: it stays (and keeps focus) until the transfer stops.
+      expect(document.activeElement).toBe(cancelButton(w).element);
+      transfer.reject({ kind: 'cancelled' });
+      await settle();
+      expect(w.find('[data-test="attachment-cancel"]').exists()).toBe(false);
+      expect(document.activeElement).toBe(saveButton(w).element);
+    });
+
+    it('does not take focus when the user moved elsewhere during the transfer', async () => {
+      const client = stubClient();
+      const transfer = deferred<{ filename: string }>();
+      client.saveAttachment.mockReturnValueOnce(transfer.promise as never);
+      const w = mountReader(withFile(), { client: asClient(client) });
+      await settle();
+      (saveButton(w).element as HTMLButtonElement).focus();
+      await saveButton(w).trigger('click');
+      await settle();
+      (w.get('[data-test="message-toggle-m1"]').element as HTMLElement).focus();
+      transfer.resolve({ filename: 'example.txt.download' });
+      await settle();
+      expect(document.activeElement).toBe(w.get('[data-test="message-toggle-m1"]').element);
+    });
   });
 
   describe('retrying file details', () => {
@@ -541,7 +630,13 @@ describe('reader loading placeholder', () => {
     // Subject bar plus message rows; no text of its own for assistive tech.
     expect(skeleton.text()).toBe('');
     expect(skeleton.findAll('.reader-skeleton-row').length).toBeGreaterThanOrEqual(3);
-    expect(skeleton.find('.reader-skeleton-subject').exists()).toBe(true);
+    // Without an identity the subject slot is a hidden bar before the status line, outside the rows.
+    const bar = w.get('[data-test="reader-skeleton-subject"]');
+    expect(bar.attributes('aria-hidden')).toBe('true');
+    expect(bar.element.tagName).toBe('H2');
+    expect(bar.classes()).toContain('reader-subject');
+    expect(skeleton.find('.reader-skeleton-subject').exists()).toBe(false);
+    expect(w.find('[data-test="reader-loading-subject"]').exists()).toBe(false);
   });
 
   it('with a known row identity shows the subject and sender, and only the rows as placeholder', async () => {
@@ -550,7 +645,45 @@ describe('reader loading placeholder', () => {
     expect(w.get('[data-test="reader-loading-subject"]').text()).toBe('Quarterly plan');
     expect(w.get('[data-test="reader-loading-sender"]').text()).toBe('Ada Fixture');
     const skeleton = w.get('[data-test="reader-skeleton"]');
-    expect(skeleton.find('.reader-skeleton-subject').exists()).toBe(false);
+    expect(w.find('[data-test="reader-skeleton-subject"]').exists()).toBe(false);
     expect(skeleton.findAll('.reader-skeleton-row').length).toBeGreaterThanOrEqual(3);
+  });
+
+  describe('does not move the pane: the status shares the identity line and adds no flow height of its own', () => {
+    const identity = { subject: 'Quarterly plan', sender: 'Ada Fixture', at: '2026-11-06T10:00:00Z' };
+    const line = (w: VueWrapper) => w.get('[data-test="reader-loading-line"]');
+
+    it('folds the sender, date and status into ONE line inside the stage, before the rows, with one role=status', async () => {
+      const w = mountLoading({ loadingIdentity: identity });
+      await settle();
+      const stage = w.get('[data-test="reader-loading-stage"]');
+      expect(stage.element.firstElementChild).toBe(line(w).element);
+      expect(stage.element.lastElementChild).toBe(w.get('[data-test="reader-skeleton"]').element);
+      const l = line(w);
+      expect(l.find('[data-test="reader-loading-sender"]').exists()).toBe(true);
+      expect(l.find('time').exists()).toBe(true);
+      expect(l.get('[data-test="reader-loading"]').text()).toBe('Loading conversation…');
+      expect(l.get('[data-test="reader-loading"]').attributes('role')).toBe('status');
+      expect(w.findAll('.reader-scroll [role="status"], .reader-scroll [role="alert"], .reader-scroll [aria-live]')).toHaveLength(1);
+      // The rows stay hidden from assistive technology and the line is not inside them.
+      expect(w.get('[data-test="reader-skeleton"]').find('[data-test="reader-loading"]').exists()).toBe(false);
+    });
+
+    it('without read controls the line is an overlay on the first row (no flow height)', async () => {
+      const w = mountLoading({ loadingIdentity: identity });
+      await settle();
+      expect(w.get('[data-test="reader-loading-stage"]').classes()).toContain('is-overlay');
+      expect(line(w).classes()).not.toContain('reader-meta-row');
+    });
+
+    it('with read controls the line takes the meta row slot the loaded reader will use', async () => {
+      const w = mountLoading({ loadingIdentity: identity, showReadControls: true });
+      await settle();
+      expect(w.get('[data-test="reader-loading-stage"]').classes()).not.toContain('is-overlay');
+      expect(line(w).classes()).toContain('reader-meta-row');
+      const readOnly = mountLoading({ loadingIdentity: identity, readOnly: true });
+      await settle();
+      expect(readOnly.get('[data-test="reader-loading-line"]').classes()).toContain('reader-meta-row');
+    });
   });
 });

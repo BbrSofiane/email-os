@@ -910,8 +910,9 @@ const contact = computed<ContactInfo | null>(() => {
 });
 const contactContext = computed<ContactContext>(() => (readerOpen.value ? 'open' : 'focused'));
 
-// Reply-target resolution for an active reply draft editor, shared by the
-// drafts-drawer composer label and the contact pane's compose context. While
+// Reply-target resolution for an active reply draft editor, for the
+// drafts-drawer composer label (the contact pane shows no compose line: it
+// would move its pinned name and email lines). While
 // the reader is open on the source conversation, the latest message's sender
 // is the exact known target; otherwise the draft's current raw To text is the
 // only honest fallback. No target is guessed from participants or names.
@@ -2631,6 +2632,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               :can-move-next="canMoveReaderNext"
               :client="props.client"
               :preview="props.mode === 'browser-preview'"
+              :reply-docked="replyComposerOpen && readerOpen"
               @close="executeAction('back')"
               @move="moveReaderConversation"
               @archive="executeAction('archive')"
@@ -2733,7 +2735,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
           ref="contactColumnEl"
           :inert="centralCovered || undefined"
         >
-          <ContactPane :contact="contact" :loading="readerLoading" :context="contactContext" :recent="recentMail" :compose-target="composeTarget" @search-sender="senderSearch" @open-recent="openRecent" />
+          <ContactPane :contact="contact" :loading="readerLoading" :context="contactContext" :recent="recentMail" @search-sender="senderSearch" @open-recent="openRecent" />
         </aside>
 
         <div
@@ -2855,7 +2857,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             <h2>Contact</h2>
             <button type="button" data-test="contact-disclosure-close" @click="closeContactDisclosure()">Close</button>
           </header>
-          <ContactPane :contact="contact" :loading="readerLoading" :context="contactContext" :recent="recentMail" :compose-target="composeTarget" @search-sender="senderSearch" @open-recent="openRecent" />
+          <ContactPane :contact="contact" :loading="readerLoading" :context="contactContext" :recent="recentMail" @search-sender="senderSearch" @open-recent="openRecent" />
         </div>
       </template>
       <!-- Bottom dock of the list column (DESIGN.md "In-flow Notices"): the

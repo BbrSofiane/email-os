@@ -170,7 +170,7 @@ const headingTarget = computed<{ text: string } | null>(() => {
 
 .composer {
   min-width: 0;
-  padding: 0.4rem 0.6rem;
+  padding: var(--composer-padding);
   display: flex;
   flex-direction: column;
   gap: 0.2rem;

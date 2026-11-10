@@ -59,7 +59,8 @@ describe('R: Reply from the reader', () => {
     expect(w.get('[data-test="prepare-reply"]').attributes('title')).toContain('Reply — R');
     expect(w.get('[data-test="prepare-reply"]').text()).toBe('Reply');
     expect(w.get('[data-test="message-reply-conv-01-m3"]').attributes('title')).toBe('Reply — R. Reply targets the latest message from Ada Fixture');
-    expect(w.get('[data-test="message-reply-conv-01-m3"]').attributes('aria-label')).toBe('Reply');
+    expect(w.get('[data-test="message-reply-conv-01-m3"]').attributes('aria-label')).toBe('Reply to latest message');
+    expect(w.get('[data-test="prepare-reply"]').text()).not.toBe(w.get('[data-test="message-reply-conv-01-m3"]').attributes('aria-label'));
 
     // Focus an older message first: the source must still be the latest one.
     await w.get('[data-test="message-toggle-conv-01-m1"]').trigger('focusin');

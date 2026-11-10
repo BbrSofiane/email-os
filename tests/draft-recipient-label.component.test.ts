@@ -1,8 +1,10 @@
 /**
  * Recipient affordance tests (TASK C): the drafts-drawer composer shows a
  * human-readable "Draft to {recipient}" label for reply drafts, and the
- * contact pane shows a "Composing to …" context line while a reply editor is
- * active. Both are plain-text interpolation; no raw IDs replace the label, and
+ * contact pane stays exactly as it is while a reply editor is active (no
+ * "Composing to …" line: it pushed the pinned name and email off their lines,
+ * and the reply heading already names the recipient). Plain-text
+ * interpolation; no raw IDs replace the label, and
  * the fixed reply source is exposed as data attributes only (never as text).
  */
 import { afterEach, describe, expect, it } from 'vitest';
@@ -92,34 +94,19 @@ describe('DraftsPanel reply recipient label', () => {
   });
 });
 
-describe('ContactPane compose target context', () => {
+describe('ContactPane while a reply editor is active', () => {
   let wrapper: VueWrapper | null = null;
   afterEach(() => { wrapper?.unmount(); wrapper = null; });
 
-  it('renders "Composing to <name> <mailbox>" at the top of the pane when composeTarget is set', () => {
-    wrapper = mount(ContactPane, { props: { contact: ADA, context: 'open', composeTarget: ADA } });
-    const line = wrapper.get('[data-test="compose-target"]');
-    expect(line.classes()).toContain('compose-target');
-    expect(line.text()).toContain('Composing to Ada Fixture');
-    expect(line.get('.compose-target-mail').text()).toBe('ada@example.test');
-    // The rest of the pane is unchanged.
-    expect(wrapper.find('[data-test="contact-identity"]').exists()).toBe(true);
-    expect(wrapper.get('[data-test="contact-mailbox"]').text()).toBe('ada@example.test');
-  });
-
-  it('falls back to the bare mailbox as the name when no display name is known', () => {
-    const target: ContactInfo = { displayName: null, mailbox: 'anon@example.test' };
-    wrapper = mount(ContactPane, { props: { contact: ADA, context: 'focused', composeTarget: target } });
-    const line = wrapper.get('[data-test="compose-target"]');
-    expect(line.text()).toContain('Composing to anon@example.test');
-    expect(line.get('.compose-target-mail').text()).toBe('anon@example.test');
-  });
-
-  it('renders nothing new when composeTarget is null', () => {
+  it('has no compose line: the identity block is the first thing after the hidden heading, so the pinned lines never move', () => {
     wrapper = mount(ContactPane, { props: { contact: ADA, context: 'open' } });
     expect(wrapper.find('[data-test="compose-target"]').exists()).toBe(false);
     expect(wrapper.find('.compose-target').exists()).toBe(false);
-    expect(wrapper.find('[data-test="contact-identity"]').exists()).toBe(true);
+    const children = [...wrapper.get('[data-test="contact-pane"]').element.children];
+    expect(children[0]?.tagName).toBe('H2');
+    expect(children[0]?.classList.contains('visually-hidden')).toBe(true);
+    expect(children[1]?.getAttribute('data-test')).toBe('contact-identity');
+    expect(wrapper.get('[data-test="contact-mailbox"]').text()).toBe('ada@example.test');
     expect(wrapper.find('[data-test="contact-unknown"]').exists()).toBe(false);
   });
 });
@@ -139,7 +126,7 @@ describe('App wiring: drawer label and contact-pane compose context for an activ
 
   afterEach(() => { wrapper?.unmount(); wrapper = null; });
 
-  it('shows "Draft to <sender>" in the inline reply composer and "Composing to" in the contact pane after preparing a reply (reader stays open)', async () => {
+  it('shows "Draft to <sender>" in the inline reply composer and leaves the contact pane unchanged after preparing a reply (reader stays open)', async () => {
     const fake = createBrowserFakeMailClient();
     const w = await mountApp(fake);
     if (w.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w);
@@ -156,9 +143,10 @@ describe('App wiring: drawer label and contact-pane compose context for an activ
     expect(w.find('[data-test="reply-composer"] [data-test="draft-flag"]').exists()).toBe(false);
     expect(w.get('[data-test="draft-recipient-label"]').text()).toBe('Ada Fixture');
     expect(w.get('[data-test="reply-source"]').attributes('data-source-message')).toBe('conv-01-m3');
-    const compose = w.get('[data-test="compose-target"]');
-    expect(compose.text()).toContain('Composing to Ada Fixture');
-    expect(compose.get('.compose-target-mail').text()).toBe('ada@example.test');
+    // The contact pane keeps its pinned lines: no "Composing to" line is inserted above them.
+    expect(w.find('[data-test="compose-target"]').exists()).toBe(false);
+    expect(w.get('[data-test="contact-pane"]').text()).not.toContain('Composing to');
+    expect(w.get('[data-test="contact-name"]').text()).toBe('Ada Fixture');
   });
 
   it('prefers the open source conversation latest sender ("Ada Fixture") while the reader is open on the reply source', async () => {
@@ -189,9 +177,7 @@ describe('App wiring: drawer label and contact-pane compose context for an activ
     expect(latest.from.displayName).toBe('Ada Fixture');
     const label = w.get('[data-test="draft-recipient-label"]');
     expect(label.text()).toBe('Ada Fixture');
-    const compose = w.get('[data-test="compose-target"]');
-    expect(compose.text()).toContain('Composing to Ada Fixture');
-    expect(compose.get('.compose-target-mail').text()).toBe('ada@example.test');
+    expect(w.find('[data-test="compose-target"]').exists()).toBe(false);
   });
 
   it('shows no compose-target line in the contact pane when no reply editor is active', async () => {

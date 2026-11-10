@@ -13,6 +13,8 @@ import { css, declarationsOf, resolveVars, rootToken, ruleIndexOf } from './css-
  */
 
 const replyComposerSfc = readFileSync('src/components/ReplyComposer.vue', 'utf8');
+const chooserSfc = readFileSync('src/components/AttachmentChooser.vue', 'utf8');
+const chooserCss = chooserSfc.slice(chooserSfc.indexOf('<style scoped>') + '<style scoped>'.length, chooserSfc.indexOf('</style>'));
 const replyComposerCss = replyComposerSfc.slice(replyComposerSfc.indexOf('<style scoped>') + '<style scoped>'.length, replyComposerSfc.indexOf('</style>'));
 
 const ROOT_FONT_PX = 16;
@@ -103,10 +105,13 @@ describe('reader and composer geometry (declared CSS)', () => {
     expect(toggleRight).toBe(0);
     const summary = declarationsOf(css, '.message-details summary');
     expect(summary['margin-left']).toBeUndefined();
-    for (const selector of ['.message-body', '.message-trail', '.message-quote-toggle']) {
+    for (const selector of ['.message-body', '.message-trail']) {
       const [, , , marginLeft] = box(declarationsOf(css, selector).margin);
       expect(marginLeft, selector).toBe(0);
     }
+    // The quote toggle is a ghost button: its LABEL (button padding included) is on that x.
+    const [, , , quoteMargin] = box(declarationsOf(css, '.message-quote-toggle').margin);
+    expect(quoteMargin + box(declarationsOf(css, ':where(button)').padding)[3]).toBe(0);
   });
 
   it('lands the selection-scope note and the in-pane recovery banner on 50px and 24px', () => {
@@ -149,5 +154,66 @@ describe('reader and composer geometry (declared CSS)', () => {
     const borderTop = px(message['border-top']?.split(' ')[0]);
     const pitch = borderTop + paddingTop + px('var(--message-row-height)') + paddingBottom + px(message['margin-bottom']);
     expect(px(row.height)).toBe(pitch);
+  });
+
+  it('gives the focused active message toggle its own non-lavender ring, so active and focused are told apart', () => {
+    const ring = declarationsOf(css, '.message.message-active .message-toggle:focus-visible');
+    // The 3px lavender bar stays the only "active" signal (One Signal Rule); keyboard focus is Paper White.
+    expect(ring.outline).toBe('2px solid var(--text-primary)');
+    expect(ring['outline-offset']).toBe('1px');
+    expect(ring.outline).not.toContain('focus-accent');
+    expect(declarationsOf(css, '.message.message-active')['box-shadow']).toBe('inset 3px 0 0 var(--focus-accent)');
+  });
+
+  it('lays the loading line out so the first skeleton row sits where the first message will (no jump)', () => {
+    // The skeleton adds no margin of its own: the subject (or its bar) and the meta slot decide where rows start.
+    expect(px(declarationsOf(css, '.reader-skeleton')['margin-top'] ?? '0px')).toBe(0);
+    // Overlay variant: the line is out of flow and centred on the first row's toggle box.
+    const overlay = declarationsOf(css, '.reader-loading-stage.is-overlay > .reader-loading-line');
+    expect(overlay.position).toBe('absolute');
+    const message = declarationsOf(css, '.message');
+    const rowTop = px(message['border-top']?.split(' ')[0]) + box(message.padding)[0];
+    expect(px(overlay.top)).toBe(rowTop);
+    expect(px(overlay.height)).toBe(px('var(--message-row-height)'));
+    // The subject placeholder is an h2 with the real subject's class, so margins and line box match by construction;
+    // the bar only paints inside that line box.
+    const bar = declarationsOf(css, '.reader-skeleton-subject');
+    expect(px(bar.height)).toBeLessThanOrEqual(px(declarationsOf(css, '.reader-subject')['font-size']) * Number(rootToken('--leading-headline')));
+    expect(bar.margin ?? '0').toMatch(/^0/);
+  });
+
+  it('gives the Details labels one fixed column, so From, To, Cc and Sent values share one x', () => {
+    const label = declarationsOf(css, '.message-field-label');
+    expect(label.flex).toBe('0 0 3rem');
+    expect(declarationsOf(css, '.message-field').display).toBe('flex');
+    // Wide enough for the longest label ("Sent") at the shell size with room to spare.
+    expect(px(label.flex?.split(' ')[2])).toBeGreaterThanOrEqual(48);
+  });
+
+  it('uses ONE inner padding for the reply composer and the new-message card, docked or not', () => {
+    expect(box(rootToken('--composer-padding'))).toEqual([12, 16, 16, 16]);
+    expect(declarationsOf(css, '.compose-card').padding).toBe('var(--composer-padding)');
+    expect(declarationsOf(replyComposerCss, '.composer').padding).toBe('var(--composer-padding)');
+  });
+
+  it('sizes the undocked new-message card to its content instead of the whole column', () => {
+    const card = declarationsOf(css, '.compose-card');
+    expect(card.flex).toBe('0 1 auto');
+    // Still scrolls instead of overflowing when the editor is taller than the column.
+    expect(card['overflow-y']).toBe('auto');
+    expect(card['min-height']).toBe('0');
+    expect(declarationsOf(css, '.reader-pane > .compose-card').flex).toBe('0 0 auto');
+  });
+
+  it('does not indent the attachment chooser lists past the text above them', () => {
+    const list = declarationsOf(chooserCss, 'ul');
+    expect(list['padding-inline-start'] ?? list.padding).toBe('0');
+  });
+
+  it('puts the Show quoted text label on the 50px text edge by pulling its 8px button padding into the gap', () => {
+    const toggle = declarationsOf(css, '.message-quote-toggle');
+    expect(box(toggle.margin)[3]).toBe(-8);
+    // The ghost default is `4px 8px`: the negative margin is exactly that padding.
+    expect(box(declarationsOf(css, ':where(button)').padding)[3]).toBe(8);
   });
 });

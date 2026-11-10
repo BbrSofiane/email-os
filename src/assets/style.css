@@ -57,6 +57,8 @@
      takes this as its minimum height and the loading skeleton rows are sized
      from it, so the pane does not jump when the conversation arrives. */
   --message-row-height: calc(var(--type-body) * 2);
+  /* One inner padding for the docked reply composer and the new-message card, docked or not. */
+  --composer-padding: 12px 16px 16px;
   --unread-marker: #ce9ece;
   /* DESIGN.md Seam: the 1px vertical separators between rail, list and
      contact pane (and the drawer's leading edge), utility-chip and input
@@ -1402,37 +1404,65 @@ button:focus-visible {
   overflow-wrap: anywhere;
 }
 
-/* Loading identity: the list row's sender and date under the subject, then one
-   quiet line. No motion; same type scale as the loaded reader. */
-.reader-loading-identity {
-  display: flex;
-  gap: 12px;
-  margin: 0.2rem 0;
+/* Loading line: the list row's sender and date and the status, one quiet line in
+   the same type scale as the loaded reader. Where the loaded reader has a meta
+   row the line is that row (`.reader-meta-row` supplies its metrics). Otherwise
+   (`.is-overlay`) it is out of flow, centred on the first placeholder row's
+   toggle box (border + top padding of `.message`, one shared row height), so it
+   never pushes the rows down. No motion. */
+.reader-loading-stage {
+  position: relative;
+}
+
+.reader-loading-line {
+  margin: 0;
   color: var(--text-secondary);
+}
+
+.reader-loading-stage.is-overlay > .reader-loading-line {
+  position: absolute;
+  top: calc(1px + 0.4rem);
+  left: 0;
+  right: 0;
+  height: var(--message-row-height);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  white-space: nowrap;
+}
+
+.reader-loading-sender {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .reader-loading-quiet {
   color: var(--text-secondary);
 }
 
-/* Static placeholder bars in the Rule colour: the subject line, then one row
-   per collapsed message. A row occupies the real collapsed .message pitch (1px
-   top border + 1rem vertical padding + the shared row height + the .5rem
-   bottom margin), so the gap is 0 and the pane does not jump when the
-   conversation arrives. The bar is drawn inside the row. No shimmer: nothing
-   moves while loading. */
+/* The overlay line stands where the first row's bar would be. */
+.reader-loading-stage.is-overlay .reader-skeleton-row:first-child::before {
+  visibility: hidden;
+}
+
+/* Static placeholder bars in the Rule colour: one row per collapsed message. A
+   row occupies the real collapsed .message pitch (1px top border + 1rem
+   vertical padding + the shared row height + the .5rem bottom margin), so the
+   gap is 0 and the rows start where the first message will (the subject, real
+   or its hidden `.reader-subject` placeholder, supplies the same margins). The
+   bar is drawn inside the row. No shimmer: nothing moves while loading. */
 .reader-skeleton {
   display: flex;
   flex-direction: column;
   gap: 0;
-  margin-top: 0.5rem;
 }
 
 .reader-skeleton-subject {
-  display: block;
+  display: inline-block;
+  vertical-align: middle;
   height: var(--type-headline);
   width: 40%;
-  margin-bottom: 0.5rem;
   background: var(--rule);
   border-radius: 4px;
   opacity: 0.6;
@@ -1512,10 +1542,14 @@ button:focus-visible {
   box-shadow: inset 3px 0 0 var(--focus-accent);
 }
 
-/* The active bar is the focus indicator for the message toggle: no second ring.
-   The fill, bold sender and bar remain; other controls keep the global ring. */
+/* Active and focused are different facts: the lavender bar says "this message",
+   the ring says "the keyboard is here". The active toggle gets a Paper White ring
+   (not lavender, so the One Signal Rule holds) only on :focus-visible; other
+   controls keep the global lavender ring. */
 .message.message-active .message-toggle:focus-visible {
-  outline: none;
+  outline: 2px solid var(--text-primary);
+  outline-offset: 1px;
+  border-radius: 4px;
 }
 
 .message.message-active .message-from {
@@ -1648,7 +1682,9 @@ button:focus-visible {
 }
 
 .message-quote-toggle {
-  margin: 0 0 0.2rem;
+  /* The ghost's 8px padding sits in the gap before the label, so the text starts
+     on the same x as the body above it (like .selection-actions). */
+  margin: 0 0 0.2rem -8px;
   color: var(--text-secondary);
 }
 
@@ -1712,7 +1748,9 @@ button:focus-visible {
 }
 
 .message-field-label {
-  flex: 0 0 auto;
+  /* One fixed column (the composer rows do the same with 3.5rem): the values
+     share one x whichever label they follow. */
+  flex: 0 0 3rem;
   color: var(--text-secondary);
 }
 
@@ -2350,7 +2388,9 @@ button:focus-visible {
  * (surface-raised) fill.
  */
 .compose-card {
-  flex: 1 1 auto;
+  /* Sized to its content (the list it replaces is not a reason to fill the column); it
+     still shrinks and scrolls when the editor is taller than the column. */
+  flex: 0 1 auto;
   min-height: 0;
   overflow-y: auto;
   margin: 6px 24px 12px 50px;
@@ -2358,7 +2398,7 @@ button:focus-visible {
   color: var(--text-primary);
   border: 1px solid var(--divider);
   border-radius: 10px;
-  padding: 12px 16px 16px;
+  padding: var(--composer-padding);
   font-size: var(--type-body);
   line-height: var(--leading-ui);
 }
