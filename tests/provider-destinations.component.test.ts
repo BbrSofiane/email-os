@@ -130,7 +130,9 @@ describe('provider destinations: look, copy and states', () => {
   it('opens with one Ash intro line; the detail lives in its title and hidden text', async () => {
     const { wrapper } = setup(); await flushPromises();
     const intro = wrapper.get('.destination-intro');
-    expect(intro.find('span:not(.visually-hidden)').text()).toBe('Read-only provider snapshots.');
+    expect(intro.find('span:not(.visually-hidden)').text()).toBe('Provider snapshots.');
+    // The drawer title already says "read only"; the intro does not repeat it.
+    expect(intro.find('span:not(.visually-hidden)').text().toLowerCase()).not.toContain('read');
     expect(intro.attributes('title')).toContain('No automatic read changes.');
     expect(intro.attributes('title')).toContain('Label and Move are not available in this increment.');
     expect(intro.get('.visually-hidden').text()).toBe('No automatic read changes. Label and Move are not available in this increment.');

@@ -64,7 +64,7 @@ const modeLabel = computed(() => {
 
 const firstSyncRunning = computed(() => sync.value.state === 'syncing' && !sync.value.initialSyncComplete);
 const syncLabel = computed(() => {
-  if (sync.value.state === 'error') return 'Sync error';
+  if (sync.value.state === 'error') return 'Failed';
   if (sync.value.state === 'syncing') return firstSyncRunning.value ? 'Syncing first mail…' : 'Syncing…';
   return 'Idle';
 });
@@ -73,10 +73,18 @@ const cachedLabel = computed(() => {
   if (firstSyncRunning.value) return `${count} cached`;
   return `${count} ${count === 1 ? 'conversation' : 'conversations'} cached`;
 });
-/** The bounded-coverage fact, once, as a short second line. */
+/**
+ * The bounded-coverage fact, once, as a short second line. It describes a cache,
+ * so it is absent with nothing cached and when the account is not connected
+ * (a disconnect clears the cache; it would only describe an empty one).
+ */
 const coverageText = computed(() => sync.value.coverageLimit > 0
+  && sync.value.cachedConversations > 0
+  && (connection.value === 'connected' || connection.value === 'auth_required')
   ? `Up to ${sync.value.coverageLimit} conversations are cached; older mail may be missing.`
   : '');
+/** The inline Retry beside the error covers Sync now; without a typed error there is no Retry. */
+const retryShown = computed(() => sync.value.state === 'error' && !!sync.value.error);
 
 const showConnect = computed(() => connection.value === 'not_configured' || connection.value === 'disconnected' || connection.value === 'auth_required');
 const canEnable = computed(() => access.value === 'read_only' && connection.value === 'connected');
@@ -143,7 +151,9 @@ watch(connection, (next) => { if (next === 'authenticating') confirming.value = 
       <h3 class="account-label">Sync</h3>
       <p class="account-line account-sync-line">
         <span data-test="account-sync-state">{{ syncLabel }}</span>
+        <span class="account-sep" aria-hidden="true">·</span>
         <span data-test="account-last-synced"><template v-if="sync.lastSyncedAt">Last synced <FullDate :at="sync.lastSyncedAt" /></template><template v-else>Never synced</template></span>
+        <span class="account-sep" aria-hidden="true">·</span>
         <span data-test="account-cached">{{ cachedLabel }}</span>
       </p>
       <p v-if="coverageText" class="account-note" data-test="account-coverage">{{ coverageText }}</p>
@@ -164,7 +174,7 @@ watch(connection, (next) => { if (next === 'authenticating') confirming.value = 
           @click="emit('sync')"
         >Retry</button>
       </p>
-      <div v-if="connection === 'connected'" class="account-actions">
+      <div v-if="connection === 'connected' && !retryShown" class="account-actions">
         <button
           type="button"
           data-test="account-sync"
@@ -243,6 +253,7 @@ watch(connection, (next) => { if (next === 'authenticating') confirming.value = 
         <div class="account-actions">
           <button
             type="button"
+            class="account-destructive"
             data-test="account-disconnect-confirm"
             :disabled="props.busy !== null || props.transitioning"
             @click="emit('disconnect')"
@@ -252,6 +263,7 @@ watch(connection, (next) => { if (next === 'authenticating') confirming.value = 
           <button
             ref="keepButton"
             type="button"
+            class="account-primary"
             data-test="account-disconnect-cancel"
             @click="keepAccount()"
           >

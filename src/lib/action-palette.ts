@@ -63,11 +63,11 @@ export const actionAliases: Record<BrowsingActionId, readonly string[]> = {
 };
 
 /** Bound keys that move or select without being a command; shown, never executed. */
-export interface KeyHint { id: string; label: string; keys: readonly string[]; aliases: readonly string[] }
+export interface KeyHint { id: string; label: string; keys: readonly string[]; aliases: readonly string[]; needsRows?: boolean }
 export const keyHints: readonly KeyHint[] = [
-  { id: 'move', label: 'Next and previous conversation', keys: ['J', 'K'], aliases: ['down', 'up', 'arrow', 'move', 'navigate'] },
-  { id: 'select', label: 'Select conversation', keys: ['X'], aliases: ['check', 'toggle', 'mark'] },
-  { id: 'extend', label: 'Extend selection', keys: ['Shift+J', 'Shift+K'], aliases: ['range', 'multiple', 'select'] },
+  { id: 'move', label: 'Next and previous conversation', keys: ['J', 'K'], aliases: ['down', 'up', 'arrow', 'move', 'navigate'], needsRows: true },
+  { id: 'select', label: 'Select conversation', keys: ['X'], aliases: ['check', 'toggle', 'mark'], needsRows: true },
+  { id: 'extend', label: 'Extend selection', keys: ['Shift+J', 'Shift+K'], aliases: ['range', 'multiple', 'select'], needsRows: true },
   { id: 'destinations', label: 'Open destinations', keys: ['←'], aliases: ['navigator', 'left', 'go to'] },
 ];
 

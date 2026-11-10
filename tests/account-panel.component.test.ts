@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import AccountPanel from '../src/components/AccountPanel.vue';
@@ -73,6 +74,37 @@ describe('AccountPanel structure', () => {
 });
 
 describe('AccountPanel sync section', () => {
+  it('labels the sync facts as one separated line: state · last synced · cached', () => {
+    const w = mountPanel(status({ sync: { cachedConversations: 18 } }));
+    const line = w.get('.account-sync-line');
+    expect(line.findAll(':scope > span').map((span) => span.text())).toEqual(['Idle', '·', 'Never synced', '·', '18 conversations cached']);
+    // Separators are decoration for the eye; assistive text reads the three facts.
+    const seps = line.findAll('.account-sep');
+    expect(seps).toHaveLength(2);
+    for (const sep of seps) expect(sep.attributes('aria-hidden')).toBe('true');
+    const failed = mountPanel(status({ sync: { state: 'error', error: { kind: 'rate_limited' }, cachedConversations: 3 } }));
+    expect(test(failed, 'account-sync-state').text()).toBe('Failed');
+  });
+
+  it('hides the coverage line when nothing is cached or the account is not connected', () => {
+    expect(test(mountPanel(status({ sync: { cachedConversations: 0 } })), 'account-coverage').exists()).toBe(false);
+    expect(test(mountPanel(status({ connection: 'disconnected', account: null, sync: { cachedConversations: 0 } })), 'account-coverage').exists()).toBe(false);
+    expect(test(mountPanel(status({ connection: 'not_configured', account: null })), 'account-coverage').exists()).toBe(false);
+    // Cached mail under an expired sign-in is still bounded, so the fact still applies.
+    expect(test(mountPanel(status({ connection: 'auth_required', sync: { cachedConversations: 18 } })), 'account-coverage').exists()).toBe(true);
+    expect(test(mountPanel(status({ sync: { cachedConversations: 1 } })), 'account-coverage').exists()).toBe(true);
+  });
+
+  it('hides Sync now while the inline Retry shows, and keeps it when the error has no typed cause', () => {
+    const failed = mountPanel(status({ sync: { state: 'error', error: { kind: 'network_unavailable' } } }));
+    expect(test(failed, 'account-sync-retry').exists()).toBe(true);
+    expect(test(failed, 'account-sync').exists()).toBe(false);
+    // An error state with no sentence has no Retry, so Sync now stays the only way to ask again.
+    const untyped = mountPanel(status({ sync: { state: 'error', error: null } }));
+    expect(test(untyped, 'account-sync-retry').exists()).toBe(false);
+    expect(test(untyped, 'account-sync').exists()).toBe(true);
+  });
+
   it('reads as one line with a correct plural', () => {
     const w = mountPanel(status({ sync: { cachedConversations: 1, lastSyncedAt: '2025-01-01T00:00:00.000Z' } }));
     expect(test(w, 'account-sync-state').text()).toBe('Idle');
@@ -168,6 +200,15 @@ describe('AccountPanel disconnect confirmation', () => {
     expect(document.activeElement).toBe(test(w, 'account-disconnect-cancel').element);
   });
 
+  it('tells the two chips apart: Disconnect is the destructive one, Keep account the default', async () => {
+    const w = mountPanel(status());
+    await test(w, 'account-disconnect').trigger('click');
+    expect(test(w, 'account-disconnect-confirm').classes()).toContain('account-destructive');
+    expect(test(w, 'account-disconnect-cancel').classes()).toContain('account-primary');
+    expect(test(w, 'account-disconnect-cancel').classes()).not.toContain('account-destructive');
+    expect(test(w, 'account-disconnect-confirm').classes()).not.toContain('account-primary');
+  });
+
   it('Keep account closes the confirm and returns focus to Disconnect…', async () => {
     const w = mountPanel(status());
     await test(w, 'account-disconnect').trigger('click');
@@ -232,5 +273,19 @@ describe('AccountPanel disconnect confirmation', () => {
       await test(w, 'account-disconnect-confirm').trigger('click');
       expect(w.emitted('disconnect')).toHaveLength(1);
     }
+  });
+});
+
+describe('AccountPanel action error', () => {
+  it('is an alert with the plain sentence, in the same coral class family as the sync error', () => {
+    const w = mountPanel(status(), { actionError: { kind: 'permission_required' } as MailError });
+    const err = test(w, 'account-action-error');
+    expect(err.attributes('role')).toBe('alert');
+    expect(err.text()).toContain('remains read-only');
+    const css = readFileSync('src/assets/style.css', 'utf8');
+    // Source-level pin (jsdom does not resolve the stylesheet): the failure tone is Coral Fault, not the amber group.
+    const amber = css.match(/\.status-outcome_unknown,[^{]*\{\s*color: var\(--warning\);/s)![0];
+    expect(amber).not.toContain('.account-action-error');
+    expect(css).toMatch(/\.account-sync-error,\s*\.account-action-error\s*\{[^}]*color: var\(--danger\)/s);
   });
 });

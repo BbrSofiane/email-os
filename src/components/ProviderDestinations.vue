@@ -139,7 +139,7 @@ onMounted(() => { void loadCatalog(); });
 
 <template>
   <section class="provider-destinations" aria-label="Provider destinations" @keydown="keydown">
-    <p class="destination-intro" :title="INTRO_DETAIL"><span>Read-only provider snapshots.</span> <span class="visually-hidden">{{ INTRO_DETAIL }}</span></p>
+    <p class="destination-intro" :title="INTRO_DETAIL"><span>Provider snapshots.</span> <span class="visually-hidden">{{ INTRO_DETAIL }}</span></p>
     <template v-if="!destination">
       <label class="destination-find"><span class="visually-hidden">Find a destination</span><input v-model="query" class="destination-search" type="search" placeholder="Find a destination" /></label>
       <div class="destination-actions">

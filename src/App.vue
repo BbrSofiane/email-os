@@ -46,7 +46,7 @@ import SelectionBar from './components/SelectionBar.vue';
 import HeaderGlyph from './components/HeaderGlyph.vue';
 import PaneGlyph from './components/PaneGlyph.vue';
 import { browsingActions, actionLabel, type BrowsingActionId } from './lib/browsing-actions';
-import { CONNECTION_NOTICE_KINDS, INBOX_EMPTY_RECOVERABLE, accountNotice, inboxEmptyState, type AccountNoticeAction, type InboxEmptyAction } from './lib/account-status';
+import { INBOX_EMPTY_RECOVERABLE, accountNotice, headerNoticeAction, inboxEmptyState, readOnlyHintShown, type AccountNoticeAction, type InboxEmptyAction } from './lib/account-status';
 import { groupRowsBySender, isSingleFromQuery, senderGroupKey, validateSearch } from './lib/search';
 import InboxList from './components/InboxList.vue';
 import SplitEditor from './components/SplitEditor.vue';
@@ -415,11 +415,25 @@ const drafts = useDrafts(props.client, accountId, props.mode);
 
 // Header status note: one fact about the connection or sync, null while connected and idle.
 const statusNotice = computed(() => accountNotice(accountStatus.value));
-// While a connection problem is showing, the Account drawer covers the older read-only hint.
-const connectionNoticeShown = computed(() => !!statusNotice.value && CONNECTION_NOTICE_KINDS.includes(statusNotice.value.kind));
+// Any status note (connection or sync) replaces the older read-only hint: the Account drawer covers it
+// and the header has no room for both.
+const readOnlyHint = computed(() => readOnlyHintShown(accountStatus.value, statusNotice.value));
 // Only the plain Inbox says anything about the account; search, filters, saved and other contexts keep their own text.
 const inboxEmpty = computed(() => mailbox.context.value === 'inbox' && !mailbox.unreadOnly.value && !mailbox.starredOnly.value
   ? inboxEmptyState(accountStatus.value) : null);
+// One action, one place: while the empty inbox line carries it, the header note keeps its words only.
+const emptyLineCarriesAction = computed(() => mailbox.listState.value === 'ready' && mailbox.conversations.value.length === 0
+  && !readerOpen.value && !!inboxEmpty.value?.action);
+const headerAction = computed(() => headerNoticeAction(statusNotice.value, emptyLineCarriesAction.value));
+// Provider mail with no account: Connect (or Account when nothing can be connected), never an action of its own.
+const providerAccountAction = computed(() => {
+  const empty = inboxEmptyState(accountStatus.value);
+  return empty && (empty.action === 'connect' || empty.action === 'account') ? { action: empty.action, label: empty.actionLabel } : null;
+});
+// Palette: Connect, or a Sync now that can fix a failure, ranks above Go to.
+const accountCommandsFirst = computed(() => actionAvailable('connect')
+  || (actionAvailable('sync') && accountStatus.value?.sync.state === 'error'));
+const paletteHasRows = computed(() => !(mailbox.listState.value === 'ready' && mailbox.conversations.value.length === 0));
 const emptyListText = computed(() => {
   if (mailbox.context.value === 'search') return mailbox.nextCursor.value ? 'No matches on this candidate page. Continue scanning older mail below.' : 'No matching conversations in the searched content.';
   if (mailbox.unreadOnly.value) return 'No known unread conversations in this view. Use Commands → Show all conversations to turn off the unread filter; unknown read states are not included.';
@@ -1637,10 +1651,11 @@ function runAccountAction(action: AccountNoticeAction): Promise<void> {
  * clicked is replaced as soon as the state changes, so focus is parked on a
  * surviving surface first and restored afterwards if it ended up on <body>.
  */
-async function accountNoticeAction(action: AccountNoticeAction | InboxEmptyAction, source: 'header' | 'empty'): Promise<void> {
+async function accountNoticeAction(action: AccountNoticeAction | InboxEmptyAction, source: 'header' | 'empty' | 'drawer'): Promise<void> {
   if (action === 'account') { await openDrawer('account'); return; }
   if (!accountActionsIdle.value) return;
   if (source === 'empty') emptyState.value?.focus({ preventScroll: true });
+  if (source === 'drawer') drawerEl.value?.focus({ preventScroll: true });
   await runAccountAction(action);
   await nextTick();
   const active = document.activeElement;
@@ -2304,11 +2319,10 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
                visible words, the full sentence as the title and visually hidden text. The hidden
                text never carries the ticking cached count, so it is announced once. -->
           <p v-if="statusNotice" class="header-note account-status-note" :class="`tone-${statusNotice.tone}`" role="status" data-test="account-status-note" :data-kind="statusNotice.kind" :title="statusNotice.title">
-            <span aria-hidden="true">{{ statusNotice.text }}</span><span class="visually-hidden">{{ statusNotice.title }}</span>
-            <template v-if="statusNotice.action && accountActionsIdle"><span aria-hidden="true"> · </span><button type="button" class="header-link" data-test="account-status-action" @click="accountNoticeAction(statusNotice.action, 'header')">{{ statusNotice.actionLabel }}</button></template>
-            <template v-else-if="statusNotice.kind === 'not_configured'"><span aria-hidden="true"> · </span><button type="button" class="header-link" data-test="account-status-action" @click="accountNoticeAction('account', 'header')">Account</button></template>
+            <span class="note-text" aria-hidden="true">{{ statusNotice.text }}</span><span class="visually-hidden">{{ statusNotice.title }}</span>
+            <template v-if="headerAction && (headerAction.action === 'account' || accountActionsIdle)"><span class="note-sep" aria-hidden="true">·</span><button type="button" class="header-link" data-test="account-status-action" @click="accountNoticeAction(headerAction.action, 'header')">{{ headerAction.label }}</button></template>
           </p>
-          <p v-if="gmailMode && !mailboxActionsEnabled && !connectionNoticeShown" class="header-note" data-test="mailbox-access-hint">
+          <p v-if="readOnlyHint" class="header-note access-hint" data-test="mailbox-access-hint">
             {{ accountStatus?.mutationAccess === 'upgrading' ? 'Mailbox permission pending' : 'Gmail is read-only' }}
             <button type="button" class="header-link" @click="openDrawer('account')">Review access<span class="visually-hidden"> in Account</span></button>
           </p>
@@ -2570,6 +2584,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
                 data-test="inbox-empty-action"
                 @click="accountNoticeAction(inboxEmpty.action, 'empty')"
               >{{ inboxEmpty.actionLabel }}</button>
+              <span v-if="inboxEmpty?.hint" class="list-state-hint" data-test="inbox-empty-hint">{{ inboxEmpty.hint }}</span>
             </p>
             <InboxList
               v-else
@@ -2724,7 +2739,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
           ref="contactColumnEl"
           :inert="centralCovered || undefined"
         >
-          <ContactPane :contact="contact" :loading="readerLoading" :context="contactContext" :recent="recentMail" :compose-target="composeTarget" @search-sender="senderSearch" @open-recent="openRecent" />
+          <ContactPane :accountless="!accountId" :contact="contact" :loading="readerLoading" :context="contactContext" :recent="recentMail" :compose-target="composeTarget" @search-sender="senderSearch" @open-recent="openRecent" />
         </aside>
 
         <div
@@ -2744,7 +2759,9 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
           <!-- No connected account (never configured, or disconnected while this
                surface was open): the capability needs an account identity, so
                render an explicit account-required state instead of an empty drawer. -->
-          <p v-else-if="drawer === 'destinations'" role="note" data-test="destinations-account-required">Provider mail needs a connected Gmail account. Connect one from Account first.</p>
+          <p v-else-if="drawer === 'destinations'" role="note" data-test="destinations-account-required">
+            Provider mail needs a connected Gmail account.<template v-if="providerAccountAction"> <button v-if="providerAccountAction.action === 'account' || accountActionsIdle" type="button" class="inline-action" data-test="destinations-account-action" @click="accountNoticeAction(providerAccountAction.action, 'drawer')">{{ providerAccountAction.label }}</button></template><template v-else> Connect one from Account first.</template>
+          </p>
           <RemindersPanel v-if="drawer === 'reminders' && remindersSupported" :key="reminderTarget ? `${reminderTarget.accountId}:${reminderTarget.conversationId}` : 'destination'" :client="props.client" :target="reminderTarget" :initial-destination="reminderDestination" @destination-change="reminderDestination = $event" @open="openReminderConversation" />
           <CachedTrashPanel v-if="drawer === 'trash' && accountId && gmailMode" :key="accountId" :client="client" :account-id="accountId" :state="trashState" @open="openFromTrash" />
           <AccountPanel
@@ -2843,7 +2860,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             <h2>Contact</h2>
             <button type="button" data-test="contact-disclosure-close" @click="closeContactDisclosure()">Close</button>
           </header>
-          <ContactPane :contact="contact" :loading="readerLoading" :context="contactContext" :recent="recentMail" :compose-target="composeTarget" @search-sender="senderSearch" @open-recent="openRecent" />
+          <ContactPane :accountless="!accountId" :contact="contact" :loading="readerLoading" :context="contactContext" :recent="recentMail" :compose-target="composeTarget" @search-sender="senderSearch" @open-recent="openRecent" />
         </div>
       </template>
       <!-- Bottom dock of the list column (DESIGN.md "In-flow Notices"): the
@@ -2883,6 +2900,6 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
       </div>
     </main>
     <AttachmentChooser v-if="attachmentConversation" :client="props.client" :conversation="attachmentConversation" :preview="props.mode === 'browser-preview'" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" @close="closeAttachments" />
-    <ActionOverlay v-if="overlay" v-model:query="overlayQuery" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" :kind="overlay" :actions="availableActions" @close="closeOverlay()" @execute="executeOverlay" />
+    <ActionOverlay v-if="overlay" v-model:query="overlayQuery" :account-first="accountCommandsFirst" :row-keys="paletteHasRows" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" :kind="overlay" :actions="availableActions" @close="closeOverlay()" @execute="executeOverlay" />
   </div>
 </template>

@@ -235,8 +235,11 @@ button:focus-visible {
  * (split editor, split error) wrap below the tab line.
  */
 .app-header {
+  /* The tab column never drops below this: the trail's notes give up width first (DESIGN.md gap 18).
+     About "Inbox 18", the 18px gap and the "Unread only" chip. */
+  --header-tabs-floor: 10rem;
   display: grid;
-  grid-template-columns: 50px minmax(0, 1fr) minmax(0, auto);
+  grid-template-columns: 50px minmax(min(var(--header-tabs-floor), 100%), 1fr) minmax(0, auto);
   grid-template-rows: minmax(calc(var(--split-header-height) - 6px), auto);
   align-items: center;
   padding: 6px 16px 0 0;
@@ -405,8 +408,40 @@ button:focus-visible {
   color: var(--text-secondary);
 }
 
+/* Shrink order when the trail is tight: Preview tag first, read-only hint next, the account status last.
+   The glyphs (flex: 0 0 auto) never shrink, and the tab column keeps its floor. */
 .preview-tag {
+  flex-shrink: 4;
+  /* Never fully hidden: "Preview ·…" stays readable, and the full disclosure is its title. */
+  min-width: 5.5rem;
   color: var(--warning);
+}
+
+.access-hint {
+  flex-shrink: 2;
+}
+
+.header-note.account-status-note {
+  flex-shrink: 1;
+  display: flex;
+  align-items: baseline;
+}
+
+/* Only the words ellipsize; the action link never clips (the empty line and the drawer are not always in view). */
+.account-status-note .note-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-status-note .note-sep {
+  flex: none;
+  padding: 0 0.35em;
+}
+
+.account-status-note .header-link {
+  flex: none;
 }
 
 /* Account status note (connection or sync). Words always carry the status; the tint only echoes them. */
@@ -513,6 +548,13 @@ button:focus-visible {
 
 .list-state:focus {
   outline: none;
+}
+
+/* The one quieter line under an empty-state sentence (what Connect does). */
+.list-state-hint {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-secondary);
 }
 
 .list-state:focus-visible {
@@ -1793,9 +1835,14 @@ button:focus-visible {
 
 .status-outcome_unknown,
 .activity-warning,
-.activity-error,
-.account-action-error {
+.activity-error {
   color: var(--warning);
+}
+
+/* A failed account request is a confirmed failure, the same Coral Fault as a failed sync. */
+.account-sync-error,
+.account-action-error {
+  color: var(--danger);
 }
 
 .activity-warning,
@@ -2163,7 +2210,11 @@ button:focus-visible {
 .account-sync-line {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 12px;
+  gap: 4px 6px;
+}
+
+.account-sep {
+  color: var(--text-secondary);
 }
 
 .account-notice {
@@ -2177,8 +2228,11 @@ button:focus-visible {
   align-items: center;
   gap: 4px 12px;
   margin: 0;
-  color: var(--danger);
   font-weight: var(--weight-strong);
+}
+
+.account-action-error {
+  margin: 0;
 }
 
 .account-sync-error button {
@@ -2206,6 +2260,23 @@ button:focus-visible {
 
 .account-primary {
   font-weight: var(--weight-strong);
+}
+
+/* The two answers to "Disconnect?": Keep account is the default (Title weight, Focus Stone fill, the focus lands
+   on it); Disconnect is the quiet one. No coral: nothing has failed, and coral is reserved for failures. */
+.account-confirm .account-primary {
+  background: var(--focus-fill);
+}
+
+.account-confirm .account-destructive {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-secondary);
+}
+
+.account-confirm .account-destructive:not(:disabled):hover {
+  background: var(--surface-raised);
+  color: var(--text-primary);
 }
 
 /* Provider mail (catalog -> page -> reader): list-row look, no cards or borders. */

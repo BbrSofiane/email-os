@@ -494,11 +494,16 @@ connected** with an inline **Connect Gmail**, **Sign-in expired** with **Sign in
 again**, **Finish sign-in in your browser** with **Cancel**, **Syncing first
 mail… N cached**, **Sync failed: …** with **Retry**, **Initial sync has not
 finished** with **Sync now**, or (not configured) a link to Account. Only a
-connected, fully synced, empty account shows the real empty text. A header status
-note repeats the connection or sync fact (Not connected, Sign-in expired, Syncing…,
-Sync failed, Offline for a network_unavailable sync error) with an action; it is
-absent while connected and idle. **Connect Gmail** (or **Sign in again**) and
-**Sync now** are palette commands only while they can run, and `G` then `A` (within
+connected, fully synced, empty account shows the real empty text. Under **Not
+connected** one line says what Connect does (it opens Google sign-in in the
+browser and starts read-only). A header status note repeats the connection or
+sync fact (Not connected, Sign-in expired, Syncing…, Sync failed with its cause in
+words, for example Sync failed · no network; there is no Offline wording); its
+action link is shown only when the empty line is not carrying the action. Any
+status note replaces the read-only hint. It is absent while connected and idle.
+**Connect Gmail** (or **Sign in again**) and
+**Sync now** are palette commands only while they can run (ranked above Go to while
+Connect or a failed sync can be fixed), and `G` then `A` (within
 1 second, Gmail mode only) opens Account. None of these gates mailbox actions:
 actions depend on `mutationAccess`, not on the connection. All of it is verified
 with the synthetic in-memory fake; real OAuth, sync and Keychain behavior stay

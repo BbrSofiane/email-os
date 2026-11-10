@@ -87,3 +87,18 @@ Checks on the final tree: `pnpm test` 1024 passed / 33 skipped (rendered Chrome 
 
 ## Not verified
 Nothing was rendered: header-note truncation at narrow widths, drawer spacing, and contrast are computed from tokens only. Screen-reader announcements are reasoned from markup. Real Google OAuth, real sync, native offline behaviour and the macOS Keychain were not exercised. Known limit (pre-existing, now documented in DESIGN.md): while `connectAccount` is in flight the Cancel sign-in controls are unavailable, so a browser flow that never completes cannot be cancelled from the UI.
+
+## Follow-up (critique run 2, 28/40)
+Implemented test-first on the same branch. Five issues from the second critique:
+
+| # | Issue | Result |
+|---|---|---|
+| 1 | P1 header squeeze | Tabs get a width floor and notes give up width first (CSS); any connection or sync note replaces the read-only hint. jsdom cannot measure layout, so the CSS rule is pinned by a stylesheet test and the hint suppression by a component test |
+| 2 | P2 repeated actions | Header note keeps words only when the empty line carries the action; one `Account` link on not configured; drawer Sync now hidden while Retry shows |
+| 3 | P2 first-run clarity | One Ash line under the Connect empty sentence ("Opens Google sign-in in your browser. Starts read-only."); contact pane no-correspondent text hidden with no account; Provider mail disconnected note has a Connect control |
+| 4 | P2 wording and cause | "Sync failed" everywhere; `network_unavailable` reads "Sync failed · no network" (no "Offline" wording); drawer label "Failed"; cause is visible words, not only a title; action error tone unified with the sync error |
+| 5 | P3 | Connect Gmail ranks above Go to Account while disconnected; empty Keys rows hidden; sync facts separated and labelled; Disconnect and Keep account differentiated; duplicate "read only" removed; coverage line dropped when nothing is cached |
+
+Checks: `pnpm test` 1047 passed / 33 skipped, `pnpm typecheck` and `pnpm build` clean. No Rust touched.
+
+Still not verified: header layout at real widths (no rendered check of the new floor), real Google OAuth and sync, macOS Keychain, native offline behaviour, screen-reader announcements.

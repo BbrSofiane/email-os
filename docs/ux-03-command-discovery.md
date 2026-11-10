@@ -67,6 +67,10 @@ independently retrievable regardless of the browsing filter.
   Later passes added `G`, then `H` (Reminders, fixture only) and `G`, then `A`
   (Go to Account, Gmail mode only) to the same chord machinery, timeout and grace
   window; in the other mode that second key is an ordinary key.
+- Palette order: groups are fixed (Conversation, Selection, View, Go to, Account);
+  while Connect (or a failed sync's Sync now) can run, Account moves right above Go
+  to so `Connect Gmail` outranks `Go to Account`. The Keys list drops the row keys
+  (J/K, X, Shift+J/K) while the list has no rows.
 - Left reveals the destination navigator only when the list browsing surface
   owns navigation; never from editable controls or the reader.
 - Cmd+K is a Mac app binding, not permission to steal browser/system-reserved

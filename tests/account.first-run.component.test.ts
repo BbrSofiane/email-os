@@ -70,6 +70,32 @@ describe('account, connection and first-run (empty inbox, header status, command
       expect(w.get('.inbox-list').element.contains(document.activeElement)).toBe(true);
     });
 
+    it('disconnected: one Ash line says what Connect does; no other state gets it', async () => {
+      gmail(none);
+      const w = mountApp();
+      await settle();
+      const hint = w.get('[data-test="inbox-empty-hint"]');
+      expect(hint.text()).toBe('Opens Google sign-in in your browser. Starts read-only.');
+      expect(hint.classes()).toContain('list-state-hint');
+      expect(empty(w).text()).toContain('Not connected.');
+      w.unmount();
+
+      for (const [patch, withRows] of [
+        [{ connection: 'not_configured', emailAddress: null, cachedConversations: 0, initialSyncComplete: false }, false],
+        [{ connection: 'auth_required', cachedConversations: 0 }, true],
+        [{ connection: 'authenticating', emailAddress: null, cachedConversations: 0, initialSyncComplete: false }, true],
+      ] as const) {
+        fake = createBrowserFakeMailClient(() => '2025-01-01T00:00:00.000Z');
+        counted = countingClient(fake);
+        gmail(patch);
+        const other = mountApp(withRows ? withNoRows(counted.client) : counted.client);
+        await settle();
+        expect(other.find('[data-test="inbox-empty"]').exists()).toBe(true);
+        expect(other.find('[data-test="inbox-empty-hint"]').exists(), patch.connection).toBe(false);
+        other.unmount();
+      }
+    });
+
     it('keeps focus on the empty line while the same line changes state', async () => {
       gmail(none);
       const w = mountApp(withNoRows(counted.client));
@@ -218,7 +244,7 @@ describe('account, connection and first-run (empty inbox, header status, command
       expect(w.find('[data-test="mailbox-access-hint"]').exists()).toBe(true);
     });
 
-    it('disconnected: Not connected with a Connect link, and the read-only hint steps aside', async () => {
+    it('disconnected: the header keeps the words only while the empty line carries Connect, and the read-only hint steps aside', async () => {
       gmail(none);
       const w = mountApp();
       await settle();
@@ -226,16 +252,34 @@ describe('account, connection and first-run (empty inbox, header status, command
       expect(n.attributes('role')).toBe('status');
       expect(n.classes()).toContain('header-note');
       expect(n.find('[aria-hidden="true"]').text()).toContain('Not connected');
-      expect(n.get('button').classes()).toContain('header-link');
-      expect(n.get('button').text()).toBe('Connect');
+      // One Connect on the page: the empty line owns it, so the header has no duplicate link.
+      expect(n.find('button').exists()).toBe(false);
+      expect(w.findAll('button').filter((b) => /^Connect/.test(b.text()) && b.element.closest('.app-main') && !b.element.closest('.utility-drawer'))).toHaveLength(1);
       expect(n.attributes('title')).toBeTruthy();
       expect(n.get('.visually-hidden').text()).toBe(n.attributes('title'));
       expect(w.find('[data-test="mailbox-access-hint"]').exists()).toBe(false);
-      await n.get('button').trigger('click');
+      await w.get('[data-test="inbox-empty-action"]').trigger('click');
       await settle();
       expect(fake.controls.accountState().connection).toBe('connected');
       expect(note(w).exists()).toBe(false);
       expect(w.find('[data-test="mailbox-access-hint"]').exists()).toBe(true);
+    });
+
+    it('keeps its action link when the empty line does not carry one (cached rows are shown)', async () => {
+      const donor = createBrowserFakeMailClient(() => '2025-01-01T00:00:00.000Z');
+      useGmailMode(donor);
+      const snapshot = await donor.listConversations();
+      gmail(none);
+      const w = mountApp({ ...counted.client, listConversations: async () => snapshot });
+      await settle();
+      expect(conversationRows(w).length).toBeGreaterThan(0);
+      expect(w.find('[data-test="inbox-empty-action"]').exists()).toBe(false);
+      const link = note(w).get('button');
+      expect(link.text()).toBe('Connect');
+      expect(link.classes()).toContain('header-link');
+      await link.trigger('click');
+      await settle();
+      expect(fake.controls.accountState().connection).toBe('connected');
     });
 
     it('auth_required: Sign-in expired, a Sign in link, and only the honest reading fact (no claim that actions are off)', async () => {
@@ -270,19 +314,36 @@ describe('account, connection and first-run (empty inbox, header status, command
       await settle();
       expect(note(nc).find('[aria-hidden="true"]').text()).toContain('Gmail not configured');
       expect(nc.find('[data-test="mailbox-access-hint"]').exists()).toBe(false);
-      await note(nc).get('button').trigger('click');
+      // Exactly one Account link: the empty line has it, the header keeps the words.
+      expect(note(nc).find('button').exists()).toBe(false);
+      const accountLinks = [...nc.findAll('[data-test="account-status-action"], [data-test="inbox-empty-action"]')].filter((b) => b.text() === 'Account');
+      expect(accountLinks).toHaveLength(1);
+      await nc.get('[data-test="inbox-empty-action"]').trigger('click');
       await settle();
       expect(nc.find('[data-test="account-panel"]').exists()).toBe(true);
     });
 
-    it('syncing: a quiet note that keeps the read-only hint, with no live churn while the count ticks', async () => {
+    it('not_configured with another context in the list keeps the header Account link (no empty line carries it)', async () => {
+      gmail({ connection: 'not_configured', emailAddress: null, cachedConversations: 0, initialSyncComplete: false });
+      const w = mountApp();
+      await settle();
+      await w.get('[data-test="starred-filter"]').trigger('click');
+      await settle();
+      expect(w.find('[data-test="inbox-empty-action"]').exists()).toBe(false);
+      expect(note(w).get('button').text()).toBe('Account');
+      await note(w).get('button').trigger('click');
+      await settle();
+      expect(w.find('[data-test="account-panel"]').exists()).toBe(true);
+    });
+
+    it('syncing: a quiet note that replaces the read-only hint, with no live churn while the count ticks', async () => {
       gmail({ syncState: 'syncing', cachedConversations: 7, initialSyncComplete: false });
       const w = mountApp();
       await settle();
       const n = note(w);
       expect(n.find('[aria-hidden="true"]').text()).toContain('Syncing first mail · 7 cached');
       expect(n.find('button').exists()).toBe(false);
-      expect(w.find('[data-test="mailbox-access-hint"]').exists()).toBe(true);
+      expect(w.find('[data-test="mailbox-access-hint"]').exists()).toBe(false);
       const hiddenBefore = n.get('.visually-hidden').element.textContent;
       const hiddenNode = n.get('.visually-hidden').element;
       fake.controls.setAccount({ cachedConversations: 8 });
@@ -293,26 +354,40 @@ describe('account, connection and first-run (empty inbox, header status, command
       expect(note(w).get('.visually-hidden').element.textContent).toBe(hiddenBefore);
     });
 
-    it('sync error: Offline only for network_unavailable, Sync failed otherwise, Retry runs a sync', async () => {
+    it('sync error: Sync failed with the cause in words (no hover needed), no Offline, the hint steps aside, Retry runs a sync', async () => {
       gmail({ syncState: 'error', syncError: { kind: 'network_unavailable' } });
       const sync = vi.spyOn(fake, 'requestSync');
       const w = mountApp();
       await settle();
-      expect(note(w).find('[aria-hidden="true"]').text()).toContain('Offline');
+      expect(note(w).find('[aria-hidden="true"]').text()).toBe('Sync failed · no network');
+      expect(note(w).classes()).toContain('tone-danger');
+      expect(note(w).text()).not.toMatch(/offline/i);
+      expect(note(w).attributes('title')).not.toMatch(/offline/i);
+      expect(w.find('[data-test="mailbox-access-hint"]').exists()).toBe(false);
       expect(note(w).get('button').text()).toBe('Retry');
       fake.controls.setAccount({ syncError: { kind: 'provider_unavailable' } });
       await settle();
-      expect(note(w).find('[aria-hidden="true"]').text()).toContain('Sync failed');
-      expect(note(w).find('[aria-hidden="true"]').text()).not.toContain('Offline');
+      expect(note(w).find('[aria-hidden="true"]').text()).toBe('Sync failed · provider unavailable');
       expect(note(w).attributes('title')).toContain('The mail provider is temporarily unavailable.');
       await note(w).get('button').trigger('click');
       await settle();
       expect(sync).toHaveBeenCalledTimes(1);
       expect(note(w).exists()).toBe(false);
+      expect(w.find('[data-test="mailbox-access-hint"]').exists()).toBe(true);
+    });
+
+    it('sync error with no rows: the empty line carries Retry, the header keeps the words', async () => {
+      gmail({ syncState: 'error', syncError: { kind: 'network_unavailable' }, cachedConversations: 0, initialSyncComplete: false });
+      const w = mountApp(withNoRows(counted.client));
+      await settle();
+      expect(empty(w).text()).toContain('Sync failed: The network is unavailable.');
+      expect(w.get('[data-test="inbox-empty-action"]').text()).toBe('Retry');
+      expect(note(w).find('[aria-hidden="true"]').text()).toBe('Sync failed · no network · 0 cached');
+      expect(note(w).find('button').exists()).toBe(false);
     });
 
     it('does not strand focus when the header action disappears', async () => {
-      gmail(none);
+      gmail({ connection: 'auth_required' });
       const w = mountApp();
       await settle();
       (note(w).get('button').element as HTMLElement).focus();
@@ -401,6 +476,126 @@ describe('account, connection and first-run (empty inbox, header status, command
       expect(w.get('#action-account kbd').text()).toBe('G then A');
       expect(w.get('#action-account kbd').attributes('title')).toBe('G then A (within 1 second)');
       expect(w.get('[data-test="rail-account"]').attributes('title')).toContain('G then A');
+    });
+  });
+  describe('P3: palette order, Keys, contact pane and Provider mail without an account', () => {
+    async function openPalette(w: VueWrapper): Promise<void> {
+      await w.get('[data-test="palette-trigger"]').trigger('click');
+      await flushPromises();
+    }
+    const optionIds = (w: VueWrapper) => w.findAll('[role="option"]').map((o) => o.attributes('id'));
+
+    it('ranks Connect Gmail above Go to Account while disconnected', async () => {
+      gmail(none);
+      const w = mountApp();
+      await settle();
+      await openPalette(w);
+      const ids = optionIds(w);
+      expect(ids.indexOf('action-connect')).toBeGreaterThanOrEqual(0);
+      expect(ids.indexOf('action-connect')).toBeLessThan(ids.indexOf('action-account'));
+      // The highlighted (Enter) row is the one the person most likely wants.
+      expect(w.get('[role="option"].highlighted').attributes('id')).toBe('action-connect');
+    });
+
+    it('keeps conversation commands first for a signed-out account that still shows cached rows, with Connect above Go to Account', async () => {
+      gmail({ connection: 'auth_required' });
+      const w = mountApp();
+      await settle();
+      await openPalette(w);
+      const ids = optionIds(w);
+      expect(ids.indexOf('action-connect')).toBeLessThan(ids.indexOf('action-account'));
+      expect(ids.indexOf('action-open')).toBeLessThan(ids.indexOf('action-connect'));
+    });
+
+    it('ranks Sync now above Go to Account only while a sync failure shows; otherwise it stays in its own group', async () => {
+      gmail({ syncState: 'error', syncError: { kind: 'rate_limited' } });
+      const failed = mountApp();
+      await settle();
+      await openPalette(failed);
+      const ids = optionIds(failed);
+      expect(ids.indexOf('action-sync')).toBeLessThan(ids.indexOf('action-account'));
+      failed.unmount();
+
+      fake = createBrowserFakeMailClient(() => '2025-01-01T00:00:00.000Z');
+      counted = countingClient(fake);
+      gmail();
+      const idle = mountApp();
+      await settle();
+      await openPalette(idle);
+      const idleIds = optionIds(idle);
+      expect(idleIds.indexOf('action-sync')).toBeGreaterThan(idleIds.indexOf('action-account'));
+    });
+
+    it('hides the row Keys when there are no rows, and keeps the one that is not about rows', async () => {
+      gmail(none);
+      const w = mountApp();
+      await settle();
+      expect(conversationRows(w)).toHaveLength(0);
+      await openPalette(w);
+      const keys = w.find('.action-keys');
+      expect(keys.text()).not.toContain('Next and previous conversation');
+      expect(keys.text()).not.toContain('Select conversation');
+      expect(keys.text()).not.toContain('Extend selection');
+      w.unmount();
+
+      fake = createBrowserFakeMailClient(() => '2025-01-01T00:00:00.000Z');
+      counted = countingClient(fake);
+      gmail();
+      const rows = mountApp();
+      await settle();
+      expect(conversationRows(rows).length).toBeGreaterThan(0);
+      await openPalette(rows);
+      expect(rows.get('.action-keys').text()).toContain('Next and previous conversation');
+    });
+
+    it('does not show "No correspondent information is available." while there is no account', async () => {
+      gmail(none);
+      const w = mountApp();
+      await settle();
+      expect(w.find('[data-test="contact-unknown"]').exists()).toBe(false);
+      w.unmount();
+
+      fake = createBrowserFakeMailClient(() => '2025-01-01T00:00:00.000Z');
+      counted = countingClient(fake);
+      gmail();
+      const withAccount = mountApp(withNoRows(counted.client));
+      await settle();
+      expect(withAccount.find('[data-test="contact-unknown"]').exists()).toBe(true);
+    });
+
+    it('Provider mail without an account: disconnected offers Connect Gmail (read-only start), not configured offers Account', async () => {
+      gmail(none);
+      const w = mountApp();
+      await settle();
+      await w.get('[data-test="rail-destinations"]').trigger('click');
+      await flushPromises();
+      const required = w.get('[data-test="destinations-account-required"]');
+      expect(required.text()).toContain('Provider mail needs a connected Gmail account.');
+      const connect = w.get('[data-test="destinations-account-action"]');
+      expect(connect.text()).toBe('Connect Gmail');
+      expect(connect.classes()).toContain('inline-action');
+      await connect.trigger('click');
+      await settle();
+      expect(fake.controls.accountState().connection).toBe('connected');
+      expect(w.find('.provider-destinations').exists()).toBe(true);
+      // Focus did not fall to <body> when the button went away.
+      expect(document.activeElement).not.toBe(document.body);
+      expect(w.get('[data-test="utility-drawer"]').element.contains(document.activeElement)).toBe(true);
+      w.unmount();
+
+      fake = createBrowserFakeMailClient(() => '2025-01-01T00:00:00.000Z');
+      counted = countingClient(fake);
+      gmail({ connection: 'not_configured', emailAddress: null, cachedConversations: 0, initialSyncComplete: false });
+      const nc = mountApp();
+      await settle();
+      await nc.get('[data-test="rail-destinations"]').trigger('click');
+      await flushPromises();
+      const account = nc.get('[data-test="destinations-account-action"]');
+      expect(account.text()).toBe('Account');
+      await account.trigger('click');
+      await settle();
+      expect(nc.find('[data-test="account-panel"]').exists()).toBe(true);
+      expect(nc.find('[data-test="destinations-account-required"]').exists()).toBe(false);
     });
   });
 });

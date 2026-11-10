@@ -4,7 +4,9 @@ import {
   INBOX_EMPTY_READ_ONLY,
   accountNotice,
   describeMailError,
+  headerNoticeAction,
   inboxEmptyState,
+  readOnlyHintShown,
 } from '../src/lib/account-status';
 import type { AccountStatus, ConnectionState, MailError, MutationAccess, SyncInfo } from '../src/lib/ipc/client';
 
@@ -85,22 +87,73 @@ describe('accountNotice', () => {
     expect(a.title).toBe(b.title);
   });
 
-  it('says Offline only for network_unavailable and Sync failed for every other error', () => {
+  it('says Sync failed everywhere; network_unavailable adds the cause "no network" and never says Offline', () => {
     const offline = accountNotice(status({ sync: { state: 'error', error: { kind: 'network_unavailable' } } }))!;
-    expect(offline).toMatchObject({ kind: 'offline', text: 'Offline', action: 'sync', actionLabel: 'Retry', tone: 'warning' });
-    expect(offline.title).toContain('The network is unavailable.');
-    for (const error of [{ kind: 'provider_unavailable' }, { kind: 'rate_limited' }, { kind: 'storage_unavailable' }] as MailError[]) {
+    expect(offline).toMatchObject({ kind: 'offline', text: 'Sync failed · no network', action: 'sync', actionLabel: 'Retry', tone: 'danger' });
+    expect(offline.title).toBe('Sync failed. The network is unavailable. Cached mail stays readable; new mail has not synced.');
+    expect(`${offline.text} ${offline.title}`).not.toMatch(/offline/i);
+    // The first sync keeps its cached count after the cause.
+    expect(accountNotice(status({ sync: { state: 'error', error: { kind: 'network_unavailable' }, initialSyncComplete: false, cachedConversations: 4 } }))!.text)
+      .toBe('Sync failed · no network · 4 cached');
+  });
+
+  it('shows a short visible cause for known sync errors and never relabels an unknown one', () => {
+    const causes: Array<[MailError, string]> = [
+      [{ kind: 'rate_limited' } as MailError, 'Sync failed · rate limited'],
+      [{ kind: 'provider_unavailable' } as MailError, 'Sync failed · provider unavailable'],
+      [{ kind: 'storage_unavailable' } as MailError, 'Sync failed · storage unavailable'],
+    ];
+    for (const [error, text] of causes) {
       const failed = accountNotice(status({ sync: { state: 'error', error } }))!;
-      expect(failed).toMatchObject({ kind: 'sync_failed', text: 'Sync failed', action: 'sync', actionLabel: 'Retry', tone: 'danger' });
+      expect(failed).toMatchObject({ kind: 'sync_failed', text, action: 'sync', actionLabel: 'Retry', tone: 'danger' });
       expect(failed.title).toContain(describeMailError(error));
     }
-    // A sync error with no typed cause is still a failure, never relabelled.
+    // No typed cause, or a kind with no short phrase: still a failure, with no invented cause.
     expect(accountNotice(status({ sync: { state: 'error', error: null } }))).toMatchObject({ kind: 'sync_failed', text: 'Sync failed' });
+    expect(accountNotice(status({ sync: { state: 'error', error: { kind: 'busy' } as MailError } }))).toMatchObject({ kind: 'sync_failed', text: 'Sync failed' });
   });
 
   it('lets a connection problem win over a sync state', () => {
     expect(accountNotice(status({ connection: 'auth_required', sync: { state: 'error', error: { kind: 'auth_required' } } }))!.kind).toBe('auth_required');
     expect(accountNotice(status({ connection: 'disconnected', sync: { state: 'syncing' } }))!.kind).toBe('disconnected');
+  });
+});
+
+describe('readOnlyHintShown', () => {
+  it('shows the read-only hint only in Gmail mode without mailbox actions, and steps aside for any status note', () => {
+    expect(readOnlyHintShown(status(), accountNotice(status()))).toBe(true);
+    expect(readOnlyHintShown(status({ mutationAccess: 'upgrading' }), null)).toBe(true);
+    expect(readOnlyHintShown(status({ mutationAccess: 'enabled' }), null)).toBe(false);
+    expect(readOnlyHintShown(status({ mode: 'fixture' }), null)).toBe(false);
+    expect(readOnlyHintShown(null, null)).toBe(false);
+    // Connection and sync notes both replace it (header width: DESIGN.md gap 18).
+    for (const patch of [
+      { connection: 'disconnected' as const },
+      { connection: 'auth_required' as const },
+      { sync: { state: 'syncing' as const } },
+      { sync: { state: 'error' as const, error: { kind: 'network_unavailable' } as MailError } },
+    ]) {
+      const s = status(patch);
+      expect(accountNotice(s)).not.toBeNull();
+      expect(readOnlyHintShown(s, accountNotice(s))).toBe(false);
+    }
+  });
+});
+
+describe('headerNoticeAction', () => {
+  it('gives the header note its action, or a single Account link when not configured', () => {
+    expect(headerNoticeAction(accountNotice(status({ connection: 'disconnected' })), false)).toEqual({ action: 'connect', label: 'Connect' });
+    expect(headerNoticeAction(accountNotice(status({ sync: { state: 'error', error: { kind: 'rate_limited' } as MailError } })), false)).toEqual({ action: 'sync', label: 'Retry' });
+    expect(headerNoticeAction(accountNotice(status({ connection: 'not_configured' })), false)).toEqual({ action: 'account', label: 'Account' });
+    expect(headerNoticeAction(null, false)).toBeNull();
+    expect(headerNoticeAction(accountNotice(status({ sync: { state: 'syncing' } })), false)).toBeNull();
+  });
+
+  it('leaves only words in the header while the empty inbox line carries the action', () => {
+    for (const connection of ['disconnected', 'auth_required', 'authenticating', 'not_configured'] as const) {
+      expect(headerNoticeAction(accountNotice(status({ connection })), true)).toBeNull();
+    }
+    expect(headerNoticeAction(accountNotice(status({ sync: { state: 'error', error: { kind: 'network_unavailable' } } })), true)).toBeNull();
   });
 });
 
@@ -117,6 +170,14 @@ describe('inboxEmptyState', () => {
     ['authenticating', 'Finish sign-in in your browser.', 'cancel', 'Cancel'],
   ] as const)('explains the %s connection with its own action', (connection, text, action, actionLabel) => {
     expect(inboxEmptyState(status({ connection }))).toMatchObject({ kind: connection, text, action, actionLabel });
+  });
+
+  it('adds the first-run hint only where Connect really is the action and the grant is a fresh read-only one', () => {
+    expect(inboxEmptyState(status({ connection: 'disconnected' }))!.hint).toBe('Opens Google sign-in in your browser. Starts read-only.');
+    for (const connection of ['not_configured', 'auth_required', 'authenticating'] as const) {
+      expect(inboxEmptyState(status({ connection }))!.hint, connection).toBeUndefined();
+    }
+    expect(inboxEmptyState(status({ sync: { state: 'error', error: { kind: 'network_unavailable' } } }))!.hint).toBeUndefined();
   });
 
   it('never offers Connect for a device that is not configured', () => {
