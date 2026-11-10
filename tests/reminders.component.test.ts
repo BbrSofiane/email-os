@@ -88,7 +88,7 @@ describe('bounded local reminder journey', () => {
     rows[0]!.phase = 'returned';
     await panel.findAll('button').find(b => b.text() === 'Refresh reminders')!.trigger('click'); await flushPromises();
     expect(panel.text()).toContain('No pending reminders');
-    await panel.findAll('nav button')[1]!.trigger('click');
+    await panel.findAll('[role="tab"]')[1]!.trigger('click');
     expect(panel.text()).toContain('<script>literal</script>');
     await panel.findAll('li button')[0]!.trigger('click'); expect(panel.emitted('open')![0]).toEqual([target]);
     panel.unmount();
@@ -99,7 +99,7 @@ describe('bounded local reminder journey', () => {
     await flushPromises();
     await panel.get('#reminder-time-input').trigger('keydown', { key: 'Escape' });
     expect(panel.emitted('dismiss')).toHaveLength(1);
-    expect(panel.findAll('nav button')[1]!.attributes('aria-pressed')).toBe('true');
+    expect(panel.findAll('[role="tab"]')[1]!.attributes('aria-selected')).toBe('true');
     panel.unmount();
   });
   it('keeps a rejected time editable rather than endlessly replaying a validation error', async () => {
@@ -157,14 +157,14 @@ describe('bounded local reminder journey', () => {
     const setRead = vi.spyOn(fake, 'setRead');
     const app = mountApp(fake, 'native', { global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
     await app.findAll('button').find(b => b.text() === 'Reminders')!.trigger('click'); await flushPromises();
-    await app.findComponent(RemindersPanel).findAll('nav button')[1]!.trigger('click'); await flushPromises();
+    await app.findComponent(RemindersPanel).findAll('[role="tab"]')[1]!.trigger('click'); await flushPromises();
     // Due times are the full viewer-local form with a machine-readable datetime.
     expect(app.findComponent(RemindersPanel).get('time[datetime="2030-01-01T00:00:00.000Z"]').text()).toBe(fullDateLabel('2030-01-01T00:00:00Z'));
     await app.findComponent(RemindersPanel).findAll('li button')[0]!.trigger('click'); await flushPromises();
     expect(app.findComponent(RemindersPanel).exists()).toBe(false);
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); await flushPromises();
     expect(app.findComponent(RemindersPanel).exists()).toBe(true);
-    expect(app.findComponent(RemindersPanel).findAll('nav button')[1]!.attributes('aria-pressed')).toBe('true');
+    expect(app.findComponent(RemindersPanel).findAll('[role="tab"]')[1]!.attributes('aria-selected')).toBe('true');
     expect(setRead).not.toHaveBeenCalled(); app.unmount();
   });
 

@@ -1,5 +1,5 @@
 /**
- * Frontend transport seam (Slices 01–04).
+ * Frontend transport seam for native IPC and synthetic browser preview.
  *
  * The UI depends only on this interface. Two implementations exist:
  * - `tauri-client.ts`: narrow Tauri adapter over the approved named commands and the

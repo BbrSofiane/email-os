@@ -24,6 +24,10 @@ The native close path uses a request/acknowledgement gate in [close_gate.rs](../
 
 The production native client and browser fake share the same `MailClient` contract, but they do not share persistence or provider behavior. Browser tests and preview use the fake client; they cannot establish native SQLite, OAuth, OS keychain, system dialogs, or WKWebView behavior. The boundary and runtime checks are recorded in [development guidance](development.md) and [current status](current-status.md).
 
+## Validation task boundaries
+
+The `mise run check` task serially runs headless core tests, the generated IPC contract check, core formatting and clippy, frontend tests, and frontend typechecking. It does not require GTK/WebKit development packages. Native shell clippy, bridge tests, and the web production build are separate tasks; `mise run check:all` runs the full sequence, including `lint:native`, serially after native prerequisites are installed. CI installs Linux prerequisites before running this full gate. Rendered Chromium suites remain opt-in and are not part of CI.
+
 ## Implemented feature seams
 
 | Area | Current ownership and behavior | Contract |
