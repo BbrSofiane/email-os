@@ -13,32 +13,21 @@
  * explicit labelled utility disclosures instead of permanent competing columns;
  * the contact pane shows only exact known fields.
  *
- * Keyboard contract (window-level, one handler):
- * - j / ArrowDown, k / ArrowUp: move conversation focus in the list (row focus
- *   follows). Inside the reader only j/k switch conversations; ArrowUp/Down
- *   keep native scrolling there.
- * - Enter: open the focused conversation. Escape: close the active utility or
- *   contact disclosure first, then the reader.
- * - e: archive the focused (or reader-open) conversation when actions are enabled.
- * - Shift+E: restore to Inbox; G then E (within 1000ms): cached Done.
- * - Left from list navigation: destination navigator; pointer Commands opens palette.
- * - Cmd+K opens the palette in native mode only (browser reservations stay native).
- * - c: compose a new local draft in the inline compose card in the central pane (works from list and reader).
- * - Shift+U: explicitly mark the focused/open conversation unread.
- * - z: undo the last accepted conversation action (single level, 10 s window;
- *   the backend's eligibility decision is authoritative). Cmd/Ctrl+Z is left
- *   to native text editing.
- * - Ignored with Ctrl/Meta/Alt held, during IME composition, inside text fields, and
- *   Enter/e are ignored when a button owns the key (it activates itself).
- * - While a visible draft editor exists, every mailbox shortcut is suppressed;
- *   a suspended editor behind another disclosure must not own keys. While a
- *   utility/contact disclosure is open, Escape closes it and mailbox shortcuts
- *   underneath are suppressed. Draft text has no submit/send path and is
- *   rendered only as ordinary text.
+ * Keyboard contract: this comment is a short index. The action catalog in
+ * `src/lib/browsing-actions.ts` and `onKeydown` below define the full contract.
+ * - j/k and Arrow keys navigate; Enter opens; Escape returns/closes.
+ * - / opens search; e archives, Shift+E restores, s toggles stars,
+ *   r prepares a local reply,
+ *   c composes a local draft, h schedules a local reminder, and z undoes.
+ * - x selects; Shift+J/K extends selection; Tab switches Inbox/saved split.
+ *   G then E opens cached Done; G then H opens Reminders when supported.
+ * - Cmd+K opens Commands in native mode. Mailbox shortcuts yield to editors,
+ *   IME composition, and modifier keys. Drafts have no send path.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import CachedTrashPanel from './components/CachedTrashPanel.vue';
 import { emptyCachedTrash } from './lib/cached-trash';
+import { createSubjectIndex } from './lib/subject-index';
 import ActionOverlay from './components/ActionOverlay.vue';
 import RemindersPanel from './components/RemindersPanel.vue';
 import { formatReminderDateTime } from './lib/reminder-timezone';
@@ -104,6 +93,13 @@ interface ReaderOrigin {
 }
 
 const mailbox = useMailbox(props.client);
+// Activity rows name mail by its cached subject. Operations carry only a ref, so
+// the UI remembers subjects it has already seen (list rows, Cached Trash rows,
+// the open conversation); an unseen ref reads "Unknown conversation".
+const subjectIndex = createSubjectIndex();
+watch(() => [mailbox.conversations.value, mailbox.conversations.value.length], () => subjectIndex.rememberRows(mailbox.conversations.value), { immediate: true });
+watch(() => [trashState.value.rows, trashState.value.rows.length], () => subjectIndex.rememberRows(trashState.value.rows), { immediate: true });
+watch(() => mailbox.conversation.value, (open) => { if (open) subjectIndex.remember(open.ref, open.subject); }, { immediate: true });
 /**
  * P5b: rows in rendered order — sender-grouped when the search context's
  * submitted query is a single non-excluded from: (InboxList renders exactly
@@ -488,6 +484,7 @@ function setToggleRef(name: UtilityDrawer): (el: Element | import('vue').Compone
   };
 }
 
+/** The drawer's accessible region name. */
 const drawerTitles: Record<UtilityDrawer, string> = {
   account: 'Account',
   destinations: 'Provider mail — read only',
@@ -496,6 +493,16 @@ const drawerTitles: Record<UtilityDrawer, string> = {
   reminders: 'Reminders',
   'reminder-settings': 'Reminder settings',
   trash: 'Cached Trash — read only',
+};
+/** The drawer's one visible heading; panels render no heading that repeats it. */
+const drawerHeadings: Record<UtilityDrawer, string> = {
+  account: 'Account',
+  destinations: 'Provider mail — read only',
+  activity: 'Activity',
+  drafts: 'Drafts',
+  reminders: 'Reminders',
+  'reminder-settings': 'Reminder settings',
+  trash: 'Cached Trash',
 };
 
 /**
@@ -1949,12 +1956,13 @@ function onKeydown(event: KeyboardEvent): void {
     endGoGrace();
     if (isGoSecondKey(event) && !isEditableTarget(event.target)) { event.preventDefault(); return; }
   }
-  // A visible compose surface (inline reply composer or inline compose card)
-  // owns Escape: it closes through the same protected flush as the drafts
-  // editor. This must run before the key suppression below so the composer
-  // (not the mailbox) answers Escape; the surface hides when drafts.isVisible
-  // goes false.
-  if ((replyComposerOpen.value || composeCardOpen.value) && event.key === 'Escape' && !event.isComposing && event.keyCode !== 229
+  // A visible compose surface (inline reply composer, inline compose card or
+  // the drafts drawer's editor) owns Escape: it closes through the same
+  // protected flush as the editor's own close control. This must run before the
+  // key suppression below so the editor (not the mailbox or the drawer) answers
+  // Escape; the surface hides when drafts.isVisible goes false, which returns
+  // the drawer to its list, and a second Escape closes the drawer.
+  if ((replyComposerOpen.value || composeCardOpen.value || (drawer.value === 'drafts' && drafts.isVisible.value)) && event.key === 'Escape' && !event.isComposing && event.keyCode !== 229
     && !event.ctrlKey && !event.metaKey && !event.altKey) {
     event.preventDefault();
     void drafts.flushAndClose();
@@ -2748,7 +2756,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
           data-test="utility-drawer"
         >
           <header class="drawer-header">
-            <h2>{{ drawerTitles[drawer] }}</h2>
+            <h2>{{ drawerHeadings[drawer] }}</h2>
             <button type="button" data-test="drawer-close" @click="closeDrawer()">Close</button>
           </header>
           <ProviderDestinations v-if="drawer === 'destinations' && accountId" :key="accountId" :client="props.client" :account-id="accountId" />
@@ -2786,6 +2794,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             :group-detail="mailbox.groupDetail.value"
             :group-detail-error="mailbox.groupDetailError.value"
             :expanded-request-id="expandedGroupRequestId"
+            :subject-for="subjectIndex.subjectFor"
             @open="openFromActivity($event)"
             @unarchive="unarchiveFromActivity"
             @retry="retryFromActivity"

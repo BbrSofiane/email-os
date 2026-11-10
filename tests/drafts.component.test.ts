@@ -1,7 +1,8 @@
 import { advanceUiUntil, useUiTestClock } from './support/timers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, type VueWrapper } from '@vue/test-utils';
-import type { DraftReceipt, MailClient } from '../src/lib/ipc/client';
+import DraftsPanel from '../src/components/DraftsPanel.vue';
+import type { DraftReceipt, DraftRef, MailClient } from '../src/lib/ipc/client';
 import { createBrowserFakeMailClient, deferred, openUtilityDrawer, createKeyEvent } from './helpers';
 import { mountDraftsApp as mountDraftsUi, startNewDraft } from './support/drafts';
 
@@ -9,6 +10,19 @@ describe('draft save and receipt integrity', () => {
   let wrapper: VueWrapper | null = null;
 
   beforeEach(useUiTestClock);
+
+  /**
+   * The drawer is one column: while an editor is open, the list (with New draft
+   * and the draft rows) is not on screen, so the UI no longer offers a switch.
+   * These tests guard the lifecycle behind it, so the request is sent through
+   * the panel's own events, which reach the same App handlers the buttons used.
+   */
+  async function requestEditorSwitch(w: VueWrapper, to?: DraftRef): Promise<void> {
+    const panel = w.findComponent(DraftsPanel);
+    if (to) panel.vm.$emit('openDraft', to);
+    else panel.vm.$emit('newDraft');
+    await flushPromises();
+  }
 
   afterEach(() => {
     wrapper?.unmount();
@@ -404,7 +418,7 @@ describe('draft save and receipt integrity', () => {
 
     if (action === 'native close') fake.controls.requestAppClose();
     else if (action === 'editor close') await w.find('[data-test="close-composer"]').trigger('click');
-    else if (action === 'editor switch') await w.find('[data-test="new-draft"]').trigger('click');
+    else if (action === 'editor switch') await requestEditorSwitch(w);
     else {
       // The flush fails, so the guarded switch away from Drafts aborts and the
       // user never reaches the Account drawer or its disconnect controls.
@@ -944,7 +958,7 @@ describe('draft save and receipt integrity', () => {
       } else if (action === 'editor close') {
         await w.find('[data-test="close-composer"]').trigger('click');
       } else if (action === 'editor switch') {
-        await w.find('[data-test="new-draft"]').trigger('click');
+        await requestEditorSwitch(w);
       } else {
         // The flush fails, so the guarded switch away from Drafts aborts and the
         // user never reaches the Account drawer or its disconnect controls.
@@ -1056,8 +1070,8 @@ describe('draft save and receipt integrity', () => {
     await startNewDraft(w);
     const original = (await fake.listDrafts())[0]!;
     const saved = await fake.getDraft(original.ref);
-    await w.find('[data-test^="open-draft-"]').trigger('click');
-    await flushPromises();
+    // Re-opening the already-open draft: the one-column drawer shows no list, so the request comes from the panel event.
+    await requestEditorSwitch(w, original.ref);
     await fake.deleteDraft({ ref: original.ref, expectedRevision: saved.revision, requestId: 'delete-elsewhere' });
     await w.find('[data-test="draft-body"]').setValue('recover text without resurrecting old ref');
     await w.find('[data-test="close-composer"]').trigger('click');
@@ -1267,7 +1281,7 @@ describe('draft save and receipt integrity', () => {
     await flushPromises();
     expect(saveCommand).not.toBeNull();
 
-    await w.find(`[data-test="open-draft-${next.ref.draftId}"]`).trigger('click');
+    await requestEditorSwitch(w, next.ref);
     expect(w.find('[data-test="confirm-discard"]').exists()).toBe(false);
     pendingSave.resolve(await fake.saveDraft(saveCommand!));
     await flushPromises();
@@ -1333,18 +1347,30 @@ describe('draft save and receipt integrity', () => {
     await startNewDraft(w);
     await w.find('[data-test="draft-body"]').setValue('e j Enter remain text');
     const textarea = w.find('[data-test="draft-body"]').element;
-    for (const key of ['e', 'j', 'Enter', 'Escape']) textarea.dispatchEvent(createKeyEvent(key, { bubbles: true }));
+    for (const key of ['e', 'j', 'Enter']) textarea.dispatchEvent(createKeyEvent(key, { bubbles: true }));
     window.dispatchEvent(createKeyEvent('e', { bubbles: true }));
     window.dispatchEvent(createKeyEvent('j', { bubbles: true }));
     window.dispatchEvent(createKeyEvent('Enter', { bubbles: true }));
-    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true }));
-    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true, ...{ ctrlKey: true } }));
+    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true, ctrlKey: true }));
     await flushPromises();
     expect(fake.controls.activity()).toEqual([]);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect((w.find('[data-test="draft-body"]').element as HTMLTextAreaElement).value).toBe('e j Enter remain text');
     expect(w.find('form').exists()).toBe(false);
     expect(w.findAll('button').every((button) => !/send/i.test(button.text()))).toBe(true);
+    // Escape is the editor's, not the mailbox's and not the drawer's: it closes
+    // through the protected flush, saves the exact text and returns to the list.
+    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true }));
+    await flushPromises();
+    expect(w.find('[data-test="composer"]').exists()).toBe(false);
+    expect(w.find('[data-test="utility-drawer"]').exists()).toBe(true);
+    expect(w.find('[data-test="draft-list-view"]').exists()).toBe(true);
+    expect(fake.controls.activity()).toEqual([]);
+    expect((await fake.getDraft((await fake.listDrafts())[0]!.ref)).content.bodyText).toBe('e j Enter remain text');
+    // A second Escape closes the drawer.
+    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true }));
+    await flushPromises();
+    expect(w.find('[data-test="utility-drawer"]').exists()).toBe(false);
   });
 
 });
