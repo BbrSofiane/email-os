@@ -10,7 +10,10 @@
  * sign-in is required.
  *
  * Layout: four labelled sections (connection, sync, permissions, session)
- * separated by spacing only; the drawer supplies the "Account" heading.
+ * separated by spacing only; the drawer supplies the "Account" heading. A fact
+ * appears only where it is real: no permission mode before there is an account,
+ * no Sync section when there is nothing to sync, and a failed sync is said once
+ * (the error line with Retry), not as a state word plus a sentence.
  * Disconnect is destructive, so it asks in place and the warning is not in the
  * DOM until it is asked for. Cancelling a sign-in has nothing to lose and stays
  * one click.
@@ -20,7 +23,7 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import type { AccountStatus, ConnectionState, MailError } from '../lib/ipc/client';
 import type { AccountAction } from '../composables/useMailbox';
-import { describeMailError } from '../lib/account-status';
+import { NOT_CONFIGURED_HINT, describeMailError, describeSyncFailure } from '../lib/account-status';
 import FullDate from './FullDate.vue';
 
 const props = defineProps<{
@@ -62,7 +65,14 @@ const modeLabel = computed(() => {
   }
 });
 
+/** A grant or a cache exists only once an account has been (or is being) connected. */
+const hasAccountFacts = computed(() => connection.value === 'connected' || connection.value === 'auth_required');
+const modeShown = hasAccountFacts;
+const syncShown = hasAccountFacts;
+
 const firstSyncRunning = computed(() => sync.value.state === 'syncing' && !sync.value.initialSyncComplete);
+/** The inline error line with Retry says the failure; the state word is then dropped, not repeated. */
+const errorLine = computed(() => sync.value.state === 'error' && sync.value.error ? describeSyncFailure(sync.value.error) : '');
 const syncLabel = computed(() => {
   if (sync.value.state === 'error') return 'Failed';
   if (sync.value.state === 'syncing') return firstSyncRunning.value ? 'Syncing first mail…' : 'Syncing…';
@@ -84,7 +94,7 @@ const coverageText = computed(() => sync.value.coverageLimit > 0
   ? `Up to ${sync.value.coverageLimit} conversations are cached; older mail may be missing.`
   : '');
 /** The inline Retry beside the error covers Sync now; without a typed error there is no Retry. */
-const retryShown = computed(() => sync.value.state === 'error' && !!sync.value.error);
+const retryShown = computed(() => errorLine.value !== '');
 
 const showConnect = computed(() => connection.value === 'not_configured' || connection.value === 'disconnected' || connection.value === 'auth_required');
 const canEnable = computed(() => access.value === 'read_only' && connection.value === 'connected');
@@ -125,15 +135,15 @@ watch(connection, (next) => { if (next === 'authenticating') confirming.value = 
       <p class="account-line account-connection-line">
         <template v-if="props.status.account"><span data-test="account-email">{{ props.status.account.emailAddress }}</span> · </template><span data-test="account-connection">{{ CONNECTION_LABELS[connection] }}</span>
       </p>
-      <p class="account-line account-mode" data-test="account-mode" :title="MODE_TITLE">{{ modeLabel }}</p>
+      <p v-if="modeShown" class="account-line account-mode" data-test="account-mode" :title="MODE_TITLE">{{ modeLabel }}</p>
       <p v-if="props.actionError" class="account-action-error" data-test="account-action-error" role="alert">
         Mailbox-action request: {{ describeMailError(props.actionError) }}
       </p>
       <p v-if="connection === 'not_configured'" class="account-notice" data-test="account-not-configured" role="note">
-        Gmail is not configured on this device; connecting is unavailable.
+        Gmail is not configured on this device. {{ NOT_CONFIGURED_HINT }}
       </p>
       <p v-if="connection === 'auth_required'" class="account-notice" data-test="account-auth-required" role="note">
-        Sign-in expired. Cached mail stays readable; sign in again to sync.
+        Cached mail stays readable. Sign in again to sync.
       </p>
       <div v-if="showConnect" class="account-actions">
         <button
@@ -142,16 +152,18 @@ watch(connection, (next) => { if (next === 'authenticating') confirming.value = 
           :disabled="props.busy !== null || props.transitioning"
           @click="emit('connect')"
         >
-          {{ connection === 'auth_required' ? 'Sign in again' : 'Connect' }}
+          {{ connection === 'auth_required' ? 'Sign in again' : 'Connect Gmail' }}
         </button>
       </div>
     </div>
 
-    <div class="account-section">
+    <div v-if="syncShown" class="account-section">
       <h3 class="account-label">Sync</h3>
       <p class="account-line account-sync-line">
-        <span data-test="account-sync-state">{{ syncLabel }}</span>
-        <span class="account-sep" aria-hidden="true">·</span>
+        <template v-if="!retryShown">
+          <span data-test="account-sync-state">{{ syncLabel }}</span>
+          <span class="account-sep" aria-hidden="true">·</span>
+        </template>
         <span data-test="account-last-synced"><template v-if="sync.lastSyncedAt">Last synced <FullDate :at="sync.lastSyncedAt" /></template><template v-else>Never synced</template></span>
         <span class="account-sep" aria-hidden="true">·</span>
         <span data-test="account-cached">{{ cachedLabel }}</span>
@@ -161,12 +173,12 @@ watch(connection, (next) => { if (next === 'authenticating') confirming.value = 
         Initial sync has not finished.
       </p>
       <p
-        v-if="sync.state === 'error' && sync.error"
+        v-if="retryShown"
         class="account-sync-error"
         data-test="account-sync-error"
         role="alert"
       >
-        <span>Sync failed: {{ describeMailError(sync.error) }}</span>
+        <span>{{ errorLine }}</span>
         <button
           type="button"
           data-test="account-sync-retry"

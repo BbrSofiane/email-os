@@ -4,6 +4,9 @@ import {
   INBOX_EMPTY_READ_ONLY,
   accountNotice,
   describeMailError,
+  describeSyncFailure,
+  emptyLineOwnsStatus,
+  headerNoteAnnounces,
   headerNoticeAction,
   inboxEmptyState,
   readOnlyHintShown,
@@ -38,6 +41,15 @@ describe('describeMailError', () => {
   });
 });
 
+describe('describeSyncFailure', () => {
+  it('says the network cause in one form, "no network", and keeps the plain sentence for other causes', () => {
+    expect(describeSyncFailure({ kind: 'network_unavailable' })).toBe('Sync failed: no network.');
+    expect(describeSyncFailure({ kind: 'rate_limited' })).toBe('Sync failed: The provider is rate limiting; retrying with backoff.');
+    // No typed cause: still a failure, with no invented cause.
+    expect(describeSyncFailure(null)).toBe('Sync failed.');
+  });
+});
+
 describe('accountNotice', () => {
   it('is null in fixture mode, without a status, and when connected and idle', () => {
     expect(accountNotice(null)).toBeNull();
@@ -58,12 +70,20 @@ describe('accountNotice', () => {
   });
 
   it('labels the connect action by state and keeps the cached-reading fact in the title only', () => {
-    expect(accountNotice(status({ connection: 'disconnected' }))!.actionLabel).toBe('Connect');
+    // One name per action, on every surface: Connect Gmail, Sign in again, Cancel sign-in.
+    expect(accountNotice(status({ connection: 'disconnected' }))!.actionLabel).toBe('Connect Gmail');
     const expired = accountNotice(status({ connection: 'auth_required', sync: { cachedConversations: 18 } }))!;
-    expect(expired.actionLabel).toBe('Sign in');
+    expect(expired.actionLabel).toBe('Sign in again');
     expect(expired.title).toContain('Cached mail stays readable; new mail will not sync until you sign in.');
     expect(expired.text).not.toContain('Cached');
-    expect(accountNotice(status({ connection: 'authenticating' }))!.actionLabel).toBe('Cancel');
+    expect(accountNotice(status({ connection: 'authenticating' }))!.actionLabel).toBe('Cancel sign-in');
+  });
+
+  it('gives a not-configured device a title with a next step instead of "connecting is unavailable"', () => {
+    const notice = accountNotice(status({ connection: 'not_configured' }))!;
+    expect(notice.title).not.toMatch(/unavailable/i);
+    expect(notice.title).toContain('Gmail is not configured on this device.');
+    expect(notice.title).toContain('Open Account');
   });
 
   it('does not claim actions are off (actions are not gated by the connection)', () => {
@@ -90,7 +110,7 @@ describe('accountNotice', () => {
   it('says Sync failed everywhere; network_unavailable adds the cause "no network" and never says Offline', () => {
     const offline = accountNotice(status({ sync: { state: 'error', error: { kind: 'network_unavailable' } } }))!;
     expect(offline).toMatchObject({ kind: 'offline', text: 'Sync failed · no network', action: 'sync', actionLabel: 'Retry', tone: 'danger' });
-    expect(offline.title).toBe('Sync failed. The network is unavailable. Cached mail stays readable; new mail has not synced.');
+    expect(offline.title).toBe('Sync failed: no network. Cached mail stays readable; new mail has not synced.');
     expect(`${offline.text} ${offline.title}`).not.toMatch(/offline/i);
     // The first sync keeps its cached count after the cause.
     expect(accountNotice(status({ sync: { state: 'error', error: { kind: 'network_unavailable' }, initialSyncComplete: false, cachedConversations: 4 } }))!.text)
@@ -107,6 +127,7 @@ describe('accountNotice', () => {
       const failed = accountNotice(status({ sync: { state: 'error', error } }))!;
       expect(failed).toMatchObject({ kind: 'sync_failed', text, action: 'sync', actionLabel: 'Retry', tone: 'danger' });
       expect(failed.title).toContain(describeMailError(error));
+      expect(failed.title.startsWith('Sync failed: ')).toBe(true);
     }
     // No typed cause, or a kind with no short phrase: still a failure, with no invented cause.
     expect(accountNotice(status({ sync: { state: 'error', error: null } }))).toMatchObject({ kind: 'sync_failed', text: 'Sync failed' });
@@ -142,7 +163,7 @@ describe('readOnlyHintShown', () => {
 
 describe('headerNoticeAction', () => {
   it('gives the header note its action, or a single Account link when not configured', () => {
-    expect(headerNoticeAction(accountNotice(status({ connection: 'disconnected' })), false)).toEqual({ action: 'connect', label: 'Connect' });
+    expect(headerNoticeAction(accountNotice(status({ connection: 'disconnected' })), false)).toEqual({ action: 'connect', label: 'Connect Gmail' });
     expect(headerNoticeAction(accountNotice(status({ sync: { state: 'error', error: { kind: 'rate_limited' } as MailError } })), false)).toEqual({ action: 'sync', label: 'Retry' });
     expect(headerNoticeAction(accountNotice(status({ connection: 'not_configured' })), false)).toEqual({ action: 'account', label: 'Account' });
     expect(headerNoticeAction(null, false)).toBeNull();
@@ -167,21 +188,24 @@ describe('inboxEmptyState', () => {
     ['not_configured', 'Gmail is not configured on this device.', 'account', 'Account'],
     ['disconnected', 'Not connected.', 'connect', 'Connect Gmail'],
     ['auth_required', 'Sign-in expired.', 'connect', 'Sign in again'],
-    ['authenticating', 'Finish sign-in in your browser.', 'cancel', 'Cancel'],
+    ['authenticating', 'Finish sign-in in your browser.', 'cancel', 'Cancel sign-in'],
   ] as const)('explains the %s connection with its own action', (connection, text, action, actionLabel) => {
     expect(inboxEmptyState(status({ connection }))).toMatchObject({ kind: connection, text, action, actionLabel });
   });
 
   it('adds the first-run hint only where Connect really is the action and the grant is a fresh read-only one', () => {
-    expect(inboxEmptyState(status({ connection: 'disconnected' }))!.hint).toBe('Opens Google sign-in in your browser. Starts read-only.');
-    for (const connection of ['not_configured', 'auth_required', 'authenticating'] as const) {
+    expect(inboxEmptyState(status({ connection: 'disconnected' }))!.hint)
+      .toBe("Opens Google sign-in in your browser. Starts read-only: Email OS can't change your mail until you enable mailbox actions in Account.");
+    for (const connection of ['auth_required', 'authenticating'] as const) {
       expect(inboxEmptyState(status({ connection }))!.hint, connection).toBeUndefined();
     }
     expect(inboxEmptyState(status({ sync: { state: 'error', error: { kind: 'network_unavailable' } } }))!.hint).toBeUndefined();
   });
 
-  it('never offers Connect for a device that is not configured', () => {
-    expect(inboxEmptyState(status({ connection: 'not_configured' }))!.action).toBe('account');
+  it('never offers Connect for a device that is not configured, and says the next step', () => {
+    const notConfigured = inboxEmptyState(status({ connection: 'not_configured' }))!;
+    expect(notConfigured.action).toBe('account');
+    expect(notConfigured.hint).toBe('Add a Google client ID to the launch environment, then restart.');
   });
 
   it('distinguishes first sync running, failed, unfinished and genuinely empty', () => {
@@ -189,7 +213,7 @@ describe('inboxEmptyState', () => {
       kind: 'syncing', text: 'Syncing first mail… 7 cached.', action: null,
     });
     expect(inboxEmptyState(status({ sync: { state: 'error', error: { kind: 'network_unavailable' }, initialSyncComplete: false } }))).toMatchObject({
-      kind: 'sync_error', text: 'Sync failed: The network is unavailable.', action: 'sync', actionLabel: 'Retry',
+      kind: 'sync_error', text: 'Sync failed: no network.', action: 'sync', actionLabel: 'Retry',
     });
     expect(inboxEmptyState(status({ sync: { state: 'idle', initialSyncComplete: false } }))).toMatchObject({
       kind: 'sync_unfinished', text: 'Initial sync has not finished.', action: 'sync', actionLabel: 'Sync now',
@@ -206,5 +230,42 @@ describe('inboxEmptyState', () => {
       expect(inboxEmptyState(status({ mutationAccess }))).toMatchObject({ kind: 'empty', text: INBOX_EMPTY_READ_ONLY });
     }
     expect(INBOX_EMPTY_READ_ONLY).toBe('No conversations in the cached inbox.');
+  });
+});
+
+describe('emptyLineOwnsStatus', () => {
+  it('gives the status sentence to the empty line in every zero-row state that has one', () => {
+    for (const patch of [
+      { connection: 'not_configured' as const },
+      { connection: 'disconnected' as const },
+      { connection: 'auth_required' as const },
+      { connection: 'authenticating' as const },
+      { sync: { state: 'syncing' as const, initialSyncComplete: false } },
+      { sync: { state: 'error' as const, error: { kind: 'network_unavailable' } as MailError } },
+    ]) {
+      expect(emptyLineOwnsStatus(inboxEmptyState(status(patch)), true), JSON.stringify(patch)).toBe(true);
+    }
+  });
+
+  it('does not, when the line is not showing or when it only says the inbox is empty (a later sync keeps its header note)', () => {
+    expect(emptyLineOwnsStatus(inboxEmptyState(status({ connection: 'disconnected' })), false)).toBe(false);
+    expect(emptyLineOwnsStatus(null, true)).toBe(false);
+    const syncing = status({ sync: { state: 'syncing', initialSyncComplete: true } });
+    expect(inboxEmptyState(syncing)!.kind).toBe('empty');
+    expect(emptyLineOwnsStatus(inboxEmptyState(syncing), true)).toBe(false);
+  });
+});
+
+describe('headerNoteAnnounces', () => {
+  it('goes silent only while the Account drawer is open and shows the same sync failure as an alert', () => {
+    const failed = status({ sync: { state: 'error', error: { kind: 'network_unavailable' } as MailError } });
+    expect(headerNoteAnnounces(failed, false)).toBe(true);
+    expect(headerNoteAnnounces(failed, true)).toBe(false);
+    // No typed error means the drawer shows no alert, so the header keeps announcing.
+    expect(headerNoteAnnounces(status({ sync: { state: 'error', error: null } }), true)).toBe(true);
+    // A connection note is not repeated by the drawer's alert.
+    expect(headerNoteAnnounces(status({ connection: 'auth_required' }), true)).toBe(true);
+    expect(headerNoteAnnounces(status({ sync: { state: 'syncing' } }), true)).toBe(true);
+    expect(headerNoteAnnounces(null, true)).toBe(true);
   });
 });

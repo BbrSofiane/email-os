@@ -102,3 +102,18 @@ Implemented test-first on the same branch. Five issues from the second critique:
 Checks: `pnpm test` 1047 passed / 33 skipped, `pnpm typecheck` and `pnpm build` clean. No Rust touched.
 
 Still not verified: header layout at real widths (no rendered check of the new floor), real Google OAuth and sync, macOS Keychain, native offline behaviour, screen-reader announcements.
+
+## Follow-up 2 (critique run 3, 28/40)
+Implemented test-first on the same branch. The empty inbox line now owns the status sentence in zero-row states (user decision). Five issues from the third critique:
+
+| # | Issue | Result |
+|---|---|---|
+| 1 | P1 tab floor (two tabs + `Unread only` + read-only hint at 1030px left `Inbox` 13px, label 0px) | The tab column floor is built from the strip: `max(10rem, Inbox 4.5rem + saved 9rem + chips 4.75rem each + 18px gaps)` through `:has()` rules; tabs and nav are `flex: 0 0 auto`; a saved-tab label stops at `12ch` with an ellipsis (full name in `title`); at 1100px and below the read-only hint collapses to its Review access link. Pinned by the stylesheet test and a markup test |
+| 2 | P2 duplicate status text | In a zero-row state with the empty line showing a status, the header note loses its visible words, link and count and stays as one hidden `role=status` announcement; the Preview tag remains. With rows, or when the line only says the inbox is empty, the note shows as before. `emptyLineOwnsStatus` is unit tested |
+| 3 | P2 first-run void | Contact pane silent when the list has no rows (any state), `text-wrap: balance` against the straggler; not configured gets the next step in the empty line (`Add a Google client ID to the launch environment, then restart.`) and the drawer, and the "connecting is unavailable" wording is gone; the `Connect Gmail` hint now explains read-only |
+| 4 | P3 names and tone | `Connect Gmail`, `Sign in again`, `Cancel sign-in`, `Retry`, `Sync now` on every surface; the network cause reads `no network` in the header, empty line, drawer and title; `Disconnect` confirm has a Coral Fault text and border cue, Keep account stays focused |
+| 5 | P3 drawer facts and announcements | Mode row and Sync section hidden while disconnected, not configured or signing in; a typed failure shows one Coral line with Retry (no `Failed` state word); `Sign-in expired` once in the drawer; header note silent while the drawer shows the same failure as its alert; `Sync now` leads the palette on a sync failure |
+
+Rejected or deferred: drawer focus on open stays on the region (the shared `openDrawer` pattern for every drawer; Account does not diverge). The palette `Keys` row `Open destinations ←` stays: Left still opens the navigator with no account. The drawer and palette keep a `Connect Gmail` control for a not-configured device (unchanged behaviour; the line above it now says why it cannot work yet). The 36x16 header Retry hit area and the 4.30:1 rail icon from the personas were not touched.
+
+Still not verified: layout at real widths (no browser was available; the floor is computed from the measured widths and the tokens, so 1030px has not been re-measured), `text-wrap: balance` rendering, real Google OAuth and sync, macOS Keychain, native offline behaviour, screen-reader announcements (the single `role=status` and the silenced note are reasoned from markup), and Tab order in the drawer.

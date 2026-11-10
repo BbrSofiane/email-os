@@ -424,7 +424,7 @@ describe('App (Slice 02 Gmail account states)', () => {
     await w.find('[data-test="account-sync"]').trigger('click');
     await settle();
     expect(w.find('[data-test="account-sync-error"]').exists()).toBe(true);
-    expect(w.find('[data-test="account-sync-error"]').text()).toContain('network is unavailable');
+    expect(w.find('[data-test="account-sync-error"]').text()).toContain('Sync failed: no network.');
     if (w.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w);
     // The cached reader is still fully usable after the sync error.
     if (w.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w);

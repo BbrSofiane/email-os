@@ -64,12 +64,43 @@ describe('AccountPanel structure', () => {
     expect(test(w, 'account-email').exists()).toBe(email !== null);
   });
 
-  it('gives not-configured and auth-required one terse line each', () => {
+  it('gives not-configured a next step and auth-required one terse line that does not repeat the connection label', () => {
     const nc = mountPanel(status({ connection: 'not_configured', account: null }));
-    expect(test(nc, 'account-not-configured').text()).toBe('Gmail is not configured on this device; connecting is unavailable.');
+    expect(test(nc, 'account-not-configured').text()).toBe('Gmail is not configured on this device. Add a Google client ID to the launch environment, then restart.');
+    expect(test(nc, 'account-not-configured').text()).not.toMatch(/unavailable/i);
     const ar = mountPanel(status({ connection: 'auth_required' }));
-    expect(test(ar, 'account-auth-required').text()).toBe('Sign-in expired. Cached mail stays readable; sign in again to sync.');
+    expect(test(ar, 'account-auth-required').text()).toBe('Cached mail stays readable. Sign in again to sync.');
+    // "Sign-in expired" is said once in the drawer, by the connection label.
+    expect(ar.text().match(/Sign-in expired/g)).toHaveLength(1);
     expect(test(ar, 'account-connect').text()).toBe('Sign in again');
+  });
+
+  it('names the connect button Connect Gmail wherever it is not a re-sign-in', () => {
+    for (const connection of ['disconnected', 'not_configured'] as const) {
+      expect(test(mountPanel(status({ connection, account: null })), 'account-connect').text()).toBe('Connect Gmail');
+    }
+  });
+
+  it('shows the permission mode only where a grant is real (connected or signed out), not before there is an account', () => {
+    for (const connection of ['connected', 'auth_required'] as const) {
+      expect(test(mountPanel(status({ connection })), 'account-mode').exists(), connection).toBe(true);
+    }
+    for (const connection of ['disconnected', 'not_configured', 'authenticating'] as const) {
+      expect(test(mountPanel(status({ connection, account: null })), 'account-mode').exists(), connection).toBe(false);
+    }
+  });
+
+  it('hides the Sync section when there is nothing to sync (not connected, not configured, signing in)', () => {
+    for (const connection of ['disconnected', 'not_configured', 'authenticating'] as const) {
+      const w = mountPanel(status({ connection, account: null, sync: { cachedConversations: 0 } }));
+      expect(w.findAll('.account-label').map((n) => n.text()), connection).not.toContain('Sync');
+      expect(test(w, 'account-sync-state').exists(), connection).toBe(false);
+      expect(w.text()).not.toMatch(/Never synced|conversations cached/);
+    }
+    // A signed-out account keeps its cached facts: the cache is real.
+    const expired = mountPanel(status({ connection: 'auth_required' }));
+    expect(expired.findAll('.account-label').map((n) => n.text())).toContain('Sync');
+    expect(test(expired, 'account-cached').exists()).toBe(true);
   });
 });
 
@@ -82,8 +113,18 @@ describe('AccountPanel sync section', () => {
     const seps = line.findAll('.account-sep');
     expect(seps).toHaveLength(2);
     for (const sep of seps) expect(sep.attributes('aria-hidden')).toBe('true');
+  });
+
+  it('says a typed failure once: the error line with Retry replaces the "Failed" state word', () => {
     const failed = mountPanel(status({ sync: { state: 'error', error: { kind: 'rate_limited' }, cachedConversations: 3 } }));
-    expect(test(failed, 'account-sync-state').text()).toBe('Failed');
+    expect(test(failed, 'account-sync-state').exists()).toBe(false);
+    expect(failed.get('.account-sync-line').findAll(':scope > span').map((span) => span.text())).toEqual(['Never synced', '·', '3 conversations cached']);
+    expect(test(failed, 'account-sync-error').text()).toContain('Sync failed: The provider is rate limiting');
+    expect(failed.text().match(/Sync failed/g)).toHaveLength(1);
+    expect(failed.text()).not.toMatch(/\bFailed\b/);
+    // Without a typed cause there is no error line, so the state word is the one statement.
+    const untyped = mountPanel(status({ sync: { state: 'error', error: null } }));
+    expect(test(untyped, 'account-sync-state').text()).toBe('Failed');
   });
 
   it('hides the coverage line when nothing is cached or the account is not connected', () => {
@@ -136,7 +177,8 @@ describe('AccountPanel sync section', () => {
     const w = mountPanel(status({ sync: { state: 'error', error: { kind: 'network_unavailable' } } }));
     const alert = test(w, 'account-sync-error');
     expect(alert.attributes('role')).toBe('alert');
-    expect(alert.text()).toContain('The network is unavailable.');
+    expect(alert.text()).toContain('Sync failed: no network.');
+    expect(alert.text()).not.toContain('The network is unavailable');
     const retry = alert.get('[data-test="account-sync-retry"]');
     expect(retry.text()).toBe('Retry');
     await retry.trigger('click');
@@ -287,5 +329,15 @@ describe('AccountPanel action error', () => {
     const amber = css.match(/\.status-outcome_unknown,[^{]*\{\s*color: var\(--warning\);/s)![0];
     expect(amber).not.toContain('.account-action-error');
     expect(css).toMatch(/\.account-sync-error,\s*\.account-action-error\s*\{[^}]*color: var\(--danger\)/s);
+  });
+});
+
+describe('AccountPanel destructive confirm (CSS source)', () => {
+  it('gives Disconnect a Coral Fault text and border cue; Keep account stays the focused default', () => {
+    const css = readFileSync('src/assets/style.css', 'utf8');
+    const rule = css.match(/\.account-confirm \.account-destructive\s*\{([^}]*)\}/)![1]!;
+    expect(rule).toMatch(/color:\s*var\(--danger\)/);
+    expect(rule).toMatch(/border-color:\s*var\(--danger\)/);
+    expect(css).toMatch(/\.account-confirm \.account-primary\s*\{[^}]*background:\s*var\(--focus-fill\)/s);
   });
 });

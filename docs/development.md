@@ -491,23 +491,33 @@ operator-gated, not authorized by implementation work.
 
 With no usable account the Inbox says why instead of claiming it is empty: **Not
 connected** with an inline **Connect Gmail**, **Sign-in expired** with **Sign in
-again**, **Finish sign-in in your browser** with **Cancel**, **Syncing first
-mail… N cached**, **Sync failed: …** with **Retry**, **Initial sync has not
-finished** with **Sync now**, or (not configured) a link to Account. Only a
-connected, fully synced, empty account shows the real empty text. Under **Not
-connected** one line says what Connect does (it opens Google sign-in in the
-browser and starts read-only). A header status note repeats the connection or
-sync fact (Not connected, Sign-in expired, Syncing…, Sync failed with its cause in
-words, for example Sync failed · no network; there is no Offline wording); its
-action link is shown only when the empty line is not carrying the action. Any
-status note replaces the read-only hint. It is absent while connected and idle.
-**Connect Gmail** (or **Sign in again**) and
-**Sync now** are palette commands only while they can run (ranked above Go to while
-Connect or a failed sync can be fixed), and `G` then `A` (within
-1 second, Gmail mode only) opens Account. None of these gates mailbox actions:
-actions depend on `mutationAccess`, not on the connection. All of it is verified
-with the synthetic in-memory fake; real OAuth, sync and Keychain behavior stay
-operator-gated.
+again**, **Finish sign-in in your browser** with **Cancel sign-in**, **Syncing first
+mail… N cached**, **Sync failed: …** with **Retry** (the network cause always reads
+**no network**), **Initial sync has not finished** with **Sync now**, or (not
+configured) a link to Account with the next step (add a Google client ID to the
+launch environment, then restart). Only a connected, fully synced, empty account
+shows the real empty text. Under **Not connected** one line says what Connect does
+(it opens Google sign-in in the browser and starts read-only, so Email OS cannot
+change mail until you enable mailbox actions). **In a zero-row state the empty line
+owns the status sentence:** the header shows only the Preview tag, and its status
+note stays only as one hidden announcement. With rows the header status note
+repeats the connection or sync fact (Not connected, Sign-in expired, Syncing…,
+Sync failed with its cause in words, for example Sync failed · no network; there
+is no Offline wording); its action link is shown only when the empty line is not
+carrying the action. While the Account drawer shows a sync failure as an alert,
+the header note stays silent so it is announced once. Any status note replaces the
+read-only hint, which at 1100px and below collapses to its Review access link.
+The note is absent while connected and idle. One name per action everywhere:
+**Connect Gmail**, **Sign in again**, **Cancel sign-in**, **Retry**, **Sync now**.
+The Account drawer shows the permission mode and the Sync section only where they
+are real (not while disconnected, not configured or signing in). **Connect Gmail**
+(or **Sign in again**) and **Sync now** are palette commands only while they can run
+(Connect ranks above Go to; during a sync failure the Account group leads the
+palette), and `G` then `A` (within 1 second, Gmail mode only) opens Account. The
+contact pane says nothing about a missing correspondent while the list has no rows.
+None of these gates mailbox actions: actions depend on `mutationAccess`, not on the
+connection. All of it is verified with the synthetic in-memory fake; real OAuth,
+sync and Keychain behavior stay operator-gated.
 
 ## Desktop-local reminder increment (UX-11, fixture only)
 

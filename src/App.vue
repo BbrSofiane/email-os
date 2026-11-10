@@ -46,7 +46,7 @@ import SelectionBar from './components/SelectionBar.vue';
 import HeaderGlyph from './components/HeaderGlyph.vue';
 import PaneGlyph from './components/PaneGlyph.vue';
 import { browsingActions, actionLabel, type BrowsingActionId } from './lib/browsing-actions';
-import { INBOX_EMPTY_RECOVERABLE, accountNotice, headerNoticeAction, inboxEmptyState, readOnlyHintShown, type AccountNoticeAction, type InboxEmptyAction } from './lib/account-status';
+import { INBOX_EMPTY_RECOVERABLE, accountNotice, emptyLineOwnsStatus, headerNoteAnnounces, headerNoticeAction, inboxEmptyState, readOnlyHintShown, type AccountNoticeAction, type InboxEmptyAction } from './lib/account-status';
 import { groupRowsBySender, isSingleFromQuery, senderGroupKey, validateSearch } from './lib/search';
 import InboxList from './components/InboxList.vue';
 import SplitEditor from './components/SplitEditor.vue';
@@ -421,18 +421,30 @@ const readOnlyHint = computed(() => readOnlyHintShown(accountStatus.value, statu
 // Only the plain Inbox says anything about the account; search, filters, saved and other contexts keep their own text.
 const inboxEmpty = computed(() => mailbox.context.value === 'inbox' && !mailbox.unreadOnly.value && !mailbox.starredOnly.value
   ? inboxEmptyState(accountStatus.value) : null);
-// One action, one place: while the empty inbox line carries it, the header note keeps its words only.
-const emptyLineCarriesAction = computed(() => mailbox.listState.value === 'ready' && mailbox.conversations.value.length === 0
-  && !readerOpen.value && !!inboxEmpty.value?.action);
+// The empty inbox line is on screen: a ready, zero-row plain Inbox with no reader open.
+const emptyLineShown = computed(() => mailbox.listState.value === 'ready' && mailbox.conversations.value.length === 0
+  && !readerOpen.value && !!inboxEmpty.value);
+// One action, one place: while the empty inbox line carries it, the header note has no link.
+const emptyLineCarriesAction = computed(() => emptyLineShown.value && !!inboxEmpty.value?.action);
 const headerAction = computed(() => headerNoticeAction(statusNotice.value, emptyLineCarriesAction.value));
+// One sentence, one place: while the empty line carries the status sentence, the header note drops its visible
+// words (the Preview tag stays) and keeps only its one announcement, so the sentence and the ticking cached
+// count are never shown twice.
+const noteWordsHidden = computed(() => emptyLineOwnsStatus(inboxEmpty.value, emptyLineShown.value));
+// While the Account drawer shows the same sync failure as its alert, the note stays silent (no double announcement).
+const noteAnnounces = computed(() => headerNoteAnnounces(accountStatus.value, drawer.value === 'account'));
+// The contact pane says nothing about a missing correspondent when no row can be focused.
+const contactListEmpty = computed(() => !readerOpen.value && mailbox.conversations.value.length === 0);
 // Provider mail with no account: Connect (or Account when nothing can be connected), never an action of its own.
 const providerAccountAction = computed(() => {
   const empty = inboxEmptyState(accountStatus.value);
   return empty && (empty.action === 'connect' || empty.action === 'account') ? { action: empty.action, label: empty.actionLabel } : null;
 });
 // Palette: Connect, or a Sync now that can fix a failure, ranks above Go to.
-const accountCommandsFirst = computed(() => actionAvailable('connect')
-  || (actionAvailable('sync') && accountStatus.value?.sync.state === 'error'));
+const syncFailureFixable = computed(() => actionAvailable('sync') && accountStatus.value?.sync.state === 'error');
+const accountCommandsFirst = computed(() => actionAvailable('connect') || syncFailureFixable.value);
+// A visible sync failure has one fix, so Sync now leads the palette (triage commands follow).
+const accountCommandsTop = computed(() => syncFailureFixable.value);
 const paletteHasRows = computed(() => !(mailbox.listState.value === 'ready' && mailbox.conversations.value.length === 0));
 const emptyListText = computed(() => {
   if (mailbox.context.value === 'search') return mailbox.nextCursor.value ? 'No matches on this candidate page. Continue scanning older mail below.' : 'No matching conversations in the searched content.';
@@ -2300,7 +2312,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
           <h1 class="app-title" :class="{ 'visually-hidden': activeTabShown }" data-test="inbox-title">{{ contextTitle }}<template v-if="switchAccountLabel"><span class="app-title-account"> — {{ accountStatus?.account?.emailAddress }}</span></template></h1>
           <nav v-if="splitNavShown" class="split-nav" aria-label="Inbox splits" :title="splitCoverageShown ? SPLIT_COVERAGE : undefined">
             <button type="button" class="split-tab" data-test="split-inbox" :aria-current="mailbox.context.value === 'inbox' ? 'page' : undefined" :aria-describedby="splitCoverageShown ? `${domIdPrefix}split-coverage` : undefined" @click="navigateContext('inbox')"><span class="split-label">Inbox</span> <span v-if="splitBadge(mailbox.inboxTotal.value)" class="split-count">{{ splitBadge(mailbox.inboxTotal.value) }}</span></button>
-            <button v-if="savedTabVisible" type="button" class="split-tab" data-test="split-saved" :aria-current="mailbox.context.value === 'saved' ? 'page' : undefined" :aria-describedby="splitCoverageShown ? `${domIdPrefix}split-coverage` : undefined" @click="navigateContext('saved')"><span class="split-label">{{ mailbox.savedSplit.value?.name }}</span> <span v-if="splitBadge(mailbox.savedTotal.value)" class="split-count">{{ splitBadge(mailbox.savedTotal.value) }}</span></button>
+            <button v-if="savedTabVisible" type="button" class="split-tab" data-test="split-saved" :title="mailbox.savedSplit.value?.name" :aria-current="mailbox.context.value === 'saved' ? 'page' : undefined" :aria-describedby="splitCoverageShown ? `${domIdPrefix}split-coverage` : undefined" @click="navigateContext('saved')"><span class="split-label">{{ mailbox.savedSplit.value?.name }}</span> <span v-if="splitBadge(mailbox.savedTotal.value)" class="split-count">{{ splitBadge(mailbox.savedTotal.value) }}</span></button>
           </nav>
           <!-- Coverage qualifies the counts, so it lives on them: the tabs'
                accessible description and the nav's hover title. -->
@@ -2318,12 +2330,12 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
           <!-- One account fact (connection or sync), same pattern as the preview tag: terse
                visible words, the full sentence as the title and visually hidden text. The hidden
                text never carries the ticking cached count, so it is announced once. -->
-          <p v-if="statusNotice" class="header-note account-status-note" :class="`tone-${statusNotice.tone}`" role="status" data-test="account-status-note" :data-kind="statusNotice.kind" :title="statusNotice.title">
-            <span class="note-text" aria-hidden="true">{{ statusNotice.text }}</span><span class="visually-hidden">{{ statusNotice.title }}</span>
-            <template v-if="headerAction && (headerAction.action === 'account' || accountActionsIdle)"><span class="note-sep" aria-hidden="true">·</span><button type="button" class="header-link" data-test="account-status-action" @click="accountNoticeAction(headerAction.action, 'header')">{{ headerAction.label }}</button></template>
+          <p v-if="statusNotice" class="header-note account-status-note" :class="[`tone-${statusNotice.tone}`, { 'visually-hidden': noteWordsHidden }]" :role="noteAnnounces ? 'status' : undefined" data-test="account-status-note" :data-kind="statusNotice.kind" :title="statusNotice.title">
+            <span class="note-text" aria-hidden="true">{{ statusNotice.text }}</span><span class="visually-hidden" :aria-hidden="noteAnnounces ? undefined : 'true'">{{ statusNotice.title }}</span>
+            <template v-if="!noteWordsHidden && headerAction && (headerAction.action === 'account' || accountActionsIdle)"><span class="note-sep" aria-hidden="true">·</span><button type="button" class="header-link" data-test="account-status-action" @click="accountNoticeAction(headerAction.action, 'header')">{{ headerAction.label }}</button></template>
           </p>
           <p v-if="readOnlyHint" class="header-note access-hint" data-test="mailbox-access-hint">
-            {{ accountStatus?.mutationAccess === 'upgrading' ? 'Mailbox permission pending' : 'Gmail is read-only' }}
+            <span class="hint-text">{{ accountStatus?.mutationAccess === 'upgrading' ? 'Mailbox permission pending' : 'Gmail is read-only' }}</span>
             <button type="button" class="header-link" @click="openDrawer('account')">Review access<span class="visually-hidden"> in Account</span></button>
           </p>
           <span ref="readerActionsHost" class="reader-actions-host"></span>
@@ -2739,7 +2751,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
           ref="contactColumnEl"
           :inert="centralCovered || undefined"
         >
-          <ContactPane :accountless="!accountId" :contact="contact" :loading="readerLoading" :context="contactContext" :recent="recentMail" :compose-target="composeTarget" @search-sender="senderSearch" @open-recent="openRecent" />
+          <ContactPane :accountless="!accountId" :empty-list="contactListEmpty" :contact="contact" :loading="readerLoading" :context="contactContext" :recent="recentMail" :compose-target="composeTarget" @search-sender="senderSearch" @open-recent="openRecent" />
         </aside>
 
         <div
@@ -2860,7 +2872,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             <h2>Contact</h2>
             <button type="button" data-test="contact-disclosure-close" @click="closeContactDisclosure()">Close</button>
           </header>
-          <ContactPane :accountless="!accountId" :contact="contact" :loading="readerLoading" :context="contactContext" :recent="recentMail" :compose-target="composeTarget" @search-sender="senderSearch" @open-recent="openRecent" />
+          <ContactPane :accountless="!accountId" :empty-list="contactListEmpty" :contact="contact" :loading="readerLoading" :context="contactContext" :recent="recentMail" :compose-target="composeTarget" @search-sender="senderSearch" @open-recent="openRecent" />
         </div>
       </template>
       <!-- Bottom dock of the list column (DESIGN.md "In-flow Notices"): the
@@ -2900,6 +2912,6 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
       </div>
     </main>
     <AttachmentChooser v-if="attachmentConversation" :client="props.client" :conversation="attachmentConversation" :preview="props.mode === 'browser-preview'" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" @close="closeAttachments" />
-    <ActionOverlay v-if="overlay" v-model:query="overlayQuery" :account-first="accountCommandsFirst" :row-keys="paletteHasRows" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" :kind="overlay" :actions="availableActions" @close="closeOverlay()" @execute="executeOverlay" />
+    <ActionOverlay v-if="overlay" v-model:query="overlayQuery" :account-first="accountCommandsFirst" :account-top="accountCommandsTop" :row-keys="paletteHasRows" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" :kind="overlay" :actions="availableActions" @close="closeOverlay()" @execute="executeOverlay" />
   </div>
 </template>

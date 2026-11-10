@@ -236,14 +236,35 @@ button:focus-visible {
  */
 .app-header {
   /* The tab column never drops below this: the trail's notes give up width first (DESIGN.md gap 18).
-     About "Inbox 18", the 18px gap and the "Unread only" chip. */
-  --header-tabs-floor: 10rem;
+     The floor is what is really in the strip: "Inbox 18" (measured 62px), a saved tab (its label stops at
+     12ch, plus the count) and each filter chip ("Unread only" measured 73px), with the 18px gaps between.
+     At least 10rem, which covers "Inbox 18" and one chip. */
+  --tabs-gap: 18px;
+  --tab-inbox: 4.5rem;
+  --tab-saved: 9rem;
+  --header-chip: 4.75rem;
+  --floor-saved: 0px;
+  --floor-filter: 0px;
+  --header-tabs-floor: max(10rem, calc(var(--tab-inbox) + var(--floor-saved) + var(--floor-filter)));
   display: grid;
   grid-template-columns: 50px minmax(min(var(--header-tabs-floor), 100%), 1fr) minmax(0, auto);
   grid-template-rows: minmax(calc(var(--split-header-height) - 6px), auto);
   align-items: center;
   padding: 6px 16px 0 0;
   background: var(--surface);
+}
+
+/* A second tab and each filter chip raise the floor (the tabs never lose their label to the notes). */
+.app-header:has(.split-nav > .split-tab + .split-tab) {
+  --floor-saved: calc(var(--tabs-gap) + var(--tab-saved));
+}
+
+.app-header:has(.header-filter) {
+  --floor-filter: calc(var(--tabs-gap) + var(--header-chip));
+}
+
+.app-header:has(.header-filter ~ .header-filter) {
+  --floor-filter: calc(2 * (var(--tabs-gap) + var(--header-chip)));
 }
 
 .app-header > .header-row {
@@ -307,7 +328,7 @@ button:focus-visible {
 .header-tabs {
   display: flex;
   align-items: baseline;
-  gap: 18px;
+  gap: var(--tabs-gap);
   min-width: 0;
   overflow: hidden;
   /* Room for the focus ring of the first tab inside the clipped line. */
@@ -339,13 +360,16 @@ button:focus-visible {
 
 .split-nav {
   display: flex;
+  flex: 0 0 auto;
   align-items: baseline;
-  gap: 18px;
+  gap: var(--tabs-gap);
   min-width: 0;
 }
 
 .split-tab {
   display: inline-flex;
+  /* Tabs never shrink: the floor above holds them, and only a saved-tab label stops at 12ch. */
+  flex: 0 0 auto;
   align-items: baseline;
   gap: 4px;
   min-width: 0;
@@ -369,6 +393,8 @@ button:focus-visible {
 
 .split-label {
   min-width: 0;
+  /* A long saved-split name stops here; its full text is the tab's title. */
+  max-width: 12ch;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -419,6 +445,32 @@ button:focus-visible {
 
 .access-hint {
   flex-shrink: 2;
+  display: flex;
+  align-items: baseline;
+  gap: 0.35em;
+}
+
+.access-hint .hint-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The link never clips; the words are what yields (below). */
+.access-hint .header-link {
+  flex: none;
+}
+
+/* At 1100px and below the read-only words collapse to the Review access link (still in the accessibility
+   tree and the hover title), so the hint gives up width before the tabs do (DESIGN.md gap 18). */
+@media (max-width: 1100px) {
+  .access-hint .hint-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    clip-path: inset(50%);
+  }
 }
 
 .header-note.account-status-note {
@@ -874,6 +926,8 @@ button:focus-visible {
   color: var(--text-secondary);
   font-size: var(--type-body);
   margin: 0;
+  /* No one-word straggler ("available." alone on a line). */
+  text-wrap: balance;
 }
 
 /* Mail section: a Title label with a Graphite glyph, then plain Ash text
@@ -2263,20 +2317,21 @@ button:focus-visible {
 }
 
 /* The two answers to "Disconnect?": Keep account is the default (Title weight, Focus Stone fill, the focus lands
-   on it); Disconnect is the quiet one. No coral: nothing has failed, and coral is reserved for failures. */
+   on it); Disconnect is the destructive one: Coral Fault text and border, the words unchanged. Coral here marks
+   the irreversible choice (the one deliberate use beyond failures), never a state. */
 .account-confirm .account-primary {
   background: var(--focus-fill);
 }
 
 .account-confirm .account-destructive {
   background: transparent;
-  border-color: transparent;
-  color: var(--text-secondary);
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 .account-confirm .account-destructive:not(:disabled):hover {
   background: var(--surface-raised);
-  color: var(--text-primary);
+  color: var(--danger);
 }
 
 /* Provider mail (catalog -> page -> reader): list-row look, no cards or borders. */

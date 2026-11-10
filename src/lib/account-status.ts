@@ -57,6 +57,18 @@ export function describeMailError(error: MailError): string {
   }
 }
 
+/**
+ * A failed sync, as one line with its cause. The network cause has exactly one
+ * phrase on every surface, "no network" (the header says "Sync failed · no
+ * network"); other causes keep their plain sentence. With no typed cause it
+ * says only that the sync failed: an unknown cause is never relabelled.
+ */
+export function describeSyncFailure(error: MailError | null): string {
+  if (!error) return 'Sync failed.';
+  if (error.kind === 'network_unavailable') return 'Sync failed: no network.';
+  return `Sync failed: ${describeMailError(error)}`;
+}
+
 export type AccountNoticeKind =
   | 'not_configured' | 'disconnected' | 'auth_required' | 'authenticating'
   | 'syncing' | 'offline' | 'sync_failed';
@@ -120,23 +132,23 @@ export function accountNotice(status: AccountStatus | null): AccountNotice | nul
     case 'not_configured':
       return {
         kind: 'not_configured', text: 'Gmail not configured', action: null, actionLabel: '', tone: 'neutral',
-        title: 'Gmail is not configured on this device. Connecting is unavailable.',
+        title: 'Gmail is not configured on this device. Open Account for the next step.',
       };
     case 'disconnected':
       return {
-        kind: 'disconnected', text: 'Not connected', action: 'connect', actionLabel: 'Connect', tone: 'neutral',
+        kind: 'disconnected', text: 'Not connected', action: 'connect', actionLabel: 'Connect Gmail', tone: 'neutral',
         title: cached > 0
           ? 'Not connected to Gmail. Cached mail stays readable; new mail will not sync until you connect.'
           : 'Not connected to Gmail. Connect to load and sync mail.',
       };
     case 'auth_required':
       return {
-        kind: 'auth_required', text: 'Sign-in expired', action: 'connect', actionLabel: 'Sign in', tone: 'warning',
+        kind: 'auth_required', text: 'Sign-in expired', action: 'connect', actionLabel: 'Sign in again', tone: 'warning',
         title: 'Sign-in expired. Cached mail stays readable; new mail will not sync until you sign in.',
       };
     case 'authenticating':
       return {
-        kind: 'authenticating', text: 'Finish sign-in in your browser', action: 'cancel', actionLabel: 'Cancel', tone: 'neutral',
+        kind: 'authenticating', text: 'Finish sign-in in your browser', action: 'cancel', actionLabel: 'Cancel sign-in', tone: 'neutral',
         title: 'Gmail sign-in is waiting for your browser. Cancel stops it.',
       };
     case 'connected':
@@ -144,10 +156,9 @@ export function accountNotice(status: AccountStatus | null): AccountNotice | nul
   }
   if (sync.state === 'error') {
     const firstSync = sync.initialSyncComplete ? '' : ` · ${cached} cached`;
-    const cause = sync.error ? `${describeMailError(sync.error)} ` : '';
     const causeWords = sync.error ? SYNC_CAUSE_WORDS[sync.error.kind] : undefined;
     const text = `Sync failed${causeWords ? ` · ${causeWords}` : ''}${firstSync}`;
-    const title = `Sync failed. ${cause}Cached mail stays readable; new mail has not synced.`;
+    const title = `${describeSyncFailure(sync.error)} Cached mail stays readable; new mail has not synced.`;
     // 'offline' stays the internal kind for a network cause; the visible words are always "Sync failed".
     const kind = sync.error?.kind === 'network_unavailable' ? 'offline' : 'sync_failed';
     return { kind, text, action: 'sync', actionLabel: 'Retry', tone: 'danger', title };
@@ -169,8 +180,10 @@ export type InboxEmptyKind =
   | 'syncing' | 'sync_error' | 'sync_unfinished' | 'empty';
 export type InboxEmptyAction = 'connect' | 'sync' | 'cancel' | 'account';
 
-/** What Connect does, said once, only where Connect really is the action. */
-export const FIRST_RUN_HINT = 'Opens Google sign-in in your browser. Starts read-only.';
+/** What Connect does, and what read-only means, said once, only where Connect really is the action. */
+export const FIRST_RUN_HINT = "Opens Google sign-in in your browser. Starts read-only: Email OS can't change your mail until you enable mailbox actions in Account.";
+/** The next step for a device with no Google client ID; the Account drawer says the same. */
+export const NOT_CONFIGURED_HINT = 'Add a Google client ID to the launch environment, then restart.';
 
 export interface InboxEmpty {
   kind: InboxEmptyKind;
@@ -191,19 +204,19 @@ export function inboxEmptyState(status: AccountStatus | null): InboxEmpty | null
   const { sync } = status;
   switch (status.connection) {
     case 'not_configured':
-      return { kind: 'not_configured', text: 'Gmail is not configured on this device.', action: 'account', actionLabel: 'Account' };
+      return { kind: 'not_configured', text: 'Gmail is not configured on this device.', hint: NOT_CONFIGURED_HINT, action: 'account', actionLabel: 'Account' };
     case 'disconnected':
       return { kind: 'disconnected', text: 'Not connected.', hint: FIRST_RUN_HINT, action: 'connect', actionLabel: 'Connect Gmail' };
     case 'auth_required':
       return { kind: 'auth_required', text: 'Sign-in expired.', action: 'connect', actionLabel: 'Sign in again' };
     case 'authenticating':
-      return { kind: 'authenticating', text: 'Finish sign-in in your browser.', action: 'cancel', actionLabel: 'Cancel' };
+      return { kind: 'authenticating', text: 'Finish sign-in in your browser.', action: 'cancel', actionLabel: 'Cancel sign-in' };
     case 'connected':
       break;
   }
   if (sync.state === 'error') {
-    const cause = sync.error ? describeMailError(sync.error) : 'Unknown error.';
-    return { kind: 'sync_error', text: `Sync failed: ${cause}`, action: 'sync', actionLabel: 'Retry' };
+    // No typed cause reads "Sync failed: Unknown error.": a failure with an unknown cause, not a made-up one.
+    return { kind: 'sync_error', text: sync.error ? describeSyncFailure(sync.error) : 'Sync failed: Unknown error.', action: 'sync', actionLabel: 'Retry' };
   }
   if (!sync.initialSyncComplete) {
     return sync.state === 'syncing'
@@ -216,4 +229,25 @@ export function inboxEmptyState(status: AccountStatus | null): InboxEmpty | null
     action: null,
     actionLabel: '',
   };
+}
+
+/**
+ * In a zero-row state the empty inbox line owns the status sentence (and its
+ * action), so the header note drops its visible words and keeps only its one
+ * announcement. The line says nothing about status when it only reports an
+ * empty inbox (`kind: 'empty'`), and a later sync note then stays visible.
+ */
+export function emptyLineOwnsStatus(empty: InboxEmpty | null, emptyLineShown: boolean): boolean {
+  return emptyLineShown && !!empty && empty.kind !== 'empty';
+}
+
+/**
+ * The header note is a polite status. While the Account drawer is open and shows
+ * the same sync failure as its alert, the note goes silent (its words and Retry
+ * stay) so the failure is announced once. Connection notes are not repeated by
+ * the drawer's alert, so they keep announcing.
+ */
+export function headerNoteAnnounces(status: AccountStatus | null, accountDrawerOpen: boolean): boolean {
+  if (!accountDrawerOpen || !status || status.mode !== 'gmail') return true;
+  return !(status.connection === 'connected' && status.sync.state === 'error' && !!status.sync.error);
 }

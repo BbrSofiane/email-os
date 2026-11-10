@@ -10,9 +10,11 @@ const props = withDefaults(defineProps<{
   query?: string;
   /** Account commands (Connect, Sync now) that can fix a visible problem rank above Go to. */
   accountFirst?: boolean;
+  /** A failed sync's one fix: the Account group leads the whole palette (implies accountFirst). */
+  accountTop?: boolean;
   /** False when the list has no rows: J/K, X and Shift+J/K then have nothing to act on. */
   rowKeys?: boolean;
-}>(), { accountFirst: false, rowKeys: true });
+}>(), { accountFirst: false, accountTop: false, rowKeys: true });
 const emit = defineEmits<{ close: []; execute: [id: BrowsingActionId]; 'update:query': [query: string] }>();
 const prefix = props.idPrefix ? `${props.idPrefix}-` : '';
 const queryId = `${prefix}action-query`;
@@ -36,6 +38,7 @@ const groupLabel = (id: BrowsingActionId) => actionGroups.find((group) => group.
 // (below the conversation, selection and view commands, so triage keys keep their order).
 const groupOrder = computed(() => {
   const ids = actionGroups.map((group) => group.id);
+  if (props.accountTop) return ['account' as const, ...ids.filter((id) => id !== 'account')];
   if (!props.accountFirst) return ids;
   return ids.filter((id) => id !== 'account').flatMap((id) => (id === 'goto' ? ['account' as const, id] : [id]));
 });

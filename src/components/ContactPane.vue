@@ -32,6 +32,8 @@ const props = withDefaults(defineProps<{
   loading?: boolean;
   /** No account at all: there is nothing to have a correspondent in, so the pane says nothing. */
   accountless?: boolean;
+  /** The list has no rows (and no reader is open): nothing is focused, so nothing is unknown. */
+  emptyList?: boolean;
 }>(), { composeTarget: null });
 
 const emit = defineEmits<{ searchSender: [mailbox: string]; openRecent: [ref: ConversationRef] }>();
@@ -134,7 +136,7 @@ async function copyValue(label: 'name' | 'email', value: string): Promise<void> 
         ><PaneGlyph name="copy" /><span class="visually-hidden">Copy email</span></button>
       </p>
     </div>
-    <p v-else-if="!props.loading && !props.accountless" class="contact-unknown" data-test="contact-unknown">
+    <p v-else-if="!props.loading && !props.accountless && !props.emptyList" class="contact-unknown" data-test="contact-unknown">
       No correspondent information is available.
     </p>
     <section v-if="props.contact && props.recent?.length" class="contact-recent" aria-label="Recent cached mail from sender">

@@ -198,4 +198,14 @@ describe('ContactPane without an account', () => {
     expect(known.get('[data-test="contact-unknown"]').text()).toBe('No correspondent information is available.');
     known.unmount();
   });
+
+  it('says nothing either while the list has no rows (nothing is focused, so nothing is unknown)', () => {
+    const empty = mount(ContactPane, { props: { contact: null, context: 'focused', emptyList: true } });
+    expect(empty.find('[data-test="contact-unknown"]').exists()).toBe(false);
+    empty.unmount();
+    // A known contact still shows even if the flag is set by a stale caller.
+    const known = mount(ContactPane, { props: { contact: { displayName: 'Ada', mailbox: 'ada@example.test' }, context: 'open', emptyList: true } });
+    expect(known.find('[data-test="contact-identity"]').exists()).toBe(true);
+    known.unmount();
+  });
 });
