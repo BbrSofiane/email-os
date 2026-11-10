@@ -219,4 +219,12 @@ describe('reader and composer geometry (declared CSS)', () => {
     expect(px(bar.height)).toBeLessThanOrEqual(px(declarationsOf(css, '.reader-subject')['font-size']) * Number(rootToken('--leading-headline')));
     expect(bar.margin ?? '0').toMatch(/^0/);
   });
+
+  it('gives the Details labels one fixed column, so From, To, Cc and Sent values share one x', () => {
+    const label = declarationsOf(css, '.message-field-label');
+    expect(label.flex).toBe('0 0 3rem');
+    expect(declarationsOf(css, '.message-field').display).toBe('flex');
+    // Wide enough for the longest label ("Sent") at the shell size with room to spare.
+    expect(px(label.flex?.split(' ')[2])).toBeGreaterThanOrEqual(48);
+  });
 });

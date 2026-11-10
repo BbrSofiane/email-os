@@ -1744,7 +1744,9 @@ button:focus-visible {
 }
 
 .message-field-label {
-  flex: 0 0 auto;
+  /* One fixed column (the composer rows do the same with 3.5rem): the values
+     share one x whichever label they follow. */
+  flex: 0 0 3rem;
   color: var(--text-secondary);
 }
 
