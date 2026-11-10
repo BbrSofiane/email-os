@@ -1682,7 +1682,9 @@ button:focus-visible {
 }
 
 .message-quote-toggle {
-  margin: 0 0 0.2rem;
+  /* The ghost's 8px padding sits in the gap before the label, so the text starts
+     on the same x as the body above it (like .selection-actions). */
+  margin: 0 0 0.2rem -8px;
   color: var(--text-secondary);
 }
 
