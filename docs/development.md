@@ -150,7 +150,8 @@ Core and frontend gates run independently of native GTK/WebKit prerequisites:
 
 | Task | What it does |
 |---|---|
-| `mise run check` | Core tests, generated-contract check, core lint, UI tests and typecheck |
+| `mise run check` | Sequential core tests, generated-contract check, core lint, UI tests and typecheck; no GTK prerequisite |
+| `mise run check:all` | Sequential `check`, native lint, native bridge tests and web production build; native prerequisites required |
 | `mise run test:core` | `cargo test --locked -p mail-core` — synthetic fixture and Gmail auth/cache/sync tests; no real accounts or Google network |
 | `mise run check:contract` | Regenerates the TS wire contract to a temp file and **fails on drift** against `src/lib/ipc/generated.ts` |
 | `mise run gen:ts` | Regenerates `src/lib/ipc/generated.ts` from Rust DTOs |
@@ -159,11 +160,13 @@ Core and frontend gates run independently of native GTK/WebKit prerequisites:
 | `mise run typecheck` | `vue-tsc --noEmit` |
 | `mise run build:web` | Frontend production build to `dist/` |
 | `mise run check:native` | `cargo check --locked -p email-os --all-targets` — compiles the Tauri shell and native test targets; requires Linux GTK/WebKit development prerequisites |
+| `mise run lint:native` | `cargo clippy --locked -p email-os --all-targets -- -D warnings`; requires Linux GTK/WebKit development prerequisites |
 | `mise run test:native` | `cargo test --locked -p email-os` — command/event bridge tests; these do not launch a native window or prove OS integration |
 | `mise run dev:native` | Tauri dev app; GTK/WebKit development packages are required on Linux |
 | `mise run build:native` | Bundled native app |
 
-`mise run check` does not include native shell checks or `build:web`. The native
+`mise run check` does not include native shell checks or `build:web`; use
+`mise run check:all` for the sequential full gate. The native
 bridge tests exercise command and event behavior through test doubles. They do
 not validate a running Tauri window, GTK/WebKit, macOS WKWebView, Keychain,
 OAuth, or Gmail provider behavior. Native runtime, macOS, and disposable-account

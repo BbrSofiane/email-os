@@ -50,8 +50,12 @@ diff -u src/lib/ipc/generated.ts "$tmp"
 """
 
 [tasks."lint:core"]
-description = "Workspace formatting and headless core clippy checks"
+description = "Workspace formatting and mail-core clippy checks with warnings denied"
 run = "cargo fmt --all -- --check && cargo clippy --locked -p mail-core --all-targets -- -D warnings"
+
+[tasks."lint:native"]
+description = "Clippy checks for the native shell and all targets with warnings denied (needs GTK/WebKit dev prerequisites)"
+run = "cargo clippy --locked -p email-os --all-targets -- -D warnings"
 
 [tasks."test:ui"]
 description = "Run frontend component and contract tests"
@@ -78,7 +82,7 @@ description = "Build the native fixture shell bundle (needs native prerequisites
 run = "pnpm tauri build"
 
 [tasks."check:native"]
-description = "Type-check the native shell (needs GTK/WebKit dev prerequisites; see docs/development.md)"
+description = "Type-check the native shell and all targets (needs GTK/WebKit dev prerequisites; see docs/development.md)"
 run = "cargo check --locked -p email-os --all-targets"
 
 [tasks."test:native"]
@@ -87,7 +91,11 @@ run = "cargo test --locked -p email-os"
 
 [tasks.check]
 description = "Validate core, contract generation, frontend tests and types (no native prerequisites needed)"
-depends = ["test:core", "check:contract", "lint:core", "test:ui", "typecheck"]
+run = "mise run test:core && mise run check:contract && mise run lint:core && mise run test:ui && mise run typecheck"
+
+[tasks."check:all"]
+description = "Run the full check, native lint and bridge tests, and web production build sequentially (native prerequisites required)"
+run = "mise run check && mise run lint:native && mise run test:native && mise run build:web"
 
 [tasks."test:rendered"]
 description = "Run opt-in rendered browser regressions with an explicit Chrome/Chromium binary"

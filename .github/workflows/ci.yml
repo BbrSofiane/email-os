@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mise
+        run: curl https://mise.run | sh
+
+      - name: Add mise to PATH
+        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install project tools
+        run: mise install
+
+      - name: Find pnpm store
+        id: pnpm-store
+        run: echo "path=$(mise exec -- pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Cargo and pnpm data
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ env.CARGO_TARGET_DIR }}
+            ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-deps-${{ hashFiles('Cargo.lock', 'pnpm-lock.yaml', 'mise.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-deps-
+
+      - name: Install Linux native prerequisites
+        run: mise run setup:linux
+
+      - name: Install locked UI dependencies
+        run: mise run install:ui
+
+      - name: Run full CI gate
+        run: mise run check:all
