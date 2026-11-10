@@ -8,6 +8,7 @@
 declare module 'node:child_process' {
   export interface ChildProcess {
     kill(signal?: string | number): boolean;
+    on(event: 'error', listener: (error: Error) => void): this;
   }
   export function spawn(command: string, args: string[], options: { stdio: 'ignore' }): ChildProcess;
 }

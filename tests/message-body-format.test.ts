@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { bodyNeedsMonospace, splitMessageBody } from '../src/lib/message-body-format';
 

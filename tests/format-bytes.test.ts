@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { ATTACHMENT_LIMIT_BYTES, formatBytes } from '../src/lib/format-bytes';
 

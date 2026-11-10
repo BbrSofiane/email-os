@@ -11,34 +11,57 @@ export function stripComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '');
 }
 
-/** Flat rules in source order (nested at-rules are skipped), with ordered declarations. */
+/** Top-level style rules only, in source order. Rules inside at-rules are excluded. */
 export function rulesOf(source: string): Array<{ selectors: string[]; decls: Array<[string, string]> }> {
   const out: Array<{ selectors: string[]; decls: Array<[string, string]> }> = [];
-  const pattern = /([^{}]+)\{([^{}]*)\}/g;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(stripComments(source))) !== null) {
-    const decls: Array<[string, string]> = [];
-    for (const part of (match[2] ?? '').split(';')) {
-      const colon = part.indexOf(':');
-      if (colon < 0) continue;
-      decls.push([part.slice(0, colon).trim(), part.slice(colon + 1).trim()]);
+  const clean = stripComments(source);
+  let depth = 0;
+  let blockStart = 0;
+  let bodyStart = 0;
+  let prelude = '';
+  let nestedAtRule = false;
+  for (let i = 0; i < clean.length; i += 1) {
+    if (clean[i] === '{') {
+      if (depth === 0) {
+        prelude = clean.slice(blockStart, i).trim();
+        nestedAtRule = prelude.startsWith('@');
+        bodyStart = i + 1;
+      }
+      depth += 1;
+    } else if (clean[i] === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        const body = clean.slice(bodyStart, i);
+        if (prelude && !nestedAtRule) {
+          const decls: Array<[string, string]> = [];
+          for (const part of body.split(';')) {
+            const colon = part.indexOf(':');
+            if (colon < 0) continue;
+            decls.push([part.slice(0, colon).trim(), part.slice(colon + 1).trim()]);
+          }
+          out.push({ selectors: prelude.split(',').map((s) => s.trim().replace(/\s+/g, ' ')), decls });
+        }
+        blockStart = i + 1;
+      }
+    } else if (clean[i] === ';' && depth === 0) {
+      // Ignore statement at-rules such as @import before the next style rule.
+      blockStart = i + 1;
     }
-    out.push({ selectors: (match[1] ?? '').split(',').map((s) => s.trim().replace(/\s+/g, ' ')), decls });
   }
   return out;
 }
 
-/** Ordered declarations of every rule whose selector list contains `selector`. */
+/** Ordered declarations from top-level rules whose selector list contains `selector`. */
 export function declarationListOf(source: string, selector: string): Array<[string, string]> {
   return rulesOf(source).filter((rule) => rule.selectors.includes(selector)).flatMap((rule) => rule.decls);
 }
 
-/** Declarations of every rule that contains `selector` (later wins). */
+/** Top-level source declarations for `selector` (later wins; no cascade evaluation). */
 export function declarationsOf(source: string, selector: string): Record<string, string> {
   return Object.fromEntries(declarationListOf(source, selector));
 }
 
-/** Source index of the first rule containing `selector`, or -1. */
+/** Index of the first top-level rule containing `selector`, or -1. */
 export function ruleIndexOf(source: string, selector: string): number {
   return rulesOf(source).findIndex((rule) => rule.selectors.includes(selector));
 }

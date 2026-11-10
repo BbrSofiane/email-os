@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
+import { flushPromises, type VueWrapper } from '@vue/test-utils';
 import { nextTick } from 'vue';
-import ReaderView from '../src/components/ReaderView.vue';
 import type { Conversation, ConversationRef, MailError } from '../src/lib/ipc/client';
+import { mountReaderView } from './reader.mount';
 
 const ACCOUNT_A = 'account-a';
 const ACCOUNT_B = 'account-b';
@@ -39,16 +39,7 @@ function conversationOf(accountId: string, messageIds: string[], extra: Partial<
 const NOT_FOUND: MailError = { kind: 'not_found' };
 
 function mountReader(conversation: Conversation, state: 'ready' | 'loading' | 'error' = 'ready') {
-  return mount(ReaderView, {
-    props: {
-      conversation: state === 'ready' ? conversation : null,
-      state,
-      error: null,
-      commandInFlight: false,
-      openRef: conversation.ref,
-    },
-    attachTo: document.body,
-  });
+  return mountReaderView(conversation, {}, state);
 }
 
 function toggleFor(wrapper: VueWrapper, messageId: string) {

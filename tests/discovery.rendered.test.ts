@@ -1,135 +1,23 @@
 // @vitest-environment node
 /** Opt-in trusted CDP keyboard/pointer evidence. Each case independently mounts synthetic state. */
-import { spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createServer, type ViteDevServer } from 'vite';
+import { startRenderedHarness, type RenderedHarness } from './rendered/chromium';
 
-const CHROME_ENV = 'EMAIL_OS_RENDERED_LAYOUT_CHROME';
-const chromePath = process.env[CHROME_ENV] ?? '';
-
-interface CdpSession {
-  cmd(method: string, params?: Record<string, unknown>): Promise<any>;
-  js<T>(expression: string): Promise<T>;
-  close(): void;
-}
+const chromePath = process.env.EMAIL_OS_RENDERED_LAYOUT_CHROME ?? '';
 
 describe.skipIf(chromePath === '')('UX-03 discovery / UX-13 workspaces (real Chromium, opt-in)', () => {
-  let server: ViteDevServer | null = null;
-  let appUrl = '';
-  let chrome: ReturnType<typeof spawn> | null = null;
-  let profileDir: string | null = null;
-  let cdp: CdpSession | null = null;
-  let tornDown = false;
+  let harness: RenderedHarness | null = null;
+  let cdp: RenderedHarness['cdp'];
 
   beforeAll(async () => {
-    server = await createServer({
-      root: new URL('..', import.meta.url).pathname,
-      server: { port: 0, strictPort: false },
-      logLevel: 'error',
-    });
-    await server.listen();
-    appUrl = server.resolvedUrls?.local?.[0] ?? '';
-    if (!appUrl) throw new Error('Vite dev server did not report a local URL');
-
-    profileDir = mkdtempSync(join(tmpdir(), 'email-os-discovery-chrome-'));
-    chrome = spawn(
-      chromePath,
-      [
-        '--headless=new',
-        '--remote-debugging-port=0',
-        '--no-first-run',
-        '--no-default-browser-check',
-        `--user-data-dir=${profileDir}`,
-        'about:blank',
-      ],
-      { stdio: 'ignore' },
-    );
-    cdp = await connectCdp(profileDir);
-    await cdp.cmd('Page.enable');
-    await cdp.cmd('Emulation.setDeviceMetricsOverride', { width: 1200, height: 800, deviceScaleFactor: 1, mobile: false });
-    await cdp.cmd('Page.navigate', { url: appUrl });
-    await waitForApp(cdp);
+    harness = await startRenderedHarness(chromePath, 'email-os-discovery-chrome-', new URL('..', import.meta.url).pathname);
+    cdp = harness.cdp;
     await cdp.js(MOUNT_SCRIPT);
     await cdp.js('window.__readerMount()');
     await cdp.js('window.__h.wait(150)');
   }, 120_000);
 
-  afterAll(async () => {
-    await teardown();
-  });
-
-  async function teardown(): Promise<void> {
-    if (tornDown) return;
-    tornDown = true;
-    try { cdp?.close(); } catch { /* already closed */ }
-    cdp = null;
-    chrome?.kill();
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    chrome?.kill('SIGKILL');
-    chrome = null;
-    if (profileDir) rmSync(profileDir, { recursive: true, force: true });
-    profileDir = null;
-    await server?.close();
-    server = null;
-  }
-
-  async function connectCdp(profile: string): Promise<CdpSession> {
-    let port: string | null = null;
-    for (let i = 0; i < 100 && !port; i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      try { port = readFileSync(join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0] ?? null; } catch { /* not yet */ }
-    }
-    if (!port) throw new Error('Chrome did not expose a DevTools port');
-    const targets = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()) as Array<{ type: string; webSocketDebuggerUrl: string }>;
-    const page = targets.find((t) => t.type === 'page');
-    if (!page) throw new Error('Chrome exposed no page target');
-    const ws = new WebSocket(page.webSocketDebuggerUrl);
-    await new Promise((resolve, reject) => {
-      ws.addEventListener('open', resolve, { once: true });
-      ws.addEventListener('error', reject, { once: true });
-    });
-    let nextId = 0;
-    const waiting = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
-    ws.addEventListener('message', (event) => {
-      const message = JSON.parse(String(event.data)) as { id?: number; result?: any; error?: unknown };
-      if (message.id === undefined) return;
-      const pending = waiting.get(message.id);
-      if (!pending) return;
-      waiting.delete(message.id);
-      clearTimeout(pending.timer);
-      if (message.error) pending.reject(new Error(JSON.stringify(message.error)));
-      else pending.resolve(message.result);
-    });
-    const cmd = (method: string, params: Record<string, unknown> = {}) => new Promise<any>((resolve, reject) => {
-      const id = ++nextId;
-      const timer = setTimeout(() => { waiting.delete(id); reject(new Error(`CDP timeout: ${method}`)); }, 20_000);
-      waiting.set(id, { resolve, reject, timer });
-      ws.send(JSON.stringify({ id, method, params }));
-    });
-    return {
-      cmd,
-      async js<T>(expression: string): Promise<T> {
-        const result = await cmd('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
-        if (result?.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
-        return result.result.value as T;
-      },
-      close() { try { ws.close(); } catch { /* ignore */ } },
-    };
-  }
-
-  async function waitForApp(session: CdpSession): Promise<void> {
-    for (let i = 0; i < 100; i += 1) {
-      const ready = await session.js<boolean>(
-        "document.querySelector('.app') !== null && performance.getEntriesByType('resource').some((x) => x.name.includes('/node_modules/.vite/deps/vue.js'))",
-      ).catch(() => false);
-      if (ready) return;
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    }
-    throw new Error('Preview app (and Vite Vue dep) did not load');
-  }
+  afterAll(async () => { await harness?.close(); });
 
   /** Boots the app against the shared reader fixture (loaded through Vite). */
   const MOUNT_SCRIPT = `(async () => {

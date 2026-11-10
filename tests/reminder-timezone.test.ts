@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it, vi } from 'vitest';
 import { formatReminderDateTime, getDeviceTimeZone } from '../src/lib/reminder-timezone';
 

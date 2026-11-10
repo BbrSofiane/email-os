@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { MESSAGE_SNIPPET_MAX, clipText, messageSnippet, quotedPreview } from '../src/lib/message-snippet';
 
