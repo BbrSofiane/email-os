@@ -1,5 +1,5 @@
 /**
- * Desktop-local reminders (fixture only): the state and request semantics behind
+ * Device-local reminders: the state and request semantics behind
  * the Reminders list context. The list, the header tabs and the in-flow picker
  * all read this one object; it lives in App so the selected tab, the loaded
  * rows and an open picker survive the reader round trip.
@@ -15,13 +15,17 @@
  * - A source rejected as `sourceMessageId` on a new reminder (expectedRevision
  *   null) goes back to preparation for the same conversation, never to a new
  *   schedule.
- * - Presets only fill the same `due` value the typed field fills, so payloads,
- *   request ids and revisions are exactly the typed path.
+ * - The time comes from the shared `ReminderPicker` (suggestions plus typed
+ *   natural-language or RFC3339 time). The Schedule / Save button is armed only
+ *   after the picker chose a time, and typing again disarms it, so a payload
+ *   always carries a time the picker resolved.
+ * - A put acknowledged by the transport reports to `onScheduled` (the app
+ *   returns to the Inbox with a receipt line); dismissing the picker of a new
+ *   reminder reports to `onDismissed`.
  */
 import { computed, nextTick, onScopeDispose, ref, shallowRef } from 'vue';
 import type { CancelReminder, ConversationRef, MailClient, PutReminder, Reminder, ReminderCondition, ReminderPhase } from '../lib/ipc/client';
 import { toMailError } from '../lib/ipc/client';
-import { reminderPresets, type ReminderPresets } from '../lib/reminder-presets';
 
 export type ReminderDestination = 'pending' | 'returned' | 'history';
 export const REMINDER_TABS: ReadonlyArray<{ id: ReminderDestination; label: string }> = [
@@ -29,22 +33,22 @@ export const REMINDER_TABS: ReadonlyArray<{ id: ReminderDestination; label: stri
   { id: 'returned', label: 'Returned' },
   { id: 'history', label: 'History' },
 ];
-/** The standing limits of the fixture feature: one visible phrase, the rest a title. */
-export const REMINDERS_FIXTURE_LINE = 'Synthetic fixture only';
-export const REMINDERS_FIXTURE_DETAIL = 'This device, while running. Overdue work reconciles on launch. No execution while fully quit or on other devices. '
-  + 'New incoming mail stays in Inbox. Return and Cancel restore only the original inbox messages; neither marks mail read.';
+/** The standing limits of the feature: one visible phrase, the rest a title and hidden text. */
+export const REMINDERS_NOTE_LINE = 'Saved on this device. Runs while Email OS is open; overdue reminders are checked at start.';
+export const REMINDERS_NOTE_DETAIL = 'Reminders are saved on this device and run while Email OS is open. Overdue reminders are checked when Email OS starts. '
+  + 'Scheduling hides this conversation from the Email OS Inbox. New incoming mail stays visible. Return and Cancel show only the original inbox messages again; neither marks mail read.';
 export const REMINDER_PHASES: Record<ReminderPhase, { word: string; tone: 'warn' | 'fault' | 'calm' }> = {
-  pending: { word: 'Pending', tone: 'calm' },
-  removing: { word: 'Removing…', tone: 'warn' },
-  returning: { word: 'Returning…', tone: 'warn' },
-  returned: { word: 'Returned', tone: 'calm' },
-  failed: { word: 'Failed', tone: 'fault' },
-  cancelling: { word: 'Cancelling…', tone: 'warn' },
+  pending: { word: 'Waiting', tone: 'calm' },
+  removing: { word: 'Hiding from Inbox', tone: 'warn' },
+  returning: { word: 'Returning to Inbox', tone: 'warn' },
+  returned: { word: 'In Inbox', tone: 'calm' },
+  failed: { word: 'Needs attention', tone: 'fault' },
+  cancelling: { word: 'Restoring Inbox', tone: 'warn' },
   cancelled: { word: 'Cancelled', tone: 'calm' },
-  suppressed: { word: 'Suppressed', tone: 'calm' },
+  suppressed: { word: 'Skipped after reply', tone: 'calm' },
 };
 
-export interface ReminderSource { conversation: ConversationRef; sourceMessageId: string; revision: number | null; subject: string }
+export interface ReminderSource { conversation: ConversationRef; sourceMessageId: string; revision: number | null; subject: string; sender: string | null }
 /** Polite words for one row action: what to say when it resolves (from its result) and when it fails. */
 interface ActionWords { done: (result: unknown) => string; failed: string }
 interface RetryRequest { action: () => Promise<unknown>; command?: PutReminder; words?: ActionWords }
@@ -94,11 +98,10 @@ export function useReminders(client: MailClient, options: RemindersOptions = {})
    */
   const loadedOnce = ref(false);
   const source = ref<ReminderSource | null>(null);
-  const due = ref('');
-  /** Preset times, computed when the picker opens (one stable set per open picker). */
-  const presets = ref<ReminderPresets>(reminderPresets(new Date()));
-  const customOpen = ref(false);
-  const someday = ref(false);
+  /** The time the picker resolved (RFC3339 with offset), or null for Someday. */
+  const dueAt = ref<string | null>(null);
+  /** True once the picker chose a time (or Someday); typing again clears it. */
+  const pickerReady = ref(false);
   const condition = ref<ReminderCondition>('if_no_reply');
   const destination = ref<ReminderDestination>(options.initialDestination ?? 'pending');
   /** The conversation the picker was requested for (Remind me); null for the plain list. */
@@ -197,7 +200,10 @@ export function useReminders(client: MailClient, options: RemindersOptions = {})
     const token = ++generation;
     try {
       const result = await client.reminders!.list();
-      if (live && token === generation) { rows.value = result; loadedOnce.value = true; loading.value = false; }
+      if (live && token === generation) {
+        rows.value = result; loadedOnce.value = true; loading.value = false;
+        if (error.value === 'Could not load local reminders. Retry refresh.') error.value = '';
+      }
     } catch { if (live && token === generation) { error.value = 'Could not load local reminders. Retry refresh.'; loading.value = false; } }
   }
 
@@ -213,7 +219,7 @@ export function useReminders(client: MailClient, options: RemindersOptions = {})
       if (live && token === editorGeneration) {
         retry.value = null;
         if (command) options.onScheduled?.(result, command.expectedRevision !== null);
-        source.value = null;
+        source.value = null; dueAt.value = null; pickerReady.value = false;
         await refresh();
       }
     }
@@ -223,17 +229,17 @@ export function useReminders(client: MailClient, options: RemindersOptions = {})
         const failure = toMailError(raw);
         if (failure.kind === 'invalid_request' && failure.field === 'dueAt') {
           retry.value = null;
-          error.value = 'Choose a future RFC3339 time with seconds and Z or a numeric timezone offset. Local times and leap seconds are not supported.';
+          error.value = 'Choose a future time. The selected time must include Z or a numeric timezone offset.';
         } else if (failure.kind === 'invalid_request' && failure.field === 'sourceMessageId' && command?.expectedRevision === null) {
           retry.value = null; source.value = null;
           preparationTarget.value = { ...command.conversation };
           preparationError.value = 'This conversation has a newer message. Refresh the source, review it, then schedule again.';
         } else if (failure.kind === 'invalid_request' || failure.kind === 'not_found') {
           retry.value = null; source.value = null;
-          error.value = 'This target or revision is no longer actionable. Refresh and choose the current reminder before editing.';
+          error.value = 'This reminder is no longer actionable. Refresh and choose the current reminder before editing.';
           await refresh();
         } else {
-          error.value = 'Reminder change was not acknowledged. Retry the exact request, or refresh to inspect durable state. Stale revisions require refresh before editing.';
+          error.value = 'Reminder change was not acknowledged. Retry the exact request, or refresh to inspect saved state. Refresh before editing a stale reminder.';
         }
       }
     }
@@ -259,8 +265,7 @@ export function useReminders(client: MailClient, options: RemindersOptions = {})
         preparationError.value = 'This conversation is retained or incomplete. A current conversation is required; retry preparation after it is available.';
         return;
       }
-      source.value = { conversation: requested, sourceMessageId: latest.id, revision: null, subject: conversation.subject };
-      presets.value = reminderPresets(new Date());
+      source.value = { conversation: requested, sourceMessageId: latest.id, revision: null, subject: conversation.subject, sender: latest.from.displayName?.trim() || latest.from.mailbox || null };
       preparationTarget.value = null;
       preparationError.value = '';
     } catch { if (live && token === editorGeneration) preparationError.value = 'Could not load the current source message. Retry preparation for this conversation.'; }
@@ -269,12 +274,12 @@ export function useReminders(client: MailClient, options: RemindersOptions = {})
 
   /** A new picker starts from a clean choice; recovery of the same picker keeps what was chosen. */
   function resetChoices() {
-    due.value = ''; someday.value = false; condition.value = 'if_no_reply'; customOpen.value = false;
+    dueAt.value = null; pickerReady.value = false; condition.value = 'if_no_reply';
   }
 
   function dismissPicker() {
     editorGeneration++;
-    busy.value = false; retry.value = null; source.value = null;
+    busy.value = false; retry.value = null; source.value = null; dueAt.value = null; pickerReady.value = false;
     preparationTarget.value = null; preparationError.value = '';
   }
 
@@ -306,28 +311,19 @@ export function useReminders(client: MailClient, options: RemindersOptions = {})
 
   function reschedule(r: Reminder) {
     dismissPicker(); error.value = '';
-    source.value = { conversation: r.conversation, sourceMessageId: r.sourceMessageId, revision: r.revision, subject: r.subject };
-    presets.value = reminderPresets(new Date());
-    due.value = r.dueAt ?? ''; someday.value = r.dueAt === null; condition.value = r.condition;
-    customOpen.value = false;
+    source.value = { conversation: r.conversation, sourceMessageId: r.sourceMessageId, revision: r.revision, subject: r.subject, sender: null };
+    dueAt.value = r.dueAt;
+    // A saved time in the past must be replaced before Save arms; Someday and future times are ready.
+    pickerReady.value = r.dueAt === null || (Number.isFinite(Date.parse(r.dueAt)) && Date.parse(r.dueAt) > Date.now());
+    condition.value = r.condition;
   }
 
-  const presetList = computed(() => {
-    const list: Array<{ id: string; label: string; at: string }> = [];
-    if (presets.value.laterToday) list.push({ id: 'later', label: 'Later today', at: presets.value.laterToday });
-    list.push({ id: 'tomorrow', label: 'Tomorrow', at: presets.value.tomorrow });
-    list.push({ id: 'next-week', label: 'Next week', at: presets.value.nextWeek });
-    return list;
-  });
-  /** A typed or saved time that is not a preset is never hidden: Custom opens by itself. */
-  const customForced = computed(() => !someday.value && due.value !== '' && !presetList.value.some(preset => preset.at === due.value));
-  const customShown = computed(() => customOpen.value || customForced.value);
-  function choosePreset(at: string) { due.value = at; someday.value = false; customOpen.value = false; }
+  function selectTime(value: string | null) { dueAt.value = value; pickerReady.value = true; }
+  function editTime() { pickerReady.value = false; }
 
   function submit() {
-    if (!source.value || retry.value) return;
-    if (!someday.value && due.value.trim() === '') return;
-    const command: PutReminder = { conversation: source.value.conversation, sourceMessageId: source.value.sourceMessageId, expectedRevision: source.value.revision, dueAt: someday.value ? null : due.value, condition: condition.value, requestId: crypto.randomUUID() };
+    if (!source.value || !pickerReady.value || retry.value || busy.value) return;
+    const command: PutReminder = { conversation: source.value.conversation, sourceMessageId: source.value.sourceMessageId, expectedRevision: source.value.revision, dueAt: dueAt.value, condition: condition.value, requestId: crypto.randomUUID() };
     void run(() => client.reminders!.put(command), command, command.expectedRevision === null ? undefined : RESCHEDULE_WORDS);
   }
   function cancel(r: Reminder) {
@@ -340,7 +336,8 @@ export function useReminders(client: MailClient, options: RemindersOptions = {})
     if (pending) void run(pending.action, pending.command, pending.words);
     else void refresh();
   }
-  function inspectDurableState() {
+  function inspectSavedState() {
+    if (busy.value) return;
     dismissPicker(); error.value = '';
     void refresh();
   }
@@ -383,10 +380,10 @@ export function useReminders(client: MailClient, options: RemindersOptions = {})
   onScopeDispose(deactivate);
 
   return {
-    rows, error, preparationError, preparationTarget, busy, loading, source, due, presets, customOpen, someday, condition,
+    rows, error, preparationError, preparationTarget, busy, loading, source, dueAt, pickerReady, condition,
     destination, target, activeRow, retrying, dismissBlocked, tabAnnouncement, actionAnnouncement, loadedOnce,
-    displayed, attentionCount, attentionTotal, counts, presetList, customForced, customShown,
-    onTabKeydown, stepDestination, refresh, prepare, dismissPicker, closePicker, setTarget, reschedule, choosePreset, submit, cancel, retryOrRefresh, inspectDurableState,
+    displayed, attentionCount, attentionTotal, counts,
+    onTabKeydown, stepDestination, refresh, prepare, dismissPicker, closePicker, setTarget, reschedule, selectTime, editTime, submit, cancel, retryOrRefresh, inspectSavedState,
     activate, deactivate, whenLoaded: () => loaded,
   };
 }

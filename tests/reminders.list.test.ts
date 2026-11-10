@@ -1,17 +1,17 @@
 /**
  * Reminders list structure: compact context rows with a status word, quiet row
- * actions, preset times that fill the same `dueAt` the typed field fills (so
- * `put` payloads are unchanged), and the typed field behind Custom. The tabs
- * live in the app header; see reminders.context.test.ts.
+ * actions, and the shared ReminderPicker (suggestions plus a typed time) that
+ * sits behind Remind me and Reschedule. The tabs live in the app header; see
+ * reminders.context.test.ts.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises } from '@vue/test-utils';
 import { fullDateLabel } from '../src/lib/browsing-dates';
-import { reminderPresets } from '../src/lib/reminder-presets';
 import { createBrowserFakeMailClient } from '../src/lib/ipc/browser-fake';
 import type { ConversationRef, PutReminder, Reminder, ReminderPhase } from '../src/lib/ipc/client';
 import { deferred } from './helpers';
-import { mountReminders } from './reminders.helpers';
+import ReminderPicker from '../src/components/ReminderPicker.vue';
+import { mountReminders, pickTime, submitPicker } from './reminders.helpers';
 
 const target: ConversationRef = { accountId: 'fixture-account', conversationId: 'conv-01' };
 const NOW = new Date('2026-11-06T15:07:00Z');
@@ -57,7 +57,7 @@ describe('Reminders rows', () => {
     const a = panel.get('[data-test="reminder-row-a"]');
     expect(a.get('.context-subject').text()).toBe('Subject a');
     expect(a.get('time').text()).toBe(fullDateLabel('2030-01-01T00:00:00Z'));
-    expect(a.get('[data-test="reminder-phase-pending"]').text()).toBe('Pending');
+    expect(a.get('[data-test="reminder-phase-pending"]').text()).toBe('Waiting');
     expect(a.get('[data-test="reminder-condition"]').text()).toBe('Returns regardless of reply');
     // Revision is evidence for a title, never text.
     expect(a.get('.context-row-main').attributes('title')).toBe('Revision 3');
@@ -65,15 +65,15 @@ describe('Reminders rows', () => {
     const b = panel.get('[data-test="reminder-row-b"]');
     expect(b.find('time').exists()).toBe(false);
     expect(b.get('.context-date').text()).toBe('Someday');
-    expect(b.get('[data-test="reminder-phase-removing"]').text()).toBe('Removing…');
+    expect(b.get('[data-test="reminder-phase-removing"]').text()).toBe('Hiding from Inbox');
     expect(b.get('[data-test="reminder-phase-removing"]').classes()).toContain('tone-warn');
     expect(b.find('[data-test="reminder-condition"]').exists()).toBe(false);
     const c = panel.get('[data-test="reminder-row-c"]');
-    expect(c.get('[data-test="reminder-phase-failed"]').text()).toBe('Failed');
+    expect(c.get('[data-test="reminder-phase-failed"]').text()).toBe('Needs attention');
     expect(c.get('[data-test="reminder-phase-failed"]').classes()).toContain('tone-fault');
     // The failed explanation is an exception and stays inline.
     expect(c.text()).toContain('Cancel does not override newer triage.');
-    expect(c.find('button[aria-label="Cancel reminder and recover original inbox messages"]').exists()).toBe(true);
+    expect(c.find('button[aria-label="Cancel and show original inbox messages"]').exists()).toBe(true);
   });
 
   it('makes the subject the Open button and keeps Reschedule and Cancel reminder as quiet ghosts', async () => {
@@ -89,14 +89,14 @@ describe('Reminders rows', () => {
     expect(quiet.every((button) => button.classes().includes('drawer-quiet'))).toBe(true);
   });
 
-  it('shows the fixture disclosure once, with the rest in its title, and no landmark or heading', async () => {
+  it('shows the device-local note once, with the rest in its title, and no landmark or heading', async () => {
     const { fake } = fixture();
     panel = show(fake).wrapper;
     await flushPromises();
     const note = panel.get('[data-test="reminders-coverage"]');
-    expect(note.text()).toContain('Synthetic fixture only');
-    expect(note.attributes('title')).toContain('New incoming mail stays in Inbox');
-    expect(note.attributes('title')).toContain('while fully quit');
+    expect(note.text()).toContain('Saved on this device');
+    expect(note.attributes('title')).toContain('New incoming mail stays visible');
+    expect(note.attributes('title')).toContain('Overdue reminders are checked when Email OS starts');
     expect(panel.element.tagName).toBe('DIV');
     expect(panel.find('section, aside, h1, h2, nav').exists()).toBe(false);
   });
@@ -194,106 +194,94 @@ describe('Reminders Needs attention group', () => {
     expect(note.classes()).toContain('tone-fault');
     expect(note.text()).toBe('A mailbox change failed or newer triage superseded it; which one is not recorded. Cancel does not override newer triage.');
     expect(row.findAll('.context-row-actions button').map((button) => button.text())).toEqual(['Cancel reminder']);
-    expect(row.get('.context-row-actions button').attributes('aria-label')).toBe('Cancel reminder and recover original inbox messages');
+    expect(row.get('.context-row-actions button').attributes('aria-label')).toBe('Cancel and show original inbox messages');
   });
 });
 
 describe('Reminders picker', () => {
-  it('names the mail by subject and keeps the ids out of the text', async () => {
+  it('hosts the shared picker for the conversation, names it by subject, and keeps the ids out of the text', async () => {
     const { fake } = fixture();
     panel = show(fake, { target }).wrapper;
     await flushPromises();
     const detail = await fake.getConversation(target);
-    const form = panel.get('form');
-    expect(form.get('.reminder-subject').text()).toBe(detail.subject);
+    const form = panel.get('[data-test="reminder-form"]');
+    expect(form.get('h2').text()).toBe('Remind me');
+    expect(panel.findComponent(ReminderPicker).exists()).toBe(true);
+    expect(form.text()).toContain(detail.subject);
     expect(form.text()).not.toContain('conv-01');
     expect(form.text()).not.toContain(detail.messages.at(-1)!.id);
-    expect(form.get('.reminder-subject').attributes('title')).toContain('conv-01');
     expect(form.attributes('data-source-conversation')).toBe('conv-01');
+    expect(form.attributes('data-source-message')).toBe(detail.messages.at(-1)!.id);
   });
 
-  it('offers Later today, Tomorrow, Next week and Someday, and Custom hides the typed field until asked', async () => {
-    const { fake } = fixture();
-    panel = show(fake, { target }).wrapper;
-    await flushPromises();
-    expect(panel.findAll('.reminder-presets button').map((button) => button.text())).toEqual(['Later today', 'Tomorrow', 'Next week', 'Custom']);
-    expect(panel.get('.reminder-someday').text()).toBe('Someday');
-    expect(panel.find('input[type="text"]').exists()).toBe(false);
-    const custom = panel.get('[data-test="reminder-custom"]');
-    expect(custom.attributes('aria-expanded')).toBe('false');
-    await custom.trigger('click');
-    expect(custom.attributes('aria-expanded')).toBe('true');
-    expect(panel.get('input[type="text"]').attributes('placeholder')).toBe('2030-11-03T09:00:00-05:00');
-    // Nothing is chosen yet: scheduling is not offered with an empty time.
-    expect(panel.get('button[type="submit"]').attributes('disabled')).toBeDefined();
-  });
-
-  it.each([
-    ['later', 'laterToday'],
-    ['tomorrow', 'tomorrow'],
-    ['next-week', 'nextWeek'],
-  ] as const)('the %s preset sends a real RFC3339 dueAt in the same put payload shape as the typed field', async (id, key) => {
+  it('arms Schedule reminder only after the picker chose a time, and sends that time in the usual put payload', async () => {
     const { fake, put } = fixture();
     panel = show(fake, { target }).wrapper;
     await flushPromises();
     const detail = await fake.getConversation(target);
-    const expected = reminderPresets(NOW)[key]!;
-    expect(expected).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00(Z|[+-]\d{2}:\d{2})$/);
-    const button = panel.get(`[data-test="reminder-preset-${id}"]`);
-    expect(button.attributes('title')).toBe(fullDateLabel(expected));
-    await button.trigger('click');
-    expect(button.attributes('aria-pressed')).toBe('true');
-    await panel.get('form').trigger('submit'); await flushPromises();
+    const schedule = () => panel!.findAll('button').find((button) => button.text() === 'Schedule reminder')!;
+    expect(schedule().attributes('disabled')).toBeDefined();
+    await pickTime(panel);
+    expect(schedule().attributes('disabled')).toBeUndefined();
+    expect(panel.get('.chosen-time').text()).toContain('2035');
+    await submitPicker(panel);
     expect(put).toHaveBeenCalledTimes(1);
     expect(put.mock.calls[0]![0]).toEqual({
       conversation: target, sourceMessageId: detail.messages.at(-1)!.id, expectedRevision: null,
-      dueAt: expected, condition: 'if_no_reply', requestId: expect.any(String),
+      dueAt: '2035-11-03T01:30:00-05:00', condition: 'if_no_reply', requestId: expect.any(String),
     });
     expect(Object.keys(put.mock.calls[0]![0]).sort()).toEqual(['condition', 'conversation', 'dueAt', 'expectedRevision', 'requestId', 'sourceMessageId']);
-    // A preset is a real instant at 09:00 local (or the rounded quarter hour for Later today).
-    const at = new Date(expected);
-    if (id !== 'later') expect(at.getHours()).toBe(9);
-    else expect(at.getTime()).toBeGreaterThan(NOW.getTime());
   });
 
-  it('Someday still sends dueAt null; a preset after Someday replaces it', async () => {
+  it('Someday sends dueAt null and the chosen return condition', async () => {
     const { fake, put } = fixture();
     panel = show(fake, { target }).wrapper;
     await flushPromises();
-    await panel.get('input[type="checkbox"]').setValue(true);
-    expect(panel.find('[data-test="reminder-custom"]').exists()).toBe(false);
-    await panel.get('[data-test="reminder-preset-tomorrow"]').trigger('click');
-    expect((panel.get('input[type="checkbox"]').element as HTMLInputElement).checked).toBe(false);
-    await panel.get('input[type="checkbox"]').setValue(true);
-    await panel.get('form').trigger('submit'); await flushPromises();
-    expect(put.mock.calls[0]![0].dueAt).toBeNull();
+    await panel.findAll('[aria-label="Suggested reminder times"] [role="option"]').find((option) => option.text().includes('Someday'))!.trigger('click');
+    await panel.get('select').setValue('regardless');
+    await submitPicker(panel);
+    expect(put.mock.calls[0]![0]).toMatchObject({ dueAt: null, condition: 'regardless' });
   });
 
-  it('opens Custom by itself for a saved time that is not a preset, so saved data is never hidden', async () => {
-    const { fake, put } = fixture([reminder('conv-01', 'pending', { dueAt: '2030-11-03T09:00:00-05:00' })]);
+  it('Reschedule shows the saved time in the picker, names the row, and keeps an untouched save exact', async () => {
+    const { fake, put } = fixture([reminder('conv-01', 'pending', { dueAt: '2999-11-03T09:00:00-05:00' })]);
     panel = show(fake).wrapper;
     await flushPromises();
     await panel.findAll('button').find((button) => button.text() === 'Reschedule')!.trigger('click');
-    expect((panel.get('input[type="text"]').element as HTMLInputElement).value).toBe('2030-11-03T09:00:00-05:00');
-    expect(panel.get('[data-test="reminder-custom"]').attributes('disabled')).toBeDefined();
-    expect(panel.get('h2').text()).toBe('Reschedule');
-    expect(panel.get('.reminder-subject').text()).toBe('Subject conv-01');
-    await panel.get('form').trigger('submit'); await flushPromises();
-    expect(put.mock.calls[0]![0]).toMatchObject({ expectedRevision: 3, dueAt: '2030-11-03T09:00:00-05:00', conversation: { conversationId: 'conv-01' } });
+    expect((panel.get('#reminder-time-input').element as HTMLInputElement).value).toContain('November 3, 2999');
+    expect(panel.get('[data-test="reminder-form"] h2').text()).toBe('Reschedule reminder');
+    expect(panel.get('[data-reminder-picker]').text()).toContain('Subject conv-01');
+    await submitPicker(panel);
+    expect(put.mock.calls[0]![0]).toMatchObject({ expectedRevision: 3, dueAt: '2999-11-03T09:00:00-05:00', conversation: { conversationId: 'conv-01' } });
   });
 
-  it('keeps exact-retry semantics for a preset: the lost-ACK retry replays the identical request', async () => {
+  it('keeps exact-retry semantics: the lost-ACK retry replays the identical request', async () => {
     const { fake, put } = fixture();
     panel = show(fake, { target }).wrapper;
     await flushPromises();
     put.mockRejectedValueOnce({ kind: 'storage_unavailable' });
-    await panel.get('[data-test="reminder-preset-tomorrow"]').trigger('click');
-    await panel.get('form').trigger('submit'); await flushPromises();
+    await pickTime(panel);
+    await submitPicker(panel);
     const first = put.mock.calls[0]![0];
     const retry = panel.findAll('button').find((button) => button.text() === 'Retry exact request')!;
     await retry.trigger('click'); await flushPromises();
     expect(put.mock.calls[1]![0]).toEqual(first);
-    expect(panel.findAll('button').some((button) => button.text() === 'Inspect durable state')).toBe(false);
+    expect(panel.findAll('button').some((button) => button.text() === 'Inspect saved state')).toBe(false);
+  });
+
+  it('keeps the picker open and focused while the request cannot be dismissed, and closes it on Escape otherwise', async () => {
+    const { fake, put } = fixture();
+    const model = show(fake, { target, attachTo: document.body }).model;
+    panel = mounted!.wrapper;
+    await flushPromises();
+    put.mockRejectedValueOnce({ kind: 'storage_unavailable' });
+    await pickTime(panel);
+    await submitPicker(panel);
+    expect(model.dismissBlocked.value).toBe(true);
+    await panel.get('#reminder-time-input').trigger('keydown', { key: 'Escape' });
+    expect(panel.find('[data-test="reminder-form"]').exists()).toBe(true);
+    await panel.findAll('button').find((button) => button.text() === 'Inspect saved state')!.trigger('click'); await flushPromises();
+    expect(panel.find('[data-test="reminder-form"]').exists()).toBe(false);
   });
 });
 
@@ -309,24 +297,24 @@ describe('Reminders row descriptions', () => {
     await flushPromises();
     const a = panel.get('[data-test="reminder-row-a"] .context-row-main');
     expect(a.text()).toBe('Open Subject a');
-    expect(described(a)).toEqual(['Pending', fullDateLabel('2030-01-01T00:00:00Z'), 'Returns regardless of reply']);
+    expect(described(a)).toEqual(['Waiting', fullDateLabel('2030-01-01T00:00:00Z'), 'Returns regardless of reply']);
     // No condition line and no due time: only what is on the row.
-    expect(described(panel.get('[data-test="reminder-row-b"] .context-row-main'))).toEqual(['Pending', 'Someday']);
+    expect(described(panel.get('[data-test="reminder-row-b"] .context-row-main'))).toEqual(['Waiting', 'Someday']);
   });
 
-  it('ties a failed row to Failed, its due time and the failed note, whatever its caption says', async () => {
+  it('ties a failed row to Needs attention, its due time and the failed note, whatever its caption says', async () => {
     const { fake } = fixture([reminder('c', 'failed'), reminder('d', 'pending')]);
     panel = show(fake).wrapper;
     await flushPromises();
     const c = panel.get('[data-test="reminder-row-c"] .context-row-main');
     const words = described(c);
-    expect(words[0]).toBe('Failed');
+    expect(words[0]).toBe('Needs attention');
     expect(words[1]).toBe(fullDateLabel('2030-01-01T00:00:00Z'));
     expect(words[2]).toContain('A mailbox change failed or newer triage superseded it');
     expect(words).toHaveLength(3);
     // The caption is a presentation item; the state is not left to it.
     expect(panel.get('[data-test="context-group"]').attributes('role')).toBe('presentation');
-    expect(described(panel.get('[data-test="reminder-row-d"] .context-row-main'))).toEqual(['Pending', fullDateLabel('2030-01-01T00:00:00Z')]);
+    expect(described(panel.get('[data-test="reminder-row-d"] .context-row-main'))).toEqual(['Waiting', fullDateLabel('2030-01-01T00:00:00Z')]);
   });
 
   it('gives every row its own ids', async () => {
@@ -386,8 +374,8 @@ describe('Reminders action status', () => {
     await flushPromises();
     put.mockRejectedValueOnce({ kind: 'storage_unavailable' });
     await panel.findAll('button').find((button) => button.text() === 'Reschedule')!.trigger('click');
-    await panel.get('[data-test="reminder-preset-tomorrow"]').trigger('click');
-    await panel.get('form').trigger('submit'); await flushPromises();
+    await pickTime(panel);
+    await submitPicker(panel);
     expect(status().text()).toBe('Could not reschedule reminder');
     await panel.findAll('button').find((button) => button.text() === 'Retry exact request')!.trigger('click'); await flushPromises();
     expect(status().text()).toBe('Reminder rescheduled');

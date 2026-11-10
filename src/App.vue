@@ -582,9 +582,11 @@ const remindersContext = computed(() => remindersSupported.value && mailbox.cont
 /** The Reminders list itself (no reader): a browse surface where mailbox actions do not apply. */
 const remindersList = computed(() => remindersContext.value && !readerOpen.value);
 const remindersPane = ref<InstanceType<typeof RemindersList> | null>(null);
+/** The conversation whose open reader asked for Remind me: a dismissed picker reopens it. */
+let reminderReaderReturn: ConversationRef | null = null;
 watch(remindersContext, (active) => {
   if (active) void reminders.activate();
-  else reminders.deactivate();
+  else { reminders.deactivate(); reminderReaderReturn = null; }
 }, { immediate: true });
 async function focusRemindersList(preventScroll = false): Promise<void> {
   await nextTick();
@@ -606,6 +608,7 @@ async function reminderScheduled(receipt: Reminder, rescheduled: boolean): Promi
   const epoch = reminderAccountEpoch;
   const token = navigationToken;
   reminders.setTarget(null);
+  reminderReaderReturn = null;
   await mailbox.refresh();
   if (!reminderViewAlive || epoch !== reminderAccountEpoch || account !== accountId.value) return;
   if (token !== navigationToken || !remindersContext.value) {
@@ -622,14 +625,24 @@ async function reminderScheduled(receipt: Reminder, rescheduled: boolean): Promi
 }
 /**
  * A new picker (Remind me) was dismissed without scheduling: the request is
- * over, so Back returns to the surface it was asked from. With no history the
+ * over, so Back returns to the surface it was asked from, and a reader that
+ * asked for it opens again on the same conversation. With no history the
  * Reminders list stays and keeps focus.
  */
 async function reminderDismissed(): Promise<void> {
   if (!remindersContext.value || reminders.target.value === null) return;
+  const reopen = reminderReaderReturn;
+  reminderReaderReturn = null;
+  const token = navigationToken;
+  const epoch = reminderAccountEpoch;
   reminders.setTarget(null);
+  await nextTick();
+  // Whoever took over meanwhile (another navigation, a drawer, another workspace, a new account) keeps the screen.
+  if (!reminderViewAlive || !workspaceActive.value || drawer.value || epoch !== reminderAccountEpoch || token !== navigationToken || !remindersContext.value) return;
   if (!actionAvailable('back')) { await focusRemindersList(); return; }
   await executeAction('back');
+  if (reopen && reopen.accountId === accountId.value && !readerOpen.value && mailbox.context.value !== 'reminders'
+    && listRows.value.some(row => sameConversation(row.ref, reopen))) await openRowFromList(reopen);
 }
 
 /** A reader opened from these surfaces never walks the Inbox with J/K, and Back does not resolve an Inbox row. */
@@ -1945,6 +1958,7 @@ async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): 
       if (!remindersSupported.value || selectedCount.value > 0 || mailbox.commandInFlight.value || mailbox.bulkUnresolved.value) return;
       const target = actionTarget(explicit);
       if (!target) return;
+      reminderReaderReturn = readerOpen.value ? { ...target } : null;
       reminders.setTarget(target);
       await navigateContext('reminders');
       return;
@@ -1967,7 +1981,11 @@ async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): 
     }
     case 'drafts': await navigateContext('drafts'); return;
     case 'destinations': case 'account': case 'activity': await openDrawer(id); return;
-    case 'back': if (readerOpen.value) closeReader(); else await contextBack(); return;
+    case 'back':
+      // A reminder request in flight (or waiting for its exact retry) owns Back, like Escape.
+      if (remindersList.value && reminders.dismissBlocked.value) { remindersPane.value?.retainPickerFocus(); return; }
+      if (readerOpen.value) closeReader(); else await contextBack();
+      return;
     case 'open': if (explicit) await openRowFromList(explicit); else await openFocusedFromList(); return;
     case 'archive':
       if (explicit) await archiveRowFromList(explicit);

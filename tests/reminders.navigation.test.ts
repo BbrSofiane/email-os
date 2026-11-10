@@ -149,15 +149,15 @@ it.each(['list', 'reader'])('restores %s shortcut focus after H then Escape', as
   expect(input).not.toBeNull();
   input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await flushPromises();
-  expect(app.findComponent(RemindersPanel).exists()).toBe(false);
-  if (surface === 'list') expect(document.activeElement).toBe(row.element);
+  expect(app.findComponent(RemindersList).exists()).toBe(false);
+  if (surface === 'list') expect(document.activeElement?.getAttribute('data-test')).toBe(row.attributes('data-test'));
   else expect(app.getComponent(ReaderView).element.contains(document.activeElement)).toBe(true);
   document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', bubbles: true }));
   await flushPromises();
   expect(archive).toHaveBeenCalledTimes(1);
 });
 
-it.each(['ack', 'lost ACK', 'unmount'])('keeps BODY Escape and drawer Close from discarding a put; handles %s', async outcome => {
+it.each(['ack', 'lost ACK', 'unmount'])('keeps BODY Escape and the Back button from discarding a put; handles %s', async outcome => {
   const client = createBrowserFakeMailClient();
   const pending = deferred<Reminder>();
   const put = vi.spyOn(client.reminders!, 'put').mockImplementationOnce(() => pending.promise);
@@ -175,7 +175,7 @@ it.each(['ack', 'lost ACK', 'unmount'])('keeps BODY Escape and drawer Close from
   (document.activeElement as HTMLElement).blur();
   document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
   await flushPromises();
-  await app.get('[data-test="drawer-close"]').trigger('click');
+  await app.get('[data-test="context-back"]').trigger('click');
   expect(document.querySelector('[data-reminder-picker]')).not.toBeNull();
   expect(document.querySelector('[data-reminder-picker]')!.contains(document.activeElement)).toBe(true);
   expect(app.find('[data-test="reminder-confirmation"]').exists()).toBe(false);
@@ -197,14 +197,14 @@ it.each(['ack', 'lost ACK', 'unmount'])('keeps BODY Escape and drawer Close from
   } else {
     (document.activeElement as HTMLElement).blur();
     await key('Escape');
-    await app.get('[data-test="drawer-close"]').trigger('click');
+    await app.get('[data-test="context-back"]').trigger('click');
     expect(document.querySelector('[data-reminder-picker]')).not.toBeNull();
     expect(app.find('[data-test="reminder-confirmation"]').exists()).toBe(false);
     const picker = document.querySelector('[data-reminder-picker]')!;
     const inspect = [...picker.querySelectorAll('button')].find(b => b.textContent === 'Inspect saved state')!;
     inspect.click(); await flushPromises();
     expect(document.querySelector('[data-reminder-picker]')).toBeNull();
-    expect(app.findComponent(RemindersPanel).exists()).toBe(true);
+    expect(app.findComponent(RemindersList).exists()).toBe(true);
   }
 });
 

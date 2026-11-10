@@ -40,7 +40,7 @@ What shipped:
 - Account/Activity moved into explicit labelled utility disclosures with
   keyboard-operable entry/close controls, Escape precedence, and focus
   restoration. Drafts started as a third disclosure and is now a list context in
-  the main pane (see DESIGN.md gap 19): a draft opens in the inline compose card
+  the main pane (see DESIGN.md gap 21): a draft opens in the inline compose card
   or, for a reply, in the docked composer of its source thread. Close
   protection and draft recovery states remain visible or one click away; every
   user departure from an active draft editor (another context, a utility,

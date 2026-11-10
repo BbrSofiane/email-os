@@ -1,7 +1,7 @@
 /**
  * Reminders as a list context (not a drawer): entries, header tabs, Back to the
- * exact row, the in-flow picker from `h`, inert mailbox shortcuts, and the
- * fixture-only gate.
+ * exact row, the picker from `h`, inert mailbox shortcuts, and the
+ * transport gate.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
@@ -50,7 +50,7 @@ describe('entering and leaving the Reminders context', () => {
     expect(w.find('[data-test="split-inbox"]').exists()).toBe(false);
     expect(w.get('[role="tablist"]').attributes('aria-label')).toBe('Reminder membership');
     expect(tabs(w).map((tab) => tab.text().replace(/\s+/g, ' '))).toEqual(['Pending 2', 'Returned 1', 'History 0']);
-    expect(w.get('[data-test="reminders-coverage"]').text()).toContain('Synthetic fixture only');
+    expect(w.get('[data-test="reminders-coverage"]').text()).toContain('Saved on this device');
     expect(rowButtons(w)).toHaveLength(2);
     // The glyph is the way back out too: Back is on the header.
     await w.get('[data-test="context-back"]').trigger('click'); await flushPromises();
@@ -87,8 +87,9 @@ describe('entering and leaving the Reminders context', () => {
     expect(w.findComponent(RemindersList).exists()).toBe(true);
   });
 
-  it('shows no entry and ignores G then H without the fixture reminders transport', async () => {
+  it('shows no entry and ignores G then H without a reminders transport; Gmail mode with one has the entry', async () => {
     const plain = createBrowserFakeMailClient();
+    delete plain.reminders;
     app = mount(App, { props: { client: plain, mode: 'native' }, attachTo: document.body });
     await flushPromises();
     expect(app.find('[data-test="reminders-trigger"]').exists()).toBe(false);
@@ -100,9 +101,9 @@ describe('entering and leaving the Reminders context', () => {
     useGmailMode(gmail);
     app = mount(App, { props: { client: gmail, mode: 'native' }, attachTo: document.body });
     await flushPromises();
-    expect(app.find('[data-test="reminders-trigger"]').exists()).toBe(false);
+    expect(app.find('[data-test="reminders-trigger"]').exists()).toBe(true);
     await key('g'); await key('h');
-    expect(title(app)).not.toBe('Reminders');
+    expect(title(app)).toBe('Reminders');
   });
 });
 
@@ -179,9 +180,10 @@ describe('Remind me from the list and the reader', () => {
     const form = w.get('[data-test="reminder-form"]');
     expect(form.attributes('data-source-conversation')).toBe('conv-02');
     expect(form.find('h2').text()).toBe('Remind me');
-    expect(form.get('.reminder-subject').text()).toBe((await fake.getConversation(ref('conv-02'))).subject);
-    // Focus lands in the picker, not on a row.
-    expect(form.element.contains(document.activeElement)).toBe(true);
+    const picker = document.querySelector('[data-reminder-picker]')!;
+    expect(picker.querySelector('.reminder-subject')!.textContent).toContain((await fake.getConversation(ref('conv-02'))).subject);
+    // Focus lands in the picker's time field, not on a row.
+    expect(picker.contains(document.activeElement)).toBe(true);
     await w.get('[data-test="context-back"]').trigger('click'); await flushPromises();
     expect(title(w)).toBe('Inbox');
     const row = w.get('[data-test="conversation-row-conv-02"]');
@@ -203,13 +205,30 @@ describe('Remind me from the list and the reader', () => {
     expect(w.get('[data-test="conversation-row-conv-02"]').attributes('aria-current')).toBe('true');
   });
 
-  it('Escape inside the picker dismisses only the picker; the next Escape goes Back', async () => {
+  it('Escape inside the picker of a new reminder ends the request and goes Back to the row it was asked from', async () => {
     const { w } = await mountApp([reminder('conv-03', 'pending')]);
+    await key('j');
     await key('h');
-    const form = w.get('[data-test="reminder-form"]');
-    const preset = form.get('[data-test="reminder-preset-tomorrow"]');
-    (preset.element as HTMLElement).focus();
-    await key('Escape', {}, preset.element);
+    expect(title(w)).toBe('Reminders');
+    const input = document.querySelector<HTMLInputElement>('#reminder-time-input')!;
+    await key('Escape', {}, input);
+    expect(w.find('[data-test="reminder-form"]').exists()).toBe(false);
+    expect(document.querySelector('[data-reminder-picker]')).toBeNull();
+    expect(title(w)).toBe('Inbox');
+    const row = w.get('[data-test="conversation-row-conv-02"]');
+    expect(row.attributes('aria-current')).toBe('true');
+    expect(document.activeElement).toBe(row.element);
+  });
+
+  it('Escape inside a Reschedule picker dismisses only the picker; the next Escape goes Back', async () => {
+    const { w } = await mountApp([reminder('conv-03', 'pending')]);
+    await key('g'); await key('h');
+    const first = rowButtons(w)[0]!.element as HTMLElement;
+    first.focus();
+    await key('h', {}, first);
+    expect(w.get('[data-test="reminder-form"] h2').text()).toBe('Reschedule reminder');
+    const input = document.querySelector<HTMLInputElement>('#reminder-time-input')!;
+    await key('Escape', {}, input);
     expect(w.find('[data-test="reminder-form"]').exists()).toBe(false);
     expect(title(w)).toBe('Reminders');
     expect(document.activeElement).toBe(rowButtons(w)[0]!.element);

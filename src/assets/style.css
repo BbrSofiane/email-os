@@ -924,7 +924,7 @@ button:focus-visible {
   border-left: 1px solid var(--divider);
   box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
   overflow-y: auto;
-  /* Content edge = the contact pane's inset (DESIGN.md gap 18), 6px/12px rhythm. */
+  /* Content edge = the contact pane's inset (DESIGN.md gap 20), 6px/12px rhythm. */
   padding: 6px var(--contact-inset) var(--contact-inset);
   z-index: 30;
 }

@@ -29,7 +29,9 @@ const active = () => document.activeElement as HTMLElement;
 async function mountPlain(mode: 'plain' | 'gmail' | 'reminders' = 'plain'): Promise<{ fake: BrowserFake; w: VueWrapper }> {
   const fake = createBrowserFakeMailClient();
   if (mode === 'gmail') useGmailMode(fake, { mutationAccess: 'enabled' });
+  // The browser fake offers reminders by default; only the 'reminders' mode keeps a (quiet) transport.
   if (mode === 'reminders') fake.reminders = { list: vi.fn(async () => []), put: vi.fn(), cancel: vi.fn() };
+  else delete fake.reminders;
   app = mount(App, { props: { client: fake, mode: 'browser-preview' }, attachTo: document.body });
   await flushPromises();
   return { fake, w: app };
@@ -275,17 +277,11 @@ describe('[ and ] step the Reminders tabs', () => {
     await key(']', { metaKey: true }, active());
     await key(']', { altKey: true }, active());
     expect(tabState(w)).toBe('Pending 2');
-    // Picker: a preset button and the custom time input own their keys.
+    // Picker: its time field owns its keys.
     await key('h', {}, active());
-    const form = w.get('[data-test="reminder-form"]');
-    const preset = form.get('[data-test="reminder-preset-tomorrow"]');
-    (preset.element as HTMLElement).focus();
-    await key(']', {}, preset.element);
-    expect(tabState(w)).toBe('Pending 2');
-    await form.get('[data-test="reminder-custom"]').trigger('click'); await flushPromises();
-    const input = form.get('input[type="text"]');
-    (input.element as HTMLElement).focus();
-    const typed = await key(']', {}, input.element);
+    const input = document.querySelector<HTMLInputElement>('#reminder-time-input')!;
+    input.focus();
+    const typed = await key(']', {}, input);
     expect(typed.defaultPrevented).toBe(false);
     expect(tabState(w)).toBe('Pending 2');
   });
@@ -310,8 +306,8 @@ describe('H and Shift+H on a Reminders row', () => {
     expect(event.defaultPrevented).toBe(true);
     const form = w.get('[data-test="reminder-form"]');
     expect(form.attributes('data-source-conversation')).toBe('conv-03');
-    expect(form.get('h2').text()).toBe('Reschedule');
-    expect(form.element.contains(active())).toBe(true);
+    expect(form.get('h2').text()).toBe('Reschedule reminder');
+    expect(document.querySelector('[data-reminder-picker]')!.contains(active())).toBe(true);
   });
 
   it('is shown on the row buttons: aria-keyshortcuts and a title', async () => {
@@ -320,9 +316,9 @@ describe('H and Shift+H on a Reminders row', () => {
     expect(actions[0]!.attributes('aria-keyshortcuts')).toBe('H');
     expect(actions[0]!.attributes('title')).toBe('Reschedule — H');
     expect(actions[1]!.attributes('aria-keyshortcuts')).toBe('Shift+H');
-    expect(actions[1]!.attributes('title')).toBe('Cancel and restore original inbox messages — Shift+H');
+    expect(actions[1]!.attributes('title')).toBe('Cancel reminder and show in Inbox — Shift+H');
     // The accessible name keeps saying what the button does.
-    expect(actions[1]!.attributes('aria-label')).toBe('Cancel reminder and restore original inbox messages');
+    expect(actions[1]!.attributes('aria-label')).toBe('Cancel reminder and show in Inbox');
   });
 
   it('Shift+H cancels the focused row at once, with no confirmation, and focus moves to the next row', async () => {
@@ -403,11 +399,10 @@ describe('H and Shift+H on a Reminders row', () => {
     expect(cancel).not.toHaveBeenCalled();
     // An editable target (the picker's own field) keeps every key.
     await w.get('.context-row-actions button').trigger('click'); await flushPromises();
-    await w.get('[data-test="reminder-custom"]').trigger('click'); await flushPromises();
-    const input = w.get('[data-test="reminder-form"] input[type="text"]');
-    (input.element as HTMLElement).focus();
+    const input = document.querySelector<HTMLInputElement>('#reminder-time-input')!;
+    input.focus();
     for (const init of [{}, { shiftKey: true }]) {
-      const typed = await key(init.shiftKey ? 'H' : 'h', init, input.element);
+      const typed = await key(init.shiftKey ? 'H' : 'h', init, input);
       expect(typed.defaultPrevented).toBe(false);
     }
     expect(cancel).not.toHaveBeenCalled();
@@ -418,10 +413,10 @@ describe('H and Shift+H on a Reminders row', () => {
     const { cancel, w } = await mountReminders();
     await key('h', {}, active());
     const form = w.get('[data-test="reminder-form"]');
-    const preset = form.get('[data-test="reminder-preset-tomorrow"]').element as HTMLElement;
-    preset.focus();
-    await key('H', { shiftKey: true }, preset);
-    await key('h', {}, preset);
+    const control = document.querySelector<HTMLElement>('[data-reminder-picker] footer button')!;
+    control.focus();
+    await key('H', { shiftKey: true }, control);
+    await key('h', {}, control);
     expect(cancel).not.toHaveBeenCalled();
     expect(form.attributes('data-source-conversation')).toBe('conv-02');
   });

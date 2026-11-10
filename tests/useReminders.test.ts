@@ -129,14 +129,14 @@ describe('useReminders picker', () => {
     stop = () => scope.stop();
     await model.activate();
     model.setTarget(target); await flushPromises();
-    model.due.value = '2035-01-01T09:00:00Z'; model.someday.value = true; model.condition.value = 'regardless';
+    model.selectTime('2035-01-01T09:00:00Z'); model.condition.value = 'regardless';
     const before = model.source.value;
     model.setTarget({ ...target }); await flushPromises();
     expect(model.source.value).toBe(before);
-    expect(model.due.value).toBe('2035-01-01T09:00:00Z');
+    expect(model.dueAt.value).toBe('2035-01-01T09:00:00Z');
     model.setTarget(other); await flushPromises();
     expect(model.source.value?.conversation).toEqual(other);
-    expect([model.due.value, model.someday.value, model.condition.value]).toEqual(['', false, 'if_no_reply']);
+    expect([model.dueAt.value, model.pickerReady.value, model.condition.value]).toEqual([null, false, 'if_no_reply']);
     model.setTarget(null);
     expect(model.source.value).toBeNull();
   });
@@ -156,13 +156,13 @@ describe('useReminders picker', () => {
     expect(model.busy.value).toBe(false);
   });
 
-  it('sends the typed or preset time as one put payload and replays a lost ACK exactly', async () => {
+  it('sends the picked time as one put payload and replays a lost ACK exactly', async () => {
     const { put, model, scope } = setup();
     stop = () => scope.stop();
     await model.activate();
     model.setTarget(target); await flushPromises();
-    const at = model.presetList.value.find((preset) => preset.id === 'tomorrow')!.at;
-    model.choosePreset(at);
+    const at = '2035-11-03T09:00:00-05:00';
+    model.selectTime(at);
     put.mockRejectedValueOnce({ kind: 'storage_unavailable' });
     model.submit(); await flushPromises();
     expect(model.retrying.value).toBe(true);
@@ -178,20 +178,80 @@ describe('useReminders picker', () => {
     expect(model.source.value).toBeNull();
   });
 
-  it('Inspect durable state drops the retry and the picker and reloads', async () => {
+  it('Inspect saved state drops the retry and the picker and reloads', async () => {
     const { put, list, model, scope } = setup();
     stop = () => scope.stop();
     await model.activate();
     model.setTarget(target); await flushPromises();
-    model.someday.value = true;
+    model.selectTime(null);
     put.mockRejectedValueOnce({ kind: 'storage_unavailable' });
     model.submit(); await flushPromises();
     const loads = list.mock.calls.length;
-    model.inspectDurableState(); await flushPromises();
+    model.inspectSavedState(); await flushPromises();
     expect(model.retrying.value).toBe(false);
     expect(model.source.value).toBeNull();
     expect(model.error.value).toBe('');
     expect(list.mock.calls.length).toBe(loads + 1);
+  });
+
+  it('arms Save only after the picker chose a time, and typing again disarms it', async () => {
+    const { put, model, scope } = setup();
+    stop = () => scope.stop();
+    await model.activate();
+    model.setTarget(target); await flushPromises();
+    model.submit(); await flushPromises();
+    expect(put).not.toHaveBeenCalled();
+    model.selectTime(null);
+    expect(model.pickerReady.value).toBe(true);
+    model.editTime();
+    expect(model.pickerReady.value).toBe(false);
+    model.submit(); await flushPromises();
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it('a past saved time is not ready to save until the picker replaces it; Someday and future times are', async () => {
+    const { model, scope } = setup([row('a', { dueAt: '2000-01-01T00:00:00Z' }), row('b', { dueAt: '2999-01-01T00:00:00Z' }), row('c', { dueAt: null })]);
+    stop = () => scope.stop();
+    await model.activate();
+    const ready = (id: string) => { model.reschedule(model.rows.value.find((r) => r.conversation.conversationId === id)!); return model.pickerReady.value; };
+    expect([ready('a'), ready('b'), ready('c')]).toEqual([false, true, true]);
+  });
+
+  it('reports an acknowledged put to onScheduled and a dismissed new picker to onDismissed, never a dismissed reschedule', async () => {
+    const onScheduled = vi.fn();
+    const onDismissed = vi.fn();
+    const fake = createBrowserFakeMailClient();
+    const put = vi.fn(async (c: PutReminder): Promise<Reminder> => ({ conversation: c.conversation, subject: 'Saved', revision: 1, sourceMessageId: c.sourceMessageId, dueAt: c.dueAt, condition: c.condition, phase: 'removing' }));
+    fake.reminders = { list: vi.fn(async () => [row('a')]), put, cancel: vi.fn() };
+    const scope = effectScope();
+    const model = scope.run(() => useReminders(fake, { onScheduled, onDismissed }))!;
+    stop = () => scope.stop();
+    await model.activate();
+    model.setTarget(target); await flushPromises();
+    model.closePicker();
+    expect(onDismissed).toHaveBeenCalledTimes(1);
+    model.setTarget(other); await flushPromises();
+    model.selectTime(null); model.submit(); await flushPromises();
+    expect(onScheduled).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ phase: 'removing' }), false);
+    model.reschedule(model.rows.value[0]!);
+    model.closePicker();
+    expect(onDismissed).toHaveBeenCalledTimes(1);
+    model.reschedule(model.rows.value[0]!);
+    model.submit(); await flushPromises();
+    expect(onScheduled).toHaveBeenLastCalledWith(expect.anything(), true);
+  });
+
+  it('keeps the picker open while a request is in flight or waiting for an exact retry', async () => {
+    const { put, model, scope } = setup();
+    stop = () => scope.stop();
+    await model.activate();
+    model.setTarget(target); await flushPromises();
+    expect(model.dismissBlocked.value).toBe(false);
+    put.mockRejectedValueOnce({ kind: 'storage_unavailable' });
+    model.selectTime(null); model.submit(); await flushPromises();
+    expect(model.dismissBlocked.value).toBe(true);
+    model.closePicker();
+    expect(model.source.value).not.toBeNull();
   });
 
   it('cancel sends the row revision with a fresh request id', async () => {
@@ -278,7 +338,7 @@ describe('useReminders action announcement', () => {
     // The exact retry keeps its words: the cancel mock now resolves to undefined.
     expect(model.actionAnnouncement.value).toBe('Reminder cancelled');
     model.reschedule(model.rows.value[0]!);
-    model.due.value = '2030-05-05T09:00:00Z';
+    model.selectTime('2030-05-05T09:00:00Z');
     put.mockRejectedValueOnce({ kind: 'storage_unavailable' });
     model.submit(); await flushPromises();
     expect(model.actionAnnouncement.value).toBe('Could not reschedule reminder');
@@ -289,7 +349,7 @@ describe('useReminders action announcement', () => {
     expect(model.actionAnnouncement.value).toBe('');
     await model.activate();
     model.setTarget(other); await flushPromises();
-    model.due.value = '2030-05-05T09:00:00Z';
+    model.selectTime('2030-05-05T09:00:00Z');
     model.submit(); await flushPromises();
     expect(put).toHaveBeenCalledTimes(3);
     expect(model.actionAnnouncement.value).toBe('');
