@@ -255,14 +255,15 @@ describe.skipIf(chromePath === '')('InboxList rendered layout (real Chrome, opt-
       await tick();
       const unknown = await measure();
       assertCompactRowLayout(unknown, { minVisibleChars: 10, expectPending: false });
-      // Actions enabled: both directional read controls plus Archive stay explicit,
-      // with their full accessible names on compact labels.
+      // Actions enabled: directional read controls, Remind, and Archive stay
+      // explicit, with their full accessible names on compact labels.
       expect(unknown.buttons.filter((b) => b.visible).map((b) => b.test)).toEqual([
         'row-mark-read-conv-01',
         'row-mark-unread-conv-01',
+        'row-remind-conv-01',
         'row-archive-conv-01',
       ]);
-      expect(unknown.buttons.filter((b) => b.visible).map((b) => b.name)).toEqual(['Mark read', 'Mark unread', 'Mark done']);
+      expect(unknown.buttons.filter((b) => b.visible).map((b) => b.name)).toEqual(['Mark read', 'Mark unread', 'Remind me on this device', 'Mark done']);
       // Pointer route works: a click really issues the read command.
       await cdp!.js("document.querySelector('[data-test=\"row-mark-read-conv-01\"]').click()");
       await tick();
@@ -283,7 +284,7 @@ describe.skipIf(chromePath === '')('InboxList rendered layout (real Chrome, opt-
       await tick();
       const unknownPending = await measure();
       assertCompactRowLayout(unknownPending, { minVisibleChars: 10, expectPending: true });
-      expect(unknownPending.buttons.filter((b) => b.visible).map((b) => b.name)).toEqual(['Mark read', 'Mark unread', 'Mark done']);
+      expect(unknownPending.buttons.filter((b) => b.visible).map((b) => b.name)).toEqual(['Mark read', 'Mark unread', 'Remind me on this device', 'Mark done']);
 
       // Scenario 3: wider desktop sanity — nothing wedged, subject fully readable.
       await resize(1440);
@@ -335,6 +336,7 @@ describe.skipIf(chromePath === '')('InboxList rendered layout (real Chrome, opt-
       expect(at16.buttons.filter((b) => b.visible).map((b) => b.test)).toEqual([
         'row-mark-read-conv-01',
         'row-mark-unread-conv-01',
+        'row-remind-conv-01',
         'row-archive-conv-01',
       ]);
       expect(at16.toggle!.visible).toBe(false);
@@ -378,14 +380,14 @@ describe.skipIf(chromePath === '')('InboxList rendered layout (real Chrome, opt-
       expect(openByPointer.toggle!.ariaExpanded).toBe('true');
       expect(openByPointer.actionsPanel!.visibility).toBe('visible');
       const popoverButtons = openByPointer.buttons.filter((b) => b.visible && b.test !== 'row-actions-toggle-conv-01');
-      expect(popoverButtons.map((b) => b.name)).toEqual(['Mark read', 'Mark unread', 'Mark done']);
+      expect(popoverButtons.map((b) => b.name)).toEqual(['Mark read', 'Mark unread', 'Remind me on this device', 'Mark done']);
       // Every disclosed action is hit-testable at its center — inside the
       // visible panel, not clipped by the row or the list scroller. The hit
       // may be the button's own glyph or label, which activates the button.
       const hitTests = await cdp!.js<Array<{ test: string | null; hitIsTarget: boolean }>>(`[...document.querySelectorAll('[data-test="conversation-row-conv-01"] button')]
         .filter((b) => b.getAttribute('data-test') !== 'row-actions-toggle-conv-01' && b.getClientRects().length > 0 && getComputedStyle(b).visibility !== 'hidden')
         .map((b) => { const r = b.getBoundingClientRect(); const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return { test: b.getAttribute('data-test'), hitTest: hit?.getAttribute('data-test') ?? null, hitIsTarget: hit !== null && b.contains(hit) }; })`);
-      expect(hitTests.map((h) => h.test)).toEqual(['row-mark-read-conv-01', 'row-mark-unread-conv-01', 'row-archive-conv-01']);
+      expect(hitTests.map((h) => h.test)).toEqual(['row-mark-read-conv-01', 'row-mark-unread-conv-01', 'row-remind-conv-01', 'row-archive-conv-01']);
       for (const hit of hitTests) expect(hit.hitIsTarget).toBe(true);
 
       // Keyboard access, part 1: Escape closes the panel and returns focus to
@@ -422,7 +424,7 @@ describe.skipIf(chromePath === '')('InboxList rendered layout (real Chrome, opt-
       expect(afterActivate.rowScrollWidth).toBeLessThanOrEqual(afterActivate.rowClientWidth + 1);
       expect(afterActivate.listScrollWidth).toBeLessThanOrEqual(afterActivate.listClientWidth + 1);
       expect(afterActivate.subject.visibleChars).toBeGreaterThanOrEqual(10);
-      expect(afterActivate.buttons.filter((b) => b.test !== 'row-actions-toggle-conv-01').map((b) => b.name)).toEqual(['Mark unread', 'Mark done']);
+      expect(afterActivate.buttons.filter((b) => b.test !== 'row-actions-toggle-conv-01').map((b) => b.name)).toEqual(['Mark unread', 'Remind me on this device', 'Mark done']);
 
       // Pointer access near the list bottom: the last compact row's panel opens
       // upward so every disclosed action stays inside the visible scroller box.
@@ -434,7 +436,7 @@ describe.skipIf(chromePath === '')('InboxList rendered layout (real Chrome, opt-
       const lastHits = await cdp!.js<Array<{ test: string | null; hitIsTarget: boolean; top: number; bottom: number }>>(`[...document.querySelectorAll('[data-test="conversation-row-conv-17"] button')]
         .filter((b) => b.getAttribute('data-test') !== 'row-actions-toggle-conv-17' && b.getClientRects().length > 0 && getComputedStyle(b).visibility !== 'hidden')
         .map((b) => { const r = b.getBoundingClientRect(); const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return { test: b.getAttribute('data-test'), hitIsTarget: hit !== null && b.contains(hit), top: r.top, bottom: r.bottom }; })`);
-      expect(lastHits.map((h) => h.test)).toEqual(['row-mark-read-conv-17', 'row-mark-unread-conv-17', 'row-archive-conv-17']);
+      expect(lastHits.map((h) => h.test)).toEqual(['row-mark-read-conv-17', 'row-mark-unread-conv-17', 'row-remind-conv-17', 'row-archive-conv-17']);
       const viewportH = await cdp!.js<number>('innerHeight');
       for (const hit of lastHits) {
         expect(hit.hitIsTarget).toBe(true);

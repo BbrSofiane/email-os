@@ -163,7 +163,8 @@ describe.skipIf(chromePath === '')('Reader journey (real Chrome, opt-in)', () =>
     await click('[data-test="files-links"]'); await cdp!.js('window.__h.wait(150)');
     expect(await cdp!.js('window.__attachmentRequests.length')).toBe(0);
     expect(await cdp!.js(`document.querySelectorAll('iframe,object,embed,img').length`)).toBe(0);
-    expect(await cdp!.js(`document.querySelector('[role="dialog"]').textContent.includes('PDF preview is unavailable')`)).toBe(true);
+    expect(await cdp!.js(`document.querySelector('.attachment-chooser .chooser-note')?.textContent.includes('Download only. Files save inert with a .download suffix; nothing is opened.')`)).toBe(true);
+    expect(await cdp!.js(`document.querySelector('.attachment-chooser .chooser-note')?.getAttribute('title')?.includes('PDF preview is unavailable')`)).toBe(true);
     await click('.attachment-chooser [aria-label="Files"] button');
     await cdp!.js('window.__h.wait(100)');
     expect(await cdp!.js('window.__attachmentRequests.length')).toBe(1);
@@ -576,9 +577,11 @@ describe.skipIf(chromePath === '')('Reader journey (real Chrome, opt-in)', () =>
     await click('[data-test="conversation-row-read-01"]');
     await cdp!.js('window.__h.wait(250)');
     expect(await activeTest()).toBe('message-toggle-read-01-m3');
-    // Open the OLDEST message's details (the summary click itself makes m1
-    // active), then return active message focus to the NEWEST message with a
-    // real native toggle click while the m1 details stay open.
+    // Details are hidden while a message is collapsed. Expand the OLDEST
+    // message first, then open its details and return active message focus to
+    // the NEWEST message with a real native toggle click.
+    await click('[data-test="message-toggle-read-01-m1"]');
+    await cdp!.js('window.__h.wait(80)');
     await click('[data-test="message-details-summary-read-01-m1"]');
     await cdp!.js('window.__h.wait(80)');
     await click('[data-test="message-toggle-read-01-m3"]');
@@ -589,6 +592,7 @@ describe.skipIf(chromePath === '')('Reader journey (real Chrome, opt-in)', () =>
     // active-message handoff at all.)
     expect(await activeTest()).toBe('message-toggle-read-01-m3');
     expect(await cdp!.js(`document.querySelector('.message-active')?.getAttribute('data-test') ?? null`)).toBe('message-read-01-m3');
+    expect(await cdp!.js(`document.querySelector('[data-test="message-toggle-read-01-m1"]')?.getAttribute('aria-expanded')`)).toBe('true');
     expect(await cdp!.js(`!!document.querySelector('[data-test="message-details-read-01-m1"]')?.open`)).toBe(true);
     expect(await cdp!.js(`window.__h.text('[data-test="contact-name"]')`)).toBe('Ada Fixture');
     // Directly focusing Ravi (a recipient of m1) makes the reader emit Ravi's
