@@ -81,6 +81,7 @@ function onSetField(field: keyof DraftContent, value: string): void {
       data-test="composer"
       autofocus="to"
       variant="new"
+      :to-described-by="notice ? noticeId : undefined"
       :active-ref="activeRef"
       :source="source"
       :content="content"

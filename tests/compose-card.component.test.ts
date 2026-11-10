@@ -496,6 +496,8 @@ describe('ComposeCard fallback reason (reply draft that cannot show its thread)'
     const id = notice.attributes('id');
     expect(id).toBeTruthy();
     expect(card.attributes('aria-describedby')).toBe(id);
+    // Focus lands in To, so the field itself carries the explanation.
+    expect(wrapper!.get('[data-test="draft-to"]').attributes('aria-describedby')).toBe(id);
     expect(card.attributes('aria-label')).toBe('Reply draft to Ada');
     expect(wrapper!.element.querySelectorAll(`[id="${id}"]`)).toHaveLength(1);
     // Two cards in one app never share a notice id.
@@ -506,5 +508,6 @@ describe('ComposeCard fallback reason (reply draft that cannot show its thread)'
     pair.unmount();
     noticeFor(null);
     expect(wrapper!.get('[data-test="compose-card"]').attributes('aria-describedby')).toBeUndefined();
+    expect(wrapper!.get('[data-test="draft-to"]').attributes('aria-describedby')).toBeUndefined();
   });
 });
