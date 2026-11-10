@@ -1,7 +1,24 @@
 <script setup lang="ts">
+/**
+ * Local drafts drawer. One column: the list is the default view; opening a
+ * draft or "New draft" replaces it with the editor (`DraftEditorCore`,
+ * unchanged), and `Back to drafts` returns through the editor's own protected
+ * close (`closeEditor`: flush, then hide). A failed flush keeps the editor
+ * open with its error, exactly as the editor's footer does.
+ *
+ * Rows are the shared drawer rows (recipient, subject, updated time). Revision
+ * numbers are evidence: they sit in the row title, and show as a word only while
+ * that draft is in conflict.
+ */
+import { computed } from 'vue';
 import type { DraftContent, DraftRef, DraftSource, DraftSummary, MailError } from '../lib/ipc/client';
 import { describeDraftError } from '../lib/draft-errors';
+import { compactDateLabel, fullDateLabel, machineDateTime } from '../lib/browsing-dates';
+import { useDrawerRows } from '../composables/useDrawerRows';
 import DraftEditorCore from './DraftEditorCore.vue';
+
+const LOCAL_LINE = 'Local to this device · never sent';
+const LOCAL_DETAIL = 'Drafts are local to this device and account. No drafts are sent to a mail provider.';
 
 const props = withDefaults(defineProps<{
   summaries: DraftSummary[];
@@ -58,53 +75,82 @@ function describe(error: MailError): string {
   return describeDraftError(error);
 }
 
+function draftKey(ref: DraftRef): string {
+  return `${ref.accountId}:${ref.draftId}`;
+}
+
+const rows = useDrawerRows({ keys: () => props.summaries.map((draft) => draftKey(draft.ref)) });
+
+/** The revision is shown as a word only while this very draft is in conflict. */
+function inConflict(ref: DraftRef): boolean {
+  return props.conflict && !!props.activeRef && props.activeRef.accountId === ref.accountId && props.activeRef.draftId === ref.draftId;
+}
+
+function rowTitle(draft: DraftSummary): string {
+  return `Revision ${draft.revision} · ${draft.source.kind === 'reply' ? 'Reply' : 'New message'}`;
+}
+
+/** Back uses the same protected close as the editor's own control. */
+const backDisabled = computed(() => props.closing || props.transitioning || props.deleting || props.deletePending);
+
 function onSetField(field: keyof DraftContent, value: string): void {
   emit('setField', field, value);
 }
 </script>
 
 <template>
-  <section class="drafts-pane" aria-label="Local drafts" data-test="drafts-pane">
-    <div class="draft-list">
-      <div class="draft-list-heading">
-        <h2>Drafts</h2>
-        <button type="button" data-test="new-draft" :disabled="props.closing || props.transitioning" @click="emit('newDraft')">New draft</button>
+  <div class="drafts-pane" data-test="drafts-pane">
+    <!-- Recovery and error lines stay visible in both views. -->
+    <p v-if="props.suspendedEditor" role="alert" class="drawer-alert" data-test="suspended-editor">
+      An editor from another account is suspended in memory. Its text is hidden and will not be saved to this account; return to the original account to resolve it.
+    </p>
+    <p v-if="props.closeError && !props.visible" role="alert" class="drawer-alert" data-test="draft-close-error">{{ props.closeError }}</p>
+    <p v-if="props.closeSetupError" role="alert" class="drawer-alert" data-test="draft-close-setup-error">
+      Close protection could not be initialized: {{ props.closeSetupError }}
+      <button type="button" class="drawer-quiet" data-test="retry-close-setup" @click="emit('retryCloseSetup')">Retry close protection</button>
+    </p>
+    <p v-if="props.closeRetryAvailable" class="drawer-line"><button type="button" class="drawer-quiet" data-test="retry-close" @click="emit('retryClose')">Retry close request</button></p>
+    <p v-if="props.listError" role="alert" class="drawer-alert" data-test="draft-list-error">Could not load drafts: {{ describe(props.listError) }}</p>
+    <p v-if="props.subscriptionError" role="alert" class="drawer-alert" data-test="draft-subscription-error">
+      Draft change notifications are unavailable; this list will refresh on reconnect and after local saves. {{ describe(props.subscriptionError) }}
+      <button type="button" class="drawer-quiet" data-test="retry-draft-subscription" @click="emit('retryDraftSubscription')">Retry draft updates</button>
+    </p>
+
+    <div v-if="!props.visible" class="draft-list" data-test="draft-list-view" @keydown="rows.onKeydown">
+      <div class="drawer-toolbar">
+        <!-- The one standing local-only line; the sentence is its title and hidden text. -->
+        <p class="drawer-note draft-local-note" role="note" :title="LOCAL_DETAIL">{{ LOCAL_LINE }}<span class="visually-hidden">. {{ LOCAL_DETAIL }}</span></p>
+        <button type="button" class="drawer-action" data-test="new-draft" :disabled="props.closing || props.transitioning" @click="emit('newDraft')">New draft</button>
       </div>
-      <p class="draft-local-note" role="note">Drafts are local to this device and account. No drafts are sent to a mail provider.</p>
-      <p v-if="props.suspendedEditor" role="alert" data-test="suspended-editor">
-        An editor from another account is suspended in memory. Its text is hidden and will not be saved to this account; return to the original account to resolve it.
-      </p>
-      <p v-if="props.closeError && !props.visible" role="alert" data-test="draft-close-error">{{ props.closeError }}</p>
-      <p v-if="props.closeSetupError" role="alert" data-test="draft-close-setup-error">
-        Close protection could not be initialized: {{ props.closeSetupError }}
-        <button type="button" data-test="retry-close-setup" @click="emit('retryCloseSetup')">Retry close protection</button>
-      </p>
-      <button v-if="props.closeRetryAvailable" type="button" data-test="retry-close" @click="emit('retryClose')">Retry close request</button>
-      <p v-if="props.listError" role="alert" data-test="draft-list-error">Could not load drafts: {{ describe(props.listError) }}</p>
-      <p v-if="props.subscriptionError" role="alert" data-test="draft-subscription-error">
-        Draft change notifications are unavailable; this list will refresh on reconnect and after local saves. {{ describe(props.subscriptionError) }}
-        <button type="button" data-test="retry-draft-subscription" @click="emit('retryDraftSubscription')">Retry draft updates</button>
-      </p>
-      <p v-if="props.createError && !props.visible" role="alert" data-test="draft-open-error">{{ describe(props.createError) }}</p>
-      <p v-else-if="props.summaries.length === 0" data-test="draft-list-empty">No local drafts.</p>
-      <ul v-else data-test="draft-list">
-        <li v-for="draft in props.summaries" :key="`${draft.ref.accountId}:${draft.ref.draftId}`">
-          <button
-            type="button"
-            class="draft-row"
-            :data-test="`open-draft-${draft.ref.draftId}`"
-            :disabled="props.closing || props.transitioning"
-            @click="emit('openDraft', draft.ref)"
-          >
-            <strong>{{ draft.subject || '(no subject)' }}</strong>
-            <span>{{ draft.to || '(no recipient)' }}</span>
-            <small>Revision {{ draft.revision }} · {{ draft.source.kind === 'reply' ? 'Reply' : 'New message' }}</small>
-          </button>
+      <p v-if="props.createError" role="alert" class="drawer-alert" data-test="draft-open-error">{{ describe(props.createError) }}</p>
+      <p v-else-if="props.summaries.length === 0" class="drawer-note" data-test="draft-list-empty">No local drafts.</p>
+      <ul v-else class="drawer-rows" data-test="draft-list">
+        <li v-for="draft in props.summaries" :key="draftKey(draft.ref)">
+          <div class="drawer-row">
+            <button
+              type="button"
+              class="drawer-row-main draft-row"
+              v-bind="rows.rowAttrs(draftKey(draft.ref))"
+              :data-test="`open-draft-${draft.ref.draftId}`"
+              :title="rowTitle(draft)"
+              :disabled="props.closing || props.transitioning"
+              @click="emit('openDraft', draft.ref)"
+            >
+              <span class="drawer-sender" :class="{ 'drawer-empty': !draft.to }">{{ draft.to || '(no recipient)' }}</span>
+              <span class="drawer-subject" :class="{ 'drawer-empty': !draft.subject }">{{ draft.subject || '(no subject)' }}</span>
+              <span v-if="inConflict(draft.ref)" class="drawer-flag tone-warn" data-test="draft-row-conflict">Conflict · revision {{ draft.revision }}</span>
+              <span v-if="draft.source.kind === 'reply'" class="drawer-flag">Reply</span>
+              <time class="drawer-date row-time" :datetime="machineDateTime(draft.updatedAt)" :title="fullDateLabel(draft.updatedAt)">{{ compactDateLabel(draft.updatedAt) }}</time>
+            </button>
+          </div>
         </li>
       </ul>
     </div>
 
-    <section v-if="props.visible" class="composer" aria-label="Plain-text draft editor" data-test="composer">
+    <div v-else class="composer" data-test="composer">
+      <p class="drawer-line">
+        <button type="button" class="drawer-quiet" data-test="back-to-drafts" :disabled="backDisabled" @click="emit('closeEditor')">Back to drafts</button>
+      </p>
       <DraftEditorCore
         :active-ref="props.activeRef"
         :source="props.source"
@@ -139,10 +185,12 @@ function onSetField(field: keyof DraftContent, value: string): void {
         @cancel-reply-preparation="emit('cancelReplyPreparation')"
       >
         <template #header>
+          <!-- A sub-section of the drawer: the drawer owns the one h2. -->
           <header class="composer-heading">
-            <h2>{{ props.source?.kind === 'reply' ? 'Reply draft' : 'New local draft' }}</h2>
+            <h3 v-if="props.source?.kind === 'reply' && props.recipientLabel">Reply draft <span class="reply-to">to <span data-test="draft-recipient-label">{{ props.recipientLabel }}</span></span></h3>
+            <h3 v-else-if="props.source?.kind === 'reply'">Reply draft</h3>
+            <h3 v-else>New local draft</h3>
           </header>
-          <p v-if="props.source?.kind === 'reply' && props.recipientLabel" class="draft-recipient" data-test="draft-recipient-label"><strong class="draft-flag">Draft</strong> to {{ props.recipientLabel }}</p>
         </template>
         <template #context>
           <!-- The fixed reply source: attributes only, never visible text. -->
@@ -155,16 +203,6 @@ function onSetField(field: keyof DraftContent, value: string): void {
           ></span>
         </template>
       </DraftEditorCore>
-    </section>
-  </section>
+    </div>
+  </div>
 </template>
-
-<style scoped>
-/* Composer reply-target line (Superhuman-style "Draft to {name}"); the flag
-   word itself uses the global .draft-flag style. */
-.draft-recipient {
-  margin: 0.3rem 0;
-  font-size: var(--type-body);
-  color: var(--text-primary);
-}
-</style>

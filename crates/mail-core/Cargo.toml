@@ -3,7 +3,7 @@ name = "mail-core"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.89"
-description = "Headless fixture mail core: concrete SQLite store, seed-once synthetic inbox, serial cancellable archive worker, serde/ts-rs DTOs"
+description = "Headless fixture and Gmail mail core: SQLite stores, provider sync and operations, serde/ts-rs DTOs"
 license = "UNLICENSED"
 
 [dependencies]

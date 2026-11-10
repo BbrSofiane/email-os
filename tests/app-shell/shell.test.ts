@@ -164,7 +164,7 @@ describe('renders the fixture browsing shell (Slice 01)', () => {
     const rows = conversationRows(w);
     expect(rows).toHaveLength(18);
     expect(w.find('[data-test="row-pending"]').exists()).toBe(true);
-    expect(w.text()).toContain('applying…');
+    expect(w.text()).toContain('Applying…');
 
     fake.controls.release();
     await flushFakeClientAndVueUpdates(fake);
@@ -180,7 +180,11 @@ describe('renders the fixture browsing shell (Slice 01)', () => {
     await flushFakeClientAndVueUpdates(fake);
     await openUtilityDrawer(w, 'activity');
     expect(w.find('[data-test="activity-failed"]').exists()).toBe(true);
-    expect(w.find('[data-test="activity-failed"]').text()).toContain('failed (provider_rejected)');
+    // One status word; the failure kind moves to its title, the human reason stays inline.
+    const failed = w.get('[data-test="activity-failed"]');
+    expect(failed.get('.activity-status').text()).toBe('Failed');
+    expect(failed.get('.activity-status').attributes('title')).toContain('Failed (provider_rejected)');
+    expect(failed.get('[data-test="activity-error"]').text()).toBe('The provider rejected the requested state.');
     expect(conversationRows(w)).toHaveLength(18);
   });
 

@@ -1,6 +1,6 @@
 /**
  * Recipient affordance tests (TASK C): the drafts-drawer composer shows a
- * human-readable "Draft to {recipient}" label for reply drafts, and the
+ * human-readable "Reply draft to {recipient}" heading for reply drafts, and the
  * contact pane stays exactly as it is while a reply editor is active (no
  * "Composing to …" line: it pushed the pinned name and email off their lines,
  * and the reply heading already names the recipient). Plain-text
@@ -58,14 +58,18 @@ describe('DraftsPanel reply recipient label', () => {
   let wrapper: VueWrapper | null = null;
   afterEach(() => { wrapper?.unmount(); wrapper = null; });
 
-  it('renders "Draft to <name>" with an accent flag for a reply source with recipientLabel, exposing the reply source only as data attributes', () => {
+  it('names the reply target once, in the editor heading, exposing the reply source only as data attributes', () => {
     wrapper = mountPanel({ recipientLabel: 'Ada Fixture' });
     const label = wrapper.get('[data-test="draft-recipient-label"]');
-    expect(label.classes()).toContain('draft-recipient');
-    expect(label.text()).toContain('Draft');
-    expect(label.text()).toContain('to Ada Fixture');
-    const flag = label.get('strong.draft-flag');
-    expect(flag.text()).toBe('Draft');
+    expect(label.text()).toBe('Ada Fixture');
+    // The separate "Draft to" flag line duplicated the heading and is gone.
+    expect(wrapper.find('strong.draft-flag').exists()).toBe(false);
+    expect(wrapper.find('.draft-recipient').exists()).toBe(false);
+    const heading = wrapper.get('.composer-heading h3');
+    expect(heading.text()).toBe('Reply draft to Ada Fixture');
+    expect(heading.element.contains(label.element)).toBe(true);
+    // The drawer owns the one h2; the editor heading is a sub-section.
+    expect(wrapper.find('h2').exists()).toBe(false);
     // Raw provider IDs are attributes for tools and tests; they are never visible text.
     const source = wrapper.get('[data-test="reply-source"]');
     expect(source.attributes('data-source-conversation')).toBe('conv-01');
@@ -77,6 +81,7 @@ describe('DraftsPanel reply recipient label', () => {
 
   it('renders no recipient label without recipientLabel, keeping the reply-source attributes', () => {
     wrapper = mountPanel();
+    expect(wrapper.get('.composer-heading h3').text()).toBe('Reply draft');
     expect(wrapper.find('[data-test="draft-recipient-label"]').exists()).toBe(false);
     expect(wrapper.find('[data-test="reply-source"]').exists()).toBe(true);
   });
