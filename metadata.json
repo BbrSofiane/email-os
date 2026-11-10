@@ -1,0 +1,33 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7231CKE6ABG8FQKYB75K4RQ",
+  "strategy": "manual-commit",
+  "branch": "impeccable/reader-compose-followup",
+  "checkpoints_count": 3,
+  "files_touched": [
+    ".impeccable/critique/2026-11-10T06-38-22Z__src-components-readerview-vue-and-reply-compose-run5.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 364,
+    "cache_creation_tokens": 433598,
+    "cache_read_tokens": 32642263,
+    "output_tokens": 120212,
+    "api_call_count": 179,
+    "subagent_tokens": {
+      "input_tokens": 142,
+      "cache_creation_tokens": 221512,
+      "cache_read_tokens": 10194147,
+      "output_tokens": 40927,
+      "api_call_count": 71
+    }
+  }
+}

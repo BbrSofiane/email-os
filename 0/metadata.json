@@ -1,0 +1,62 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7231CKE6ABG8FQKYB75K4RQ",
+  "session_id": "225e03df-31dc-4e8a-8279-c773b08e5b0a",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-10T06:41:33.441396903Z",
+  "branch": "impeccable/reader-compose-followup",
+  "checkpoints_count": 3,
+  "save_step_count": 2,
+  "files_touched": [
+    ".impeccable/critique/2026-11-10T06-38-22Z__src-components-readerview-vue-and-reply-compose-run5.md"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "a4f74f1589f6",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 364,
+    "cache_creation_tokens": 433598,
+    "cache_read_tokens": 32642263,
+    "output_tokens": 120212,
+    "api_call_count": 179,
+    "subagent_tokens": {
+      "input_tokens": 142,
+      "cache_creation_tokens": 221512,
+      "cache_read_tokens": 10194147,
+      "output_tokens": 40927,
+      "api_call_count": 71
+    }
+  },
+  "session_metrics": {
+    "turn_count": 4
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-10T06:41:33.13732675Z",
+    "agent_lines": 81,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 81,
+    "total_lines_changed": 81,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 81,
+      "agent_lines_removed": 0
+    }
+  ]
+}
