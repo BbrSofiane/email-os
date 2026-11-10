@@ -1,0 +1,49 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M71F3ZY43JQCVFSCY7R2CAFH",
+  "strategy": "manual-commit",
+  "branch": "impeccable/account-first-run",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "DESIGN.md",
+    "docs/development.md",
+    "docs/ux-03-command-discovery.md",
+    "src/App.vue",
+    "src/assets/style.css",
+    "src/components/AccountPanel.vue",
+    "src/components/ActionOverlay.vue",
+    "src/components/ContactPane.vue",
+    "src/components/ProviderDestinations.vue",
+    "src/lib/account-status.ts",
+    "src/lib/action-palette.ts",
+    "tests/account-header.layout-css.test.ts",
+    "tests/account-panel.component.test.ts",
+    "tests/account-status.test.ts",
+    "tests/account.first-run.component.test.ts",
+    "tests/contact-pane.component.test.ts",
+    "tests/provider-destinations.component.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 146,
+    "cache_creation_tokens": 455469,
+    "cache_read_tokens": 10761498,
+    "output_tokens": 55407,
+    "api_call_count": 71,
+    "subagent_tokens": {
+      "input_tokens": 290,
+      "cache_creation_tokens": 587785,
+      "cache_read_tokens": 20065994,
+      "output_tokens": 91085,
+      "api_call_count": 144
+    }
+  }
+}

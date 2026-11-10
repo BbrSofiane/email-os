@@ -1,0 +1,9 @@
+Show me a video and screenshots of your implementation
+
+---
+
+/impeccable  critique the account and first-run UX pass
+
+---
+
+Apply the changes using subagents where applicable
