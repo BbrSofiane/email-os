@@ -27,6 +27,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import CachedTrashPanel from './components/CachedTrashPanel.vue';
 import { emptyCachedTrash } from './lib/cached-trash';
+import { createSubjectIndex } from './lib/subject-index';
 import ActionOverlay from './components/ActionOverlay.vue';
 import RemindersPanel from './components/RemindersPanel.vue';
 import { formatReminderDateTime } from './lib/reminder-timezone';
@@ -92,6 +93,13 @@ interface ReaderOrigin {
 }
 
 const mailbox = useMailbox(props.client);
+// Activity rows name mail by its cached subject. Operations carry only a ref, so
+// the UI remembers subjects it has already seen (list rows, Cached Trash rows,
+// the open conversation); an unseen ref reads "Unknown conversation".
+const subjectIndex = createSubjectIndex();
+watch(() => [mailbox.conversations.value, mailbox.conversations.value.length], () => subjectIndex.rememberRows(mailbox.conversations.value), { immediate: true });
+watch(() => [trashState.value.rows, trashState.value.rows.length], () => subjectIndex.rememberRows(trashState.value.rows), { immediate: true });
+watch(() => mailbox.conversation.value, (open) => { if (open) subjectIndex.remember(open.ref, open.subject); }, { immediate: true });
 /**
  * P5b: rows in rendered order — sender-grouped when the search context's
  * submitted query is a single non-excluded from: (InboxList renders exactly
@@ -476,6 +484,7 @@ function setToggleRef(name: UtilityDrawer): (el: Element | import('vue').Compone
   };
 }
 
+/** The drawer's accessible region name. */
 const drawerTitles: Record<UtilityDrawer, string> = {
   account: 'Account',
   destinations: 'Provider mail — read only',
@@ -484,6 +493,16 @@ const drawerTitles: Record<UtilityDrawer, string> = {
   reminders: 'Reminders',
   'reminder-settings': 'Reminder settings',
   trash: 'Cached Trash — read only',
+};
+/** The drawer's one visible heading; panels render no heading that repeats it. */
+const drawerHeadings: Record<UtilityDrawer, string> = {
+  account: 'Account',
+  destinations: 'Provider mail — read only',
+  activity: 'Activity',
+  drafts: 'Drafts',
+  reminders: 'Reminders',
+  'reminder-settings': 'Reminder settings',
+  trash: 'Cached Trash',
 };
 
 /**
@@ -1937,12 +1956,13 @@ function onKeydown(event: KeyboardEvent): void {
     endGoGrace();
     if (isGoSecondKey(event) && !isEditableTarget(event.target)) { event.preventDefault(); return; }
   }
-  // A visible compose surface (inline reply composer or inline compose card)
-  // owns Escape: it closes through the same protected flush as the drafts
-  // editor. This must run before the key suppression below so the composer
-  // (not the mailbox) answers Escape; the surface hides when drafts.isVisible
-  // goes false.
-  if ((replyComposerOpen.value || composeCardOpen.value) && event.key === 'Escape' && !event.isComposing && event.keyCode !== 229
+  // A visible compose surface (inline reply composer, inline compose card or
+  // the drafts drawer's editor) owns Escape: it closes through the same
+  // protected flush as the editor's own close control. This must run before the
+  // key suppression below so the editor (not the mailbox or the drawer) answers
+  // Escape; the surface hides when drafts.isVisible goes false, which returns
+  // the drawer to its list, and a second Escape closes the drawer.
+  if ((replyComposerOpen.value || composeCardOpen.value || (drawer.value === 'drafts' && drafts.isVisible.value)) && event.key === 'Escape' && !event.isComposing && event.keyCode !== 229
     && !event.ctrlKey && !event.metaKey && !event.altKey) {
     event.preventDefault();
     void drafts.flushAndClose();
@@ -2736,7 +2756,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
           data-test="utility-drawer"
         >
           <header class="drawer-header">
-            <h2>{{ drawerTitles[drawer] }}</h2>
+            <h2>{{ drawerHeadings[drawer] }}</h2>
             <button type="button" data-test="drawer-close" @click="closeDrawer()">Close</button>
           </header>
           <ProviderDestinations v-if="drawer === 'destinations' && accountId" :key="accountId" :client="props.client" :account-id="accountId" />
@@ -2774,6 +2794,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             :group-detail="mailbox.groupDetail.value"
             :group-detail-error="mailbox.groupDetailError.value"
             :expanded-request-id="expandedGroupRequestId"
+            :subject-for="subjectIndex.subjectFor"
             @open="openFromActivity($event)"
             @unarchive="unarchiveFromActivity"
             @retry="retryFromActivity"

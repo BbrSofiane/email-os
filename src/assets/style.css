@@ -922,7 +922,8 @@ button:focus-visible {
   border-left: 1px solid var(--divider);
   box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
   overflow-y: auto;
-  padding: 0.5rem 0.75rem;
+  /* Content edge = the contact pane's inset (DESIGN.md gap 18), 6px/12px rhythm. */
+  padding: 6px var(--contact-inset) var(--contact-inset);
   z-index: 30;
 }
 
@@ -934,14 +935,273 @@ button:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
-  margin-bottom: 0.4rem;
+  gap: 6px;
+  margin-bottom: 6px;
 }
 
 .drawer-header h2 {
   font-size: var(--type-headline);
   font-weight: var(--weight-regular);
   margin: 0;
+}
+
+/*
+ * Drawer rows (DESIGN.md "Drawer Row"): the one anatomy shared by Activity,
+ * Drafts, Reminders and Cached Trash. A 36px row on 12px type, separated by
+ * rhythm alone (no borders). The text sits on the drawer's 24px content edge;
+ * the Focus Stone fill reaches 6px past it, with a 4px radius. The primary
+ * action is one real button (`.drawer-row-main`, marked `data-drawer-row` for
+ * the shared roving keyboard model); quiet ghost buttons and one status word
+ * sit in the trailing slot. Focus uses the standard 2px ring, never a lavender
+ * bar: the row is not "the current row" of the list.
+ */
+.drawer-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.drawer-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 36px;
+  margin-inline: -6px;
+  padding-inline: 6px;
+  border-radius: 4px;
+  font-size: var(--type-body);
+  line-height: var(--leading-ui);
+  color: var(--text-primary);
+}
+
+.drawer-row:hover,
+.drawer-row:has(:focus-visible) {
+  background: var(--focus-fill);
+}
+
+.drawer-row-main {
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.drawer-row-trailing {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+
+.drawer-subject,
+.drawer-sender {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drawer-subject {
+  flex: 1 1 auto;
+}
+
+.drawer-sender {
+  flex: 0 1 9em;
+  font-weight: var(--weight-strong);
+}
+
+.drawer-strong,
+.activity-action {
+  font-weight: var(--weight-strong);
+}
+
+.activity-action,
+.drawer-date,
+.drawer-flag {
+  flex: none;
+  white-space: nowrap;
+}
+
+.drawer-date,
+.drawer-flag,
+.drawer-empty {
+  color: var(--text-secondary);
+}
+
+.drawer-date {
+  font-variant-numeric: tabular-nums;
+}
+
+.activity-status {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* Status colour lives on the word alone (Status-Is-Sacred: words, not tints). */
+.tone-warn {
+  color: var(--warning);
+}
+
+.tone-fault {
+  color: var(--danger);
+}
+
+.activity-status.tone-calm {
+  color: var(--text-secondary);
+}
+
+/* Lines under a row or a toolbar: Ash notes, Coral alerts, plain lines. */
+.drawer-note,
+.drawer-alert,
+.drawer-line {
+  margin: 0 0 6px;
+  font-size: var(--type-body);
+  line-height: var(--leading-ui);
+  overflow-wrap: anywhere;
+}
+
+.drawer-note {
+  color: var(--text-secondary);
+}
+
+.drawer-alert {
+  color: var(--danger);
+}
+
+.drawer-section {
+  margin: 0 0 12px;
+}
+
+.drawer-section-title {
+  margin: 0 0 6px;
+  font-size: var(--type-body);
+  font-weight: var(--weight-strong);
+}
+
+.drawer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 6px;
+}
+
+.drawer-toolbar > .drawer-note {
+  margin: 0;
+}
+
+.drawer-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+}
+
+/* Ghost buttons in a drawer: quiet Ash text, Paper White Title weight for the
+   one action, Focus Stone for a choice. Their text lines up with the content
+   edge; the 8px padding is only the hit target. */
+.drawer-quiet,
+.drawer-action,
+.drawer-primary,
+.drawer-chip {
+  border: 0;
+  border-radius: 4px;
+  padding: 4px 8px;
+  background: transparent;
+  font: inherit;
+}
+
+.drawer-quiet {
+  color: var(--text-secondary);
+}
+
+.drawer-action {
+  color: var(--text-primary);
+  font-weight: var(--weight-strong);
+}
+
+.drawer-chip {
+  color: var(--text-secondary);
+}
+
+.drawer-chip[aria-pressed='true'] {
+  background: var(--focus-fill);
+  color: var(--text-primary);
+}
+
+.drawer-primary {
+  background: var(--focus-fill);
+  color: var(--text-primary);
+  font-weight: var(--weight-strong);
+}
+
+.drawer-quiet:hover:not(:disabled),
+.drawer-action:hover:not(:disabled),
+.drawer-chip:hover:not(:disabled) {
+  background: var(--focus-fill);
+  color: var(--text-primary);
+}
+
+.drawer-primary:hover:not(:disabled) {
+  background: var(--focus-fill);
+  box-shadow: inset 0 0 0 1px var(--text-secondary);
+}
+
+/* On a hovered row the fill already equals the button hover fill: add the ring. */
+.drawer-row .drawer-quiet:hover:not(:disabled) {
+  box-shadow: inset 0 0 0 1px var(--text-secondary);
+}
+
+.drawer-line > .drawer-quiet:first-child,
+.drawer-line > .drawer-action:first-child,
+.drawer-row-actions > .drawer-quiet:first-child,
+.drawer-toolbar > .drawer-quiet:first-child,
+.drawer-toolbar > .drawer-action:first-child {
+  margin-left: -8px;
+}
+
+.drawer-toolbar > .drawer-quiet:last-child,
+.drawer-toolbar > .drawer-action:last-child {
+  margin-right: -8px;
+}
+
+.drawer-alert .drawer-quiet {
+  margin-left: 6px;
+}
+
+/* Activity group detail: no box, members indent by rhythm. */
+.activity-group-detail {
+  margin: 0 0 6px 12px;
+}
+
+.activity-compensations {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 12px;
+}
+
+/* Cached Trash scrolls its own list; room for the row fill and the focus ring. */
+.cached-trash-list {
+  max-height: 55vh;
+  overflow-y: auto;
+  margin: 0 -6px;
+  padding: 3px 6px;
+}
+
+.reply-to {
+  color: var(--text-secondary);
+  font-weight: var(--weight-regular);
+  overflow-wrap: anywhere;
 }
 
 /*
@@ -1817,61 +2077,16 @@ button:focus-visible {
   color: var(--text-secondary);
 }
 
-/* Activity (inside its utility disclosure). */
-/* In-panel headings are Title labels under the drawer's Headline. */
-.activity-title {
-  font-size: var(--type-body);
-  font-weight: var(--weight-strong);
-  margin: 0 0 0.5rem;
-}
-
-.activity-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.activity-row {
-  border-bottom: 1px solid var(--rule);
-  padding: 0.4rem 0;
-  font-size: var(--type-body);
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-
-.status-queued,
-.status-applying {
-  font-style: italic;
-}
-
-.status-outcome_unknown,
-.activity-warning,
-.activity-error,
+/* Activity status words (the only coloured part of an Activity row). */
 .account-action-error {
   color: var(--warning);
 }
 
-.activity-warning,
-.activity-error {
-  margin: 0;
-}
-
-.status-failed {
-  color: var(--danger);
-  font-weight: var(--weight-strong);
-}
-
-.activity-buttons {
-  display: flex;
-  gap: 0.4rem;
-}
-
-/* Local-only plain-text drafts; fields remain ordinary text controls. */
+/* Local-only plain-text drafts (drawer): one column, list or editor. */
 .drafts-pane {
-  display: grid;
-  grid-template-columns: minmax(190px, 0.7fr) minmax(0, 2fr);
-  gap: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
   min-height: 0;
 }
 
@@ -1880,7 +2095,6 @@ button:focus-visible {
   min-width: 0;
 }
 
-.draft-list-heading,
 .composer-heading,
 .composer-actions,
 .conflict-actions {
@@ -1891,8 +2105,8 @@ button:focus-visible {
   flex-wrap: wrap;
 }
 
-.draft-list-heading h2,
-.composer-heading h2 {
+.composer-heading h2,
+.composer-heading h3 {
   font-size: var(--type-body);
   font-weight: var(--weight-strong);
   margin: 0.25rem 0;
@@ -2055,27 +2269,6 @@ button:focus-visible {
   margin-top: 0.4rem;
 }
 
-.draft-list ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.draft-row {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  width: 100%;
-  padding: 0.4rem;
-  border: 0;
-  border-bottom: 1px solid var(--rule);
-  border-radius: 0;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  overflow-wrap: anywhere;
-}
-
 /* One-line field rows: a label column and a borderless-looking input. The
    body is the dominant field. */
 .composer-fields {
@@ -2185,12 +2378,6 @@ button:focus-visible {
 
 .field-textarea:focus-visible {
   border-color: var(--focus-accent);
-}
-
-@media (max-width: 760px) {
-  .drafts-pane {
-    grid-template-columns: 1fr;
-  }
 }
 
 /* Account gate, capability disclosures, and reader notices. */
@@ -2368,16 +2555,6 @@ button:focus-visible {
   color: var(--text-secondary);
   font-size: var(--type-body);
 }
-
-/* UX-05 Activity group sections. */
-.activity-groups { margin-bottom: 1rem; }
-.activity-groups-title { margin: .2rem 0 .4rem; font-size: var(--type-body); font-weight: var(--weight-strong); }
-.activity-group-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .35rem; }
-.activity-group-toggle { width: 100%; text-align: left; cursor: pointer; }
-.activity-group-detail { margin-top: .4rem; padding: .5rem; border: 1px solid var(--rule); border-radius: 4px; }
-.activity-group-request { margin: 0 0 .4rem; color: var(--text-secondary); font-size: var(--type-body); overflow-wrap: anywhere; }
-.activity-group-members { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .35rem; }
-.activity-group-member { display: flex; flex-wrap: wrap; align-items: baseline; gap: .4rem; }
 
 /*
  * Inline compose card (new-message editor): an in-flow block in the central

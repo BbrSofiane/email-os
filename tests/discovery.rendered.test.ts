@@ -419,7 +419,7 @@ describe.skipIf(chromePath === '')('UX-03 discovery / UX-13 workspaces (real Chr
       await cdp!.cmd('Input.insertText', { text: 'Go to cached Trash' });
       await press('Enter');
       await cdp!.js('window.__h.wait(200)');
-      expect(await cdp!.js(`document.querySelector('[aria-label="Cached Trash browsing"]').textContent`)).toContain('not your complete Gmail Trash');
+      expect(await cdp!.js(`document.querySelector('[data-test="cached-trash-coverage"]').textContent`)).toContain('not your full Gmail Trash');
       await click('button[data-id="conv-06"]');
       await cdp!.js('window.__h.wait(200)');
       expect(await cdp!.js(`document.querySelector('[data-test="reader"]').textContent`)).toContain('<script>alert("body")</script>');
