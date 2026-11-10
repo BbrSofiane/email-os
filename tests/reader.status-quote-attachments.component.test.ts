@@ -630,7 +630,13 @@ describe('reader loading placeholder', () => {
     // Subject bar plus message rows; no text of its own for assistive tech.
     expect(skeleton.text()).toBe('');
     expect(skeleton.findAll('.reader-skeleton-row').length).toBeGreaterThanOrEqual(3);
-    expect(skeleton.find('.reader-skeleton-subject').exists()).toBe(true);
+    // Without an identity the subject slot is a hidden bar before the status line, outside the rows.
+    const bar = w.get('[data-test="reader-skeleton-subject"]');
+    expect(bar.attributes('aria-hidden')).toBe('true');
+    expect(bar.element.tagName).toBe('H2');
+    expect(bar.classes()).toContain('reader-subject');
+    expect(skeleton.find('.reader-skeleton-subject').exists()).toBe(false);
+    expect(w.find('[data-test="reader-loading-subject"]').exists()).toBe(false);
   });
 
   it('with a known row identity shows the subject and sender, and only the rows as placeholder', async () => {
@@ -639,7 +645,45 @@ describe('reader loading placeholder', () => {
     expect(w.get('[data-test="reader-loading-subject"]').text()).toBe('Quarterly plan');
     expect(w.get('[data-test="reader-loading-sender"]').text()).toBe('Ada Fixture');
     const skeleton = w.get('[data-test="reader-skeleton"]');
-    expect(skeleton.find('.reader-skeleton-subject').exists()).toBe(false);
+    expect(w.find('[data-test="reader-skeleton-subject"]').exists()).toBe(false);
     expect(skeleton.findAll('.reader-skeleton-row').length).toBeGreaterThanOrEqual(3);
+  });
+
+  describe('does not move the pane: the status shares the identity line and adds no flow height of its own', () => {
+    const identity = { subject: 'Quarterly plan', sender: 'Ada Fixture', at: '2026-11-06T10:00:00Z' };
+    const line = (w: VueWrapper) => w.get('[data-test="reader-loading-line"]');
+
+    it('folds the sender, date and status into ONE line inside the stage, before the rows, with one role=status', async () => {
+      const w = mountLoading({ loadingIdentity: identity });
+      await settle();
+      const stage = w.get('[data-test="reader-loading-stage"]');
+      expect(stage.element.firstElementChild).toBe(line(w).element);
+      expect(stage.element.lastElementChild).toBe(w.get('[data-test="reader-skeleton"]').element);
+      const l = line(w);
+      expect(l.find('[data-test="reader-loading-sender"]').exists()).toBe(true);
+      expect(l.find('time').exists()).toBe(true);
+      expect(l.get('[data-test="reader-loading"]').text()).toBe('Loading conversation…');
+      expect(l.get('[data-test="reader-loading"]').attributes('role')).toBe('status');
+      expect(w.findAll('.reader-scroll [role="status"], .reader-scroll [role="alert"], .reader-scroll [aria-live]')).toHaveLength(1);
+      // The rows stay hidden from assistive technology and the line is not inside them.
+      expect(w.get('[data-test="reader-skeleton"]').find('[data-test="reader-loading"]').exists()).toBe(false);
+    });
+
+    it('without read controls the line is an overlay on the first row (no flow height)', async () => {
+      const w = mountLoading({ loadingIdentity: identity });
+      await settle();
+      expect(w.get('[data-test="reader-loading-stage"]').classes()).toContain('is-overlay');
+      expect(line(w).classes()).not.toContain('reader-meta-row');
+    });
+
+    it('with read controls the line takes the meta row slot the loaded reader will use', async () => {
+      const w = mountLoading({ loadingIdentity: identity, showReadControls: true });
+      await settle();
+      expect(w.get('[data-test="reader-loading-stage"]').classes()).not.toContain('is-overlay');
+      expect(line(w).classes()).toContain('reader-meta-row');
+      const readOnly = mountLoading({ loadingIdentity: identity, readOnly: true });
+      await settle();
+      expect(readOnly.get('[data-test="reader-loading-line"]').classes()).toContain('reader-meta-row');
+    });
   });
 });

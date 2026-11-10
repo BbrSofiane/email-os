@@ -152,6 +152,9 @@ const hasMetaRow = computed(() => {
   return !!(props.readOnly || props.showReadControls || bulkScope.value);
 });
 
+/** Whether the loaded reader will have a meta row; the loading line then takes that row's slot. */
+const expectsMetaRow = computed(() => !!(props.readOnly || props.showReadControls || bulkScope.value));
+
 /** The one rule for whether Reply may run (button, glyph and the R key). */
 function canPrepareReply(): boolean {
   return actionable.value && !props.browsingOnly && !!latestMessage.value && replyBlockedReason.value === null;
@@ -917,20 +920,25 @@ defineExpose({
 
     <div class="reader-scroll" ref="scrollerEl" data-test="reader-scroll">
       <template v-if="props.state === 'loading' && !held">
-        <!-- The list row's own subject, sender and date: truthful while the detail loads. -->
-        <template v-if="props.loadingIdentity">
-          <h2 class="reader-subject" data-test="reader-loading-subject">{{ props.loadingIdentity.subject }}</h2>
-          <p class="reader-loading-identity" data-test="reader-loading-identity">
-            <span v-if="props.loadingIdentity.sender" data-test="reader-loading-sender">{{ props.loadingIdentity.sender }}</span>
-            <time v-if="props.loadingIdentity.at" :datetime="machineDateTime(props.loadingIdentity.at)" :title="fullDateLabel(props.loadingIdentity.at)">{{ compactDateLabel(props.loadingIdentity.at) }}</time>
+        <!-- The list row's own subject: truthful while the detail loads. Without one, a hidden
+             placeholder with the real subject's class (same margins and line box). -->
+        <h2 v-if="props.loadingIdentity" class="reader-subject" data-test="reader-loading-subject">{{ props.loadingIdentity.subject }}</h2>
+        <h2 v-else class="reader-subject" aria-hidden="true" data-test="reader-skeleton-subject"><span class="reader-skeleton-subject"></span></h2>
+        <!-- One line holds the row's sender and date and the status. Where the loaded reader has a meta row
+             (read controls, read-only, a selection scope) it takes that row's slot; otherwise it is drawn
+             over the first placeholder row, out of flow. Either way the rows start where the first message
+             will, so the pane does not jump when the conversation arrives. Static, no motion. -->
+        <div class="reader-loading-stage" :class="{ 'is-overlay': !expectsMetaRow }" data-test="reader-loading-stage">
+          <p class="reader-loading-line" :class="{ 'reader-meta-row': expectsMetaRow }" data-test="reader-loading-line">
+            <template v-if="props.loadingIdentity">
+              <span v-if="props.loadingIdentity.sender" class="reader-loading-sender" data-test="reader-loading-sender">{{ props.loadingIdentity.sender }}</span>
+              <time v-if="props.loadingIdentity.at" :datetime="machineDateTime(props.loadingIdentity.at)" :title="fullDateLabel(props.loadingIdentity.at)">{{ compactDateLabel(props.loadingIdentity.at) }}</time>
+            </template>
+            <span class="reader-loading-quiet" data-test="reader-loading" role="status">Loading conversation…</span>
           </p>
-        </template>
-        <p data-test="reader-loading" role="status" :class="{ 'reader-loading-quiet': props.loadingIdentity }">Loading conversation…</p>
-        <!-- Static placeholder of the loaded shape (subject, then message rows) so the
-             pane does not jump when the conversation arrives. No motion; hidden from assistive tech. -->
-        <div class="reader-skeleton" aria-hidden="true" data-test="reader-skeleton">
-          <span v-if="!props.loadingIdentity" class="reader-skeleton-subject"></span>
-          <span v-for="n in 3" :key="n" class="reader-skeleton-row"></span>
+          <div class="reader-skeleton" aria-hidden="true" data-test="reader-skeleton">
+            <span v-for="n in 3" :key="n" class="reader-skeleton-row"></span>
+          </div>
         </div>
       </template>
       <p v-else-if="props.state === 'error' && props.error" data-test="reader-error" role="alert">
