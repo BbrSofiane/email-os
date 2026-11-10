@@ -106,7 +106,8 @@ describe('ReaderView visit-scoped message state (UX-02)', () => {
     await settle(wrapper);
     const reply = wrapper.find('[data-test="message-reply-m3"]');
     expect(reply.exists()).toBe(true);
-    expect(reply.attributes('aria-label')).toBe('Reply');
+    // Two controls do the same thing; their names differ so a screen reader can tell them apart.
+    expect(reply.attributes('aria-label')).toBe('Reply to latest message');
     expect(reply.element.closest('.message-toggle')).toBeNull();
     expect(wrapper.findAll('.message-reply')).toHaveLength(1);
     await reply.trigger('click');

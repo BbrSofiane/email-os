@@ -21,7 +21,8 @@ const own = ['open', 'undo', 'select-all-loaded', 'clear-selection', 'create-spl
     <RowGlyph v-else-if="id === 'read'" name="mark-read" />
     <RowGlyph v-else-if="id === 'unread'" name="mark-unread" />
     <HeaderGlyph v-else-if="id === 'back'" name="back" />
-    <HeaderGlyph v-else-if="id === 'remind' || id === 'reminders'" name="reminders" />
+    <HeaderGlyph v-else-if="id === 'remind'" name="remind" />
+    <HeaderGlyph v-else-if="id === 'reminders'" name="reminders" />
     <HeaderGlyph v-else-if="id === 'search'" name="search" />
     <HeaderGlyph v-else-if="id === 'star' || id === 'starred'" name="star" />
     <!-- Unstar: the filled star, the state it takes away. -->

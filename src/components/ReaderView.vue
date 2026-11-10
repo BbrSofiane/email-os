@@ -913,7 +913,7 @@ defineExpose({
     </Teleport>
     <Teleport :to="props.actionsHost ?? undefined" :disabled="!props.actionsHost">
       <div class="reader-actions" data-test="reader-toolbar">
-        <button v-if="actionsShown && props.reminderEnabled && !bulkScope && props.conversation?.isInInbox" type="button" class="header-glyph" data-test="reader-remind" title="Remind me on this device" :disabled="!actionable || props.commandInFlight" @click="emit('remind')"><HeaderGlyph name="reminders" /><span class="visually-hidden">Remind me on this device</span></button>
+        <button v-if="actionsShown && props.reminderEnabled && !bulkScope && props.conversation?.isInInbox" type="button" class="header-glyph" data-test="reader-remind" title="Remind me on this device" :disabled="!actionable || props.commandInFlight" @click="emit('remind')"><HeaderGlyph name="remind" /><span class="visually-hidden">Remind me on this device</span></button>
         <button
           v-if="actionsShown && !props.readOnly && !bulkScope"
           type="button"
@@ -1094,7 +1094,7 @@ defineExpose({
                 type="button"
                 class="message-reply"
                 :data-test="`message-reply-${message.id}`"
-                aria-label="Reply"
+                aria-label="Reply to latest message"
                 :title="replyTitle"
                 :disabled="!actionable || !!replyBlockedReason"
                 @click="prepareReply"
