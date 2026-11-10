@@ -5,7 +5,7 @@
  * carries the accessible name in visually hidden text.
  */
 defineProps<{
-  name: 'menu' | 'search' | 'commands' | 'star' | 'back' | 'reminders' | 'x' | 'compose' | 'done' | 'files' | 'reply' | 'read' | 'unread' | 'prev' | 'next';
+  name: 'menu' | 'search' | 'commands' | 'star' | 'back' | 'remind' | 'reminders' | 'x' | 'compose' | 'done' | 'files' | 'reply' | 'read' | 'unread' | 'prev' | 'next';
   /** Star only: a filled star for the pressed (filter on) state. */
   filled?: boolean;
 }>();
@@ -75,7 +75,12 @@ defineProps<{
     <path v-else-if="name === 'next'" d="M3.75 6l4.25 4.25L12.25 6" />
     <!-- Close/clear: an X. -->
     <path v-else-if="name === 'x'" d="M4 4l8 8M12 4l-8 8" />
-    <!-- Local reminders: a clock. -->
+    <!-- The Reminders view (the list): a bell, so it never reads as the clock of "Remind me". -->
+    <template v-else-if="name === 'reminders'">
+      <path d="M4 11V7a4 4 0 018 0v4l1.25 1.5H2.75L4 11z" />
+      <path d="M6.75 14.5h2.5" />
+    </template>
+    <!-- Remind me (an action on this conversation): a clock, like the row action. -->
     <template v-else>
       <circle cx="8" cy="8" r="5.25" />
       <path d="M8 5.25V8l1.9 1.4" />
