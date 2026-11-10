@@ -45,7 +45,15 @@ export const REMINDER_PHASES: Record<ReminderPhase, { word: string; tone: 'warn'
 };
 
 export interface ReminderSource { conversation: ConversationRef; sourceMessageId: string; revision: number | null; subject: string }
-interface RetryRequest { action: () => Promise<unknown>; command?: PutReminder }
+/** Polite words for one row action: what to say when it resolves (from its result) and when it fails. */
+interface ActionWords { done: (result: unknown) => string; failed: string }
+interface RetryRequest { action: () => Promise<unknown>; command?: PutReminder; words?: ActionWords }
+/** An acknowledged cancel can still be moving: say "Cancelling" until the row says it is cancelled. */
+const CANCEL_WORDS: ActionWords = {
+  done: result => ((result as Reminder | undefined)?.phase === 'cancelling' ? 'Cancelling reminder' : 'Reminder cancelled'),
+  failed: 'Could not cancel reminder',
+};
+const RESCHEDULE_WORDS: ActionWords = { done: () => 'Reminder rescheduled', failed: 'Could not reschedule reminder' };
 
 /**
  * Rows of the Pending tab that are not calm waiting: a failed reminder, and one
@@ -79,6 +87,12 @@ export function useReminders(client: MailClient, options: RemindersOptions = {})
   const preparationTarget = ref<ConversationRef | null>(null);
   const busy = ref(false);
   const loading = ref(true);
+  /**
+   * True once a list read has succeeded in this session. Until then the counts
+   * are 0 because nothing was read, not because nothing exists: the header tabs,
+   * the empty line and the `[` / `]` words must not say so.
+   */
+  const loadedOnce = ref(false);
   const source = ref<ReminderSource | null>(null);
   const due = ref('');
   /** Preset times, computed when the picker opens (one stable set per open picker). */
@@ -133,6 +147,13 @@ export function useReminders(client: MailClient, options: RemindersOptions = {})
   // ---- Tabs: their own arrow keys; rows use J/K/arrows (useDrawerRows) -------
   /** Polite words for the last list-side tab change (`[` / `]`); the list renders them in a live region. */
   const tabAnnouncement = ref('');
+  /** Polite words for the last row action (Cancel reminder, Reschedule), said only after it resolved or failed. */
+  const actionAnnouncement = ref('');
+  function announceAction(words: string) {
+    // Clear first so the same words announce again after a repeated action.
+    actionAnnouncement.value = '';
+    void nextTick(() => { if (live) actionAnnouncement.value = words; });
+  }
   /**
    * Move to the previous or next tab with the same wrap as the tablist's arrow
    * keys, forget the old current row (the new tab starts at its first row) and
@@ -144,13 +165,15 @@ export function useReminders(client: MailClient, options: RemindersOptions = {})
     destination.value = next.id;
     activeRow.value = null;
     // The same numbers the tab shows. Attention rows are never "no reminders".
+    // Before the first successful read there are no numbers: name the tab only.
     const count = counts.value[next.id];
     const attention = attentionCount.value;
     const calm = `${count} ${count === 1 ? 'reminder' : 'reminders'}`;
     const flagged = `${attention} ${attention === 1 ? 'needs' : 'need'} attention`;
-    const words = attention === 0
-      ? `${next.label}, ${count === 0 ? 'no reminders' : calm}`
-      : count === 0 ? `${next.label}, ${flagged}` : `${next.label}, ${calm}. ${NEEDS_ATTENTION_LABEL} ${attention}`;
+    const words = !loadedOnce.value ? next.label
+      : attention === 0
+        ? `${next.label}, ${count === 0 ? 'no reminders' : calm}`
+        : count === 0 ? `${next.label}, ${flagged}` : `${next.label}, ${calm}. ${NEEDS_ATTENTION_LABEL} ${attention}`;
     // Clear first so the same words announce again after an unrelated tab change.
     tabAnnouncement.value = '';
     void nextTick(() => { tabAnnouncement.value = words; });
@@ -174,17 +197,19 @@ export function useReminders(client: MailClient, options: RemindersOptions = {})
     const token = ++generation;
     try {
       const result = await client.reminders!.list();
-      if (live && token === generation) { rows.value = result; loading.value = false; }
+      if (live && token === generation) { rows.value = result; loadedOnce.value = true; loading.value = false; }
     } catch { if (live && token === generation) { error.value = 'Could not load local reminders. Retry refresh.'; loading.value = false; } }
   }
 
-  async function run(action: () => Promise<unknown>, command?: PutReminder) {
+  async function run(action: () => Promise<unknown>, command?: PutReminder, words?: ActionWords) {
     if (busy.value) return;
     const token = editorGeneration;
     // Retain both the exact payload and its validation context after a lost ACK.
-    busy.value = true; error.value = ''; retry.value = { action, command };
+    busy.value = true; error.value = ''; retry.value = { action, command, words };
     try {
       const result = await action() as Reminder;
+      // The action resolved: say so, even if the picker was dismissed meanwhile.
+      if (live && words) announceAction(words.done(result));
       if (live && token === editorGeneration) {
         retry.value = null;
         if (command) options.onScheduled?.(result, command.expectedRevision !== null);
@@ -193,6 +218,7 @@ export function useReminders(client: MailClient, options: RemindersOptions = {})
       }
     }
     catch (raw) {
+      if (live && words) announceAction(words.failed);
       if (live && token === editorGeneration) {
         const failure = toMailError(raw);
         if (failure.kind === 'invalid_request' && failure.field === 'dueAt') {
@@ -302,16 +328,16 @@ export function useReminders(client: MailClient, options: RemindersOptions = {})
     if (!source.value || retry.value) return;
     if (!someday.value && due.value.trim() === '') return;
     const command: PutReminder = { conversation: source.value.conversation, sourceMessageId: source.value.sourceMessageId, expectedRevision: source.value.revision, dueAt: someday.value ? null : due.value, condition: condition.value, requestId: crypto.randomUUID() };
-    void run(() => client.reminders!.put(command), command);
+    void run(() => client.reminders!.put(command), command, command.expectedRevision === null ? undefined : RESCHEDULE_WORDS);
   }
   function cancel(r: Reminder) {
     const command: CancelReminder = { conversation: r.conversation, expectedRevision: r.revision, requestId: crypto.randomUUID() };
-    void run(() => client.reminders!.cancel(command));
+    void run(() => client.reminders!.cancel(command), undefined, CANCEL_WORDS);
   }
   /** The toolbar's primary button: replay the exact lost request, else refresh. */
   function retryOrRefresh() {
     const pending = retry.value;
-    if (pending) void run(pending.action, pending.command);
+    if (pending) void run(pending.action, pending.command, pending.words);
     else void refresh();
   }
   function inspectDurableState() {
@@ -328,7 +354,7 @@ export function useReminders(client: MailClient, options: RemindersOptions = {})
     if (live) return loaded;
     live = true;
     const mine = ++session;
-    rows.value = []; loading.value = true; error.value = '';
+    rows.value = []; loading.value = true; loadedOnce.value = false; error.value = ''; actionAnnouncement.value = '';
     dismissPicker();
     resetChoices();
     const isMine = () => live && session === mine;
@@ -352,13 +378,13 @@ export function useReminders(client: MailClient, options: RemindersOptions = {})
     unsubscribe?.(); unsubscribe = undefined;
     dismissPicker();
     target.value = null;
-    tabAnnouncement.value = '';
+    tabAnnouncement.value = ''; actionAnnouncement.value = '';
   }
   onScopeDispose(deactivate);
 
   return {
     rows, error, preparationError, preparationTarget, busy, loading, source, due, presets, customOpen, someday, condition,
-    destination, target, activeRow, retrying, dismissBlocked, tabAnnouncement,
+    destination, target, activeRow, retrying, dismissBlocked, tabAnnouncement, actionAnnouncement, loadedOnce,
     displayed, attentionCount, attentionTotal, counts, presetList, customForced, customShown,
     onTabKeydown, stepDestination, refresh, prepare, dismissPicker, closePicker, setTarget, reschedule, choosePreset, submit, cancel, retryOrRefresh, inspectDurableState,
     activate, deactivate, whenLoaded: () => loaded,

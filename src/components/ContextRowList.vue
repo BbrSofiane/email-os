@@ -16,6 +16,8 @@
  *   modified keys are ignored). Enter and Space stay native. The trailing slot
  *   and the row `actions` are not rows: they keep native Tab and Enter and
  *   stay Tab-reachable. Escape is the app's.
+ * - `describedBy` points the open button at the ids of the state that sits
+ *   outside its name, so that state is read with the row.
  * - Clicking the row outside any control opens it, like an Inbox row.
  * - `groupCaption` may name a quiet Ash caption that precedes an item (a
  *   non-actionable `presentation` line, as in the Inbox's date captions). It
@@ -39,6 +41,13 @@ const props = defineProps<{
   rowTestId?: (item: T) => string | undefined;
   /** A caption shown before this item, or null/undefined for none. */
   groupCaption?: (item: T, index: number) => string | null | undefined;
+  /**
+   * Space-separated ids of the elements that describe this row (its state, due
+   * time, condition, notes), bound as `aria-describedby` on the open button.
+   * The slots sit outside the button's name, so a screen reader hears them only
+   * through this.
+   */
+  describedBy?: (item: T) => string | undefined;
   /** Test hook of the open button (the row's marker element). */
   openTestId?: (item: T) => string | undefined;
   /** Rows cannot be opened while true (an editor transition is running). */
@@ -96,6 +105,7 @@ defineExpose({ focusRow, el: listEl });
             class="context-row-main"
             v-bind="rows.rowAttrs(item.key)"
             :title="rowTitle?.(item)"
+            :aria-describedby="describedBy?.(item) || undefined"
             :data-test="openTestId?.(item)"
             :disabled="disabled || undefined"
             @focus="emit('update:activeKey', item.key)"

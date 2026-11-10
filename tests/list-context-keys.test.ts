@@ -146,7 +146,7 @@ function reminder(id: string, phase: ReminderPhase, patch: Partial<Reminder> = {
 const rowButtons = (w: VueWrapper) => w.findAll('[data-drawer-row]');
 const tabState = (w: VueWrapper) => w.findAll('[role="tab"]').find((tab) => tab.attributes('aria-selected') === 'true')!.text().replace(/\s+/g, ' ');
 
-async function mountReminders(rows: Reminder[] = [reminder('conv-02', 'pending'), reminder('conv-03', 'pending'), reminder('conv-04', 'returned')], gate: Promise<void> = Promise.resolve()) {
+async function mountReminders(rows: Reminder[] = [reminder('conv-02', 'pending'), reminder('conv-03', 'pending'), reminder('conv-04', 'returned')], gate: Promise<void> = Promise.resolve(), failList = false) {
   const fake = createBrowserFakeMailClient();
   const cancel = vi.fn(async (command: CancelReminder) => {
     await gate;
@@ -155,7 +155,7 @@ async function mountReminders(rows: Reminder[] = [reminder('conv-02', 'pending')
     return undefined as never;
   });
   const put = vi.fn(async (c: PutReminder): Promise<Reminder> => ({ conversation: c.conversation, subject: 'Saved', revision: 1, sourceMessageId: c.sourceMessageId, dueAt: c.dueAt, condition: c.condition, phase: 'removing' }));
-  fake.reminders = { list: vi.fn(async () => structuredClone(rows)), put, cancel };
+  fake.reminders = { list: vi.fn(async () => { if (failList) throw new Error('offline'); return structuredClone(rows); }), put, cancel };
   app = mount(App, { props: { client: fake, mode: 'native' }, attachTo: document.body });
   await flushPromises();
   await app.get('[data-test="reminders-trigger"]').trigger('click'); await flushPromises();
@@ -211,6 +211,17 @@ describe('[ and ] step the Reminders tabs', () => {
     await key(']', {}, active());
     await key(']', {}, active());
     expect(status(w)).toBe('Pending, 1 needs attention');
+    expect(status(w)).not.toMatch(/no reminders/);
+  });
+
+  it('announces only the tab name before the first successful read', async () => {
+    const { w } = await mountReminders([], Promise.resolve(), true);
+    expect(w.get('[data-test="reminders-error"]').text()).toBe('Could not load local reminders. Retry refresh.');
+    expect(w.findAll('[role="tab"]').map((tab) => tab.text().replace(/\s+/g, ' '))).toEqual(['Pending', 'Returned', 'History']);
+    await key(']', {}, w.get('[data-test="reminders-panel"]').element as HTMLElement);
+    expect(status(w)).toBe('Returned');
+    await key('[', {}, active());
+    expect(status(w)).toBe('Pending');
     expect(status(w)).not.toMatch(/no reminders/);
   });
 
@@ -304,6 +315,22 @@ describe('H and Shift+H on a Reminders row', () => {
     await key('H', { shiftKey: true }, active());
     await waitFor(() => rowButtons(w).length === 0);
     expect(active()).toBe(w.get('[data-test="reminders-panel"]').element);
+  });
+
+  it('Shift+H announces the result politely only after the cancel resolved, and names a failure', async () => {
+    const release = deferred<void>();
+    const { cancel, w } = await mountReminders(undefined, release.promise);
+    const announced = () => w.get('[data-test="reminders-action-status"]').text();
+    expect(w.get('[data-test="reminders-action-status"]').attributes('role')).toBe('status');
+    expect(w.get('[data-test="reminders-action-status"]').attributes('aria-live')).toBe('polite');
+    await key('H', { shiftKey: true }, active());
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(announced()).toBe('');
+    release.resolve(); await flushPromises();
+    expect(announced()).toBe('Reminder cancelled');
+    cancel.mockRejectedValueOnce({ kind: 'storage_unavailable' });
+    await key('H', { shiftKey: true }, active());
+    expect(announced()).toBe('Could not cancel reminder');
   });
 
   it('does not steal focus the user moved elsewhere before the cancelled row left', async () => {

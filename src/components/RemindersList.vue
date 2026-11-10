@@ -21,9 +21,12 @@
  * same enabled rules, and a silent `false` for a row that does not offer the
  * action. Cancel keeps its immediate semantics. When a cancelled row leaves the
  * tab while focus is on <body>, focus moves to the next row (else the previous
- * one, else the pane). A polite status line names the tab after `[` / `]`.
+ * one, else the pane). A polite status line names the tab after `[` / `]` (the
+ * tab name alone until the first successful read); a second one says what Cancel
+ * reminder or Reschedule did, only after it resolved or failed. Each row's open
+ * button is described by its phase, due time, condition and failed note.
  */
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, ref, useId, watch } from 'vue';
 import type { Reminder } from '../lib/ipc/client';
 import { fullDateLabel } from '../lib/browsing-dates';
 import { NEEDS_ATTENTION_LABEL, REMINDER_PHASES, REMINDERS_FIXTURE_DETAIL, REMINDERS_FIXTURE_LINE, type RemindersModel } from '../composables/useReminders';
@@ -34,7 +37,7 @@ const props = defineProps<{ model: RemindersModel }>();
 const emit = defineEmits<{ open: [target: Reminder['conversation']] }>();
 const {
   error, preparationError, preparationTarget, busy, loading, source, due, someday, condition, destination,
-  displayed, attentionCount, activeRow, retrying, presetList, customForced, customShown, customOpen, tabAnnouncement,
+  displayed, attentionCount, activeRow, retrying, presetList, customForced, customShown, customOpen, tabAnnouncement, actionAnnouncement, loadedOnce,
 } = props.model;
 
 interface ReminderItem { key: string; reminder: Reminder }
@@ -131,6 +134,22 @@ function groupCaption(_item: ReminderItem, index: number): string | null {
   return index === attention ? `Pending ${items.value.length - attention}` : null;
 }
 function rowTitle(item: ReminderItem): string { return `Revision ${item.reminder.revision}`; }
+
+// The open button's name is only "Open <subject>". The state beside it (phase,
+// due time, condition, failed note) is tied to it by `aria-describedby`, so a
+// screen reader reads it with the row. The phase word also carries what the
+// "Needs attention" caption means, which is a presentation item.
+const uid = useId();
+type DescriptionPart = 'phase' | 'due' | 'condition' | 'note';
+function descId(item: ReminderItem, part: DescriptionPart): string {
+  return `${uid}-${item.key.replace(/\s/g, '_')}-${part}`;
+}
+function describedBy(item: ReminderItem): string {
+  const parts: DescriptionPart[] = ['phase', 'due'];
+  if (item.reminder.condition === 'regardless') parts.push('condition');
+  if (item.reminder.phase === 'failed') parts.push('note');
+  return parts.map(part => descId(item, part)).join(' ');
+}
 </script>
 
 <template>
@@ -203,9 +222,12 @@ function rowTitle(item: ReminderItem): string { return `Revision ${item.reminder
     </form>
     <!-- Names the tab after `[` / `]`; mounted all the time so each change is announced. -->
     <p class="visually-hidden" role="status" aria-live="polite" data-test="reminders-tab-status">{{ tabAnnouncement }}</p>
+    <!-- Says what Cancel reminder / Reschedule did, only after it resolved or failed. -->
+    <p class="visually-hidden" role="status" aria-live="polite" data-test="reminders-action-status">{{ actionAnnouncement }}</p>
     <div id="reminder-tabpanel" role="tabpanel" :aria-labelledby="`reminder-tab-${destination}`">
       <p v-if="loading" class="list-state" role="status">Loading local reminders…</p>
-      <p v-else-if="!displayed.length" class="list-state" data-test="reminders-empty">No {{ destination }} reminders.</p>
+      <!-- Before the first successful read an empty list means "not read", not "none": the error above says so. -->
+      <p v-else-if="loadedOnce && !displayed.length" class="list-state" data-test="reminders-empty">No {{ destination }} reminders.</p>
       <ContextRowList
         v-if="items.length"
         ref="list"
@@ -214,12 +236,13 @@ function rowTitle(item: ReminderItem): string { return `Revision ${item.reminder
         :active-key="activeRow"
         :row-title="rowTitle"
         :group-caption="groupCaption"
+        :described-by="describedBy"
         :row-test-id="(item: ReminderItem) => `reminder-row-${item.key}`"
         @update:active-key="activeRow = $event"
         @open="emit('open', $event.reminder.conversation)"
       >
         <template #primary="{ item }"><span class="context-subject">{{ item.reminder.subject || '(No subject)' }}</span></template>
-        <template #secondary="{ item }"><span v-if="item.reminder.condition === 'regardless'" data-test="reminder-condition">Returns regardless of reply</span></template>
+        <template #secondary="{ item }"><span v-if="item.reminder.condition === 'regardless'" :id="descId(item, 'condition')" data-test="reminder-condition">Returns regardless of reply</span></template>
         <template #actions="{ item }">
           <button v-if="item.reminder.phase === 'pending'" type="button" class="drawer-quiet" title="Reschedule — H" aria-keyshortcuts="H" :disabled="busy || retrying" @click="model.reschedule(item.reminder)">Reschedule</button>
           <button
@@ -234,11 +257,11 @@ function rowTitle(item: ReminderItem): string { return `Revision ${item.reminder
           >Cancel reminder</button>
         </template>
         <template #trailing="{ item }">
-          <span class="context-date"><FullDate v-if="item.reminder.dueAt" :at="item.reminder.dueAt" /><template v-else>Someday</template></span>
-          <span class="activity-status context-phase" :class="`tone-${REMINDER_PHASES[item.reminder.phase].tone}`" :data-test="`reminder-phase-${item.reminder.phase}`">{{ REMINDER_PHASES[item.reminder.phase].word }}</span>
+          <span :id="descId(item, 'due')" class="context-date"><FullDate v-if="item.reminder.dueAt" :at="item.reminder.dueAt" /><template v-else>Someday</template></span>
+          <span :id="descId(item, 'phase')" class="activity-status context-phase" :class="`tone-${REMINDER_PHASES[item.reminder.phase].tone}`" :data-test="`reminder-phase-${item.reminder.phase}`">{{ REMINDER_PHASES[item.reminder.phase].word }}</span>
         </template>
         <template #note="{ item }">
-          <p v-if="item.reminder.phase === 'failed'" class="context-row-note tone-fault">A mailbox change failed or newer triage superseded it; which one is not recorded. Cancel does not override newer triage.</p>
+          <p v-if="item.reminder.phase === 'failed'" :id="descId(item, 'note')" class="context-row-note tone-fault">A mailbox change failed or newer triage superseded it; which one is not recorded. Cancel does not override newer triage.</p>
         </template>
       </ContextRowList>
     </div>

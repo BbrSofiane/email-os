@@ -2484,7 +2484,9 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             <button v-if="savedTabVisible" type="button" class="split-tab" data-test="split-saved" :aria-current="mailbox.context.value === 'saved' ? 'page' : undefined" :aria-describedby="splitCoverageShown ? `${domIdPrefix}split-coverage` : undefined" @click="navigateContext('saved')"><span class="split-label">{{ mailbox.savedSplit.value?.name }}</span> <span v-if="splitBadge(mailbox.savedTotal.value)" class="split-count">{{ splitBadge(mailbox.savedTotal.value) }}</span></button>
           </nav>
           <!-- Reminders: the list's sections take the split-tab slot (Pending,
-               Returned, History, each with the count of its loaded rows),
+               Returned, History, each with the count of its loaded rows once
+               a read has succeeded: before that a count would say 0 for
+               "not read"),
                after the context heading, which stays visible so the tabs are
                named. -->
           <div v-if="splitNavShown && remindersContext" class="split-nav" role="tablist" aria-label="Reminder membership" @keydown="reminders.onTabKeydown">
@@ -2500,7 +2502,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               aria-controls="reminder-tabpanel"
               :tabindex="reminders.destination.value === tab.id ? 0 : -1"
               @click="reminders.destination.value = tab.id"
-            ><span class="split-label">{{ tab.label }}</span> <span class="split-count">{{ reminders.counts.value[tab.id] }}</span> <span v-if="tab.id === 'pending' && reminders.attentionTotal.value > 0" class="split-count">· {{ reminders.attentionTotal.value }} {{ reminders.attentionTotal.value === 1 ? 'needs' : 'need' }} attention</span></button>
+            ><span class="split-label">{{ tab.label }}</span> <span v-if="reminders.loadedOnce.value" class="split-count">{{ reminders.counts.value[tab.id] }}</span> <span v-if="reminders.loadedOnce.value && tab.id === 'pending' && reminders.attentionTotal.value > 0" class="split-count">· {{ reminders.attentionTotal.value }} {{ reminders.attentionTotal.value === 1 ? 'needs' : 'need' }} attention</span></button>
           </div>
           <!-- Coverage qualifies the counts, so it lives on them: the tabs'
                accessible description and the nav's hover title. -->
@@ -2650,7 +2652,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
           </div>
         </nav>
 
-        <section class="central" :aria-label="readerOpen ? 'Reader' : composeCardOpen ? cardTitle : draftsContext ? 'Drafts' : 'Conversation list'" :inert="centralCovered || undefined" data-test="central-surface">
+        <section class="central" :aria-label="readerOpen ? 'Reader' : composeCardOpen ? cardTitle : draftsContext ? 'Drafts' : remindersContext ? 'Reminders' : 'Conversation list'" :inert="centralCovered || undefined" data-test="central-surface">
           <!-- Search results header (UX-07): the query echoes at active-tab
                size and the X is the visible exit (same as the header Back
                glyph, which is reachable in search context). -->

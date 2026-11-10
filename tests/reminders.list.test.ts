@@ -10,6 +10,7 @@ import { fullDateLabel } from '../src/lib/browsing-dates';
 import { reminderPresets } from '../src/lib/reminder-presets';
 import { createBrowserFakeMailClient } from '../src/lib/ipc/browser-fake';
 import type { ConversationRef, PutReminder, Reminder, ReminderPhase } from '../src/lib/ipc/client';
+import { deferred } from './helpers';
 import { mountReminders } from './reminders.helpers';
 
 const target: ConversationRef = { accountId: 'fixture-account', conversationId: 'conv-01' };
@@ -293,5 +294,115 @@ describe('Reminders picker', () => {
     await retry.trigger('click'); await flushPromises();
     expect(put.mock.calls[1]![0]).toEqual(first);
     expect(panel.findAll('button').some((button) => button.text() === 'Inspect durable state')).toBe(false);
+  });
+});
+
+describe('Reminders row descriptions', () => {
+  /** The text of the elements an open button's aria-describedby points at. */
+  const described = (button: { attributes: (name: string) => string | undefined }): string[] =>
+    (button.attributes('aria-describedby') ?? '').split(' ').filter(Boolean)
+      .map((id) => panel!.element.querySelector(`[id="${id}"]`)?.textContent?.trim() ?? `MISSING ${id}`);
+
+  it('ties a pending row to its phase, due time and condition', async () => {
+    const { fake } = fixture([reminder('a', 'pending', { condition: 'regardless' }), reminder('b', 'pending', { dueAt: null })]);
+    panel = show(fake).wrapper;
+    await flushPromises();
+    const a = panel.get('[data-test="reminder-row-a"] .context-row-main');
+    expect(a.text()).toBe('Open Subject a');
+    expect(described(a)).toEqual(['Pending', fullDateLabel('2030-01-01T00:00:00Z'), 'Returns regardless of reply']);
+    // No condition line and no due time: only what is on the row.
+    expect(described(panel.get('[data-test="reminder-row-b"] .context-row-main'))).toEqual(['Pending', 'Someday']);
+  });
+
+  it('ties a failed row to Failed, its due time and the failed note, whatever its caption says', async () => {
+    const { fake } = fixture([reminder('c', 'failed'), reminder('d', 'pending')]);
+    panel = show(fake).wrapper;
+    await flushPromises();
+    const c = panel.get('[data-test="reminder-row-c"] .context-row-main');
+    const words = described(c);
+    expect(words[0]).toBe('Failed');
+    expect(words[1]).toBe(fullDateLabel('2030-01-01T00:00:00Z'));
+    expect(words[2]).toContain('A mailbox change failed or newer triage superseded it');
+    expect(words).toHaveLength(3);
+    // The caption is a presentation item; the state is not left to it.
+    expect(panel.get('[data-test="context-group"]').attributes('role')).toBe('presentation');
+    expect(described(panel.get('[data-test="reminder-row-d"] .context-row-main'))).toEqual(['Pending', fullDateLabel('2030-01-01T00:00:00Z')]);
+  });
+
+  it('gives every row its own ids', async () => {
+    const { fake } = fixture([reminder('a', 'pending'), reminder('b', 'pending')]);
+    panel = show(fake).wrapper;
+    await flushPromises();
+    const ids = panel.findAll('.context-row-main').flatMap((button) => (button.attributes('aria-describedby') ?? '').split(' '));
+    expect(ids).toHaveLength(4);
+    expect(new Set(ids).size).toBe(4);
+  });
+});
+
+describe('Reminders action status', () => {
+  const status = () => panel!.get('[data-test="reminders-action-status"]');
+  const cancelButton = () => panel!.findAll('button').find((button) => button.text() === 'Cancel reminder')!;
+
+  it('is a polite, empty status line until an action resolves', async () => {
+    const { fake } = fixture([reminder('a', 'pending')]);
+    panel = show(fake).wrapper;
+    await flushPromises();
+    expect(status().attributes('role')).toBe('status');
+    expect(status().attributes('aria-live')).toBe('polite');
+    expect(status().classes()).toContain('visually-hidden');
+    expect(status().text()).toBe('');
+  });
+
+  it('says "Reminder cancelled" only after Cancel reminder resolved as cancelled, and "Cancelling reminder" while it still moves', async () => {
+    const { fake } = fixture([reminder('a', 'pending')]);
+    const gate = deferred<Reminder>();
+    vi.mocked(fake.reminders!.cancel).mockReturnValueOnce(gate.promise);
+    panel = show(fake).wrapper;
+    await flushPromises();
+    await cancelButton().trigger('click'); await flushPromises();
+    // Not resolved yet: nothing is claimed.
+    expect(status().text()).toBe('');
+    gate.resolve(reminder('a', 'cancelled'));
+    await flushPromises();
+    expect(status().text()).toBe('Reminder cancelled');
+    vi.mocked(fake.reminders!.cancel).mockResolvedValueOnce(reminder('a', 'cancelling'));
+    await cancelButton().trigger('click'); await flushPromises();
+    expect(status().text()).toBe('Cancelling reminder');
+  });
+
+  it('says "Could not cancel reminder" when the cancel fails, beside the existing alert', async () => {
+    const { fake } = fixture([reminder('a', 'failed')]);
+    vi.mocked(fake.reminders!.cancel).mockRejectedValueOnce({ kind: 'storage_unavailable' });
+    panel = show(fake).wrapper;
+    await flushPromises();
+    await cancelButton().trigger('click'); await flushPromises();
+    expect(status().text()).toBe('Could not cancel reminder');
+    expect(panel.get('[data-test="reminders-error"]').text()).toContain('Reminder change was not acknowledged');
+  });
+
+  it('says "Reminder rescheduled" after Save new time resolves, and a failure after a lost ACK and its retry', async () => {
+    const { fake, put } = fixture([reminder('a', 'pending')]);
+    panel = show(fake).wrapper;
+    await flushPromises();
+    put.mockRejectedValueOnce({ kind: 'storage_unavailable' });
+    await panel.findAll('button').find((button) => button.text() === 'Reschedule')!.trigger('click');
+    await panel.get('[data-test="reminder-preset-tomorrow"]').trigger('click');
+    await panel.get('form').trigger('submit'); await flushPromises();
+    expect(status().text()).toBe('Could not reschedule reminder');
+    await panel.findAll('button').find((button) => button.text() === 'Retry exact request')!.trigger('click'); await flushPromises();
+    expect(status().text()).toBe('Reminder rescheduled');
+  });
+});
+
+describe('Reminders before the first successful read', () => {
+  it('shows the load error and no "No pending reminders." beside it, then the empty line after a retry succeeds', async () => {
+    const { fake } = fixture();
+    vi.mocked(fake.reminders!.list).mockRejectedValueOnce(new Error('offline'));
+    panel = show(fake).wrapper;
+    await flushPromises();
+    expect(panel.get('[data-test="reminders-error"]').text()).toBe('Could not load local reminders. Retry refresh.');
+    expect(panel.find('[data-test="reminders-empty"]').exists()).toBe(false);
+    await panel.get('[data-test="reminders-refresh"]').trigger('click'); await flushPromises();
+    expect(panel.get('[data-test="reminders-empty"]').text()).toBe('No pending reminders.');
   });
 });

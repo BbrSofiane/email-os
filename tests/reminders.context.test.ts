@@ -10,7 +10,7 @@ import ReaderView from '../src/components/ReaderView.vue';
 import RemindersList from '../src/components/RemindersList.vue';
 import { createBrowserFakeMailClient } from '../src/lib/ipc/browser-fake';
 import type { ConversationRef, PutReminder, Reminder, ReminderPhase } from '../src/lib/ipc/client';
-import { useGmailMode } from './helpers';
+import { deferred, useGmailMode } from './helpers';
 
 let app: VueWrapper | null = null;
 afterEach(() => { app?.unmount(); app = null; document.body.innerHTML = ''; });
@@ -245,5 +245,48 @@ describe('mutation safety', () => {
     expect(actions.every((button) => button.attributes('tabindex') === undefined)).toBe(true);
     await actions[1]!.trigger('click'); await flushPromises();
     expect(fake.reminders!.cancel).toHaveBeenCalledWith(expect.objectContaining({ conversation: ref('conv-02'), expectedRevision: 2 }));
+  });
+});
+
+describe('list region name', () => {
+  it('names the central region Reminders in the context and Conversation list again after Back', async () => {
+    const { w } = await mountApp();
+    const region = () => w.get('[data-test="central-surface"]').attributes('aria-label');
+    expect(region()).toBe('Conversation list');
+    await w.get('[data-test="reminders-trigger"]').trigger('click'); await flushPromises();
+    expect(region()).toBe('Reminders');
+    await w.get('[data-test="context-back"]').trigger('click'); await flushPromises();
+    expect(region()).toBe('Conversation list');
+  });
+});
+
+describe('before the first successful read', () => {
+  async function enter(list: () => Promise<Reminder[]>) {
+    const fake = createBrowserFakeMailClient();
+    fake.reminders = { list: vi.fn(list), put: vi.fn(), cancel: vi.fn() };
+    app = mount(App, { props: { client: fake, mode: 'native' }, attachTo: document.body });
+    await flushPromises();
+    await app.get('[data-test="reminders-trigger"]').trigger('click'); await flushPromises();
+    return app;
+  }
+
+  it('shows the tab names with no counts while loading, then the counts', async () => {
+    const gate = deferred<Reminder[]>();
+    const w = await enter(() => gate.promise);
+    expect(w.get('[data-test="reminders-panel"]').text()).toContain('Loading local reminders…');
+    expect(tabs(w).map((tab) => tab.text().replace(/\s+/g, ' '))).toEqual(['Pending', 'Returned', 'History']);
+    gate.resolve([reminder('a', 'pending'), reminder('b', 'failed')]); await flushPromises();
+    expect(tabs(w).map((tab) => tab.text().replace(/\s+/g, ' '))).toEqual(['Pending 1 · 1 needs attention', 'Returned 0', 'History 0']);
+  });
+
+  it('shows no zero counts and no empty line beside the load error, and the counts after Refresh succeeds', async () => {
+    let fail = true;
+    const w = await enter(async () => { if (fail) throw new Error('offline'); return [reminder('a', 'pending'), reminder('b', 'returned')]; });
+    expect(w.get('[data-test="reminders-error"]').text()).toBe('Could not load local reminders. Retry refresh.');
+    expect(tabs(w).map((tab) => tab.text().replace(/\s+/g, ' '))).toEqual(['Pending', 'Returned', 'History']);
+    expect(w.find('[data-test="reminders-empty"]').exists()).toBe(false);
+    fail = false;
+    await w.get('[data-test="reminders-refresh"]').trigger('click'); await flushPromises();
+    expect(tabs(w).map((tab) => tab.text().replace(/\s+/g, ' '))).toEqual(['Pending 1', 'Returned 1', 'History 0']);
   });
 });

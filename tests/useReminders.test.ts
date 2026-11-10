@@ -203,3 +203,95 @@ describe('useReminders picker', () => {
     expect(fake.reminders!.cancel).toHaveBeenCalledWith({ conversation: { accountId: 'fixture-account', conversationId: 'a' }, expectedRevision: 5, requestId: expect.any(String) });
   });
 });
+
+describe('useReminders loadedOnce', () => {
+  it('is false until the first list read succeeds, stays false after a failed read, and resets with each session', async () => {
+    const { list, model, scope } = setup([row('a')]);
+    stop = () => scope.stop();
+    const gate = deferred<Reminder[]>();
+    list.mockReturnValueOnce(gate.promise);
+    const loaded = model.activate();
+    expect(model.loadedOnce.value).toBe(false);
+    gate.reject(new Error('offline'));
+    await loaded;
+    expect(model.loading.value).toBe(false);
+    expect(model.error.value).toBe('Could not load local reminders. Retry refresh.');
+    expect(model.loadedOnce.value).toBe(false);
+    await model.refresh();
+    expect(model.loadedOnce.value).toBe(true);
+    // A later failed read keeps the rows and the flag: they were read.
+    list.mockRejectedValueOnce(new Error('offline'));
+    await model.refresh();
+    expect(model.loadedOnce.value).toBe(true);
+    model.deactivate();
+    const second = deferred<Reminder[]>();
+    list.mockReturnValueOnce(second.promise);
+    const again = model.activate();
+    expect(model.loadedOnce.value).toBe(false);
+    second.resolve([]);
+    await again;
+    expect(model.loadedOnce.value).toBe(true);
+  });
+
+  it('announces only the tab name on a step before the first successful read, and the counts after', async () => {
+    const { list, model, scope } = setup([row('a'), row('b', { phase: 'failed' }), row('c', { phase: 'returned' })]);
+    stop = () => scope.stop();
+    list.mockRejectedValueOnce(new Error('offline'));
+    await model.activate();
+    model.stepDestination(1); await flushPromises();
+    expect(model.tabAnnouncement.value).toBe('Returned');
+    model.stepDestination(1); await flushPromises();
+    expect(model.tabAnnouncement.value).toBe('History');
+    await model.refresh();
+    model.stepDestination(-1); await flushPromises();
+    expect(model.tabAnnouncement.value).toBe('Returned, 1 reminder');
+    model.stepDestination(1); await flushPromises();
+    expect(model.tabAnnouncement.value).toBe('History, no reminders');
+  });
+});
+
+describe('useReminders action announcement', () => {
+  it('names a cancel only after it resolved, from the phase it returned', async () => {
+    const { fake, model, scope } = setup([row('a')]);
+    stop = () => scope.stop();
+    await model.activate();
+    const cancel = vi.mocked(fake.reminders!.cancel);
+    const gate = deferred<Reminder>();
+    cancel.mockReturnValueOnce(gate.promise);
+    model.cancel(model.rows.value[0]!); await flushPromises();
+    expect(model.actionAnnouncement.value).toBe('');
+    gate.resolve(row('a', { phase: 'cancelled' })); await flushPromises();
+    expect(model.actionAnnouncement.value).toBe('Reminder cancelled');
+    cancel.mockResolvedValueOnce(row('a', { phase: 'cancelling' }));
+    model.cancel(model.rows.value[0]!); await flushPromises();
+    expect(model.actionAnnouncement.value).toBe('Cancelling reminder');
+  });
+
+  it('names a failed cancel, a failed reschedule, and nothing for a new reminder', async () => {
+    const { fake, put, model, scope } = setup([row('a')]);
+    stop = () => scope.stop();
+    await model.activate();
+    vi.mocked(fake.reminders!.cancel).mockRejectedValueOnce({ kind: 'storage_unavailable' });
+    model.cancel(model.rows.value[0]!); await flushPromises();
+    expect(model.actionAnnouncement.value).toBe('Could not cancel reminder');
+    model.retryOrRefresh(); await flushPromises();
+    // The exact retry keeps its words: the cancel mock now resolves to undefined.
+    expect(model.actionAnnouncement.value).toBe('Reminder cancelled');
+    model.reschedule(model.rows.value[0]!);
+    model.due.value = '2030-05-05T09:00:00Z';
+    put.mockRejectedValueOnce({ kind: 'storage_unavailable' });
+    model.submit(); await flushPromises();
+    expect(model.actionAnnouncement.value).toBe('Could not reschedule reminder');
+    put.mockResolvedValueOnce(row('a'));
+    model.retryOrRefresh(); await flushPromises();
+    expect(model.actionAnnouncement.value).toBe('Reminder rescheduled');
+    model.deactivate();
+    expect(model.actionAnnouncement.value).toBe('');
+    await model.activate();
+    model.setTarget(other); await flushPromises();
+    model.due.value = '2030-05-05T09:00:00Z';
+    model.submit(); await flushPromises();
+    expect(put).toHaveBeenCalledTimes(3);
+    expect(model.actionAnnouncement.value).toBe('');
+  });
+});
