@@ -18,6 +18,13 @@ have not been checked.
 
 ## Start here
 
+For the current implemented feature inventory and validation state, start with
+[Current status](docs/current-status.md). It distinguishes native fixture,
+explicit Gmail, and synthetic browser preview behavior. For setup and validation
+commands, see the [development guide](docs/development.md). The architecture
+overview is [current architecture](docs/current-architecture.md); the broader
+proposal remains in [ARCHITECTURE.md](ARCHITECTURE.md).
+
 - [Superhuman-inspired browsing implementation plan](docs/superhuman-browsing-implementation-plan.md):
   proposed end-to-end UX slices, mapped to the [browsing specification](superhuman-email-browsing-ux-spec.md),
   with scope decisions, acceptance scenarios, and separate browser/native validation gates.
@@ -31,34 +38,30 @@ have not been checked.
   including on-phone use; superseded by ADR 0001 for first-build sequencing.
 - [email security review](security/email-review.md) and [Pebble security review](security/pebble-review.md):
   static findings to address before reusing candidate implementations.
-- [Development guide](docs/development.md): how to run fixture and explicit Gmail modes, setup, validation, and platform gates.
+- [Development guide](docs/development.md): setup, fixture and explicit Gmail modes, validation commands, and platform gates.
 - [Vertical slice 01 contract](docs/vertical-slice-01.md): the completed fixture baseline and its frozen wire contract.
 - [Vertical slice 02 contract](docs/vertical-slice-02.md): the disposable-account, read-only Gmail scope and safety contract.
 - [Vertical slice 03 contract](docs/vertical-slice-03.md): opt-in Gmail archive/recovery and explicit read/unread actions.
+- [Vertical slice 04 contract](docs/vertical-slice-04.md): plain-text composition and durable local-only drafts; sending is not implemented.
+- [Current status and validation matrix](docs/current-status.md): canonical availability and evidence summary.
 
-**Status:** Slice 01 is implemented as a durable synthetic fixture inbox. Slice 02 provides an explicit,
-separate Gmail profile with OAuth/PKCE, Keychain-only production credential custody, bounded plain-text
-cache/sync, and background sync. Slice 03 adds durable, explicit Gmail archive/unarchive and
-read/unread actions behind an opt-in `gmail.modify` permission upgrade; the app does not compose, send,
-delete, or expose arbitrary labels, and opening a message never marks it read. Gmail mode is opt-in
-with `EMAIL_OS_MODE=gmail`; fixture remains the native default and browser preview remains synthetic.
-No real account or Google network has been used in VM validation. The operator-validated Slice 01
-and prior Slice 02 Mac gates are separate from pending Slice 03 consent, deny/cancel,
-offline/restart/reconciliation, external-change and recovery validation. See
-[docs/development.md](docs/development.md) for setup and exact limitations. `ARCHITECTURE.md`
-preserves the original broader research/proposal and should not be read as a current implementation
-inventory.
+**Status:** See [docs/current-status.md](docs/current-status.md) for the canonical feature and
+validation matrix. In brief, local drafts are durable on native profiles, but there is no send path.
+Gmail mailbox writes are limited to explicit, opt-in archive/unarchive, read/unread, and star/unstar
+actions after the `gmail.modify` permission upgrade. Opening a message does not mark it read. The native default is
+fixture mode; Gmail mode requires `EMAIL_OS_MODE=gmail`; browser preview uses synthetic in-memory
+state. Do not read the historical research or `ARCHITECTURE.md` proposal as a current feature inventory.
 
 ## Research background
 
-The sections below preserve earlier research. Their suggested MVP deferrals are historical options,
-not the current platform requirements. Use the PRD for product direction and ADR 0001 for the
-accepted first-build scope. This section is historical: Tauri with a Vue 3 frontend has since been
-selected for the first build (see [ARCHITECTURE.md](ARCHITECTURE.md)), while fork-versus-greenfield,
-provider/OS confirmation, and exact dependencies remain open decisions there. A custom Android client
-is outside the first build, not outside the product vision.
+The sections below preserve earlier research. Their suggested MVP deferrals and open questions are
+historical context, not current status. Use the PRD for product direction, ADR 0001 for the accepted
+first-build scope, and [docs/current-status.md](docs/current-status.md) for implemented availability.
+Tauri with a Vue 3 frontend is selected for the first build. Fork-versus-greenfield and provider/OS
+questions in the research below describe that earlier evaluation, not unresolved implementation choices.
+A custom Android client is outside the first build, not outside the product vision.
 
-This research summarizes a conversation about building an ideal personal email-processing
+This historical research summarizes a conversation about building an ideal personal email-processing
 workflow. It is **not** an attempt at full Superhuman parity: the goal is a workflow that fits how the
 user works. **Method caveat:** the comparison below is **source inspection only** (READMEs, licenses,
 manifests, selected source files, release metadata) — **not runtime validation**. Nothing was built,
