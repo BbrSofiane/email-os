@@ -1,0 +1,262 @@
+Ok nice, run use a subagent to run an impeccable critique to validate our changes have improved the application
+
+---
+
+Note: the T3 server restarted, and this background work was cancelled before it finished. It will not report back on its own, so resume or restart what you still need and wait for its result:
+- subagent: Critique A: design review (id ad3094d18f153c6b6)
+- subagent: Critique B: detector and overlay (id a9c0019a493b27cd7)
+
+---
+
+<task-notification>
+<task-id>ad3094d18f153c6b6</task-id>
+<tool-use-id>toolu_01YCNxv8YMT1dCXzjMBAP3jD</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-impeccable-account-first-run/a84d11fd-b201-44b6-9f70-207afb25eaa3/tasks/ad3094d18f153c6b6.output</output-file>
+<status>completed</status>
+<summary>Agent "Critique A: design review" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result># Assessment A (design review): account, connection and first-run UX
+
+HEAD 3fbf1a7. Rendered at 1280, 1030 and 900 px in my own tab, since closed. A second tab in the session isn't mine and I left it alone. No repo files were touched.
+
+## Design-specificity verdict
+Authored for this product, not interchangeable. The wording is terse and factual ("Sync failed · no network", "Opens Google sign-in in your browser. Starts read-only."). Status always carries words. Disconnect defaults focus to the safe choice. The drawer says exactly what a disconnect removes and what it leaves in place. There are no cards, illustrations or exclamation marks. What isn't authored yet is the empty states: they are single sentences with a link on an otherwise blank 968px column, plus an empty 272px contact column.
+
+## Nielsen heuristics (0-4)
+| # | Heuristic | Score | Key issue |
+|---|---|---|---|
+| 1 | Visibility of system status | 3 | Cause and count are visible in the header. Remaining flaws: duplicate wording, and "Idle · Never synced · 18 cached" next to "Sign-in expired". |
+| 2 | Match with real world | 3 | Plain verbs. "Not connected / Sign-in expired / Failed / Idle" are good. "Offline" is gone. |
+| 3 | User control and freedom | 3 | Esc cancels the disconnect confirm and returns focus to "Disconnect…". Esc on Close returns focus to the rail Account glyph. The Cancel sign-in link works. |
+| 4 | Consistency and standards | 2 | "Connect Gmail" (empty line, palette) vs "Connect" (drawer) vs "Sign in" (header) vs "Sign in again" (empty line, drawer). Link-style in some surfaces, chips in the drawer. |
+| 5 | Error prevention | 3 | Two-step disconnect with a specific warning. The destructive "Disconnect" button is a bare grey ghost (rgb 192,188,182, transparent border), with no danger cue. |
+| 6 | Recognition over recall | 3 | The first-run hint explains Connect. The palette ranks Connect first. Sync now sits 9th when sync fails. |
+| 7 | Flexibility and efficiency | 3 | `g a` works (the chord hint shows "g…"). The palette is correct. Focus on drawer open lands on the region, not the first control. |
+| 8 | Aesthetic and minimalist design | 2 | The same fact appears twice at the top of every zero-row state. The header carries up to five text items. |
+| 9 | Error recovery | 3 | Cause is visible, Retry is one click, and the drawer line stays specific. Retry is present in 3 places when rows exist. |
+| 10 | Help and documentation | 3 | The first-run hint, the Permissions disclosure and the disconnect warning are good. Nothing explains what `Starts read-only` means. |
+
+**Total: 28/40.**
+
+## Cognitive load failures
+- **Redundancy.** In every zero-row state the header note and the empty line say the same thing:
+  - disconnected: "Not connected" / "Not connected."
+  - auth_required: "Sign-in expired" / "Sign-in expired."
+  - syncing_first: "Syncing first mail · 0 cached" / "Syncing first mail… 0 cached." (a ticking count shown twice)
+  - sync_error: "Sync failed · no network · 0 cached" / "Sync failed: The network is unavailable."
+  - not_configured: "Gmail not configured" / "Gmail is not configured on this device."
+- **Mixed phrasing for one cause.** "no network" in the header vs "The network is unavailable" in the empty line and drawer.
+- **Drawer repetition.** The failed-sync drawer shows "Sync / Failed" and then "Sync failed: …". The auth_required drawer says "Sign-in expired" three times.
+- **Header density.** At 1030 with the read-only hint, Preview tag and Unread chip, the header holds "Inbox 18", "Unread only", "Preview · in-memory", "Gmail is read-only Review access" and four glyphs.
+- **Misleading drawer facts.**
+  - A disconnected account shows "Gmail · read-only" and "Sync: Idle".
+  - "Never synced" appears beside "18 cached" (a fixture artifact, but it is what renders).
+
+## Emotional journey
+- **First run.** Anxious but oriented. The line "Opens Google sign-in in your browser. Starts read-only." reassures. The page is otherwise empty, with an empty right column.
+- **Mid-sign-in.** Clear: "Finish sign-in in your browser" with Cancel in the header, the empty line and the drawer.
+- **Failure.** Calm and honest ("Sync failed · no network" in coral, Retry beside it). It repeats itself in the empty states, so it feels slightly nagging.
+- **Disconnect.** Trustworthy. The warning is specific and the safe button is focused.
+
+## Strengths
+1. The disconnect flow is well built: the warning text, safe-choice focus, Esc handling and focus return.
+2. Honest-state vocabulary. Pending, failed and unknown stay distinct, and the tint only echoes the words. Contrast measures 7.8 to 14.7:1.
+3. The palette ranks Connect Gmail first when disconnected, and `g a` / `G then A` is discoverable (it appears in the palette and the chord hint).
+
+## Priority issues
+
+**[P1] The tab floor does not protect two tabs plus the Unread chip at 1030 px.**
+- Why: with a saved split, "Unread only" and the read-only hint, the Inbox tab renders at width 13 px with its label at width 0. Only "18" and "N… 15" show. "Unread only" ends at x=259 and the Preview tag starts at x=262, so they touch. The primary single-tab case is fine.
+- Fix: the floor should be computed (tabs plus chip) or the hint should collapse to its link text. Alternatively, cap the saved tab label at about 12ch.
+- Command: `/impeccable layout`.
+
+**[P2] The header note and the empty line duplicate each other in every zero-row state.**
+- Why: this is the same fact at 12px twice, 40px apart, and it breaks the "one action, one place" intent. Action duplication is fixed; wording duplication is not.
+- Fix: when the empty line carries the sentence, drop the header note's text and leave only the Preview tag. Or make the empty line carry only what the header doesn't (the hint, plus the action).
+- Command: `/impeccable distill`.
+
+**[P2] The first-run void is only half addressed.**
+- Why: the right column is a blank 272px, and the list is one sentence. In auth_required, syncing_first, sync_error and connected with zero rows, the contact pane still reads "No correspondent information is available." beside an empty list.
+- Fix: suppress that line when the list has no rows. Add one more concrete line to the empty state, such as what read-only means or the first-sync duration.
+- Command: `/impeccable onboard`.
+
+**[P3] Label inconsistency across surfaces.**
+- Why: Connect Gmail, Connect, Sign in and Sign in again name the same action. The destructive confirm button is visually a muted ghost with no danger tint.
+- Fix: unify on "Connect Gmail" and "Sign in again". Give the confirm button a `--danger` text or border.
+- Command: `/impeccable clarify`.
+
+**[P3] Drawer facts are wrong for the state.**
+- Why: a disconnected drawer says "Gmail · read-only" and "Idle". A failed state shows "Sync / Failed" with a redundant "Sync failed:" line beneath it.
+- Fix: hide the mode and sync rows when disconnected. In the error state, show only the error line.
+- Command: `/impeccable clarify`.
+
+## Persona red flags
+- **Alex (power user).**
+  - The palette puts Sync now 9th on failure. Eight mailbox actions rank above it, including Star/Unstar rows that are disabled with explanations.
+  - The drawer opens focus on the region, not the first control.
+  - Retry is offered in the header, the empty line and the drawer.
+  - The palette "Keys" section lists a single row, "Open destinations ←". That is out of place when disconnected.
+- **Jordan (first-timer).**
+  - In not_configured the only action is a tiny underlined "Account" link. The drawer then says "connecting is unavailable" with no next step.
+  - "Starts read-only" is never explained at the point of use.
+  - The blank right column reads as broken.
+- **Sam (keyboard / screen reader).**
+  - Keyboard: Esc handling is correct. `g a` works when the two keys fall within the 1-second chord window. Tab from the last drawer control goes to the document start, not back to the drawer's first control or the trigger.
+  - Screen reader: the status note is a polite `role=status` with a full sentence and no ticking count. That is good.
+  - Possible issue: in the drawer the Retry button sits inside a `role=alert` paragraph, so it may be re-announced.
+
+## Minor observations
+- The "Preview · in-memory" tag (amber) sits next to the coral "Sync failed" note. Both are legitimate; together they are loud.
+- `.list-state-hint` uses the same colour and size as the sentence above it, so there is no hierarchy. This is acceptable but flat.
+- In the Provider mail drawer for a disconnected account, the inline "Connect Gmail" link works and matches the empty line.
+- The header star glyph (Starred only) stays active when disconnected, with nothing to filter.
+- No "Cached Done" rail item and no Compose/Search glyphs when there is no account. That is correct and honest.
+
+## Previous critique: per-item verdicts
+- **P1 header squeeze at 1030: PARTLY.** With one tab, the tab column is 172-183px. Measured: Inbox tab 62px, "Unread only" 73px, no clipping; the Preview tag is 124px and the read-only hint 204px, none clipped. With a saved split plus Unread only plus the read-only hint at 1030, the Inbox tab is 13px (label 0) and the second tab 47px. At 900 the tab column is 314px and fine. The squeeze is not fixed for the two-tab case.
+- **P2 repeated actions: FIXED for actions, NOT FIXED for wording.** The header link is dropped while the empty line carries the action. The drawer button stays on its own surface. The wording repeats, as above.
+- **P2 first-run void, no explanation of Connect: PARTLY.** The hint line is present and clear. The right column is still blank, and "No correspondent information" persists in auth_required, syncing_first, sync_error and connected with zero rows. It is gone in disconnected, not_configured and authenticating, where there is no account.
+- **P2 failure cause hidden in title / Offline vs Sync failed: FIXED.** "Sync failed · no network" is visible in the header. "Offline" is no longer the visible word. A minor leftover is "no network" vs "The network is unavailable".
+- **P3 palette order: FIXED when disconnected, PARTLY on failure.** Connect Gmail is first and Go to Account second. On failure, Sync now is 9th, behind the mailbox actions.
+- **P3 empty "Keys" rows: PARTLY.** It now has one row ("Open destinations ←") in the disconnected palette. The section is sparse.
+- **P3 unlabeled sync facts: FIXED.** The drawer shows "Idle · Never synced · N conversations cached". "Never synced" alongside "18 cached" looks like a fixture artifact.
+- **P3 Disconnect vs Keep account chips alike: FIXED.** Keep account is a filled chip with a focus ring; Disconnect is a bare ghost. The destructive button now looks inert.
+- **P3 duplicate "read only": FIXED.** The read-only hint is hidden whenever a status note shows. The drawer still says "read-only" in the mode line (accurate, not a duplicate).
+- **P3 misleading coverage line: FIXED.** It shows only when connected or auth_required and something is cached. It is absent when disconnected.
+- **Regressions:** none found. The new duplication in zero-row states is a new problem rather than a regression.
+
+## Provocative questions
+- Which surface owns the sentence "Not connected": the header note or the empty list? Having both means neither is authoritative.
+- If the floor is only 160px, what is it protecting? Is a saved tab ever allowed to lose its label?
+- Why does a disconnected account have a Sync section at all?
+- Should "Connect" and "Sign in again" be the same verb everywhere, given they do the same thing?
+- Is an empty right column a first-run state worth designing (what read-only means, what Connect does) or something to remove entirely?
+
+## Could not verify
+- Whether `g a` also works when typed by hand outside my synthetic key events. It worked once I dispatched `g` then `a` inside a single call, which stays within the 1-second window.
+- The upgrading preset's drawer, and the workspaces banner. `FixtureWorkspaces.vue` lives at `src/FixtureWorkspaces.vue` and renders only in the multi-workspace shell, not in the `?state=` harness.
+- The Provider mail destinations drawer when connected (catalog, page, reader). I only saw its disconnected state.
+- Real screen-reader output and real Tab order across the full page.
+- Dark and light appearance. I rendered the dark default only.
+- The header with a status note plus a saved split plus Unread only at 1030. I measured the split with the read-only hint instead.
+- Subpixel text rendering and pixel exactness of screenshots. The preview scaled screenshots, so I relied on `getBoundingClientRect` for numbers.</result>
+<usage><subagent_tokens>195620</subagent_tokens><tool_uses>35</tool_uses><duration_ms>190320</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a9c0019a493b27cd7</task-id>
+<tool-use-id>toolu_012FDaRtybh5mV4eQgM1wDoG</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-impeccable-account-first-run/a84d11fd-b201-44b6-9f70-207afb25eaa3/tasks/a9c0019a493b27cd7.output</output-file>
+<status>completed</status>
+<summary>Agent "Critique B: detector and overlay" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>Assessment B found no real anti-patterns in the six scanned files. The browser overlay did inject, and its only findings are one small text-wrap straggler and a set of overlay-by-design false positives. The repo is clean (`git status` empty), the live-server is stopped (port 8400 is down), and my preview tab is closed.
+
+## 1. CLI detector
+
+I ran the launcher at `/home/exedev/.claude/skills/impeccable/scripts/impeccable`, because `.claude/skills/...` doesn't exist in the repo.
+
+**The six files you listed.** `FixtureWorkspaces.vue` does not exist; the tool printed `Warning: cannot access`. The fixture code is `src/lib/fixture-workspaces.ts`, which the detector scans as `[]`. The other five files (`AccountPanel.vue`, `ProviderDestinations.vue`, `ContactPane.vue`, `ActionOverlay.vue`, `App.vue`) returned `[]`: 0 findings.
+
+**`src/assets/style.css`.** The tool accepted it and returned 6 findings, none in the account/first-run code:
+
+| Rule | Severity | file:line | Verdict |
+|---|---|---|---|
+| side-tab | warning | style.css:960 `.search-suggestion.highlighted` | False positive. It's a 4px inset focus stripe on the highlighted list row, the Focus Stone and Dusk Lavender pattern the CSS comment describes. |
+| side-tab | warning | style.css:1056 `.inbox-row.focused` | Same as above. |
+| side-tab | warning | style.css:2487 `.command-overlay li.highlighted` | Same, 3px stripe. |
+| design-system-radius | advisory | style.css:355 (2px) | Real but minor: radius outside the DESIGN.md scale. |
+| design-system-radius | advisory | style.css:919 (2px) | Same. |
+| design-system-radius | advisory | style.css:1090 (3px) | Same. |
+
+## 2. Overlay (live-server)
+
+The first live-server was started on port 8400 (`--background`) and stopped with `stop --keep-inject`. The T3 restart then interrupted the run. The server was already down when I checked, and no restart was needed.
+
+**Injection.** It succeeded on every state: `detect.js` loaded via a script tag, with no CSP block (the dev server sends no CSP header). I did not run the document.title preflight on every page, and the overlay worked anyway. In every state I wrapped the console methods in the page to read the output, since I can't read the console directly.
+
+| State | Overlay output |
+|---|---|
+| `disconnected&amp;rows=0` | `No anti-patterns found.` |
+| `sync_error_network` | `No anti-patterns found.` |
+| `sync_error_empty&amp;rows=0` | 1 anti-pattern: `straggler` on `p.contact-unknown` ("No correspondent information is available."): "available." alone on the last of 2 lines, 30% of the measure. The paragraph is 223px wide at 12px. `ContactPane.vue:137`, CSS at `style.css:833`, `style.css:838` and `style.css:873`. |
+| `sync_error_network` with Account drawer open | 12 anti-patterns, all `text-occlusion`: `time.row-time "9 Jan 2025"` is "100% covered" by `div.utility-drawer`, `p.account-note` or a button. |
+
+The drawer findings are false positives. The drawer (`.utility-drawer`, `role=region`, `aria-label=Account`, 460px wide) is an opaque panel laid over the inbox list on purpose, and the list rows underneath are meant to be hidden. The straggler is a real, minor typographic hit.
+
+## 3. Measurements (`preview_evaluate`)
+
+**Header, `sync_error_network`** (all widths show no clipping or overflow; `scrollWidth` equals `clientWidth` and the header is 78px tall):
+
+| Width | Header (width) | `.header-tabs` | Active tab | Preview tag | Status note | Note link |
+|---|---|---|---|---|---|---|
+| 1280 | 968 | 90,28 w433 | 90,32 62x20 | 523 w124 | 659 w193 | 816 w36x16 |
+| 1030 | 718 | w183 | same | 273 w124 | 409 w193 | 566 w36x16 |
+| 900 | 860 | w325 | same | 415 w124 | 551 w193 | 708 w36x16 |
+
+The header starts at x=40. At 900 the contact column is gone and the header is 860 wide. The trail is 469px wide at every width and ends at the header's right edge.
+
+**Header, `connected` with "Unread only" on** (the read-only hint and the chip appear together). The elements are laid out in this order at 1030: `Unread only` 170–243, preview 262–386, "Gmail is read-only" hint 398–602 (204 wide), icon buttons 614–742. At 900 the same elements sit at 404, 540 and 756, and at 1280 at 512 and 648. At 1030 the gap between the chip and the preview tag is 19px. Nothing clipped at any width.
+
+**Font sizes and contrast.** Contrast is computed from computed styles; "Ash" is `--text-secondary` `#c0bcb6`.
+
+| Item | Size | Contrast |
+|---|---|---|
+| Header notes (status, preview, read-only hint, Unread chip) | 12px | not measured |
+| Status note text ("Sync failed · no network") | 12px | 7.69:1 (danger tone `rgb(241,169,165)`) |
+| Preview tag | 12px | 8.68:1 |
+| Unread chip and read-only hint | 12px | 7.79:1 |
+| Header note link | 12px | 14.73:1 |
+| First-run hint ("Opens Google sign-in…", Ash) | 12px | 7.79:1 |
+| "Not connected" note | 12px | 7.79:1 |
+| Drawer: Account `h2` | 16px | 16.66:1 |
+| Drawer: everything else | 12px | `p.account-note` and `span.account-sep` are 8.81:1; the rest 12.97–16.66:1 |
+| Rail icon button | n/a | 4.30:1 (`#8e8a87`, icon colour) |
+
+The Account drawer uses 2 distinct font sizes: 16px (one `h2`) and 12px (20 text elements). The active split tab's computed font size reads 16px.
+
+**Hit sizes.** All box sizes below are width x height.
+
+| Control | Size |
+|---|---|
+| Header note link (Retry) | 36x16 |
+| Inline "Connect Gmail" action | 102x16 |
+| Drawer Close | 51x24 |
+| Drawer Retry | 50x24 |
+| Drawer Enable mailbox actions | 157x24 |
+| Drawer Disconnect… | 95x24 |
+| Rail buttons | 28x28 |
+
+On the Retry link, `elementFromPoint` at 4px above and below its box did not return the link, so the hit area equals the 16px box.
+
+**DOM and ARIA, `disconnected&amp;rows=0`.**
+- `role=status` regions: 3, with 0 `role=alert`.
+  - `chord-hint`: empty and hidden.
+  - `account-status-note`: "Not connected / Not connected to Gmail…", visible.
+  - `action-notice` (`aria-live=polite`): empty.
+- Rail button accessible names:
+
+| `data-test` | Accessible name | Title |
+|---|---|---|
+| `rail-inbox` | "Inbox" | "Go to Inbox" |
+| `rail-destinations` | "Provider mail" | "Provider mail (read only)" |
+| `rail-account` | "Account" | "Go to Account — G then A…" |
+| `rail-activity` | "Activity" | "Go to Activity" |
+
+- Focusable elements in DOM order (not browser-simulated): `navigator-trigger` "Destinations", `starred-filter`, `palette-trigger` "Commands", `rail-inbox`, `rail-destinations`, `rail-account`, `rail-activity`, `inbox-empty-action` "Connect Gmail". That is 8, and the compose and search buttons are absent without an account.
+
+**Live regions, `sync_error_network` with the drawer open.** There are 4: `chord-hint` (hidden), `account-status-note` (status, shown), `account-sync-error` (`role=alert`, "Sync failed: The network is unavailable."), and `action-notice`. So the header status and the drawer alert announce the same failure twice. In the closed-drawer `sync_error_network` state, 3 regions exist: `chord-hint`, `account-status-note` and `action-notice`, with no `role=alert`.
+
+## Skipped or not done
+
+- `FixtureWorkspaces.vue` is not a file; I scanned `src/lib/fixture-workspaces.ts` instead, with 0 findings.
+- I did not test `?state=` presets beyond those listed, and I did not simulate real Tab-key order (DOM order only).
+- Mid-run, the T3 restart killed my first tab; I opened a new one and closed it at the end. I did not touch ports 5173 or 5199.</result>
+<usage><subagent_tokens>85383</subagent_tokens><tool_uses>28</tool_uses><duration_ms>218766</duration_ms></usage>
+</task-notification>
+
+---
+
+Continue where you left off.

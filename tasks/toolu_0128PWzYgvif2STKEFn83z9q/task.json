@@ -1,0 +1,15 @@
+{
+  "tool_use_id": "toolu_0128PWzYgvif2STKEFn83z9q",
+  "agent_id": "ad3094d18f153c6b6",
+  "subagent_type": "general-purpose",
+  "task_description": "Critique A: design review",
+  "token_usage": {
+    "input_tokens": 66,
+    "cache_creation_tokens": 122590,
+    "cache_read_tokens": 2815266,
+    "output_tokens": 16779,
+    "api_call_count": 33
+  },
+  "started_at": "2026-11-10T06:28:15.995798073Z",
+  "completed_at": "2026-11-10T06:31:28.631726598Z"
+}

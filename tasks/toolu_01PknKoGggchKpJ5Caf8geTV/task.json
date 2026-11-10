@@ -1,0 +1,15 @@
+{
+  "tool_use_id": "toolu_01PknKoGggchKpJ5Caf8geTV",
+  "agent_id": "a9c0019a493b27cd7",
+  "subagent_type": "general-purpose",
+  "task_description": "Critique B: detector and overlay",
+  "token_usage": {
+    "input_tokens": 46,
+    "cache_creation_tokens": 39217,
+    "cache_read_tokens": 1007735,
+    "output_tokens": 9487,
+    "api_call_count": 23
+  },
+  "started_at": "2026-11-10T06:28:25.866024589Z",
+  "completed_at": "2026-11-10T06:31:28.641096543Z"
+}
