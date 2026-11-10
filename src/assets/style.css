@@ -57,6 +57,8 @@
      takes this as its minimum height and the loading skeleton rows are sized
      from it, so the pane does not jump when the conversation arrives. */
   --message-row-height: calc(var(--type-body) * 2);
+  /* One inner padding for the docked reply composer and the new-message card, docked or not. */
+  --composer-padding: 12px 16px 16px;
   --unread-marker: #ce9ece;
   /* DESIGN.md Seam: the 1px vertical separators between rail, list and
      contact pane (and the drawer's leading edge), utility-chip and input
@@ -2384,7 +2386,9 @@ button:focus-visible {
  * (surface-raised) fill.
  */
 .compose-card {
-  flex: 1 1 auto;
+  /* Sized to its content (the list it replaces is not a reason to fill the column); it
+     still shrinks and scrolls when the editor is taller than the column. */
+  flex: 0 1 auto;
   min-height: 0;
   overflow-y: auto;
   margin: 6px 24px 12px 50px;
@@ -2392,7 +2396,7 @@ button:focus-visible {
   color: var(--text-primary);
   border: 1px solid var(--divider);
   border-radius: 10px;
-  padding: 12px 16px 16px;
+  padding: var(--composer-padding);
   font-size: var(--type-body);
   line-height: var(--leading-ui);
 }

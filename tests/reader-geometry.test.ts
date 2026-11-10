@@ -13,6 +13,8 @@ import { css, declarationsOf, resolveVars, rootToken, ruleIndexOf } from './css-
  */
 
 const replyComposerSfc = readFileSync('src/components/ReplyComposer.vue', 'utf8');
+const chooserSfc = readFileSync('src/components/AttachmentChooser.vue', 'utf8');
+const chooserCss = chooserSfc.slice(chooserSfc.indexOf('<style scoped>') + '<style scoped>'.length, chooserSfc.indexOf('</style>'));
 const replyComposerCss = replyComposerSfc.slice(replyComposerSfc.indexOf('<style scoped>') + '<style scoped>'.length, replyComposerSfc.indexOf('</style>'));
 
 const ROOT_FONT_PX = 16;
@@ -183,5 +185,25 @@ describe('reader and composer geometry (declared CSS)', () => {
     expect(declarationsOf(css, '.message-field').display).toBe('flex');
     // Wide enough for the longest label ("Sent") at the shell size with room to spare.
     expect(px(label.flex?.split(' ')[2])).toBeGreaterThanOrEqual(48);
+  });
+
+  it('uses ONE inner padding for the reply composer and the new-message card, docked or not', () => {
+    expect(box(rootToken('--composer-padding'))).toEqual([12, 16, 16, 16]);
+    expect(declarationsOf(css, '.compose-card').padding).toBe('var(--composer-padding)');
+    expect(declarationsOf(replyComposerCss, '.composer').padding).toBe('var(--composer-padding)');
+  });
+
+  it('sizes the undocked new-message card to its content instead of the whole column', () => {
+    const card = declarationsOf(css, '.compose-card');
+    expect(card.flex).toBe('0 1 auto');
+    // Still scrolls instead of overflowing when the editor is taller than the column.
+    expect(card['overflow-y']).toBe('auto');
+    expect(card['min-height']).toBe('0');
+    expect(declarationsOf(css, '.reader-pane > .compose-card').flex).toBe('0 0 auto');
+  });
+
+  it('does not indent the attachment chooser lists past the text above them', () => {
+    const list = declarationsOf(chooserCss, 'ul');
+    expect(list['padding-inline-start'] ?? list.padding).toBe('0');
   });
 });
