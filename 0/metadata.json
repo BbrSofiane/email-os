@@ -1,0 +1,77 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M73Q9QWG96A3N7RJZG3DJTEQ",
+  "session_id": "8f4d5ca6-57cb-4c84-ae4f-cde2bd9d7ccb",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-10T21:54:48.04059651Z",
+  "checkpoints_count": 2,
+  "save_step_count": 1,
+  "files_touched": [
+    "tests/reader-geometry.test.ts",
+    "tests/reader.component.test.ts",
+    "tests/reader.rendered.test.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "cbb617ff529b",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 178,
+    "cache_creation_tokens": 579303,
+    "cache_read_tokens": 17961152,
+    "output_tokens": 84861,
+    "api_call_count": 79
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "prompt-skill-claude-code-impeccable-2026-11-09T19:53:25.688412293Z",
+      "event_type": "prompt_invocation",
+      "skill": {
+        "name": "impeccable"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "prompt_slash_command",
+        "confidence": "explicit"
+      },
+      "turn_id": "58e8e0dc2152",
+      "timestamp": "2026-11-09T19:53:25.688412293Z",
+      "native": {
+        "command": "/impeccable"
+      },
+      "collapse": {
+        "target": "user_message",
+        "label": "/impeccable",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 8
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-10T21:54:47.957188574Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 1225,
+    "human_modified": 180,
+    "human_removed": 0,
+    "total_committed": 1225,
+    "total_lines_changed": 2019,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 1,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".impeccable/hook.cache.json": 1
+      }
+    }
+  ]
+}
