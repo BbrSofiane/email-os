@@ -1,0 +1,25 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M71FMDYC601XJ01ZN7XSBRT2",
+  "session_id": "225e03df-31dc-4e8a-8279-c773b08e5b0a",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-10T01:02:22.011630566Z",
+  "branch": "impeccable/reader-compose-followup",
+  "checkpoints_count": 1,
+  "save_step_count": 1,
+  "files_touched": [],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "f5447b78e7cf",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 294,
+    "cache_creation_tokens": 374171,
+    "cache_read_tokens": 25436419,
+    "output_tokens": 98499,
+    "api_call_count": 146
+  },
+  "session_metrics": {
+    "turn_count": 1
+  }
+}
