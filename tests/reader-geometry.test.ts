@@ -148,10 +148,13 @@ describe('reader and composer geometry (declared CSS)', () => {
     expect(toggleRight).toBe(0);
     const summary = declarationsOf(css, '.message-details summary');
     expect(summary['margin-left']).toBeUndefined();
-    for (const selector of ['.message-body', '.message-trail', '.message-quote-toggle']) {
+    for (const selector of ['.message-body', '.message-trail']) {
       const [, , , marginLeft] = box(declarationsOf(css, selector).margin);
       expect(marginLeft, selector).toBe(0);
     }
+    // The quote toggle is a ghost button: its LABEL (button padding included) is on that x.
+    const [, , , quoteMargin] = box(declarationsOf(css, '.message-quote-toggle').margin);
+    expect(quoteMargin + box(declarationsOf(css, ':where(button)').padding)[3]).toBe(0);
   });
 
   it('lands the selection-scope note and the in-pane recovery banner on 50px and 24px', () => {
@@ -248,5 +251,12 @@ describe('reader and composer geometry (declared CSS)', () => {
   it('does not indent the attachment chooser lists past the text above them', () => {
     const list = declarationsOf(chooserCss, 'ul');
     expect(list['padding-inline-start'] ?? list.padding).toBe('0');
+  });
+
+  it('puts the Show quoted text label on the 50px text edge by pulling its 8px button padding into the gap', () => {
+    const toggle = declarationsOf(css, '.message-quote-toggle');
+    expect(box(toggle.margin)[3]).toBe(-8);
+    // The ghost default is `4px 8px`: the negative margin is exactly that padding.
+    expect(box(declarationsOf(css, ':where(button)').padding)[3]).toBe(8);
   });
 });
