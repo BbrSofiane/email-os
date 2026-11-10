@@ -8,10 +8,12 @@
  * explanation when more than the 100-conversation bound is loaded. The count is
  * announced through the app-level polite live region, not from here.
  */
+import type { BrowseContext } from '../composables/useMailbox';
+
 const props = defineProps<{
   count: number;
   loadedCount: number;
-  context: 'inbox' | 'saved' | 'done' | 'starred' | 'search';
+  context: BrowseContext;
   /** Archive/unarchive groups need the same capability gates as singles. */
   actionsEnabled?: boolean;
   /** Read groups are Gmail-only like the single setter. */

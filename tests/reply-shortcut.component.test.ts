@@ -268,7 +268,7 @@ describe('R: Reply from the reader', () => {
     await w.get('[data-test="action-query"]').setValue('Go to cached Trash');
     press({ key: 'Enter' });
     await flushPromises();
-    await w.get('button[data-id="conv-04"]').trigger('click');
+    await w.get('[data-test="conversation-row-conv-04"]').trigger('click');
     await flushPromises();
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
     press({ key: 'r' });

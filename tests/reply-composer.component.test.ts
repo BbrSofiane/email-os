@@ -312,7 +312,7 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
     expect(w.find('[data-test="search-input"]').exists()).toBe(false);
   });
 
-  it('re-docks into the drafts drawer when the reader moves off the reply source (contact recent row)', async () => {
+  it('moves into the inline compose card when the reader moves off the reply source (contact recent row)', async () => {
     const fake = createBrowserFakeMailClient();
     const w = await mountApp(fake);
     await openReaderAndPrepareReply(w);
@@ -324,8 +324,11 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
     await other!.trigger('click');
     await flushPromises();
     await waitFor(() => !w.find('[data-test="reply-composer"]').exists());
-    // The editor is still visible and protected: docked in the drafts drawer.
-    expect(w.find('[data-test="drafts-pane"]').exists()).toBe(true);
+    // The editor is still visible and protected: the same draft in the inline
+    // card, titled as the reply draft, with the reason it is not in its thread.
+    expect(w.find('[data-test="compose-card"]').exists()).toBe(true);
+    expect(w.get('[data-test="compose-card"]').attributes('aria-label')).toBe('Reply draft to ada@example.test');
+    expect(w.get('[data-test="compose-card-notice"]').text()).toBe('Source conversation not open. Editing locally; nothing is sent.');
     expect(w.find('[data-test="composer"]').exists()).toBe(true);
     expect((await fake.listDrafts())).toHaveLength(1);
     expect((await fake.listDrafts())[0]?.source).toMatchObject({ kind: 'reply' });

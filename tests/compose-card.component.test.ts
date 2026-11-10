@@ -1,9 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
+import { defineComponent, h } from 'vue';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import App from '../src/App.vue';
 import ComposeCard from '../src/components/ComposeCard.vue';
 import { browsingActions } from '../src/lib/browsing-actions';
+import { REPLY_REASONS, sourceLoadErrorReason } from '../src/lib/reply-context';
 import { actionAliases, actionGroupOf, matchesQuery } from '../src/lib/action-palette';
 import { createBrowserFakeMailClient, deferred, waitFor, type BrowserFake } from './helpers';
 import type { DraftContent, DraftReceipt, MailClient } from '../src/lib/ipc/client';
@@ -444,5 +446,68 @@ describe('compose entry points in App (inline card in the central pane)', () => 
     expect(fake.controls.activity()).toEqual([]);
     expect((w.find('[data-test="draft-body"]').element as HTMLTextAreaElement).value).toBe('e j k stay text');
     expect(w.find('[data-test="search-input"]').exists()).toBe(false);
+  });
+});
+
+describe('ComposeCard fallback reason (reply draft that cannot show its thread)', () => {
+  let wrapper: VueWrapper | null = null;
+  afterEach(() => { wrapper?.unmount(); wrapper = null; });
+  const replySource = { kind: 'reply', conversation: { accountId: 'fixture-account', conversationId: 'conv-01' }, sourceMessageId: 'm1' } as const;
+  const noticeFor = (notice: string | null) => {
+    wrapper?.unmount();
+    wrapper = mount(ComposeCard, { props: cardProps({ source: replySource, recipientLabel: 'Ada', notice }) });
+    return wrapper.find('[data-test="compose-card-notice"]');
+  };
+
+  it.each([
+    [REPLY_REASONS.noLatestMessage.text, 'Source conversation unavailable: no latest message.'],
+    [REPLY_REASONS.retainedSnapshot.text, 'Source conversation unavailable: retained snapshot.'],
+    [REPLY_REASONS.incomplete.text, 'Source conversation unavailable: incomplete cached conversation.'],
+    [REPLY_REASONS.headerMismatch.text, 'Source conversation unavailable: reply headers do not match the latest message.'],
+    [sourceLoadErrorReason('not found'), 'Source conversation unavailable: could not be loaded: not found.'],
+    [sourceLoadErrorReason(null), 'Source conversation unavailable: could not be loaded.'],
+  ])('shows the failure "%s" as "unavailable: <reason>" and keeps the sentence in the title', (reason, line) => {
+    const notice = noticeFor(reason);
+    expect(notice.text()).toBe(`${line} Editing locally; nothing is sent.`);
+    expect(notice.attributes('title')).toBe(reason);
+    expect(notice.attributes('role')).toBe('note');
+  });
+
+  it.each([
+    [REPLY_REASONS.notOpen.text, 'Source conversation not open.'],
+    [REPLY_REASONS.stillLoading.text, 'Source conversation still loading.'],
+    [REPLY_REASONS.otherAccount.text, 'Source conversation belongs to another account.'],
+  ])('states the navigation reason "%s" as a fact, never as "unavailable"', (reason, line) => {
+    const notice = noticeFor(reason);
+    expect(notice.text()).toBe(`${line} Editing locally; nothing is sent.`);
+    expect(notice.text()).not.toContain('unavailable');
+    expect(notice.attributes('title')).toBe(reason);
+    expect(notice.attributes('role')).toBe('note');
+  });
+
+  it('shows an unknown reason as written, never a vague word, and no line without a reason', () => {
+    expect(noticeFor('Something specific broke.').text()).toBe('Source conversation unavailable: Something specific broke. Editing locally; nothing is sent.');
+    expect(noticeFor(null).exists()).toBe(false);
+  });
+
+  it('describes the card by the notice through a unique id, and by nothing when there is no notice', () => {
+    const notice = noticeFor(REPLY_REASONS.notOpen.text);
+    const card = wrapper!.get('[data-test="compose-card"]');
+    const id = notice.attributes('id');
+    expect(id).toBeTruthy();
+    expect(card.attributes('aria-describedby')).toBe(id);
+    // Focus lands in To, so the field itself carries the explanation.
+    expect(wrapper!.get('[data-test="draft-to"]').attributes('aria-describedby')).toBe(id);
+    expect(card.attributes('aria-label')).toBe('Reply draft to Ada');
+    expect(wrapper!.element.querySelectorAll(`[id="${id}"]`)).toHaveLength(1);
+    // Two cards in one app never share a notice id.
+    const props = cardProps({ source: replySource, recipientLabel: 'Ada', notice: REPLY_REASONS.notOpen.text });
+    const pair = mount(defineComponent({ render: () => h('div', [h(ComposeCard, props), h(ComposeCard, props)]) }));
+    const ids = pair.findAll('[data-test="compose-card-notice"]').map((el) => el.attributes('id'));
+    expect(new Set(ids).size).toBe(2);
+    pair.unmount();
+    noticeFor(null);
+    expect(wrapper!.get('[data-test="compose-card"]').attributes('aria-describedby')).toBeUndefined();
+    expect(wrapper!.get('[data-test="draft-to"]').attributes('aria-describedby')).toBeUndefined();
   });
 });

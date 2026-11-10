@@ -27,6 +27,7 @@ import { actionLabel } from '../lib/browsing-actions';
 import { compactDateLabel, fullDateLabel, machineDateTime } from '../lib/browsing-dates';
 import { messageSnippet } from '../lib/message-snippet';
 import { revealDelta } from '../lib/reveal-in-view';
+import { replyBlockedReason as replyBlockedReasonOf } from '../lib/reply-context';
 import { bodyNeedsMonospace, splitMessageBody, type MessageBodyParts } from '../lib/message-body-format';
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, useId, watch } from 'vue';
 import HeaderGlyph from './HeaderGlyph.vue';
@@ -34,7 +35,7 @@ import MessageAttachments from './MessageAttachments.vue';
 import { useAttachmentTransfer } from '../composables/useAttachmentTransfer';
 import type { Address, Conversation, ConversationRef, DraftSource, MailClient, MailError, Message } from '../lib/ipc/client';
 import type { AttachmentDescriptor } from '../lib/ipc/generated';
-import type { DetailState } from '../composables/useMailbox';
+import type { BrowseContext, DetailState } from '../composables/useMailbox';
 
 const props = defineProps<{
   conversation: Conversation | null;
@@ -58,7 +59,7 @@ const props = defineProps<{
    * offers explicit count-labelled desired-state controls instead of the open
    * conversation's single-state toggles (mixed selections included). */
   selectionCount?: number;
-  selectionContext?: 'inbox' | 'saved' | 'done' | 'starred' | 'search';
+  selectionContext?: BrowseContext;
   /** Header slots the quiet icon actions are teleported into; inline when null. */
   backHost?: HTMLElement | null;
   actionsHost?: HTMLElement | null;
@@ -129,13 +130,7 @@ function starCoverageDetail(stars: StarCoverage): string {
 }
 
 const latestMessage = computed(() => props.conversation?.messages.at(-1) ?? null);
-const replyBlockedReason = computed(() => {
-  if (!props.conversation || !latestMessage.value) return 'No displayed latest message is available as a reply source.';
-  if (props.conversation.retainedSnapshotAt) return 'Reply preparation is blocked for a retained snapshot; current message headers cannot be verified.';
-  if (props.conversation.contextComplete === false) return 'Reply preparation is blocked because this cached conversation is incomplete.';
-  if (props.conversation.replyContext && props.conversation.replyContext.sourceMessageId !== latestMessage.value.id) return 'Reply preparation is blocked because cached reply headers do not match the displayed latest message.';
-  return null;
-});
+const replyBlockedReason = computed(() => replyBlockedReasonOf(props.conversation));
 
 const replySourceId = `reader-reply-source-${useId()}`;
 const replyTargetLabel = computed(() => latestMessage.value

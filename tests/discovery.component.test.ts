@@ -235,9 +235,10 @@ describe('UX-03 query and lifecycle guarantees', () => {
     await w.get('[data-test="draft-body"]').setValue('Exact unsaved buffer ✓');
     fixture.client.saveDraft = async () => { throw { kind: 'storage_unavailable' }; };
     await palette(w, 'Go to cached Done'); key('Enter'); await flushPromises();
-    expect(w.get('[data-test="inbox-title"]').text()).toBe('Inbox');
+    // The aborted destination leaves the Drafts context and its editor card in place.
+    expect(w.get('[data-test="inbox-title"]').text()).toBe('Drafts');
     expect((w.get('[data-test="draft-body"]').element as HTMLTextAreaElement).value).toBe('Exact unsaved buffer ✓');
-    expect(w.get('[data-test="utility-drawer"]').attributes('aria-label')).toBe('Local drafts');
+    expect(w.find('[data-test="compose-card"]').exists()).toBe(true);
     expect(fixture.doneCalls()).toBe(0);
   });
 

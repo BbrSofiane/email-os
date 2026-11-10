@@ -44,7 +44,7 @@ describe('command palette structure', () => {
   it('shows the compact bound key for each command, with chord timing in the tooltip', async () => {
     const { w } = await openPalette();
     expect(w.get('#action-done kbd').text()).toBe('G then E');
-    expect(w.get('#action-done kbd').attributes('title')).toBe('G then E (within 1 second)');
+    expect(w.get('#action-done kbd').attributes('title')).toBeUndefined();
     expect(w.get('#action-archive kbd').text()).toBe('E');
     expect(w.get('#action-unread kbd').text()).toBe('Shift+U');
   });
