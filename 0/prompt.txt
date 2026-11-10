@@ -1,0 +1,108 @@
+Task: fix the issues found by the FIRST RENDERED Impeccable critique of the reader and reply/compose UI of Email OS (Vue 3 + Tauri desktop email client, Operate-mode app UI). This branch is stacked on PR #35 (branch impeccable/reader-compose-critique-2, https://github.com/BbrSofiane/email-os/pull/35), which is not merged yet; open ONE PR for this work with base = impeccable/reader-compose-critique-2 (retarget to main once #35 merges; if #35 has already merged, rebase on origin/main and target main). The repo remote is an internal proxy that `gh` does not recognise: use `gh pr create --repo BbrSofiane/email-os ...`.
+
+READ FIRST (fully): PRODUCT.md, DESIGN.md (esp. Layout geometry > Reader, Parity gaps 17 and 18, Composer, Inputs / Fields, Reader Message Disclosures, Typography > Reading), and the critique that produced this task: /home/exedev/.t3/worktrees/email-os/impeccable-reader-compose-critique-2/.impeccable/critique/2026-11-09T20-01-29Z__src-components-readerview-vue.md (uncommitted in the other worktree, read it by that absolute path; it is the archive of the report below). Also read the Impeccable skill refs at ~/.claude/skills/impeccable/reference/{polish,layout,clarify}.md and craft-floor.md (read craft-floor immediately before editing UI), and the repo's `implement` skill / persona-feature-engineer agent (.claude/skills/implement, .claude/agents/persona-feature-engineer.md): use it for implementation, test-first (failing test, then fix). Run `pnpm install --frozen-lockfile` if node_modules is missing. Checks: `pnpm test`, `pnpm typecheck`, `pnpm exec vite build`, `~/.claude/skills/impeccable/scripts/impeccable detect --json <touched .vue files>` (style.css has 6 known pre-existing advisories; ignore 'CONTEXT_STALE' notes, do not repair them). Baseline on the parent branch: 1162 tests passed / 34 skipped (4 opt-in Chrome suites).
+
+NEW CAPABILITY vs the previous pass: a real browser exists here through the T3 preview tools (deferred; load with ToolSearch `select:mcp__t3-code__preview_open,mcp__t3-code__preview_snapshot,mcp__t3-code__preview_act,mcp__t3-code__preview_evaluate,mcp__t3-code__preview_resize,mcp__t3-code__t3_preview_close`). Start the fixture-only preview with `pnpm exec vite --port 5199 --strictPort --host 127.0.0.1` in the background, open your own tab, and MEASURE before and after each fix (getBoundingClientRect / getComputedStyle / document.activeElement) at 1280x800, 1000x700 and documentElement font-size 20px. The preview page adds a ~55px synthetic-workspace banner, so absolute y values include it. Stop the dev server and close your tab at the end. Synthetic data only; there is no Send in this product and no real provider writes.
+
+ISSUES TO FIX (from the rendered critique, 29/40; owner decisions already made: fix both P1s, keep the thread visible while replying, fix the CODE to meet the DESIGN.md claims rather than rewording them):
+1. [P1] Saving an attachment drops keyboard focus to <body>. In src/components/MessageAttachments.vue the Save button is swapped for `Saving…` + `Cancel`; pressing Enter on Save moved document.activeElement to BODY. Retry (same file) already has a focus-safe pattern (button stays mounted with aria-disabled, group takes focus on success): apply the same idea to Save/Saving…/Cancel so focus never falls to body, including when the transfer finishes or fails and when Cancel is used. The AttachmentChooser has the same Save button swap: check and fix it if it has the same flaw (it is a modal with its own focus trap). No new live regions (the status line stays quiet; saved/failed lines keep role=status / role=alert as they are). Also: the active message's toggle has no focus ring of its own (the 3px active bar is the only cue, so a keyboard user cannot tell active from focused). Propose and implement the smallest cue that keeps the One Signal Rule (e.g. a non-lavender focus treatment or a ring only when :focus-visible), measure it, and document it.
+2. [P1] The loading skeleton still jumps. Row pitch (49px) is right, but with a known row identity the first skeleton row starts ~56px lower than the first real message (measured y=244.3 vs 187.9 on a replica) because the `Loading conversation…` status line and the sender/date identity line push the rows down. DESIGN.md says the pane does not jump; make that true. Fold the status into the identity line or reserve the exact height with the loaded layout's margins; keep `Loading conversation…` text and role=status exactly (tests pin them), keep aria-hidden skeleton, keep J/K navigation smooth with no empty frame (tests/reader-navigation.smooth.test.ts). The fixture loads instantly, so to measure a REAL load you will need to slow it (e.g. delay the fixture client's getConversation via a query flag or temporary local patch that you do NOT commit, or inject the same markup into the live reader as the critique did, but prefer a real delayed load) and compare the first-skeleton-row y with the first-real-message y; add a test that pins the structure you choose.
+3. [P2] The docked reply composer covers the message it answers. With Cc/Subject open the thread scroller is 241px at 1280x800 (225px at a 20px root); the message being replied to is hidden behind its own composer (its quote sits inside the card). Keep the latest message visible: e.g. when the composer opens, scroll the replied-to (latest) message into view above the card and/or cap the card so a minimum thread strip always remains (keep `max-height: 60%` text in ReplyComposer.vue because tests grep it, or update those tests if you change the cap deliberately). Measure at 1280x800, 1000x700 and 20px root; the answered message must be visible and keyboard focus/scroll positions must stay sane.
+4. [P2] The contact pane shifts while a reply is open: a 'Composing to Ada Fixture / ada@example.test' line is inserted at the top of ContactPane (y=55 to 87), moving the contact name from y=87 to 120 and the email from 143 to 176, breaking DESIGN.md's rule (name on the tab line, email on the first-list line). Remove the line or move it below the thread list so the pinned lines never move; update ContactPane tests and DESIGN.md accordingly.
+5. [P2] Details values are ragged: `.message-field-label` has no fixed width, so From/To/Cc/Sent values start at x=126/109/111/124 while Details itself is at x=90. Give the label a fixed width (about 3rem, on-scale) or use a two-column grid so values share one x.
+6. [P2] Composer geometry: the reply composer's inner padding is 10px but the docked new-message card's is 16px; the undocked new-message card is 613px tall (139 to 752) with the footer at y=382 and ~360px of dead space (size it to content or pin sensibly); the attachment chooser's file list is indented 40px (x=328 vs 288 for the text above it, scoped style in AttachmentChooser.vue). One shared padding value; zero the chooser list indent.
+7. [P3] Identical clock glyphs: 'Remind me on this device' (reader header) and 'Reminders' (app header) are the same SVG; and two controls are both named 'Reply' (header glyph and the per-message glyph; run 1 noted the per-message one could go, but removing a visible control is a separate decision: do NOT remove it, just make the accessible names/titles distinguishable if that can be done tersely, e.g. keep 'Reply' on the header glyph and 'Reply to latest message' wording only if it does not break tests/R-hint conventions; otherwise leave and report).
+Minor, only if trivial and safe: the `Show quoted text`/`Save` ghost buttons place their text 8px inside the 90px text edge (the 8px button padding) — consider aligning the text to the inset with a negative margin like `.selection-actions`; the Esc hint beside `Save and close` is bare text; signature and quote share one style (leave).
+
+CONSTRAINTS / OUT OF SCOPE: honour PRODUCT.md 'Standing constraints' (safe literal plain text, no HTML rendering of message content, no auto-open of attachments, drafts local-only, no Send, no optimistic UI). DRAFT INTEGRITY stays deferred: do not change draft creation/dedupe/cleanup (R then Esc leaving blank drafts, resuming drafts, a Draft marker in the reader status line). Do not touch the drawer panels (DraftsPanel, ActivityPanel, RemindersPanel, CachedTrashPanel; DraftsPanel embeds DraftEditorCore, so keep its API compatible and edits minimal), AccountPanel/ProviderDestinations/first-run, search, the bulk selection bar or notice dock (another thread may be touching them; branch impeccable/drawer-panels and impeccable/account-first-run exist). Do not change the Rust DTO/wire format. Keep editable/IME shortcut protection, announcements (keep every live region quiet), focus handling, reduced-motion and J/K smoothness intact. Voice: terse, factual, sentence-case, no exclamation marks. Tokens only (no hardcoded colours), on-scale spacing and radii, :focus-visible on every new interactive element.
+
+DOCS: update DESIGN.md wherever a claim changes or is newly verified (Layout geometry > Reader, gap 17/18, Composer, ContactPane), and add a short run-4 note in a new file under .impeccable/critique/ in the existing format (see the 2026-11-08 and 2026-11-09 files there on the parent branch) with before/after MEASURED numbers.
+
+DONE MEANS: commits per logical fix on this branch with clear messages (end each commit message with `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`; end the PR body with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`), all checks green, the PR opened and linked to this thread, and a final report stating per issue: what changed, the before/after measurements from the real browser, what you rejected or could not verify, and anything deferred.
+
+---
+
+Delivery change (owner request): this work goes INTO PR #35, not a separate PR. Do NOT open a new PR. Keep working on your branch impeccable/reader-compose-followup (it cannot be checked out twice, so the local branch impeccable/reader-compose-critique-2 lives in another worktree). Commit per fix as planned. When all checks are green, run `git fetch origin && git rebase origin/impeccable/reader-compose-critique-2` (origin has one new commit, 8148c1b, which only adds the run-3 critique file under .impeccable/critique/ and does not touch your files; the file is now committed in the repo, so read it from your own checkout), re-run `pnpm test`, `pnpm typecheck`, `pnpm exec vite build`, then push with `git push origin HEAD:impeccable/reader-compose-critique-2` (a fast-forward; never force-push). PR #35 then updates by itself. Do not retarget or close the PR. Add your run-4 critique note and any DESIGN.md changes in the same commits. In your final report, state the final pushed SHA and say the work is on #35. Everything else in the original brief stands (rendered before/after measurements, out-of-scope list, test-first).
+
+---
+
+Delivery change again (owner request): PR #35 has just been MERGED into main (merge commit f361f57; it contains everything up to 8148c1b). Do NOT push to impeccable/reader-compose-critique-2 any more. New plan: when your checks are green, `git fetch origin && git rebase origin/main` (your branch impeccable/reader-compose-followup is based on the pre-merge commits, so the rebase should just replay your own commits), re-run `pnpm test`, `pnpm typecheck`, `pnpm exec vite build`, push your branch (`git push -u origin impeccable/reader-compose-followup`, no force) and open ONE new PR with base main via `gh pr create --repo BbrSofiane/email-os --base main --head impeccable/reader-compose-followup ...` (PR body ends with the 🤖 Generated with Claude Code line). Link it to this thread. Do not merge it; the owner will. Everything else in the original brief stands.
+
+---
+
+<task-notification>
+<task-id>b1phkag4s</task-id>
+<tool-use-id>toolu_014vWp4xTm5e4f8YLzMXCSvq</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-impeccable-reader-compose-followup/225e03df-31dc-4e8a-8279-c773b08e5b0a/tasks/b1phkag4s.output</output-file>
+<status>completed</status>
+<summary>Background command "pnpm exec vitest run tests/attachments.component.test.ts 2&gt;&amp;1 | grep -v "^$" | head -20" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>b9aehtts2</task-id>
+<tool-use-id>toolu_013ETsZGsaNZd8LzSBMTNZgh</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-impeccable-reader-compose-followup/225e03df-31dc-4e8a-8279-c773b08e5b0a/tasks/b9aehtts2.output</output-file>
+<status>failed</status>
+<summary>Background command "python3 - &lt;&lt;'EOF'
+p='tests/reader-geometry.test.ts'
+s=open(p).read()
+i=s.rindex("});")
+s=s[:i]+'''
+  it('gives the focused active message toggle its own non-lavender ring, so active and focused are told apart', () =&gt; {
+    const ring = declarationsOf(css, '.message.message-active .message-toggle:focus-visible');
+    // The 3px lavender bar stays the only "active" signal (One Signal Rule); keyboard focus is Paper White.
+    expect(ring.outline).toBe('2px solid var(--text-primary)');
+    expect(ring['outline-offset']).toBe('1px');
+    expect(ring.outline).not.toContain('focus-accent');
+    expect(declarationsOf(css, '.message.message-active').['box-shadow']).toBe('inset 3px 0 0 var(--focus-accent)');
+  });
+});
+'''.replace(").['box-shadow']",")['box-shadow']")
+open(p,'w').write(s)
+p='src/assets/style.css'
+s=open(p).read()
+a="""/* The active bar is the focus indicator for the message toggle: no second ring.
+   The fill, bold sender and bar remain; other controls keep the global ring. */
+.message.message-active .message-toggle:focus-visible {
+  outline: none;
+}"""
+b="""/* Active and focused are different facts: the lavender bar says "this message",
+   the ring says "the keyboard is here". The active toggle gets a Paper White ring
+   (not lavender, so the One Signal Rule holds) only on :focus-visible; other
+   controls keep the global lavender ring. */
+.message.message-active .message-toggle:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 1px;
+  border-radius: 4px;
+}"""
+assert a in s
+s=s.replace(a,b)
+open(p,'w').write(s)
+EOF
+timeout 100 pnpm exec vitest run tests/reader-geometry.test.ts 2&gt;&amp;1 | grep -E "×|Tests "" failed with exit code 143</summary>
+</task-notification>
+
+---
+
+Continue where you left off.
+
+---
+
+<task-notification>
+<task-id>bu22odt0h</task-id>
+<tool-use-id>toolu_01WwKXZgs7JYZNXwURsGqaqt</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-impeccable-reader-compose-followup/225e03df-31dc-4e8a-8279-c773b08e5b0a/tasks/bu22odt0h.output</output-file>
+<status>completed</status>
+<summary>Background command "python3 - &lt;&lt;'EOF'
+p='DESIGN.md'
+s=open(p).read()
+a="the Cc is not added to the wire format.\n\n19."
+import re
+i=s.index("\n\n19. **Reader and composer, rendered follow-up.**")
+s=s[:i]+"\n"+s[i+2:]
+open(p,'w').write(s)
+EOF
+git add -A &amp;&amp; git commit -q --amend --no-edit &amp;&amp; (timeout 580 pnpm test 2&gt;&amp;1 | tail -15)" completed (exit code 0)</summary>
+</task-notification>
