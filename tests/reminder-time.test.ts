@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { getReminderPresets, parseReminderTime } from '../src/lib/reminder-time';
 

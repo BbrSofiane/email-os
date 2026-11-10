@@ -1,5 +1,7 @@
+// @vitest-environment node
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { css, declarationsOf, resolveVars, rootToken, ruleIndexOf } from './css-contract';
 
 /**
  * Reader and composer geometry contracts (DESIGN.md "Layout geometry").
@@ -10,58 +12,13 @@ import { describe, expect, it } from 'vitest';
  * message pitch). They do not prove how a browser lays the result out.
  */
 
-const css = readFileSync('src/assets/style.css', 'utf8');
 const replyComposerSfc = readFileSync('src/components/ReplyComposer.vue', 'utf8');
 const replyComposerCss = replyComposerSfc.slice(replyComposerSfc.indexOf('<style scoped>') + '<style scoped>'.length, replyComposerSfc.indexOf('</style>'));
 
 const ROOT_FONT_PX = 16;
 
-function stripComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, '');
-}
-
-/** Selector lists of every flat rule, with its body. Nested at-rules are skipped. */
-function rulesOf(source: string): Array<{ selectors: string[]; body: string }> {
-  const out: Array<{ selectors: string[]; body: string }> = [];
-  const pattern = /([^{}]+)\{([^{}]*)\}/g;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(stripComments(source))) !== null) {
-    out.push({ selectors: (match[1] ?? '').split(',').map((s) => s.trim().replace(/\s+/g, ' ')), body: match[2] ?? '' });
-  }
-  return out;
-}
-
-/** Declarations of every rule whose selector list contains exactly `selector` (later wins). */
-function declarationsOf(source: string, selector: string): Record<string, string> {
-  const decls: Record<string, string> = {};
-  for (const rule of rulesOf(source)) {
-    if (!rule.selectors.includes(selector)) continue;
-    for (const part of rule.body.split(';')) {
-      const colon = part.indexOf(':');
-      if (colon < 0) continue;
-      decls[part.slice(0, colon).trim()] = part.slice(colon + 1).trim();
-    }
-  }
-  return decls;
-}
-
 function hasRule(source: string, selector: string): boolean {
-  return rulesOf(source).some((rule) => rule.selectors.includes(selector));
-}
-
-function rootToken(name: string): string {
-  const value = declarationsOf(css, ':root')[name];
-  if (value === undefined) throw new Error(`missing :root token ${name}`);
-  return value;
-}
-
-/** Replaces every var(--token) with its :root value, recursively. */
-function resolveVars(value: string): string {
-  let current = value;
-  for (let i = 0; i < 8 && /var\(--[\w-]+\)/.test(current); i += 1) {
-    current = current.replace(/var\((--[\w-]+)\)/g, (_all, name: string) => rootToken(name));
-  }
-  return current;
+  return ruleIndexOf(source, selector) >= 0;
 }
 
 /** Evaluates a px/rem length or calc() of them to px. */

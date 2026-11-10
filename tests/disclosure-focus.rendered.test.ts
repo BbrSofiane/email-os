@@ -14,26 +14,21 @@
  * where activation is the expected, positive outcome (rail toggles during
  * setup/teardown of the scenario, and mailbox actions after dismissal).
  *
- * Opt-in only: set EMAIL_OS_DISCLOSURE_FOCUS_CHROME to a Chrome/Chromium binary
+ * Opt-in only: set EMAIL_OS_RENDERED_LAYOUT_CHROME to a Chrome/Chromium binary
  * path to run, e.g.
  *
- *   EMAIL_OS_DISCLOSURE_FOCUS_CHROME=/path/to/chrome \
- *     pnpm vitest run tests/disclosure-focus.rendered.test.ts
+ *   EMAIL_OS_RENDERED_LAYOUT_CHROME=/path/to/chrome \
+ *     mise run test:rendered
  *
  * The test starts its own ephemeral Vite dev server and its own headless
  * Chrome profile (synthetic in-memory browser fake only — never real Gmail,
  * never real mail), and tears both down in `finally`. Default `pnpm test`
- * runs skip it (jsdom environment stays default).
+ * the default test task excludes it.
  */
-import { spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createServer, type ViteDevServer } from 'vite';
+import { startRenderedHarness, type RenderedHarness } from './rendered/chromium';
 
-const CHROME_ENV = 'EMAIL_OS_DISCLOSURE_FOCUS_CHROME';
-const chromePath = process.env[CHROME_ENV] ?? '';
+const chromePath = process.env.EMAIL_OS_RENDERED_LAYOUT_CHROME ?? '';
 
 interface Rect { x: number; y: number; width: number; height: number }
 interface FocusInfo {
@@ -45,126 +40,16 @@ interface FocusInfo {
 }
 interface ArchiveOp { conversationId: string; requestedArchived: boolean; status: string }
 
-interface CdpSession {
-  cmd(method: string, params?: Record<string, unknown>): Promise<any>;
-  js<T>(expression: string): Promise<T>;
-  close(): void;
-}
-
 describe.skipIf(chromePath === '')('App covered central surface focus safety (real Chrome, opt-in)', () => {
-  let server: ViteDevServer | null = null;
-  let appUrl = '';
-  let chrome: ReturnType<typeof spawn> | null = null;
-  let profileDir: string | null = null;
-  let cdp: CdpSession | null = null;
-  let tornDown = false;
+  let harness: RenderedHarness | null = null;
+  let cdp: RenderedHarness['cdp'];
 
   beforeAll(async () => {
-    server = await createServer({
-      root: new URL('..', import.meta.url).pathname,
-      // Inline overrides win over vite.config.ts (whose fixed port could clash).
-      server: { port: 0, strictPort: false },
-      logLevel: 'error',
-    });
-    await server.listen();
-    appUrl = server.resolvedUrls?.local?.[0] ?? '';
-    if (!appUrl) throw new Error('Vite dev server did not report a local URL');
-
-    profileDir = mkdtempSync(join(tmpdir(), 'email-os-disclosure-focus-chrome-'));
-    chrome = spawn(
-      chromePath,
-      [
-        '--headless=new',
-        '--remote-debugging-port=0',
-        '--no-first-run',
-        '--no-default-browser-check',
-        `--user-data-dir=${profileDir}`,
-        'about:blank',
-      ],
-      { stdio: 'ignore' },
-    );
-    cdp = await connectCdp(profileDir);
-    await cdp.cmd('Page.enable');
-    await cdp.cmd('Page.navigate', { url: appUrl });
-    await waitForApp(cdp);
+    harness = await startRenderedHarness(chromePath, 'email-os-disclosure-focus-chrome-', new URL('..', import.meta.url).pathname);
+    cdp = harness.cdp;
   }, 120_000);
 
-  afterAll(async () => {
-    await teardown();
-  });
-
-  async function teardown(): Promise<void> {
-    if (tornDown) return;
-    tornDown = true;
-    try { cdp?.close(); } catch { /* already closed */ }
-    cdp = null;
-    chrome?.kill();
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    chrome?.kill('SIGKILL');
-    chrome = null;
-    if (profileDir) rmSync(profileDir, { recursive: true, force: true });
-    profileDir = null;
-    await server?.close();
-    server = null;
-  }
-
-  async function connectCdp(profile: string): Promise<CdpSession> {
-    // Headless Chrome writes the chosen debugging port into DevToolsActivePort.
-    let port: string | null = null;
-    for (let i = 0; i < 100 && !port; i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      try { port = readFileSync(join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0] ?? null; } catch { /* not yet */ }
-    }
-    if (!port) throw new Error('Chrome did not expose a DevTools port');
-    const targets = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()) as Array<{ type: string; webSocketDebuggerUrl: string }>;
-    const page = targets.find((t) => t.type === 'page');
-    if (!page) throw new Error('Chrome exposed no page target');
-    const ws = new WebSocket(page.webSocketDebuggerUrl);
-    await new Promise((resolve, reject) => {
-      ws.addEventListener('open', resolve, { once: true });
-      ws.addEventListener('error', reject, { once: true });
-    });
-    let nextId = 0;
-    const waiting = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
-    ws.addEventListener('message', (event) => {
-      const message = JSON.parse(String(event.data)) as { id?: number; result?: any; error?: unknown };
-      if (message.id === undefined) return;
-      const pending = waiting.get(message.id);
-      if (!pending) return;
-      waiting.delete(message.id);
-      clearTimeout(pending.timer);
-      if (message.error) pending.reject(new Error(JSON.stringify(message.error)));
-      else pending.resolve(message.result);
-    });
-    const cmd = (method: string, params: Record<string, unknown> = {}) => new Promise<any>((resolve, reject) => {
-      const id = ++nextId;
-      const timer = setTimeout(() => { waiting.delete(id); reject(new Error(`CDP timeout: ${method}`)); }, 20_000);
-      waiting.set(id, { resolve, reject, timer });
-      ws.send(JSON.stringify({ id, method, params }));
-    });
-    return {
-      cmd,
-      async js<T>(expression: string): Promise<T> {
-        const result = await cmd('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
-        if (result?.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
-        return result.result.value as T;
-      },
-      close() { try { ws.close(); } catch { /* ignore */ } },
-    };
-  }
-
-  async function waitForApp(session: CdpSession): Promise<void> {
-    // The dev-server root mounts the default preview shell; its module graph
-    // also registers the Vue dep URL used by the bootstrap below.
-    for (let i = 0; i < 100; i += 1) {
-      const ready = await session.js<boolean>(
-        "document.querySelector('.app') !== null && performance.getEntriesByType('resource').some((x) => x.name.includes('/node_modules/.vite/deps/vue.js'))",
-      ).catch(() => false);
-      if (ready) return;
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    }
-    throw new Error('Preview app (and Vite Vue dep) did not load');
-  }
+  afterAll(async () => { await harness?.close(); });
 
   /** Replaces the default shell with a fresh synthetic browser-fake app. */
   const MOUNT_SCRIPT = `(async () => {
@@ -376,7 +261,8 @@ describe.skipIf(chromePath === '')('App covered central surface focus safety (re
       await cdp!.js('window.__focusFake.controls.flush()');
       expect(await archiveOps()).toContainEqual({ conversationId: 'conv-02', requestedArchived: true, status: 'confirmed' });
     } finally {
-      await teardown();
+      await harness?.close();
+      harness = null;
     }
   }, 180_000);
 });

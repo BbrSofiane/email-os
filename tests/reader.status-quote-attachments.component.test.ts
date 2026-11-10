@@ -4,10 +4,10 @@
  * stays literal text throughout.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
+import { flushPromises, type VueWrapper } from '@vue/test-utils';
 import { nextTick } from 'vue';
-import ReaderView from '../src/components/ReaderView.vue';
 import type { Conversation, ConversationRef, MailClient } from '../src/lib/ipc/client';
+import { mountReaderView } from './reader.mount';
 import type { AttachmentDescriptor } from '../src/lib/ipc/generated';
 import { deferred } from './helpers';
 
@@ -40,10 +40,7 @@ let wrapper: VueWrapper | null = null;
 afterEach(() => { wrapper?.unmount(); wrapper = null; document.body.innerHTML = ''; });
 
 function mountReader(conversation: Conversation, props: Record<string, unknown> = {}): VueWrapper {
-  wrapper = mount(ReaderView, {
-    props: { conversation, state: 'ready', error: null, commandInFlight: false, openRef: conversation.ref, ...props },
-    attachTo: document.body,
-  });
+  wrapper = mountReaderView(conversation, props);
   return wrapper;
 }
 
@@ -153,10 +150,7 @@ describe('reader status line and exceptions', () => {
   });
 
   it('marks the bare loading line as a status without changing its text', async () => {
-    wrapper = mount(ReaderView, {
-      props: { conversation: null, state: 'loading', error: null, commandInFlight: false, openRef: ref('c1') },
-      attachTo: document.body,
-    });
+    wrapper = mountReaderView(conversationOf('c1', []), { openRef: ref('c1') }, 'loading');
     const line = wrapper.get('[data-test="reader-loading"]');
     expect(line.text()).toBe('Loading conversation…');
     expect(line.attributes('role')).toBe('status');
@@ -532,10 +526,8 @@ describe('inline attachments', () => {
 
 describe('reader loading placeholder', () => {
   function mountLoading(props: Record<string, unknown> = {}): VueWrapper {
-    wrapper = mount(ReaderView, {
-      props: { conversation: null, state: 'loading', error: null, commandInFlight: false, openRef: null, ...props },
-      attachTo: document.body,
-    });
+    const loadingConversation = conversationOf('loading', []);
+    wrapper = mountReaderView(loadingConversation, { openRef: null, ...props }, 'loading');
     return wrapper;
   }
 
