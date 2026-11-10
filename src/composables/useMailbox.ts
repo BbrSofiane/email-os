@@ -444,6 +444,10 @@ export function useMailbox(client: MailClient): Mailbox {
       const matching = definition ? snap.conversations.filter((row) => matchesSplit(row, definition!)) : [];
       return { definition, definitionError, snap, matching };
     })();
+    // Only Inbox, Saved and the cached lists consume the projection. Drafts,
+    // Reminders and Search never await it, so a failed Inbox read must not
+    // surface as an unhandled rejection there. Awaiting callers still see it.
+    projectionRead.catch(() => {});
     const publishProjection = (projection: NonNullable<Awaited<typeof projectionRead>>): void => {
       savedSplit.value = projection.definition;
       splitError.value = projection.definitionError;

@@ -12,7 +12,7 @@
  * visible text and the full sentence in the title).
  * No Send action exists.
  */
-import { computed } from 'vue';
+import { computed, useId } from 'vue';
 import type { DraftContent, DraftRef, DraftSource, MailError } from '../lib/ipc/client';
 import { replyNoticeLine } from '../lib/reply-context';
 import DraftEditorCore from './DraftEditorCore.vue';
@@ -53,6 +53,9 @@ const noticeLine = computed(() => props.notice
   ? `${replyNoticeLine(props.notice)} Editing locally; nothing is sent.`
   : '');
 
+/** Unique per card, so the section can point at the notice. */
+const noticeId = useId();
+
 const emit = defineEmits<{
   closeEditor: [];
   setField: [field: keyof DraftContent, value: string];
@@ -73,7 +76,7 @@ function onSetField(field: keyof DraftContent, value: string): void {
 </script>
 
 <template>
-  <section class="compose-card" :aria-label="title" data-test="compose-card">
+  <section class="compose-card" :aria-label="title" :aria-describedby="notice ? noticeId : undefined" data-test="compose-card">
     <DraftEditorCore
       data-test="composer"
       autofocus="to"
@@ -117,7 +120,7 @@ function onSetField(field: keyof DraftContent, value: string): void {
           <h2 v-else>New Message</h2>
         </header>
         <!-- Honest state: the reply cannot be shown in its thread, so it is edited here. -->
-        <p v-if="notice" class="compose-card-notice" role="note" data-test="compose-card-notice" :title="notice">{{ noticeLine }}</p>
+        <p v-if="notice" :id="noticeId" class="compose-card-notice" role="note" data-test="compose-card-notice" :title="notice">{{ noticeLine }}</p>
       </template>
       <template #context>
         <!-- The fixed reply source: attributes only, never visible text. -->

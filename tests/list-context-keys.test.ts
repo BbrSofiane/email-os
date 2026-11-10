@@ -73,13 +73,37 @@ describe('G chords for Trash and Drafts', () => {
     document.body.appendChild(input);
     await key('g'); await key('d', {}, input);
     expect(title(w)).toBe('Inbox');
-    await key('g'); await key('D', { shiftKey: true });
+    await key('g'); await key('d', { shiftKey: true });
     expect(title(w)).toBe('Inbox');
     await key('g'); await key('d', { isComposing: true });
     expect(title(w)).toBe('Inbox');
     await key('g'); await key('t', { ctrlKey: true });
     expect(title(w)).toBe('Inbox');
     input.remove();
+  });
+
+  it('does not arm the chord from a button that is not the list row', async () => {
+    // Reminders: the trailing Cancel button is a button, not the row.
+    const { w } = await mountReminders();
+    expect(title(w)).toBe('Reminders');
+    const cancelButton = w.get('.context-row-actions button[aria-label^="Cancel reminder"]').element as HTMLElement;
+    cancelButton.focus();
+    await key('g', {}, cancelButton);
+    expect(w.find('[data-test="chord-hint"] .visually-hidden').exists()).toBe(false);
+    await key('d', {}, cancelButton);
+    expect(title(w)).toBe('Reminders');
+  });
+
+  it('does not arm the chord from the Confirm discard button of a Drafts row', async () => {
+    const { w } = await mountDrafts();
+    await key('Delete', {}, active());
+    const confirm = active();
+    expect(confirm.dataset.test).toBe('confirm-discard-draft');
+    await key('g', {}, confirm);
+    expect(w.find('[data-test="chord-hint"] .visually-hidden').exists()).toBe(false);
+    await key('e', {}, confirm);
+    expect(title(w)).toBe('Drafts');
+    expect(confirmOpen(w)).toHaveLength(1);
   });
 
   it('names only the available second keys in the polite hint', async () => {
