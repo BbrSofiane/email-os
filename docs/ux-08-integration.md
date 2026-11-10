@@ -57,7 +57,7 @@ UX-06 is absent. UX-07/provider search remains out of scope.
 
 ## Added synthetic cross-feature regressions
 
-- `tests/saved-split-stars.integration.test.ts` (4): filter intersection/unknowns,
+- `tests/saved-split/saved-split-stars.integration.test.ts` (4): filter intersection/unknowns,
   unfiltered totals, saved/history Back and account resets; exact noncontiguous
   Star/Unstar groups + Undo, archived cached Starred and both command families;
   cached continuation/boundary with failed split reads; stale single/frozen group
@@ -75,7 +75,7 @@ All paths below are local logs, not assertions of real-provider convergence.
 
 | Command | Result | Log |
 |---|---|---|
-| `pnpm exec vitest run tests/saved-split-stars.integration.test.ts tests/stars.component.test.ts tests/saved-split.test.ts tests/saved-split.native-sender.test.ts tests/app.saved-split-activity.test.ts tests/create-split-command.test.ts tests/unread-filter-command.test.ts tests/useMailbox.saved-split-safety.test.ts tests/split-editor.component.test.ts` | 9 files, **71 passed** | `/tmp/ux08-integration-focused-ui-final.log` |
+| `pnpm exec vitest run tests/saved-split/saved-split-stars.integration.test.ts tests/stars.component.test.ts tests/saved-split/saved-split.test.ts tests/saved-split/app-activity.test.ts tests/saved-split/create-command.test.ts tests/commands/unread-filter.test.ts tests/saved-split/useMailbox-safety.test.ts tests/saved-split/editor.test.ts` | 8 files, **71 passed** | `/tmp/ux08-integration-focused-ui-final.log` |
 | `pnpm test` | 29 files passed, 4 skipped; **514 passed, 28 skipped** | `/tmp/ux08-integration-ui-final3.log` |
 | `pnpm typecheck` | pass | `/tmp/ux08-integration-typecheck-final2.log` |
 | `pnpm build` | pass | `/tmp/ux08-integration-build-final2.log` |

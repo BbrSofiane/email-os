@@ -247,7 +247,7 @@ Final real-Chrome results (existing binary
 `/home/exedev/.cache/rod/browser/chromium-1321438/chrome`):
 
 - `EMAIL_OS_RENDERED_LAYOUT_CHROME` and `EMAIL_OS_DISCLOSURE_FOCUS_CHROME` set,
-  `pnpm exec vitest run tests/discovery.rendered.test.ts tests/reader.rendered.test.ts tests/disclosure-focus.rendered.test.ts --maxWorkers=1 --minWorkers=1`:
+  `pnpm exec vitest run tests/discovery/discovery.rendered.test.ts tests/reader/reader.rendered.test.ts tests/layout/disclosure-focus.rendered.test.ts --maxWorkers=1 --minWorkers=1`:
   **18 passed** (5 discovery, 12 reader, 1 covered-focus). Each discovery case
   initializes fresh synthetic state. Both pointer and row-origin geometry paths
   pass; real input typing produces zero mutations; real Tab/Shift+Tab remain
@@ -290,13 +290,15 @@ commit, push and PR creation only; merge/deployment remain operator-controlled.
 - Frontend: `src/App.vue`, `src/assets/style.css`,
   `src/composables/useMailbox.ts`, `src/lib/browsing-actions.ts`,
   `src/components/{ActionOverlay.vue,InboxList.vue,ReaderView.vue}`.
-- Tests/fixtures: `tests/{discovery.component.test.ts,discovery.rendered.test.ts,
-  discovery.fixture.ts,account.component.test.ts,browser-fake.test.ts,
-  drafts.component.test.ts,helpers.ts,reader.fixture.ts,tauri-client.test.ts,
-  useMailbox.test.ts}`.
+- Tests/fixtures: `tests/discovery.component.test.ts`,
+  `tests/discovery/discovery.rendered.test.ts`,
+  `tests/support/fixtures/discovery.fixture.ts`, `tests/account.component.test.ts`,
+  `tests/browser-fake/core.test.ts`, `tests/drafts.component.test.ts`,
+  `tests/helpers.ts`, `tests/support/fixtures/reader.fixture.ts`,
+  `tests/ipc/tauri-client.test.ts`, `tests/app-shell/useMailbox.test.ts`.
 - This contract/evidence document. No dependency/framework/OS package changes.
 
-Known unchanged baseline limitation: `tests/inbox-list.rendered-layout.test.ts`
+Known unchanged baseline limitation: `tests/browsing/inbox-list.rendered-layout.test.ts`
 hardcodes `30 Sept 2001`; under `LANG=C.UTF-8` Chrome renders `Sep 30, 2001`.
 Default-locale layout must not be called green. Explicit en-GB passes both
 baseline cases; this slice does not fix that unrelated locale assumption.

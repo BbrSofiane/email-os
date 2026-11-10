@@ -8,7 +8,7 @@ slug: src-components-readerview-vue-and-reply-compose
 ---
 # Critique run 2: reader + reply/compose
 
-Method: the critique input scored this area 28/40 (22 before the first pass) from source only. This run re-verified every claim by reading the code and, for each confirmed one, reproducing it in a failing test before the fix. Nothing was rendered: this VM has no browser, so layout statements come from CSS (asserted by `tests/reader-geometry.test.ts`, `tests/polish-affordances.css.test.ts`, `tests/design-typography.contract.test.ts`) and contrast ratios are computed from the tokens, not sampled. The per-heuristic table of the input critique was not supplied, so none is reproduced here.
+Method: the critique input scored this area 28/40 (22 before the first pass) from source only. This run re-verified every claim by reading the code and, for each confirmed one, reproducing it in a failing test before the fix. Nothing was rendered: this VM has no browser, so layout statements come from CSS (asserted by `tests/reader/geometry.test.ts`, `tests/layout/polish-affordances.test.ts`, `tests/layout/design-typography.test.ts`) and contrast ratios are computed from the tokens, not sampled. The per-heuristic table of the input critique was not supplied, so none is reproduced here.
 
 Out of scope and untouched: draft integrity (the P1: R then Esc leaving blank drafts, resuming drafts, a Draft marker in the reader status line, kept as the one open P1), provider handoff, the drawer panels, account/first-run, search, the selection bar and dock.
 

@@ -26,7 +26,7 @@ async function switchTo(w: VueWrapper, id: string) {
   await flushPromises();
 }
 
-describe('UX-13A independent synthetic sessions', () => {
+describe('isolates synthetic workspaces with colliding identities (UX-13A)', () => {
   it('keeps identical IDs, focus, selection, reader, Back and scroll independent; hidden keys do nothing', async () => {
     const { w, a, b, pa, pb } = await setup();
     const rowA = pa.get('[data-test="conversation-row-conv-03"]').element as HTMLElement;

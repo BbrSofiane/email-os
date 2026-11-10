@@ -101,5 +101,5 @@ if ! command -v "$EMAIL_OS_RENDERED_LAYOUT_CHROME" >/dev/null 2>&1 && [ ! -x "$E
   echo "Chrome/Chromium binary not found or not executable: $EMAIL_OS_RENDERED_LAYOUT_CHROME" >&2
   exit 1
 fi
-EMAIL_OS_RUN_RENDERED=1 pnpm vitest run --config vitest.config.ts tests/reader.rendered.test.ts tests/discovery.rendered.test.ts tests/disclosure-focus.rendered.test.ts tests/inbox-list.rendered-layout.test.ts
+EMAIL_OS_RUN_RENDERED=1 pnpm vitest run --config vitest.config.ts tests/reader/reader.rendered.test.ts tests/discovery/discovery.rendered.test.ts tests/layout/disclosure-focus.rendered.test.ts tests/browsing/inbox-list.rendered-layout.test.ts
 '''

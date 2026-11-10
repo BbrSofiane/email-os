@@ -3,7 +3,7 @@ import { mountApp, press, deferred } from './helpers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, type VueWrapper } from '@vue/test-utils';
 import type { Conversation, InboxSnapshot } from '../src/lib/ipc/client';
-import { createDiscoveryFixture } from './discovery.fixture';
+import { createDiscoveryFixture } from './support/fixtures/discovery.fixture';
 
 let wrapper: VueWrapper | null = null;
 beforeEach(useUiTestClock);
@@ -21,7 +21,7 @@ async function palette(w: VueWrapper, query = '') {
   await w.get('[data-test="action-query"]').setValue(query);
 }
 
-describe('UX-03 discovery and context history', () => {
+describe('preserves discovery focus and context history (UX-03)', () => {
   it('focuses the actual palette input, owns ordinary typing, highlights and restores origin', async () => {
     const { fixture, w } = await setup();
     const row = w.get('[data-test="conversation-row-read-02"]').element as HTMLElement;
@@ -158,7 +158,7 @@ describe('UX-03 discovery and context history', () => {
   });
 });
 
-describe('UX-03 query and lifecycle guarantees', () => {
+describe('revalidates query and lifecycle targets (UX-03)', () => {
   it('handles an empty page with nextCursor, loads more, resolves focus, and retains independent Activity', async () => {
     const fixture = createDiscoveryFixture();
     await fixture.seedDone();

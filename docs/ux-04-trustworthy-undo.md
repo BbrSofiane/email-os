@@ -246,7 +246,7 @@ status; Z precedence (palette/editor/overlay/reader disclosure → no undo,
 BROWSE-10 style); Z in reader; focus return after undo; last/only-row archive
 then undo (BROWSE-08); `superseded` re-pointing; `expired` messaging;
 ActivityPanel renders `cancelled` and `undo_of` linkage; contract shape in
-`tauri-client.test.ts`; `check:contract`, `typecheck`, `build:web` green.
+`tests/ipc/tauri-client.test.ts`; `check:contract`, `typecheck`, `build:web` green.
 
 Mac fixture gate (extends the UX-03 checklist; pending until run): real `Z`
 after E on a known row; `Z` inside the palette input types a character and

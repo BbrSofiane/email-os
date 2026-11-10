@@ -146,12 +146,12 @@ operations. Assertions use the fake's actual snapshot/detail/operation shapes.
 
 Focused implementation-lane commands (all passed, no failures in these runs):
 
-- `mise run test:ui -- tests/workspaces.component.test.ts tests/discovery.component.test.ts tests/browser-fake.accounts.test.ts tests/tauri-client.test.ts`
+- `mise run test:ui -- tests/workspaces.component.test.ts tests/discovery.component.test.ts tests/browser-fake/accounts.test.ts tests/ipc/tauri-client.test.ts`
   — **40 tests passed**, including eight workspace tests.
-- `mise run test:ui -- tests/app.component.test.ts tests/app.selection.test.ts tests/drafts.component.test.ts`
+- `mise run test:ui -- tests/app-shell/shell.test.ts tests/app-shell/selection.test.ts tests/drafts.component.test.ts`
   — **147 tests passed** (shortcut, selection and draft lifecycle regressions).
 - `mise run typecheck` — passed.
-- `EMAIL_OS_RENDERED_LAYOUT_CHROME='/Applications/Comet.app/Contents/MacOS/Comet' mise run test:ui -- tests/discovery.rendered.test.ts`
+- `EMAIL_OS_RENDERED_LAYOUT_CHROME='/Applications/Comet.app/Contents/MacOS/Comet' mise run test:ui -- tests/discovery/discovery.rendered.test.ts`
   — **7/7 rendered journeys passed**, using the existing harness's isolated
   temporary profile, cleaned up on teardown.
 - `git diff --check` — passed.
@@ -192,7 +192,7 @@ Accepted, not fixed:
 
 Re-run after these changes: `mise run check` (450 UI tests, 22 opt-in skipped;
 core/clippy/typecheck/contract drift) and `mise run build:web` passed;
-`tests/discovery.rendered.test.ts` 7/7 with the local Chrome-family harness.
+`tests/discovery/discovery.rendered.test.ts` 7/7 with the local Chrome-family harness.
 No native/provider evidence was added.
 
 ### Native compile/bridge only
