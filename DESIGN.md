@@ -252,6 +252,11 @@ This is the backlog for layout, typeset and polish passes. Each gap names what s
    - **Type:** localized quote attributions, monospace only for aligned prose, the 15px reading role, grapheme-safe snippets.
    - **Kept as is:** the subject (16px, 600) over the body (15px, 400) separates by weight, position and the sender row between them; changing the size would break the Headline role and the Two-Size Rule, and nothing can be measured without a render. If a render shows the subject blending in, try tone before size.
    - **Not done:** draft integrity (blank drafts after R then Esc, resuming drafts, a Draft marker in the reader) is deferred; the blocked-reply notices and `Cancel reply preparation` keep the word "preparation"; Cc is not added to the wire format.
+19. **Reader and composer, rendered follow-up.** Done (2026-11-10, measured in a browser at 1280×800, 1000×700 and a 20px root; the Gmail meta-row variant and the quote toggle on replicas). Each item is described where it lives; this entry is the index. Run notes: `.impeccable/critique/` (run 4).
+   - **Focus:** Save/Saving…/Cancel keep keyboard focus in the reader list and the chooser; the focused active message toggle has a Paper White ring beside the lavender bar (Reader Message Disclosures, Layout geometry > Reader).
+   - **Geometry:** the loading skeleton starts where the first message will (0.0px, was 56.4px); the docked reply keeps the message being answered in view; the contact pane never moves while a reply is open; Details values share one x; one composer padding; the undocked card is content-sized; the chooser lists are flush (Composer, Contact pane, Reader).
+   - **Glyphs and names:** Reminders is a bell, Remind me is the clock; the per-message reply glyph is `Reply to latest message`.
+   - **Not done:** draft integrity stays deferred; the Esc hint, signature and quote styles are unchanged.
 
 ## 2. Colors
 
