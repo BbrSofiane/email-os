@@ -334,7 +334,7 @@ read-only reviewers. Nothing here certifies native WKWebView behavior.
 
 | Configured command | Result |
 | --- | --- |
-| `mise run test:core` | 199 passed (106 unit; 2 cached_done; 7 draft_core; 8 gmail_auth_contract; 30 gmail_cache_sync; 15 gmail_operations; 16 integration; 15 new `tests/undo.rs`) |
+| `mise run test:core` | 199 passed (106 unit; 2 cached_done; 7 draft_core; 8 gmail_auth_contract; 30 gmail_cache_sync; 15 gmail_operations; 16 integration; 15 new `crates/mail-core/tests/undo.rs`) |
 | `mise run check:contract` | exit 0 |
 | `mise run lint:core` | exit 0 |
 | `mise run test:ui` | 335 passed / 20 opt-in browser tests skipped |
@@ -404,7 +404,7 @@ Integrated gate results after the fix pass (parent, logs `/tmp/ux04-fixpass/`):
 
 | Configured command | Result |
 | --- | --- |
-| `mise run test:core` | 201 passed (17 in `tests/undo.rs`); no gmail_operations flake observed |
+| `mise run test:core` | 201 passed (17 in `crates/mail-core/tests/undo.rs`); no gmail_operations flake observed |
 | `mise run check:contract` | exit 0 (no DTO change in the fix pass) |
 | `mise run lint:core` | exit 0 |
 | `mise run test:ui` | 359 passed / 20 opt-in browser tests skipped |
