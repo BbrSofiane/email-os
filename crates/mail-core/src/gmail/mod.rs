@@ -2,6 +2,7 @@
 pub mod auth;
 pub mod browsing;
 pub mod operations;
+mod parse;
 pub mod provider;
 pub mod secrets;
 pub mod store;
