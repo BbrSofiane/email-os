@@ -706,9 +706,8 @@ fn url_encode(value: &str) -> String {
     url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
-pub(super) use super::parse::{
-    optional_array, optional_string, parse_history, parse_json, parse_thread, str_field,
-};
+pub(super) use super::parse::parse_thread;
+use super::parse::{optional_array, optional_string, parse_history, parse_json, str_field};
 
 fn map_status(status: StatusCode) -> MailError {
     match status.as_u16() {
