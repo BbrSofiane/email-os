@@ -1,0 +1,52 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M74AVM3CYEBBNH4GVZT1AK1Z",
+  "session_id": "51d622e1-6ef8-4cf7-94af-6048a9823193",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-11T03:36:37.325795648Z",
+  "branch": "maintenance/p4-synthetic-provider-spike",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "docs/adr/0002-fixture-as-synthetic-provider.md"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5-2",
+  "turn_id": "4d4b45faded7",
+  "checkpoint_transcript_start": 1248,
+  "transcript_lines_at_start": 1248,
+  "compact_transcript_start": 181,
+  "token_usage": {
+    "input_tokens": 26,
+    "cache_creation_tokens": 25228,
+    "cache_read_tokens": 5778601,
+    "output_tokens": 9515,
+    "api_call_count": 12
+  },
+  "session_metrics": {
+    "turn_count": 2
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-11T03:36:37.120339233Z",
+    "agent_lines": 137,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 137,
+    "total_lines_changed": 137,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 23,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".codex/hooks.json": 23
+      }
+    }
+  ]
+}
