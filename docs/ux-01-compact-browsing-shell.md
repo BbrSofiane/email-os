@@ -37,16 +37,18 @@ What shipped:
 - Non-selectable chronological date group headings derived in the viewer's
   calendar; they never reorder the backend's rows and are never actionable or
   tabbable.
-- Account/Activity/Drafts moved into explicit labelled utility disclosures with
+- Account/Activity moved into explicit labelled utility disclosures with
   keyboard-operable entry/close controls, Escape precedence, and focus
-  restoration. The drafts editor routes to the drafts disclosure; close
+  restoration. Drafts started as a third disclosure and is now a list context in
+  the main pane (see DESIGN.md gap 21): a draft opens in the inline compose card
+  or, for a reply, in the docked composer of its source thread. Close
   protection and draft recovery states remain visible or one click away; every
-  user departure from an active drafts drawer (Close, another utility,
+  user departure from an active draft editor (another context, a utility,
   Contact, Inbox) goes through the protected flush-and-close lifecycle and
   keeps the exact editor buffer visible on failure instead of leaving a hidden
   editor owning the keyboard. Utility and contact disclosures are mutually
   exclusive, and draft save or close failures remain recoverable even when the
-  drafts drawer is not the visible surface.
+  editor's surface is not the visible one.
 
 Explicitly out of scope (unchanged from the plan's non-goals): message-level
 focus/expansion (UX-02), bulk selection, Undo, command palette, search, saved

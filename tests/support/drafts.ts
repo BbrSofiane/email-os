@@ -13,6 +13,13 @@ export async function mountDraftsApp(fake: BrowserFake, client: MailClient = fak
   return mounted;
 }
 
+/** Mount the app in its initial Inbox context for draft navigation tests. */
+export async function mountDraftsContextApp(fake: BrowserFake, client: MailClient = fake): Promise<VueWrapper> {
+  const mounted = mountApp(client, 'browser-preview', { attachTo: document.body });
+  await flushPromises();
+  return mounted;
+}
+
 export async function startNewDraft(w: VueWrapper): Promise<void> {
   await w.find('[data-test="new-draft"]').trigger('click');
   await advanceUiUntil(() => w.find('[data-test="composer"]').exists());

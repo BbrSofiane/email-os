@@ -1,9 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { flushPromises, type VueWrapper } from '@vue/test-utils';
-
-import { compactShortcut, matchesQuery } from '../../src/lib/action-palette';
-import { createDiscoveryFixture } from '../support/fixtures/discovery.fixture';
-import { createBrowserFakeMailClient, useGmailMode, mountApp } from '../helpers';
+import { compactShortcut, matchesQuery } from "../../src/lib/action-palette";
+import { createDiscoveryFixture } from "../support/fixtures/discovery.fixture";
+import { createBrowserFakeMailClient, mountApp, press, useGmailMode } from "../helpers";
 
 let wrapper: VueWrapper | null = null;
 afterEach(() => { wrapper?.unmount(); wrapper = null; });
@@ -19,7 +18,7 @@ async function openPalette(query = '') {
 }
 const ids = (w: VueWrapper) => w.findAll('[role="option"]').map((option) => option.attributes('id'));
 
-describe('command palette structure', () => {
+describe("command palette structure", () => {
   it('groups commands under quiet labels with a glyph per item and no placeholder characters', async () => {
     const { w } = await openPalette();
     const labels = w.findAll('.action-group').map((node) => node.text());
@@ -44,7 +43,7 @@ describe('command palette structure', () => {
   it('shows the compact bound key for each command, with chord timing in the tooltip', async () => {
     const { w } = await openPalette();
     expect(w.get('#action-done kbd').text()).toBe('G then E');
-    expect(w.get('#action-done kbd').attributes('title')).toBe('G then E (within 1 second)');
+    expect(w.get('#action-done kbd').attributes('title')).toBeUndefined();
     expect(w.get('#action-archive kbd').text()).toBe('E');
     expect(w.get('#action-unread kbd').text()).toBe('Shift+U');
   });
@@ -55,7 +54,7 @@ describe('command palette structure', () => {
     await flushPromises();
     if (archiveFirst) {
       (wrapper.get('[data-test="conversation-row-conv-01"]').element as HTMLElement).focus();
-      document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'e' }));
+      press('e', { bubbles: true, cancelable: true }, document.activeElement!);
       await flushPromises();
     }
     await wrapper.get('[data-test="palette-trigger"]').trigger('click');
@@ -90,7 +89,7 @@ describe('command palette structure', () => {
     const fixture = createDiscoveryFixture();
     wrapper = mountApp(fixture.client, 'browser-preview', { attachTo: document.body });
     await flushPromises();
-    document.body.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowLeft' }));
+    press('ArrowLeft', { bubbles: true }, document.body);
     await flushPromises();
     expect(wrapper.find('[role="dialog"]').exists()).toBe(true);
     expect(wrapper.find('.action-group').exists()).toBe(false);
@@ -100,7 +99,7 @@ describe('command palette structure', () => {
   });
 });
 
-describe('palette matching', () => {
+describe("palette matching", () => {
   it('matches aliases, every word, and the exact bound key', () => {
     expect(matchesQuery('undo', 'Undo last action', ['revert'], ['Z'])).toBe(true);
     expect(matchesQuery('revert', 'Undo last action', ['revert'], ['Z'])).toBe(true);

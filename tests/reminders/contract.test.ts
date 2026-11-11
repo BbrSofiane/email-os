@@ -1,8 +1,8 @@
-import { flushPromises, mount } from '@vue/test-utils';
+import { flushPromises } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
-import RemindersPanel from '../../src/components/RemindersPanel.vue';
-import { createBrowserFakeMailClient } from '../../src/lib/ipc/browser-fake';
-import { parseReminderTime } from '../../src/lib/reminder-time';
+import { mountReminders } from "./helpers";
+import { createBrowserFakeMailClient } from "../../src/lib/ipc/browser-fake";
+import { parseReminderTime } from "../../src/lib/reminder-time";
 
 const now = '2025-01-06T09:00:00.000Z';
 const matrix = [
@@ -31,7 +31,7 @@ async function fixture(mode: 'gmail' | 'fixture' = 'gmail') {
     condition: 'regardless' as const, expectedRevision: null as number | null, requestId: 'schedule' };
   return { client, command };
 }
-describe('reminder timestamp native admission contract', () => {
+describe("reminder timestamp native admission contract", () => {
   it.each(matrix)('%s: parser=%s, transport=%s', async (input, parsed, admitted) => {
     const result = parseReminderTime(input, new Date(now), { hour: 8, minute: 0 });
     expect(result.ok).toBe(parsed);
@@ -46,7 +46,7 @@ describe('reminder timestamp native admission contract', () => {
     }
   });
 });
-describe.each(['gmail', 'fixture'] as const)('%s reminder error contract', mode => {
+describe.each(['gmail', 'fixture'] as const)("%s reminder error contract", mode => {
   it.each(['', 'x'.repeat(129), 'é'.repeat(65)])('validates put/cancel request IDs by UTF-8 bytes: %s', async requestId => {
     const { client, command } = await fixture(mode);
     await expect(client.reminders!.put({ ...command, requestId })).rejects.toEqual({ kind: 'invalid_request', field: 'requestId' });
@@ -115,9 +115,9 @@ it('rejects pending read intent even when Inbox membership is unchanged', async 
   await client.controls.flush();
   expect(await client.reminders!.put(command)).toMatchObject({ phase: 'pending' });
 });
-it('routes Gmail membership rejection through the panel conflict branch, without stale-source recovery', async () => {
+it('routes Gmail membership rejection through the list conflict branch, without stale-source recovery', async () => {
   const { client, command } = await fixture();
-  const panel = mount(RemindersPanel, { props: { client, target: command.conversation }, global: { stubs: { Teleport: true } } });
+  const m = mountReminders(client, { target: command.conversation }); const panel = m.wrapper;
   try {
     await flushPromises();
     await client.enableMailboxActions();
@@ -127,5 +127,5 @@ it('routes Gmail membership rejection through the panel conflict branch, without
     await flushPromises();
     expect(panel.text()).toContain('This reminder is no longer actionable.');
     expect(panel.text()).not.toContain('Retry preparation / refresh conversation');
-  } finally { panel.unmount(); }
+  } finally { m.unmount(); }
 });

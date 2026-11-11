@@ -481,8 +481,9 @@ convergence (BROWSE-18) additionally requires the approved disposable account.
 Gmail mode exposes **Go to cached Trash (read only)** in Commands and Destinations.
 This lists known locally cached TRASH conversations, including operation-retained
 snapshots; it does not discover Gmail Trash or claim mailbox-complete coverage.
-Refresh is explicit, pagination is bounded, and Back preserves the loaded local
-browsing state. Trash-origin readers omit mailbox actions and Reply. Opening
+It is a list context in the main pane (Done and Starred are its siblings), not a
+drawer. It follows cache changes like Done, pagination is bounded, and Back
+preserves the loaded local browsing state. Trash-origin readers omit mailbox actions and Reply. Opening
 never marks read. The native fixture profile rejects this Gmail-only query;
 browser-preview fixtures can simulate it in memory.
 

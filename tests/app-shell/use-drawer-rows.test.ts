@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { defineComponent, h, ref } from 'vue';
 import { mount, type VueWrapper } from '@vue/test-utils';
-import { useDrawerRows } from '../src/composables/useDrawerRows';
+import { press as dispatchKey } from '../helpers';
+import { useDrawerRows } from '../../src/composables/useDrawerRows';
 
 /**
  * A minimal drawer: three rows (real buttons), a trailing action button that is
@@ -30,38 +31,36 @@ function mountHarness(initial: string | null = null): VueWrapper {
   wrapper = mount(Harness, { props: { initial }, attachTo: document.body });
   return wrapper;
 }
-function press(w: VueWrapper, test: string, key: string, init: KeyboardEventInit = {}): KeyboardEvent {
+function focusTarget(w: VueWrapper, test: string): HTMLElement {
   const el = w.get(`[data-test="${test}"]`).element as HTMLElement;
   el.focus();
-  const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init });
-  el.dispatchEvent(event);
-  return event;
+  return el;
 }
 const active = () => (document.activeElement as HTMLElement | null)?.dataset.test;
 
 describe('useDrawerRows', () => {
   it('moves with ArrowDown/ArrowUp and J/K (any case) and stops at both ends', () => {
     const w = mountHarness();
-    expect(press(w, 'row-a', 'ArrowDown').defaultPrevented).toBe(true);
+    expect(dispatchKey('ArrowDown', { bubbles: true, cancelable: true }, focusTarget(w, 'row-a')).defaultPrevented).toBe(true);
     expect(active()).toBe('row-b');
-    press(w, 'row-b', 'j');
+    dispatchKey('j', { bubbles: true, cancelable: true }, focusTarget(w, 'row-b'));
     expect(active()).toBe('row-c');
     // No wrap at the end.
-    press(w, 'row-c', 'J');
+    dispatchKey('J', { bubbles: true, cancelable: true }, focusTarget(w, 'row-c'));
     expect(active()).toBe('row-c');
-    press(w, 'row-c', 'ArrowUp');
+    dispatchKey('ArrowUp', { bubbles: true, cancelable: true }, focusTarget(w, 'row-c'));
     expect(active()).toBe('row-b');
-    press(w, 'row-b', 'k');
+    dispatchKey('k', { bubbles: true, cancelable: true }, focusTarget(w, 'row-b'));
     expect(active()).toBe('row-a');
-    press(w, 'row-a', 'K');
+    dispatchKey('K', { bubbles: true, cancelable: true }, focusTarget(w, 'row-a'));
     expect(active()).toBe('row-a');
   });
 
   it('jumps with Home and End', () => {
     const w = mountHarness();
-    press(w, 'row-b', 'End');
+    dispatchKey('End', { bubbles: true, cancelable: true }, focusTarget(w, 'row-b'));
     expect(active()).toBe('row-c');
-    press(w, 'row-c', 'Home');
+    dispatchKey('Home', { bubbles: true, cancelable: true }, focusTarget(w, 'row-c'));
     expect(active()).toBe('row-a');
   });
 
@@ -69,7 +68,7 @@ describe('useDrawerRows', () => {
     const w = mountHarness();
     const tabs = () => ['a', 'b', 'c'].map((key) => w.get(`[data-test="row-${key}"]`).attributes('tabindex'));
     expect(tabs()).toEqual(['0', '-1', '-1']);
-    press(w, 'row-a', 'j');
+    dispatchKey('j', { bubbles: true, cancelable: true }, focusTarget(w, 'row-a'));
     await w.vm.$nextTick();
     expect(tabs()).toEqual(['-1', '0', '-1']);
     // Trailing buttons carry no tabindex of their own: they stay Tab-reachable.
@@ -83,10 +82,10 @@ describe('useDrawerRows', () => {
 
   it('ignores editable targets, IME composition, modifiers and Shift', () => {
     const w = mountHarness();
-    expect(press(w, 'field', 'j').defaultPrevented).toBe(false);
+    expect(dispatchKey('j', { bubbles: true, cancelable: true }, focusTarget(w, 'field')).defaultPrevented).toBe(false);
     expect(active()).toBe('field');
     for (const init of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }, { shiftKey: true }, { isComposing: true }, { keyCode: 229 }] as KeyboardEventInit[]) {
-      const event = press(w, 'row-a', 'ArrowDown', init);
+      const event = dispatchKey('ArrowDown', { bubbles: true, cancelable: true, ...init }, focusTarget(w, 'row-a'));
       expect(event.defaultPrevented).toBe(false);
       expect(active()).toBe('row-a');
     }
@@ -94,15 +93,15 @@ describe('useDrawerRows', () => {
 
   it('ignores a target that is not a row marker, so trailing buttons keep native keys', () => {
     const w = mountHarness();
-    const event = press(w, 'act-a', 'j');
+    const event = dispatchKey('j', { bubbles: true, cancelable: true }, focusTarget(w, 'act-a'));
     expect(event.defaultPrevented).toBe(false);
     expect(active()).toBe('act-a');
-    expect(press(w, 'act-a', 'ArrowDown').defaultPrevented).toBe(false);
+    expect(dispatchKey('ArrowDown', { bubbles: true, cancelable: true }, focusTarget(w, 'act-a')).defaultPrevented).toBe(false);
   });
 
   it('leaves Enter, Space and Escape alone and lets Enter activate the row natively', async () => {
     const w = mountHarness();
-    for (const key of ['Enter', ' ', 'Escape', 'Tab']) expect(press(w, 'row-a', key).defaultPrevented).toBe(false);
+    for (const key of ['Enter', ' ', 'Escape', 'Tab']) expect(dispatchKey(key, { bubbles: true, cancelable: true }, focusTarget(w, 'row-a')).defaultPrevented).toBe(false);
     // jsdom has no layout: a real click is what Enter produces on a button.
     let clicks = 0;
     w.get('[data-test="row-a"]').element.addEventListener('click', () => { clicks += 1; });
@@ -113,7 +112,7 @@ describe('useDrawerRows', () => {
   it('skips disabled rows', async () => {
     const w = mountHarness();
     (w.get('[data-test="row-b"]').element as HTMLButtonElement).disabled = true;
-    press(w, 'row-a', 'ArrowDown');
+    dispatchKey('ArrowDown', { bubbles: true, cancelable: true }, focusTarget(w, 'row-a'));
     expect(active()).toBe('row-c');
   });
 });
