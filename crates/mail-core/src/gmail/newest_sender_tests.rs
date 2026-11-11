@@ -379,7 +379,7 @@ fn newest_sender_provider_storage_and_membership_wire_contract() {
     store
         .lock_conn()
         .unwrap()
-        .execute_batch("ALTER TABLE gmail_conversations DROP COLUMN newest_sender_json")
+        .execute_batch("ALTER TABLE gmail_conversations DROP COLUMN newest_sender_json; UPDATE meta SET value = 'gmail-2' WHERE key = 'schema_version';")
         .unwrap();
     drop(store);
     let store = GmailStore::open(dir.path(), Arc::new(SystemClock)).unwrap();

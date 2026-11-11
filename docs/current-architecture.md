@@ -14,6 +14,18 @@ The fixture `MailCore` in [lib.rs](../crates/mail-core/src/lib.rs) owns a SQLite
 
 Gmail mode is implemented separately in [gmail/sync.rs](../crates/mail-core/src/gmail/sync.rs), [gmail/store.rs](../crates/mail-core/src/gmail/store.rs), [gmail/operations.rs](../crates/mail-core/src/gmail/operations.rs), and [gmail/provider.rs](../crates/mail-core/src/gmail/provider.rs). The sync service owns the Gmail cache and coordinates provider reads and queued operations. SQLite transactions persist local state; network calls occur through the provider path. OAuth flow, token access, and secret storage are in [gmail/auth.rs](../crates/mail-core/src/gmail/auth.rs) and [gmail/secrets.rs](../crates/mail-core/src/gmail/secrets.rs). The service exposes account status and sync state through DTOs. Runtime success on a supported macOS installation is a separate validation question; see [current status](current-status.md).
 
+Gmail schema upgrades are owned by `gmail/store_schema.rs`. The authoritative
+`meta.schema_version` advances through `gmail-migrations-1` to
+`gmail-migrations-9`, with each stage's DDL, backfills and marker in one
+transaction. Pre-numbered `gmail-1` and `gmail-2` profiles had ambiguous physical
+layouts, so only those historical migration bodies inspect optional columns.
+An already-current profile performs no migration writes. Fresh profiles use the
+canonical schema captured from the pre-change store. Unknown or newer markers
+fail before schema changes. Startup crash recovery runs explicitly after
+migration: globally applying operations become uncertain and lose `last_error`.
+Reconnect recovery remains account-scoped and additionally clears `failure`;
+these distinct semantics are preserved.
+
 Drafts are stored in a separate `<selected-profile>/local-drafts` SQLite database by [drafts/store.rs](../crates/mail-core/src/drafts/store.rs), with revision and account identity types in [drafts/types.rs](../crates/mail-core/src/drafts/types.rs). The store uses WAL and FULL synchronous mode. Saves and deletes are revision-checked and return receipts after commit; deletion records request tombstones so a late save cannot recreate a removed draft. The frontend draft composable and editor coordinate local edits, acknowledged saves, and error recovery in [useDrafts.ts](../src/composables/useDrafts.ts), [DraftEditorCore.vue](../src/components/DraftEditorCore.vue), and [ReplyComposer.vue](../src/components/ReplyComposer.vue). Drafts remain local to the profile and do not sync to Gmail.
 
 The native close path uses a request/acknowledgement gate in [close_gate.rs](../src-tauri/src/close_gate.rs). The shell asks the frontend to flush and close dirty draft state; the frontend acknowledges only after the latest save is committed, and cancels close when save fails. Frontend coordination lives in [App.vue](../src/App.vue) and the draft composable. The governing contract is [vertical slice 04](vertical-slice-04.md).

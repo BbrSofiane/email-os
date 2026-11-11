@@ -33,7 +33,13 @@ use crate::groups::{GroupMemberRejection, OperationGroupReceipt, OperationGroupS
 /// discovery/history pass. Disclosed to the wire through `SyncInfo.coverageLimit`.
 pub(crate) const DISCOVERY_CAP: usize = 100;
 
-const SCHEMA_VERSION: &str = "gmail-2";
+const SCHEMA_VERSION: &str = "gmail-migrations-9";
+
+#[cfg(test)]
+#[path = "migration_tests.rs"]
+mod migration_tests;
+#[path = "store_schema.rs"]
+mod schema;
 
 /// Outcome of a checkpointed write. [`Commit::Discarded`] means the write
 /// lost a disconnect race: the account was cleared mid-pass, so the stale
@@ -168,367 +174,27 @@ impl GmailStore {
             injected_persistence_failure: AtomicBool::new(false),
         };
         store.migrate()?;
+        store.recover_interrupted_operations_on_startup()?;
         Ok(store)
     }
 
     fn migrate(&self) -> Result<(), MailError> {
         let mut conn = self.lock_conn()?;
+        schema::migrate(&mut conn)
+    }
+
+    fn recover_interrupted_operations_on_startup(&self) -> Result<(), MailError> {
+        let mut conn = self.lock_conn()?;
         let tx = conn
             .transaction()
             .map_err(|_| MailError::StorageUnavailable)?;
-        tx.execute_batch(
-            "CREATE TABLE IF NOT EXISTS meta (
-                key   TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS gmail_destination_snapshots (
-                account_id TEXT NOT NULL,
-                destination_id TEXT NOT NULL,
-                snapshot_json TEXT NOT NULL,
-                PRIMARY KEY(account_id, destination_id)
-            );
-            CREATE TABLE IF NOT EXISTS gmail_reminders (
-                account_id TEXT NOT NULL,
-                conversation_id TEXT NOT NULL,
-                data TEXT NOT NULL,
-                baseline_ids TEXT NOT NULL,
-                snapshot_json TEXT NOT NULL,
-                PRIMARY KEY(account_id, conversation_id)
-            );
-            CREATE TABLE IF NOT EXISTS gmail_reminder_requests (
-                account_id TEXT NOT NULL,
-                request_id TEXT NOT NULL,
-                payload TEXT NOT NULL,
-                receipt TEXT NOT NULL,
-                PRIMARY KEY(account_id, request_id)
-            );
-            CREATE TABLE IF NOT EXISTS gmail_conversations (
-                account_id         TEXT NOT NULL,
-                conversation_id    TEXT NOT NULL,
-                subject            TEXT NOT NULL,
-                context_complete   INTEGER NOT NULL CHECK (context_complete IN (0, 1)),
-                unsupported_reason TEXT,
-                reply_context_json  TEXT,
-                PRIMARY KEY (account_id, conversation_id)
-            );
-            CREATE TABLE IF NOT EXISTS gmail_messages (
-                account_id      TEXT NOT NULL,
-                conversation_id TEXT NOT NULL,
-                message_id      TEXT NOT NULL,
-                from_display    TEXT,
-                from_mailbox    TEXT NOT NULL,
-                to_json         TEXT NOT NULL,
-                sent_at         TEXT NOT NULL,
-                body_text       TEXT NOT NULL,
-                in_inbox        INTEGER NOT NULL CHECK (in_inbox IN (0, 1)),
-                PRIMARY KEY (account_id, conversation_id, message_id)
-            );
-            CREATE TABLE IF NOT EXISTS gmail_discovery_seen (
-                conversation_id TEXT PRIMARY KEY
-            );
-            CREATE TABLE IF NOT EXISTS gmail_inbox_membership (
-                account_id      TEXT NOT NULL,
-                conversation_id TEXT NOT NULL,
-                message_id      TEXT NOT NULL,
-                PRIMARY KEY (account_id, conversation_id, message_id)
-            );
-            CREATE TABLE IF NOT EXISTS gmail_message_facts (
-                account_id TEXT NOT NULL,
-                conversation_id TEXT NOT NULL,
-                message_id TEXT NOT NULL,
-                in_inbox INTEGER,
-                is_unread INTEGER,
-                PRIMARY KEY (account_id, conversation_id, message_id)
-            );
-            CREATE TABLE IF NOT EXISTS gmail_operations (
-                account_id TEXT NOT NULL,
-                operation_id TEXT NOT NULL,
-                conversation_id TEXT NOT NULL,
-                kind TEXT NOT NULL,
-                requested_value INTEGER NOT NULL,
-                status TEXT NOT NULL,
-                failure TEXT,
-                last_error TEXT,
-                accepted_seq INTEGER NOT NULL,
-                accepted_at TEXT NOT NULL,
-                request_id TEXT NOT NULL,
-                PRIMARY KEY (account_id, operation_id)
-            );
-            CREATE TABLE IF NOT EXISTS gmail_operation_targets (
-                account_id TEXT NOT NULL,
-                operation_id TEXT NOT NULL,
-                conversation_id TEXT NOT NULL,
-                message_id TEXT NOT NULL,
-                PRIMARY KEY (account_id, operation_id, message_id)
-            );
-            CREATE TABLE IF NOT EXISTS gmail_operation_requests (
-                account_id TEXT NOT NULL,
-                request_id TEXT NOT NULL,
-                payload TEXT NOT NULL,
-                operation_id TEXT NOT NULL,
-                accepted_at TEXT,
-                PRIMARY KEY (account_id, request_id)
-            );
-            CREATE TABLE IF NOT EXISTS gmail_operation_preimages (
-                account_id TEXT NOT NULL,
-                operation_id TEXT NOT NULL,
-                message_id TEXT NOT NULL,
-                prior_value INTEGER NULL CHECK (prior_value IN (0, 1)),
-                PRIMARY KEY (account_id, operation_id, message_id)
-            );
-            CREATE TABLE IF NOT EXISTS gmail_operation_snapshots (
-                account_id TEXT NOT NULL,
-                conversation_id TEXT NOT NULL,
-                snapshot_json TEXT NOT NULL,
-                snapshot_saved_at TEXT NOT NULL,
-                PRIMARY KEY (account_id, conversation_id)
-            );
-            CREATE TABLE IF NOT EXISTS gmail_operation_groups (
-                group_id      TEXT PRIMARY KEY,
-                account_id    TEXT NOT NULL,
-                request_id    TEXT NOT NULL,
-                kind          TEXT NOT NULL,
-                requested_value INTEGER NOT NULL CHECK (requested_value IN (0, 1)),
-                accepted_at   TEXT NOT NULL,
-                undone_at     TEXT,
-                group_seq     INTEGER NOT NULL,
-                UNIQUE (account_id, request_id)
-            );
-            CREATE TABLE IF NOT EXISTS gmail_operation_group_members (
-                account_id      TEXT NOT NULL,
-                group_id        TEXT NOT NULL,
-                ordinal         INTEGER NOT NULL,
-                conversation_id TEXT NOT NULL,
-                operation_id    TEXT,
-                rejection       TEXT,
-                undo_decision   TEXT,
-                undo_skip_reason TEXT,
-                undo_operation_ids TEXT,
-                PRIMARY KEY (account_id, group_id, ordinal)
-            );",
-        )
-        .map_err(|_| MailError::StorageUnavailable)?;
-
-        // Additive nullable facts; legacy membership remains unknown.
-        for column in ["is_starred", "in_trash", "in_spam"] {
-            let mut stmt = tx
-                .prepare("PRAGMA table_info(gmail_message_facts)")
-                .map_err(|_| MailError::StorageUnavailable)?;
-            let columns = stmt
-                .query_map([], |row| row.get::<_, String>(1))
-                .map_err(|_| MailError::StorageUnavailable)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|_| MailError::StorageUnavailable)?;
-            if !columns.iter().any(|name| name == column) {
-                tx.execute(
-                    &format!("ALTER TABLE gmail_message_facts ADD COLUMN {column} INTEGER"),
-                    [],
-                )
-                .map_err(|_| MailError::StorageUnavailable)?;
-            }
-        }
-
-        // P5a: per-message attachment presence, known at provider parse time.
-        // Nullable: legacy cached message rows stay NULL = unknown (never a
-        // guessed false), freshly parsed rows store the observed 0/1.
-        if !has_column(&tx, "gmail_messages", "has_attachment")? {
-            tx.execute(
-                "ALTER TABLE gmail_messages ADD COLUMN has_attachment INTEGER",
-                [],
-            )
-            .map_err(|_| MailError::StorageUnavailable)?;
-        }
-
-        let has_attachments = {
-            let mut stmt = tx
-                .prepare("PRAGMA table_info(gmail_conversations)")
-                .map_err(|_| MailError::StorageUnavailable)?;
-            let columns = stmt
-                .query_map([], |row| row.get::<_, String>(1))
-                .map_err(|_| MailError::StorageUnavailable)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|_| MailError::StorageUnavailable)?;
-            columns.iter().any(|c| c == "attachments_json")
-        };
-        if !has_attachments {
-            tx.execute(
-                "ALTER TABLE gmail_conversations ADD COLUMN attachments_json TEXT",
-                [],
-            )
-            .map_err(|_| MailError::StorageUnavailable)?;
-        }
-        let has_reply_context_column = {
-            let mut stmt = tx
-                .prepare("PRAGMA table_info(gmail_conversations)")
-                .map_err(|_| MailError::StorageUnavailable)?;
-            let columns = stmt
-                .query_map([], |row| row.get::<_, String>(1))
-                .map_err(|_| MailError::StorageUnavailable)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|_| MailError::StorageUnavailable)?;
-            columns.iter().any(|column| column == "reply_context_json")
-        };
-        if !has_reply_context_column {
-            tx.execute(
-                "ALTER TABLE gmail_conversations ADD COLUMN reply_context_json TEXT",
-                [],
-            )
-            .map_err(|_| MailError::StorageUnavailable)?;
-        }
-
-        // Legacy caches retained only renderable messages; never backfill their sender.
-        let has_newest_sender = {
-            let mut stmt = tx
-                .prepare("PRAGMA table_info(gmail_conversations)")
-                .map_err(|_| MailError::StorageUnavailable)?;
-            let columns = stmt
-                .query_map([], |row| row.get::<_, String>(1))
-                .map_err(|_| MailError::StorageUnavailable)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|_| MailError::StorageUnavailable)?;
-            columns.iter().any(|column| column == "newest_sender_json")
-        };
-        if !has_newest_sender {
-            tx.execute(
-                "ALTER TABLE gmail_conversations ADD COLUMN newest_sender_json TEXT",
-                [],
-            )
-            .map_err(|_| MailError::StorageUnavailable)?;
-        }
-
-        let has_snapshot_sort_column = {
-            let mut stmt = tx
-                .prepare("PRAGMA table_info(gmail_operation_snapshots)")
-                .map_err(|_| MailError::StorageUnavailable)?;
-            let columns = stmt
-                .query_map([], |row| row.get::<_, String>(1))
-                .map_err(|_| MailError::StorageUnavailable)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|_| MailError::StorageUnavailable)?;
-            columns.iter().any(|column| column == "last_message_at")
-        };
-        if !has_snapshot_sort_column {
-            // One-time additive migration; page reads never parse unselected bodies.
-            tx.execute_batch("ALTER TABLE gmail_operation_snapshots ADD COLUMN last_message_at TEXT NOT NULL DEFAULT '';
-                UPDATE gmail_operation_snapshots SET last_message_at = COALESCE(json_extract(snapshot_json, '$.messages[#-1].sentAt'), '');")
-                .map_err(|_| MailError::StorageUnavailable)?;
-        }
-
-        let has_undo_of_column = {
-            let mut stmt = tx
-                .prepare("PRAGMA table_info(gmail_operations)")
-                .map_err(|_| MailError::StorageUnavailable)?;
-            let columns = stmt
-                .query_map([], |row| row.get::<_, String>(1))
-                .map_err(|_| MailError::StorageUnavailable)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|_| MailError::StorageUnavailable)?;
-            columns.iter().any(|column| column == "undo_of")
-        };
-        if !has_undo_of_column {
-            // Undo of the latest operation (docs/ux-04-trustworthy-undo.md §3.5):
-            // the id of the operation this row compensates, NULL otherwise.
-            tx.execute("ALTER TABLE gmail_operations ADD COLUMN undo_of TEXT", [])
-                .map_err(|_| MailError::StorageUnavailable)?;
-        }
-        let has_request_accepted_at_column = {
-            let mut stmt = tx
-                .prepare("PRAGMA table_info(gmail_operation_requests)")
-                .map_err(|_| MailError::StorageUnavailable)?;
-            let columns = stmt
-                .query_map([], |row| row.get::<_, String>(1))
-                .map_err(|_| MailError::StorageUnavailable)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|_| MailError::StorageUnavailable)?;
-            columns.iter().any(|column| column == "accepted_at")
-        };
-        if !has_request_accepted_at_column {
-            // Only undo requests need their own acceptance time persisted so an
-            // idempotent replay reconstructs the exact committed receipt.
-            tx.execute(
-                "ALTER TABLE gmail_operation_requests ADD COLUMN accepted_at TEXT",
-                [],
-            )
-            .map_err(|_| MailError::StorageUnavailable)?;
-        }
-        // UX-05 (docs/ux-05-safe-bulk-processing.md §4.2): group tables come
-        // from the idempotent batch above; operations gain their top-level
-        // action-order identity and retry linkage. Backfill: standalone
-        // setters are their own action; compensations belong to none.
-        // Existing operations, requests, preimages and undo links are
-        // preserved untouched.
-        if !has_column(&tx, "gmail_operations", "action_id")? {
-            tx.execute("ALTER TABLE gmail_operations ADD COLUMN action_id TEXT", [])
-                .map_err(|_| MailError::StorageUnavailable)?;
-        }
-        if !has_column(&tx, "gmail_operations", "retry_of")? {
-            tx.execute("ALTER TABLE gmail_operations ADD COLUMN retry_of TEXT", [])
-                .map_err(|_| MailError::StorageUnavailable)?;
-        }
-        tx.execute(
-            "UPDATE gmail_operations SET action_id = operation_id
-             WHERE undo_of IS NULL AND action_id IS NULL",
-            [],
-        )
-        .map_err(|_| MailError::StorageUnavailable)?;
-
-        let version: Option<String> = meta_get(&tx, "schema_version")?;
-        match version.as_deref() {
-            Some(v) if v == SCHEMA_VERSION || v == "gmail-1" => {}
-            Some(_) => return Err(MailError::StorageUnavailable),
-            None => {
-                tx.execute(
-                    "INSERT INTO meta (key, value) VALUES ('schema_version', ?1)",
-                    params![SCHEMA_VERSION],
-                )
-                .map_err(|_| MailError::StorageUnavailable)?;
-            }
-        }
-        // Existing profiles stored INBOX membership on renderable message rows.
-        // Preserve those facts while allowing unsupported messages to keep
-        // membership without a decoded body row.
-        tx.execute(
-            "INSERT OR IGNORE INTO gmail_inbox_membership
-             (account_id, conversation_id, message_id)
-             SELECT account_id, conversation_id, message_id FROM gmail_messages WHERE in_inbox = 1",
-            [],
-        )
-        .map_err(|_| MailError::StorageUnavailable)?;
-        tx.execute(
-            "INSERT OR IGNORE INTO gmail_message_facts
-             (account_id, conversation_id, message_id, in_inbox, is_unread)
-             SELECT account_id, conversation_id, message_id, in_inbox, NULL FROM gmail_messages",
-            [],
-        )
-        .map_err(|_| MailError::StorageUnavailable)?;
-        tx.execute(
-            "INSERT OR IGNORE INTO gmail_message_facts
-             (account_id, conversation_id, message_id, in_inbox, is_unread)
-             SELECT account_id, conversation_id, message_id, 1, NULL FROM gmail_inbox_membership",
-            [],
-        )
-        .map_err(|_| MailError::StorageUnavailable)?;
-        tx.execute_batch(
-            "CREATE TABLE IF NOT EXISTS gmail_search_cache (
-            account_id TEXT NOT NULL, conversation_id TEXT NOT NULL, seq INTEGER NOT NULL,
-            PRIMARY KEY(account_id, conversation_id));",
-        )
-        .map_err(|_| MailError::StorageUnavailable)?;
-        // A process crash after claiming a setter is uncertain, never a safe
-        // reason to replay it. Reconciliation precedes any explicit retry.
         tx.execute(
             "UPDATE gmail_operations SET status = 'outcome_unknown', last_error = NULL
              WHERE status = 'applying'",
             [],
         )
         .map_err(|_| MailError::StorageUnavailable)?;
-        tx.execute(
-            "INSERT OR IGNORE INTO meta (key, value) VALUES ('generation', '0')",
-            [],
-        )
-        .map_err(|_| MailError::StorageUnavailable)?;
-        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
-        Ok(())
+        tx.commit().map_err(|_| MailError::StorageUnavailable)
     }
 
     /// Fail-closed gate; under `cfg(test)` it can simulate persistence loss.
@@ -5376,7 +5042,12 @@ mod tests {
             .expect("query schema");
         let rows = statement
             .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
             })
             .expect("read schema");
         let normalized = rows
@@ -5386,8 +5057,12 @@ mod tests {
                 format!("{kind}|{name}|{table}|{sql}")
             })
             .collect::<Vec<_>>()
-            .join("\n") + "\n";
-        assert_eq!(normalized, include_str!("../../tests/fixtures/gmail-current-schema.txt"));
+            .join("\n")
+            + "\n";
+        assert_eq!(
+            normalized,
+            include_str!("../../tests/fixtures/gmail-current-schema.txt")
+        );
     }
 
     use crate::testing::profile;
@@ -6529,7 +6204,7 @@ mod tests {
         {
             let conn = store.lock_conn().unwrap();
             conn.execute("INSERT INTO gmail_message_facts (account_id, conversation_id, message_id, in_inbox, is_unread) VALUES ('a', 'c', 'm', 0, 1)", []).unwrap();
-            conn.execute_batch("ALTER TABLE gmail_message_facts DROP COLUMN in_trash; ALTER TABLE gmail_message_facts DROP COLUMN in_spam;").unwrap();
+            conn.execute_batch("ALTER TABLE gmail_message_facts DROP COLUMN in_trash; ALTER TABLE gmail_message_facts DROP COLUMN in_spam; UPDATE meta SET value = 'gmail-2' WHERE key = 'schema_version';").unwrap();
         }
         drop(store);
         let reopened = GmailStore::open(dir.path(), Arc::new(SystemClock)).unwrap();
@@ -6680,6 +6355,7 @@ mod tests {
                 [],
             )
             .expect("simulate legacy schema");
+        legacy.execute("UPDATE meta SET value = 'gmail-2' WHERE key = 'schema_version'", []).unwrap();
         drop(legacy);
         let migrated =
             GmailStore::open(dir.path(), Arc::new(SystemClock)).expect("additive migration");
@@ -6961,7 +6637,7 @@ mod tests {
         // backfills the table from its existing message rows.
         let legacy = Connection::open(dir.path().join("gmail.db")).expect("open legacy db");
         legacy
-            .execute_batch("DROP TABLE gmail_inbox_membership")
+            .execute_batch("DROP TABLE gmail_inbox_membership; UPDATE meta SET value = 'gmail-1' WHERE key = 'schema_version';")
             .expect("remove newly introduced table");
         drop(legacy);
         let migrated = GmailStore::open(dir.path(), Arc::new(SystemClock)).expect("migrated store");
@@ -7716,6 +7392,7 @@ mod tests {
             .unwrap();
             conn.execute("DELETE FROM gmail_conversations WHERE account_id = 'acct' AND conversation_id = 'a'", []).unwrap();
             // Simulate a pre-UX03 profile: reopen must backfill lightweight sort metadata.
+            conn.execute("UPDATE meta SET value = 'gmail-2' WHERE key = 'schema_version'", []).unwrap();
             conn.execute(
                 "ALTER TABLE gmail_operation_snapshots DROP COLUMN last_message_at",
                 [],
