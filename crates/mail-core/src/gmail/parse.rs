@@ -8,12 +8,17 @@ use base64::Engine;
 use serde_json::Value;
 use std::collections::HashSet;
 
+/// Bound on one decoded MIME part body we will parse; larger bodies are
+/// disclosed as unsupported instead of being parsed.
 pub(super) const MAX_PART_BODY_BYTES: usize = 1024 * 1024;
+/// Bound on one decoded text body, in characters.
 pub(super) const MAX_MESSAGE_TEXT_CHARS: usize = 256 * 1024;
+/// Recursion bound on Gmail payload trees (hostile/deep structures).
 pub(super) const MAX_PAYLOAD_DEPTH: usize = 10;
-pub(super) const MAX_HISTORY_RECORDS: usize = 10_000;
-pub(super) const MAX_CHANGED_THREAD_IDS: usize = 1_000;
-pub(super) const MAX_DELETED_MESSAGE_IDS: usize = 5_000;
+/// Bound on work retained from one nested Gmail history response.
+const MAX_HISTORY_RECORDS: usize = 10_000;
+const MAX_CHANGED_THREAD_IDS: usize = 1_000;
+const MAX_DELETED_MESSAGE_IDS: usize = 5_000;
 
 pub(super) fn parse_json(body: &str) -> Result<Value, MailError> {
     let value: Value =
@@ -936,6 +941,10 @@ pub(super) fn parse_history(body: &str) -> Result<HistoryPage, MailError> {
         history_id,
     })
 }
+
+#[cfg(test)]
+#[path = "parse/tests.rs"]
+mod tests;
 
 #[cfg(test)]
 #[path = "reply_context_tests.rs"]
