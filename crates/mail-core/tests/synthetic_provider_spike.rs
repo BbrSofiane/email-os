@@ -477,6 +477,8 @@ fn synthetic_provider_catalog_archive_undo_restart_and_local_reminder() {
         .unwrap()
         .id
         .clone();
+    let provider_facts_before_reminder: HashMap<String, bool> =
+        serde_json::from_slice(&fs::read(&facts).unwrap()).unwrap();
     restarted
         .put_reminder(&PutReminder {
             conversation: ref_for("conv-05"),
@@ -499,10 +501,12 @@ fn synthetic_provider_catalog_archive_undo_restart_and_local_reminder() {
     );
     assert!(
         !restarted
-            .get_conversation(&ref_for("conv-05"))
+            .list_conversations()
             .unwrap()
-            .is_in_inbox,
-        "reminder hides the Gmail conversation locally"
+            .conversations
+            .iter()
+            .any(|c| c.conversation_ref.conversation_id == "conv-05"),
+        "pending reminder hides the conversation from GmailCore's Inbox projection"
     );
     clock.advance_seconds(61);
     restarted.request_sync().unwrap();
@@ -518,17 +522,18 @@ fn synthetic_provider_catalog_archive_undo_restart_and_local_reminder() {
     );
     assert!(
         restarted
-            .get_conversation(&ref_for("conv-05"))
+            .list_conversations()
             .unwrap()
-            .is_in_inbox,
-        "returned reminder makes the conversation visible again"
+            .conversations
+            .iter()
+            .any(|c| c.conversation_ref.conversation_id == "conv-05"),
+        "returned reminder releases the local Inbox overlay"
     );
-    assert!(
-        !fs::read(&facts)
-            .ok()
-            .and_then(|b| serde_json::from_slice::<HashMap<String, bool>>(&b).ok())
-            .is_some_and(|m| m.get("conv-05") == Some(&true)),
-        "local reminder did not mutate provider archive facts"
+    let provider_facts_after_reminder: HashMap<String, bool> =
+        serde_json::from_slice(&fs::read(&facts).unwrap()).unwrap();
+    assert_eq!(
+        provider_facts_after_reminder, provider_facts_before_reminder,
+        "local reminder must not mutate Gmail archive facts"
     );
     restarted.stop();
     drop(restarted);
