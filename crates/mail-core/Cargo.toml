@@ -6,6 +6,9 @@ rust-version = "1.89"
 description = "Headless fixture mail core: concrete SQLite store, seed-once synthetic inbox, serial cancellable archive worker, serde/ts-rs DTOs"
 license = "UNLICENSED"
 
+[features]
+test-support = ["dep:tempfile"]
+
 [dependencies]
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
@@ -22,6 +25,11 @@ url = "2"
 mailparse = "0.16"
 charset = "0.1"
 webbrowser = "1"
+tempfile = { version = "3", optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+mail_core = { package = "mail-core", path = ".", features = ["test-support"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", default-features = false, features = ["apple-native"] }

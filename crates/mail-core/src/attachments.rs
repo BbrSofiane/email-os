@@ -219,24 +219,16 @@ pub fn descriptors(
 }
 
 #[cfg(test)]
-pub(crate) struct TestDirectory(std::path::PathBuf);
+pub(crate) struct TestDirectory(tempfile::TempDir);
 #[cfg(test)]
 impl TestDirectory {
     pub(crate) fn path(&self) -> &Path {
-        &self.0
-    }
-}
-#[cfg(test)]
-impl Drop for TestDirectory {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        self.0.path()
     }
 }
 #[cfg(test)]
 pub(crate) fn test_directory() -> TestDirectory {
-    let path = std::env::temp_dir().join(format!("email-os-attachments-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir(&path).unwrap();
-    TestDirectory(path)
+    TestDirectory(tempfile::tempdir().unwrap())
 }
 
 #[cfg(test)]

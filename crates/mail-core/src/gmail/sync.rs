@@ -2624,174 +2624,51 @@ fn retained_thread_bytes(thread: &GmailThread) -> usize {
 #[cfg(test)]
 mod worker_halt_tests {
     use super::*;
-    use crate::dto::{Address, Message};
-    use crate::gmail::types::{GmailHistoryError, GmailProfile, HistoryPage, InboxPage};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use crate::gmail::types::{GmailProfile, HistoryPage};
 
     const TEST_ACCOUNT: &str = "halt-test-account";
     const TEST_THREAD: &str = "halt-test-thread";
 
-    struct ProviderState {
-        block_history: bool,
-        history_started: bool,
-        writes: usize,
-        mutation_granted: bool,
-        auth_expired: bool,
-        include_reply: bool,
-        archived: bool,
-        incomplete: bool,
-        fail_history: bool,
-        history_calls: usize,
-        block_thread: bool,
-        thread_started: bool,
+    type HaltTestProvider = crate::testing::operations_fake::FakeProvider;
+
+    fn provider() -> Arc<HaltTestProvider> {
+        HaltTestProvider::with_halt_thread(test_thread())
     }
 
-    struct HaltTestProvider {
-        mutation_hook: Mutex<Option<Box<dyn FnOnce() + Send>>>,
-        search_error: Mutex<Option<MailError>>,
-        search_hook: Mutex<Option<Box<dyn FnOnce() + Send>>>,
-        search_reads: std::sync::atomic::AtomicUsize,
-        state: Mutex<ProviderState>,
-        wake: Condvar,
-    }
-
-    impl HaltTestProvider {
-        fn new() -> Arc<Self> {
-            Arc::new(Self {
-                mutation_hook: Mutex::new(None),
-                search_error: Mutex::new(None),
-                search_hook: Mutex::new(None),
-                search_reads: std::sync::atomic::AtomicUsize::new(0),
-                state: Mutex::new(ProviderState {
-                    block_history: false,
-                    history_started: false,
-                    writes: 0,
-                    mutation_granted: true,
-                    auth_expired: false,
-                    include_reply: false,
-                    archived: false,
-                    incomplete: false,
-                    fail_history: false,
-                    history_calls: 0,
-                    block_thread: false,
-                    thread_started: false,
-                }),
-                wake: Condvar::new(),
-            })
-        }
-
-        fn block_history(&self) {
-            let mut state = self.state.lock().unwrap();
-            state.block_history = true;
-            state.history_started = false;
-        }
-
-        fn wait_for_history(&self) -> bool {
-            let deadline = Instant::now() + Duration::from_secs(5);
-            let mut state = self.state.lock().unwrap();
-            while !state.history_started {
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                if remaining.is_zero() {
-                    return false;
-                }
-                let (next, _) = self.wake.wait_timeout(state, remaining).unwrap();
-                state = next;
-            }
-            true
-        }
-
-        fn release_history(&self) {
-            let mut state = self.state.lock().unwrap();
-            state.block_history = false;
-            drop(state);
-            self.wake.notify_all();
-        }
-
-        fn writes(&self) -> usize {
-            self.state.lock().unwrap().writes
-        }
-
-        fn set_mutation_access(&self, granted: bool) {
-            self.state.lock().unwrap().mutation_granted = granted;
-        }
-    }
-
-    fn until(mut predicate: impl FnMut() -> bool) -> bool {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            if predicate() {
-                return true;
-            }
-            if Instant::now() >= deadline {
-                return predicate();
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-    }
+    use crate::testing::until;
 
     fn test_profile() -> GmailProfile {
-        GmailProfile {
-            account_id: TEST_ACCOUNT.to_string(),
-            email_address: "halt@example.test".to_string(),
-            history_id: "history-1".to_string(),
-        }
+        crate::testing::profile(TEST_ACCOUNT, "halt@example.test", "history-1")
     }
 
     fn test_thread() -> GmailThread {
-        GmailThread {
-            star_facts: None,
-            newest_sender: None,
-            attachments: Vec::new(),
-            conversation: Conversation {
-                stars: None,
-                conversation_ref: ConversationRef {
-                    account_id: TEST_ACCOUNT.to_string(),
-                    conversation_id: TEST_THREAD.to_string(),
-                },
-                subject: "synthetic halt test".to_string(),
-                messages: vec![Message {
-                    id: "message-1".to_string(),
-                    from: Address {
-                        display_name: None,
-                        mailbox: "sender@example.test".to_string(),
-                    },
-                    to: vec![],
-                    sent_at: "2026-01-01T00:00:00Z".to_string(),
-                    body_text: "synthetic body".to_string(),
-                    has_attachment: None,
-                }],
-                is_in_inbox: true,
-                is_read: Some(true),
-                context_complete: Some(true),
-                unsupported_reason: None,
-                retained_snapshot_at: None,
-                reply_context: None,
-                pending_operation_id: None,
-            },
-            inbox_message_ids: vec!["message-1".to_string()],
-            message_ids: Some(vec!["message-1".to_string()]),
-            unread_message_ids: Some(vec![]),
-            trash_message_ids: None,
-            spam_message_ids: None,
-            history_id: "history-1".to_string(),
-        }
+        let message = crate::testing::message(
+            "message-1",
+            "sender@example.test",
+            "2026-01-01T00:00:00Z",
+            "synthetic body",
+        );
+        let mut thread = crate::testing::thread(
+            TEST_ACCOUNT,
+            TEST_THREAD,
+            vec![message],
+            &["message-1"],
+            Some(vec![]),
+            "history-1",
+        );
+        thread.conversation.subject = "synthetic halt test".to_string();
+        thread.conversation.is_read = Some(true);
+        thread
     }
 
     #[test]
     fn gmail_no_reply_deadline_defers_offline_then_uses_fresh_thread_read() {
         use crate::reminders::{PutReminder, ReminderCondition, ReminderPhase};
-        let dir = std::env::temp_dir().join(format!(
-            "mail-core-gmail-reminder-worker-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let dir = crate::testing::temp_profile("gmail-reminder-worker");
         let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let store = GmailStore::open(&dir, clock.clone()).unwrap();
+        let store = GmailStore::open(dir.path(), clock.clone()).unwrap();
         store.begin_account(&test_profile(), 0).unwrap();
         store
             .apply_discovery_page(
@@ -2816,7 +2693,7 @@ mod worker_halt_tests {
             })
             .unwrap();
         clock.advance_seconds(60);
-        let provider = HaltTestProvider::new();
+        let provider = provider();
         let ctrl = Arc::new(Ctrl {
             state: Mutex::new(CtrlState {
                 stop: false,
@@ -2882,23 +2759,22 @@ mod worker_halt_tests {
             "new external message IDs in fresh thread evidence suppress a conditional reminder"
         );
         assert_eq!(
-            provider.state.lock().unwrap().writes,
+            provider.state.lock().unwrap().halt_writes,
             0,
             "reminder handling performs no provider mutation"
         );
         drop(store);
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn due_read_reconciles_external_archive_without_provider_writes() {
         use crate::reminders::{PutReminder, ReminderCondition, ReminderPhase};
-        let dir = std::env::temp_dir().join(format!("due-archive-{}", uuid::Uuid::new_v4()));
+        let dir = crate::testing::temp_profile("due-archive");
         let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let provider = HaltTestProvider::new();
-        let core = GmailCore::open_with_clock(&dir, provider.clone(), clock.clone()).unwrap();
+        let provider = provider();
+        let core = GmailCore::open_with_clock(dir.path(), provider.clone(), clock.clone()).unwrap();
         assert!(until(|| core
             .list_conversations()
             .is_ok_and(|s| s.conversations.len() == 1)));
@@ -2924,22 +2800,20 @@ mod worker_halt_tests {
             core.list_conversations().unwrap().conversations.is_empty(),
             "fresh external archive must survive local reminder return"
         );
-        assert_eq!(provider.writes(), 0);
+        assert_eq!(provider.halt_writes(), 0);
         core.stop();
         drop(core);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn reminder_wakes_do_not_starve_sync_recovery() {
         use crate::reminders::{PutReminder, ReminderCondition, ReminderPhase};
-        let dir =
-            std::env::temp_dir().join(format!("sync-reminder-retry-{}", uuid::Uuid::new_v4()));
+        let dir = crate::testing::temp_profile("sync-reminder-retry");
         let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let provider = HaltTestProvider::new();
-        let core = GmailCore::open_with_clock(&dir, provider.clone(), clock.clone()).unwrap();
+        let provider = provider();
+        let core = GmailCore::open_with_clock(dir.path(), provider.clone(), clock.clone()).unwrap();
         assert!(until(|| core
             .list_conversations()
             .is_ok_and(|s| s.conversations.len() == 1)));
@@ -2971,39 +2845,37 @@ mod worker_halt_tests {
             .ctrl
             .wait_until_idle(Duration::from_secs(5))
             .unwrap();
-        let calls = provider.state.lock().unwrap().history_calls;
+        let calls = provider.state.lock().unwrap().halt_history_calls;
         provider.state.lock().unwrap().fail_history = false;
         // 120s sync backoff becomes 1.2s; overdue reminder retries are 0.6s.
         std::thread::sleep(Duration::from_millis(700));
         assert_eq!(
-            provider.state.lock().unwrap().history_calls,
+            provider.state.lock().unwrap().halt_history_calls,
             calls,
             "reminder wake must not shorten sync backoff"
         );
         assert!(
-            until(|| provider.state.lock().unwrap().history_calls > calls),
+            until(|| provider.state.lock().unwrap().halt_history_calls > calls),
             "periodic sync must recover while reminder evidence stays incomplete"
         );
         assert_eq!(
             core.list_reminders().unwrap()[0].phase,
             ReminderPhase::Pending
         );
-        assert_eq!(provider.writes(), 0);
+        assert_eq!(provider.halt_writes(), 0);
         core.stop();
         drop(core);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn local_reminder_worker_reschedules_deadline_and_catches_up_after_reopen() {
         use crate::reminders::{PutReminder, ReminderCondition, ReminderPhase};
-        let dir =
-            std::env::temp_dir().join(format!("reminder-worker-public-{}", uuid::Uuid::new_v4()));
+        let dir = crate::testing::temp_profile("reminder-worker-public");
         let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let provider = HaltTestProvider::new();
-        let core = GmailCore::open_with_clock(&dir, provider.clone(), clock.clone()).unwrap();
+        let provider = provider();
+        let core = GmailCore::open_with_clock(dir.path(), provider.clone(), clock.clone()).unwrap();
         assert!(until(|| core
             .account_status()
             .is_ok_and(|s| s.sync.initial_sync_complete)
@@ -3075,7 +2947,7 @@ mod worker_halt_tests {
         core.stop();
         drop(core);
         clock.advance_seconds(2);
-        let reopened = GmailCore::open_with_clock(&dir, provider.clone(), clock).unwrap();
+        let reopened = GmailCore::open_with_clock(dir.path(), provider.clone(), clock).unwrap();
         assert!(until(|| reopened
             .list_reminders()
             .is_ok_and(|r| r[0].phase == ReminderPhase::Returned)));
@@ -3083,23 +2955,22 @@ mod worker_halt_tests {
             reopened.list_reminders().unwrap()[0].revision,
             next.revision + 1
         );
-        assert_eq!(provider.writes(), 0);
+        assert_eq!(provider.halt_writes(), 0);
         reopened.stop();
         drop(reopened);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn local_reminder_thread_read_is_cancelled_on_stop_and_disconnect() {
         use crate::reminders::{PutReminder, ReminderCondition, ReminderPhase};
         for disconnect in [false, true] {
-            let dir =
-                std::env::temp_dir().join(format!("reminder-read-cancel-{}", uuid::Uuid::new_v4()));
+            let dir = crate::testing::temp_profile("reminder-read-cancel");
             let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
                 "2026-01-01T00:00:00Z",
             )));
-            let provider = HaltTestProvider::new();
-            let core = GmailCore::open_with_clock(&dir, provider.clone(), clock.clone()).unwrap();
+            let provider = provider();
+            let core =
+                GmailCore::open_with_clock(dir.path(), provider.clone(), clock.clone()).unwrap();
             assert!(until(|| core
                 .account_status()
                 .is_ok_and(|s| s.sync.initial_sync_complete)
@@ -3136,214 +3007,18 @@ mod worker_halt_tests {
                     ReminderPhase::Pending
                 );
             }
-            assert_eq!(provider.writes(), 0);
+            assert_eq!(provider.halt_writes(), 0);
             core.stop();
             drop(core);
-            std::fs::remove_dir_all(dir).unwrap();
-        }
-    }
-
-    impl GmailReadProvider for HaltTestProvider {
-        fn mutation_access(&self) -> Result<bool, MailError> {
-            let hook = self.mutation_hook.lock().unwrap().take();
-            if let Some(hook) = hook {
-                hook();
-            }
-            Ok(self.state.lock().unwrap().mutation_granted)
-        }
-
-        fn apply_read(
-            &self,
-            _message_ids: &[String],
-            _read: bool,
-            _cancel: &CancelToken,
-        ) -> Result<(), MailError> {
-            self.state.lock().unwrap().writes += 1;
-            Ok(())
-        }
-
-        fn apply_archive(
-            &self,
-            _message_ids: &[String],
-            _archived: bool,
-            _cancel: &CancelToken,
-        ) -> Result<(), MailError> {
-            self.state.lock().unwrap().writes += 1;
-            Ok(())
-        }
-
-        fn is_configured(&self) -> bool {
-            true
-        }
-
-        fn has_credentials(&self) -> Result<bool, MailError> {
-            Ok(true)
-        }
-
-        fn connect(&self, _cancel: &CancelToken) -> Result<GmailProfile, MailError> {
-            Ok(test_profile())
-        }
-
-        fn disconnect(&self) -> Result<(), MailError> {
-            Ok(())
-        }
-
-        fn profile(&self, _cancel: &CancelToken) -> Result<GmailProfile, MailError> {
-            Ok(test_profile())
-        }
-
-        fn list_inbox(
-            &self,
-            _page_token: Option<&str>,
-            _cancel: &CancelToken,
-        ) -> Result<InboxPage, MailError> {
-            Ok(InboxPage {
-                thread_ids: vec![TEST_THREAD.to_string()],
-                next_page_token: None,
-            })
-        }
-
-        fn search_threads(
-            &self,
-            page: Option<&str>,
-            _cancel: &CancelToken,
-        ) -> Result<InboxPage, MailError> {
-            let page: usize = page.unwrap_or("0").parse().unwrap();
-            Ok(InboxPage {
-                thread_ids: (page * 20..page * 20 + 20)
-                    .map(|n| format!("search-{n:03}"))
-                    .collect(),
-                next_page_token: (page < 5).then(|| (page + 1).to_string()),
-            })
-        }
-
-        fn get_thread(
-            &self,
-            thread_id: &str,
-            _cancel: &CancelToken,
-        ) -> Result<Option<GmailThread>, MailError> {
-            if thread_id == TEST_THREAD {
-                let mut thread = test_thread();
-                {
-                    let state = self.state.lock().unwrap();
-                    if state.archived {
-                        thread.inbox_message_ids.clear();
-                        thread.conversation.is_in_inbox = false;
-                    }
-                    if state.incomplete {
-                        thread.conversation.context_complete = Some(false);
-                    }
-                }
-                if self.state.lock().unwrap().include_reply {
-                    thread.conversation.messages.push(Message {
-                        id: "reply-1".to_string(),
-                        from: Address {
-                            display_name: None,
-                            mailbox: "other@example.test".to_string(),
-                        },
-                        to: vec![],
-                        sent_at: "2026-01-01T00:02:00Z".to_string(),
-                        body_text: "synthetic reply".to_string(),
-                        has_attachment: None,
-                    });
-                    thread.message_ids = Some(vec!["message-1".to_string(), "reply-1".to_string()]);
-                }
-                return Ok(Some(thread));
-            }
-            self.search_reads
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            if let Some(error) = self.search_error.lock().unwrap().clone() {
-                return Err(error);
-            }
-            let thread = thread_id
-                .starts_with("search-")
-                .then(|| search_test_thread(thread_id));
-            let hook = self.search_hook.lock().unwrap().take();
-            if let Some(hook) = hook {
-                hook();
-            }
-            Ok(thread)
-        }
-
-        fn get_thread_for_account(
-            &self,
-            expected_account_id: &str,
-            thread_id: &str,
-            cancel: &CancelToken,
-        ) -> Result<Option<GmailThread>, MailError> {
-            if expected_account_id != TEST_ACCOUNT {
-                return Err(MailError::NotFound);
-            }
-            {
-                let mut state = self.state.lock().unwrap();
-                if state.block_thread {
-                    state.thread_started = true;
-                    self.wake.notify_all();
-                    while state.block_thread && !cancel.is_cancelled() {
-                        state = self
-                            .wake
-                            .wait_timeout(state, Duration::from_millis(10))
-                            .unwrap()
-                            .0;
-                    }
-                    if cancel.is_cancelled() {
-                        return Err(MailError::AuthCancelled);
-                    }
-                }
-            }
-            self.get_thread(thread_id, cancel)
-        }
-
-        fn history(
-            &self,
-            start_history_id: &str,
-            _page_token: Option<&str>,
-            cancel: &CancelToken,
-        ) -> Result<HistoryPage, GmailHistoryError> {
-            let mut state = self.state.lock().unwrap();
-            state.history_calls += 1;
-            if state.fail_history {
-                return Err(GmailHistoryError::Mail(MailError::NetworkUnavailable));
-            }
-            if state.auth_expired {
-                return Err(GmailHistoryError::Mail(MailError::AuthRequired));
-            }
-            if state.block_history {
-                state.history_started = true;
-                self.wake.notify_all();
-                while state.block_history && !cancel.is_cancelled() {
-                    let (next, _) = self
-                        .wake
-                        .wait_timeout(state, Duration::from_millis(10))
-                        .unwrap();
-                    state = next;
-                }
-            }
-            if cancel.is_cancelled() {
-                return Err(GmailHistoryError::Mail(MailError::AuthCancelled));
-            }
-            Ok(HistoryPage {
-                changed_thread_ids: vec![],
-                deleted_message_ids: vec![],
-                next_page_token: None,
-                history_id: start_history_id.to_string(),
-            })
         }
     }
 
     #[test]
     fn mutation_admission_precheck_storage_halt_stops_queued_setters_until_restart() {
-        let dir = std::env::temp_dir().join(format!(
-            "mail-core-gmail-worker-halt-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let provider = HaltTestProvider::new();
-        let core = GmailCore::open(&dir, Arc::clone(&provider) as Arc<dyn GmailReadProvider>)
-            .expect("open synthetic Gmail core");
+        let dir = crate::testing::temp_profile("gmail-worker-halt");
+        let provider = provider();
+        let core =
+            GmailCore::open(dir.path(), provider.clone()).expect("open synthetic Gmail core");
         assert!(until(|| {
             core.account_status().is_ok_and(|status| {
                 status.connection == ConnectionState::Connected
@@ -3396,7 +3071,7 @@ mod worker_halt_tests {
         }));
 
         assert_eq!(
-            provider.writes(),
+            provider.halt_writes(),
             0,
             "halted worker never dispatches queued action after storage recovery"
         );
@@ -3414,7 +3089,6 @@ mod worker_halt_tests {
         );
         core.stop();
         drop(core);
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     include!("search_sync_tests.rs");
@@ -3425,17 +3099,10 @@ mod worker_halt_tests {
     /// action and compensation dispatches immediately.
     #[test]
     fn gmail_core_group_gate_acceptance_execution_and_undo() {
-        let dir = std::env::temp_dir().join(format!(
-            "mail-core-gmail-group-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let provider = HaltTestProvider::new();
-        let core = GmailCore::open(&dir, Arc::clone(&provider) as Arc<dyn GmailReadProvider>)
-            .expect("open synthetic Gmail core");
+        let dir = crate::testing::temp_profile("gmail-group");
+        let provider = provider();
+        let core =
+            GmailCore::open(dir.path(), provider.clone()).expect("open synthetic Gmail core");
         assert!(until(|| {
             core.account_status().is_ok_and(|status| {
                 status.connection == ConnectionState::Connected && status.sync.initial_sync_complete
@@ -3471,7 +3138,7 @@ mod worker_halt_tests {
         provider.set_mutation_access(true);
 
         // Accepted group executes through the serial worker.
-        let writes_before = provider.writes();
+        let writes_before = provider.halt_writes();
         let receipt = core
             .set_read_group(&crate::groups::SetReadGroup {
                 account_id: TEST_ACCOUNT.into(),
@@ -3487,7 +3154,7 @@ mod worker_halt_tests {
                 .iter()
                 .any(|row| row.status == crate::dto::OperationStatus::Confirmed)
         }));
-        assert_eq!(provider.writes(), writes_before + 1);
+        assert_eq!(provider.halt_writes(), writes_before + 1);
         let status = core
             .get_operation_group(&crate::groups::GetOperationGroupRequest {
                 account_id: TEST_ACCOUNT.into(),
@@ -3533,7 +3200,6 @@ mod worker_halt_tests {
         );
         core.stop();
         drop(core);
-        let _ = std::fs::remove_dir_all(dir);
     }
 }
 

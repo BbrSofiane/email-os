@@ -5359,20 +5359,11 @@ mod tests {
     use crate::clock::SystemClock;
     use crate::dto::Message;
 
-    fn temp_dir(tag: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "mail-core-gmail-store-{tag}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock")
-                .as_nanos()
-        ))
-    }
+    use crate::testing::temp_profile as temp_dir;
 
-    fn open_store(tag: &str) -> (GmailStore, std::path::PathBuf) {
+    fn open_store(tag: &str) -> (GmailStore, tempfile::TempDir) {
         let dir = temp_dir(tag);
-        let store = GmailStore::open(&dir, Arc::new(SystemClock)).expect("store opens");
+        let store = GmailStore::open(dir.path(), Arc::new(SystemClock)).expect("store opens");
         (store, dir)
     }
 
@@ -5447,7 +5438,7 @@ mod tests {
     #[test]
     fn due_thread_merge_rejects_stale_observation_revision_and_generation() {
         use crate::reminders::{CancelReminder, PutReminder, ReminderCondition};
-        let (store, dir) = open_store("due-thread-fences");
+        let (store, _dir) = open_store("due-thread-fences");
         store
             .begin_account(&profile("acct", "test@example.test", "h1"), 0)
             .unwrap();
@@ -5530,7 +5521,6 @@ mod tests {
         assert!(store.list_snapshot().unwrap().conversations.is_empty());
         assert!(store.list_reminders().unwrap().is_empty());
         drop(store);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -5629,9 +5619,8 @@ mod tests {
             Err(MailError::NotFound)
         );
         drop(store);
-        let reopened = open_store_in(&dir);
+        let reopened = open_store_in(dir.path());
         assert_eq!(reopened.list_reminders().unwrap(), vec![cancelled]);
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -5641,7 +5630,7 @@ mod tests {
         let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let store = GmailStore::open(&dir, clock.clone()).unwrap();
+        let store = GmailStore::open(dir.path(), clock.clone()).unwrap();
         store
             .begin_account(&profile("acct", "test@example.test", "h1"), 0)
             .unwrap();
@@ -5690,10 +5679,9 @@ mod tests {
             Err(MailError::RequestIdConflict)
         );
         drop(store);
-        let reopened = GmailStore::open(&dir, clock).unwrap();
+        let reopened = GmailStore::open(dir.path(), clock).unwrap();
         assert_eq!(reopened.put_reminder(&put).unwrap(), receipt);
         drop(reopened);
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -5703,7 +5691,7 @@ mod tests {
         let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let store = GmailStore::open(&dir, clock.clone()).unwrap();
+        let store = GmailStore::open(dir.path(), clock.clone()).unwrap();
         store
             .begin_account(&profile("acct", "self@example.test", "h1"), 0)
             .unwrap();
@@ -5805,7 +5793,7 @@ mod tests {
         );
         drop(store);
         clock.advance_seconds(120);
-        let store = GmailStore::open(&dir, clock).unwrap();
+        let store = GmailStore::open(dir.path(), clock).unwrap();
         let due = store.due_reminders().unwrap();
         assert_eq!(due[0].1.len(), 2, "replacement inventory persists");
         assert!(store
@@ -5836,7 +5824,6 @@ mod tests {
         }
         drop(conn);
         drop(store);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// P5a: per-message attachment facts parse -> persist -> summary. Known
@@ -5888,7 +5875,7 @@ mod tests {
 
         // The facts are durable across reopen (column, not just parse state).
         drop(store);
-        let store = open_store_in(&dir);
+        let store = open_store_in(dir.path());
         let rows = store.list_snapshot().unwrap().conversations;
         let att_row = rows
             .iter()
@@ -5915,7 +5902,6 @@ mod tests {
             legacy_row.has_attachments, None,
             "legacy cache stays unknown"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn open_store_in(dir: &std::path::Path) -> GmailStore {
@@ -5924,7 +5910,7 @@ mod tests {
 
     #[test]
     fn search_observations_cannot_overwrite_confirmed_archive_or_read() {
-        let (store, dir) = open_store("search-authoritative-fence");
+        let (store, _dir) = open_store("search-authoritative-fence");
         store
             .begin_account(&profile("acct", "test@example.test", "h1"), 0)
             .unwrap();
@@ -5974,12 +5960,11 @@ mod tests {
         assert!(!current.is_in_inbox);
         assert_eq!(current.is_read, Some(true));
         drop(store);
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn search_admits_older_archived_mail_without_touching_discovery_and_fences_accounts() {
-        let (store, dir) = open_store("search-archived");
+        let (store, _dir) = open_store("search-archived");
         store
             .begin_account(&profile("acct", "test@example.test", "h1"), 0)
             .unwrap();
@@ -6027,12 +6012,11 @@ mod tests {
             Err(MailError::NotFound)
         ));
         drop(store);
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn search_cache_is_bounded_and_eviction_preserves_operation_recovery() {
-        let (store, dir) = open_store("search-retention");
+        let (store, _dir) = open_store("search-retention");
         store
             .begin_account(&profile("acct", "test@example.test", "h1"), 0)
             .unwrap();
@@ -6083,7 +6067,6 @@ mod tests {
         assert!(recovered.retained_snapshot_at.is_some());
         assert!(recovered.is_in_inbox);
         drop(store);
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -6207,7 +6190,7 @@ mod tests {
                 .unwrap();
         }
         drop(store);
-        let reopened = GmailStore::open(&dir, Arc::new(SystemClock)).unwrap();
+        let reopened = GmailStore::open(dir.path(), Arc::new(SystemClock)).unwrap();
         assert_eq!(reopened.list_cached_trash(&request).unwrap(), first);
         let target = ConversationRef {
             account_id: "acct".into(),
@@ -6237,7 +6220,6 @@ mod tests {
         );
         assert!(!reopened.get_conversation(&target).unwrap().is_in_inbox);
         drop(reopened);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -6410,7 +6392,7 @@ mod tests {
                 if capped { 1 } else { DISCOVERY_CAP }
             );
             drop(store);
-            let reopened = GmailStore::open(&dir, Arc::new(SystemClock)).unwrap();
+            let reopened = GmailStore::open(dir.path(), Arc::new(SystemClock)).unwrap();
             assert_eq!(
                 ids(reopened
                     .list_cached_done(&done_request)
@@ -6521,7 +6503,6 @@ mod tests {
                 "disconnect leaves no recovery-owned facts or snapshots"
             );
             drop(reopened);
-            std::fs::remove_dir_all(dir).unwrap();
         }
     }
 
@@ -6534,7 +6515,7 @@ mod tests {
             conn.execute_batch("ALTER TABLE gmail_message_facts DROP COLUMN in_trash; ALTER TABLE gmail_message_facts DROP COLUMN in_spam;").unwrap();
         }
         drop(store);
-        let reopened = GmailStore::open(&dir, Arc::new(SystemClock)).unwrap();
+        let reopened = GmailStore::open(dir.path(), Arc::new(SystemClock)).unwrap();
         let facts: (Option<i64>, Option<i64>, i64) = reopened
             .lock_conn()
             .unwrap()
@@ -6546,7 +6527,6 @@ mod tests {
             .unwrap();
         assert_eq!(facts, (None, None, 1));
         drop(reopened);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -6585,7 +6565,7 @@ mod tests {
             })
             .is_err());
         drop(store);
-        let store = GmailStore::open(&dir, Arc::new(SystemClock)).unwrap();
+        let store = GmailStore::open(dir.path(), Arc::new(SystemClock)).unwrap();
         assert_eq!(store.list_attachments(&target).unwrap(), source.attachments);
         store
             .conn
@@ -6600,7 +6580,6 @@ mod tests {
         store.clear_account().unwrap();
         assert!(store.list_attachments(&target).is_err());
         drop(store);
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -6668,7 +6647,7 @@ mod tests {
         // Restart preserves metadata; a legacy database without the new column
         // migrates it additively and leaves old rows NULL.
         drop(store);
-        let reopened = GmailStore::open(&dir, Arc::new(SystemClock)).expect("reopen");
+        let reopened = GmailStore::open(dir.path(), Arc::new(SystemClock)).expect("reopen");
         assert_eq!(
             reopened
                 .get_conversation(&target)
@@ -6677,7 +6656,7 @@ mod tests {
             Some(context)
         );
         drop(reopened);
-        let legacy = Connection::open(dir.join("gmail.db")).expect("legacy db");
+        let legacy = Connection::open(dir.path().join("gmail.db")).expect("legacy db");
         legacy
             .execute(
                 "ALTER TABLE gmail_conversations DROP COLUMN reply_context_json",
@@ -6685,7 +6664,8 @@ mod tests {
             )
             .expect("simulate legacy schema");
         drop(legacy);
-        let migrated = GmailStore::open(&dir, Arc::new(SystemClock)).expect("additive migration");
+        let migrated =
+            GmailStore::open(dir.path(), Arc::new(SystemClock)).expect("additive migration");
         assert_eq!(
             migrated
                 .get_conversation(&target)
@@ -6693,12 +6673,11 @@ mod tests {
                 .reply_context,
             None
         );
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn malformed_cached_reply_context_is_a_storage_error() {
-        let (store, dir) = open_store("reply-context-invalid-json");
+        let (store, _dir) = open_store("reply-context-invalid-json");
         store
             .begin_account(&profile("acct-alpha", "alpha@example.test", "hist-1"), 0)
             .expect("account");
@@ -6728,12 +6707,11 @@ mod tests {
             }),
             Err(MailError::StorageUnavailable)
         );
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn reply_context_save_rejects_generation_and_latest_source_races() {
-        let (store, dir) = open_store("reply-context-races");
+        let (store, _dir) = open_store("reply-context-races");
         store
             .begin_account(&profile("acct-alpha", "alpha@example.test", "hist-1"), 0)
             .expect("account");
@@ -6787,7 +6765,6 @@ mod tests {
                 .reply_context,
             None
         );
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     fn history_page(
@@ -6807,7 +6784,7 @@ mod tests {
 
     #[test]
     fn account_identity_mismatch_fails_closed() {
-        let (store, dir) = open_store("identity");
+        let (store, _dir) = open_store("identity");
         assert_eq!(
             store.begin_account(&profile("acct-alpha", "alpha@example.test", "hist-1"), 0),
             Ok(Commit::Applied)
@@ -6825,12 +6802,11 @@ mod tests {
         );
         // Baseline cursor was pinned by the first begin_account only.
         assert_eq!(store.cursor().expect("cursor").as_deref(), Some("hist-1"));
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn baseline_is_pinned_before_discovery_and_pages_are_idempotent() {
-        let (store, dir) = open_store("discovery");
+        let (store, _dir) = open_store("discovery");
         store
             .begin_account(&profile("acct-alpha", "alpha@example.test", "hist-base"), 0)
             .expect("begin account");
@@ -6878,12 +6854,11 @@ mod tests {
             .apply_discovery_page(&page2, None, true, false, 0)
             .expect("replay");
         assert_eq!(store.cached_count().expect("count"), 2, "idempotent replay");
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn history_cursor_advances_only_after_the_final_page() {
-        let (store, dir) = open_store("history-cursor");
+        let (store, _dir) = open_store("history-cursor");
         store
             .begin_account(&profile("acct-alpha", "alpha@example.test", "hist-base"), 0)
             .expect("begin account");
@@ -6939,7 +6914,6 @@ mod tests {
                 cursor: Some("hist-final".to_string())
             }
         );
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -6968,12 +6942,12 @@ mod tests {
         // Simulate a gmail-1 profile opened by the version before independent
         // membership storage was introduced; startup migration recreates and
         // backfills the table from its existing message rows.
-        let legacy = Connection::open(dir.join("gmail.db")).expect("open legacy db");
+        let legacy = Connection::open(dir.path().join("gmail.db")).expect("open legacy db");
         legacy
             .execute_batch("DROP TABLE gmail_inbox_membership")
             .expect("remove newly introduced table");
         drop(legacy);
-        let migrated = GmailStore::open(&dir, Arc::new(SystemClock)).expect("migrated store");
+        let migrated = GmailStore::open(dir.path(), Arc::new(SystemClock)).expect("migrated store");
         assert_eq!(
             migrated
                 .list_snapshot()
@@ -6982,12 +6956,11 @@ mod tests {
                 .len(),
             1
         );
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn unsupported_inbox_membership_is_cached_without_a_renderable_body() {
-        let (store, dir) = open_store("unsupported-membership");
+        let (store, _dir) = open_store("unsupported-membership");
         store
             .begin_account(&profile("acct-alpha", "alpha@example.test", "hist-1"), 0)
             .expect("begin account");
@@ -7020,12 +6993,11 @@ mod tests {
             conversation.unsupported_reason.as_deref(),
             Some("no safe plain-text body")
         );
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn account_mismatched_thread_facts_are_rejected_at_store_boundary() {
-        let (store, dir) = open_store("thread-account-mismatch");
+        let (store, _dir) = open_store("thread-account-mismatch");
         store
             .begin_account(&profile("acct-alpha", "alpha@example.test", "hist-1"), 0)
             .expect("begin account");
@@ -7041,12 +7013,11 @@ mod tests {
             Err(MailError::InvalidProviderResponse)
         );
         assert_eq!(store.cached_count().expect("cache count"), 0);
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn discovery_checkpoints_keep_cache_capped_and_prefer_observed_threads() {
-        let (store, dir) = open_store("partial-cap");
+        let (store, _dir) = open_store("partial-cap");
         store
             .begin_account(&profile("acct-alpha", "alpha@example.test", "hist-1"), 0)
             .expect("begin account");
@@ -7120,12 +7091,11 @@ mod tests {
             .apply_discovery_page(&tail, None, true, false, 0)
             .expect("complete rediscovery");
         assert!(store.cached_count().expect("bounded cache count") <= DISCOVERY_CAP);
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn stale_inbox_membership_is_reconciled_by_a_complete_discovery_pass() {
-        let (store, dir) = open_store("reconcile");
+        let (store, _dir) = open_store("reconcile");
         store
             .begin_account(&profile("acct-alpha", "alpha@example.test", "hist-base"), 0)
             .expect("begin account");
@@ -7160,12 +7130,11 @@ mod tests {
             })
             .expect("still cached and readable");
         assert!(!conversation.is_in_inbox);
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn deleted_messages_emptied_conversations_are_removed() {
-        let (store, dir) = open_store("deletion");
+        let (store, _dir) = open_store("deletion");
         store
             .begin_account(&profile("acct-alpha", "alpha@example.test", "hist-base"), 0)
             .expect("begin account");
@@ -7225,12 +7194,11 @@ mod tests {
             0,
             "emptied conversation removed"
         );
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn stale_generation_discards_disconnect_raced_writes() {
-        let (store, dir) = open_store("generation");
+        let (store, _dir) = open_store("generation");
         store
             .begin_account(&profile("acct-alpha", "alpha@example.test", "hist-base"), 0)
             .expect("begin account");
@@ -7265,7 +7233,6 @@ mod tests {
             "a fresh pass after the bump applies normally"
         );
         assert_eq!(store.cached_count().expect("count"), 1);
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -7290,7 +7257,7 @@ mod tests {
             Err(MailError::NotFound)
         );
         drop(store);
-        let store = GmailStore::open(&dir, Arc::new(SystemClock)).unwrap();
+        let store = GmailStore::open(dir.path(), Arc::new(SystemClock)).unwrap();
         assert_eq!(store.get_saved_split("acct").unwrap(), Some(saved));
         store.set_test_persistence_failure(true);
         assert_eq!(
@@ -7304,12 +7271,11 @@ mod tests {
             .unwrap();
         assert_eq!(store.get_saved_split("acct").unwrap(), None);
         drop(store);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn clear_account_wipes_identity_cache_and_checkpoints() {
-        let (store, dir) = open_store("clear");
+        let (store, _dir) = open_store("clear");
         store
             .begin_account(&profile("acct-alpha", "alpha@example.test", "hist-base"), 0)
             .expect("begin account");
@@ -7337,13 +7303,12 @@ mod tests {
             store.discovery().expect("discovery"),
             DiscoveryProgress::Pending
         ));
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// Storage failures surface typed instead of being logged-and-ignored.
     #[test]
     fn operation_recovery_snapshot_survives_cache_eviction_and_can_be_restored() {
-        let (store, dir) = open_store("operation-retention");
+        let (store, _dir) = open_store("operation-retention");
         store
             .begin_account(&profile("acct-alpha", "alpha@example.test", "hist-1"), 0)
             .expect("begin account");
@@ -7458,12 +7423,11 @@ mod tests {
         assert!(restored.is_in_inbox);
         assert!(restored.retained_snapshot_at.is_some());
         drop(store);
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn capped_rediscovery_retains_full_recovery_inventory_not_unretained_facts() {
-        let (store, dir) = open_store("rediscovery-inventory");
+        let (store, _dir) = open_store("rediscovery-inventory");
         store
             .begin_account(&profile("acct", "a@example.test", "h1"), 0)
             .unwrap();
@@ -7570,19 +7534,17 @@ mod tests {
         assert_eq!(fact_count, 0, "disconnect also clears retained inventory");
         drop(conn);
         drop(store);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn persistence_failure_is_surfaced_not_ignored() {
-        let (store, dir) = open_store("failure");
+        let (store, _dir) = open_store("failure");
         assert!(store.has_account().is_ok());
         store.set_test_persistence_failure(true);
         assert_eq!(store.has_account(), Err(MailError::StorageUnavailable));
         assert_eq!(store.clear_account(), Err(MailError::StorageUnavailable));
         store.set_test_persistence_failure(false);
         assert!(store.has_account().is_ok());
-        let _ = std::fs::remove_dir_all(dir);
     }
     #[test]
     fn list_cached_done_membership_scoping_ordering_bounds_and_recovery() {
@@ -7744,7 +7706,7 @@ mod tests {
             .unwrap();
         }
         drop(store);
-        let store = GmailStore::open(&dir, Arc::new(SystemClock)).unwrap();
+        let store = GmailStore::open(dir.path(), Arc::new(SystemClock)).unwrap();
         let page = store.list_cached_done(&request).unwrap();
         assert_eq!(page.conversations.len(), 2);
         assert_eq!(page.conversations[0].conversation_ref.conversation_id, "a");
@@ -7777,13 +7739,12 @@ mod tests {
         );
         assert!(bounded.next_cursor.is_some());
         drop(store);
-        std::fs::remove_dir_all(dir).unwrap();
     }
     // -------------------------------------------------- UX-05 group tests
 
-    fn open_store_with_clock(tag: &str, clock: Arc<dyn Clock>) -> (GmailStore, std::path::PathBuf) {
+    fn open_store_with_clock(tag: &str, clock: Arc<dyn Clock>) -> (GmailStore, tempfile::TempDir) {
         let dir = temp_dir(tag);
-        let store = GmailStore::open(&dir, clock).expect("store opens");
+        let store = GmailStore::open(dir.path(), clock).expect("store opens");
         (store, dir)
     }
 
@@ -7846,7 +7807,7 @@ mod tests {
         let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let (store, dir) = open_store_with_clock("gmail-group-idempotent", clock);
+        let (store, _dir) = open_store_with_clock("gmail-group-idempotent", clock);
         seed_group_threads(&store, &["thr-a", "thr-b"]);
 
         let command = crate::groups::SetReadGroup {
@@ -7901,7 +7862,6 @@ mod tests {
         assert_eq!(archive_receipt.requested_archived, Some(true));
         assert_eq!(group_counts(&store), (3, 2));
         drop(store);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// A member without immutable targets is a persisted acceptance rejection
@@ -7912,7 +7872,7 @@ mod tests {
         let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let (store, dir) = open_store_with_clock("gmail-group-rejection", clock);
+        let (store, _dir) = open_store_with_clock("gmail-group-rejection", clock);
         seed_group_threads(&store, &["thr-a"]);
         let receipt = store
             .accept_archived_group(&crate::groups::SetArchivedGroup {
@@ -7969,7 +7929,6 @@ mod tests {
             .expect("replay");
         assert_eq!(replay, receipt, "original ordering preserved on replay");
         drop(store);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// Storage failure at acceptance rejects the whole group; the same
@@ -7979,7 +7938,7 @@ mod tests {
         let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let (store, dir) = open_store_with_clock("gmail-group-rollback", clock);
+        let (store, _dir) = open_store_with_clock("gmail-group-rollback", clock);
         seed_group_threads(&store, &["thr-a", "thr-b"]);
         store.set_test_persistence_failure(true);
         assert_eq!(
@@ -8003,7 +7962,6 @@ mod tests {
             .expect("retry safe");
         assert_eq!(receipt.members.len(), 2);
         drop(store);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// Group Undo at 9 seconds (§7.6): confirmed member compensates from the
@@ -8015,7 +7973,7 @@ mod tests {
         let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let (store, dir) = open_store_with_clock("gmail-group-undo", clock.clone());
+        let (store, _dir) = open_store_with_clock("gmail-group-undo", clock.clone());
         seed_group_threads(&store, &["thr-a", "thr-b", "thr-c"]);
         let receipt = store
             .accept_read_group(&crate::groups::SetReadGroup {
@@ -8105,7 +8063,6 @@ mod tests {
             Some(UndoUnavailableReason::AlreadyUndone)
         );
         drop(store);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// Outcome-unknown members are explicitly skipped (never compensated,
@@ -8115,7 +8072,7 @@ mod tests {
         let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let (store, dir) = open_store_with_clock("gmail-group-unknown", clock.clone());
+        let (store, _dir) = open_store_with_clock("gmail-group-unknown", clock.clone());
         seed_group_threads(&store, &["thr-a", "thr-b"]);
         let receipt = store
             .accept_read_group(&crate::groups::SetReadGroup {
@@ -8152,7 +8109,6 @@ mod tests {
             crate::groups::GroupMemberUndoDecision::Cancelled
         );
         drop(store);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// Expiry, supersession by a newer single/group/retry, and the child
@@ -8162,7 +8118,7 @@ mod tests {
         let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let (store, dir) = open_store_with_clock("gmail-group-gates", clock.clone());
+        let (store, _dir) = open_store_with_clock("gmail-group-gates", clock.clone());
         seed_group_threads(&store, &["thr-a", "thr-b", "thr-c"]);
         let receipt = store
             .accept_archived_group(&crate::groups::SetArchivedGroup {
@@ -8281,7 +8237,6 @@ mod tests {
             })
         );
         drop(store);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// Group listing pagination and account fencing (§7.9); a group absent
@@ -8292,7 +8247,7 @@ mod tests {
         let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let (store, dir) = open_store_with_clock("gmail-group-pages", clock);
+        let (store, _dir) = open_store_with_clock("gmail-group-pages", clock);
         seed_group_threads(&store, &["thr-a"]);
         let mut group_ids = Vec::new();
         for i in 0..3 {
@@ -8354,7 +8309,6 @@ mod tests {
             .unwrap()
             .is_none());
         drop(store);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// Disconnect cleanup (§4.2): `clear_account` deletes the durable group
@@ -8367,7 +8321,7 @@ mod tests {
         let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let (store, dir) = open_store_with_clock("gmail-group-clear-account", clock);
+        let (store, _dir) = open_store_with_clock("gmail-group-clear-account", clock);
         seed_group_threads(&store, &["thr-a", "thr-b"]);
         let receipt = store
             .accept_archived_group(&crate::groups::SetArchivedGroup {
@@ -8433,7 +8387,6 @@ mod tests {
             "a fresh group identity is committed after disconnect"
         );
         drop(store);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// Restart after a partial group Undo with a FAILED compensation: the
@@ -8487,7 +8440,7 @@ mod tests {
         }
 
         // Reopen (same profile, fresh store): the undo record comes back.
-        let store = GmailStore::open(&dir, clock).expect("reopen");
+        let store = GmailStore::open(dir.path(), clock).expect("reopen");
         let status = store
             .get_operation_group(&crate::groups::GetOperationGroupRequest {
                 account_id: "acct".into(),
@@ -8548,7 +8501,6 @@ mod tests {
             "compensations are ungrouped"
         );
         drop(store);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// A retried failed group member stays linked for inspection across a
@@ -8601,7 +8553,7 @@ mod tests {
 
         // Restart: the lineage and the historical failure both survive.
         drop(store);
-        let store = GmailStore::open(&dir, clock).expect("reopen");
+        let store = GmailStore::open(dir.path(), clock).expect("reopen");
         let activity = store.list_snapshot().unwrap().activity;
         let retry_row = activity
             .iter()
@@ -8638,6 +8590,5 @@ mod tests {
             crate::groups::GroupMemberStatus::Failed
         );
         drop(store);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 }

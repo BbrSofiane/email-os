@@ -5,9 +5,9 @@ use crate::{
 };
 #[test]
 fn restore_preserves_mixed_prior_membership_and_commit_failure_creates_no_return() {
-    let dir = std::env::temp_dir().join(format!("reminder-mixed-{}", uuid::Uuid::new_v4()));
+    let dir = tempfile::tempdir().unwrap();
     let clock = Arc::new(FakeClock::new(utc("2030-01-01T00:00:00Z")));
-    let s = Store::open(&dir, clock.clone()).unwrap();
+    let s = Store::open(dir.path(), clock.clone()).unwrap();
     let target = ConversationRef {
         account_id: ACCOUNT_ID.into(),
         conversation_id: "conv-01".into(),
@@ -57,13 +57,12 @@ fn restore_preserves_mixed_prior_membership_and_commit_failure_creates_no_return
     assert!(!inbox);
     drop(conn);
     drop(s);
-    std::fs::remove_dir_all(dir).unwrap();
 }
 #[test]
 fn concurrent_cancel_and_reschedule_have_only_one_revision_winner_and_dst_offsets_are_explicit() {
-    let dir = std::env::temp_dir().join(format!("reminder-cas-{}", uuid::Uuid::new_v4()));
+    let dir = tempfile::tempdir().unwrap();
     let clock = Arc::new(FakeClock::new(utc("2030-01-01T00:00:00Z")));
-    let s = Arc::new(Store::open(&dir, clock).unwrap());
+    let s = Arc::new(Store::open(dir.path(), clock).unwrap());
     let target = ConversationRef {
         account_id: ACCOUNT_ID.into(),
         conversation_id: "conv-01".into(),
@@ -117,5 +116,4 @@ fn concurrent_cancel_and_reschedule_have_only_one_revision_winner_and_dst_offset
     let results = [one.join().unwrap(), two.join().unwrap()];
     assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
     drop(s);
-    std::fs::remove_dir_all(dir).unwrap();
 }

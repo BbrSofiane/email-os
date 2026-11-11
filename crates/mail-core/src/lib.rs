@@ -22,6 +22,8 @@ mod seed;
 pub mod splits;
 pub mod stars;
 mod store;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
 mod worker;
 
 use std::collections::HashMap;
@@ -419,8 +421,8 @@ mod facade_tests {
 
     #[test]
     fn worker_halt_remains_visible_through_commands_after_storage_recovers() {
-        let dir = std::env::temp_dir().join(format!("mail-core-halt-{}", uuid::Uuid::new_v4()));
-        let core = MailCore::open(&dir).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let core = MailCore::open(dir.path()).unwrap();
         let (tx, rx) = std::sync::mpsc::channel();
         let _subscription = core.subscribe(move || {
             let _ = tx.send(());
@@ -462,10 +464,9 @@ mod facade_tests {
             .activity
             .is_empty());
         drop(core);
-        let restarted = MailCore::open(&dir).unwrap();
+        let restarted = MailCore::open(dir.path()).unwrap();
         assert!(restarted.list_conversations().is_ok());
         drop(restarted);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// Core forwarding for the UX-05 group path (docs/ux-05-safe-bulk-processing.md
@@ -474,8 +475,8 @@ mod facade_tests {
     /// group Undo dispatches compensation immediately.
     #[test]
     fn group_children_execute_serially_and_group_undo_compensates() {
-        let dir = std::env::temp_dir().join(format!("mail-core-group-{}", uuid::Uuid::new_v4()));
-        let core = MailCore::open(&dir).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let core = MailCore::open(dir.path()).unwrap();
         core.start_worker(Arc::new(FakeArchiveProvider::new()))
             .unwrap();
         let receipt = core
@@ -580,7 +581,7 @@ mod facade_tests {
         // Restart: the group, member outcomes and receipt replay survive.
         core.stop_worker();
         drop(core);
-        let reopened = MailCore::open(&dir).unwrap();
+        let reopened = MailCore::open(dir.path()).unwrap();
         assert_eq!(
             reopened
                 .set_archived_group(&crate::groups::SetArchivedGroup {
@@ -615,7 +616,6 @@ mod facade_tests {
             "group undo outcome survives restart"
         );
         drop(reopened);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     fn wait_for(predicate: impl Fn() -> bool) -> bool {

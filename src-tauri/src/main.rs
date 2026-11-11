@@ -1152,11 +1152,8 @@ mod attachment_transfer_tests {
     }
     #[test]
     fn fixture_download_revalidates_exact_targets_and_never_opens_documents() {
-        let dir = std::env::temp_dir().join(format!(
-            "email-os-attachment-shell-{}",
-            fresh_close_request_id()
-        ));
-        let core = MailCore::open(dir.join("profile")).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let core = MailCore::open(dir.path().join("profile")).unwrap();
         let backend = Backend::Fixture(core);
         let target = backend.list_conversations().unwrap().conversations[0]
             .conversation_ref
@@ -1169,16 +1166,16 @@ mod attachment_transfer_tests {
             request_id: "r1".into(),
         };
         let saved = backend
-            .download_attachment(&request, &CancelToken::default(), &dir)
+            .download_attachment(&request, &CancelToken::default(), dir.path())
             .unwrap();
         assert_eq!(
-            std::fs::read(dir.join(saved.filename)).unwrap(),
+            std::fs::read(dir.path().join(saved.filename)).unwrap(),
             b"Synthetic attachment only.\n"
         );
         let mut wrong = request.clone();
         wrong.message_id = "another-message".into();
         assert_eq!(
-            backend.download_attachment(&wrong, &CancelToken::default(), &dir),
+            backend.download_attachment(&wrong, &CancelToken::default(), dir.path()),
             Err(MailError::NotFound)
         );
         drop(backend);
@@ -1311,19 +1308,10 @@ mod tests {
     use super::*;
     use std::{
         sync::{mpsc, Arc},
-        time::{Duration, SystemTime, UNIX_EPOCH},
+        time::Duration,
     };
 
-    fn temp_dir(tag: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "email-os-bridge-{tag}-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ))
-    }
+    use mail_core::testing::temp_profile as temp_dir;
 
     #[test]
     fn fixture_status_is_explicit_and_gmail_mutations_require_verified_access() {
@@ -1335,62 +1323,11 @@ mod tests {
         assert_eq!(status.sync.coverage_limit, 0);
         // The Gmail variant cannot dispatch to the fixture archive core; this
         // construction-level guard is covered without real credentials/network.
-        struct ReadOnlyProvider;
-        impl mail_core::gmail::types::GmailReadProvider for ReadOnlyProvider {
-            fn is_configured(&self) -> bool {
-                false
-            }
-            fn has_credentials(&self) -> Result<bool, MailError> {
-                Ok(false)
-            }
-            fn connect(
-                &self,
-                _: &mail_core::CancelToken,
-            ) -> Result<mail_core::gmail::types::GmailProfile, MailError> {
-                Err(MailError::NotConfigured)
-            }
-            fn disconnect(&self) -> Result<(), MailError> {
-                Ok(())
-            }
-            fn profile(
-                &self,
-                _: &mail_core::CancelToken,
-            ) -> Result<mail_core::gmail::types::GmailProfile, MailError> {
-                Err(MailError::NotConfigured)
-            }
-            fn list_inbox(
-                &self,
-                _: Option<&str>,
-                _: &mail_core::CancelToken,
-            ) -> Result<mail_core::gmail::types::InboxPage, MailError> {
-                Ok(mail_core::gmail::types::InboxPage {
-                    thread_ids: Vec::new(),
-                    next_page_token: None,
-                })
-            }
-            fn get_thread(
-                &self,
-                _: &str,
-                _: &mail_core::CancelToken,
-            ) -> Result<Option<mail_core::gmail::types::GmailThread>, MailError> {
-                Ok(None)
-            }
-            fn history(
-                &self,
-                _: &str,
-                _: Option<&str>,
-                _: &mail_core::CancelToken,
-            ) -> Result<
-                mail_core::gmail::types::HistoryPage,
-                mail_core::gmail::types::GmailHistoryError,
-            > {
-                Err(mail_core::gmail::types::GmailHistoryError::Mail(
-                    MailError::NotConfigured,
-                ))
-            }
-        }
-        let gmail =
-            GmailCore::open(temp_dir("gmail-readonly"), Arc::new(ReadOnlyProvider)).unwrap();
+        let provider = mail_core::testing::operations_fake::FakeProvider::new(false);
+        provider.set_configured(false);
+        provider.set_credentials(false);
+        let dir = temp_dir("gmail-readonly");
+        let gmail = GmailCore::open(dir.path(), provider).unwrap();
         let gmail = Backend::Gmail(gmail);
         assert!(gmail.list_reminders().unwrap().is_empty());
         let status = gmail.account_status().unwrap();
@@ -1650,7 +1587,7 @@ mod tests {
         let dir = temp_dir("events");
         let core = MailCore::open(&dir).unwrap();
         let (tx, rx) = mpsc::channel();
-        let drafts = DraftCore::open(dir.join("local-drafts")).unwrap();
+        let drafts = DraftCore::open(dir.path().join("local-drafts")).unwrap();
         let state = AppState::new(Backend::Fixture(core), drafts, move || {
             let _ = tx.send(());
         });

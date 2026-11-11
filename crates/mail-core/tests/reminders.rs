@@ -36,12 +36,12 @@ impl Clock for ObservedClock {
 
 #[test]
 fn serial_fake_provider_fires_future_reminder_once_while_worker_stays_alive() {
-    let dir = std::env::temp_dir().join(format!("reminder-live-{}", uuid::Uuid::new_v4()));
+    let dir = tempfile::tempdir().unwrap();
     let clock = Arc::new(ObservedClock {
         fake: FakeClock::new(utc("2030-01-01T00:00:00Z")),
         worker_reads: AtomicUsize::new(0),
     });
-    let core = MailCore::open_with_clock(&dir, clock.clone()).unwrap();
+    let core = MailCore::open_with_clock(dir.path(), clock.clone()).unwrap();
     let target = ConversationRef {
         account_id: ACCOUNT_ID.into(),
         conversation_id: "conv-01".into(),
@@ -50,7 +50,7 @@ fn serial_fake_provider_fires_future_reminder_once_while_worker_stays_alive() {
     assert!(detail.messages.len() > 1);
     let originally_archived = &detail.messages[0].id;
     let original_inbox_ids: Vec<_> = detail.messages[1..].iter().map(|m| m.id.clone()).collect();
-    let conn = rusqlite::Connection::open(dir.join("mail.db")).unwrap();
+    let conn = rusqlite::Connection::open(dir.path().join("mail.db")).unwrap();
     conn.execute(
         "UPDATE messages SET provider_inbox=0 WHERE message_id=?1",
         [originally_archived],
@@ -151,14 +151,13 @@ fn serial_fake_provider_fires_future_reminder_once_while_worker_stays_alive() {
     core.stop_worker();
     drop(conn);
     drop(core);
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
 fn serial_fake_provider_resumes_overdue_once_after_native_fixture_restart() {
-    let dir = std::env::temp_dir().join(format!("reminder-worker-{}", uuid::Uuid::new_v4()));
+    let dir = tempfile::tempdir().unwrap();
     let clock = Arc::new(FakeClock::new(utc("2030-01-01T00:00:00Z")));
-    let core = MailCore::open_with_clock(&dir, clock.clone()).unwrap();
+    let core = MailCore::open_with_clock(dir.path(), clock.clone()).unwrap();
     let target = ConversationRef {
         account_id: ACCOUNT_ID.into(),
         conversation_id: "conv-01".into(),
@@ -187,7 +186,7 @@ fn serial_fake_provider_resumes_overdue_once_after_native_fixture_restart() {
     core.stop_worker();
     drop(core);
     clock.advance_seconds(61);
-    let core = MailCore::open_with_clock(&dir, clock).unwrap();
+    let core = MailCore::open_with_clock(dir.path(), clock).unwrap();
     assert_eq!(core.put_reminder(&command).unwrap(), receipt);
     let provider = Arc::new(FakeArchiveProvider::new());
     core.start_worker(provider.clone()).unwrap();
@@ -198,7 +197,7 @@ fn serial_fake_provider_resumes_overdue_once_after_native_fixture_restart() {
     assert!(core.get_conversation(&target).unwrap().is_in_inbox);
     core.stop_worker();
     drop(core);
-    let core = MailCore::open(&dir).unwrap();
+    let core = MailCore::open(dir.path()).unwrap();
     let provider = Arc::new(FakeArchiveProvider::new());
     core.start_worker(provider.clone()).unwrap();
     std::thread::sleep(Duration::from_millis(150));
@@ -206,5 +205,4 @@ fn serial_fake_provider_resumes_overdue_once_after_native_fixture_restart() {
     assert_eq!(provider.call_count(), 0);
     core.stop_worker();
     drop(core);
-    std::fs::remove_dir_all(dir).unwrap();
 }

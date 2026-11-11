@@ -10,597 +10,50 @@
 //! no test opens sockets, performs network I/O, or touches real
 //! credentials. History ids are arbitrary opaque strings throughout.
 
-use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use mail_core::testing::operations_fake::{FakeProvider as FakeGmail, ProfilePlan};
+use mail_core::testing::{open_core as open_at, open_profile as open_core, until, TIMEOUT};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use mail_core::dto::{ConversationRef, Message};
 use mail_core::error::MailError;
 use mail_core::gmail::sync::{GmailCore, COVERAGE_LIMIT};
 use mail_core::gmail::types::{
-    AccountInfo, AccountStatus, ConnectionState, GmailHistoryError, GmailProfile,
-    GmailReadProvider, GmailThread, HistoryPage, InboxPage, MailMode, SyncState,
+    AccountInfo, AccountStatus, ConnectionState, GmailThread, HistoryPage, InboxPage, MailMode,
+    SyncState,
 };
-use mail_core::CancelToken;
 
-const TIMEOUT: Duration = Duration::from_secs(5);
 const ACCOUNT: &str = "acct-alpha-9f3";
 const EMAIL: &str = "alpha@example.test";
 
-fn temp_profile(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "mail-core-gmail-it-{tag}-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    dir
-}
-
-/// Bounded assertion loop; woken work uses provider call-log barriers, this
-/// only polls the typed status/snapshot surfaces.
-fn until(mut f: impl FnMut() -> bool) -> bool {
-    let deadline = Instant::now() + TIMEOUT;
-    loop {
-        if f() {
-            return true;
-        }
-        if Instant::now() >= deadline {
-            return f();
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
-// --------------------------------------------------------- fake provider
-
-#[derive(Clone)]
-enum ProfilePlan {
-    Value(GmailProfile),
-    Error(MailError),
-}
-
-struct FakeState {
-    configured: bool,
-    credentials: bool,
-    connect_plan: ProfilePlan,
-    profile_plan: ProfilePlan,
-    inbox: HashMap<Option<String>, InboxPage>,
-    threads: HashMap<String, GmailThread>,
-    history: HashMap<Option<String>, HistoryPage>,
-    expired_starts: HashSet<String>,
-    sticky_error: Option<MailError>,
-    /// Per-thread typed error plan (e.g. a rate limit on one thread read);
-    /// cleared by tests to simulate the limit recovering.
-    thread_errors: HashMap<String, MailError>,
-    paused_method: Option<&'static str>,
-    pause_thread_id: Option<String>,
-    calls: Vec<String>,
-    inflight: usize,
-    disconnect_calls: usize,
-    disconnect_paused: bool,
-}
-
-struct FakeInner {
-    state: Mutex<FakeState>,
-    gate: Condvar,
-}
-
-/// Fake `GmailReadProvider`: token-keyed canned pages (so restart/resume
-/// replays hit the same entries), pause gates keyed by method and thread id,
-/// sticky typed errors, and a recorded call log. Pure memory.
-struct FakeGmail {
-    inner: Arc<FakeInner>,
-}
-
-/// Decrements the in-flight counter and wakes barrier waiters on exit.
-struct GateGuard {
-    inner: Arc<FakeInner>,
-}
-
-impl Drop for GateGuard {
-    fn drop(&mut self) {
-        let mut state = self.inner.state.lock().expect("fake gmail poisoned");
-        state.inflight -= 1;
-        drop(state);
-        self.inner.gate.notify_all();
-    }
-}
-
-impl FakeGmail {
-    fn new() -> (Arc<Self>, GmailProfile) {
-        let profile = gmail_profile(ACCOUNT, EMAIL, "hist-1000");
-        (
-            Arc::new(Self {
-                inner: Arc::new(FakeInner {
-                    state: Mutex::new(FakeState {
-                        configured: true,
-                        credentials: true,
-                        connect_plan: ProfilePlan::Value(profile.clone()),
-                        profile_plan: ProfilePlan::Value(profile.clone()),
-                        inbox: HashMap::new(),
-                        threads: HashMap::new(),
-                        history: HashMap::new(),
-                        expired_starts: HashSet::new(),
-                        sticky_error: None,
-                        thread_errors: HashMap::new(),
-                        paused_method: None,
-                        pause_thread_id: None,
-                        calls: Vec::new(),
-                        inflight: 0,
-                        disconnect_calls: 0,
-                        disconnect_paused: false,
-                    }),
-                    gate: Condvar::new(),
-                }),
-            }),
-            profile,
-        )
-    }
-
-    fn set_configured(&self, configured: bool) {
-        self.inner
-            .state
-            .lock()
-            .expect("fake gmail poisoned")
-            .configured = configured;
-    }
-
-    fn set_credentials(&self, credentials: bool) {
-        self.inner
-            .state
-            .lock()
-            .expect("fake gmail poisoned")
-            .credentials = credentials;
-    }
-
-    fn set_connect_plan(&self, plan: ProfilePlan) {
-        self.inner
-            .state
-            .lock()
-            .expect("fake gmail poisoned")
-            .connect_plan = plan;
-    }
-
-    fn set_profile_plan(&self, plan: ProfilePlan) {
-        self.inner
-            .state
-            .lock()
-            .expect("fake gmail poisoned")
-            .profile_plan = plan;
-    }
-
-    fn set_inbox(&self, inbox: HashMap<Option<String>, InboxPage>) {
-        self.inner.state.lock().expect("fake gmail poisoned").inbox = inbox;
-    }
-
-    fn set_threads(&self, threads: HashMap<String, GmailThread>) {
-        self.inner
-            .state
-            .lock()
-            .expect("fake gmail poisoned")
-            .threads = threads;
-    }
-
-    fn set_history(&self, history: HashMap<Option<String>, HistoryPage>) {
-        self.inner
-            .state
-            .lock()
-            .expect("fake gmail poisoned")
-            .history = history;
-    }
-
-    fn expire_history_start(&self, start: &str) {
-        self.inner
-            .state
-            .lock()
-            .expect("fake gmail poisoned")
-            .expired_starts
-            .insert(start.to_string());
-    }
-
-    fn fail_thread(&self, thread_id: &str, error: Option<MailError>) {
-        let mut state = self.inner.state.lock().expect("fake gmail poisoned");
-        match error {
-            Some(error) => {
-                state.thread_errors.insert(thread_id.to_string(), error);
-            }
-            None => {
-                state.thread_errors.remove(thread_id);
-            }
-        }
-    }
-
-    fn set_sticky_error(&self, error: Option<MailError>) {
-        self.inner
-            .state
-            .lock()
-            .expect("fake gmail poisoned")
-            .sticky_error = error;
-    }
-
-    fn set_disconnect_paused(&self, paused: bool) {
-        let mut state = self.inner.state.lock().expect("fake gmail poisoned");
-        state.disconnect_paused = paused;
-        drop(state);
-        self.inner.gate.notify_all();
-    }
-
-    fn set_paused_method(&self, method: Option<&'static str>) {
-        let mut state = self.inner.state.lock().expect("fake gmail poisoned");
-        state.paused_method = method;
-        drop(state);
-        self.inner.gate.notify_all();
-    }
-
-    fn pause_thread(&self, thread_id: Option<&str>) {
-        let mut state = self.inner.state.lock().expect("fake gmail poisoned");
-        state.pause_thread_id = thread_id.map(str::to_string);
-        drop(state);
-        self.inner.gate.notify_all();
-    }
-
-    fn calls_matching(&self, prefix: &str) -> Vec<String> {
-        self.inner
-            .state
-            .lock()
-            .expect("fake gmail poisoned")
-            .calls
-            .iter()
-            .filter(|call| call.starts_with(prefix))
-            .cloned()
-            .collect()
-    }
-
-    fn disconnect_calls(&self) -> usize {
-        self.inner
-            .state
-            .lock()
-            .expect("fake gmail poisoned")
-            .disconnect_calls
-    }
-
-    fn has_credentials(&self) -> bool {
-        self.inner
-            .state
-            .lock()
-            .expect("fake gmail poisoned")
-            .credentials
-    }
-
-    /// Barrier: resolves once `n` calls with `prefix` have arrived.
-    fn wait_for_calls(&self, prefix: &str, n: usize) -> bool {
-        let deadline = Instant::now() + TIMEOUT;
-        let mut state = self.inner.state.lock().expect("fake gmail poisoned");
-        loop {
-            let arrived = state
-                .calls
-                .iter()
-                .filter(|call| call.starts_with(prefix))
-                .count();
-            if arrived >= n {
-                return true;
-            }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return false;
-            }
-            let (guard, _) = self
-                .inner
-                .gate
-                .wait_timeout(state, remaining)
-                .expect("fake gmail poisoned");
-            state = guard;
-        }
-    }
-
-    /// Barrier: resolves once at least `n` provider calls are in flight.
-    fn wait_for_inflight(&self, n: usize) -> bool {
-        let deadline = Instant::now() + TIMEOUT;
-        let mut state = self.inner.state.lock().expect("fake gmail poisoned");
-        while state.inflight < n {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return false;
-            }
-            let (guard, _) = self
-                .inner
-                .gate
-                .wait_timeout(state, remaining)
-                .expect("fake gmail poisoned");
-            state = guard;
-        }
-        true
-    }
-
-    /// Barrier: resolves once no provider call is in flight.
-    fn wait_until_idle(&self) -> bool {
-        let deadline = Instant::now() + TIMEOUT;
-        let mut state = self.inner.state.lock().expect("fake gmail poisoned");
-        loop {
-            if state.inflight == 0 {
-                return true;
-            }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return false;
-            }
-            let (guard, _) = self
-                .inner
-                .gate
-                .wait_timeout(state, remaining)
-                .expect("fake gmail poisoned");
-            state = guard;
-        }
-    }
-
-    /// Records a detailed call-log entry and wakes barrier waiters.
-    fn record(&self, entry: String) {
-        let mut state = self.inner.state.lock().expect("fake gmail poisoned");
-        state.calls.push(entry);
-        drop(state);
-        self.inner.gate.notify_all();
-    }
-
-    /// Applies the pause gate (cancellation-aware) and the sticky typed
-    /// error. Network never blocks on the store.
-    fn enter(
-        &self,
-        method: &'static str,
-        pause_key: Option<&str>,
-        cancel: &CancelToken,
-    ) -> Result<GateGuard, MailError> {
-        let mut state = self.inner.state.lock().expect("fake gmail poisoned");
-        state.inflight += 1;
-        self.inner.gate.notify_all();
-        let pause_active = |state: &FakeState| -> bool {
-            if state.paused_method != Some(method) {
-                return false;
-            }
-            match (&state.pause_thread_id, pause_key) {
-                (Some(pause_id), Some(key)) => pause_id == key,
-                (Some(_), None) => false,
-                (None, _) => true,
-            }
-        };
-        while pause_active(&state) && !cancel.is_cancelled() {
-            let (guard, _) = self
-                .inner
-                .gate
-                .wait_timeout(state, Duration::from_millis(20))
-                .expect("fake gmail poisoned");
-            state = guard;
-        }
-        if cancel.is_cancelled() {
-            state.inflight -= 1;
-            drop(state);
-            self.inner.gate.notify_all();
-            return Err(MailError::AuthCancelled);
-        }
-        if let Some(error) = state.sticky_error.clone() {
-            state.inflight -= 1;
-            drop(state);
-            self.inner.gate.notify_all();
-            return Err(error);
-        }
-        Ok(GateGuard {
-            inner: Arc::clone(&self.inner),
-        })
-    }
-}
-
-impl GmailReadProvider for FakeGmail {
-    fn is_configured(&self) -> bool {
-        self.inner
-            .state
-            .lock()
-            .expect("fake gmail poisoned")
-            .configured
-    }
-
-    fn has_credentials(&self) -> Result<bool, MailError> {
-        Ok(self.has_credentials())
-    }
-
-    fn connect(&self, cancel: &CancelToken) -> Result<GmailProfile, MailError> {
-        self.record("connect".to_string());
-        let plan = {
-            self.inner
-                .state
-                .lock()
-                .expect("fake gmail poisoned")
-                .connect_plan
-                .clone()
-        };
-        let _guard = self.enter("connect", None, cancel)?;
-        match plan {
-            ProfilePlan::Value(profile) => Ok(profile),
-            ProfilePlan::Error(error) => Err(error),
-        }
-    }
-
-    fn disconnect(&self) -> Result<(), MailError> {
-        // Local secure credential deletion is not cancellable; the test gate
-        // verifies the core excludes new work throughout this cleanup window.
-        let mut state = self.inner.state.lock().expect("fake gmail poisoned");
-        state.disconnect_calls += 1;
-        state.calls.push("disconnect".to_string());
-        self.inner.gate.notify_all();
-        while state.disconnect_paused {
-            state = self.inner.gate.wait(state).expect("fake gmail poisoned");
-        }
-        state.credentials = false;
-        Ok(())
-    }
-
-    fn profile(&self, cancel: &CancelToken) -> Result<GmailProfile, MailError> {
-        self.record("profile".to_string());
-        let plan = {
-            self.inner
-                .state
-                .lock()
-                .expect("fake gmail poisoned")
-                .profile_plan
-                .clone()
-        };
-        let _guard = self.enter("profile", None, cancel)?;
-        match plan {
-            ProfilePlan::Value(profile) => Ok(profile),
-            ProfilePlan::Error(error) => Err(error),
-        }
-    }
-
-    fn list_inbox(
-        &self,
-        page_token: Option<&str>,
-        cancel: &CancelToken,
-    ) -> Result<InboxPage, MailError> {
-        self.record(format!(
-            "list_inbox|{}",
-            match page_token {
-                Some(token) => token.to_string(),
-                None => "-".to_string(),
-            }
-        ));
-        let _guard = self.enter("list_inbox", None, cancel)?;
-        let key = page_token.map(str::to_string);
-        let page = {
-            let state = self.inner.state.lock().expect("fake gmail poisoned");
-            state.inbox.get(&key).cloned().unwrap_or(InboxPage {
-                thread_ids: Vec::new(),
-                next_page_token: None,
-            })
-        };
-        Ok(page)
-    }
-
-    fn get_thread(
-        &self,
-        thread_id: &str,
-        cancel: &CancelToken,
-    ) -> Result<Option<GmailThread>, MailError> {
-        self.record(format!("get_thread|{thread_id}"));
-        let planned_error = {
-            self.inner
-                .state
-                .lock()
-                .expect("fake gmail poisoned")
-                .thread_errors
-                .get(thread_id)
-                .cloned()
-        };
-        if let Some(error) = planned_error {
-            return Err(error);
-        }
-        let _guard = self.enter("get_thread", Some(thread_id), cancel)?;
-        let thread = {
-            let state = self.inner.state.lock().expect("fake gmail poisoned");
-            state.threads.get(thread_id).cloned()
-        };
-        Ok(thread)
-    }
-
-    fn history(
-        &self,
-        start_history_id: &str,
-        page_token: Option<&str>,
-        cancel: &CancelToken,
-    ) -> Result<HistoryPage, GmailHistoryError> {
-        let _guard = self
-            .enter("history", None, cancel)
-            .map_err(GmailHistoryError::Mail)?;
-        let call = format!(
-            "history|{start_history_id}|{}",
-            match page_token {
-                Some(token) => token.to_string(),
-                None => "-".to_string(),
-            }
-        );
-        let outcome = {
-            let mut state = self.inner.state.lock().expect("fake gmail poisoned");
-            state.calls.push(call);
-            if state.expired_starts.contains(start_history_id) {
-                Err(GmailHistoryError::Expired)
-            } else {
-                let key = page_token.map(str::to_string);
-                Ok(state.history.get(&key).cloned().unwrap_or(HistoryPage {
-                    changed_thread_ids: Vec::new(),
-                    deleted_message_ids: Vec::new(),
-                    next_page_token: None,
-                    history_id: start_history_id.to_string(),
-                }))
-            }
-        };
-        outcome
-    }
-}
-
 // ------------------------------------------------------------- builders
-
-fn gmail_profile(account_id: &str, email_address: &str, history_id: &str) -> GmailProfile {
-    GmailProfile {
-        account_id: account_id.to_string(),
-        email_address: email_address.to_string(),
-        history_id: history_id.to_string(),
-    }
-}
+use mail_core::testing::profile as gmail_profile;
 
 fn msg(id: &str, sent_at: &str) -> Message {
-    Message {
-        id: id.to_string(),
-        from: mail_core::dto::Address {
-            display_name: Some("Ada Sender".to_string()),
-            mailbox: "ada@example.test".to_string(),
-        },
-        to: vec![mail_core::dto::Address {
-            display_name: None,
-            mailbox: "me@example.test".to_string(),
-        }],
-        sent_at: sent_at.to_string(),
-        body_text: "plain text body".to_string(),
-        has_attachment: None,
-    }
+    let mut message =
+        mail_core::testing::message(id, "ada@example.test", sent_at, "plain text body");
+    message.from.display_name = Some("Ada Sender".to_string());
+    message.to.push(mail_core::dto::Address {
+        display_name: None,
+        mailbox: "me@example.test".to_string(),
+    });
+    message
 }
 
 fn thread(id: &str, history_id: &str, msgs: Vec<Message>, inbox_ids: &[&str]) -> GmailThread {
-    let is_in_inbox = inbox_ids
+    let is_in_inbox = inbox_ids.iter().any(|id| msgs.iter().any(|m| m.id == **id));
+    let newest = msgs
         .iter()
-        .any(|inbox_id| msgs.iter().any(|m| m.id == **inbox_id));
-    GmailThread {
-        star_facts: None,
-        newest_sender: msgs
-            .iter()
-            .max_by(|a, b| (&a.sent_at, &a.id).cmp(&(&b.sent_at, &b.id)))
-            .map(|m| m.from.clone()),
-        attachments: Vec::new(),
-        conversation: mail_core::dto::Conversation {
-            stars: None,
-            conversation_ref: ConversationRef {
-                account_id: ACCOUNT.to_string(),
-                conversation_id: id.to_string(),
-            },
-            subject: format!("subject {id}"),
-            messages: msgs,
-            is_in_inbox,
-            is_read: None,
-            context_complete: Some(true),
-            unsupported_reason: None,
-            retained_snapshot_at: None,
-            reply_context: None,
-            pending_operation_id: None,
-        },
-        inbox_message_ids: inbox_ids.iter().map(|s| s.to_string()).collect(),
-        message_ids: None,
-        unread_message_ids: None,
-        trash_message_ids: None,
-        spam_message_ids: None,
-        history_id: history_id.to_string(),
-    }
+        .max_by(|a, b| (&a.sent_at, &a.id).cmp(&(&b.sent_at, &b.id)))
+        .map(|m| m.from.clone());
+    let mut thread = mail_core::testing::thread(ACCOUNT, id, msgs, inbox_ids, None, history_id);
+    thread.newest_sender = newest;
+    thread.message_ids = None;
+    thread.conversation.subject = format!("subject {id}");
+    thread.conversation.is_in_inbox = is_in_inbox;
+    thread
 }
 
 fn inbox_page(thread_ids: &[&str], next_page_token: Option<&str>) -> InboxPage {
@@ -691,16 +144,6 @@ fn inbox_ids(core: &GmailCore) -> Vec<String> {
         .collect()
 }
 
-fn open_core(tag: &str, fake: &Arc<FakeGmail>) -> (GmailCore, PathBuf) {
-    let dir = temp_profile(tag);
-    let core = open_at(&dir, fake);
-    (core, dir)
-}
-
-fn open_at(dir: &PathBuf, fake: &Arc<FakeGmail>) -> GmailCore {
-    GmailCore::open(dir, Arc::clone(fake) as Arc<dyn GmailReadProvider>).expect("open gmail core")
-}
-
 /// Waits until the initial discovery + catch-up pass completed for the
 /// baseline world.
 fn wait_initial_sync(core: &GmailCore) {
@@ -722,7 +165,7 @@ fn wait_initial_sync(core: &GmailCore) {
 
 #[test]
 fn states_are_visible_and_rejections_are_typed() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     fake.set_configured(false);
     let (core, dir) = open_core("states", &fake);
     assert_eq!(status(&core).mode, MailMode::Gmail);
@@ -756,7 +199,7 @@ fn states_are_visible_and_rejections_are_typed() {
 
 #[test]
 fn startup_restore_completes_bounded_discovery_and_catchup() {
-    let (fake, profile) = FakeGmail::new();
+    let (fake, profile) = FakeGmail::new_for_cache();
     baseline_world(&fake);
     let (core, dir) = open_core("initial", &fake);
     assert_eq!(
@@ -803,7 +246,7 @@ fn startup_restore_completes_bounded_discovery_and_catchup() {
 /// from the newest cached message in the ordered stack — never participants[0].
 #[test]
 fn gmail_summaries_derive_primary_correspondent_from_the_newest_message() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     let mut inbox = HashMap::new();
     inbox.insert(None::<String>, inbox_page(&["thr-self"], None));
     fake.set_inbox(inbox);
@@ -883,7 +326,7 @@ fn gmail_summaries_derive_primary_correspondent_from_the_newest_message() {
 
 #[test]
 fn restored_credentials_for_another_account_never_sync_into_cached_profile() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     baseline_world(&fake);
     let (core, dir) = open_core("restore-account-mismatch", &fake);
     wait_initial_sync(&core);
@@ -896,7 +339,7 @@ fn restored_credentials_for_another_account_never_sync_into_cached_profile() {
         "beta@example.test",
         "foreign-history",
     )));
-    let restored = open_at(&dir, &fake);
+    let restored = open_at(dir.path(), &fake);
     assert!(
         until(|| {
             let state = status(&restored);
@@ -925,7 +368,7 @@ fn restored_credentials_for_another_account_never_sync_into_cached_profile() {
 
 #[test]
 fn restart_during_discovery_resumes_committed_pages_without_duplication() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     baseline_world(&fake);
     fake.set_paused_method(Some("get_thread"));
     fake.pause_thread(Some("thr-3c"));
@@ -941,7 +384,7 @@ fn restart_during_discovery_resumes_committed_pages_without_duplication() {
 
     fake.set_paused_method(None);
     fake.pause_thread(None);
-    let core = open_at(&dir, &fake);
+    let core = open_at(dir.path(), &fake);
     wait_initial_sync(&core);
 
     // Committed pages were not re-listed or re-fetched; the interrupted page
@@ -970,7 +413,7 @@ fn restart_during_discovery_resumes_committed_pages_without_duplication() {
 
 #[test]
 fn discovery_caps_at_one_hundred_conversations() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     let mut inbox = HashMap::new();
     let first: Vec<String> = (1..=60).map(|i| format!("cap-{i:03}")).collect();
     let second: Vec<String> = (61..=120).map(|i| format!("cap-{i:03}")).collect();
@@ -1021,7 +464,7 @@ fn discovery_caps_at_one_hundred_conversations() {
 
 #[test]
 fn rate_limit_mid_discovery_preserves_and_reuses_durable_progress() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     // Two pages; the second read of page 2 is rate limited mid-page.
     let mut inbox = HashMap::new();
     inbox.insert(
@@ -1069,7 +512,7 @@ fn rate_limit_mid_discovery_preserves_and_reuses_durable_progress() {
     drop(core);
     // The limit clears; the restart resumes from the durable checkpoints.
     fake.fail_thread("thr-4d", None);
-    let core = open_at(&dir, &fake);
+    let core = open_at(dir.path(), &fake);
     assert!(
         until(|| {
             let st = status(&core);
@@ -1106,7 +549,7 @@ fn rate_limit_mid_discovery_preserves_and_reuses_durable_progress() {
 
 #[test]
 fn first_page_mid_page_failures_preserve_and_reuse_durable_progress() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     // The first (and only) inbox page fails on its second thread read; the
     // running checkpoint keeps a `None` page token across reopens.
     let mut inbox = HashMap::new();
@@ -1145,7 +588,7 @@ fn first_page_mid_page_failures_preserve_and_reuse_durable_progress() {
 
     // Reopen onto a durable `running` state with no page token: discovery
     // must resume the first page, and the limit still holds (failure 2).
-    let core = open_at(&dir, &fake);
+    let core = open_at(dir.path(), &fake);
     assert!(
         until(|| status(&core).sync.error == Some(MailError::RateLimited)),
         "second rate limit visible: {:?}",
@@ -1159,7 +602,7 @@ fn first_page_mid_page_failures_preserve_and_reuse_durable_progress() {
 
     // The limit clears; the second reopen completes discovery and catch-up.
     fake.fail_thread("thr-2b", None);
-    let core = open_at(&dir, &fake);
+    let core = open_at(dir.path(), &fake);
     assert!(
         until(|| {
             let st = status(&core);
@@ -1195,7 +638,7 @@ fn first_page_mid_page_failures_preserve_and_reuse_durable_progress() {
 
 #[test]
 fn capped_expiry_rediscovery_drops_unseen_cached_inbox_threads_before_rebasing() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     let old_ids: Vec<String> = (1..=100).map(|n| format!("old-{n:03}")).collect();
     let old_refs: Vec<&str> = old_ids.iter().map(String::as_str).collect();
     let mut inbox = HashMap::new();
@@ -1349,7 +792,7 @@ fn capped_expiry_rediscovery_drops_unseen_cached_inbox_threads_before_rebasing()
 
 #[test]
 fn history_catch_up_reflects_external_changes_deletions_and_archives() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     baseline_world(&fake);
     let (core, dir) = open_core("external", &fake);
     wait_initial_sync(&core);
@@ -1432,7 +875,7 @@ fn history_catch_up_reflects_external_changes_deletions_and_archives() {
 
 #[test]
 fn history_does_not_import_new_archived_thread_bodies_into_the_bounded_cache() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     baseline_world(&fake);
     let (core, dir) = open_core("history-archived-thread", &fake);
     wait_initial_sync(&core);
@@ -1472,7 +915,7 @@ fn history_does_not_import_new_archived_thread_bodies_into_the_bounded_cache() {
 
 #[test]
 fn history_cursor_only_advances_after_all_pages_and_resumes_mid_batch() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     baseline_world(&fake);
     let (core, dir) = open_core("batch-restart", &fake);
     wait_initial_sync(&core);
@@ -1536,7 +979,7 @@ fn history_cursor_only_advances_after_all_pages_and_resumes_mid_batch() {
     fake.set_paused_method(None);
     fake.pause_thread(None);
 
-    let core = open_at(&dir, &fake);
+    let core = open_at(dir.path(), &fake);
     assert!(
         until(|| {
             core.get_conversation(&conv_ref("thr-2b"))
@@ -1554,7 +997,7 @@ fn history_cursor_only_advances_after_all_pages_and_resumes_mid_batch() {
         history_calls.len(),
         3,
         "{history_calls:?} full: {:?}",
-        fake.inner.state.lock().expect("log").calls
+        fake.state.lock().expect("log").calls
     );
     assert_eq!(history_calls[0], "history|hist-1000|-");
     assert_eq!(history_calls[1], "history|hist-1001|-");
@@ -1574,7 +1017,7 @@ fn history_cursor_only_advances_after_all_pages_and_resumes_mid_batch() {
 
 #[test]
 fn cursor_expiry_triggers_bounded_rediscovery_and_reconciles_stale_members() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     baseline_world(&fake);
     let (core, dir) = open_core("expiry", &fake);
     wait_initial_sync(&core);
@@ -1657,7 +1100,7 @@ fn cursor_expiry_triggers_bounded_rediscovery_and_reconciles_stale_members() {
 
 #[test]
 fn cached_reads_survive_offline_and_auth_errors() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     baseline_world(&fake);
     let (core, dir) = open_core("offline", &fake);
     wait_initial_sync(&core);
@@ -1706,7 +1149,7 @@ fn cached_reads_survive_offline_and_auth_errors() {
 
 #[test]
 fn account_identity_switch_is_rejected_fail_closed() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     baseline_world(&fake);
     let (core, dir) = open_core("identity", &fake);
     wait_initial_sync(&core);
@@ -1751,7 +1194,7 @@ fn account_identity_switch_is_rejected_fail_closed() {
 
 #[test]
 fn discovery_rejects_repeated_page_tokens_without_spinning() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     let mut inbox = HashMap::new();
     inbox.insert(None, inbox_page(&[], Some("cycle")));
     inbox.insert(Some("cycle".to_string()), inbox_page(&[], Some("cycle")));
@@ -1774,7 +1217,7 @@ fn discovery_rejects_repeated_page_tokens_without_spinning() {
 
 #[test]
 fn discovery_page_budget_yields_with_each_checkpoint_durable() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     let mut pages = HashMap::new();
     for index in 0..100 {
         let incoming = if index == 0 {
@@ -1797,7 +1240,7 @@ fn discovery_page_budget_yields_with_each_checkpoint_durable() {
 
 #[test]
 fn history_rejects_repeated_page_tokens_without_advancing_cursor() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     baseline_world(&fake);
     let mut history = HashMap::new();
     history.insert(None, history_page(&[], &[], Some("cycle"), "hist-1001"));
@@ -1824,7 +1267,7 @@ fn history_rejects_repeated_page_tokens_without_advancing_cursor() {
 
 #[test]
 fn disconnect_from_pass_start_hint_cancels_the_published_dispatch_token() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     fake.set_credentials(false);
     let (core, dir) = open_core("dispatch-cancel", &fake);
     let fired = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -1860,7 +1303,7 @@ fn disconnect_from_pass_start_hint_cancels_the_published_dispatch_token() {
 
 #[test]
 fn subscribers_receive_a_progress_hint_after_history_checkpoint_before_next_page_finishes() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     baseline_world(&fake);
     let (core, dir) = open_core("sync-progress-hint", &fake);
     wait_initial_sync(&core);
@@ -1899,7 +1342,7 @@ fn subscribers_receive_a_progress_hint_after_history_checkpoint_before_next_page
 
 #[test]
 fn subscribers_observe_sync_start_before_a_paused_provider_call_returns() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     baseline_world(&fake);
     let (core, dir) = open_core("sync-start-hint", &fake);
     wait_initial_sync(&core);
@@ -1926,7 +1369,7 @@ fn subscribers_observe_sync_start_before_a_paused_provider_call_returns() {
 
 #[test]
 fn history_page_budget_yields_after_durable_checkpoints() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     baseline_world(&fake);
     let (core, dir) = open_core("history-page-budget", &fake);
     wait_initial_sync(&core);
@@ -1960,7 +1403,7 @@ fn history_page_budget_yields_after_durable_checkpoints() {
 
 #[test]
 fn sync_is_serial_and_in_flight_requests_reject_as_busy() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     baseline_world(&fake);
     fake.set_paused_method(Some("get_thread"));
     fake.pause_thread(Some("thr-3c"));
@@ -1988,7 +1431,7 @@ fn sync_is_serial_and_in_flight_requests_reject_as_busy() {
 
 #[test]
 fn disconnect_barrier_rejects_connect_and_sync_until_cleanup_finishes() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     baseline_world(&fake);
     let (core, dir) = open_core("disconnect-barrier", &fake);
     wait_initial_sync(&core);
@@ -2017,7 +1460,7 @@ fn disconnect_barrier_rejects_connect_and_sync_until_cleanup_finishes() {
 
 #[test]
 fn disconnect_cancels_in_flight_clears_state_and_blocks_repopulation() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     baseline_world(&fake);
     let (core, dir) = open_core("disconnect", &fake);
     wait_initial_sync(&core);
@@ -2122,7 +1565,7 @@ fn disconnect_cancels_in_flight_clears_state_and_blocks_repopulation() {
 
 #[test]
 fn stop_is_bounded_and_durable_work_resumes_on_restart() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     baseline_world(&fake);
     fake.set_paused_method(Some("get_thread"));
     fake.pause_thread(Some("thr-3c"));
@@ -2139,7 +1582,7 @@ fn stop_is_bounded_and_durable_work_resumes_on_restart() {
 
     fake.set_paused_method(None);
     fake.pause_thread(None);
-    let core = open_at(&dir, &fake);
+    let core = open_at(dir.path(), &fake);
     wait_initial_sync(&core);
     core.stop();
     let _ = std::fs::remove_dir_all(dir);
@@ -2147,21 +1590,21 @@ fn stop_is_bounded_and_durable_work_resumes_on_restart() {
 
 #[test]
 fn profile_lock_rejects_a_second_gmail_writer() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     baseline_world(&fake);
     let (core, dir) = open_core("profile-lock", &fake);
-    let second = GmailCore::open(&dir, Arc::clone(&fake) as Arc<dyn GmailReadProvider>);
+    let second = GmailCore::open(&dir, fake.clone());
     assert_eq!(second.err(), Some(MailError::ProfileInUse));
     core.stop();
     drop(core);
-    let core = open_at(&dir, &fake);
+    let core = open_at(dir.path(), &fake);
     core.stop();
     let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
 fn discovery_page_rejects_aggregate_retained_threads_over_budget_before_commit() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     fake.set_inbox(HashMap::from([(
         None,
         inbox_page(&["huge-discovery"], None),
@@ -2190,7 +1633,7 @@ fn discovery_page_rejects_aggregate_retained_threads_over_budget_before_commit()
 
 #[test]
 fn history_page_rejects_aggregate_retained_threads_without_advancing_cursor() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     baseline_world(&fake);
     let (core, dir) = open_core("history-retained-byte-budget", &fake);
     wait_initial_sync(&core);
@@ -2240,7 +1683,7 @@ fn history_page_rejects_aggregate_retained_threads_without_advancing_cursor() {
 
 #[test]
 fn subscription_fires_on_sync_changes() {
-    let (fake, _profile) = FakeGmail::new();
+    let (fake, _profile) = FakeGmail::new_for_cache();
     baseline_world(&fake);
     let (core, dir) = open_core("subscribe", &fake);
 
