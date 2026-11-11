@@ -2,7 +2,7 @@
 /**
  * Covered-action focus safety regression (real Chrome, real activation).
  *
- * P1 guard: while a utility drawer (Account/Activity/Drafts) or the narrow
+ * P1 guard: while a utility drawer (Account/Activity) or the narrow
  * Contact disclosure overlays the central surface, the covered central rows
  * must be isolated from NATIVE user interaction — real Tab/Shift+Tab traversal
  * must not land on covered row actions, and a native Enter (keyDown with
@@ -171,17 +171,19 @@ describe.skipIf(chromePath === '')('App covered central surface focus safety (re
       expect(info.inRail).toBe(true);
       expect(info.test?.startsWith('rail-')).toBe(true);
 
-      // The visible drawer Close control is still reachable in the forward
-      // direction, and traversal still skips the inert central surface.
+      // Forward traversal still skips the inert central surface and reaches
+      // Drafts, now a list destination in the rail (PR #32, a42cf24).
       await cdp!.js('document.querySelector(\'[data-test="rail-activity"]\').focus()');
       await pressTab(false);
       info = await focusInfo();
       expect(info.inCentral).toBe(false);
-      expect(info.inRail || info.test === 'drawer-close').toBe(true);
+      expect(info).toMatchObject({ inRail: true, test: 'rail-drafts' });
 
-      // Native Enter where focus actually landed (a rail control) must not
-      // archive any covered conversation. The rail activation may switch the
-      // disclosure, but no central row action may fire.
+      // Account still opens a utility drawer; Drafts navigation intentionally
+      // dismisses it. Native Enter on Account must switch drawers without
+      // activating any covered conversation.
+      await cdp!.js('document.querySelector(\'[data-test="rail-account"]\').focus()');
+      expect(await focusInfo()).toMatchObject({ test: 'rail-account', inRail: true, inCentral: false });
       await cdp!.js('window.__focusFake.controls.flush()');
       const before = await archiveOps();
       await pressEnter();
