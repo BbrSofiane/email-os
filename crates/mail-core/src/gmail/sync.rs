@@ -88,7 +88,12 @@ struct GmailInner {
 struct Ctrl {
     state: Mutex<CtrlState>,
     wake: Condvar,
+    #[cfg(test)]
+    after_mutation_count: Mutex<Option<MutationCountHook>>,
 }
+
+#[cfg(test)]
+type MutationCountHook = Box<dyn FnOnce(bool) + Send>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AuthKind {
@@ -373,6 +378,8 @@ impl GmailCore {
                 operations_paused,
             }),
             wake: Condvar::new(),
+            #[cfg(test)]
+            after_mutation_count: Mutex::new(None),
         });
         let hub = Arc::new(GmailHub {
             listeners: Mutex::new(HashMap::new()),
@@ -2028,6 +2035,16 @@ fn run(
                 Ok(count) => more_claimable_mutations = count > 0,
                 Err(error) => outcome = PassOutcome::Halt(error),
             }
+            #[cfg(test)]
+            let callback = ctrl
+                .after_mutation_count
+                .lock()
+                .expect("test mutation-count hook poisoned")
+                .take();
+            #[cfg(test)]
+            if let Some(callback) = callback {
+                callback(more_claimable_mutations);
+            }
         }
 
         let mut halted = false;
@@ -2055,7 +2072,8 @@ fn run(
                         {
                             st.operations_requested = true;
                         } else if action == PassAction::Mutations {
-                            st.operations_requested = more_claimable_mutations;
+                            // Preserve acceptances published after the count above.
+                            st.operations_requested |= more_claimable_mutations;
                         }
                     }
                     PassOutcome::Idle => {}
@@ -2789,6 +2807,100 @@ mod worker_halt_tests {
     }
 
     #[test]
+    fn mutation_accepted_after_post_pass_count_is_dispatched_without_another_wakeup() {
+        use std::sync::mpsc;
+
+        use crate::testing::TIMEOUT;
+        let dir = crate::testing::temp_profile("gmail-lost-wakeup");
+        let provider = provider();
+        let core = GmailCore::open(dir.path(), provider.clone()).expect("open Gmail core");
+        assert!(until(|| {
+            core.account_status().is_ok_and(|status| {
+                status.connection == ConnectionState::Connected
+                    && status.sync.initial_sync_complete
+                    && status.sync.state == SyncState::Idle
+            }) && core
+                .list_conversations()
+                .is_ok_and(|snapshot| !snapshot.conversations.is_empty())
+        }));
+        core.wait_for_test_idle(TIMEOUT).expect("startup work idle");
+
+        let (count_tx, count_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        *core.inner.ctrl.after_mutation_count.lock().unwrap() = Some(Box::new(move |count| {
+            let _ = count_tx.send(count);
+            let _ = release_rx.recv_timeout(TIMEOUT);
+        }));
+        let conversation = ConversationRef {
+            account_id: TEST_ACCOUNT.into(),
+            conversation_id: TEST_THREAD.into(),
+        };
+        core.set_archived(&SetArchived {
+            conversation: conversation.clone(),
+            archived: true,
+            request_id: "lost-wakeup-a".into(),
+        })
+        .expect("accept mutation A");
+        assert!(
+            !count_rx
+                .recv_timeout(TIMEOUT)
+                .expect("post-pass count observed"),
+            "A was the only claimable operation at the post-pass count"
+        );
+
+        core.set_archived(&SetArchived {
+            conversation,
+            archived: false,
+            request_id: "lost-wakeup-b".into(),
+        })
+        .expect("accept mutation B during the count/update gap");
+        assert_eq!(
+            core.list_conversations().unwrap().activity[0].status,
+            crate::dto::OperationStatus::Queued,
+            "B is durably queued while the worker is held"
+        );
+        let cycle_before_release = core.inner.ctrl.state.lock().unwrap().test_wait_cycles;
+        assert!(core.inner.ctrl.state.lock().unwrap().operations_requested);
+        release_tx.send(()).expect("release worker boundary");
+
+        assert!(
+            until(|| {
+                core.inner.ctrl.state.lock().unwrap().test_wait_cycles > cycle_before_release
+            }),
+            "worker must pass the post-pass control update and reach its next wait cycle"
+        );
+        let boundary_state = {
+            let state = core.inner.ctrl.state.lock().unwrap();
+            let status = core.list_conversations().unwrap().activity[0].status;
+            (
+                state.operations_requested
+                    || state.active_action == Some(PassAction::Mutations)
+                    || status == crate::dto::OperationStatus::Confirmed,
+                status,
+            )
+        };
+        if !boundary_state.0 {
+            core.stop();
+            drop(core);
+            panic!(
+                "B was stranded after the worker returned to waiting: {:?}",
+                boundary_state.1
+            );
+        }
+        assert!(
+            until(|| {
+                core.list_conversations().is_ok_and(|snapshot| {
+                    snapshot.activity[0].status == crate::dto::OperationStatus::Confirmed
+                })
+            }),
+            "B must dispatch without another command or sync wake"
+        );
+        assert_eq!(provider.halt_writes(), 2, "A and B both dispatch");
+        core.stop();
+        drop(core);
+    }
+
+    #[test]
     fn gmail_no_reply_deadline_defers_offline_then_uses_fresh_thread_read() {
         use crate::reminders::{PutReminder, ReminderCondition, ReminderPhase};
         let dir = crate::testing::temp_profile("gmail-reminder-worker");
@@ -2855,6 +2967,8 @@ mod worker_halt_tests {
                 operations_paused: false,
             }),
             wake: Condvar::new(),
+            #[cfg(test)]
+            after_mutation_count: Mutex::new(None),
         });
         let hub = GmailHub {
             listeners: Mutex::new(HashMap::new()),
