@@ -1,0 +1,50 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M74TH5NK53EC17EA6P5029JZ",
+  "session_id": "51d622e1-6ef8-4cf7-94af-6048a9823193",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-11T08:10:31.976466533Z",
+  "branch": "maintenance/p3a-gmail-migrations",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "crates/mail-core/tests/fixtures/gmail-1.sql",
+    "crates/mail-core/tests/fixtures/gmail-2-operations.sql"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5-2",
+  "turn_id": "b9399ce00e29",
+  "checkpoint_transcript_start": 1632,
+  "transcript_lines_at_start": 1632,
+  "compact_transcript_start": 238,
+  "token_usage": {
+    "input_tokens": 0,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 0,
+    "output_tokens": 0,
+    "api_call_count": 0
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-11T08:10:31.749611171Z",
+    "agent_lines": 119,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 119,
+    "total_lines_changed": 119,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 23,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".codex/hooks.json": 23
+      }
+    }
+  ]
+}
