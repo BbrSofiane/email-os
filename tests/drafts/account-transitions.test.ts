@@ -2,7 +2,7 @@ import { advanceUiUntil, useUiTestClock } from '../support/timers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises } from '@vue/test-utils';
 import type { MailClient } from '../../src/lib/ipc/client';
-import { closeUtilityDrawer, createBrowserFakeMailClient, deferred, openUtilityDrawer } from '../helpers';
+import { closeUtilityDrawer, createBrowserFakeMailClient, deferred, openDraftsList, openUtilityDrawer } from '../helpers';
 import { mountDraftsApp, startNewDraft } from '../support/drafts';
 
 describe('draft account transitions', () => {
@@ -20,7 +20,7 @@ describe('draft account transitions', () => {
     await openUtilityDrawer(w, 'account');
     await w.find('[data-test="account-disconnect"]').trigger('click');
     await flushPromises();
-    await openUtilityDrawer(w, 'drafts');
+    await openDraftsList(w);
     expect(w.find('[data-test="new-draft"]').attributes('disabled')).toBeDefined();
     await w.find('[data-test="new-draft"]').trigger('click');
     expect(w.find('[data-test="composer"]').exists()).toBe(false);
@@ -67,7 +67,7 @@ describe('draft account transitions', () => {
     await openUtilityDrawer(w, 'account');
     expect(w.find('[data-test="disconnect-warning"]').text()).toContain('local drafts remain on this device');
     await closeUtilityDrawer(w);
-    await openUtilityDrawer(w, 'drafts');
+    await openDraftsList(w);
     await startNewDraft(w);
     await w.find('[data-test="draft-body"]').setValue('must persist through disconnect');
     // The blocked switch keeps the editor visible with its exact buffer; the
@@ -90,7 +90,7 @@ describe('draft account transitions', () => {
     expect(w.find('[data-test="drafts-pane"]').exists()).toBe(false);
     await w.find('[data-test="account-connect"]').trigger('click');
     await flushPromises();
-    await openUtilityDrawer(w, 'drafts');
+    await openDraftsList(w);
     await advanceUiUntil(() => w.find('[data-test^="open-draft-"]').exists());
     await w.find('[data-test^="open-draft-"]').trigger('click');
     await flushPromises();

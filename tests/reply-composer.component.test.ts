@@ -11,15 +11,17 @@
  * lifecycle as the drafts drawer; a failed close keeps the reader and the
  * composer visible with their unacknowledged buffer.
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 
 import ReplyComposer from '../src/components/ReplyComposer.vue';
 import type { DraftContent, DraftReceipt, DraftSource, MailClient } from '../src/lib/ipc/client';
-import { createBrowserFakeMailClient, deferred, fixtureRef, waitFor, mountApp as sharedMountApp, createKeyEvent } from './helpers';
+import { createBrowserFakeMailClient, deferred, fixtureRef, mountApp as sharedMountApp, press } from './helpers';
+import { advanceUiUntil, useUiTestClock } from './support/timers';
 
 describe('inline reply composer docked in the open reader (TASK B)', () => {
   let wrapper: VueWrapper | null = null;
+  beforeEach(useUiTestClock);
 
   /** Opens conv-01 in the reader and clicks Reply. */
   async function openReaderAndPrepareReply(w: VueWrapper): Promise<void> {
@@ -27,13 +29,14 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
     await flushPromises();
     await w.find('[data-test="prepare-reply"]').trigger('click');
     await flushPromises();
-    await waitFor(() => w.find('[data-test="reply-composer"]').exists());
+    await advanceUiUntil(() => w.find('[data-test="reply-composer"]').exists());
     await flushPromises();
   }
 
   afterEach(() => {
     wrapper?.unmount();
     wrapper = null;
+    vi.useRealTimers();
   });
 
   it('keeps the reader open and docks the composer at the bottom of the reader pane on Reply', async () => {
@@ -118,7 +121,7 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
 
     // Editing the body saves only the typed text; the quote is never appended.
     await w.find('[data-test="draft-body"]').setValue('my own reply text');
-    await new Promise((resolve) => setTimeout(resolve, 360));
+    await vi.advanceTimersByTimeAsync(300);
     await flushPromises();
     const saved = await fake.getDraft((await fake.listDrafts())[0]!.ref);
     expect(saved.content.bodyText).toBe('my own reply text');
@@ -169,13 +172,13 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
     await openReaderAndPrepareReply(w);
     await w.find('[data-test="draft-body"]').setValue('last keystroke');
 
-    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true }));
+    press('Escape', { bubbles: true }, window);
     await flushPromises();
     // The flush is in flight: the composer must stay open.
     expect(w.find('[data-test="reply-composer"]').exists()).toBe(true);
     gate.reject({ kind: 'storage_unavailable' });
     await flushPromises();
-    await waitFor(() => w.find('[data-test="draft-error"]').exists());
+    await advanceUiUntil(() => w.find('[data-test="draft-error"]').exists());
     // Failed close: reader AND composer stay visible with the exact buffer.
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
     expect(w.find('[data-test="reply-composer"]').exists()).toBe(true);
@@ -185,9 +188,9 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
     // flush; the reader itself stays open.
     await w.find('[data-test="retry-draft-save"]').trigger('click');
     await flushPromises();
-    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true }));
+    press('Escape', { bubbles: true }, window);
     await flushPromises();
-    await waitFor(() => !w.find('[data-test="reply-composer"]').exists());
+    await advanceUiUntil(() => !w.find('[data-test="reply-composer"]').exists());
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
     expect(w.find('[data-test="utility-drawer"]').exists()).toBe(false);
     const saved = await fake.getDraft((await fake.listDrafts())[0]!.ref);
@@ -201,7 +204,7 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
     await w.find('[data-test="draft-body"]').setValue('typed reply');
     await w.find('[data-test="reply-composer"]').find('[data-test="close-composer"]').trigger('click');
     await flushPromises();
-    await waitFor(() => !w.find('[data-test="reply-composer"]').exists());
+    await advanceUiUntil(() => !w.find('[data-test="reply-composer"]').exists());
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
     const saved = await fake.getDraft((await fake.listDrafts())[0]!.ref);
     expect(saved.content.bodyText).toBe('typed reply');
@@ -221,7 +224,7 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
     // Reader Back while the inline composer is open: protected flush first.
     await w.find('[data-test="reader-close"]').trigger('click');
     await flushPromises();
-    await waitFor(() => w.find('[data-test="draft-error"]').exists());
+    await advanceUiUntil(() => w.find('[data-test="draft-error"]').exists());
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
     expect(w.find('[data-test="reply-composer"]').exists()).toBe(true);
     expect((w.find('[data-test="draft-body"]').element as HTMLTextAreaElement).value).toBe('unacknowledged buffer');
@@ -239,7 +242,7 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
     await flushPromises();
     await w.find('[data-test="reader-close"]').trigger('click');
     await flushPromises();
-    await waitFor(() => !w.find('[data-test="reader"]').exists());
+    await advanceUiUntil(() => !w.find('[data-test="reader"]').exists());
     expect(w.find('[data-test="reply-composer"]').exists()).toBe(false);
     const saved = await fake.getDraft((await fake.listDrafts())[0]!.ref);
     expect(saved.content.bodyText).toBe('unacknowledged buffer');
@@ -280,9 +283,8 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
     await openReaderAndPrepareReply(w);
     await w.find('[data-test="draft-body"]').setValue('e j k stay text');
 
-    for (const key of ['e', 'j', 'k', 'Enter', 'x', 'g', 'E']) window.dispatchEvent(createKeyEvent(key, { bubbles: true, ...(key === 'E' ? { shiftKey: true } : {}) }));
+    for (const key of ['e', 'j', 'k', 'Enter', 'x', 'g', 'E']) press(key, { bubbles: true, ...(key === 'E' ? { shiftKey: true } : {}) }, window);
     await flushPromises();
-    await new Promise((resolve) => setTimeout(resolve, 50));
 
     expect(archives).toBe(0);
     expect(fake.controls.activity()).toEqual([]);
@@ -295,7 +297,7 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
     expect(w.find('[data-test="search-input"]').exists()).toBe(false);
   });
 
-  it('re-docks into the drafts drawer when the reader moves off the reply source (contact recent row)', async () => {
+  it('moves into the inline compose card when the reader moves off the reply source (contact recent row)', async () => {
     const fake = createBrowserFakeMailClient();
     const w = sharedMountApp(fake, 'browser-preview', { attachTo: document.body }); wrapper = w; await flushPromises();
     await openReaderAndPrepareReply(w);
@@ -306,9 +308,12 @@ describe('inline reply composer docked in the open reader (TASK B)', () => {
     expect(other).toBeDefined();
     await other!.trigger('click');
     await flushPromises();
-    await waitFor(() => !w.find('[data-test="reply-composer"]').exists());
-    // The editor is still visible and protected: docked in the drafts drawer.
-    expect(w.find('[data-test="drafts-pane"]').exists()).toBe(true);
+    await advanceUiUntil(() => !w.find('[data-test="reply-composer"]').exists());
+    // The editor is still visible and protected: the same draft in the inline
+    // card, titled as the reply draft, with the reason it is not in its thread.
+    expect(w.find('[data-test="compose-card"]').exists()).toBe(true);
+    expect(w.get('[data-test="compose-card"]').attributes('aria-label')).toBe('Reply draft to ada@example.test');
+    expect(w.get('[data-test="compose-card-notice"]').text()).toBe('Source conversation not open. Editing locally; nothing is sent.');
     expect(w.find('[data-test="composer"]').exists()).toBe(true);
     expect((await fake.listDrafts())).toHaveLength(1);
     expect((await fake.listDrafts())[0]?.source).toMatchObject({ kind: 'reply' });

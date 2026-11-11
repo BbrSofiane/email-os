@@ -1,38 +1,40 @@
-import { advanceUiUntil, useUiTestClock } from './support/timers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, type VueWrapper } from '@vue/test-utils';
-import DraftsPanel from '../src/components/DraftsPanel.vue';
-import type { DraftReceipt, DraftRef, MailClient } from '../src/lib/ipc/client';
-import { createBrowserFakeMailClient, deferred, openUtilityDrawer, createKeyEvent } from './helpers';
-import { mountDraftsApp as mountDraftsUi, startNewDraft } from './support/drafts';
+import type { DraftReceipt, DraftSummary, MailClient } from '../src/lib/ipc/client';
+import {
+  createBrowserFakeMailClient,
+  deferred,
+  openDraftsList,
+  openUtilityDrawer,
+  press,
+} from './helpers';
+import { advanceUiUntil, useUiTestClock } from './support/timers';
+import { mountDraftsApp, startNewDraft } from './support/drafts';
 
-describe('draft save and receipt integrity', () => {
-  let wrapper: VueWrapper | null = null;
-
-  beforeEach(useUiTestClock);
+describe('local plain-text drafts UI', () => {
 
   /**
-   * The drawer is one column: while an editor is open, the list (with New draft
-   * and the draft rows) is not on screen, so the UI no longer offers a switch.
-   * These tests guard the lifecycle behind it, so the request is sent through
-   * the panel's own events, which reach the same App handlers the buttons used.
+   * While an editor is open its surface (the inline card or the docked reply
+   * composer) covers the list, so the UI offers no switch. These tests guard
+   * the lifecycle behind it, so the request is sent through the App's own
+   * handlers, the ones the Drafts list's New draft button and rows reach.
    */
-  async function requestEditorSwitch(w: VueWrapper, to?: DraftRef): Promise<void> {
-    const panel = w.findComponent(DraftsPanel);
-    if (to) panel.vm.$emit('openDraft', to);
-    else panel.vm.$emit('newDraft');
+  async function requestEditorSwitch(w: VueWrapper, to?: Pick<DraftSummary, 'ref' | 'source'>): Promise<void> {
+    const app = w.vm as unknown as { drafts: { openNew(): Promise<boolean> }; openDraftFromList(draft: Pick<DraftSummary, 'ref' | 'source'>): Promise<void> };
+    if (to) void app.openDraftFromList(to);
+    else void app.drafts.openNew();
     await flushPromises();
   }
 
+  beforeEach(useUiTestClock);
+
   afterEach(() => {
-    wrapper?.unmount();
-    wrapper = null;
     vi.useRealTimers();
   });
 
   it('creates, autosaves, closes, and reopens exact raw text in all four fields', async () => {
     const fake = createBrowserFakeMailClient();
-    const w = wrapper = await mountDraftsUi(fake);
+    const w = await mountDraftsApp(fake);
     await startNewDraft(w);
     await w.find('[data-test="draft-to"]').setValue('  not an address, left as typed  ');
     // Cc is on demand in the new-message layout.
@@ -64,7 +66,7 @@ describe('draft save and receipt integrity', () => {
 
   it('debounces ordinary edits into an acknowledged local revision', async () => {
     const fake = createBrowserFakeMailClient();
-    const w = wrapper = await mountDraftsUi(fake);
+    const w = await mountDraftsApp(fake);
     await startNewDraft(w);
     const ref = (await fake.listDrafts())[0]!.ref;
     await w.find('[data-test="draft-body"]').setValue('debounced value ✓');
@@ -88,7 +90,7 @@ describe('draft save and receipt integrity', () => {
         return fake.saveDraft(command);
       },
     };
-    const w = wrapper = await mountDraftsUi(fake, client);
+    const w = await mountDraftsApp(fake, client);
     await startNewDraft(w);
     await w.find('[data-test="draft-body"]').setValue('frozen snapshot');
     await w.find('[data-test="close-composer"]').trigger('click');
@@ -111,7 +113,7 @@ describe('draft save and receipt integrity', () => {
     const fake = createBrowserFakeMailClient();
     let lists = 0;
     const client: MailClient = { ...fake, listDrafts: async () => { lists += 1; return fake.listDrafts(); } };
-    const w = wrapper = await mountDraftsUi(fake, client);
+    const w = await mountDraftsApp(fake, client);
     await startNewDraft(w);
     await w.find('[data-test="draft-body"]').setValue('buffer survives focus');
     const baseline = lists;
@@ -135,7 +137,7 @@ describe('draft save and receipt integrity', () => {
       },
       saveDraft: (command) => { saves.push(command); return fake.saveDraft(command); },
     };
-    const w = wrapper = await mountDraftsUi(fake, client);
+    const w = await mountDraftsApp(fake, client);
     await advanceUiUntil(() => w.find('[data-test="draft-subscription-error"]').exists());
     expect(w.find('[data-test="draft-list-error"]').exists()).toBe(false);
     expect(subscriptionAttempts).toBe(1);
@@ -172,7 +174,7 @@ describe('draft save and receipt integrity', () => {
 
   it('background draft hints do not overwrite a dirty editor or advance its CAS revision', async () => {
     const fake = createBrowserFakeMailClient();
-    const w = wrapper = await mountDraftsUi(fake);
+    const w = await mountDraftsApp(fake);
     await startNewDraft(w);
     const original = (await fake.listDrafts())[0]!;
     const before = await fake.getDraft(original.ref);
@@ -212,7 +214,7 @@ describe('draft save and receipt integrity', () => {
         return commands.length === 1 ? first.promise : fake.saveDraft(command);
       },
     };
-    const w = wrapper = await mountDraftsUi(fake, client);
+    const w = await mountDraftsApp(fake, client);
     await startNewDraft(w);
     await w.find('[data-test="draft-body"]').setValue('frozen text');
     await w.find('[data-test="close-composer"]').trigger('click');
@@ -242,7 +244,7 @@ describe('draft save and receipt integrity', () => {
         return commands.length === 1 ? Promise.reject({ kind: 'invalid_request', field: 'bodyText' }) : fake.saveDraft(command);
       },
     };
-    const w = wrapper = await mountDraftsUi(fake, client);
+    const w = await mountDraftsApp(fake, client);
     await startNewDraft(w);
     await w.find('[data-test="draft-body"]').setValue('too long');
     await w.find('[data-test="close-composer"]').trigger('click');
@@ -270,7 +272,7 @@ describe('draft save and receipt integrity', () => {
           : fake.createDraft(command);
       },
     };
-    const w = wrapper = await mountDraftsUi(fake, client);
+    const w = await mountDraftsApp(fake, client);
     await startNewDraft(w);
     const original = (await fake.listDrafts())[0]!;
     const saved = await fake.getDraft(original.ref);
@@ -304,7 +306,7 @@ describe('draft save and receipt integrity', () => {
         return creates.length === 2 ? Promise.reject({ kind: 'storage_unavailable' }) : fake.createDraft(command);
       },
     };
-    const w = wrapper = await mountDraftsUi(fake, client);
+    const w = await mountDraftsApp(fake, client);
     await startNewDraft(w);
     const original = (await fake.listDrafts())[0]!;
     let current = await fake.getDraft(original.ref);
@@ -355,7 +357,7 @@ describe('draft save and receipt integrity', () => {
         return fake.getDraft(ref);
       },
     };
-    const w = wrapper = await mountDraftsUi(fake, client);
+    const w = await mountDraftsApp(fake, client);
     await w.find('[data-test="new-draft"]').trigger('click');
     await advanceUiUntil(() => receipt !== null);
     await advanceUiUntil(() => w.find('[data-test="composer"]').exists());
@@ -395,7 +397,7 @@ describe('draft save and receipt integrity', () => {
       },
       disconnectAccount: async () => { disconnects += 1; await fake.disconnectAccount(); },
     };
-    const w = wrapper = await mountDraftsUi(fake, client);
+    const w = await mountDraftsApp(fake, client);
     await startNewDraft(w);
     await w.find('[data-test="draft-body"]').setValue('only surviving exact local buffer');
     await w.find('[data-test="close-composer"]').trigger('click');
@@ -426,7 +428,7 @@ describe('draft save and receipt integrity', () => {
     }
     await flushPromises();
     // The blocked disconnect keeps the editor; return to its visible surface.
-    if (action === 'account transition') await openUtilityDrawer(w, 'drafts');
+    if (action === 'account transition') await openDraftsList(w);
 
     if (action === 'native close') {
       await advanceUiUntil(() => fake.controls.pendingAppClose() === null);
@@ -473,7 +475,7 @@ describe('draft save and receipt integrity', () => {
         return fake.getDraft(ref);
       },
     };
-    const w = wrapper = await mountDraftsUi(fake, client);
+    const w = await mountDraftsApp(fake, client);
     await startNewDraft(w);
     await w.find('[data-test="draft-body"]').setValue('saved but not yet verified');
     await w.find('[data-test="close-composer"]').trigger('click');
@@ -512,7 +514,7 @@ describe('draft save and receipt integrity', () => {
         return fake.getDraft(ref);
       },
     };
-    const w = wrapper = await mountDraftsUi(fake, client);
+    const w = await mountDraftsApp(fake, client);
     await startNewDraft(w);
     await w.find('[data-test="draft-body"]').setValue('first frozen version');
     const closing = w.find('[data-test="close-composer"]').trigger('click');
@@ -559,7 +561,7 @@ describe('draft save and receipt integrity', () => {
         return fake.getDraft(ref);
       },
     };
-    const w = wrapper = await mountDraftsUi(fake, client);
+    const w = await mountDraftsApp(fake, client);
     await startNewDraft(w);
     await w.find('[data-test="draft-body"]').setValue('frozen before account transition');
     const closing = w.find('[data-test="close-composer"]').trigger('click');
@@ -599,7 +601,7 @@ describe('draft save and receipt integrity', () => {
         return fake.getDraft(ref);
       },
     };
-    const w = wrapper = await mountDraftsUi(fake, client);
+    const w = await mountDraftsApp(fake, client);
     await w.find('[data-test="new-draft"]').trigger('click');
     await advanceUiUntil(() => receipt !== null);
     await advanceUiUntil(() => w.find('[data-test="draft-body"]').exists());
@@ -644,7 +646,7 @@ describe('draft save and receipt integrity', () => {
         return fake.createDraft(command);
       },
     };
-    const w = wrapper = await mountDraftsUi(fake, client);
+    const w = await mountDraftsApp(fake, client);
     await w.find(`[data-test="open-draft-${source.ref.draftId}"]`).trigger('click');
     await flushPromises();
     await fake.deleteDraft({ ref: source.ref, expectedRevision: source.revision, requestId: 'delete-tombstone-source' });
@@ -712,7 +714,7 @@ describe('draft save and receipt integrity', () => {
         },
         getDraft: (ref) => ref.draftId === verificationDraftId ? verification.promise : fake.getDraft(ref),
       };
-      const w = wrapper = await mountDraftsUi(fake, client);
+      const w = await mountDraftsApp(fake, client);
       await startNewDraft(w);
       const original = (await fake.listDrafts())[0]!;
       await fake.deleteDraft({ ref: original.ref, expectedRevision: original.revision, requestId: `late-save-${lateOutcome}-delete-original` });
@@ -784,7 +786,7 @@ describe('draft save and receipt integrity', () => {
       },
       getDraft: (ref) => recoveredRef?.draftId === ref.draftId ? read.promise : fake.getDraft(ref),
     };
-    const w = wrapper = await mountDraftsUi(fake, client);
+    const w = await mountDraftsApp(fake, client);
     await w.find(`[data-test="open-draft-${source.ref.draftId}"]`).trigger('click');
     await flushPromises();
     await fake.deleteDraft({ ref: source.ref, expectedRevision: source.revision, requestId: 'delete-verification-race-source' });
@@ -833,7 +835,7 @@ describe('draft save and receipt integrity', () => {
         return fake.getDraft(ref);
       },
     };
-    const w = wrapper = await mountDraftsUi(fake, client);
+    const w = await mountDraftsApp(fake, client);
     await w.find(`[data-test="open-draft-${source.ref.draftId}"]`).trigger('click');
     await flushPromises();
     await fake.deleteDraft({ ref: source.ref, expectedRevision: source.revision, requestId: 'delete-buffer-verification-source' });
@@ -873,7 +875,7 @@ describe('draft save and receipt integrity', () => {
         return fake.saveDraft(command);
       },
     };
-    const w = wrapper = await mountDraftsUi(fake, client);
+    const w = await mountDraftsApp(fake, client);
     await startNewDraft(w);
     const original = (await fake.listDrafts())[0]!;
     await fake.deleteDraft({ ref: original.ref, expectedRevision: original.revision, requestId: 'delete-before-copy-race' });
@@ -941,7 +943,7 @@ describe('draft save and receipt integrity', () => {
         },
         disconnectAccount: async () => { disconnects += 1; await fake.disconnectAccount(); },
       };
-      const w = wrapper = await mountDraftsUi(fake, client);
+      const w = await mountDraftsApp(fake, client);
       await w.find(`[data-test="open-draft-${source.ref.draftId}"]`).trigger('click');
       await flushPromises();
       await fake.deleteDraft({ ref: source.ref, expectedRevision: source.revision, requestId: `copy-delete-${action}` });
@@ -990,9 +992,11 @@ describe('draft save and receipt integrity', () => {
 
       if (action === 'account transition') {
         expect(disconnects).toBe(1);
+        await advanceUiUntil(() => w.find('[data-test="account-connect"]').attributes('disabled') === undefined);
         await w.find('[data-test="account-connect"]').trigger('click');
         await flushPromises();
-        await openUtilityDrawer(w, 'drafts');
+        await advanceUiUntil(() => w.find('[data-test="rail-drafts"]').exists());
+        await openDraftsList(w);
         await advanceUiUntil(() => w.find(`[data-test="open-draft-${copied.ref.draftId}"]`).exists());
       }
       expect(await fake.getDraft(copied.ref)).toMatchObject({ content: { subject: 'valuable original', bodyText: 'only remaining exact text' } });
@@ -1012,7 +1016,7 @@ describe('draft save and receipt integrity', () => {
           : fake.createDraft(command);
       },
     };
-    const w = wrapper = await mountDraftsUi(fake, client);
+    const w = await mountDraftsApp(fake, client);
     await startNewDraft(w);
     const original = (await fake.listDrafts())[0]!;
     await fake.saveDraft({ ref: original.ref, expectedRevision: original.revision, requestId: 'sequential-correction-conflict', content: { to: '', cc: '', subject: 'external change', bodyText: '' } });
@@ -1048,7 +1052,7 @@ describe('draft save and receipt integrity', () => {
       ...fake,
       saveDraft: (command) => { saveCalls += 1; return fake.saveDraft(command); },
     };
-    const w = wrapper = await mountDraftsUi(fake, client);
+    const w = await mountDraftsApp(fake, client);
     await startNewDraft(w);
     await w.find('[data-test="draft-body"]').setValue('x'.repeat(1024 * 1024 + 1));
     await w.find('[data-test="close-composer"]').trigger('click');
@@ -1066,12 +1070,12 @@ describe('draft save and receipt integrity', () => {
 
   it('recovers a dirty buffer as a new draft after another client deletes its saved ref', async () => {
     const fake = createBrowserFakeMailClient();
-    const w = wrapper = await mountDraftsUi(fake);
+    const w = await mountDraftsApp(fake);
     await startNewDraft(w);
     const original = (await fake.listDrafts())[0]!;
     const saved = await fake.getDraft(original.ref);
-    // Re-opening the already-open draft: the one-column drawer shows no list, so the request comes from the panel event.
-    await requestEditorSwitch(w, original.ref);
+    // Re-opening the already-open draft: its card covers the list, so the request goes through the App's handler.
+    await requestEditorSwitch(w, original);
     await fake.deleteDraft({ ref: original.ref, expectedRevision: saved.revision, requestId: 'delete-elsewhere' });
     await w.find('[data-test="draft-body"]').setValue('recover text without resurrecting old ref');
     await w.find('[data-test="close-composer"]').trigger('click');
@@ -1097,7 +1101,7 @@ describe('draft save and receipt integrity', () => {
         return receipt;
       },
     };
-    const w = wrapper = await mountDraftsUi(fake, client);
+    const w = await mountDraftsApp(fake, client);
     await startNewDraft(w);
     await w.find('[data-test="discard-draft"]').trigger('click');
     await w.find('[data-test="confirm-discard"]').trigger('click');
@@ -1116,7 +1120,7 @@ describe('draft save and receipt integrity', () => {
 
   it('reloads a conflicting saved version only after explicit confirmation', async () => {
     const fake = createBrowserFakeMailClient();
-    const w = wrapper = await mountDraftsUi(fake);
+    const w = await mountDraftsApp(fake);
     await startNewDraft(w);
     const created = (await fake.listDrafts())[0]!;
     const draft = await fake.getDraft(created.ref);
@@ -1148,7 +1152,7 @@ describe('draft save and receipt integrity', () => {
         return fake.getDraft(ref);
       },
     };
-    const w = wrapper = await mountDraftsUi(fake, client);
+    const w = await mountDraftsApp(fake, client);
     await startNewDraft(w);
     const original = (await fake.listDrafts())[0]!;
     const stored = await fake.getDraft(original.ref);
@@ -1193,7 +1197,7 @@ describe('draft save and receipt integrity', () => {
         return fake.createDraft(command);
       },
     };
-    const w = wrapper = await mountDraftsUi(fake, client);
+    const w = await mountDraftsApp(fake, client);
     await startNewDraft(w);
     const original = (await fake.listDrafts())[0]!;
     originalDraftId = original.ref.draftId;
@@ -1240,7 +1244,7 @@ describe('draft save and receipt integrity', () => {
       saveDraft: (command) => { saveCommand = command; return pendingSave.promise; },
       deleteDraft: (command) => { deletions.push(command); return fake.deleteDraft(command); },
     };
-    const w = wrapper = await mountDraftsUi(fake, client);
+    const w = await mountDraftsApp(fake, client);
     await startNewDraft(w);
     const original = (await fake.listDrafts())[0]!;
     await w.find('[data-test="draft-body"]').setValue('valuable text I decide to keep');
@@ -1272,7 +1276,7 @@ describe('draft save and receipt integrity', () => {
       saveDraft: (command) => { saveCommand = command; return pendingSave.promise; },
       deleteDraft: (command) => { deletions.push(command); return fake.deleteDraft(command); },
     };
-    const w = wrapper = await mountDraftsUi(fake, client);
+    const w = await mountDraftsApp(fake, client);
     await w.find(`[data-test="open-draft-${original.ref.draftId}"]`).trigger('click');
     await flushPromises();
     await w.find('[data-test="draft-body"]').setValue('first draft text to keep');
@@ -1281,7 +1285,7 @@ describe('draft save and receipt integrity', () => {
     await flushPromises();
     expect(saveCommand).not.toBeNull();
 
-    await requestEditorSwitch(w, next.ref);
+    await requestEditorSwitch(w, { ref: next.ref, source: { kind: 'new_message' } });
     expect(w.find('[data-test="confirm-discard"]').exists()).toBe(false);
     pendingSave.resolve(await fake.saveDraft(saveCommand!));
     await flushPromises();
@@ -1304,7 +1308,7 @@ describe('draft save and receipt integrity', () => {
         return receipt;
       },
     };
-    const w = wrapper = await mountDraftsUi(fake, client);
+    const w = await mountDraftsApp(fake, client);
     await startNewDraft(w);
     await w.find('[data-test="discard-draft"]').trigger('click');
     expect(w.find('[data-test="confirm-discard"]').exists()).toBe(true);
@@ -1323,7 +1327,7 @@ describe('draft save and receipt integrity', () => {
 
   it('warns before browser unload when the active buffer is dirty and tears down both subscriptions', async () => {
     const fake = createBrowserFakeMailClient();
-    const w = wrapper = await mountDraftsUi(fake);
+    const w = await mountDraftsApp(fake);
     await startNewDraft(w);
     await w.find('[data-test="draft-body"]').setValue('unsaved preview text');
     const event = new Event('beforeunload', { bubbles: false, cancelable: true }) as BeforeUnloadEvent;
@@ -1334,7 +1338,6 @@ describe('draft save and receipt integrity', () => {
     expect(fake.controls.draftListenerCount()).toBe(1);
     expect(fake.controls.closeListenerCount()).toBe(1);
     w.unmount();
-    wrapper = null;
     await flushPromises();
     expect(fake.controls.listenerCount()).toBe(0);
     expect(fake.controls.draftListenerCount()).toBe(0);
@@ -1343,34 +1346,35 @@ describe('draft save and receipt integrity', () => {
 
   it('blocks mailbox shortcuts while composing and has no send or submit path', async () => {
     const fake = createBrowserFakeMailClient();
-    const w = wrapper = await mountDraftsUi(fake);
+    const w = await mountDraftsApp(fake);
     await startNewDraft(w);
     await w.find('[data-test="draft-body"]').setValue('e j Enter remain text');
     const textarea = w.find('[data-test="draft-body"]').element;
-    for (const key of ['e', 'j', 'Enter']) textarea.dispatchEvent(createKeyEvent(key, { bubbles: true }));
-    window.dispatchEvent(createKeyEvent('e', { bubbles: true }));
-    window.dispatchEvent(createKeyEvent('j', { bubbles: true }));
-    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true }));
-    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true, ctrlKey: true }));
+    for (const key of ['e', 'j', 'Enter']) press(key, { bubbles: true }, textarea);
+    press('e', { bubbles: true }, window);
+    press('j', { bubbles: true }, window);
+    press('Enter', { bubbles: true }, window);
+    press('Enter', { bubbles: true, ctrlKey: true }, window);
     await flushPromises();
     expect(fake.controls.activity()).toEqual([]);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect((w.find('[data-test="draft-body"]').element as HTMLTextAreaElement).value).toBe('e j Enter remain text');
     expect(w.find('form').exists()).toBe(false);
     expect(w.findAll('button').every((button) => !/send/i.test(button.text()))).toBe(true);
-    // Escape is the editor's, not the mailbox's and not the drawer's: it closes
+    // Escape is the editor's, not the mailbox's and not the app's Back: it closes
     // through the protected flush, saves the exact text and returns to the list.
-    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true }));
+    press('Escape', { bubbles: true }, window);
     await flushPromises();
     expect(w.find('[data-test="composer"]').exists()).toBe(false);
-    expect(w.find('[data-test="utility-drawer"]').exists()).toBe(true);
-    expect(w.find('[data-test="draft-list-view"]').exists()).toBe(true);
+    expect(w.find('[data-test="utility-drawer"]').exists()).toBe(false);
+    expect(w.find('[data-test="drafts-pane"]').exists()).toBe(true);
+    expect(w.find('[data-test="draft-list"]').exists()).toBe(true);
     expect(fake.controls.activity()).toEqual([]);
     expect((await fake.getDraft((await fake.listDrafts())[0]!.ref)).content.bodyText).toBe('e j Enter remain text');
-    // A second Escape closes the drawer.
-    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true }));
+    // A second Escape goes Back from the Drafts list to the previous context.
+    press('Escape', { bubbles: true }, window);
     await flushPromises();
-    expect(w.find('[data-test="utility-drawer"]').exists()).toBe(false);
+    expect(w.find('[data-test="drafts-pane"]').exists()).toBe(false);
+    expect(w.get('[data-test="inbox-title"]').text()).toBe('Inbox');
   });
-
 });

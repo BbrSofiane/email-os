@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, type VueWrapper } from '@vue/test-utils';
-
 import ReaderView from '../src/components/ReaderView.vue';
-import RemindersPanel from '../src/components/RemindersPanel.vue';
+import RemindersList from '../src/components/RemindersList.vue';
 import { createBrowserFakeMailClient } from '../src/lib/ipc/browser-fake';
 import type { Conversation, Reminder } from '../src/lib/ipc/client';
 import { deferred, mountApp, press } from './helpers';
@@ -45,14 +44,15 @@ async function fixture() {
   return { reminded, entry, neighbor, detail, pending, getConversation, setRead };
 }
 
+
 async function openReturnedReminder() {
-  await app!.findAll('button').find(button => button.text() === 'Reminders')!.trigger('click');
+  await app!.get('[data-test="reminders-trigger"]').trigger('click');
   await flushPromises();
-  const panel = app!.getComponent(RemindersPanel);
-  await panel.findAll('[role="tab"]').find(button => button.text().startsWith('Returned'))!.trigger('click');
+  const panel = app!.getComponent(RemindersList);
+  await app!.findAll('[role="tab"]').find(button => button.text().startsWith('Returned'))!.trigger('click');
   await panel.get('li button').trigger('click');
   await flushPromises();
-  expect(app!.findComponent(RemindersPanel).exists()).toBe(false);
+  expect(app!.findComponent(RemindersList).exists()).toBe(false);
   expect(app!.find('[data-test="reader-loading"]').exists()).toBe(true);
 }
 
@@ -69,16 +69,16 @@ describe('reminder reader navigation ownership', () => {
       // The transport is still pending: Back must already know its real origin.
       press('Escape', { bubbles: true, cancelable: true }, window); await flushPromises();
       expect(app!.findComponent(ReaderView).exists()).toBe(false);
-      expect(app!.findComponent(RemindersPanel).exists()).toBe(true);
-      const panel = app!.getComponent(RemindersPanel);
-      expect(panel.findAll('[role="tab"]').find(button => button.text().startsWith('Returned'))!.attributes('aria-selected')).toBe('true');
+      expect(app!.findComponent(RemindersList).exists()).toBe(true);
+      const panel = app!.getComponent(RemindersList);
+      expect(app!.findAll('[role="tab"]').find(button => button.text().startsWith('Returned'))!.attributes('aria-selected')).toBe('true');
       expect(panel.get('li button').text()).toBe(`Open ${detail.subject}`);
       expect(app!.get('[data-test="rail-activity"]').attributes('aria-expanded')).toBe('false');
 
       pending.resolve(detail);
       await flushPromises();
       expect(app!.findComponent(ReaderView).exists()).toBe(false);
-      expect(app!.findComponent(RemindersPanel).exists()).toBe(true);
+      expect(app!.findComponent(RemindersList).exists()).toBe(true);
       expect(getConversation).toHaveBeenCalledTimes(1);
       expect(setRead).not.toHaveBeenCalled();
     } finally {
@@ -104,7 +104,7 @@ describe('reminder reader navigation ownership', () => {
       pending.resolve(detail);
       await flushPromises();
       expect(app!.getComponent(ReaderView).props('conversation')?.ref).toEqual(entry);
-      expect(app!.findComponent(RemindersPanel).exists()).toBe(false);
+      expect(app!.findComponent(RemindersList).exists()).toBe(false);
       const before = getConversation.mock.calls.length;
       press('j', { bubbles: true, cancelable: true }, window); await flushPromises();
       // The prefetched neighbor swaps in from cache; one background revalidation
@@ -119,7 +119,7 @@ describe('reminder reader navigation ownership', () => {
 
       press('Escape', { bubbles: true, cancelable: true }, window); await flushPromises();
       expect(app!.findComponent(ReaderView).exists()).toBe(false);
-      expect(app!.findComponent(RemindersPanel).exists()).toBe(false);
+      expect(app!.findComponent(RemindersList).exists()).toBe(false);
       const row = app!.get(`[data-test="conversation-row-${entry.conversationId}"]`);
       expect(row.attributes('aria-current')).toBe('true');
       expect(document.activeElement).toBe(row.element);
@@ -142,17 +142,17 @@ it.each(['list', 'reader'])('restores %s shortcut focus after H then Escape', as
   press('h', { bubbles: true, cancelable: true }, window); await flushPromises();
   const input = document.querySelector('#reminder-time-input')!;
   expect(input).not.toBeNull();
-  press('Escape', { bubbles: true }, input);
+  press('Escape', { bubbles: true  }, input);
   await flushPromises();
-  expect(app.findComponent(RemindersPanel).exists()).toBe(false);
-  if (surface === 'list') expect(document.activeElement).toBe(row.element);
+  expect(app.findComponent(RemindersList).exists()).toBe(false);
+  if (surface === 'list') expect(document.activeElement?.getAttribute('data-test')).toBe(row.attributes('data-test'));
   else expect(app.getComponent(ReaderView).element.contains(document.activeElement)).toBe(true);
-  press('e', { bubbles: true }, document.activeElement!);
+  press('e', { bubbles: true  }, document.activeElement!);
   await flushPromises();
   expect(archive).toHaveBeenCalledTimes(1);
 });
 
-it.each(['ack', 'lost ACK', 'unmount'])('keeps BODY Escape and drawer Close from discarding a put; handles %s', async outcome => {
+it.each(['ack', 'lost ACK', 'unmount'])('keeps BODY Escape and the Back button from discarding a put; handles %s', async outcome => {
   const client = createBrowserFakeMailClient();
   const pending = deferred<Reminder>();
   const put = vi.spyOn(client.reminders!, 'put').mockImplementationOnce(() => pending.promise);
@@ -168,9 +168,9 @@ it.each(['ack', 'lost ACK', 'unmount'])('keeps BODY Escape and drawer Close from
   expect(input.disabled).toBe(true);
   expect(document.querySelector('[data-reminder-picker]')!.contains(document.activeElement)).toBe(true);
   (document.activeElement as HTMLElement).blur();
-  press('Escape', { bubbles: true, cancelable: true }, document.body);
+  press('Escape', { bubbles: true, cancelable: true  }, document.body);
   await flushPromises();
-  await app.get('[data-test="drawer-close"]').trigger('click');
+  await app.get('[data-test="context-back"]').trigger('click');
   expect(document.querySelector('[data-reminder-picker]')).not.toBeNull();
   expect(document.querySelector('[data-reminder-picker]')!.contains(document.activeElement)).toBe(true);
   expect(app.find('[data-test="reminder-confirmation"]').exists()).toBe(false);
@@ -192,14 +192,14 @@ it.each(['ack', 'lost ACK', 'unmount'])('keeps BODY Escape and drawer Close from
   } else {
     (document.activeElement as HTMLElement).blur();
     press('Escape', { bubbles: true, cancelable: true }, window); await flushPromises();
-    await app.get('[data-test="drawer-close"]').trigger('click');
+    await app.get('[data-test="context-back"]').trigger('click');
     expect(document.querySelector('[data-reminder-picker]')).not.toBeNull();
     expect(app.find('[data-test="reminder-confirmation"]').exists()).toBe(false);
     const picker = document.querySelector('[data-reminder-picker]')!;
     const inspect = [...picker.querySelectorAll('button')].find(b => b.textContent === 'Inspect saved state')!;
     inspect.click(); await flushPromises();
     expect(document.querySelector('[data-reminder-picker]')).toBeNull();
-    expect(app.findComponent(RemindersPanel).exists()).toBe(true);
+    expect(app.findComponent(RemindersList).exists()).toBe(true);
   }
 });
 
@@ -208,7 +208,7 @@ it.each(['inactive workspace', 'new drawer'])('does not restore origin focus aft
   app = mountApp(client, 'native', { attachTo: document.body });
   await flushPromises(); press('h', { bubbles: true, cancelable: true }, window); await flushPromises();
   const input = document.querySelector('#reminder-time-input')!;
-  press('Escape', { bubbles: true }, input);
+  press('Escape', { bubbles: true  }, input);
   if (owner === 'inactive workspace') {
     const other = document.createElement('button'); document.body.append(other); other.focus();
     await app.setProps({ active: false });

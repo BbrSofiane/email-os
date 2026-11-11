@@ -60,15 +60,21 @@ export const actionAliases: Record<BrowsingActionId, readonly string[]> = {
 };
 
 /** Bound keys that move or select without being a command; shown, never executed. */
-export interface KeyHint { id: string; label: string; keys: readonly string[]; aliases: readonly string[] }
+export type KeyScope = 'reminders' | 'drafts';
+/** `scope` limits a hint to the list context where the key works; no scope means everywhere. */
+export interface KeyHint { id: string; label: string; keys: readonly string[]; aliases: readonly string[]; scope?: KeyScope }
 export const keyHints: readonly KeyHint[] = [
   { id: 'move', label: 'Next and previous conversation', keys: ['J', 'K'], aliases: ['down', 'up', 'arrow', 'move', 'navigate'] },
   { id: 'select', label: 'Select conversation', keys: ['X'], aliases: ['check', 'toggle', 'mark'] },
   { id: 'extend', label: 'Extend selection', keys: ['Shift+J', 'Shift+K'], aliases: ['range', 'multiple', 'select'] },
   { id: 'destinations', label: 'Open destinations', keys: ['←'], aliases: ['navigator', 'left', 'go to'] },
+  { id: 'reminder-tabs', label: 'Previous and next reminders tab', keys: ['[', ']'], aliases: ['pending', 'returned', 'history', 'tab', 'switch'], scope: 'reminders' },
+  { id: 'reminder-reschedule', label: 'Reschedule focused reminder', keys: ['H'], aliases: ['remind', 'snooze', 'time'], scope: 'reminders' },
+  { id: 'reminder-cancel', label: 'Cancel focused reminder', keys: ['Shift+H'], aliases: ['remove', 'unremind', 'restore'], scope: 'reminders' },
+  { id: 'draft-discard', label: 'Discard focused draft (asks first)', keys: ['Delete', 'Backspace'], aliases: ['delete', 'remove', 'trash'], scope: 'drafts' },
 ];
 
-/** "G then E (within 1 second)" → "G then E"; the timing stays in the tooltip. */
+/** Strips a trailing parenthetical from a shortcut hint, e.g. "G then E (note)" → "G then E". */
 export function compactShortcut(shortcut: string): string {
   return shortcut.replace(/\s*\([^)]*\)\s*$/, '');
 }

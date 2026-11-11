@@ -4,12 +4,14 @@
  * source is always the displayed latest message, and the key is inert wherever
  * another surface or a text field owns the keyboard.
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, type VueWrapper } from '@vue/test-utils';
-import { createBrowserFakeMailClient, fixtureRef, useGmailMode, waitFor, type BrowserFake, mountApp as sharedMountApp, press } from './helpers';
+import { createBrowserFakeMailClient, fixtureRef, useGmailMode, type BrowserFake, mountApp as sharedMountApp, press } from './helpers';
+import { advanceUiUntil, useUiTestClock } from './support/timers';
 
 let wrapper: VueWrapper | null = null;
-afterEach(() => { wrapper?.unmount(); wrapper = null; document.body.innerHTML = ''; });
+beforeEach(useUiTestClock);
+afterEach(() => { wrapper?.unmount(); wrapper = null; document.body.innerHTML = ''; vi.useRealTimers(); });
 
 async function openReader(w: VueWrapper, id = 'conv-01'): Promise<void> {
   await w.get(`[data-test="conversation-row-${id}"]`).trigger('click');
@@ -53,15 +55,15 @@ describe('R: Reply from the reader', () => {
     await w.get('[data-test="message-toggle-conv-01-m1"]').trigger('focusin');
     const event = press('r', { bubbles: true, cancelable: true });
     expect(event.defaultPrevented).toBe(true);
-    await waitFor(() => w.find('[data-test="reply-composer"]').exists());
+    await advanceUiUntil(() => w.find('[data-test="reply-composer"]').exists());
     await flushPromises();
     const [draft] = await drafts(fake);
     expect(draft!.source).toEqual({ kind: 'reply', conversation: fixtureRef('conv-01'), sourceMessageId: 'conv-01-m3' });
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
     // Focus ends in the body once the draft exists; Escape closes through the protected flush.
-    await waitFor(() => document.activeElement === w.get('[data-test="draft-body"]').element);
+    await advanceUiUntil(() => document.activeElement === w.get('[data-test="draft-body"]').element);
     press('Escape', { bubbles: true, cancelable: true });
-    await waitFor(() => !w.find('[data-test="reply-composer"]').exists());
+    await advanceUiUntil(() => !w.find('[data-test="reply-composer"]').exists());
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
     expect((await fake.listDrafts())).toHaveLength(1);
     await flushPromises();
@@ -81,7 +83,7 @@ describe('R: Reply from the reader', () => {
       expect(document.activeElement).toBe(element);
       const event = press('r', { bubbles: true, cancelable: true }, element);
       expect(event.defaultPrevented).toBe(true);
-      await waitFor(() => w.find('[data-test="reply-composer"]').exists());
+      await advanceUiUntil(() => w.find('[data-test="reply-composer"]').exists());
       await flushPromises();
       expect(await drafts(fake)).toHaveLength(1);
     }
@@ -96,7 +98,7 @@ describe('R: Reply from the reader', () => {
       await openReader(w);
       await expandFirst(w);
       await pressRFrom(w, fake, pick(w));
-      await waitFor(() => document.activeElement === w.get('[data-test="draft-body"]').element);
+      await advanceUiUntil(() => document.activeElement === w.get('[data-test="draft-body"]').element);
       // Typing now goes into the draft, not into the key handler.
       const body = w.get('[data-test="draft-body"]');
       await body.setValue('hello');
@@ -111,7 +113,7 @@ describe('R: Reply from the reader', () => {
       document.body.appendChild(field);
       press('r', { bubbles: true, cancelable: true });
       field.focus();
-      await waitFor(() => w.find('[data-test="reply-composer"]').exists());
+      await advanceUiUntil(() => w.find('[data-test="reply-composer"]').exists());
       await flushPromises();
       expect(document.activeElement).toBe(field);
       field.remove();
@@ -133,8 +135,8 @@ describe('R: Reply from the reader', () => {
       expect(w.find('[data-test="reply-composer"]').exists()).toBe(false);
       // Now open the reply properly and compose with an IME: keys are left alone.
       press('r', { bubbles: true, cancelable: true }, article);
-      await waitFor(() => w.find('[data-test="reply-composer"]').exists());
-      await waitFor(() => document.activeElement === w.get('[data-test="draft-body"]').element);
+      await advanceUiUntil(() => w.find('[data-test="reply-composer"]').exists());
+      await advanceUiUntil(() => document.activeElement === w.get('[data-test="draft-body"]').element);
       const imeKey = press(init.key, { bubbles: true, cancelable: true, ...init }, w.get('[data-test="draft-body"]').element);
       expect(imeKey.defaultPrevented).toBe(false);
       expect(await drafts(fake)).toHaveLength(1);
@@ -145,11 +147,11 @@ describe('R: Reply from the reader', () => {
       const w = sharedMountApp(fake, 'browser-preview', { attachTo: document.body }); wrapper = w; await flushPromises();
       await openReader(w);
       await pressRFrom(w, fake, w.get('[data-test="reader"]').element as HTMLElement);
-      await waitFor(() => document.activeElement === w.get('[data-test="draft-body"]').element);
+      await advanceUiUntil(() => document.activeElement === w.get('[data-test="draft-body"]').element);
       await w.get('[data-test="discard-draft"]').trigger('click');
-      await waitFor(() => w.find('[data-test="confirm-discard"]').exists());
+      await advanceUiUntil(() => w.find('[data-test="confirm-discard"]').exists());
       await w.get('[data-test="confirm-discard"]').trigger('click');
-      await waitFor(() => !w.find('[data-test="reply-composer"]').exists());
+      await advanceUiUntil(() => !w.find('[data-test="reply-composer"]').exists());
       await flushPromises();
       expect(await drafts(fake)).toHaveLength(0);
       expect(document.activeElement).not.toBe(document.body);
@@ -217,7 +219,7 @@ describe('R: Reply from the reader', () => {
     const w = sharedMountApp(fake, 'browser-preview', { attachTo: document.body }); wrapper = w; await flushPromises();
     await openReader(w);
     press('r', { bubbles: true, cancelable: true });
-    await waitFor(() => w.find('[data-test="reply-composer"]').exists());
+    await advanceUiUntil(() => w.find('[data-test="reply-composer"]').exists());
     await flushPromises();
     const body = w.get('[data-test="draft-body"]');
     await body.setValue('r');
@@ -255,7 +257,7 @@ describe('R: Reply from the reader', () => {
     await w.get('[data-test="action-query"]').setValue('Go to cached Trash');
     press('Enter', { bubbles: true, cancelable: true });
     await flushPromises();
-    await w.get('button[data-id="conv-04"]').trigger('click');
+    await w.get('[data-test="conversation-row-conv-04"]').trigger('click');
     await flushPromises();
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
     press('r', { bubbles: true, cancelable: true });
@@ -281,7 +283,7 @@ describe('R: Reply from the reader', () => {
     expect(option.get('kbd').text()).toBe('R');
     // Running it from the palette uses the same path as the key.
     press('Enter', { bubbles: true, cancelable: true }, w.get('[data-test="action-query"]').element);
-    await waitFor(() => w.find('[data-test="reply-composer"]').exists());
+    await advanceUiUntil(() => w.find('[data-test="reply-composer"]').exists());
     expect((await fake.listDrafts())[0]!.source).toEqual({ kind: 'reply', conversation: fixtureRef('conv-01'), sourceMessageId: 'conv-01-m3' });
   });
 });
