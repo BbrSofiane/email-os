@@ -6,17 +6,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import { effectScope } from 'vue';
-import App from '../src/App.vue';
 import ContactPane from '../src/components/ContactPane.vue';
-import {
-  DETAIL_CACHE_MAX,
-  DETAIL_CACHE_TTL_MS,
-  READER_LOADING_DELAY_MS,
-  useMailbox,
-} from '../src/composables/useMailbox';
+import { DETAIL_CACHE_MAX, DETAIL_CACHE_TTL_MS, READER_LOADING_DELAY_MS, useMailbox } from '../src/composables/useMailbox';
 import type { Conversation, ConversationRef, MailClient } from '../src/lib/ipc/client';
-import { deferred, openUtilityDrawer } from './helpers';
+import { deferred, openUtilityDrawer, mountApp as sharedMountApp, press } from './helpers';
 import { createReaderFixtureClient, readerRef, type ReaderFixture } from './reader.fixture';
+import { flushFakeTimersZeroTick } from './support/ui-settle';
 
 type Gate = ReturnType<typeof deferred<Conversation>>;
 
@@ -37,27 +32,12 @@ function detailOf(id: string): Promise<Conversation> {
   return fixture.client.getConversation(readerRef(id));
 }
 
-function key(value: string): void {
-  window.dispatchEvent(new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }));
-}
-
-async function settle(): Promise<void> {
-  await flushPromises();
-  await vi.advanceTimersByTimeAsync(0);
-  await flushPromises();
-}
-
 async function openReader(w: VueWrapper, id = 'read-01'): Promise<void> {
   const row = w.get(`[data-test="conversation-row-${id}"]`);
   (row.element as HTMLElement).focus();
   await row.trigger('focusin');
-  key('Enter');
-  await settle();
-}
-
-function mountApp(): VueWrapper {
-  wrapper = mount(App, { props: { client, mode: 'browser-preview' }, attachTo: document.body });
-  return wrapper;
+  press('Enter', { bubbles: true, cancelable: true }, window);
+  await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
 }
 
 function subject(): string | null {
@@ -117,20 +97,20 @@ afterEach(() => {
 describe('delayed loading presentation (J/K)', () => {
   it('renders no intermediate loading frame when the response lands inside the delay', async () => {
     const slow = gate('read-02'); // the prefetch of the next neighbor stays in flight
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     await openReader(w);
     expect(subject()).toBe('Reader journey thread');
     const recorder = recordFrames();
-    key('j');
-    await settle();
+    press('j', { bubbles: true, cancelable: true }, window);
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     // The previous conversation stays rendered; nothing is empty or loading.
     expect(subject()).toBe('Reader journey thread');
     expect(loadingShown()).toBe(false);
     await vi.advanceTimersByTimeAsync(READER_LOADING_DELAY_MS - 20);
     expect(loadingShown()).toBe(false);
     slow.resolve(await detailOf('read-02'));
-    await settle();
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     expect(subject()).toBe('Neighbor thread read-02');
     await vi.advanceTimersByTimeAsync(READER_LOADING_DELAY_MS * 2);
     recorder.stop();
@@ -141,13 +121,13 @@ describe('delayed loading presentation (J/K)', () => {
 
   it('shows the target list identity after the delay, never the held body under the new subject', async () => {
     const slow = gate('read-02');
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     await openReader(w);
-    key('j');
-    await settle();
+    press('j', { bubbles: true, cancelable: true }, window);
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     await vi.advanceTimersByTimeAsync(READER_LOADING_DELAY_MS + 1);
-    await settle();
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     expect(loadingShown()).toBe(true);
     expect(document.querySelector('[data-test="reader-loading-subject"]')?.textContent).toBe('Neighbor thread read-02');
     expect(document.querySelector('[data-test="reader-loading-sender"]')?.textContent).toBe('Ada Fixture');
@@ -158,15 +138,15 @@ describe('delayed loading presentation (J/K)', () => {
     expect(w.find('[data-test="contact-unknown"]').exists()).toBe(false);
     expect(w.get('[data-test="contact-name"]').text()).toBe('Ada Fixture');
     slow.resolve(await detailOf('read-02'));
-    await settle();
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     expect(loadingShown()).toBe(false);
     expect(subject()).toBe('Neighbor thread read-02');
     expect(w.find('[data-test="reader-loading-line"]').exists()).toBe(false);
   });
 
   it('keeps the loading presentation without an identity when no list row matches', async () => {
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     const pane = mount(ContactPane, { props: { contact: null, context: 'open', loading: true } });
     expect(pane.find('[data-test="contact-unknown"]').exists()).toBe(false);
     await pane.setProps({ loading: false });
@@ -178,20 +158,20 @@ describe('delayed loading presentation (J/K)', () => {
 
   it('keeps header actions mounted and disabled while not ready, enabled when ready', async () => {
     const slow = gate('read-02');
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     await openReader(w);
     for (const id of headerIds) expect(headerButton(id), id).not.toBeNull();
     expect(headerButton('reader-archive-toggle')!.disabled).toBe(false);
     expect(headerButton('files-links')!.disabled).toBe(false);
     expect(headerButton('prepare-reply')!.disabled).toBe(false);
-    key('j');
-    await settle();
+    press('j', { bubbles: true, cancelable: true }, window);
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     // Held window, then the loading presentation: mounted and disabled in both.
     for (const phase of ['held', 'loading']) {
       if (phase === 'loading') {
         await vi.advanceTimersByTimeAsync(READER_LOADING_DELAY_MS + 1);
-        await settle();
+        await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
         expect(loadingShown()).toBe(true);
       }
       for (const id of ['reader-archive-toggle', 'files-links', 'prepare-reply']) {
@@ -206,32 +186,32 @@ describe('delayed loading presentation (J/K)', () => {
     }
     expect(headerButton('reader-archive-toggle')!.textContent).toContain('Mark done (E)');
     slow.resolve(await detailOf('read-02'));
-    await settle();
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     for (const id of ['reader-archive-toggle', 'files-links', 'prepare-reply']) expect(headerButton(id)!.disabled, id).toBe(false);
   });
 
   it('does not make held content actionable as if it were the new thread', async () => {
     gate('read-02');
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     await openReader(w);
     const toggle = w.get('[data-test="message-toggle-read-01-m3"]');
     const expandedBefore = toggle.attributes('aria-expanded');
     const recent = w.findAll('[data-test="message-toggle-read-01-m1"]')[0]!;
     const m1Expanded = recent.attributes('aria-expanded');
-    key('j');
-    await settle();
+    press('j', { bubbles: true, cancelable: true }, window);
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     expect(subject()).toBe('Reader journey thread'); // held, not the open thread
-    key('e');
-    key('o');
-    key('p');
-    key('n');
-    await settle();
+    press('e', { bubbles: true, cancelable: true }, window);
+    press('o', { bubbles: true, cancelable: true }, window);
+    press('p', { bubbles: true, cancelable: true }, window);
+    press('n', { bubbles: true, cancelable: true }, window);
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     await w.get('[data-test="reader-archive-toggle"]').trigger('click');
     await w.get('[data-test="files-links"]').trigger('click');
     await w.get('[data-test="prepare-reply"]').trigger('click');
     await recent.trigger('click');
-    await settle();
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     expect(fixture.controls.archiveCommands).toHaveLength(0);
     expect(fixture.controls.readCommands).toHaveLength(0);
     expect(fixture.controls.draftCreations).toHaveLength(0);
@@ -244,8 +224,8 @@ describe('delayed loading presentation (J/K)', () => {
 
 describe('neighbor prefetch and cache', () => {
   it('prefetches exactly one neighbor (next by default) once the reader is ready', async () => {
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     await openReader(w);
     expect(calls).toEqual(['read-01', 'read-02']);
     expect(fixture.controls.archiveCommands).toHaveLength(0);
@@ -253,28 +233,28 @@ describe('neighbor prefetch and cache', () => {
   });
 
   it('swaps a cached neighbor in instantly, then revalidates in the background and prefetches the next one', async () => {
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     await openReader(w);
     const recorder = recordFrames();
-    key('j');
+    press('j', { bubbles: true, cancelable: true }, window);
     await flushPromises(); // no timers: an instant swap needs no delay window
     expect(subject()).toBe('Neighbor thread read-02');
     expect(loadingShown()).toBe(false);
     recorder.stop();
     expect(recorder.frames.every((frame) => !frame.loading && frame.subject !== null)).toBe(true);
-    await settle();
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     expect(calls).toEqual(['read-01', 'read-02', 'read-02', 'read-03']);
     expect(subject()).toBe('Neighbor thread read-02');
   });
 
   it('prefetches in the direction of the last move', async () => {
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     await openReader(w, 'read-03');
     expect(calls).toEqual(['read-03', 'read-04']);
-    key('k');
-    await settle();
+    press('k', { bubbles: true, cancelable: true }, window);
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     expect(subject()).toBe('Neighbor thread read-02');
     expect(calls.slice(2)).toEqual(['read-02', 'read-01']);
   });
@@ -282,77 +262,77 @@ describe('neighbor prefetch and cache', () => {
   it('does not serve an entry older than the TTL as fresh', async () => {
     const slow = gate('read-02');
     slow.resolve(await detailOf('read-02')); // the prefetch resolves immediately
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     await openReader(w);
     await vi.advanceTimersByTimeAsync(DETAIL_CACHE_TTL_MS + 1);
     const refetch = gate('read-02');
-    key('j');
-    await settle();
+    press('j', { bubbles: true, cancelable: true }, window);
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     expect(subject()).toBe('Reader journey thread'); // held: nothing came from the expired cache
     refetch.resolve(await detailOf('read-02'));
-    await settle();
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     expect(subject()).toBe('Neighbor thread read-02');
   });
 
   it('invalidates the cache on a list refresh so stale neighbor state is never shown as fresh', async () => {
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     await openReader(w);
     expect(calls).toEqual(['read-01', 'read-02']); // read-02 is cached
     const refreshed = gate('read-02'); // the next read-02 request is a post-refresh one
     fixture.controls.replaceDetail('read-02', { subject: 'Changed neighbor read-02' }); // notifies -> refresh
-    await settle();
-    key('j');
-    await settle();
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
+    press('j', { bubbles: true, cancelable: true }, window);
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     // The earlier cached copy (old subject) must not appear, even for a frame.
     expect(subject()).toBe('Reader journey thread');
     refreshed.resolve({ ...(await detailOf('read-02')) });
-    await settle();
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     expect(subject()).toBe('Changed neighbor read-02');
   });
 
   it('keeps at most three entries', async () => {
     expect(DETAIL_CACHE_MAX).toBe(3);
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     await openReader(w);
-    for (let i = 0; i < 3; i += 1) { key('j'); await settle(); }
+    for (let i = 0; i < 3; i += 1) { press('j', { bubbles: true, cancelable: true }, window); await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0)); }
     expect(subject()).toBe('Neighbor thread read-04');
     // read-01 was evicted (oldest of four loaded): K x3 walks back through cache + one fetch.
     const before = calls.length;
-    for (let i = 0; i < 3; i += 1) { key('k'); await settle(); }
+    for (let i = 0; i < 3; i += 1) { press('k', { bubbles: true, cancelable: true }, window); await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0)); }
     expect(subject()).toBe('Reader journey thread');
     expect(calls.length).toBeGreaterThan(before);
   });
 
   it('never surfaces a prefetch failure and leaves no cache entry', async () => {
     const failing = gate('read-02');
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     await openReader(w);
     failing.reject({ kind: 'network_unavailable' });
-    await settle();
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     expect(w.find('[data-test="reader-error"]').exists()).toBe(false);
     expect(w.find('[role="alert"]').exists()).toBe(false);
     expect(subject()).toBe('Reader journey thread');
-    key('j'); // no cache entry: an ordinary fetch happens
-    await settle();
+    press('j', { bubbles: true, cancelable: true }, window); // no cache entry: an ordinary fetch happens
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     expect(subject()).toBe('Neighbor thread read-02');
     expect(calls.filter((id) => id === 'read-02').length).toBeGreaterThanOrEqual(2);
   });
 
   it('never prefetches for an Activity-origin reader', async () => {
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     await openUtilityDrawer(w, 'activity');
     await w.get('[data-test="activity-open-read-op-1"]').trigger('click');
-    await settle();
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     expect(subject()).toBe('Neighbor thread read-02');
     expect(calls).toEqual(['read-02']);
-    key('j');
-    key('k');
-    await settle();
+    press('j', { bubbles: true, cancelable: true }, window);
+    press('k', { bubbles: true, cancelable: true }, window);
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     expect(calls).toEqual(['read-02']);
   });
 });
@@ -456,18 +436,18 @@ describe('rapid navigation', () => {
     const first = gate('read-02'); // prefetch, adopted by the first J
     const second = gate('read-03');
     const third = gate('read-04');
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     await openReader(w);
-    key('j'); key('j'); key('j');
-    await settle();
+    press('j', { bubbles: true, cancelable: true }, window); press('j', { bubbles: true, cancelable: true }, window); press('j', { bubbles: true, cancelable: true }, window);
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     expect(calls).toEqual(['read-01', 'read-02', 'read-03', 'read-04']);
     third.resolve(await detailOf('read-04'));
-    await settle();
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     expect(subject()).toBe('Neighbor thread read-04');
     second.resolve(await detailOf('read-03'));
     first.resolve(await detailOf('read-02'));
-    await settle();
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     await vi.advanceTimersByTimeAsync(READER_LOADING_DELAY_MS * 2);
     expect(subject()).toBe('Neighbor thread read-04');
     expect(loadingShown()).toBe(false);
@@ -477,16 +457,16 @@ describe('rapid navigation', () => {
   it('keeps the original loading deadline across repeated J presses', async () => {
     gate('read-02');
     gate('read-03');
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     await openReader(w);
-    key('j');
+    press('j', { bubbles: true, cancelable: true }, window);
     await vi.advanceTimersByTimeAsync(80);
-    key('j');
-    await settle();
+    press('j', { bubbles: true, cancelable: true }, window);
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     expect(loadingShown()).toBe(false);
     await vi.advanceTimersByTimeAsync(READER_LOADING_DELAY_MS - 80 + 1);
-    await settle();
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     expect(loadingShown()).toBe(true);
     expect(document.querySelector('[data-test="reader-loading-subject"]')?.textContent).toBe('Neighbor thread read-03');
     void w;
@@ -510,15 +490,15 @@ describe('focus and scroll across a swap', () => {
   });
 
   it('never passes focus through the reader container on an instant swap and focuses the new newest toggle once', async () => {
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     await openReader(w);
     expect(focusName()).toBe('message-toggle-read-01-m3');
     const scroller = w.get('[data-test="reader-scroll"]').element as HTMLElement;
     scroller.scrollTop = 150;
     const recorder = recordFrames();
-    key('j');
-    await settle();
+    press('j', { bubbles: true, cancelable: true }, window);
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     recorder.stop();
     expect(recorder.focus).toEqual(['message-toggle-read-02-m1']);
     expect(focusName()).toBe('message-toggle-read-02-m1');
@@ -527,18 +507,18 @@ describe('focus and scroll across a swap', () => {
 
   it('keeps focus on the previous toggle while held, then moves once to the new toggle', async () => {
     const slow = gate('read-02');
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     await openReader(w);
     (w.get('[data-test="reader-scroll"]').element as HTMLElement).scrollTop = 150;
     const recorder = recordFrames();
-    key('j');
-    await settle();
+    press('j', { bubbles: true, cancelable: true }, window);
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     await vi.advanceTimersByTimeAsync(READER_LOADING_DELAY_MS - 20);
     expect(focusName()).toBe('message-toggle-read-01-m3');
     expect((w.get('[data-test="reader-scroll"]').element as HTMLElement).scrollTop).toBe(150);
     slow.resolve(await detailOf('read-02'));
-    await settle();
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     recorder.stop();
     expect(recorder.focus).toEqual(['message-toggle-read-02-m1']);
     expect(recorder.focus).not.toContain('reader');
@@ -547,30 +527,30 @@ describe('focus and scroll across a swap', () => {
 
   it('parks focus on the reader container only while the loading presentation shows, then moves once', async () => {
     const slow = gate('read-02');
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     await openReader(w);
-    key('j');
-    await settle();
+    press('j', { bubbles: true, cancelable: true }, window);
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     await vi.advanceTimersByTimeAsync(READER_LOADING_DELAY_MS + 1);
-    await settle();
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     expect(loadingShown()).toBe(true);
     expect(focusName()).toBe('reader');
     slow.resolve(await detailOf('read-02'));
-    await settle();
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     expect(focusName()).toBe('message-toggle-read-02-m1');
   });
 
   it('restores the saved scroll position when returning to the same conversation', async () => {
-    const w = mountApp();
-    await settle();
+    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     await openReader(w);
     (w.get('[data-test="reader-scroll"]').element as HTMLElement).scrollTop = 150;
-    key('j');
-    await settle();
+    press('j', { bubbles: true, cancelable: true }, window);
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     expect((w.get('[data-test="reader-scroll"]').element as HTMLElement).scrollTop).toBe(0);
-    key('k');
-    await settle();
+    press('k', { bubbles: true, cancelable: true }, window);
+    await flushFakeTimersZeroTick(() => vi.advanceTimersByTimeAsync(0));
     expect(subject()).toBe('Reader journey thread');
     expect((w.get('[data-test="reader-scroll"]').element as HTMLElement).scrollTop).toBe(150);
   });

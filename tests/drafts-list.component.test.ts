@@ -9,7 +9,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import DraftsList from '../src/components/DraftsList.vue';
 import { compactDateLabel, fullDateLabel } from '../src/lib/browsing-dates';
 import type { DraftRef, DraftSummary, MailError } from '../src/lib/ipc/client';
-import { fixtureRef } from './helpers';
+import { fixtureRef, press } from './helpers';
 
 const ref = (draftId: string): DraftRef => ({ accountId: 'acct-fixture', draftId });
 const summary = (draftId: string, patch: Partial<DraftSummary> = {}): DraftSummary => ({
@@ -565,7 +565,7 @@ describe('DraftsList Discard', () => {
     await confirm.trigger('click'); await flushPromises();
     expect(wrapper.find('[data-test="draft-discard-confirm"]').exists()).toBe(true);
     expect(document.activeElement).toBe(confirm.element);
-    document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    press('Escape', { bubbles: true, cancelable: true }, document.activeElement!);
     await flushPromises();
     expect(wrapper.find('[data-test="draft-discard-confirm"]').exists()).toBe(false);
     expect(document.activeElement).toBe(discardBtn('d2').element);

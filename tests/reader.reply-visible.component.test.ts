@@ -1,3 +1,4 @@
+import { flushVueNextTick } from './support/ui-settle';
 /**
  * The docked reply composer shrinks the thread scroller. While a reply is open the
  * reader keeps the message being answered (the latest) in view above the card, until
@@ -5,8 +6,8 @@
  * has no layout, so this proves the decisions, not the pixels (measured in a browser).
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import { nextTick } from 'vue';
+import { mount, type VueWrapper } from '@vue/test-utils';
+
 import ReaderView from '../src/components/ReaderView.vue';
 import type { Conversation } from '../src/lib/ipc/client';
 
@@ -75,24 +76,24 @@ function mountReader(props: Record<string, unknown> = {}): VueWrapper {
   });
   return wrapper;
 }
-const settle = async () => { await flushPromises(); await nextTick(); await flushPromises(); };
+
 const scroller = (w: VueWrapper) => w.get('[data-test="reader-scroll"]').element as HTMLElement;
 const fire = () => observers.forEach((o) => o.callback());
 
 describe('reply composer keeps the answered message in view', () => {
   it('scrolls the latest message fully above the card when the reply opens', async () => {
     const w = mountReader();
-    await settle();
+    await flushVueNextTick();
     expect(scroller(w).scrollTop).toBe(0);
     await w.setProps({ replyDocked: true });
-    await settle();
+    await flushVueNextTick();
     // Latest bottom 452 vs viewport bottom 341: move down by 111.
     expect(scroller(w).scrollTop).toBe(111);
   });
 
   it('follows the latest message when the card grows (Cc / Subject opens) and the strip shrinks', async () => {
     const w = mountReader({ replyDocked: true });
-    await settle();
+    await flushVueNextTick();
     scrollTopStore.set(scroller(w), 0);
     rects['reader-scroll'] = { top: 100, bottom: 281 };
     rects['message-m3'] = { top: 226, bottom: 392 };
@@ -103,15 +104,15 @@ describe('reply composer keeps the answered message in view', () => {
   it('leaves the scroll alone when the latest message is already fully visible', async () => {
     rects['message-m3'] = { top: 180, bottom: 300 };
     const w = mountReader();
-    await settle();
+    await flushVueNextTick();
     await w.setProps({ replyDocked: true });
-    await settle();
+    await flushVueNextTick();
     expect(scroller(w).scrollTop).toBe(0);
   });
 
   it('stops following once the user scrolls the thread themselves', async () => {
     const w = mountReader({ replyDocked: true });
-    await settle();
+    await flushVueNextTick();
     await w.get('[data-test="reader-scroll"]').trigger('wheel');
     scrollTopStore.set(scroller(w), 7);
     fire();
@@ -120,18 +121,18 @@ describe('reply composer keeps the answered message in view', () => {
 
   it('does nothing while no reply is docked', async () => {
     mountReader();
-    await settle();
+    await flushVueNextTick();
     fire();
     expect(scrollTopStore.get(document.querySelector('[data-test="reader-scroll"]') as HTMLElement) ?? 0).toBe(0);
   });
 
   it('does not move keyboard focus', async () => {
     const w = mountReader();
-    await settle();
+    await flushVueNextTick();
     const toggle = w.get('[data-test="message-toggle-m1"]').element as HTMLElement;
     toggle.focus();
     await w.setProps({ replyDocked: true });
-    await settle();
+    await flushVueNextTick();
     expect(document.activeElement).toBe(toggle);
   });
 });

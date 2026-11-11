@@ -7,7 +7,8 @@ import { effectScope } from 'vue';
 import { useMailbox } from '../src/composables/useMailbox';
 import { createBrowserFakeMailClient } from '../src/lib/ipc/browser-fake';
 import type { CachedTrashSnapshot, ConversationSummary } from '../src/lib/ipc/client';
-import { deferred, flushMacrotasks, useGmailMode } from './helpers';
+import { deferred, useGmailMode } from './helpers';
+import { flushVueMacrotasks } from './support/ui-settle';
 
 function scopeRun<T>(fn: () => T): { result: T; stop: () => void } {
   const scope = effectScope();
@@ -25,7 +26,7 @@ async function setup() {
   for (const id of ['conv-04', 'conv-05', 'conv-06']) fake.controls.markTriage(id, 'trash');
   const { result: box, stop } = scopeRun(() => useMailbox(fake));
   await box.ready;
-  await flushMacrotasks(2);
+  await flushVueMacrotasks(2);
   const rows = (await fake.listCachedTrash({ accountId: 'gmail-account', limit: 100, cursor: null })).conversations;
   return { fake, box, stop, rows };
 }
@@ -121,12 +122,12 @@ describe('useMailbox Cached Trash context', () => {
     const late = deferred<CachedTrashSnapshot>();
     vi.spyOn(fake, 'listCachedTrash').mockReturnValue(late.promise);
     const pending = box.setContext('trash');
-    await flushMacrotasks(1);
+    await flushVueMacrotasks(1);
     expect(box.listState.value).toBe('loading');
     await box.setContext('done');
     late.resolve(snapshot({ conversations: [rows[0]!], nextCursor: 'stale' }));
     await pending;
-    await flushMacrotasks(2);
+    await flushVueMacrotasks(2);
     expect(box.context.value).toBe('done');
     expect(ids(box.conversations.value)).not.toContain(rows[0]!.ref.conversationId);
     expect(box.nextCursor.value).not.toBe('stale');
@@ -141,7 +142,7 @@ describe('useMailbox Cached Trash context', () => {
       .mockReturnValueOnce(late.promise);
     await box.setContext('trash');
     const more = box.loadMore();
-    await flushMacrotasks(1);
+    await flushVueMacrotasks(1);
     expect(box.loadingMore.value).toBe(true);
     await box.setContext('inbox');
     late.resolve(snapshot({ conversations: [rows[1]!], nextCursor: 'stale' }));
@@ -157,18 +158,18 @@ describe('useMailbox Cached Trash context', () => {
     const late = deferred<CachedTrashSnapshot>();
     vi.spyOn(fake, 'listCachedTrash').mockReturnValue(late.promise);
     const pending = box.setContext('trash');
-    await flushMacrotasks(1);
+    await flushVueMacrotasks(1);
     const oldStatus = await fake.getAccountStatus();
     vi.spyOn(fake, 'getAccountStatus').mockResolvedValue({ ...oldStatus, account: { ...oldStatus.account!, accountId: 'another-account' } });
     vi.spyOn(fake, 'listConversations').mockResolvedValue({ conversations: [], activity: [] });
     // The status refresh (and the Trash read it queued) is held by the late page.
     const refreshing = box.refresh();
-    await flushMacrotasks(3);
+    await flushVueMacrotasks(3);
     expect(box.accountStatus.value?.account?.accountId).toBe('another-account');
     expect(box.context.value).toBe('inbox');
     late.resolve(snapshot({ conversations: [rows[0]!], nextCursor: 'stale' }));
     await Promise.all([pending, refreshing]);
-    await flushMacrotasks(2);
+    await flushVueMacrotasks(2);
     expect(box.conversations.value).toEqual([]);
     expect(box.nextCursor.value).toBeNull();
     expect(box.lastSyncedAt.value).toBeNull();
@@ -177,7 +178,7 @@ describe('useMailbox Cached Trash context', () => {
 
   it('clears the selection on entering Trash and cannot be selected into a bulk set by navigation', async () => {
     const { box, stop } = await setup();
-    await flushMacrotasks(2);
+    await flushVueMacrotasks(2);
     const first = box.conversations.value[0]!.ref;
     box.toggleSelected(first);
     expect(box.selectedRefs.value).toHaveLength(1);

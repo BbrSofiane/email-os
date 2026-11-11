@@ -6,6 +6,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { nextTick } from 'vue';
 import { mount, type VueWrapper } from '@vue/test-utils';
+import { press as dispatchKey } from './helpers';
 import ContextRowList from '../src/components/ContextRowList.vue';
 
 interface Item { key: string; name: string; note?: string }
@@ -30,13 +31,6 @@ function mountList(props: Record<string, unknown> = {}) {
   return wrapper;
 }
 const mains = () => wrapper!.findAll('[data-drawer-row]');
-function press(el: Element, key: string, init: KeyboardEventInit = {}): KeyboardEvent {
-  (el as HTMLElement).focus();
-  const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init });
-  el.dispatchEvent(event);
-  return event;
-}
-
 describe('ContextRowList anatomy', () => {
   it('renders a named list of rows with the Conversation Row geometry classes and the slots in order', () => {
     const w = mountList();
@@ -105,29 +99,34 @@ describe('ContextRowList keyboard', () => {
   it('moves with ArrowDown/ArrowUp and J/K, jumps with Home and End, and never wraps', () => {
     mountList();
     const focused = () => (document.activeElement as HTMLElement).dataset.drawerRow;
-    expect(press(mains()[0]!.element, 'ArrowDown').defaultPrevented).toBe(true);
+    const first = mains()[0]!.element as HTMLElement;
+    first.focus();
+    expect(dispatchKey('ArrowDown', { bubbles: true, cancelable: true }, first).defaultPrevented).toBe(true);
     expect(focused()).toBe('b');
-    press(document.activeElement!, 'j');
+    dispatchKey('j', { bubbles: true, cancelable: true }, document.activeElement!);
     expect(focused()).toBe('c');
-    press(document.activeElement!, 'J');
+    dispatchKey('J', { bubbles: true, cancelable: true }, document.activeElement!);
     expect(focused()).toBe('c');
-    press(document.activeElement!, 'ArrowUp');
+    dispatchKey('ArrowUp', { bubbles: true, cancelable: true }, document.activeElement!);
     expect(focused()).toBe('b');
-    press(document.activeElement!, 'k');
-    press(document.activeElement!, 'K');
+    dispatchKey('k', { bubbles: true, cancelable: true }, document.activeElement!);
+    dispatchKey('K', { bubbles: true, cancelable: true }, document.activeElement!);
     expect(focused()).toBe('a');
-    press(document.activeElement!, 'End');
+    dispatchKey('End', { bubbles: true, cancelable: true }, document.activeElement!);
     expect(focused()).toBe('c');
-    press(document.activeElement!, 'Home');
+    dispatchKey('Home', { bubbles: true, cancelable: true }, document.activeElement!);
     expect(focused()).toBe('a');
   });
 
   it('leaves Enter to the native button, and the trailing action buttons to native keys', () => {
     const w = mountList();
     // Enter is never handled here: the real button owns it.
-    expect(press(mains()[0]!.element, 'Enter').defaultPrevented).toBe(false);
+    const first = mains()[0]!.element as HTMLElement;
+    first.focus();
+    expect(dispatchKey('Enter', { bubbles: true, cancelable: true }, first).defaultPrevented).toBe(false);
     const act = w.findAll('.act')[0]!.element;
-    const event = press(act, 'j');
+    (act as HTMLElement).focus();
+    const event = dispatchKey('j', { bubbles: true, cancelable: true }, act);
     expect(event.defaultPrevented).toBe(false);
     expect(document.activeElement).toBe(act);
   });
@@ -136,12 +135,17 @@ describe('ContextRowList keyboard', () => {
     const w = mountList();
     const input = document.createElement('input');
     w.element.appendChild(input);
-    expect(press(mains()[0]!.element, 'j', { isComposing: true }).defaultPrevented).toBe(false);
-    expect(press(mains()[0]!.element, 'j', { keyCode: 229 }).defaultPrevented).toBe(false);
+    const first = mains()[0]!.element as HTMLElement;
+    first.focus();
+    expect(dispatchKey('j', { bubbles: true, cancelable: true, isComposing: true }, first).defaultPrevented).toBe(false);
+    first.focus();
+    expect(dispatchKey('j', { bubbles: true, cancelable: true, keyCode: 229 }, first).defaultPrevented).toBe(false);
     for (const init of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }, { shiftKey: true }]) {
-      expect(press(mains()[0]!.element, 'j', init).defaultPrevented).toBe(false);
+      first.focus();
+      expect(dispatchKey('j', { bubbles: true, cancelable: true, ...init }, first).defaultPrevented).toBe(false);
     }
-    expect(press(input, 'j').defaultPrevented).toBe(false);
+    input.focus();
+    expect(dispatchKey('j', { bubbles: true, cancelable: true }, input).defaultPrevented).toBe(false);
     expect(document.activeElement).toBe(input);
   });
 

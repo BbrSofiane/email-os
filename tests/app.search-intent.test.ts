@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import App from '../src/App.vue';
+import { flushPromises, type VueWrapper } from '@vue/test-utils';
+
 import type { MailClient } from '../src/lib/ipc/client';
-import { createBrowserFakeMailClient, deferred } from './helpers';
+import { createBrowserFakeMailClient, deferred, mountApp, press } from './helpers';
 
 let wrapper: VueWrapper | null = null;
 afterEach(() => { wrapper?.unmount(); wrapper = null; });
@@ -28,7 +28,7 @@ async function setup(options: { singleRow?: boolean; activityOrigin?: boolean } 
     },
     subscribe: async (listener) => { notify = listener; return () => { notify = () => {}; }; },
   };
-  const w = mount(App, { props: { client, mode: 'browser-preview' }, attachTo: document.body });
+  const w = mountApp(client, 'browser-preview', { attachTo: document.body });
   wrapper = w;
   await flushPromises();
   const openRow = async (index = 0) => {
@@ -72,11 +72,7 @@ async function setup(options: { singleRow?: boolean; activityOrigin?: boolean } 
   // Contact-history reads are real cached fake searches; these are distinct
   // from the user's submitted traversal (cachedOnly=false at entry).
   const submissions = () => searchMail.mock.calls.filter(([request]) => !request.cachedOnly);
-  const press = async (key: string) => {
-    w.get('[data-test="reader"]').element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
-    await flushPromises();
-  };
-  return { w, rows, openRow, openActivityReader, startArchive, senderSearch, submissions, getConversation, press, notify: () => notify(), cancelSearchMail };
+  return { w, rows, openRow, openActivityReader, startArchive, senderSearch, submissions, getConversation, notify: () => notify(), cancelSearchMail };
 }
 
 describe('App archive continuation ownership', () => {
@@ -112,7 +108,7 @@ describe('App archive continuation ownership', () => {
       const completeArchive = await h.startArchive();
       if (destination === 'Close') await h.w.get('[data-test="reader-close"]').trigger('click');
       else if (destination === 'recent link') await h.w.get('.contact-recent button').trigger('click');
-      else if (destination === 'j') await h.press('j');
+      else if (destination === 'j') { press('j', { bubbles: true }, h.w.get('[data-test="reader"]').element); await flushPromises(); }
       else await h.w.get(`[data-test="rail-${destination.toLowerCase()}"]`).trigger('click');
       await flushPromises();
       const location = () => ({
@@ -191,7 +187,7 @@ describe('App explicit navigation during deferred search cancellation', () => {
     await h.openRow(1);
     const cancellation = await h.senderSearch();
     if (action === 'Close') await h.w.get('[data-test="reader-close"]').trigger('click');
-    else await h.press('Escape');
+    else { press('Escape', { bubbles: true }, h.w.get('[data-test="reader"]').element); await flushPromises(); }
     await flushPromises();
     cancellation.resolve();
     await flushPromises();
@@ -232,7 +228,8 @@ describe('App explicit navigation during deferred search cancellation', () => {
     const rowId = h.w.findAll('.inbox-row')[1]!.attributes('data-test');
     await h.openRow(1);
     const cancellation = await h.senderSearch();
-    await h.press(key);
+    press(key, { bubbles: true }, h.w.get('[data-test="reader"]').element);
+    await flushPromises();
     const expected = h.rows[key === 'j' ? 2 : 0]!.subject;
     expect(h.w.get('.reader-subject').text()).toBe(expected);
     cancellation.resolve();

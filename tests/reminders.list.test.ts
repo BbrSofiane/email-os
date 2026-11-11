@@ -6,6 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises } from '@vue/test-utils';
+import { press } from './helpers';
 import { fullDateLabel } from '../src/lib/browsing-dates';
 import { createBrowserFakeMailClient } from '../src/lib/ipc/browser-fake';
 import type { ConversationRef, PutReminder, Reminder, ReminderPhase } from '../src/lib/ipc/client';
@@ -114,8 +115,7 @@ describe('Reminders rows', () => {
     expect(document.activeElement).toBe(first!.element);
     const reschedule = panel.findAll('button').find((button) => button.text() === 'Reschedule')!;
     (reschedule.element as HTMLElement).focus();
-    const event = new KeyboardEvent('keydown', { key: 'j', bubbles: true, cancelable: true });
-    reschedule.element.dispatchEvent(event);
+    const event = press('j', { bubbles: true, cancelable: true }, reschedule.element);
     expect(event.defaultPrevented).toBe(false);
     expect(document.activeElement).toBe(reschedule.element);
   });

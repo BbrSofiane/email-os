@@ -30,6 +30,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { startRenderedHarness, type RenderedHarness } from './rendered/chromium';
+import { pressRenderedKey } from './rendered/keyboard';
 
 const chromePath = process.env.EMAIL_OS_RENDERED_LAYOUT_CHROME ?? '';
 
@@ -107,24 +108,7 @@ describe.skipIf(chromePath === '')('Reader journey (real Chrome, opt-in)', () =>
   };
 })()`;
 
-  async function press(key: string, options: { shift?: boolean; ctrl?: boolean } = {}): Promise<void> {
-    // Keep the effective key consistent with the shift modifier: Shift+U must
-    // report key 'U', not a base-spread lowercase 'u'.
-    const base: Record<string, unknown> = options.shift ? { key: key.toUpperCase() } : { key };
-    if (options.shift) { base.modifiers = 8; }
-    const keyCode: Record<string, number> = { n: 78, p: 80, o: 79, j: 74, k: 75, u: 85, Escape: 27, Enter: 13, ArrowDown: 40, ArrowUp: 38 };
-    const code: Record<string, string> = { n: 'KeyN', p: 'KeyP', o: 'KeyO', j: 'KeyJ', k: 'KeyK', u: 'KeyU', ArrowDown: 'ArrowDown', ArrowUp: 'ArrowUp' };
-    const printable = key.length === 1;
-    const keyPayload = {
-      key: options.shift ? key.toUpperCase() : key,
-      ...(code[key] ? { code: code[key] } : {}),
-      ...(keyCode[key] ? { windowsVirtualKeyCode: keyCode[key], nativeVirtualKeyCode: keyCode[key] } : {}),
-      ...(printable ? { text: options.shift ? key.toUpperCase() : key } : key === 'Enter' ? { text: '\r' } : {}),
-      ...base,
-    };
-    await cdp!.cmd('Input.dispatchKeyEvent', { type: 'keyDown', ...keyPayload });
-    await cdp!.cmd('Input.dispatchKeyEvent', { type: 'keyUp', ...keyPayload });
-  }
+  const press = (key: string, options: { shift?: boolean; ctrl?: boolean } = {}): Promise<void> => pressRenderedKey(cdp!, key, options, 'reader');
 
   async function click(selector: string): Promise<void> {
     const point = await cdp!.js<{ x: number; y: number }>(`window.__h.clickPoint(${JSON.stringify(selector)})`);

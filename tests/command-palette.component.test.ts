@@ -1,16 +1,15 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import App from '../src/App.vue';
+import { flushPromises, type VueWrapper } from '@vue/test-utils';
 import { compactShortcut, matchesQuery } from '../src/lib/action-palette';
 import { createDiscoveryFixture } from './discovery.fixture';
-import { createBrowserFakeMailClient, useGmailMode } from './helpers';
+import { createBrowserFakeMailClient, mountApp, press, useGmailMode } from './helpers';
 
 let wrapper: VueWrapper | null = null;
 afterEach(() => { wrapper?.unmount(); wrapper = null; });
 async function openPalette(query = '') {
   const fixture = createDiscoveryFixture();
   await fixture.seedDone();
-  wrapper = mount(App, { props: { client: fixture.client, mode: 'browser-preview' }, attachTo: document.body });
+  wrapper = mountApp(fixture.client, 'browser-preview', { attachTo: document.body });
   await flushPromises();
   await wrapper.get('[data-test="palette-trigger"]').trigger('click');
   await flushPromises();
@@ -51,11 +50,11 @@ describe('command palette structure', () => {
 
   async function palette(gmail: boolean, archiveFirst: boolean) {
     const fake = createBrowserFakeMailClient(); if (gmail) useGmailMode(fake);
-    wrapper = mount(App, { props: { client: fake, mode: 'browser-preview' }, attachTo: document.body });
+    wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
     await flushPromises();
     if (archiveFirst) {
       (wrapper.get('[data-test="conversation-row-conv-01"]').element as HTMLElement).focus();
-      document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'e' }));
+      press('e', { bubbles: true, cancelable: true }, document.activeElement!);
       await flushPromises();
     }
     await wrapper.get('[data-test="palette-trigger"]').trigger('click');
@@ -88,9 +87,9 @@ describe('command palette structure', () => {
 
   it('keeps the navigator a single unlabelled list without key hints', async () => {
     const fixture = createDiscoveryFixture();
-    wrapper = mount(App, { props: { client: fixture.client, mode: 'browser-preview' }, attachTo: document.body });
+    wrapper = mountApp(fixture.client, 'browser-preview', { attachTo: document.body });
     await flushPromises();
-    document.body.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowLeft' }));
+    press('ArrowLeft', { bubbles: true }, document.body);
     await flushPromises();
     expect(wrapper.find('[role="dialog"]').exists()).toBe(true);
     expect(wrapper.find('.action-group').exists()).toBe(false);

@@ -1,26 +1,24 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import App from '../src/App.vue';
+import { flushPromises, type VueWrapper } from '@vue/test-utils';
 import { createBrowserFakeMailClient } from '../src/lib/ipc/browser-fake';
-import { deferred, useGmailMode } from './helpers';
+import { deferred, mountApp, press, useGmailMode } from './helpers';
 import { compactDateLabel, fullDateLabel, machineDateTime } from '../src/lib/browsing-dates';
 import type { CachedTrashSnapshot, ConversationSummary } from '../src/lib/ipc/client';
 
 let wrapper: VueWrapper | null = null;
 afterEach(() => { wrapper?.unmount(); wrapper = null; document.body.innerHTML = ''; });
-const key = (value: string, init: KeyboardEventInit = {}) => (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true, ...init }));
 const active = () => (document.activeElement as HTMLElement | null)?.dataset.test;
 const rowTest = (id: string) => `[data-test="conversation-row-${id}"]`;
 async function goTrash(w: VueWrapper) {
   await w.get('[data-test="palette-trigger"]').trigger('click');
   await w.get('[data-test="action-query"]').setValue('Go to cached Trash');
-  key('Enter');
+  press('Enter', { bubbles: true, cancelable: true });
   await flushPromises();
 }
-async function mountApp(fake = createBrowserFakeMailClient()) {
-  wrapper = mount(App, { props: { client: fake, mode: 'browser-preview' }, attachTo: document.body });
+async function mountCachedTrash(fake = createBrowserFakeMailClient()) {
+  wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
   await flushPromises();
-  return wrapper;
+  return wrapper!;
 }
 function emptySnapshot(over: Partial<CachedTrashSnapshot> = {}): CachedTrashSnapshot {
   return { conversations: [], nextCursor: null, coverage: 'local_cache', exactTotal: null, lastSyncedAt: null, ...over };
@@ -39,7 +37,7 @@ describe('UX-10 A read-only cached Trash list context', () => {
     const archive = vi.spyOn(fake, 'setArchived');
     const read = vi.spyOn(fake, 'setRead');
     const group = vi.spyOn(fake, 'setArchivedGroup');
-    const w = await mountApp(fake);
+    const w = await mountCachedTrash(fake);
     expect(w.find(rowTest('conv-04')).exists()).toBe(false);
     expect(w.find(rowTest('conv-07')).exists()).toBe(false);
     await w.get('[data-test="row-select-conv-01"]').setValue(true);
@@ -61,12 +59,12 @@ describe('UX-10 A read-only cached Trash list context', () => {
     expect(w.find('[data-test="trash-coverage"]').exists()).toBe(false);
     expect(w.get('.reader-readonly').text()).toBe('Cached Trash — read only. Recovery is not available here; use your provider client.');
     const calls = get.mock.calls.length;
-    for (const value of ['e', 'E', 'U', 'z', 'j', 'k']) key(value);
+    for (const value of ['e', 'E', 'U', 'z', 'j', 'k']) press(value, { bubbles: true, cancelable: true });
     await flushPromises();
     expect(get).toHaveBeenCalledTimes(calls);
     expect(archive).not.toHaveBeenCalled(); expect(read).not.toHaveBeenCalled(); expect(group).not.toHaveBeenCalled();
     // Back returns to the Trash list at the same row, not to a drawer.
-    key('Escape'); await flushPromises();
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect(w.find('[data-test="utility-drawer"]').exists()).toBe(false);
     expect(w.get('[data-test="inbox-title"]').text()).toBe('Cached Trash');
@@ -74,7 +72,7 @@ describe('UX-10 A read-only cached Trash list context', () => {
     expect(w.find('[data-test="trash-coverage"]').exists()).toBe(true);
     expect(w.find('[data-test="selection-bar"]').exists()).toBe(false);
     // A second Back returns to the context the user came from.
-    key('Escape'); await flushPromises();
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
     expect(w.get('[data-test="inbox-title"]').text()).toBe('Inbox');
     expect(w.find('[data-test="trash-coverage"]').exists()).toBe(false);
     expect(w.find('[data-test="selection-bar"]').exists()).toBe(false);
@@ -84,7 +82,7 @@ describe('UX-10 A read-only cached Trash list context', () => {
     const fake = createBrowserFakeMailClient();
     useGmailMode(fake, { mutationAccess: 'enabled' });
     fake.controls.markTriage('conv-04', 'trash');
-    const w = await mountApp(fake);
+    const w = await mountCachedTrash(fake);
     const rail = w.get('[data-test="rail-trash"]');
     expect(rail.attributes('aria-current')).toBeUndefined();
     expect(rail.attributes('aria-expanded')).toBeUndefined();
@@ -99,7 +97,7 @@ describe('UX-10 A read-only cached Trash list context', () => {
     // While a Trash row is open the rail no longer claims the list is current.
     await w.get(rowTest('conv-04')).trigger('click'); await flushPromises();
     expect(w.get('[data-test="rail-trash"]').attributes('aria-current')).toBeUndefined();
-    key('Escape'); await flushPromises();
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
     expect(w.get('[data-test="rail-trash"]').attributes('aria-current')).toBe('page');
     // Back from the list (header button) returns to Inbox; the rail follows.
     await w.get('[data-test="context-back"]').trigger('click'); await flushPromises();
@@ -118,16 +116,16 @@ describe('UX-10 A read-only cached Trash list context', () => {
     });
     expect(base.length).toBe(3);
     const client = { ...fake, listCachedTrash: async () => emptySnapshot({ conversations: base }) };
-    const w = await mountApp(client as typeof fake);
+    const w = await mountCachedTrash(client as typeof fake);
     const filterCommand = async () => {
       await w.get('[data-test="palette-trigger"]').trigger('click');
       const present = w.find('#action-toggle-unread-filter').exists();
-      key('Escape'); await flushPromises();
+      press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
       return present;
     };
     await w.get('[data-test="palette-trigger"]').trigger('click');
     await w.get('[data-test="action-query"]').setValue('Show unread only');
-    key('Enter'); await flushPromises();
+    press('Enter', { bubbles: true, cancelable: true }); await flushPromises();
     expect(w.find('[data-test="unread-filter-status"]').exists()).toBe(true);
     await goTrash(w);
     expect(w.get('[data-test="inbox-title"]').text()).toBe('Cached Trash');
@@ -149,13 +147,13 @@ describe('UX-10 A read-only cached Trash list context', () => {
     const writes = ['setArchived', 'setRead', 'setStarred', 'setArchivedGroup', 'setReadGroup', 'setStarredGroup', 'createDraft'] as const;
     const spies = writes.map((name) => vi.spyOn(fake, name));
     const get = vi.spyOn(fake, 'getConversation');
-    const w = await mountApp(fake);
+    const w = await mountCachedTrash(fake);
     await goTrash(w);
     expect(w.findAll('li.inbox-row')).toHaveLength(2);
     const list = w.get('ul.inbox-list');
     expect(list.find('button, input, .row-action, .row-actions, .row-actions-toggle').exists()).toBe(false);
-    for (const letter of ['e', 'E', 'u', 'U', 'z', 's', 'S', 'h', 'x', 'X', 'r']) key(letter);
-    key('J', { shiftKey: true }); key('K', { shiftKey: true });
+    for (const letter of ['e', 'E', 'u', 'U', 'z', 's', 'S', 'h', 'x', 'X', 'r']) press(letter, { bubbles: true, cancelable: true });
+    press('J', { bubbles: true, cancelable: true, ...{ shiftKey: true } }); press('K', { bubbles: true, cancelable: true, ...{ shiftKey: true } });
     await flushPromises();
     for (const spy of spies) expect(spy).not.toHaveBeenCalled();
     expect(get).not.toHaveBeenCalled();
@@ -168,7 +166,7 @@ describe('UX-10 A read-only cached Trash list context', () => {
     expect(w.find('[data-test="selection-bar"]').exists()).toBe(false);
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
     // The palette offers navigation, never a mailbox mutation, selection or undo.
-    key('Escape'); await flushPromises();
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
     await w.get('[data-test="palette-trigger"]').trigger('click');
     const ids = w.findAll('[role="option"]').map((option) => option.attributes('id'));
     expect(ids).toContain('action-inbox');
@@ -183,16 +181,16 @@ describe('UX-10 A read-only cached Trash list context', () => {
     useGmailMode(fake, { mutationAccess: 'enabled' });
     fake.controls.markTriage('conv-04', 'trash'); fake.controls.markTriage('conv-05', 'trash');
     const spies = (['setArchived', 'setRead', 'setStarred', 'createDraft'] as const).map((name) => vi.spyOn(fake, name));
-    const w = await mountApp(fake);
+    const w = await mountCachedTrash(fake);
     // An Inbox action leaves a live Undo notice behind.
-    key('e'); await flushPromises();
+    press('e', { bubbles: true, cancelable: true }); await flushPromises();
     expect(w.find('[data-test="action-notice-undo"]').exists()).toBe(true);
     const archived = spies[0]!.mock.calls.length;
     await goTrash(w);
     expect(w.find('[data-test="action-notice-undo"]').exists()).toBe(false);
     await w.get(rowTest('conv-04')).trigger('click'); await flushPromises();
     expect(w.find('[data-test="action-notice-undo"]').exists()).toBe(false);
-    for (const letter of ['e', 'E', 'u', 'U', 'z', 's', 'h', 'r', 'j', 'k']) key(letter);
+    for (const letter of ['e', 'E', 'u', 'U', 'z', 's', 'h', 'r', 'j', 'k']) press(letter, { bubbles: true, cancelable: true });
     await flushPromises();
     expect(spies[0]!.mock.calls.length).toBe(archived);
     for (const spy of spies.slice(1)) expect(spy).not.toHaveBeenCalled();
@@ -204,19 +202,19 @@ describe('UX-10 A read-only cached Trash list context', () => {
     const fake = createBrowserFakeMailClient();
     useGmailMode(fake);
     fake.controls.markTriage('conv-04', 'trash');
-    const w = await mountApp(fake);
+    const w = await mountCachedTrash(fake);
     await goTrash(w);
-    key('s'); await flushPromises();
+    press('s', { bubbles: true, cancelable: true }); await flushPromises();
     expect(w.find('[data-test="utility-drawer"]').exists()).toBe(false);
     await w.get(rowTest('conv-04')).trigger('click'); await flushPromises();
-    key('s'); await flushPromises();
+    press('s', { bubbles: true, cancelable: true }); await flushPromises();
     expect(w.find('[data-test="utility-drawer"]').exists()).toBe(false);
   });
 
   it('puts the one coverage line above the list with the whole caveat in its title and hidden text', async () => {
     const fake = createBrowserFakeMailClient(); useGmailMode(fake);
     fake.controls.markTriage('conv-04', 'trash'); fake.controls.markTriage('conv-05', 'trash'); fake.controls.markTriage('conv-06', 'trash');
-    const w = await mountApp(fake);
+    const w = await mountCachedTrash(fake);
     await goTrash(w);
     const coverage = w.get('[data-test="trash-coverage"]');
     const caveat = coverage.attributes('title')!;
@@ -240,7 +238,7 @@ describe('UX-10 A read-only cached Trash list context', () => {
     fake.controls.markTriage('conv-04', 'trash');
     const [first] = await trashRows(fake);
     vi.spyOn(fake, 'listCachedTrash').mockResolvedValue(emptySnapshot({ conversations: [first!], lastSyncedAt: '2026-01-02T03:04:00Z' }));
-    const w = await mountApp(fake);
+    const w = await mountCachedTrash(fake);
     await goTrash(w);
     expect(w.get('[data-test="trash-coverage"]').text()).toMatch(/1 cached · total unknown · Last synced .+\./);
   });
@@ -248,7 +246,7 @@ describe('UX-10 A read-only cached Trash list context', () => {
   it('renders the shared Done row: sender, subject, snippet, compact date and attachment glyph', async () => {
     const fake = createBrowserFakeMailClient(); useGmailMode(fake);
     fake.controls.markTriage('conv-04', 'trash');
-    const w = await mountApp(fake);
+    const w = await mountCachedTrash(fake);
     await goTrash(w);
     const [summary] = await trashRows(fake);
     const row = w.get(rowTest('conv-04'));
@@ -270,7 +268,7 @@ describe('UX-10 A read-only cached Trash list context', () => {
     vi.spyOn(fake, 'listCachedTrash').mockResolvedValue(emptySnapshot({
       conversations: [{ ref: { accountId: 'gmail-account', conversationId: 'conv-x' }, subject: '', participants: [], lastMessageAt: '2026-01-02T03:04:00Z', pendingOperationId: null } as unknown as ConversationSummary],
     }));
-    const w = await mountApp(fake);
+    const w = await mountCachedTrash(fake);
     await goTrash(w);
     expect(w.get(rowTest('conv-x')).get('.row-sender').text()).toBe('Unknown sender');
   });
@@ -279,7 +277,7 @@ describe('UX-10 A read-only cached Trash list context', () => {
     const fake = createBrowserFakeMailClient(); useGmailMode(fake);
     const late = deferred<CachedTrashSnapshot>();
     vi.spyOn(fake, 'listCachedTrash').mockReturnValue(late.promise);
-    const w = await mountApp(fake);
+    const w = await mountCachedTrash(fake);
     await goTrash(w);
     expect(w.get('[data-test="inbox-loading"]').text()).toBe('Loading Cached Trash…');
     // Before data there is no count, no empty claim and no row.
@@ -298,23 +296,23 @@ describe('UX-10 A read-only cached Trash list context', () => {
     fake.controls.markTriage('conv-04', 'trash'); fake.controls.markTriage('conv-05', 'trash'); fake.controls.markTriage('conv-06', 'trash');
     const get = vi.spyOn(fake, 'getConversation');
     const archive = vi.spyOn(fake, 'setArchived');
-    const w = await mountApp(fake);
+    const w = await mountCachedTrash(fake);
     await goTrash(w);
     const ids = w.findAll('li.inbox-row').map((li) => li.attributes('data-test'));
     expect(ids).toHaveLength(3);
     expect(active()).toBe(ids[0]);
-    key('j'); await flushPromises();
+    press('j', { bubbles: true, cancelable: true }); await flushPromises();
     expect(active()).toBe(ids[1]);
-    key('ArrowDown'); await flushPromises();
+    press('ArrowDown', { bubbles: true, cancelable: true }); await flushPromises();
     expect(active()).toBe(ids[2]);
-    key('k'); await flushPromises();
+    press('k', { bubbles: true, cancelable: true }); await flushPromises();
     expect(active()).toBe(ids[1]);
     expect(w.findAll('li.inbox-row').map((li) => li.attributes('tabindex'))).toEqual(['-1', '0', '-1']);
     expect(get).not.toHaveBeenCalled();
-    key('Enter'); await flushPromises();
+    press('Enter', { bubbles: true, cancelable: true }); await flushPromises();
     expect(get).toHaveBeenLastCalledWith({ accountId: 'gmail-account', conversationId: ids[1]!.replace('conversation-row-', '') }, false);
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
-    key('Escape'); await flushPromises();
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
     expect(active()).toBe(ids[1]);
     expect(archive).not.toHaveBeenCalled();
   });
@@ -322,7 +320,7 @@ describe('UX-10 A read-only cached Trash list context', () => {
   it('omits the destination for unsupported fixture mode and rejects direct fake calls', async () => {
     const fake = createBrowserFakeMailClient();
     await expect(fake.listCachedTrash({ accountId: 'gmail-account', limit: 10, cursor: null })).rejects.toEqual({ kind: 'invalid_request', field: 'mode' });
-    wrapper = mount(App, { props: { client: fake, mode: 'browser-preview' } }); await flushPromises();
+    wrapper = mountApp(fake, 'browser-preview'); await flushPromises();
     await wrapper.get('[data-test="palette-trigger"]').trigger('click');
     await wrapper.get('[data-test="action-query"]').setValue('Trash');
     expect(wrapper.find('[role="option"]').exists()).toBe(false);
@@ -347,7 +345,7 @@ describe('UX-10 A read-only cached Trash list context', () => {
   it('distinguishes failure from empty results and retries the same read query', async () => {
     const fake = createBrowserFakeMailClient(); useGmailMode(fake);
     const query = vi.spyOn(fake, 'listCachedTrash').mockRejectedValueOnce({ kind: 'storage_unavailable' });
-    const w = await mountApp(fake);
+    const w = await mountCachedTrash(fake);
     await goTrash(w);
     const alert = w.get('[data-test="inbox-error"] [role="alert"]');
     expect(alert.text()).toBe('Could not load Cached Trash: storage unavailable.');
@@ -367,13 +365,13 @@ describe('UX-10 A read-only cached Trash list context', () => {
     const query = vi.spyOn(fake, 'listCachedTrash')
       .mockResolvedValueOnce(emptySnapshot({ conversations: [a!, b!], nextCursor: 'page-2' }))
       .mockResolvedValueOnce(emptySnapshot({ conversations: [b!, c!], nextCursor: null }));
-    const w = await mountApp(fake);
+    const w = await mountCachedTrash(fake);
     await goTrash(w);
     expect(w.findAll('li.inbox-row')).toHaveLength(2);
     const more = w.get('[data-test="done-more"]');
     expect(more.text()).toBe('Load more Cached Trash');
     expect(w.get('[data-test="trash-coverage"]').text()).toContain('2 cached · total unknown');
-    key('j'); await flushPromises();
+    press('j', { bubbles: true, cancelable: true }); await flushPromises();
     const focused = active();
     await more.trigger('click'); await flushPromises();
     expect(query).toHaveBeenLastCalledWith({ accountId: 'gmail-account', limit: 100, cursor: 'page-2' });
@@ -389,7 +387,7 @@ describe('UX-10 A read-only cached Trash list context', () => {
     const [row] = await trashRows(fake);
     const late = deferred<CachedTrashSnapshot>();
     vi.spyOn(fake, 'listCachedTrash').mockReturnValue(late.promise);
-    const w = await mountApp(fake);
+    const w = await mountCachedTrash(fake);
     await goTrash(w);
     expect(w.find('[data-test="inbox-loading"]').exists()).toBe(true);
     await w.get('[data-test="rail-inbox"]').trigger('click'); await flushPromises();
@@ -420,10 +418,10 @@ describe('UX-10 A read-only cached Trash list context', () => {
     await fake.setArchived({ conversation: { accountId: 'gmail-account', conversationId: 'conv-04' }, archived: true, requestId: 'before-trash' });
     fake.controls.markTriage('conv-04', 'trash');
     const [row] = await trashRows(fake);
-    const w = await mountApp(fake);
+    const w = await mountCachedTrash(fake);
     await w.get('[data-test="rail-activity"]').trigger('click'); await flushPromises();
     expect(w.get('[data-test="utility-drawer"]').text()).toContain('Unknown conversation');
-    key('Escape'); await flushPromises();
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
     await goTrash(w);
     await w.get('[data-test="rail-activity"]').trigger('click'); await flushPromises();
     const drawer = w.get('[data-test="utility-drawer"]');

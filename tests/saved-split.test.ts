@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { effectScope } from 'vue';
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import App from '../src/App.vue';
+import { flushPromises, type VueWrapper } from '@vue/test-utils';
+
 import { useMailbox } from '../src/composables/useMailbox';
 import { matchesSplit, normalizeSplit, splitBadge } from '../src/lib/saved-split';
 import type { SavedSplit } from '../src/lib/ipc/client';
-import { createBrowserFakeMailClient, useGmailMode } from './helpers';
+import { createBrowserFakeMailClient, useGmailMode, mountApp } from './helpers';
 
 const definition = (value: string): SavedSplit => ({ name: 'Clients', criterion: 'sender', value, enabled: true, hideWhenEmpty: false });
 let wrapper: VueWrapper | null = null;
@@ -147,7 +147,7 @@ describe('saved view over the authoritative Inbox snapshot', () => {
 it('edits a split, switches by pointer and nonwrapping Tab, restores reader context, and reaches hidden splits in Commands', async () => {
   const fake = createBrowserFakeMailClient();
   const first = (await fake.listConversations()).conversations[0]!;
-  wrapper = mount(App, { props: { client: fake, mode: 'browser-preview' }, attachTo: document.body });
+  wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
   await flushPromises();
   await wrapper.get('[data-test="palette-trigger"]').trigger('click');
   await wrapper.get('[data-test="action-query"]').setValue('Create split');

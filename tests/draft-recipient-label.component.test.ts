@@ -8,18 +8,17 @@
  * interpolation; no raw IDs replace the label, and
  * the fixed reply source is exposed as data attributes only (never as text).
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import App from '../src/App.vue';
 import ComposeCard from '../src/components/ComposeCard.vue';
 import ContactPane, { type ContactInfo } from '../src/components/ContactPane.vue';
-import type { DraftContent, DraftSource, MailClient } from '../src/lib/ipc/client';
+import type { DraftContent, DraftSource } from '../src/lib/ipc/client';
 import {
   createBrowserFakeMailClient,
   fixtureRef,
-  waitFor,
-  type BrowserFake,
 } from './helpers';
+import { mountDraftsApp } from './support/drafts';
+import { advanceUiUntil, useUiTestClock } from './support/timers';
 
 const REPLY_SOURCE: DraftSource = { kind: 'reply', conversation: fixtureRef('conv-01'), sourceMessageId: 'conv-01-m3' };
 const CONTENT: DraftContent = { to: 'ada@example.test', cc: '', subject: 'Re: Fixture thread 1: weekly status', bodyText: '' };
@@ -112,18 +111,9 @@ describe('ContactPane while a reply editor is active', () => {
 
 describe('App wiring: reply label and contact-pane compose context for an active reply editor', () => {
   let wrapper: VueWrapper | null = null;
+  beforeEach(useUiTestClock);
 
-  async function mountApp(fake: BrowserFake, client: MailClient = fake): Promise<VueWrapper> {
-    const mounted = mount(App, { props: { client, mode: 'browser-preview' }, attachTo: document.body });
-    wrapper = mounted;
-    await flushPromises();
-    await mounted.find('[data-test="rail-drafts"]').trigger('click');
-    await waitFor(() => mounted.find('[data-test="drafts-pane"]').exists());
-    await flushPromises();
-    return mounted;
-  }
-
-  afterEach(() => { wrapper?.unmount(); wrapper = null; });
+  afterEach(() => { wrapper?.unmount(); wrapper = null; vi.useRealTimers(); });
 
   async function openInbox(w: VueWrapper): Promise<void> {
     await w.get('[data-test="rail-inbox"]').trigger('click');
@@ -132,13 +122,13 @@ describe('App wiring: reply label and contact-pane compose context for an active
 
   it('shows "Draft to <sender>" in the inline reply composer and leaves the contact pane unchanged after preparing a reply (reader stays open)', async () => {
     const fake = createBrowserFakeMailClient();
-    const w = await mountApp(fake);
+    const w = wrapper = await mountDraftsApp(fake);
     await openInbox(w);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
     await w.find('[data-test="prepare-reply"]').trigger('click');
     await flushPromises();
-    await waitFor(() => w.find('[data-test="reply-composer"]').exists());
+    await advanceUiUntil(() => w.find('[data-test="reply-composer"]').exists());
     await flushPromises();
     // The reader stays open on the reply source, so the latest sender names the target.
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
@@ -155,7 +145,7 @@ describe('App wiring: reply label and contact-pane compose context for an active
 
   it('prefers the open source conversation latest sender ("Ada Fixture") while the reader is open on the reply source', async () => {
     const fake = createBrowserFakeMailClient();
-    const w = await mountApp(fake);
+    const w = wrapper = await mountDraftsApp(fake);
     await openInbox(w);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
@@ -168,7 +158,7 @@ describe('App wiring: reply label and contact-pane compose context for an active
     });
     await flushPromises();
     await w.find('[data-test="rail-drafts"]').trigger('click');
-    await waitFor(() => w.find('[data-test="drafts-pane"]').exists());
+    await advanceUiUntil(() => w.find('[data-test="drafts-pane"]').exists());
     await flushPromises();
     const summary = (await fake.listDrafts())[0]!;
     await w.find(`[data-test="open-draft-${summary.ref.draftId}"]`).trigger('click');
@@ -176,7 +166,7 @@ describe('App wiring: reply label and contact-pane compose context for an active
     // Opening the reply draft from the Drafts list navigates to its source
     // thread (conv-01) and docks the editor in that reader; the latest message
     // sender wins over the raw To text.
-    await waitFor(() => w.find('[data-test="reply-composer"]').exists());
+    await advanceUiUntil(() => w.find('[data-test="reply-composer"]').exists());
     expect(w.find('[data-test="drafts-pane"]').exists()).toBe(false);
     const latest = (await fake.getConversation(fixtureRef('conv-01'))).messages.at(-1)!;
     expect(latest.from.displayName).toBe('Ada Fixture');
@@ -187,12 +177,12 @@ describe('App wiring: reply label and contact-pane compose context for an active
 
   it('shows no compose-target line in the contact pane when no reply editor is active', async () => {
     const fake = createBrowserFakeMailClient();
-    const w = await mountApp(fake);
+    const w = wrapper = await mountDraftsApp(fake);
     expect(w.find('[data-test="compose-target"]').exists()).toBe(false);
     expect(w.find('[data-test="draft-recipient-label"]').exists()).toBe(false);
     await w.find('[data-test="new-draft"]').trigger('click');
     await flushPromises();
-    await waitFor(() => w.find('[data-test="composer"]').exists());
+    await advanceUiUntil(() => w.find('[data-test="composer"]').exists());
     // A new-message editor is not a reply: no recipient label, no compose context.
     expect(w.find('[data-test="draft-recipient-label"]').exists()).toBe(false);
     expect(w.find('[data-test="compose-target"]').exists()).toBe(false);

@@ -1,13 +1,13 @@
-import { mount, flushPromises } from '@vue/test-utils';
+import { flushPromises } from '@vue/test-utils';
 import { describe, expect, it, vi } from 'vitest';
 import RemindersList from '../src/components/RemindersList.vue';
 import ReminderPicker from '../src/components/ReminderPicker.vue';
 import { fullDateLabel } from '../src/lib/browsing-dates';
-import App from '../src/App.vue';
 import { createBrowserFakeMailClient } from '../src/lib/ipc/browser-fake';
 import type { PutReminder, Reminder } from '../src/lib/ipc/client';
-import { deferred, useGmailMode } from './helpers';
+import { deferred, useGmailMode, mountApp, press } from './helpers';
 import { mountReminders } from './reminders.helpers';
+import { flushVueMacrotasks } from './support/ui-settle';
 
 function fixture() {
   const fake = createBrowserFakeMailClient();
@@ -20,8 +20,8 @@ function fixture() {
   return { fake, rows, put };
 }
 /** H, choose Someday in the shared picker, press Schedule reminder: the keyboard path of a new reminder. */
-async function scheduleSomeday(app: ReturnType<typeof mount>) {
-  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', bubbles: true })); await flushPromises();
+async function scheduleSomeday(app: ReturnType<typeof mountApp>) {
+  press('h', { bubbles: true  }, window); await flushPromises();
   const input = app.get('#reminder-time-input');
   await input.setValue('Someday'); await input.trigger('keydown', { key: 'ArrowDown' }); await input.trigger('keydown', { key: 'Enter' }); await flushPromises();
   await app.findAll('button').find(button => button.text() === 'Schedule reminder')!.trigger('click'); await flushPromises();
@@ -164,14 +164,14 @@ describe('bounded local reminder journey', () => {
     const detail = await fake.getConversation(target);
     rows.push({ conversation: target, subject: 'Returned fixture', revision: 4, sourceMessageId: detail.messages.at(-1)!.id, dueAt: '2030-01-01T00:00:00Z', condition: 'regardless', phase: 'returned' });
     const setRead = vi.spyOn(fake, 'setRead');
-    const app = mount(App, { props: { client: fake, mode: 'native' }, global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
+    const app = mountApp(fake, 'native', { global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
     await app.findAll('button').find(b => b.text() === 'Reminders')!.trigger('click'); await flushPromises();
     await app.findAll('[role="tab"]')[1]!.trigger('click'); await flushPromises();
     // Due times are the full viewer-local form with a machine-readable datetime.
     expect(app.findComponent(RemindersList).get('time[datetime="2030-01-01T00:00:00.000Z"]').text()).toBe(fullDateLabel('2030-01-01T00:00:00Z'));
     await app.findComponent(RemindersList).get('.context-row-main').trigger('click'); await flushPromises();
     expect(app.findComponent(RemindersList).exists()).toBe(false);
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); await flushPromises();
+    press('Escape', {}, window); await flushPromises();
     expect(app.findComponent(RemindersList).exists()).toBe(true);
     expect(app.findAll('[role="tab"]')[1]!.attributes('aria-selected')).toBe('true');
     expect(setRead).not.toHaveBeenCalled(); app.unmount();
@@ -179,8 +179,8 @@ describe('bounded local reminder journey', () => {
 
   it('H opens a capable fixture or Gmail picker and guards bulk, text input, IME, and absent transport', async () => {
     const { fake } = fixture();
-    const app = mount(App, { props: { client: fake, mode: 'native' }, global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', bubbles: true })); await flushPromises();
+    const app = mountApp(fake, 'native', { global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
+    press('h', { bubbles: true  }, window); await flushPromises();
     expect(app.findComponent(RemindersList).exists()).toBe(true);
     expect(app.findComponent(RemindersList).findComponent(ReminderPicker).exists()).toBe(true);
     const input = app.findComponent(RemindersList).get('#reminder-time-input');
@@ -188,31 +188,31 @@ describe('bounded local reminder journey', () => {
     expect((input.element as HTMLInputElement).value).toBe('h');
     // Escape in the picker of a new reminder ends the request and goes Back to the Inbox row.
     await input.trigger('keydown', { key: 'Escape' }); await flushPromises();
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', isComposing: true })); await flushPromises();
+    press('h', { isComposing: true  }, window); await flushPromises();
     expect(app.findComponent(RemindersList).exists()).toBe(false);
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'x' })); await flushPromises();
+    press('x', {}, window); await flushPromises();
     expect(app.get('[data-test="selection-live"]').text()).toContain('1 selected');
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h' })); await flushPromises();
+    press('h', {}, window); await flushPromises();
     expect(app.findComponent(RemindersList).exists()).toBe(false);
     app.unmount();
     const gmail = fixture(); useGmailMode(gmail.fake);
-    const gated = mount(App, { props: { client: gmail.fake, mode: 'native' } }); await flushPromises();
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h' })); await flushPromises();
+    const gated = mountApp(gmail.fake, 'native'); await flushPromises();
+    press('h', {}, window); await flushPromises();
     expect(gated.findComponent(RemindersList).exists()).toBe(true); gated.unmount();
     const unsupported = createBrowserFakeMailClient();
     delete unsupported.reminders;
-    const preview = mount(App, { props: { client: unsupported, mode: 'browser-preview' } }); await flushPromises();
+    const preview = mountApp(unsupported, 'browser-preview'); await flushPromises();
     expect(preview.text()).not.toContain('Remind me'); preview.unmount();
   });
 
   it('returns an acknowledged schedule from list and reader to Inbox with receipt-based status', async () => {
     const { fake, put } = fixture();
-    const app = mount(App, { props: { client: fake, mode: 'native' }, global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
+    const app = mountApp(fake, 'native', { global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
     const row = app.find('[data-test^="conversation-row-"]');
     const rowTestId = row.attributes('data-test');
     await row.trigger('click'); await flushPromises();
     expect(app.find('[data-test="reader"]').exists()).toBe(true);
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', bubbles: true })); await flushPromises();
+    press('h', { bubbles: true  }, window); await flushPromises();
     const input = app.get('#reminder-time-input');
     await input.setValue('2030-11-03T01:30:00-05:00'); await input.trigger('keydown', { key: 'Enter' }); await flushPromises();
     await app.findAll('button').find(b => b.text() === 'Schedule reminder')!.trigger('click'); await flushPromises();
@@ -230,7 +230,7 @@ describe('bounded local reminder journey', () => {
     const target = { accountId: 'fixture-account', conversationId: 'conv-01' };
     const detail = await fake.getConversation(target);
     rows.push({ conversation: target, subject: 'Existing reminder', revision: 3, sourceMessageId: detail.messages.at(-1)!.id, dueAt: '2030-11-03T01:30:00-05:00', condition: 'regardless', phase: 'pending' });
-    const app = mount(App, { props: { client: fake, mode: 'native' }, global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
+    const app = mountApp(fake, 'native', { global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
     await app.findAll('button').find(button => button.text() === 'Reminders')!.trigger('click'); await flushPromises();
     await app.findAll('button').find(button => button.text() === 'Reschedule')!.trigger('click'); await flushPromises();
     await app.findAll('button').find(button => button.text() === 'Save new time')!.trigger('click'); await flushPromises();
@@ -245,8 +245,8 @@ describe('bounded local reminder journey', () => {
   it('keeps failure and dismissal silent, then confirms Someday only after exact retry succeeds', async () => {
     const { fake, put } = fixture();
     put.mockRejectedValueOnce({ kind: 'storage_unavailable' });
-    const app = mount(App, { props: { client: fake, mode: 'native' }, global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', bubbles: true })); await flushPromises();
+    const app = mountApp(fake, 'native', { global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
+    press('h', { bubbles: true  }, window); await flushPromises();
     const picker = app.findComponent(RemindersList);
     const input = picker.get('#reminder-time-input');
     await input.setValue('Someday'); await input.trigger('keydown', { key: 'ArrowDown' }); await input.trigger('keydown', { key: 'Enter' }); await flushPromises();
@@ -261,8 +261,8 @@ describe('bounded local reminder journey', () => {
     app.unmount();
 
     const dismissed = fixture();
-    const second = mount(App, { props: { client: dismissed.fake, mode: 'native' }, global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', bubbles: true })); await flushPromises();
+    const second = mountApp(dismissed.fake, 'native', { global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
+    press('h', { bubbles: true  }, window); await flushPromises();
     await second.get('#reminder-time-input').trigger('keydown', { key: 'Escape' }); await flushPromises();
     expect(second.find('[data-test="reminder-confirmation"]').exists()).toBe(false);
     expect(second.findComponent(RemindersList).exists()).toBe(false);
@@ -273,7 +273,7 @@ describe('bounded local reminder journey', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const timeout = vi.spyOn(globalThis, 'setTimeout');
     const { fake } = fixture();
-    const app = mount(App, { props: { client: fake, mode: 'native' }, global: { stubs: { Teleport: true } }, attachTo: document.body });
+    const app = mountApp(fake, 'native', { global: { stubs: { Teleport: true } }, attachTo: document.body });
     try {
       await flushPromises();
       await scheduleSomeday(app);
@@ -297,16 +297,17 @@ describe('bounded local reminder journey', () => {
 
   it('does not let a late acknowledged schedule replace newer Inbox navigation', async () => {
     const { fake } = fixture();
-    const app = mount(App, { props: { client: fake, mode: 'native' }, global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
+    const app = mountApp(fake, 'native', { global: { stubs: { Teleport: true } }, attachTo: document.body }); await flushPromises();
     const originalList = fake.listConversations.bind(fake);
     const pendingList = deferred<Awaited<ReturnType<typeof fake.listConversations>>>();
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', bubbles: true })); await flushPromises();
+    press('h', { bubbles: true  }, window); await flushPromises();
     const input = app.get('#reminder-time-input');
     await input.setValue('Someday'); await input.trigger('keydown', { key: 'ArrowDown' }); await input.trigger('keydown', { key: 'Enter' }); await flushPromises();
     // Only the refresh that follows the acknowledged schedule is held back.
     const list = vi.spyOn(fake, 'listConversations').mockImplementationOnce(() => pendingList.promise);
     await app.findAll('button').find(button => button.text() === 'Schedule reminder')!.trigger('click');
-    await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(1));
+    await flushVueMacrotasks();
+    expect(list).toHaveBeenCalledTimes(1);
     await app.get('[data-test="rail-inbox"]').trigger('click'); await flushPromises();
     pendingList.resolve(await originalList());
     await flushPromises();

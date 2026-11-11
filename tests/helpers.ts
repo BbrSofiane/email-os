@@ -1,6 +1,63 @@
 import { createBrowserFakeMailClient, type BrowserFake, type FakeAccountState } from '../src/lib/ipc/browser-fake';
 import type { ConversationRef, InboxSnapshot, MailClient, SetArchived } from '../src/lib/ipc/client';
-import { flushPromises, type VueWrapper } from '@vue/test-utils';
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
+import App from '../src/App.vue';
+import { afterEach } from 'vitest';
+
+/** Build a keydown event with caller-supplied flags. This function does not dispatch it. */
+export function createKeyEvent(key: string, init: KeyboardEventInit & { keyCode?: number } = {}): KeyboardEvent {
+  const event = new KeyboardEvent('keydown', { key, ...init });
+  if (init.keyCode !== undefined) Object.defineProperty(event, 'keyCode', { get: () => init.keyCode });
+  return event;
+}
+
+/**
+ * Dispatch a keydown event. The default target is document.activeElement ?? document.body.
+ * Pass window or a specific element as the third argument when the test needs that target.
+ * Event flags are not inferred; pass bubbles, cancelable, and other options explicitly.
+ */
+export function press(key: string, init: KeyboardEventInit & { keyCode?: number } = {}, target: EventTarget = document.activeElement ?? document.body): KeyboardEvent {
+  const event = createKeyEvent(key, init);
+  target.dispatchEvent(event);
+  return event;
+}
+
+const mountedApps = new Set<VueWrapper>();
+afterEach(() => {
+  for (const wrapper of mountedApps) {
+    if (wrapper.exists()) wrapper.unmount();
+  }
+  mountedApps.clear();
+});
+
+/** Mount App with the requested client and mode. Preserve all other Vue Test Utils options. */
+export function mountApp(
+  client: MailClient,
+  mode: 'native' | 'browser-preview',
+  options: Omit<NonNullable<Parameters<typeof mount>[1]>, 'props'> & { attachTo?: Element | string; props?: Record<string, unknown> } = {},
+): VueWrapper {
+  const { props = {}, ...mountOptions } = options;
+  const wrapper = mount(App, { ...mountOptions, props: { ...props, client, mode } }) as VueWrapper;
+  mountedApps.add(wrapper);
+  return wrapper;
+}
+
+/** Drain pending promise continuations and Vue updates. */
+export async function flushVuePromises(): Promise<void> { await flushPromises(); }
+
+/** Drain promise continuations, one 0ms macrotask, then promise/Vue work it schedules. */
+export async function flushVueAndMacrotask(): Promise<void> {
+  await flushPromises();
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  await flushPromises();
+}
+
+/** Flush Vue promise work, fake-client queues, then Vue work triggered by the fake. */
+export async function flushFakeClientAndVueUpdates(fake: BrowserFake): Promise<void> {
+  await flushPromises();
+  await fake.controls.flush();
+  await flushPromises();
+}
 
 /** Switches the labelled fake into a synthetic Gmail mode for UI tests. */
 export function useGmailMode(fake: BrowserFake, patch: Partial<FakeAccountState> = {}): void {

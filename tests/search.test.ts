@@ -1,16 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { effectScope } from 'vue';
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import App from '../src/App.vue';
+import { flushPromises, type VueWrapper } from '@vue/test-utils';
+
 import { createBrowserFakeMailClient } from '../src/lib/ipc/browser-fake';
 import { parseSearch, matchesSearch, validateSearch, isSingleFromQuery } from '../src/lib/search';
 import { useMailbox } from '../src/composables/useMailbox';
 import type { MailClient, SearchPage } from '../src/lib/ipc/client';
-import { deferred } from './helpers';
+import { deferred, mountApp, press } from './helpers';
 
 let wrapper: VueWrapper | null = null;
 afterEach(() => { wrapper?.unmount(); wrapper = null; });
-const key = (value: string) => (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }));
 
 describe('UX-07 search', () => {
   it('rejects unsupported syntax and preserves AND/OR, quoted phrases and exclusions', async () => {
@@ -31,12 +30,12 @@ describe('UX-07 search', () => {
     fake.controls.behavior.holdQueued = true;
     await fake.setArchived({ conversation: archived.ref, archived: true, requestId: 'search-archive' });
     expect((await fake.listConversations()).conversations.some((r) => r.ref.conversationId === archived.ref.conversationId)).toBe(false);
-    wrapper = mount(App, { props: { client: fake, mode: 'browser-preview' }, attachTo: document.body });
+    wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
     await flushPromises();
     const previous = wrapper.get('.inbox-row').element as HTMLElement;
     previous.focus();
     const previousId = previous.getAttribute('data-test');
-    key('/'); await flushPromises();
+    press('/', { bubbles: true, cancelable: true }); await flushPromises();
     expect(document.activeElement).toBe(wrapper.get('[data-test="search-input"]').element);
     const query = 'subject:"' + archived.subject + '"';
     await wrapper.get('[data-test="search-input"]').setValue(query);
@@ -59,11 +58,11 @@ describe('UX-07 search', () => {
     expect((wrapper.get('[data-test="search-input"]').element as HTMLInputElement).value).toBe(query);
     // Esc on the reopened form: listbox closes, then the form collapses (focus
     // back to the row); the next Esc on the list exits the search context.
-    key('Escape'); await flushPromises();
-    key('Escape'); await flushPromises();
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
     expect(wrapper.find('form[role="search"]').exists()).toBe(false);
     expect(document.activeElement?.getAttribute('data-test')).toBe(resultId);
-    key('Escape'); await flushPromises();
+    press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
     expect(wrapper.get('[data-test="inbox-title"]').text()).toBe('Inbox');
     expect(document.activeElement?.getAttribute('data-test')).toBe(previousId);
   });
@@ -113,10 +112,10 @@ describe('UX-07 search', () => {
     const fake = createBrowserFakeMailClient();
     const archive = vi.spyOn(fake, 'setArchived');
     const searchMail = vi.spyOn(fake, 'searchMail');
-    wrapper = mount(App, { props: { client: fake, mode: 'browser-preview' }, attachTo: document.body });
+    wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
     await flushPromises();
     await wrapper.get('[data-test="search-trigger"]').trigger('click'); await flushPromises();
-    for (const k of ['e', 'z', '/', 'j']) key(k);
+    for (const k of ['e', 'z', '/', 'j']) press(k, { bubbles: true, cancelable: true });
     expect(archive).not.toHaveBeenCalled();
     // The inline error appears while typing, before any submit.
     await wrapper.get('[data-test="search-input"]').setValue('label:unsupported');
@@ -170,7 +169,7 @@ describe('UX-07 search', () => {
     const row = (await fake.listConversations()).conversations[0]!;
     const getConversation = vi.fn(async () => { throw { kind: 'not_found' }; });
     const client: MailClient = { ...fake, getConversation };
-    wrapper = mount(App, { props: { client, mode: 'browser-preview' }, attachTo: document.body });
+    wrapper = mountApp(client, 'browser-preview', { attachTo: document.body });
     await flushPromises();
     await wrapper.get('[data-test="search-trigger"]').trigger('click');
     await wrapper.get('[data-test="search-input"]').setValue('subject:"' + row.subject + '"');
@@ -188,7 +187,7 @@ describe('UX-07 search', () => {
 
   it('restores the loaded search visit after navigating to another destination', async () => {
     const fake = createBrowserFakeMailClient();
-    wrapper = mount(App, { props: { client: fake, mode: 'browser-preview' }, attachTo: document.body });
+    wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
     await flushPromises();
     await wrapper.get('[data-test="search-trigger"]').trigger('click');
     await wrapper.get('[data-test="search-input"]').setValue('subject:Fixture');
@@ -208,7 +207,7 @@ describe('UX-07 search', () => {
 
   it('contact search and up to four real recent links do not hijack Copy', async () => {
     const fake = createBrowserFakeMailClient();
-    wrapper = mount(App, { props: { client: fake, mode: 'browser-preview' }, attachTo: document.body });
+    wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
     await flushPromises();
     const pane = wrapper.get('[data-test="contact-pane"]');
     expect(pane.findAll('.contact-recent li')).toHaveLength(4);

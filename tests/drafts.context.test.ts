@@ -5,33 +5,26 @@
  * flush before another open, the in-flow recovery lines, and inert mailbox
  * shortcuts. The lifecycle matrix itself lives in drafts.component.test.ts.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import App from '../src/App.vue';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { flushPromises, type VueWrapper } from '@vue/test-utils';
 import type { DraftSource, DraftSummary, MailClient } from '../src/lib/ipc/client';
-import { createBrowserFakeMailClient, deferred, fixtureRef, useGmailMode, waitFor, type BrowserFake } from './helpers';
+import { createBrowserFakeMailClient, deferred, fixtureRef, useGmailMode, type BrowserFake, press } from './helpers';
+import { mountDraftsContextApp } from './support/drafts';
+import { advanceUiUntil, useUiTestClock } from './support/timers';
 
 let app: VueWrapper | null = null;
-afterEach(() => { app?.unmount(); app = null; document.body.innerHTML = ''; });
+beforeEach(useUiTestClock);
+afterEach(() => { app?.unmount(); app = null; document.body.innerHTML = ''; vi.useRealTimers(); });
 
 const REPLY_SOURCE: DraftSource = { kind: 'reply', conversation: fixtureRef('conv-01'), sourceMessageId: 'conv-01-m3' };
-const key = async (value: string, init: KeyboardEventInit = {}, target: EventTarget = window) => {
-  target.dispatchEvent(new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true, ...init }));
-  await flushPromises();
-};
 const title = (w: VueWrapper) => w.get('[data-test="inbox-title"]').text();
 const rail = (w: VueWrapper) => w.get('[data-test="rail-drafts"]');
 const rows = (w: VueWrapper) => w.findAll('[data-test="draft-list"] [data-drawer-row]');
 const body = (w: VueWrapper) => (w.get('[data-test="draft-body"]').element as HTMLTextAreaElement).value;
 
-async function mountApp(fake: BrowserFake, client: MailClient = fake): Promise<VueWrapper> {
-  app = mount(App, { props: { client, mode: 'browser-preview' }, attachTo: document.body });
-  await flushPromises();
-  return app;
-}
 async function enter(w: VueWrapper): Promise<void> {
   await rail(w).trigger('click'); await flushPromises();
-  await waitFor(() => w.find('[data-test="drafts-pane"]').exists());
+  await advanceUiUntil(() => w.find('[data-test="drafts-pane"]').exists());
 }
 async function seed(fake: BrowserFake): Promise<{ reply: DraftSummary; plain: DraftSummary }> {
   await fake.createDraft({ requestId: 'ctx-reply', source: REPLY_SOURCE, initialContent: null });
@@ -49,7 +42,7 @@ describe('entering and leaving the Drafts context', () => {
   it('the rail item is a plain navigation item; the h1, aria-current, coverage and focus name the list', async () => {
     const fake = createBrowserFakeMailClient();
     const { reply } = await seed(fake);
-    const w = await mountApp(fake);
+    const w = await mountDraftsContextApp(fake);
     expect(rail(w).attributes('aria-current')).toBeUndefined();
     await enter(w);
     expect(title(w)).toBe('Drafts');
@@ -72,7 +65,7 @@ describe('entering and leaving the Drafts context', () => {
   it('the palette action "Go to local Drafts" and the header Back enter and leave it; the rail item loses aria-current in the Inbox', async () => {
     const fake = createBrowserFakeMailClient();
     await seed(fake);
-    const w = await mountApp(fake);
+    const w = await mountDraftsContextApp(fake);
     await w.get('[data-test="palette-trigger"]').trigger('click'); await flushPromises();
     const action = w.get('#action-drafts');
     expect(action.text()).toContain('Go to local Drafts');
@@ -87,12 +80,14 @@ describe('entering and leaving the Drafts context', () => {
   it('Escape returns to the Inbox row that was current', async () => {
     const fake = createBrowserFakeMailClient();
     await seed(fake);
-    const w = await mountApp(fake);
-    await key('j');
+    const w = await mountDraftsContextApp(fake);
+    press('j', { bubbles: true, cancelable: true, ...{} }, window);
+    await flushPromises();
     const current = w.get('[data-test="conversation-row-conv-02"]');
     expect(current.attributes('aria-current')).toBe('true');
     await enter(w);
-    await key('Escape');
+    press('Escape', { bubbles: true, cancelable: true, ...{} }, window);
+    await flushPromises();
     expect(w.find('[data-test="drafts-pane"]').exists()).toBe(false);
     expect(w.get('[data-test="conversation-row-conv-02"]').attributes('aria-current')).toBe('true');
     expect(document.activeElement).toBe(w.get('[data-test="conversation-row-conv-02"]').element);
@@ -101,26 +96,29 @@ describe('entering and leaving the Drafts context', () => {
   it('keeps G chords and the destination navigator working from a draft row', async () => {
     const fake = createBrowserFakeMailClient();
     await seed(fake);
-    const w = await mountApp(fake);
+    const w = await mountDraftsContextApp(fake);
     await enter(w);
     const first = rows(w)[0]!.element;
-    await key('g', {}, first); await key('e', {}, first);
+    press('g', { bubbles: true, cancelable: true }, first); await flushPromises();
+    press('e', { bubbles: true, cancelable: true }, first); await flushPromises();
+    await flushPromises();
     expect(title(w)).toBe('Cached Done');
     await w.get('[data-test="context-back"]').trigger('click'); await flushPromises();
     expect(title(w)).toBe('Drafts');
     expect(rows(w)).toHaveLength(2);
-    await key('ArrowLeft', {}, rows(w)[0]!.element);
+    press('ArrowLeft', { bubbles: true, cancelable: true, ...{} }, rows(w)[0]!.element);
+    await flushPromises();
     expect(w.find('[data-test="destination-navigator"], .action-overlay').exists()).toBe(true);
   });
 
   it('is only offered with an account', async () => {
     const fake = createBrowserFakeMailClient();
     useGmailMode(fake);
-    const w = await mountApp(fake);
+    const w = await mountDraftsContextApp(fake);
     expect(w.find('[data-test="rail-drafts"]').exists()).toBe(true);
     await w.get('[data-test="rail-account"]').trigger('click'); await flushPromises();
     await w.get('[data-test="account-disconnect"]').trigger('click'); await flushPromises();
-    await waitFor(() => w.find('[data-test="account-connect"]').exists());
+    await advanceUiUntil(() => w.find('[data-test="account-connect"]').exists());
     expect(w.find('[data-test="rail-drafts"]').exists()).toBe(false);
     await w.get('[data-test="palette-trigger"]').trigger('click'); await flushPromises();
     expect(w.find('#action-drafts').exists()).toBe(false);
@@ -132,11 +130,14 @@ describe('entering and leaving the Drafts context', () => {
     const archive = vi.spyOn(fake, 'setArchived');
     const read = vi.spyOn(fake, 'setRead');
     const star = vi.spyOn(fake, 'setStarred');
-    const w = await mountApp(fake);
+    const w = await mountDraftsContextApp(fake);
     await enter(w);
     const row = rows(w)[0]!.element;
-    for (const letter of ['e', 'E', 'z', 'u', 'U', 's', 'x', 'X', 'h', 'r']) await key(letter, letter === 'E' || letter === 'U' || letter === 'X' ? { shiftKey: true } : {}, row);
-    for (const letter of ['e', 'z', 'x', 'h']) await key(letter);
+    for (const letter of ['e', 'E', 'z', 'u', 'U', 's', 'x', 'X', 'h', 'r']) {
+      press(letter, { bubbles: true, cancelable: true, ...(letter === 'E' || letter === 'U' || letter === 'X' ? { shiftKey: true } : {}) }, row);
+      await flushPromises();
+    }
+    for (const letter of ['e', 'z', 'x', 'h']) { press(letter, { bubbles: true, cancelable: true }, window); await flushPromises(); }
     expect(archive).not.toHaveBeenCalled();
     expect(read).not.toHaveBeenCalled();
     expect(star).not.toHaveBeenCalled();
@@ -144,22 +145,24 @@ describe('entering and leaving the Drafts context', () => {
     expect(w.find('[data-test="reminder-form"]').exists()).toBe(false);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     // C and the header glyph open a new message card from the list.
-    await key('c', {}, row);
-    await waitFor(() => w.find('[data-test="compose-card"]').exists());
+    press('c', { bubbles: true, cancelable: true, ...{} }, row);
+    await flushPromises();
+    await advanceUiUntil(() => w.find('[data-test="compose-card"]').exists());
     expect(w.get('[data-test="compose-card"]').attributes('aria-label')).toBe('New Message');
   });
 
   it('New draft does what C does: the card replaces the list, and closing it returns to the list on the new draft', async () => {
     const fake = createBrowserFakeMailClient();
-    const w = await mountApp(fake);
+    const w = await mountDraftsContextApp(fake);
     await enter(w);
     expect(w.get('[data-test="draft-list-empty"]').text()).toBe('No local drafts.');
     await w.get('[data-test="new-draft"]').trigger('click'); await flushPromises();
-    await waitFor(() => w.find('[data-test="compose-card"]').exists());
+    await advanceUiUntil(() => w.find('[data-test="compose-card"]').exists());
     expect(w.find('[data-test="drafts-pane"]').exists()).toBe(false);
     expect(rail(w).attributes('aria-current')).toBeUndefined();
     await typeBody(w, 'made from the list');
-    await key('Escape');
+    press('Escape', { bubbles: true, cancelable: true, ...{} }, window);
+    await flushPromises();
     expect(w.find('[data-test="compose-card"]').exists()).toBe(false);
     expect(title(w)).toBe('Drafts');
     expect(rows(w)).toHaveLength(1);
@@ -174,12 +177,12 @@ describe('opening a draft', () => {
     const fake = createBrowserFakeMailClient();
     const { reply, plain } = await seed(fake);
     const loads = vi.spyOn(fake, 'getConversation');
-    const w = await mountApp(fake);
+    const w = await mountDraftsContextApp(fake);
     await enter(w);
     // Make the reply draft the second row's neighbour: open the first row's sibling.
     const replyRow = w.get(`[data-test="open-draft-${reply.ref.draftId}"]`);
     await replyRow.trigger('click');
-    await waitFor(() => w.find('[data-test="reply-composer"]').exists());
+    await advanceUiUntil(() => w.find('[data-test="reply-composer"]').exists());
     await flushPromises();
     expect(loads.mock.calls.map(([ref]) => ref.conversationId)).toContain('conv-01');
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
@@ -190,14 +193,17 @@ describe('opening a draft', () => {
     // The reader offers no neighbour navigation from this origin.
     expect(w.find('[data-test="reader-next"], [data-test="reader-prev"]').exists()).toBe(false);
     loads.mockClear();
-    await key('j');
+    press('j', { bubbles: true, cancelable: true, ...{} }, window);
+    await flushPromises();
     expect(loads).not.toHaveBeenCalled();
     await typeBody(w, 'reply typed in the docked composer');
-    await key('Escape');
+    press('Escape', { bubbles: true, cancelable: true, ...{} }, window);
+    await flushPromises();
     expect(w.find('[data-test="reply-composer"]').exists()).toBe(false);
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
     expect((await fake.getDraft(reply.ref)).content.bodyText).toBe('reply typed in the docked composer');
-    await key('Escape');
+    press('Escape', { bubbles: true, cancelable: true, ...{} }, window);
+    await flushPromises();
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect(title(w)).toBe('Drafts');
     const row = w.get(`[data-test="open-draft-${reply.ref.draftId}"]`);
@@ -209,10 +215,10 @@ describe('opening a draft', () => {
   it('a new-message draft opens in the inline card with its content; closing returns to the list and the row', async () => {
     const fake = createBrowserFakeMailClient();
     const { plain } = await seed(fake);
-    const w = await mountApp(fake);
+    const w = await mountDraftsContextApp(fake);
     await enter(w);
     await w.get(`[data-test="open-draft-${plain.ref.draftId}"]`).trigger('click');
-    await waitFor(() => w.find('[data-test="compose-card"]').exists());
+    await advanceUiUntil(() => w.find('[data-test="compose-card"]').exists());
     await flushPromises();
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect(w.find('[data-test="compose-card-notice"]').exists()).toBe(false);
@@ -231,11 +237,12 @@ describe('opening a draft', () => {
     const { reply } = await seed(fake);
     const pending = deferred<Awaited<ReturnType<MailClient['getConversation']>>>();
     const client: MailClient = { ...fake, getConversation: (ref, ...rest) => ref.conversationId === 'conv-01' ? pending.promise : fake.getConversation(ref, ...rest) };
-    const w = await mountApp(fake, client);
+    const w = await mountDraftsContextApp(fake, client);
     await enter(w);
     await w.get(`[data-test="open-draft-${reply.ref.draftId}"]`).trigger('click'); await flushPromises();
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
-    await key('Escape');
+    press('Escape', { bubbles: true, cancelable: true, ...{} }, window);
+    await flushPromises();
     expect(w.find('[data-test="drafts-pane"]').exists()).toBe(true);
     pending.resolve(await fake.getConversation(fixtureRef('conv-01')));
     await flushPromises();
@@ -251,10 +258,11 @@ describe('opening a draft', () => {
     const { plain } = await seed(fake);
     const pending = deferred<Awaited<ReturnType<MailClient['getDraft']>>>();
     const client: MailClient = { ...fake, getDraft: (ref) => ref.draftId === plain.ref.draftId ? pending.promise : fake.getDraft(ref) };
-    const w = await mountApp(fake, client);
+    const w = await mountDraftsContextApp(fake, client);
     await enter(w);
     await w.get(`[data-test="open-draft-${plain.ref.draftId}"]`).trigger('click'); await flushPromises();
-    await key('Escape');
+    press('Escape', { bubbles: true, cancelable: true, ...{} }, window);
+    await flushPromises();
     expect(title(w)).toBe('Inbox');
     expect(w.find('[data-test="drafts-pane"]').exists()).toBe(false);
     pending.resolve(await fake.getDraft(plain.ref));
@@ -271,12 +279,13 @@ describe('opening a draft', () => {
     const { reply } = await seed(fake);
     const pending = deferred<Awaited<ReturnType<MailClient['getDraft']>>>();
     const client: MailClient = { ...fake, getDraft: (ref) => ref.draftId === reply.ref.draftId ? pending.promise : fake.getDraft(ref) };
-    const w = await mountApp(fake, client);
+    const w = await mountDraftsContextApp(fake, client);
     await enter(w);
     await w.get(`[data-test="open-draft-${reply.ref.draftId}"]`).trigger('click');
-    await waitFor(() => w.find('[data-test="reader"]').exists());
+    await advanceUiUntil(() => w.find('[data-test="reader"]').exists());
     await flushPromises();
-    await key('Escape');
+    press('Escape', { bubbles: true, cancelable: true, ...{} }, window);
+    await flushPromises();
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     pending.resolve(await fake.getDraft(reply.ref));
     await flushPromises();
@@ -291,13 +300,13 @@ describe('opening a draft', () => {
     const { reply, plain } = await seed(fake);
     const pending = deferred<Awaited<ReturnType<MailClient['getConversation']>>>();
     const client: MailClient = { ...fake, getConversation: (ref, ...rest) => ref.conversationId === 'conv-01' ? pending.promise : fake.getConversation(ref, ...rest) };
-    const w = await mountApp(fake, client);
+    const w = await mountDraftsContextApp(fake, client);
     await enter(w);
     const app = w.vm as unknown as { openDraftFromList(draft: DraftSummary): Promise<void> };
     void app.openDraftFromList(reply);
     await flushPromises();
     void app.openDraftFromList(plain);
-    await waitFor(() => w.find('[data-test="compose-card"]').exists());
+    await advanceUiUntil(() => w.find('[data-test="compose-card"]').exists());
     pending.resolve(await fake.getConversation(fixtureRef('conv-01')));
     await flushPromises();
     expect(w.find('[data-test="reply-composer"]').exists()).toBe(false);
@@ -310,7 +319,7 @@ describe('opening a draft', () => {
     const { reply } = await seed(fake);
     const pending = deferred<Awaited<ReturnType<MailClient['getConversation']>>>();
     const client: MailClient = { ...fake, getConversation: (ref, ...rest) => ref.conversationId === 'conv-01' ? pending.promise : fake.getConversation(ref, ...rest) };
-    const w = await mountApp(fake, client);
+    const w = await mountDraftsContextApp(fake, client);
     await enter(w);
     await w.get(`[data-test="open-draft-${reply.ref.draftId}"]`).trigger('click'); await flushPromises();
     await w.get('[data-test="rail-activity"]').trigger('click'); await flushPromises();
@@ -333,7 +342,7 @@ describe('opening a draft', () => {
     const { plain } = await seed(fake);
     const pending = deferred<Awaited<ReturnType<MailClient['getDraft']>>>();
     const client: MailClient = { ...fake, getDraft: (ref) => ref.draftId === plain.ref.draftId ? pending.promise : fake.getDraft(ref) };
-    const w = await mountApp(fake, client);
+    const w = await mountDraftsContextApp(fake, client);
     await enter(w);
     await w.get(`[data-test="open-draft-${plain.ref.draftId}"]`).trigger('click'); await flushPromises();
     await w.get('[data-test="rail-activity"]').trigger('click'); await flushPromises();
@@ -349,10 +358,10 @@ describe('opening a draft', () => {
     const loads = vi.spyOn(fake, 'getConversation');
     let failSaves = false;
     const client: MailClient = { ...fake, getConversation: fake.getConversation, saveDraft: (command) => failSaves ? Promise.reject({ kind: 'storage_unavailable' }) : fake.saveDraft(command) };
-    const w = await mountApp(fake, client);
+    const w = await mountDraftsContextApp(fake, client);
     await enter(w);
     await w.get(`[data-test="open-draft-${plain.ref.draftId}"]`).trigger('click');
-    await waitFor(() => w.find('[data-test="compose-card"]').exists());
+    await advanceUiUntil(() => w.find('[data-test="compose-card"]').exists());
     await flushPromises();
     failSaves = true;
     await typeBody(w, 'plain body edited, not saved');
@@ -368,7 +377,7 @@ describe('opening a draft', () => {
     // Once saving works again, the same request flushes the edit and then navigates.
     failSaves = false;
     await app.openDraftFromList(reply);
-    await waitFor(() => w.find('[data-test="reply-composer"]').exists());
+    await advanceUiUntil(() => w.find('[data-test="reply-composer"]').exists());
     expect((await fake.getDraft(plain.ref)).content.bodyText).toBe('plain body edited, not saved');
     expect(w.get('[data-test="reply-source"]').attributes('data-source-conversation')).toBe('conv-01');
   });
@@ -380,10 +389,10 @@ describe('a reply draft whose source cannot host it', () => {
 
   async function openReply(fake: BrowserFake, client: MailClient = fake) {
     const { reply } = await seed(fake);
-    const w = await mountApp(fake, client);
+    const w = await mountDraftsContextApp(fake, client);
     await enter(w);
     await w.get(`[data-test="open-draft-${reply.ref.draftId}"]`).trigger('click');
-    await waitFor(() => w.find('[data-test="compose-card"]').exists());
+    await advanceUiUntil(() => w.find('[data-test="compose-card"]').exists());
     await flushPromises();
     return { w, reply };
   }
@@ -409,7 +418,8 @@ describe('a reply draft whose source cannot host it', () => {
     const { w, reply } = await openReply(fake, client);
     expectEditableInCard(w, /could not be loaded/, 'Source conversation unavailable: could not be loaded: not found.');
     await typeBody(w, 'edited without the thread');
-    await key('Escape');
+    press('Escape', { bubbles: true, cancelable: true, ...{} }, window);
+    await flushPromises();
     expect(w.find('[data-test="compose-card"]').exists()).toBe(false);
     expect(title(w)).toBe('Drafts');
     expect((await fake.getDraft(reply.ref)).content.bodyText).toBe('edited without the thread');
@@ -421,10 +431,10 @@ describe('a reply draft whose source cannot host it', () => {
     const fake = createBrowserFakeMailClient();
     const { reply } = await seed(fake);
     fake.controls.markUnsupported('conv-01', 'Incomplete cached context', false);
-    const w = await mountApp(fake);
+    const w = await mountDraftsContextApp(fake);
     await enter(w);
     await w.get(`[data-test="open-draft-${reply.ref.draftId}"]`).trigger('click');
-    await waitFor(() => w.find('[data-test="compose-card"]').exists());
+    await advanceUiUntil(() => w.find('[data-test="compose-card"]').exists());
     await flushPromises();
     expectEditableInCard(w, /incomplete/, 'Source conversation unavailable: incomplete cached conversation.');
   });
@@ -439,10 +449,10 @@ describe('a reply draft whose source cannot host it', () => {
       getDraft: async (ref) => { const draft = await fake.getDraft(ref); return { ...draft, source: foreign(draft.source) }; },
     };
     const loads = vi.spyOn(fake, 'getConversation');
-    const w = await mountApp(fake, client);
+    const w = await mountDraftsContextApp(fake, client);
     await enter(w);
     await w.get(`[data-test="open-draft-${reply.ref.draftId}"]`).trigger('click');
-    await waitFor(() => w.find('[data-test="compose-card"]').exists());
+    await advanceUiUntil(() => w.find('[data-test="compose-card"]').exists());
     await flushPromises();
     expect(loads).not.toHaveBeenCalled();
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
@@ -458,9 +468,9 @@ describe('triaging drafts in the list', () => {
   it('shows a one-line plain-text preview of each body, and "No text yet" for an empty draft', async () => {
     const fake = createBrowserFakeMailClient();
     const { reply, plain } = await seed(fake);
-    const w = await mountApp(fake);
+    const w = await mountDraftsContextApp(fake);
     await enter(w);
-    await waitFor(() => w.findAll('[data-test="draft-preview"]').length === 2);
+    await advanceUiUntil(() => w.findAll('[data-test="draft-preview"]').length === 2);
     expect(w.get(`[data-test="draft-row-${plain.ref.draftId}"] [data-test="draft-preview"]`).text()).toBe('plain body');
     expect(w.get(`[data-test="draft-row-${reply.ref.draftId}"] [data-test="draft-preview"]`).text()).toBe('No text yet');
   });
@@ -468,12 +478,13 @@ describe('triaging drafts in the list', () => {
   it('discards a draft only after the confirmation, announces it, and moves focus to the neighbouring row', async () => {
     const fake = createBrowserFakeMailClient();
     const { reply, plain } = await seed(fake);
-    const w = await mountApp(fake);
+    const w = await mountDraftsContextApp(fake);
     await enter(w);
     // Cancel: nothing is deleted.
     await discardOf(w, plain.ref.draftId).trigger('click'); await flushPromises();
     expect(w.get('[data-test="draft-discard-confirm"]').text()).toContain('Discard this local draft? This cannot be undone.');
-    await key('Escape', {}, w.get('[data-test="confirm-discard-draft"]').element);
+    press('Escape', { bubbles: true, cancelable: true, ...{} }, w.get('[data-test="confirm-discard-draft"]').element);
+    await flushPromises();
     expect(w.find('[data-test="draft-discard-confirm"]').exists()).toBe(false);
     expect(title(w)).toBe('Drafts');
     expect(await fake.listDrafts()).toHaveLength(2);
@@ -496,7 +507,7 @@ describe('triaging drafts in the list', () => {
     const fake = createBrowserFakeMailClient();
     const { plain } = await seed(fake);
     const client: MailClient = { ...fake, deleteDraft: () => Promise.reject({ kind: 'storage_unavailable' }) };
-    const w = await mountApp(fake, client);
+    const w = await mountDraftsContextApp(fake, client);
     await enter(w);
     await discardOf(w, plain.ref.draftId).trigger('click'); await flushPromises();
     await w.get('[data-test="confirm-discard-draft"]').trigger('click'); await flushPromises();
@@ -516,12 +527,13 @@ describe('Open and Discard of the same draft', () => {
     const pending = deferred<Awaited<ReturnType<MailClient['getDraft']>>>();
     const deleteDraft = vi.fn(fake.deleteDraft.bind(fake));
     const client: MailClient = { ...fake, deleteDraft, getDraft: (ref) => ref.draftId === plain.ref.draftId ? pending.promise : fake.getDraft(ref) };
-    const w = await mountApp(fake, client);
+    const w = await mountDraftsContextApp(fake, client);
     await enter(w);
     const open = w.get(`[data-test="open-draft-${plain.ref.draftId}"]`);
     await open.trigger('click'); await flushPromises();
     expect(discardOf(w, plain.ref.draftId).attributes('disabled')).toBeDefined();
-    await key('Delete', {}, open.element);
+    press('Delete', { bubbles: true, cancelable: true, ...{} }, open.element);
+    await flushPromises();
     expect(w.find('[data-test="draft-discard-confirm"]').exists()).toBe(false);
     expect(deleteDraft).not.toHaveBeenCalled();
     pending.resolve(await fake.getDraft(plain.ref));
@@ -536,7 +548,7 @@ describe('Open and Discard of the same draft', () => {
     const pending = deferred<void>();
     const getDraft = vi.fn(fake.getDraft.bind(fake));
     const deleteDraft: MailClient['deleteDraft'] = async (command) => { await pending.promise; return fake.deleteDraft(command); };
-    const w = await mountApp(fake, { ...fake, deleteDraft, getDraft });
+    const w = await mountDraftsContextApp(fake, { ...fake, deleteDraft, getDraft });
     await enter(w);
     await discardOf(w, plain.ref.draftId).trigger('click'); await flushPromises();
     await w.get('[data-test="confirm-discard-draft"]').trigger('click'); await flushPromises();
@@ -560,9 +572,9 @@ describe('recovery lines in the Drafts list', () => {
       ...fake,
       subscribeAppClose: async (listener) => { subscriptions += 1; if (subscriptions === 1) throw { kind: 'storage_unavailable' }; return fake.subscribeAppClose(listener); },
     };
-    const w = await mountApp(fake, client);
+    const w = await mountDraftsContextApp(fake, client);
     // Outside the list, close protection has its one global banner with the retry.
-    await waitFor(() => w.find('.draft-close-recovery').exists());
+    await advanceUiUntil(() => w.find('.draft-close-recovery').exists());
     expect(w.findAll('[data-test="retry-close-setup"]')).toHaveLength(1);
     await enter(w);
     // In the list the same lines are in flow above the rows and the banner steps aside.

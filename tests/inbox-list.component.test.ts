@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import InboxList from '../src/components/InboxList.vue';
 import type { ConversationRef, ConversationSummary } from '../src/lib/ipc/client';
+import { flushVueAndMacrotask } from './helpers';
 
 const ACCOUNT = 'list-account';
 
@@ -266,8 +267,7 @@ describe('InboxList (UX-01 compact rows)', () => {
     // Move DOM focus to another row, then let the row observe the focusout.
     (w.find('[data-test="conversation-row-yesterday"]').element as HTMLElement).focus();
     await w.find('[data-test="conversation-row-today-1"]').trigger('focusout');
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await flushPromises();
+    await flushVueAndMacrotask();
     expect(w.find('[data-test="row-actions-toggle-today-1"]').attributes('aria-expanded')).toBe('false');
   });
 

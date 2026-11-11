@@ -1,6 +1,7 @@
+import { mountApp, press } from './helpers';
 import { afterEach, describe, expect, it } from 'vitest';
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import App from '../src/App.vue';
+import { flushPromises, type VueWrapper } from '@vue/test-utils';
+
 import { createBrowserFakeMailClient } from '../src/lib/ipc/browser-fake';
 
 /**
@@ -15,12 +16,9 @@ import { createBrowserFakeMailClient } from '../src/lib/ipc/browser-fake';
 let wrapper: VueWrapper | null = null;
 afterEach(() => { wrapper?.unmount(); wrapper = null; });
 
-const key = (value: string) =>
-  (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }));
-
 async function setup() {
   const fake = createBrowserFakeMailClient();
-  wrapper = mount(App, { props: { client: fake, mode: 'browser-preview' }, attachTo: document.body });
+  wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
   await flushPromises();
   const openSearch = async () => {
     await wrapper!.get('[data-test="search-trigger"]').trigger('click');
@@ -101,7 +99,7 @@ describe('search sender grouping (P5b)', () => {
     const focusId = () => document.activeElement?.getAttribute('data-test') ?? null;
     const walked: (string | null)[] = [];
     for (let step = 0; step < 6; step += 1) {
-      key('j');
+      press('j', { bubbles: true, cancelable: true });
       await flushPromises();
       walked.push(focusId());
       // Focus never lands on a caption: it is always a conversation row.
@@ -114,7 +112,7 @@ describe('search sender grouping (P5b)', () => {
     const start = ids.indexOf(walked[0]!);
     expect(start).toBeGreaterThanOrEqual(0);
     expect(walked).toEqual(ids.slice(start, start + 6));
-    key('k');
+    press('k', { bubbles: true, cancelable: true });
     await flushPromises();
     expect(focusId()).toBe(ids[start + 4]);
   });

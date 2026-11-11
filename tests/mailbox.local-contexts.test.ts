@@ -7,7 +7,7 @@ import { effectScope } from 'vue';
 import { useMailbox } from '../src/composables/useMailbox';
 import { createBrowserFakeMailClient } from '../src/lib/ipc/browser-fake';
 import type { MailClient } from '../src/lib/ipc/client';
-import { flushMacrotasks } from './helpers';
+import { flushVueMacrotasks } from './support/ui-settle';
 
 // The repository ships no @types/node; declare only the process events used here.
 const proc = process as unknown as {
@@ -40,7 +40,7 @@ describe('useMailbox contexts that skip the Inbox projection', () => {
     await box.ready;
     state.failing = true;
     await box.setContext(context);
-    await flushMacrotasks(3);
+    await flushVueMacrotasks(3);
     scope.stop();
     expect(box.context.value).toBe(context);
     expect(box.listState.value).toBe('ready');
@@ -52,7 +52,7 @@ describe('useMailbox contexts that skip the Inbox projection', () => {
     const scope = effectScope();
     const box = scope.run(() => useMailbox(client))!;
     await box.ready;
-    await flushMacrotasks(3);
+    await flushVueMacrotasks(3);
     scope.stop();
     expect(box.listState.value).toBe('error');
     expect(box.listError.value).toMatchObject({ kind: 'storage_unavailable' });

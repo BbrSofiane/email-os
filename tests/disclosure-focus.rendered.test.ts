@@ -27,6 +27,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { startRenderedHarness, type RenderedHarness } from './rendered/chromium';
+import { pressRenderedEnter, pressRenderedTab } from './rendered/keyboard';
 
 const chromePath = process.env.EMAIL_OS_RENDERED_LAYOUT_CHROME ?? '';
 
@@ -120,31 +121,14 @@ describe.skipIf(chromePath === '')('App covered central surface focus safety (re
   }
 
   /** Real keyboard Tab (forward when shift=false, Shift+Tab when shift=true). */
-  async function pressTab(shift: boolean): Promise<void> {
-    if (shift) {
-      await cdp!.cmd('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Shift', code: 'ShiftLeft', windowsVirtualKeyCode: 16, nativeVirtualKeyCode: 16 });
-    }
-    const modifiers = shift ? 8 : 0;
-    await cdp!.cmd('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9, modifiers });
-    await cdp!.cmd('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9, modifiers });
-    if (shift) {
-      await cdp!.cmd('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Shift', code: 'ShiftLeft', windowsVirtualKeyCode: 16, nativeVirtualKeyCode: 16 });
-    }
-    await tick();
-  }
+  const pressTab = (shift: boolean): Promise<void> => pressRenderedTab(cdp!, shift, tick);
 
   /**
    * Native Enter activation exactly as a real user's keypress reaches the
    * browser: keyDown with carriage-return text plus keyUp. This is the
    * activation path the global shortcut guard cannot intercept.
    */
-  async function pressEnter(): Promise<void> {
-    await cdp!.cmd('Input.dispatchKeyEvent', {
-      type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r',
-    });
-    await cdp!.cmd('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
-    await tick();
-  }
+  const pressEnter = (): Promise<void> => pressRenderedEnter(cdp!, tick);
 
   async function focusInfo(): Promise<FocusInfo> {
     return cdp!.js<FocusInfo>(FOCUS_INFO_SCRIPT);

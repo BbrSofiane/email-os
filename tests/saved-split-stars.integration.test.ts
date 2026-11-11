@@ -1,9 +1,9 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { effectScope } from 'vue';
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import App from '../src/App.vue';
+import { flushPromises, type VueWrapper } from '@vue/test-utils';
+
 import { useMailbox } from '../src/composables/useMailbox';
-import { createBrowserFakeMailClient, deferred, useGmailMode } from './helpers';
+import { createBrowserFakeMailClient, deferred, useGmailMode, mountApp } from './helpers';
 import type { InboxSnapshot, SavedSplit } from '../src/lib/ipc/client';
 
 let wrapper: VueWrapper | null = null;
@@ -27,7 +27,7 @@ it('intersects independent cached filters, excludes unknowns, retains totals, an
   }));
   const client = { ...fake, listConversations: async () => ({ ...snap, conversations: rows }) };
   const read = vi.spyOn(client, 'setRead');
-  wrapper = mount(App, { props: { client, mode: 'browser-preview' }, attachTo: document.body });
+  wrapper = mountApp(client, 'browser-preview', { attachTo: document.body });
   await flushPromises();
   await wrapper.get('[data-test="split-saved"]').trigger('click'); await flushPromises();
   await wrapper.get('[data-test="starred-filter"]').trigger('click'); await flushPromises();
@@ -61,7 +61,7 @@ it('keeps command-only split editing with exact selected Star/Unstar groups, Und
   const snap = await fake.listConversations();
   await fake.saveSavedSplit(snap.conversations[0]!.ref.accountId, split);
   const group = vi.spyOn(fake, 'setStarredGroup'); const single = vi.spyOn(fake, 'setStarred');
-  wrapper = mount(App, { props: { client: fake, mode: 'browser-preview' }, attachTo: document.body });
+  wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
   await flushPromises();
   await wrapper.get('[data-test="split-saved"]').trigger('click'); await flushPromises();
   const targets = [snap.conversations[1]!.ref, snap.conversations[3]!.ref];
