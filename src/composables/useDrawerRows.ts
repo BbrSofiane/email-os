@@ -1,6 +1,7 @@
 /**
- * Shared keyboard model for the rows of a utility drawer (Activity, Drafts,
- * Reminders, Cached Trash).
+ * Shared keyboard model for the rows of a utility drawer (Activity) and of the
+ * list contexts whose rows are not threads (`ContextRowList`: Reminders,
+ * Drafts).
  *
  * One marker, one handler:
  * - A row is any focusable element that carries `data-drawer-row`. The primary
@@ -15,15 +16,15 @@
  * - It ignores editable targets, IME composition, modifier keys (including
  *   Shift) and any target that is not itself a row marker, so a trailing button,
  *   a field or a tab never has its keys taken.
- * - Escape is not handled: the app owns it (it closes the drawer; in the drafts
- *   editor the editor's own close runs first).
+ * - Escape is not handled: the app owns it (it closes the drawer, or goes Back
+ *   from a list context).
  */
 import { ref, type Ref } from 'vue';
 
 export interface DrawerRowsOptions {
   /** Row keys in render order; the first one owns the Tab stop when none is current. */
   keys: () => readonly string[];
-  /** The remembered current row (for example Cached Trash's last opened row). */
+  /** The remembered current row (for example a panel's last opened row). */
   initial?: () => string | null;
 }
 

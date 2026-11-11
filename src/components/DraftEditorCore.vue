@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
- * Shared draft-editor body used by every compose surface (the drafts-drawer
- * editor in DraftsPanel, the inline ComposeCard, and the docked ReplyComposer).
+ * Shared draft-editor body used by every compose surface (the inline
+ * ComposeCard and the docked ReplyComposer).
  * One copy of the field markup, the error wording and the disabled-logic — the
  * surfaces differ only in their header and context (recipient label, quoted
  * message) supplied through slots.
@@ -44,6 +44,8 @@ const props = defineProps<{
   closeError: string | null;
   /** Which field receives focus when the editor appears (keyboard-first). */
   autofocus?: 'to' | 'body';
+  /** Id of a note that explains why the To field is the first thing the user lands in. */
+  toDescribedBy?: string;
   /** `reply` is the compact docked layout; `new` keeps To and Subject visible. */
   variant?: 'new' | 'reply';
   /** Reply only: the display name shown while To is still the default mailbox. */
@@ -275,7 +277,7 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
           :disabled="fieldsDisabled()"
           @click="editTo"
         ><template v-if="toAddress === ''">No recipient</template><template v-else><template v-if="toName"><span data-test="draft-to-name">{{ toName }}</span> <span class="field-summary-address" data-test="draft-to-address">&lt;{{ toAddress }}&gt;</span></template><template v-else>{{ toAddress }}</template></template></button>
-        <input v-else :id="ids.to" ref="toInput" class="field-input" data-test="draft-to" type="text" autocomplete="off" :value="props.content.to" :disabled="fieldsDisabled()" @input="emit('setField', 'to', ($event.target as HTMLInputElement).value)">
+        <input v-else :id="ids.to" ref="toInput" class="field-input" data-test="draft-to" type="text" :aria-describedby="props.toDescribedBy" autocomplete="off" :value="props.content.to" :disabled="fieldsDisabled()" @input="emit('setField', 'to', ($event.target as HTMLInputElement).value)">
         <button
           type="button"
           class="field-toggle"

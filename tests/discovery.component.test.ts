@@ -1,13 +1,16 @@
-import { advanceUiUntil, useUiTestClock } from './support/timers';
-import { mountApp, press, deferred } from './helpers';
+import { press } from "./helpers";
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, type VueWrapper } from '@vue/test-utils';
-import type { Conversation, InboxSnapshot } from '../src/lib/ipc/client';
-import { createDiscoveryFixture } from './support/fixtures/discovery.fixture';
+import type { InboxSnapshot } from "../src/lib/ipc/client";
+import { createDiscoveryFixture } from "./support/fixtures/discovery.fixture";
+import { mountApp } from "./helpers";
+import { useUiTestClock } from "./support/timers";
 
 let wrapper: VueWrapper | null = null;
+afterEach(() => { wrapper?.unmount(); wrapper = null; });
 beforeEach(useUiTestClock);
-afterEach(() => { wrapper?.unmount(); wrapper = null; vi.useRealTimers(); });
+afterEach(() => vi.useRealTimers());
+
 async function setup() {
   const fixture = createDiscoveryFixture();
   await fixture.seedDone();
@@ -21,7 +24,7 @@ async function palette(w: VueWrapper, query = '') {
   await w.get('[data-test="action-query"]').setValue(query);
 }
 
-describe('preserves discovery focus and context history (UX-03)', () => {
+describe("preserves discovery focus and context history (UX-03)", () => {
   it('focuses the actual palette input, owns ordinary typing, highlights and restores origin', async () => {
     const { fixture, w } = await setup();
     const row = w.get('[data-test="conversation-row-read-02"]').element as HTMLElement;
@@ -111,8 +114,8 @@ describe('preserves discovery focus and context history (UX-03)', () => {
     press('g', { bubbles: true, cancelable: true }); await palette(w); press('Escape', { bubbles: true, cancelable: true }); await flushPromises();
     press('e', { bubbles: true, cancelable: true, ...{ ctrlKey: true } });
     // Past the chord window AND the swallow grace, a plain e is Archive again.
-    focus();
-    press('g', { bubbles: true, cancelable: true }); vi.advanceTimersByTime(2200); press('e', { bubbles: true, cancelable: true }); await flushPromises();
+    focus(); vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    press('g', { bubbles: true, cancelable: true }); vi.advanceTimersByTime(2200); vi.useRealTimers(); press('e', { bubbles: true, cancelable: true }); await flushPromises();
     expect(fixture.doneCalls()).toBe(0);
     expect(fixture.controls.archiveCommands.map((command) => command.conversation.conversationId)).toEqual(['read-02']);
     press('g', { bubbles: true, cancelable: true }); press('e', { bubbles: true, cancelable: true }); await flushPromises();
@@ -158,7 +161,7 @@ describe('preserves discovery focus and context history (UX-03)', () => {
   });
 });
 
-describe('revalidates query and lifecycle targets (UX-03)', () => {
+describe("revalidates query and lifecycle targets (UX-03)", () => {
   it('handles an empty page with nextCursor, loads more, resolves focus, and retains independent Activity', async () => {
     const fixture = createDiscoveryFixture();
     await fixture.seedDone();
@@ -211,30 +214,18 @@ describe('revalidates query and lifecycle targets (UX-03)', () => {
 
   it('revalidates targets across slow reader navigation so palette cannot mutate the previous thread', async () => {
     const { fixture, w } = await setup();
-    const pendingDetail = deferred<Conversation>();
-    const getConversation = fixture.client.getConversation.bind(fixture.client);
-    let read02Requested = false;
-    fixture.client.getConversation = (ref, loadMissingSearchResult) => {
-      if (ref.conversationId === 'read-02') {
-        read02Requested = true;
-        return pendingDetail.promise;
-      }
-      return getConversation(ref, loadMissingSearchResult);
-    };
     await w.get('[data-test="conversation-row-read-03"]').trigger('click'); await flushPromises();
     // The next neighbor (read-04) is prefetched; K targets the uncached read-02.
+    fixture.controls.delayNextDetail(50);
     press('k', { bubbles: true, cancelable: true });
-    await advanceUiUntil(() => read02Requested);
     await palette(w);
     expect(w.find('#action-archive').exists()).toBe(false);
     expect(w.find('#action-unread').exists()).toBe(false);
     await w.get('[data-test="action-query"]').setValue('e/s/h'); press('e', { bubbles: true, cancelable: true }); press('Enter', { bubbles: true, cancelable: true }); await flushPromises();
     expect(fixture.controls.archiveCommands).toEqual([]);
     expect(fixture.controls.readCommands).toEqual([]);
-    pendingDetail.resolve(await getConversation({ accountId: 'reader-account', conversationId: 'read-02' }));
-    await flushPromises();
-    // Reader loading presentation has a 120ms minimum hold after detail arrives.
-    await vi.advanceTimersByTimeAsync(120); await flushPromises();
+    // Advance beyond both the 50ms detail delay and the 120ms hold.
+    await vi.advanceTimersByTimeAsync(250); await flushPromises();
     await w.get('[data-test="action-query"]').setValue('Mark done'); press('Enter', { bubbles: true, cancelable: true }); await flushPromises();
     expect(fixture.controls.archiveCommands.map((command) => command.conversation.conversationId)).toEqual(['read-02']);
   });
@@ -246,9 +237,10 @@ describe('revalidates query and lifecycle targets (UX-03)', () => {
     await w.get('[data-test="draft-body"]').setValue('Exact unsaved buffer ✓');
     fixture.client.saveDraft = async () => { throw { kind: 'storage_unavailable' }; };
     await palette(w, 'Go to cached Done'); press('Enter', { bubbles: true, cancelable: true }); await flushPromises();
-    expect(w.get('[data-test="inbox-title"]').text()).toBe('Inbox');
+    // The aborted destination leaves the Drafts context and its editor card in place.
+    expect(w.get('[data-test="inbox-title"]').text()).toBe('Drafts');
     expect((w.get('[data-test="draft-body"]').element as HTMLTextAreaElement).value).toBe('Exact unsaved buffer ✓');
-    expect(w.get('[data-test="utility-drawer"]').attributes('aria-label')).toBe('Local drafts');
+    expect(w.find('[data-test="compose-card"]').exists()).toBe(true);
     expect(fixture.doneCalls()).toBe(0);
   });
 

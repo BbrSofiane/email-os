@@ -2,8 +2,8 @@ import { advanceUiUntil, useUiTestClock } from '../support/timers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, type VueWrapper } from '@vue/test-utils';
 import type { DraftReceipt, MailClient } from '../../src/lib/ipc/client';
-import { closeUtilityDrawer, createBrowserFakeMailClient, createKeyEvent, deferred, fixtureRef, openUtilityDrawer } from '../helpers';
-import { mountDraftsApp as mountDraftsUi } from '../support/drafts';
+import { createBrowserFakeMailClient, deferred, fixtureRef, openDraftsList, press } from '../helpers';
+import { mountDraftsContextApp } from '../support/drafts';
 
 describe('draft reply preparation', () => {
   let wrapper: VueWrapper | null = null;
@@ -11,8 +11,7 @@ describe('draft reply preparation', () => {
   afterEach(() => { wrapper?.unmount(); wrapper = null; vi.useRealTimers(); });
   it('prepares a reply to the displayed latest message with immutable source and blank body', async () => {
     const fake = createBrowserFakeMailClient();
-    const w = wrapper = await mountDraftsUi(fake);
-    if (w.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w);
+    const w = wrapper = await mountDraftsContextApp(fake);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
     // Reader actions are teleported into the app header, outside the article.
@@ -54,8 +53,7 @@ describe('draft reply preparation', () => {
         return fake.createDraft(command);
       },
     };
-    const w = wrapper = await mountDraftsUi(fake, client);
-    if (w.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w);
+    const w = wrapper = await mountDraftsContextApp(fake, client);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
     await w.find('[data-test="prepare-reply"]').trigger('click');
@@ -68,7 +66,7 @@ describe('draft reply preparation', () => {
     expect(w.find('[data-test="composer"]').exists()).toBe(false);
     // The reply flow keeps the reader open; a new local draft comes from the
     // compose entry (C), which opens the inline compose card.
-    window.dispatchEvent(createKeyEvent('c', { bubbles: true }));
+    press('c', { bubbles: true }, window);
     await flushPromises();
     await advanceUiUntil(() => w.find('[data-test="compose-card"]').exists());
     await advanceUiUntil(() => w.find('[data-test="draft-status"]').text().includes('preview memory'));
@@ -90,8 +88,7 @@ describe('draft reply preparation', () => {
         return fake.createDraft(command);
       },
     };
-    const w = wrapper = await mountDraftsUi(fake, client);
-    if (w.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w);
+    const w = wrapper = await mountDraftsContextApp(fake, client);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
     await w.find('[data-test="prepare-reply"]').trigger('click');
@@ -105,7 +102,7 @@ describe('draft reply preparation', () => {
     await flushPromises();
     // The reply flow keeps the reader open and never auto-opens the drawer; the
     // late receipt must stay recoverable in the drafts list, not in an editor.
-    await openUtilityDrawer(w, 'drafts');
+    await openDraftsList(w);
     await advanceUiUntil(() => w.text().includes('Re: Fixture thread 1: weekly status'));
     expect(w.find('[data-test="composer"]').exists()).toBe(false);
     expect(await fake.getDraft(receipt.ref)).toMatchObject({ source: { kind: 'reply' } });
@@ -121,8 +118,7 @@ describe('draft reply preparation', () => {
         return conversation;
       },
     };
-    const w = wrapper = await mountDraftsUi(fake, client);
-    if (w.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w);
+    const w = wrapper = await mountDraftsContextApp(fake, client);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
     expect(w.find('[data-test="reply-blocked"]').exists()).toBe(false);
@@ -133,8 +129,7 @@ describe('draft reply preparation', () => {
     w.unmount();
     wrapper = null;
     const staleFake = createBrowserFakeMailClient();
-    const stale = wrapper = await mountDraftsUi(staleFake);
-    if (stale.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(stale);
+    const stale = wrapper = await mountDraftsContextApp(staleFake);
     await stale.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
     staleFake.controls.addMessage('conv-01');
@@ -147,8 +142,7 @@ describe('draft reply preparation', () => {
   it('explains and blocks replies from retained or incomplete cached context', async () => {
     const fake = createBrowserFakeMailClient();
     fake.controls.markRetainedSnapshot('conv-01', '2025-01-01T00:00:00.000Z');
-    const w = wrapper = await mountDraftsUi(fake);
-    if (w.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w);
+    const w = wrapper = await mountDraftsContextApp(fake);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
     expect(w.find('[data-test="prepare-reply"]').attributes('disabled')).toBeDefined();
@@ -159,8 +153,7 @@ describe('draft reply preparation', () => {
     wrapper = null;
     const second = createBrowserFakeMailClient();
     second.controls.markUnsupported('conv-01', 'plain text incomplete', false);
-    const w2 = wrapper = await mountDraftsUi(second);
-    if (w2.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w2);
+    const w2 = wrapper = await mountDraftsContextApp(second);
     await w2.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
     expect(w2.find('[data-test="reply-blocked"]').text()).toContain('incomplete');

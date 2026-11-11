@@ -1,15 +1,44 @@
+import { flushVueMacrotasks } from "../support/ui-settle";
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, type VueWrapper } from '@vue/test-utils';
-import type { AccountStatus, MailClient } from '../../src/lib/ipc/client';
-import { accountMethods, groupMethods, closeUtilityDrawer, conversationRows, countingClient, createBrowserFakeMailClient, createSixConversationClient, flushMacrotasks, deferred, fixtureRef, focusedRow, openUtilityDrawer, type BrowserFake, mountApp as sharedMountApp, createKeyEvent } from '../helpers';
-import { createReaderFixtureClient, readerRef, type ReaderFixture } from '../support/fixtures/reader.fixture';
-import { READER_LOADING_DELAY_MS } from '../../src/composables/useMailbox';
-import { flushFakeClientAndVueUpdates, flushVueMacrotasks } from '../support/ui-settle';
+import type { AccountStatus, MailClient } from "../../src/lib/ipc/client";
+import {
+  accountMethods,
+  createKeyEvent,
+  mountApp as mountSharedApp,
+  press,
+  groupMethods,
+  closeUtilityDrawer,
+  conversationRows,
+  countingClient,
+  createBrowserFakeMailClient,
+  createSixConversationClient,
+  flushFakeClientAndVueUpdates,
+  flushMacrotasks,
+  deferred,
+  fixtureRef,
+  focusedRow,
+  openDraftsList,
+  openUtilityDrawer,
+  type BrowserFake,
+} from "../helpers";
+import { createReaderFixtureClient, readerRef, type ReaderFixture } from "../support/fixtures/reader.fixture";
+import { READER_LOADING_DELAY_MS } from "../../src/composables/useMailbox";
 
-describe('renders the fixture browsing shell (Slice 01)', () => {
+
+
+describe("renders the fixture browsing shell (Slice 01)", () => {
   let fake: BrowserFake;
   let counted: ReturnType<typeof countingClient>;
   let wrapper: VueWrapper | null = null;
+
+  function mountApp(client: MailClient = counted.client): VueWrapper {
+    const w = mountSharedApp(client, 'browser-preview', { attachTo: document.body });
+    wrapper = w;
+    return w;
+  }
+
+
 
   beforeEach(() => {
     fake = createBrowserFakeMailClient();
@@ -26,7 +55,7 @@ describe('renders the fixture browsing shell (Slice 01)', () => {
       ...fake,
       subscribe: async () => { throw { kind: 'storage_unavailable' }; },
     };
-    const w = sharedMountApp(broken, 'browser-preview', { attachTo: document.body });
+    const w = mountApp(broken);
     await flushPromises();
     expect(w.find('[data-test="account-loading"]').exists()).toBe(false);
     expect(w.find('[data-test="account-error"]').text()).toContain('Could not subscribe to or load the inbox');
@@ -38,7 +67,7 @@ describe('renders the fixture browsing shell (Slice 01)', () => {
   });
 
   it('discloses memory-only preview and renders the seeded inbox', async () => {
-    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    const w = mountApp();
     await flushFakeClientAndVueUpdates(fake);
     expect(w.find('[data-test="preview-banner"]').text()).toContain('in-memory');
     expect(w.find('[data-test="preview-banner"]').text()).toContain('native core is not connected');
@@ -46,7 +75,7 @@ describe('renders the fixture browsing shell (Slice 01)', () => {
   });
 
   it('offers quiet icon-only reader actions in the header, with previous/next wired like J/K', async () => {
-    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    const w = mountApp();
     await flushFakeClientAndVueUpdates(fake);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushFakeClientAndVueUpdates(fake);
@@ -70,7 +99,7 @@ describe('renders the fixture browsing shell (Slice 01)', () => {
   });
 
   it('navigates with j/k and arrow keys, moving DOM focus with conversation focus', async () => {
-    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    const w = mountApp();
     await flushFakeClientAndVueUpdates(fake);
     const rows = conversationRows(w);
     (rows[0]!.element as HTMLElement).focus();
@@ -79,53 +108,53 @@ describe('renders the fixture browsing shell (Slice 01)', () => {
     expect(document.activeElement).toBe(rows[0]!.element);
     expect(rows[0]!.attributes('aria-current')).toBe('true');
 
-    window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
+    press('j', { bubbles: true }, window);
     await flushPromises();
     expect(document.activeElement).toBe(rows[1]!.element);
     expect(rows[1]!.attributes('aria-current')).toBe('true');
     expect(rows[0]!.attributes('aria-current')).toBeUndefined();
 
-    window.dispatchEvent(createKeyEvent('ArrowDown', { bubbles: true  }));
+    press('ArrowDown', { bubbles: true }, window);
     await flushPromises();
     expect(document.activeElement).toBe(rows[2]!.element);
 
-    window.dispatchEvent(createKeyEvent('k', { bubbles: true  }));
+    press('k', { bubbles: true }, window);
     await flushPromises();
     expect(document.activeElement).toBe(rows[1]!.element);
 
-    window.dispatchEvent(createKeyEvent('ArrowUp', { bubbles: true  }));
+    press('ArrowUp', { bubbles: true }, window);
     await flushPromises();
     expect(document.activeElement).toBe(rows[0]!.element);
 
     // at the top edge, ArrowUp clamps and focus stays put
-    window.dispatchEvent(createKeyEvent('ArrowUp', { bubbles: true  }));
+    press('ArrowUp', { bubbles: true }, window);
     await flushPromises();
     expect(document.activeElement).toBe(rows[0]!.element);
     expect(rows[0]!.attributes('aria-current')).toBe('true');
   });
 
   it('opens with Enter, closes with Escape, and restores list focus', async () => {
-    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    const w = mountApp();
     await flushFakeClientAndVueUpdates(fake);
     const rows = conversationRows(w);
     (rows[1]!.element as HTMLElement).focus();
     rows[1]!.trigger('focusin');
     await flushPromises();
 
-    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
+    press('Enter', { bubbles: true }, window);
     await flushFakeClientAndVueUpdates(fake);
     const reader = w.find('[data-test="reader"]');
     expect(reader.exists()).toBe(true);
     expect(reader.text()).toContain('Fixture thread 2');
 
-    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    press('Escape', { bubbles: true }, window);
     await flushPromises();
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect(document.activeElement).toBe(conversationRows(w)[1]!.element);
   });
 
   it('archives with e: row leaves the inbox, focus stays on the resolved survivor', async () => {
-    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    const w = mountApp();
     await flushFakeClientAndVueUpdates(fake);
     const rows = conversationRows(w);
     expect(rows[0]!.text()).toContain('conv-01');
@@ -133,7 +162,7 @@ describe('renders the fixture browsing shell (Slice 01)', () => {
     rows[0]!.trigger('focusin');
     await flushPromises();
 
-    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    press('e', { bubbles: true }, window);
     await flushFakeClientAndVueUpdates(fake);
 
     const after = conversationRows(w);
@@ -148,10 +177,10 @@ describe('renders the fixture browsing shell (Slice 01)', () => {
   });
 
   it('shows a pending operation on a restored row and completes after release', async () => {
-    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    const w = mountApp();
     await flushFakeClientAndVueUpdates(fake);
     // archive conv-01 to completion
-    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    press('e', { bubbles: true }, window);
     await flushFakeClientAndVueUpdates(fake);
     expect(conversationRows(w)).toHaveLength(17);
 
@@ -173,10 +202,10 @@ describe('renders the fixture browsing shell (Slice 01)', () => {
   });
 
   it('renders failed operations in activity and reverts the row to the inbox', async () => {
-    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    const w = mountApp();
     await flushFakeClientAndVueUpdates(fake);
     fake.controls.behavior.failNext = 1;
-    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    press('e', { bubbles: true }, window);
     await flushFakeClientAndVueUpdates(fake);
     await openUtilityDrawer(w, 'activity');
     expect(w.find('[data-test="activity-failed"]').exists()).toBe(true);
@@ -189,9 +218,9 @@ describe('renders the fixture browsing shell (Slice 01)', () => {
   });
 
   it('unarchives from activity and opens archived conversations from activity', async () => {
-    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    const w = mountApp();
     await flushFakeClientAndVueUpdates(fake);
-    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    press('e', { bubbles: true }, window);
     await flushFakeClientAndVueUpdates(fake);
     expect(conversationRows(w)).toHaveLength(17);
 
@@ -206,7 +235,7 @@ describe('renders the fixture browsing shell (Slice 01)', () => {
     (restored.element as HTMLElement).focus();
     await restored.trigger('focusin');
     // archive again, then Open from activity must still show the archived thread
-    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    press('e', { bubbles: true }, window);
     await flushFakeClientAndVueUpdates(fake);
     await openUtilityDrawer(w, 'activity');
     await w.find('[data-test^="activity-open-"]').trigger('click');
@@ -217,28 +246,28 @@ describe('renders the fixture browsing shell (Slice 01)', () => {
   });
 
   it('ignores shortcuts with modifiers, during IME composition, in text fields, and when a button owns the key', async () => {
-    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    const w = mountApp();
     await flushFakeClientAndVueUpdates(fake);
     const baseline = fake.controls.activity().length;
 
-    window.dispatchEvent(createKeyEvent('e', { bubbles: true , ctrlKey: true }));
-    window.dispatchEvent(createKeyEvent('j', { bubbles: true , metaKey: true }));
-    window.dispatchEvent(createKeyEvent('j', { bubbles: true , altKey: true }));
-    const ime = createKeyEvent('j', { bubbles: true  });
+    press('e', { bubbles: true, ctrlKey: true }, window);
+    press('j', { bubbles: true, metaKey: true }, window);
+    press('j', { bubbles: true, altKey: true }, window);
+    const ime = createKeyEvent('j', { bubbles: true });
     Object.defineProperty(ime, 'isComposing', { value: true });
     window.dispatchEvent(ime);
-    window.dispatchEvent(createKeyEvent('j', { bubbles: true , keyCode: 229 }));
+    press('j', { bubbles: true, keyCode: 229 }, window);
 
     const input = document.createElement('input');
     document.body.appendChild(input);
-    input.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
-    input.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    press('j', { bubbles: true }, input);
+    press('e', { bubbles: true }, input);
     input.remove();
 
     const button = document.createElement('button');
     document.body.appendChild(button);
-    button.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
-    button.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
+    press('e', { bubbles: true }, button);
+    press('Enter', { bubbles: true }, button);
     button.remove();
 
     await flushMacrotasks();
@@ -250,14 +279,14 @@ describe('renders the fixture browsing shell (Slice 01)', () => {
   });
 
   it('renders hostile markup as literal text with no script/img/link elements or remote assets', async () => {
-    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    const w = mountApp();
     await flushFakeClientAndVueUpdates(fake);
     // conv-06 is the hostile fixture; move focus to it and open
     for (let i = 0; i < 5; i += 1) {
-      window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
+      press('j', { bubbles: true }, window);
       await flushPromises();
     }
-    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
+    press('Enter', { bubbles: true }, window);
     await flushFakeClientAndVueUpdates(fake);
 
     const reader = w.find('[data-test="reader"]');
@@ -271,10 +300,10 @@ describe('renders the fixture browsing shell (Slice 01)', () => {
   });
 
   it('shows the inbox empty state when everything is archived', async () => {
-    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    const w = mountApp();
     await flushFakeClientAndVueUpdates(fake);
     for (let i = 0; i < 18; i += 1) {
-      window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+      press('e', { bubbles: true }, window);
       await flushFakeClientAndVueUpdates(fake);
     }
     expect(w.find('[data-test="inbox-empty"]').exists()).toBe(true);
@@ -295,7 +324,7 @@ describe('renders the fixture browsing shell (Slice 01)', () => {
       setArchived: fake.setArchived.bind(fake),
       subscribe: (l) => fake.subscribe(l),
     };
-    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    const w = mountApp(client);
     await flushPromises();
     expect(w.find('[data-test="inbox-loading"]').exists()).toBe(true);
     resolveList((await fake.listConversations()) as Awaited<ReturnType<MailClient['listConversations']>>);
@@ -314,7 +343,7 @@ describe('renders the fixture browsing shell (Slice 01)', () => {
       setArchived: fake.setArchived.bind(fake),
       subscribe: (l) => fake.subscribe(l),
     };
-    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    const w = mountApp(client);
     await flushFakeClientAndVueUpdates(fake);
     const errorPane = w.find('[data-test="inbox-error"]');
     expect(errorPane.exists()).toBe(true);
@@ -327,9 +356,9 @@ describe('renders the fixture browsing shell (Slice 01)', () => {
   });
 
   it('advances from an archived reader to the next conversation', async () => {
-    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    const w = mountApp();
     await flushFakeClientAndVueUpdates(fake);
-    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
+    press('Enter', { bubbles: true }, window);
     await flushFakeClientAndVueUpdates(fake);
     await w.find('[data-test="reader-archive-toggle"]').trigger('click');
     await flushFakeClientAndVueUpdates(fake);
@@ -345,19 +374,19 @@ describe('renders the fixture browsing shell (Slice 01)', () => {
       ...counted.client,
       getConversation: (target) => target.conversationId === 'conv-02' ? pending.promise : fake.getConversation(target),
     };
-    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    const w = mountApp(client);
     await flushFakeClientAndVueUpdates(fake);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushFakeClientAndVueUpdates(fake);
     // Back to the list (the reader replaces it), then open the next conversation.
-    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    press('Escape', { bubbles: true }, window);
     await flushFakeClientAndVueUpdates(fake);
     await w.find('[data-test="conversation-row-conv-02"]').trigger('click');
     await flushPromises();
     expect(w.find('[data-test="reader-loading"]').exists()).toBe(true);
     // The header action stays mounted but disabled: it supplies no target while loading.
     expect(w.find('[data-test="reader-archive-toggle"]').attributes('disabled')).toBeDefined();
-    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    press('e', { bubbles: true }, window);
     await flushPromises();
     expect(counted.commands).toHaveLength(0);
     pending.resolve(await fake.getConversation(fixtureRef('conv-02')));
@@ -365,14 +394,14 @@ describe('renders the fixture browsing shell (Slice 01)', () => {
   });
 
   it('keeps keyboard commands aligned with the focused row after a delayed rejection', async () => {
-    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    const w = mountApp();
     await flushFakeClientAndVueUpdates(fake);
     fake.controls.behavior.hold = true;
     fake.controls.behavior.failNext = 1;
     const first = conversationRows(w)[0]!;
     (first.element as HTMLElement).focus();
     await first.trigger('focusin');
-    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    press('e', { bubbles: true }, window);
     await flushPromises();
     const focused = document.activeElement;
     expect(focused?.textContent).toContain('conv-02');
@@ -380,15 +409,15 @@ describe('renders the fixture browsing shell (Slice 01)', () => {
     await flushFakeClientAndVueUpdates(fake);
     expect(document.activeElement).toBe(focused);
     expect(conversationRows(w)[1]!.attributes('aria-current')).toBe('true');
-    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
+    press('Enter', { bubbles: true }, window);
     await flushFakeClientAndVueUpdates(fake);
     expect(w.find('[data-test="reader"]').text()).toContain('Fixture thread 2');
   });
 
   it('does not steal toolbar focus during a background reader refresh', async () => {
-    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    const w = mountApp();
     await flushFakeClientAndVueUpdates(fake);
-    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
+    press('Enter', { bubbles: true }, window);
     await flushFakeClientAndVueUpdates(fake);
     const close = w.find('[data-test="reader-close"]').element as HTMLElement;
     close.focus();
@@ -407,20 +436,20 @@ describe('renders the fixture browsing shell (Slice 01)', () => {
         return accepted.promise;
       },
     };
-    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    const w = mountApp(client);
     await flushFakeClientAndVueUpdates(fake);
-    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
+    press('Enter', { bubbles: true }, window);
     await flushFakeClientAndVueUpdates(fake);
-    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    press('e', { bubbles: true }, window);
     await flushPromises();
-    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    press('Escape', { bubbles: true }, window);
     accepted.resolve(receipt!);
     await flushFakeClientAndVueUpdates(fake);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
   });
 
   it('detaches the subscription and window listeners on unmount', async () => {
-    const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
+    const w = mountApp();
     await flushFakeClientAndVueUpdates(fake);
     expect(fake.controls.listenerCount()).toBe(1);
     const calls = counted.listCalls();
@@ -434,7 +463,7 @@ describe('renders the fixture browsing shell (Slice 01)', () => {
   });
 });
 
-describe('preserves compact browsing focus and navigation (UX-01)', () => {
+describe("preserves compact browsing focus and navigation (UX-01)", () => {
   let six: ReturnType<typeof createSixConversationClient>;
   let wrapper: VueWrapper | null = null;
   const originalGetBCR = HTMLElement.prototype.getBoundingClientRect;
@@ -484,6 +513,20 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
     await row.trigger('focusin');
   }
 
+  function mountSix(): VueWrapper {
+    const w = mountSharedApp(six.client, 'browser-preview', { attachTo: document.body });
+    wrapper = w;
+    return w;
+  }
+
+  function mountApp(client: MailClient = six.client): VueWrapper {
+    const w = mountSharedApp(client, 'browser-preview', { attachTo: document.body });
+    wrapper = w;
+    return w;
+  }
+
+
+
   beforeEach(() => {
     six = createSixConversationClient();
     rowDocTops.clear();
@@ -504,7 +547,7 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
   });
 
   it('renders compact rows with non-selectable date group headings and no AI/calendar controls', async () => {
-    const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+    const w = mountSix();
     await flushVueMacrotasks(2);
     const rows = conversationRows(w);
     expect(rows).toHaveLength(6);
@@ -533,30 +576,30 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
   });
 
   it('moves focus row to row, skipping group headings, with j/k', async () => {
-    const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+    const w = mountSix();
     await flushVueMacrotasks(2);
     const rows = conversationRows(w);
     (rows[0]!.element as HTMLElement).focus();
     rows[0]!.trigger('focusin');
     await flushPromises();
     for (let i = 1; i < rows.length; i += 1) {
-      window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
+      press('j', { bubbles: true }, window);
       await flushPromises();
       expect(document.activeElement).toBe(rows[i]!.element);
     }
-    window.dispatchEvent(createKeyEvent('k', { bubbles: true  }));
+    press('k', { bubbles: true }, window);
     await flushPromises();
     expect(document.activeElement).toBe(rows[rows.length - 2]!.element);
   });
 
   it('focuses the fourth row, opens it, and returns to the same row with a restored anchor', async () => {
-    const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+    const w = mountSix();
     await flushVueMacrotasks(2);
     await focusRowById(w, 'six-d');
     await flushPromises();
     expect(focusedRow(w).attributes('data-test')).toBe('conversation-row-six-d');
 
-    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
+    press('Enter', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
 
@@ -565,7 +608,7 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
     await flushVueMacrotasks(2);
     seedRowTops(1); // six-d moved one row down
 
-    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    press('Escape', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     // The surviving anchor row is focused again without scrolling it away.
@@ -576,7 +619,7 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
   });
 
   it('keeps an action targeted at the original id when a newer row is inserted (BROWSE-17)', async () => {
-    const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+    const w = mountSix();
     await flushVueMacrotasks(2);
     await focusRowById(w, 'six-d');
     await flushPromises();
@@ -586,14 +629,14 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
     // focus survives the insertion, still addressing the original conversation
     expect(focusedRow(w).attributes('data-test')).toBe('conversation-row-six-d');
 
-    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    press('e', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(six.commands).toHaveLength(1);
     expect(six.commands[0]!.conversation.conversationId).toBe('six-d');
   });
 
   it('shows exact known contact context and never guesses a missing correspondent', async () => {
-    const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+    const w = mountSix();
     await flushVueMacrotasks(2);
     // six-a: long display name plus mailbox
     await focusRowById(w, 'six-a');
@@ -609,13 +652,13 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
     // Reader mode uses the loaded latest message's From for the open ref only.
     await focusRowById(w, 'six-a');
     await flushPromises();
-    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
+    press('Enter', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(w.find('[data-test="contact-name"]').text()).toBe('Anastasia Vasquez-Romanov of the Northern Reaches');
   });
 
   it('keeps hover inert and inline row actions row-scoped', async () => {
-    const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+    const w = mountSix();
     await flushVueMacrotasks(2);
     await focusRowById(w, 'six-f');
     await flushPromises();
@@ -640,7 +683,7 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
       ...six.client,
       listConversations: () => new Promise((resolve) => { resolveList = resolve; }),
     };
-    let w: VueWrapper = sharedMountApp(loadingClient, 'browser-preview', { attachTo: document.body });
+    let w: VueWrapper = mountSharedApp(loadingClient, 'browser-preview', { attachTo: document.body });
     wrapper = w;
     await flushPromises();
     expect(w.find('[data-test="inbox-loading"]').exists()).toBe(true);
@@ -651,7 +694,7 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
 
     // Error with retry
     six.failNextList({ kind: 'storage_unavailable' });
-    w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+    w = mountSix();
     await flushVueMacrotasks(2);
     expect(w.find('[data-test="inbox-error"]').exists()).toBe(true);
     expect(w.find('[data-test="inbox-error"]').text()).toContain('storage unavailable');
@@ -664,14 +707,14 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
 
     // Empty: archive every row through the keyboard; the last archive focuses
     // the empty state instead of a removed row.
-    w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+    w = mountSix();
     await flushVueMacrotasks(2);
     const rows = conversationRows(w);
     (rows[0]!.element as HTMLElement).focus();
     rows[0]!.trigger('focusin');
     await flushPromises();
     for (let i = 0; i < 6; i += 1) {
-      window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+      press('e', { bubbles: true }, window);
       await flushVueMacrotasks(2);
     }
     expect(w.find('[data-test="inbox-empty"]').exists()).toBe(true);
@@ -692,7 +735,7 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
       dispatchEvent: () => false,
     })) as unknown as typeof window.matchMedia;
     try {
-      const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+      const w = mountSix();
       await flushVueMacrotasks(2);
       expect(w.find('[data-test="contact-pane"]').exists()).toBe(false);
       expect(w.find('[data-test="contact-disclosure"]').exists()).toBe(true);
@@ -705,7 +748,7 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
       expect(w.find('[data-test="contact-unknown"]').exists()).toBe(true);
 
       // Escape closes the disclosure with precedence and restores focus.
-      window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+      press('Escape', { bubbles: true }, window);
       await flushPromises();
       expect(w.find('[data-test="contact-disclosure-panel"]').exists()).toBe(false);
       expect(document.activeElement).toBe(w.find('[data-test="contact-disclosure"]').element);
@@ -717,7 +760,7 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
   });
 
   it('restores an anchor relative to the current scroll position, not the captured one (P2)', async () => {
-    const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+    const w = mountSix();
     await flushVueMacrotasks(2);
     // Simulate a scrolled inbox: the sixth row is at absolute position 300.
     rowDocTops.set('six-e', 300);
@@ -726,12 +769,12 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
     await focusRowById(w, 'six-e');
     await flushPromises();
 
-    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
+    press('Enter', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
 
     // Opening a reader unmounts the list; returning recreates it at scrollTop 0.
-    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    press('Escape', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     // The restored scroller must return the row to its captured viewport offset (100),
@@ -743,7 +786,7 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
   });
 
   it('suppresses revealRow during preventScroll focus restoration (P2)', async () => {
-    const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+    const w = mountSix();
     await flushVueMacrotasks(2);
     // Focus a row and simulate an off-screen scroll position for it.
     await focusRowById(w, 'six-c');
@@ -752,13 +795,13 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
     const list = w.find('ul.inbox-scroll').element as HTMLElement;
     list.scrollTop = 0; // six-c is off-screen (docTop 500, viewport 0-360).
 
-    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
+    press('Enter', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
 
     // The reader closed and focus restoration uses preventScroll: the row must
     // not be yanked back into view by an automatic reveal.
-    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    press('Escape', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect(document.activeElement?.getAttribute('data-test')).toBe('conversation-row-six-c');
@@ -768,11 +811,11 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
   });
 
   it('leaves the reader when the Inbox rail control is activated (P2)', async () => {
-    const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+    const w = mountSix();
     await flushVueMacrotasks(2);
     await focusRowById(w, 'six-b');
     await flushPromises();
-    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
+    press('Enter', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
 
@@ -798,7 +841,7 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
       dispatchEvent: () => false,
     })) as unknown as typeof window.matchMedia;
     try {
-      const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+      const w = mountSix();
       await flushVueMacrotasks(2);
       await w.find('[data-test="contact-disclosure"]').trigger('click');
       await flushPromises();
@@ -838,7 +881,7 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
       dispatchEvent: () => false,
     })) as unknown as typeof window.matchMedia;
     try {
-      const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+      const w = mountSix();
       await flushVueMacrotasks(2);
       expect(w.find('[data-test="contact-disclosure"]').exists()).toBe(true);
       await w.find('[data-test="contact-disclosure"]').trigger('click');
@@ -865,35 +908,36 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
 
   it('does not let a hidden draft editor own all mailbox shortcuts (P2)', async () => {
     const fake = createBrowserFakeMailClient();
-    const w = sharedMountApp(fake, 'browser-preview', { attachTo: document.body });
+    const w = mountSharedApp(fake, 'browser-preview', { attachTo: document.body });
     wrapper = w;
     await flushVueMacrotasks(2);
-    await openUtilityDrawer(w, 'drafts');
+    await openDraftsList(w);
     await w.find('[data-test="new-draft"]').trigger('click');
     await flushPromises();
     await w.find('[data-test="draft-body"]').setValue('draft text');
     await flushPromises();
 
-    // Close the drawer: the protected lifecycle flushes and closes the editor,
+    // Leave for the Inbox: the protected lifecycle flushes and closes the editor,
     // so the inbox is free and no hidden editor owns the mailbox shortcuts.
-    await closeUtilityDrawer(w);
+    await w.find('[data-test="rail-inbox"]').trigger('click');
     await flushPromises();
     // A successful protected close leaves no active editor behind to hide.
     expect(w.find('[data-test="drafts-pane"]').exists()).toBe(false);
+    expect(w.find('[data-test="composer"]').exists()).toBe(false);
     w.unmount();
     wrapper = null;
   });
 
-  it('keeps drafts recovery controls visible when the drawer is closed (P2)', async () => {
+  it('keeps drafts recovery controls visible when the editor surface is not left (P2)', async () => {
     const fake = createBrowserFakeMailClient();
     const client: MailClient = {
       ...fake,
       saveDraft: () => Promise.reject({ kind: 'storage_unavailable' }),
     };
-    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    const w = mountSharedApp(client, 'browser-preview', { attachTo: document.body });
     wrapper = w;
     await flushVueMacrotasks(2);
-    await openUtilityDrawer(w, 'drafts');
+    await openDraftsList(w);
     await w.find('[data-test="new-draft"]').trigger('click');
     await flushPromises();
     await w.find('[data-test="draft-body"]').setValue('unsaved text');
@@ -906,7 +950,7 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
     await flushPromises();
     expect(w.find('[data-test="draft-close-recovery"]').exists()).toBe(false);
     expect(w.find('[data-test="draft-attention-open"]').exists()).toBe(false);
-    expect(w.find('[data-test="drafts-pane"]').exists()).toBe(true);
+    expect(w.find('[data-test="compose-card"]').exists()).toBe(true);
     expect(w.find('[data-test="draft-error"]').exists()).toBe(true);
     w.unmount();
     wrapper = null;
@@ -927,7 +971,7 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
       dispatchEvent: () => false,
     })) as unknown as typeof window.matchMedia;
     try {
-      const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+      const w = mountSix();
       await flushVueMacrotasks(2);
       expect(w.find('[data-test="contact-column"]').exists()).toBe(true);
       (w.find('[data-test="contact-column"]').element as HTMLElement).focus();
@@ -963,7 +1007,7 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
       dispatchEvent: () => false,
     })) as unknown as typeof window.matchMedia;
     try {
-      const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+      const w = mountSix();
       await flushVueMacrotasks(2);
       // Focus lives in the list, not the contact column.
       await focusRowById(w, 'six-a');
@@ -994,7 +1038,7 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
       dispatchEvent: () => false,
     })) as unknown as typeof window.matchMedia;
     try {
-      const w = sharedMountApp(six.client, 'browser-preview', { attachTo: document.body });
+      const w = mountSix();
       await flushVueMacrotasks(2);
       await w.find('[data-test="contact-disclosure"]').trigger('click');
       await flushPromises();
@@ -1013,9 +1057,9 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
   });
 
   it('returns to Inbox (not Activity) when navigating from an Activity-origin reader (P2)', async () => {
-    const w = sharedMountApp(createBrowserFakeMailClient(), 'browser-preview', { attachTo: document.body });
+    const w = mountApp(createBrowserFakeMailClient());
     await flushVueMacrotasks(2);
-    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    press('e', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     await openUtilityDrawer(w, 'activity');
     await w.find('[data-test^="activity-open-"]').trigger('click');
@@ -1035,9 +1079,9 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
   });
 
   it('still returns to Activity after an ordinary Escape from an Activity-origin reader (P2)', async () => {
-    const w = sharedMountApp(createBrowserFakeMailClient(), 'browser-preview', { attachTo: document.body });
+    const w = mountApp(createBrowserFakeMailClient());
     await flushVueMacrotasks(2);
-    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    press('e', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     await openUtilityDrawer(w, 'activity');
     await w.find('[data-test^="activity-open-"]').trigger('click');
@@ -1046,7 +1090,7 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
 
     // An ordinary Escape from the reader restores the originating Activity
     // surface, keeping the drawer visible alongside the saved list anchor.
-    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    press('Escape', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect(w.find('[data-test="utility-drawer"]').exists()).toBe(true);
@@ -1066,10 +1110,10 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
         return fake.saveDraft(command);
       },
     };
-    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    const w = mountSharedApp(client, 'browser-preview', { attachTo: document.body });
     wrapper = w;
     await flushVueMacrotasks(2);
-    await openUtilityDrawer(w, 'drafts');
+    await openDraftsList(w);
     await w.find('[data-test="new-draft"]').trigger('click');
     await flushPromises();
     await w.find('[data-test="draft-body"]').setValue('must survive pending save');
@@ -1081,7 +1125,7 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
     await flushPromises();
     expect(w.find('[data-test="draft-body"]').exists()).toBe(true);
     expect((w.find('[data-test="draft-body"]').element as HTMLTextAreaElement).value).toBe('must survive pending save');
-    expect(w.find('[data-test="drafts-pane"]').exists()).toBe(true);
+    expect(w.find('[data-test="compose-card"]').exists()).toBe(true);
     w.unmount();
     wrapper = null;
   });
@@ -1093,9 +1137,17 @@ describe('preserves compact browsing focus and navigation (UX-01)', () => {
 // while it overlays them, and normal central interaction must return after
 // dismissal. The rail and the active disclosure stay interactive.
 // ---------------------------------------------------------------------------
-describe('App covered central surface (P1)', () => {
+describe("App covered central surface (P1)", () => {
   let fake: BrowserFake;
   let wrapper: VueWrapper | null = null;
+
+  function mountFakeApp(): VueWrapper {
+    const w = mountSharedApp(fake, 'browser-preview', { attachTo: document.body });
+    wrapper = w;
+    return w;
+  }
+
+
 
   function archiveConfirmed(conversationId: string): boolean {
     return fake.controls.activity().some(
@@ -1115,7 +1167,7 @@ describe('App covered central surface (P1)', () => {
   });
 
   it('marks the central surface inert while a utility drawer is open and restores interaction after dismissal', async () => {
-    const w = sharedMountApp(fake, 'browser-preview', { attachTo: document.body });
+    const w = mountFakeApp();
     await flushFakeClientAndVueUpdates(fake);
     const central = w.find('[data-test="central-surface"]').element as HTMLElement;
     expect(central.hasAttribute('inert')).toBe(false);
@@ -1150,7 +1202,7 @@ describe('App covered central surface (P1)', () => {
       dispatchEvent: () => false,
     })) as unknown as typeof window.matchMedia;
     try {
-      const w = sharedMountApp(fake, 'browser-preview', { attachTo: document.body });
+      const w = mountFakeApp();
       await flushFakeClientAndVueUpdates(fake);
       expect(w.find('[data-test="contact-disclosure"]').exists()).toBe(true);
       const central = w.find('[data-test="central-surface"]').element as HTMLElement;
@@ -1180,7 +1232,7 @@ describe('App covered central surface (P1)', () => {
 // UX-02 reader session: message commands, J/K in the reader, origin Back.
 // Uses the synthetic three-message reader fixture (tests/support/fixtures/reader.fixture.ts).
 // ---------------------------------------------------------------------------
-describe('keeps reader navigation within the active session (UX-02)', () => {
+describe("keeps reader navigation within the active session (UX-02)", () => {
   let fixture: ReaderFixture;
   let wrapper: VueWrapper | null = null;
   const originalGetBCR = HTMLElement.prototype.getBoundingClientRect;
@@ -1226,9 +1278,17 @@ describe('keeps reader navigation within the active session (UX-02)', () => {
     await row.trigger('focusin');
   }
 
+  function mountReaderApp(): VueWrapper {
+    const w = mountSharedApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    wrapper = w;
+    return w;
+  }
+
+
+
   async function openReader(w: VueWrapper, conversationId: string): Promise<void> {
     await focusRowById(w, conversationId);
-    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
+    press('Enter', { bubbles: true }, window);
     await flushVueMacrotasks(2);
   }
 
@@ -1258,7 +1318,7 @@ describe('keeps reader navigation within the active session (UX-02)', () => {
   });
 
   it('opens focused on the newest message toggle and keeps N/P distinct from J/K', async () => {
-    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    const w = mountReaderApp();
     await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
     expect(readerSubject(w)).toBe('Reader journey thread');
@@ -1268,50 +1328,50 @@ describe('keeps reader navigation within the active session (UX-02)', () => {
     expect(w.find('[data-test="message-toggle-read-01-m1"]').attributes('aria-expanded')).toBe('false');
 
     // P moves message focus without expanding.
-    window.dispatchEvent(createKeyEvent('p', { bubbles: true  }));
+    press('p', { bubbles: true }, window);
     await flushPromises();
     expect(activeMessageToggle()).toBe('message-toggle-read-01-m2');
     expect(w.find('[data-test="message-toggle-read-01-m2"]').attributes('aria-expanded')).toBe('false');
     // N moves back, still without expanding.
-    window.dispatchEvent(createKeyEvent('n', { bubbles: true  }));
+    press('n', { bubbles: true }, window);
     await flushPromises();
     expect(activeMessageToggle()).toBe('message-toggle-read-01-m3');
     expect(w.find('[data-test="message-toggle-read-01-m2"]').attributes('aria-expanded')).toBe('false');
 
     // J is conversation movement, not message movement: the conversation changes.
-    window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
+    press('j', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(readerSubject(w)).toBe('Neighbor thread read-02');
     expect(fixture.controls.detailCalls.map((ref) => ref.conversationId)).toContain('read-02');
     // K returns to the previous conversation with its visit state preserved.
-    window.dispatchEvent(createKeyEvent('k', { bubbles: true  }));
+    press('k', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(readerSubject(w)).toBe('Reader journey thread');
     expect(activeMessageToggle()).toBe('message-toggle-read-01-m3');
   });
 
   it('expands all with Shift+O idempotently and collapses only the focused message with O', async () => {
-    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    const w = mountReaderApp();
     await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
-    window.dispatchEvent(createKeyEvent('O', { bubbles: true , shiftKey: true }));
+    press('O', { bubbles: true, shiftKey: true }, window);
     await flushPromises();
     expect(w.findAll('.message-toggle').map((t) => t.attributes('aria-expanded'))).toEqual(['true', 'true', 'true']);
-    window.dispatchEvent(createKeyEvent('O', { bubbles: true , shiftKey: true }));
+    press('O', { bubbles: true, shiftKey: true }, window);
     await flushPromises();
     expect(w.findAll('.message-toggle').map((t) => t.attributes('aria-expanded'))).toEqual(['true', 'true', 'true']);
-    window.dispatchEvent(createKeyEvent('o', { bubbles: true  }));
+    press('o', { bubbles: true }, window);
     await flushPromises();
     expect(w.findAll('.message-toggle').map((t) => t.attributes('aria-expanded'))).toEqual(['true', 'true', 'false']);
   });
 
   it('renders hostile markup literally inside expanded message bodies', async () => {
-    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    const w = mountReaderApp();
     await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
-    window.dispatchEvent(createKeyEvent('p', { bubbles: true  })); // focus the hostile middle message
+    press('p', { bubbles: true }, window); // focus the hostile middle message
     await flushPromises();
-    window.dispatchEvent(createKeyEvent('o', { bubbles: true  })); // expand it
+    press('o', { bubbles: true }, window); // expand it
     await flushPromises();
     expect(w.find('[data-test="reader"]').text()).toContain('<script>alert("body")</script>');
     expect(w.find('[data-test="reader"]').text()).toContain('<img src=x onerror=alert(1)> subject with <b>markup</b>');
@@ -1322,21 +1382,21 @@ describe('keeps reader navigation within the active session (UX-02)', () => {
   });
 
   it('restores the ORIGINAL entry reference and anchor at nonzero scroll on Back', async () => {
-    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    const w = mountReaderApp();
     await flushVueMacrotasks(2);
     const list = w.find('ul.inbox-scroll').element as HTMLElement;
     list.scrollTop = 36; // read-03 sits at doc top 72 → viewport offset 36
     await focusRowById(w, 'read-03');
-    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true  }));
+    press('Enter', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
 
     // Move the reader cursor away, then Back: the ORIGINAL entry reference
     // (read-03) and the captured viewport anchor must be restored.
-    window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
+    press('j', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(readerSubject(w)).toBe('Neighbor thread read-04');
-    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    press('Escape', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect(focusedRow(w).attributes('data-test')).toBe('conversation-row-read-03');
@@ -1347,7 +1407,7 @@ describe('keeps reader navigation within the active session (UX-02)', () => {
   });
 
   it('resolves a removed entry reference to the next surviving old neighbor on Back', async () => {
-    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    const w = mountReaderApp();
     await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
     // Both the entry row and its next neighbor vanish while reading.
@@ -1355,63 +1415,63 @@ describe('keeps reader navigation within the active session (UX-02)', () => {
     await flushVueMacrotasks(2);
     fixture.controls.removeFromInbox('read-02');
     await flushVueMacrotasks(2);
-    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    press('Escape', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect(focusedRow(w).attributes('data-test')).toBe('conversation-row-read-03');
   });
 
   it('resolves a removed J/K cursor through the entry ordering without wrapping', async () => {
-    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    const w = mountReaderApp();
     await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
     fixture.controls.removeFromInbox('read-01');
     await flushVueMacrotasks(2);
     // The cursor (read-01) is no longer in the snapshot; the entry ordering
     // resolves J to the next surviving neighbor (read-02).
-    window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
+    press('j', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(readerSubject(w)).toBe('Neighbor thread read-02');
     // K from the first snapshot row clamps (no wrap, no access to removed rows).
-    window.dispatchEvent(createKeyEvent('k', { bubbles: true  }));
+    press('k', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(readerSubject(w)).toBe('Neighbor thread read-02');
   });
 
   it('archives the actioned conversation (not the entry origin) and advances to its surviving neighbor', async () => {
-    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    const w = mountReaderApp();
     await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
-    window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
+    press('j', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(readerSubject(w)).toBe('Neighbor thread read-02');
-    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    press('e', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(fixture.controls.archiveCommands).toHaveLength(1);
     expect(fixture.controls.archiveCommands[0]!.conversation.conversationId).toBe('read-02');
     // The reader advanced to read-03 (surviving neighbor of the actioned
     // conversation), and the origin (read-01) was untouched.
     expect(readerSubject(w)).toBe('Neighbor thread read-03');
-    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    press('Escape', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(focusedRow(w).attributes('data-test')).toBe('conversation-row-read-01');
   });
 
   it('advances through the ACTION-TIME ordering after a concurrent reorder, while Back keeps the entry ordering (P2)', async () => {
-    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    const w = mountReaderApp();
     await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
     // Entry ordering [01,02,03,04]; move the reader cursor to read-03.
-    window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
+    press('j', { bubbles: true }, window);
     await flushVueMacrotasks(2);
-    window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
+    press('j', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(readerSubject(w)).toBe('Neighbor thread read-03');
     // A backend reorder lands BEFORE the archive: action-time ordering is
     // [01,03,02,04], so the next surviving neighbor of read-03 is read-02.
     fixture.controls.reorderInbox(['read-01', 'read-03', 'read-02', 'read-04']);
     await flushVueMacrotasks(2);
-    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    press('e', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(fixture.controls.archiveCommands).toHaveLength(1);
     expect(fixture.controls.archiveCommands[0]!.conversation.conversationId).toBe('read-03');
@@ -1419,14 +1479,14 @@ describe('keeps reader navigation within the active session (UX-02)', () => {
     expect(readerSubject(w)).toBe('Neighbor thread read-02');
     // Back still restores the ORIGINAL entry reference through the immutable
     // entry ordering — the archived read-03 and the reorder do not affect it.
-    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    press('Escape', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect(focusedRow(w).attributes('data-test')).toBe('conversation-row-read-01');
   });
 
   it('archives the open conversation with E from the initial message-toggle focus (bubbling target)', async () => {
-    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    const w = mountReaderApp();
     await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
     // The default reader focus is the newest message toggle — navigation
@@ -1434,7 +1494,7 @@ describe('keeps reader navigation within the active session (UX-02)', () => {
     // open conversation.
     expect(activeMessageToggle()).toBe('message-toggle-read-01-m3');
     const toggle = document.querySelector('[data-test="message-toggle-read-01-m3"]');
-    toggle!.dispatchEvent(createKeyEvent('e', { bubbles: true  })); // bubbles from the real target
+    press('e', { bubbles: true }, toggle!); // bubbles from the real target
     await flushVueMacrotasks(2);
     expect(fixture.controls.archiveCommands).toHaveLength(1);
     expect(fixture.controls.archiveCommands[0]!.conversation.conversationId).toBe('read-01');
@@ -1442,19 +1502,19 @@ describe('keeps reader navigation within the active session (UX-02)', () => {
   });
 
   it('keeps E usable after N/P moves message focus, and still blocks toolbar buttons', async () => {
-    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    const w = mountReaderApp();
     await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
     // A focused toolbar button keeps the generic exclusion.
     (w.find('[data-test="reader-archive-toggle"]').element as HTMLElement).focus();
-    (w.find('[data-test="reader-archive-toggle"]').element as HTMLElement).dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    press('e', { bubbles: true }, (w.find('[data-test="reader-archive-toggle"]').element as HTMLElement));
     await flushVueMacrotasks(2);
     expect(fixture.controls.archiveCommands).toHaveLength(0);
-    window.dispatchEvent(createKeyEvent('p', { bubbles: true  }));
+    press('p', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(activeMessageToggle()).toBe('message-toggle-read-01-m2');
     const toggle = document.querySelector('[data-test="message-toggle-read-01-m2"]');
-    toggle!.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    press('e', { bubbles: true }, toggle!);
     await flushVueMacrotasks(2);
     // The action targets the current open conversation, never the focused message.
     expect(fixture.controls.archiveCommands).toHaveLength(1);
@@ -1474,13 +1534,13 @@ describe('keeps reader navigation within the active session (UX-02)', () => {
         mutationAccess: 'enabled',
       }),
     };
-    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    const w = mountSharedApp(client, 'browser-preview', { attachTo: document.body });
     wrapper = w;
     await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
     expect(activeMessageToggle()).toBe('message-toggle-read-01-m3');
     const toggle = document.querySelector('[data-test="message-toggle-read-01-m3"]');
-    toggle!.dispatchEvent(createKeyEvent('U', { bubbles: true , shiftKey: true }));
+    press('U', { bubbles: true, shiftKey: true }, toggle!);
     await flushVueMacrotasks(2);
     expect(fixture.controls.readCommands).toHaveLength(1);
     expect(fixture.controls.readCommands[0]!.conversation.conversationId).toBe('read-01');
@@ -1489,7 +1549,7 @@ describe('keeps reader navigation within the active session (UX-02)', () => {
   });
 
   it('keeps a stale delayed detail from replacing a newer cursor and refuses actions while loading', async () => {
-    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    const w = mountReaderApp();
     await flushVueMacrotasks(2);
     // read-02 is prefetched after read-01 became ready; make that in-flight
     // response slow so J has to wait for it (the neighbor is not cached yet).
@@ -1502,23 +1562,25 @@ describe('keeps reader navigation within the active session (UX-02)', () => {
       return real(target, searchContext);
     };
     await openReader(w, 'read-01');
-    window.dispatchEvent(createKeyEvent('j', { bubbles: true  })); // read-02 → response pending
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    press('j', { bubbles: true }, window); // read-02 → response pending
     await flushPromises();
     // Within the loading delay the previous conversation stays on screen but supplies no action target.
     expect(readerSubject(w)).toBe('Reader journey thread');
     expect(w.find('[data-test="reader-loading"]').exists()).toBe(false);
-    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    press('e', { bubbles: true }, window);
     await flushPromises();
     expect(fixture.controls.archiveCommands).toHaveLength(0);
     // Past the delay the loading presentation shows the target's list identity, never the old body.
-    await new Promise((resolve) => setTimeout(resolve, READER_LOADING_DELAY_MS + 30));
+    await vi.advanceTimersByTimeAsync(READER_LOADING_DELAY_MS + 30);
+    vi.useRealTimers();
     await flushPromises();
     expect(w.find('[data-test="reader-loading"]').exists()).toBe(true);
-    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    press('e', { bubbles: true }, window);
     await flushPromises();
     expect(fixture.controls.archiveCommands).toHaveLength(0);
     // Move on: read-03 resolves immediately and becomes the current cursor.
-    window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
+    press('j', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(readerSubject(w)).toBe('Neighbor thread read-03');
     // Make read-02 distinguishable while the stale (delayed) read-02 response
@@ -1526,7 +1588,7 @@ describe('keeps reader navigation within the active session (UX-02)', () => {
     fixture.controls.replaceDetail('read-02', { subject: 'Changed neighbor read-02' });
     await flushVueMacrotasks(2);
     // Go back to read-02: the fresh fetch returns the CHANGED content.
-    window.dispatchEvent(createKeyEvent('k', { bubbles: true  }));
+    press('k', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(readerSubject(w)).toBe('Changed neighbor read-02');
     // Now let the stale read-02 response (old subject) settle: it must not
@@ -1547,27 +1609,27 @@ describe('keeps reader navigation within the active session (UX-02)', () => {
         return accepted.promise;
       },
     };
-    const w = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    const w = mountSharedApp(client, 'browser-preview', { attachTo: document.body });
     wrapper = w;
     await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
-    window.dispatchEvent(createKeyEvent('e', { bubbles: true  }));
+    press('e', { bubbles: true }, window);
     await flushPromises();
-    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    press('Escape', { bubbles: true }, window);
     accepted.resolve(receipt!);
     await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
   });
 
   it('leaves reader ArrowUp/ArrowDown to native behavior with no fetch (inbox origin, P2)', async () => {
-    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    const w = mountReaderApp();
     await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
     const callsBefore = fixture.controls.detailCalls.length;
-    const down = createKeyEvent('ArrowDown', { bubbles: true , cancelable: true });
+    const down = createKeyEvent('ArrowDown', { bubbles: true, cancelable: true });
     window.dispatchEvent(down);
     await flushVueMacrotasks(2);
-    const up = createKeyEvent('ArrowUp', { bubbles: true , cancelable: true });
+    const up = createKeyEvent('ArrowUp', { bubbles: true, cancelable: true });
     window.dispatchEvent(up);
     await flushVueMacrotasks(2);
     // Native default: no preventDefault, no conversation fetch, no cursor move.
@@ -1576,23 +1638,23 @@ describe('keeps reader navigation within the active session (UX-02)', () => {
     expect(fixture.controls.detailCalls.length).toBe(callsBefore);
     expect(readerSubject(w)).toBe('Reader journey thread');
     // j/k still switch conversations inside the reader.
-    window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
+    press('j', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(readerSubject(w)).toBe('Neighbor thread read-02');
   });
 
   it('leaves reader ArrowUp/ArrowDown to native behavior with no fetch (Activity origin, P2)', async () => {
-    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    const w = mountReaderApp();
     await flushVueMacrotasks(2);
     await openUtilityDrawer(w, 'activity');
     await w.find('[data-test="activity-open-read-op-1"]').trigger('click');
     await flushVueMacrotasks(2);
     expect(readerSubject(w)).toBe('Neighbor thread read-02');
     const callsBefore = fixture.controls.detailCalls.length;
-    const down = createKeyEvent('ArrowDown', { bubbles: true , cancelable: true });
+    const down = createKeyEvent('ArrowDown', { bubbles: true, cancelable: true });
     window.dispatchEvent(down);
     await flushVueMacrotasks(2);
-    const up = createKeyEvent('ArrowUp', { bubbles: true , cancelable: true });
+    const up = createKeyEvent('ArrowUp', { bubbles: true, cancelable: true });
     window.dispatchEvent(up);
     await flushVueMacrotasks(2);
     expect(down.defaultPrevented).toBe(false);
@@ -1602,7 +1664,7 @@ describe('keeps reader navigation within the active session (UX-02)', () => {
   });
 
   it('treats J/K as a no-op for Activity-origin readers (duplicate references included) and returns to Activity on Back', async () => {
-    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    const w = mountReaderApp();
     await flushVueMacrotasks(2);
     await openUtilityDrawer(w, 'activity');
     // The fixture carries duplicate Activity references to read-02.
@@ -1610,21 +1672,21 @@ describe('keeps reader navigation within the active session (UX-02)', () => {
     await flushVueMacrotasks(2);
     expect(readerSubject(w)).toBe('Neighbor thread read-02');
     const callsBefore = fixture.controls.detailCalls.length;
-    window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
+    press('j', { bubbles: true }, window);
     await flushVueMacrotasks(2);
-    window.dispatchEvent(createKeyEvent('k', { bubbles: true  }));
+    press('k', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     // No navigation and no getConversation calls for an Activity origin.
     expect(fixture.controls.detailCalls.length).toBe(callsBefore);
     expect(readerSubject(w)).toBe('Neighbor thread read-02');
-    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    press('Escape', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(w.find('[data-test="utility-drawer"]').exists()).toBe(true);
     expect(w.find('[data-test="reader"]').exists()).false;
   });
 
   it('keeps Escape precedence: drawer first, then message details, then the reader', async () => {
-    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    const w = mountReaderApp();
     await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
     const details = w.find('[data-test="message-details-read-01-m3"]');
@@ -1633,54 +1695,54 @@ describe('keeps reader navigation within the active session (UX-02)', () => {
     await flushPromises();
     // A drawer opened over the reader takes Escape precedence.
     await openUtilityDrawer(w, 'activity');
-    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    press('Escape', { bubbles: true }, window);
     await flushPromises();
     expect(w.find('[data-test="utility-drawer"]').exists()).toBe(false);
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
     expect((w.find('[data-test="message-details-read-01-m3"]').element as HTMLDetailsElement).open).toBe(true);
     // Next Escape dismisses the open details disclosure, keeping the reader.
-    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    press('Escape', { bubbles: true }, window);
     await flushPromises();
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
     expect((w.find('[data-test="message-details-read-01-m3"]').element as HTMLDetailsElement).open).toBe(false);
     // Final Escape closes the reader.
-    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    press('Escape', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
   });
 
   it('suppresses reader message commands under the modifier, IME, editable, and overlay guards', async () => {
-    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    const w = mountReaderApp();
     await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
     const before = activeMessageToggle();
-    window.dispatchEvent(createKeyEvent('n', { bubbles: true , ctrlKey: true }));
-    const ime = createKeyEvent('n', { bubbles: true  });
+    press('n', { bubbles: true, ctrlKey: true }, window);
+    const ime = createKeyEvent('n', { bubbles: true });
     Object.defineProperty(ime, 'isComposing', { value: true });
     window.dispatchEvent(ime);
-    window.dispatchEvent(createKeyEvent('n', { bubbles: true , keyCode: 229 }));
+    press('n', { bubbles: true, keyCode: 229 }, window);
     const input = document.createElement('input');
     document.body.appendChild(input);
-    input.dispatchEvent(createKeyEvent('n', { bubbles: true  }));
+    press('n', { bubbles: true }, input);
     input.remove();
     await flushPromises();
     expect(activeMessageToggle()).toBe(before);
     // J under modifiers is equally suppressed.
-    window.dispatchEvent(createKeyEvent('j', { bubbles: true , metaKey: true }));
+    press('j', { bubbles: true, metaKey: true }, window);
     await flushPromises();
     expect(readerSubject(w)).toBe('Reader journey thread');
     // With a drawer open, reader commands are suppressed underneath it.
     await openUtilityDrawer(w, 'activity');
     const callsBefore = fixture.controls.detailCalls.length;
-    window.dispatchEvent(createKeyEvent('n', { bubbles: true  }));
-    window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
+    press('n', { bubbles: true }, window);
+    press('j', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(activeMessageToggle()).not.toBe('message-toggle-read-01-m2');
     expect(fixture.controls.detailCalls.length).toBe(callsBefore);
   });
 
   it('keeps a participant override when focus lands directly on a newly focused message participant (P2)', async () => {
-    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    const w = mountReaderApp();
     await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
     // Baseline: newest message sender (m3, Ada).
@@ -1709,7 +1771,7 @@ describe('keeps reader navigation within the active session (UX-02)', () => {
   });
 
   it('temporarily overrides the reader contact from participant hover/focus and restores the baseline', async () => {
-    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    const w = mountReaderApp();
     await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
     // Baseline: the active (newest) message sender.
@@ -1745,12 +1807,12 @@ describe('keeps reader navigation within the active session (UX-02)', () => {
   });
 
   it('keeps the reply source fixed to the latest message even when an older message is focused', async () => {
-    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    const w = mountReaderApp();
     await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
     expect(w.find('[data-test="reply-source-label"]').text()).toContain('Ada Fixture');
-    window.dispatchEvent(createKeyEvent('p', { bubbles: true  }));
-    window.dispatchEvent(createKeyEvent('p', { bubbles: true  }));
+    press('p', { bubbles: true }, window);
+    press('p', { bubbles: true }, window);
     await flushPromises();
     expect(activeMessageToggle()).toBe('message-toggle-read-01-m1');
     // The label still names the latest source.
@@ -1767,12 +1829,12 @@ describe('keeps reader navigation within the active session (UX-02)', () => {
   });
 
   it('preserves expansion, focus, and message identity through background replacement and message removal', async () => {
-    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    const w = mountReaderApp();
     await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
-    window.dispatchEvent(createKeyEvent('p', { bubbles: true  }));
-    window.dispatchEvent(createKeyEvent('p', { bubbles: true  }));
-    window.dispatchEvent(createKeyEvent('o', { bubbles: true  })); // expand the oldest message
+    press('p', { bubbles: true }, window);
+    press('p', { bubbles: true }, window);
+    press('o', { bubbles: true }, window); // expand the oldest message
     await flushPromises();
     expect(w.find('[data-test="message-toggle-read-01-m1"]').attributes('aria-expanded')).toBe('true');
     // Same-reference background replacement: no focus theft, expansion kept.
@@ -1781,8 +1843,8 @@ describe('keeps reader navigation within the active session (UX-02)', () => {
     expect(activeMessageToggle()).toBe('message-toggle-read-01-m1');
     expect(w.find('[data-test="message-toggle-read-01-m1"]').attributes('aria-expanded')).toBe('true');
     // Focused message removed remotely: identity resolves to the next survivor.
-    window.dispatchEvent(createKeyEvent('n', { bubbles: true  }));
-    window.dispatchEvent(createKeyEvent('n', { bubbles: true  }));
+    press('n', { bubbles: true }, window);
+    press('n', { bubbles: true }, window);
     await flushPromises(); // focus is back on the newest toggle
     fixture.controls.removeMessage('read-01', 'read-01-m3');
     await flushVueMacrotasks(2);
@@ -1791,11 +1853,11 @@ describe('keeps reader navigation within the active session (UX-02)', () => {
   });
 
   it('adds no mailbox writes during a pure reading journey (copy, hover, details, navigation)', async () => {
-    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    const w = mountReaderApp();
     await flushVueMacrotasks(2);
     await openReader(w, 'read-01');
-    window.dispatchEvent(createKeyEvent('p', { bubbles: true  }));
-    window.dispatchEvent(createKeyEvent('O', { bubbles: true , shiftKey: true }));
+    press('p', { bubbles: true }, window);
+    press('O', { bubbles: true, shiftKey: true }, window);
     const details = w.find('[data-test="message-details-read-01-m2"]');
     (details.element as HTMLDetailsElement).open = true;
     details.element.dispatchEvent(new Event('toggle'));
@@ -1803,11 +1865,11 @@ describe('keeps reader navigation within the active session (UX-02)', () => {
     await w.find('[data-test="participant-from-read-01-m2"]').trigger('mouseleave');
     await w.find('[data-test="copy-email"]').trigger('click');
     await flushPromises();
-    window.dispatchEvent(createKeyEvent('j', { bubbles: true  }));
+    press('j', { bubbles: true }, window);
     await flushVueMacrotasks(2);
-    window.dispatchEvent(createKeyEvent('k', { bubbles: true  }));
+    press('k', { bubbles: true }, window);
     await flushVueMacrotasks(2);
-    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true  }));
+    press('Escape', { bubbles: true }, window);
     await flushVueMacrotasks(2);
     expect(fixture.controls.archiveCommands).toHaveLength(0);
     expect(fixture.controls.readCommands).toHaveLength(0);
@@ -1815,9 +1877,11 @@ describe('keeps reader navigation within the active session (UX-02)', () => {
   });
 });
 
-describe('copies contact details without stealing focus (UX-02)', () => {
+describe("copies contact details without stealing focus (UX-02)", () => {
   let fixture: ReaderFixture;
   let wrapper: VueWrapper | null = null;
+
+
 
   beforeEach(() => {
     fixture = createReaderFixtureClient();
@@ -1829,17 +1893,23 @@ describe('copies contact details without stealing focus (UX-02)', () => {
     delete (navigator as { clipboard?: unknown }).clipboard;
   });
 
+  function mountReaderApp(): VueWrapper {
+    const w = mountSharedApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    wrapper = w;
+    return w;
+  }
+
   async function openReader(w: VueWrapper): Promise<void> {
     const row = w.find('[data-test="conversation-row-read-01"]');
     (row.element as HTMLElement).focus();
     await row.trigger('focusin');
-    window.dispatchEvent(createKeyEvent('Enter', { bubbles: true }));
+    press('Enter', { bubbles: true }, window);
     await flushVueMacrotasks(2);
   }
 
   it('reports unavailable clipboard APIs with an honest manual-copy notice and no side effects', async () => {
     expect(navigator.clipboard).toBeUndefined();
-    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    const w = mountReaderApp();
     await flushVueMacrotasks(2);
     await openReader(w);
     await w.find('[data-test="copy-email"]').trigger('click');
@@ -1861,7 +1931,7 @@ describe('copies contact details without stealing focus (UX-02)', () => {
       configurable: true,
       value: { writeText: async (text: string) => { writes.push(text); } },
     });
-    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    const w = mountReaderApp();
     await flushVueMacrotasks(2);
     await openReader(w);
     await w.find('[data-test="copy-email"]').trigger('click');
@@ -1876,7 +1946,7 @@ describe('copies contact details without stealing focus (UX-02)', () => {
       configurable: true,
       value: { writeText: async () => { throw new Error('denied'); } },
     });
-    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    const w = mountReaderApp();
     await flushVueMacrotasks(2);
     await openReader(w);
     await w.find('[data-test="copy-email"]').trigger('click');
@@ -1888,7 +1958,7 @@ describe('copies contact details without stealing focus (UX-02)', () => {
   });
 
   it('hides the copy-name control when no display name is known', async () => {
-    const w = sharedMountApp(fixture.client, 'browser-preview', { attachTo: document.body });
+    const w = mountReaderApp();
     await flushVueMacrotasks(2);
     await openReader(w);
     // The reader baseline contact (newest message sender) has a display name.

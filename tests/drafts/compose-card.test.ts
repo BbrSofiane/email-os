@@ -1,13 +1,16 @@
-import { flushFakeClientAndVueUpdates } from '../helpers';
+import { flushFakeClientAndVueUpdates } from "../helpers";
 import { readFileSync } from 'node:fs';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { defineComponent, h } from 'vue';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 
-import ComposeCard from '../../src/components/ComposeCard.vue';
-import { browsingActions } from '../../src/lib/browsing-actions';
-import { actionAliases, actionGroupOf, matchesQuery } from '../../src/lib/action-palette';
-import { createBrowserFakeMailClient, deferred, waitFor, type BrowserFake, mountApp as sharedMountApp, createKeyEvent } from '../helpers';
-import type { DraftContent, DraftReceipt, MailClient } from '../../src/lib/ipc/client';
+import ComposeCard from "../../src/components/ComposeCard.vue";
+import { browsingActions } from "../../src/lib/browsing-actions";
+import { REPLY_REASONS, sourceLoadErrorReason } from "../../src/lib/reply-context";
+import { actionAliases, actionGroupOf, matchesQuery } from "../../src/lib/action-palette";
+import { createBrowserFakeMailClient, deferred, type BrowserFake, mountApp as sharedMountApp, press } from "../helpers";
+import { advanceUiUntil, useUiTestClock } from "../support/timers";
+import type { DraftContent, DraftReceipt, MailClient } from "../../src/lib/ipc/client";
 
 type CardProps = InstanceType<typeof ComposeCard>['$props'];
 
@@ -39,9 +42,10 @@ function cardProps(overrides: Partial<CardProps> = {}): CardProps {
   };
 }
 
-describe('ComposeCard inline new-message card', () => {
+describe("ComposeCard inline new-message card", () => {
   let wrapper: VueWrapper | null = null;
-  afterEach(() => { wrapper?.unmount(); wrapper = null; });
+  beforeEach(useUiTestClock);
+  afterEach(() => { wrapper?.unmount(); wrapper = null; vi.useRealTimers(); });
 
   it('renders as an in-flow card (no backdrop, no modal role) with To/Cc/Subject/Body fields and emits setField and close', async () => {
     wrapper = mount(ComposeCard, { props: cardProps() });
@@ -189,7 +193,7 @@ describe('ComposeCard inline new-message card', () => {
   });
 });
 
-describe('compose palette metadata', () => {
+describe("compose palette metadata", () => {
   it('registers compose in the conversation group with aliases and the C key', () => {
     const compose = browsingActions.find((action) => action.id === 'compose');
     expect(compose).toBeDefined();
@@ -210,14 +214,15 @@ describe('compose palette metadata', () => {
   });
 });
 
-describe('compose entry points in App (inline card in the central pane)', () => {
+describe("compose entry points in App (inline card in the central pane)", () => {
   let wrapper: VueWrapper | null = null;
   let fake: BrowserFake;
-  afterEach(() => { wrapper?.unmount(); wrapper = null; });
+  beforeEach(useUiTestClock);
+  afterEach(() => { wrapper?.unmount(); wrapper = null; vi.useRealTimers(); });
 
   async function openCardFromList(w: VueWrapper): Promise<void> {
-    document.body.dispatchEvent(createKeyEvent('c', { bubbles: true, cancelable: true }));
-    await waitFor(() => w.find('[data-test="compose-card"]').exists());
+    press('c', { bubbles: true, cancelable: true }, document.body);
+    await advanceUiUntil(() => w.find('[data-test="compose-card"]').exists());
     await flushPromises();
   }
 
@@ -270,7 +275,7 @@ describe('compose entry points in App (inline card in the central pane)', () => 
     expect((await fake.listDrafts())).toHaveLength(1);
     expect((await fake.listDrafts())[0]?.source).toEqual({ kind: 'new_message' });
     // A second c must not stack another editor surface or draft.
-    document.body.dispatchEvent(createKeyEvent('c', { bubbles: true, cancelable: true }));
+    press('c', { bubbles: true, cancelable: true }, document.body);
     await flushPromises();
     expect(w.findAll('[data-test="compose-card"]')).toHaveLength(1);
     expect((await fake.listDrafts())).toHaveLength(1);
@@ -278,7 +283,7 @@ describe('compose entry points in App (inline card in the central pane)', () => 
     await card.find('[data-test="draft-subject"]').setValue('Inline subject');
     await card.find('[data-test="close-composer"]').trigger('click');
     await flushPromises();
-    await waitFor(() => !w.find('[data-test="compose-card"]').exists());
+    await advanceUiUntil(() => !w.find('[data-test="compose-card"]').exists());
     // The list is back after the card closed.
     expect(w.find('.inbox-list').exists()).toBe(true);
     const summaries = await fake.listDrafts();
@@ -293,7 +298,7 @@ describe('compose entry points in App (inline card in the central pane)', () => 
     await flushFakeClientAndVueUpdates(fake);
     await w.get('[data-test="compose-trigger"]').trigger('click');
     await flushPromises();
-    await waitFor(() => w.find('[data-test="compose-card"]').exists());
+    await advanceUiUntil(() => w.find('[data-test="compose-card"]').exists());
     expectInlineCardInCentral(w);
     expect((await fake.listDrafts())[0]?.source).toEqual({ kind: 'new_message' });
   });
@@ -314,13 +319,13 @@ describe('compose entry points in App (inline card in the central pane)', () => 
     await openCardFromList(w);
     await w.find('[data-test="draft-body"]').setValue('last keystroke');
 
-    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true, cancelable: true }));
+    press('Escape', { bubbles: true, cancelable: true }, window);
     await flushPromises();
     // The flush is in flight: the card must stay open.
     expect(w.find('[data-test="compose-card"]').exists()).toBe(true);
     gate.reject({ kind: 'storage_unavailable' });
     await flushPromises();
-    await waitFor(() => w.find('[data-test="draft-error"]').exists());
+    await advanceUiUntil(() => w.find('[data-test="draft-error"]').exists());
     // Failed close: the inline card stays visible with the exact buffer.
     expect(w.find('[data-test="compose-card"]').exists()).toBe(true);
     expect(w.find('.inbox-list').exists()).toBe(false);
@@ -329,9 +334,9 @@ describe('compose entry points in App (inline card in the central pane)', () => 
     // Retry the save, then Escape closes the card through the protected flush.
     await w.find('[data-test="retry-draft-save"]').trigger('click');
     await flushPromises();
-    window.dispatchEvent(createKeyEvent('Escape', { bubbles: true, cancelable: true }));
+    press('Escape', { bubbles: true, cancelable: true }, window);
     await flushPromises();
-    await waitFor(() => !w.find('[data-test="compose-card"]').exists());
+    await advanceUiUntil(() => !w.find('[data-test="compose-card"]').exists());
     expect(w.find('.inbox-list').exists()).toBe(true);
     const saved = await fake.getDraft((await fake.listDrafts())[0]!.ref);
     expect(saved.content.bodyText).toBe('last keystroke');
@@ -343,9 +348,9 @@ describe('compose entry points in App (inline card in the central pane)', () => 
     await flushFakeClientAndVueUpdates(fake);
     await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushPromises();
-    await waitFor(() => w.find('[data-test="reader"]').exists());
-    document.body.dispatchEvent(createKeyEvent('c', { bubbles: true, cancelable: true }));
-    await waitFor(() => w.find('[data-test="compose-card"]').exists());
+    await advanceUiUntil(() => w.find('[data-test="reader"]').exists());
+    press('c', { bubbles: true, cancelable: true }, document.body);
+    await advanceUiUntil(() => w.find('[data-test="compose-card"]').exists());
     // The reader stays open; the card docks at the BOTTOM of the reader pane.
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
     const pane = w.find('section.reader-pane');
@@ -364,16 +369,16 @@ describe('compose entry points in App (inline card in the central pane)', () => 
     fake = createBrowserFakeMailClient();
     const w = wrapper = sharedMountApp(fake, 'browser-preview', { attachTo: document.body });
     await flushFakeClientAndVueUpdates(fake);
-    document.body.dispatchEvent(createKeyEvent('c', { bubbles: true, cancelable: true, ...{ ctrlKey: true } }));
-    document.body.dispatchEvent(createKeyEvent('c', { bubbles: true, cancelable: true, ...{ metaKey: true } }));
-    document.body.dispatchEvent(createKeyEvent('c', { bubbles: true, cancelable: true, ...{ altKey: true } }));
-    document.body.dispatchEvent(createKeyEvent('C', { bubbles: true, cancelable: true, ...{ shiftKey: true } }));
-    document.body.dispatchEvent(createKeyEvent('c', { bubbles: true, cancelable: true, ...{ keyCode: 229 } }));
+    press('c', { bubbles: true, cancelable: true, ...{ ctrlKey: true } }, document.body);
+    press('c', { bubbles: true, cancelable: true, ...{ metaKey: true } }, document.body);
+    press('c', { bubbles: true, cancelable: true, ...{ altKey: true } }, document.body);
+    press('C', { bubbles: true, cancelable: true, ...{ shiftKey: true } }, document.body);
+    press('c', { bubbles: true, cancelable: true, ...{ keyCode: 229 } }, document.body);
     await flushPromises();
     expect(w.find('[data-test="compose-card"]').exists()).toBe(false);
     const input = document.createElement('input');
     document.body.appendChild(input);
-    input.dispatchEvent(createKeyEvent('c', { bubbles: true, cancelable: true }));
+    press('c', { bubbles: true, cancelable: true }, input);
     await flushPromises();
     expect(w.find('[data-test="compose-card"]').exists()).toBe(false);
     input.remove();
@@ -393,7 +398,7 @@ describe('compose entry points in App (inline card in the central pane)', () => 
     expect(option.get('kbd').text()).toBe('C');
     await option.trigger('click');
     await flushPromises();
-    await waitFor(() => w.find('[data-test="compose-card"]').exists());
+    await advanceUiUntil(() => w.find('[data-test="compose-card"]').exists());
     expectInlineCardInCentral(w);
     expect((await fake.listDrafts())[0]?.source).toEqual({ kind: 'new_message' });
   });
@@ -403,18 +408,18 @@ describe('compose entry points in App (inline card in the central pane)', () => 
     const w = wrapper = sharedMountApp(fake, 'browser-preview', { attachTo: document.body });
     await flushFakeClientAndVueUpdates(fake);
     await w.find('[data-test="rail-activity"]').trigger('click');
-    await waitFor(() => w.find('[data-test="utility-drawer"]').exists());
+    await advanceUiUntil(() => w.find('[data-test="utility-drawer"]').exists());
     // The glyph is disabled and the C key does nothing while the drawer covers central.
     expect(w.get('[data-test="compose-trigger"]').attributes('disabled')).toBeDefined();
-    document.body.dispatchEvent(createKeyEvent('c', { bubbles: true, cancelable: true }));
+    press('c', { bubbles: true, cancelable: true }, document.body);
     await flushPromises();
     expect(w.find('[data-test="compose-card"]').exists()).toBe(false);
     expect((await fake.listDrafts())).toHaveLength(0);
     // With the drawer closed, compose works again.
     await w.find('[data-test="drawer-close"]').trigger('click');
-    await waitFor(() => !w.find('[data-test="utility-drawer"]').exists());
-    document.body.dispatchEvent(createKeyEvent('c', { bubbles: true, cancelable: true }));
-    await waitFor(() => w.find('[data-test="compose-card"]').exists());
+    await advanceUiUntil(() => !w.find('[data-test="utility-drawer"]').exists());
+    press('c', { bubbles: true, cancelable: true }, document.body);
+    await advanceUiUntil(() => w.find('[data-test="compose-card"]').exists());
     expectInlineCardInCentral(w);
   });
 
@@ -432,12 +437,74 @@ describe('compose entry points in App (inline card in the central pane)', () => 
     await flushFakeClientAndVueUpdates(fake);
     await openCardFromList(w);
     await w.find('[data-test="draft-body"]').setValue('e j k stay text');
-    for (const key of ['e', 'j', 'k', 'Enter', 'x', 'g', 'E']) window.dispatchEvent(createKeyEvent(key, key === 'E' ? { shiftKey: true } : {}));
+    for (const key of ['e', 'j', 'k', 'Enter', 'x', 'g', 'E']) press(key, { bubbles: true, ...(key === 'E' ? { shiftKey: true } : {}) }, window);
     await flushPromises();
-    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(archives).toBe(0);
     expect(fake.controls.activity()).toEqual([]);
     expect((w.find('[data-test="draft-body"]').element as HTMLTextAreaElement).value).toBe('e j k stay text');
     expect(w.find('[data-test="search-input"]').exists()).toBe(false);
+  });
+});
+
+describe('ComposeCard fallback reason (reply draft that cannot show its thread)', () => {
+  let wrapper: VueWrapper | null = null;
+  afterEach(() => { wrapper?.unmount(); wrapper = null; });
+  const replySource = { kind: 'reply', conversation: { accountId: 'fixture-account', conversationId: 'conv-01' }, sourceMessageId: 'm1' } as const;
+  const noticeFor = (notice: string | null) => {
+    wrapper?.unmount();
+    wrapper = mount(ComposeCard, { props: cardProps({ source: replySource, recipientLabel: 'Ada', notice }) });
+    return wrapper.find('[data-test="compose-card-notice"]');
+  };
+
+  it.each([
+    [REPLY_REASONS.noLatestMessage.text, 'Source conversation unavailable: no latest message.'],
+    [REPLY_REASONS.retainedSnapshot.text, 'Source conversation unavailable: retained snapshot.'],
+    [REPLY_REASONS.incomplete.text, 'Source conversation unavailable: incomplete cached conversation.'],
+    [REPLY_REASONS.headerMismatch.text, 'Source conversation unavailable: reply headers do not match the latest message.'],
+    [sourceLoadErrorReason('not found'), 'Source conversation unavailable: could not be loaded: not found.'],
+    [sourceLoadErrorReason(null), 'Source conversation unavailable: could not be loaded.'],
+  ])('shows the failure "%s" as "unavailable: <reason>" and keeps the sentence in the title', (reason, line) => {
+    const notice = noticeFor(reason);
+    expect(notice.text()).toBe(`${line} Editing locally; nothing is sent.`);
+    expect(notice.attributes('title')).toBe(reason);
+    expect(notice.attributes('role')).toBe('note');
+  });
+
+  it.each([
+    [REPLY_REASONS.notOpen.text, 'Source conversation not open.'],
+    [REPLY_REASONS.stillLoading.text, 'Source conversation still loading.'],
+    [REPLY_REASONS.otherAccount.text, 'Source conversation belongs to another account.'],
+  ])('states the navigation reason "%s" as a fact, never as "unavailable"', (reason, line) => {
+    const notice = noticeFor(reason);
+    expect(notice.text()).toBe(`${line} Editing locally; nothing is sent.`);
+    expect(notice.text()).not.toContain('unavailable');
+    expect(notice.attributes('title')).toBe(reason);
+    expect(notice.attributes('role')).toBe('note');
+  });
+
+  it('shows an unknown reason as written, never a vague word, and no line without a reason', () => {
+    expect(noticeFor('Something specific broke.').text()).toBe('Source conversation unavailable: Something specific broke. Editing locally; nothing is sent.');
+    expect(noticeFor(null).exists()).toBe(false);
+  });
+
+  it('describes the card by the notice through a unique id, and by nothing when there is no notice', () => {
+    const notice = noticeFor(REPLY_REASONS.notOpen.text);
+    const card = wrapper!.get('[data-test="compose-card"]');
+    const id = notice.attributes('id');
+    expect(id).toBeTruthy();
+    expect(card.attributes('aria-describedby')).toBe(id);
+    // Focus lands in To, so the field itself carries the explanation.
+    expect(wrapper!.get('[data-test="draft-to"]').attributes('aria-describedby')).toBe(id);
+    expect(card.attributes('aria-label')).toBe('Reply draft to Ada');
+    expect(wrapper!.element.querySelectorAll(`[id="${id}"]`)).toHaveLength(1);
+    // Two cards in one app never share a notice id.
+    const props = cardProps({ source: replySource, recipientLabel: 'Ada', notice: REPLY_REASONS.notOpen.text });
+    const pair = mount(defineComponent({ render: () => h('div', [h(ComposeCard, props), h(ComposeCard, props)]) }));
+    const ids = pair.findAll('[data-test="compose-card-notice"]').map((el) => el.attributes('id'));
+    expect(new Set(ids).size).toBe(2);
+    pair.unmount();
+    noticeFor(null);
+    expect(wrapper!.get('[data-test="compose-card"]').attributes('aria-describedby')).toBeUndefined();
+    expect(wrapper!.get('[data-test="draft-to"]').attributes('aria-describedby')).toBeUndefined();
   });
 });

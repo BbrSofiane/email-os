@@ -2,6 +2,8 @@
 import { computed, onScopeDispose, ref, type ComputedRef, type Ref } from 'vue';
 import type {
   AccountStatus,
+  CachedDoneSnapshot,
+  CachedTrashSnapshot,
   SavedSplit,
   Conversation,
   ConversationRef,
@@ -67,7 +69,12 @@ export function sameConversation(a: ConversationRef | null, b: ConversationRef |
   return a !== null && b !== null && a.accountId === b.accountId && a.conversationId === b.conversationId;
 }
 
-export type BrowseContext = 'inbox' | 'saved' | 'done' | 'starred' | 'search';
+/**
+ * `reminders` and `drafts` are list contexts whose rows are not conversations:
+ * the mailbox only tracks that one is the active context (history, Back, reader
+ * origin); `useReminders` and `useDrafts` own their rows.
+ */
+export type BrowseContext = 'inbox' | 'saved' | 'done' | 'starred' | 'trash' | 'reminders' | 'drafts' | 'search';
 
 /**
  * UX-05 product/safety bound for selection and groups (docs/ux-05-safe-bulk-
@@ -377,10 +384,23 @@ export function useMailbox(client: MailClient): Mailbox {
     savedTotal.value = null;
   }
 
-  /** Independent cache filters compose by intersection; unknown facts never qualify. */
+  /** Independent cache filters compose by intersection; unknown facts never qualify.
+   *  Cached Trash is a read-only recovery view: it always lists everything, so the unread filter never applies there. */
   function matchesCachedFilters(row: ConversationSummaryLike): boolean {
-    return (!unreadOnly.value || row.isRead === false)
+    return (!unreadOnly.value || context.value === 'trash' || row.isRead === false)
       && (!starredOnly.value || (row.stars?.starredMessages ?? 0) > 0);
+  }
+
+  /** Cached Done, Starred and Trash share one paged, replayable list read. */
+  function isCachedList(source: BrowseContext): source is 'done' | 'starred' | 'trash' {
+    return source === 'done' || source === 'starred' || source === 'trash';
+  }
+
+  function readCachedPage(source: 'done' | 'starred' | 'trash', accountId: string, cursor: string | null): Promise<CachedDoneSnapshot | CachedTrashSnapshot> {
+    const request = { accountId, limit: 100, cursor };
+    return source === 'starred' ? client.listCachedStarred(request)
+      : source === 'trash' ? client.listCachedTrash(request)
+      : client.listCachedDone(request);
   }
 
   async function refreshList(token: number): Promise<void> {
@@ -424,6 +444,10 @@ export function useMailbox(client: MailClient): Mailbox {
       const matching = definition ? snap.conversations.filter((row) => matchesSplit(row, definition!)) : [];
       return { definition, definitionError, snap, matching };
     })();
+    // Only Inbox, Saved and the cached lists consume the projection. Drafts,
+    // Reminders and Search never await it, so a failed Inbox read must not
+    // surface as an unhandled rejection there. Awaiting callers still see it.
+    projectionRead.catch(() => {});
     const publishProjection = (projection: NonNullable<Awaited<typeof projectionRead>>): void => {
       savedSplit.value = projection.definition;
       splitError.value = projection.definitionError;
@@ -432,12 +456,21 @@ export function useMailbox(client: MailClient): Mailbox {
     };
     // Done owns its own list read. A delayed/failed Inbox or definition read must
     // not hold Done rows hostage; its badges still use a fenced projection pair.
-    const doneProjection = (source === 'done' || source === 'starred') ? projectionRead.then((projection) => {
+    const doneProjection = isCachedList(source) ? projectionRead.then((projection) => {
       if (current() && projection) publishProjection(projection);
     }, () => {
       if (current()) { inboxTotal.value = null; savedTotal.value = null; }
     }) : null;
     try {
+      if (source === 'reminders' || source === 'drafts') {
+        // These lists read their own transports; the mailbox list is empty.
+        if (!current()) return;
+        conversations.value = [];
+        focusedRef.value = null;
+        listError.value = null;
+        listState.value = 'ready';
+        return;
+      }
       if (source === 'search') {
         // Background invalidations refresh loaded identities from cached facts, not
         // a new provider traversal that would discard the user's loaded pages.
@@ -471,7 +504,7 @@ export function useMailbox(client: MailClient): Mailbox {
         return;
       }
       const projection = (source === 'inbox' || source === 'saved') ? await projectionRead : null;
-      const initial = (source === 'inbox' || source === 'saved') ? projection?.snap : await (source === 'starred' ? client.listCachedStarred : client.listCachedDone)({ accountId: account!, limit: 100, cursor: null });
+      const initial = (source === 'inbox' || source === 'saved') ? projection?.snap : await readCachedPage(source, account!, null);
       if (!current() || !initial) return;
       let snap = initial;
       if (projection) {
@@ -484,7 +517,7 @@ export function useMailbox(client: MailClient): Mailbox {
           snap = { ...snap, conversations: projection.matching };
         }
       }
-      if ((source === 'done' || source === 'starred') && 'nextCursor' in snap) {
+      if (isCachedList(source) && 'nextCursor' in snap) {
         // Recover the saved identity range even when new archives shift page edges.
         const pages = loadedDonePages.value;
         const boundary = loadedDoneBoundary.value;
@@ -494,7 +527,7 @@ export function useMailbox(client: MailClient): Mailbox {
           // Finite recovery budget beyond the user's explicitly loaded range.
           // Never misclassify an uninspected target as removed on budget exhaustion.
           if (replayed >= pages + 10) throw { kind: 'invalid_request', field: 'cachedDoneRestoreRange' } satisfies MailError;
-          const next = await (source === 'starred' ? client.listCachedStarred : client.listCachedDone)({ accountId: account!, limit: 100, cursor: snap.nextCursor });
+          const next = await readCachedPage(source, account!, snap.nextCursor);
           snap = { ...next, conversations: [...snap.conversations, ...next.conversations.filter((row) => !snap.conversations.some((old) => sameConversation(old.ref, row.ref)))] };
           replayed += 1;
         }
@@ -504,7 +537,7 @@ export function useMailbox(client: MailClient): Mailbox {
       if (detached || token !== listToken || source !== context.value) return;
       const previous = conversations.value;
       conversations.value = snap.conversations.filter(matchesCachedFilters);
-      if ((source === 'done' || source === 'starred') && 'nextCursor' in snap) {
+      if (isCachedList(source) && 'nextCursor' in snap) {
         nextCursor.value = snap.nextCursor;
         exactTotal.value = snap.exactTotal;
         lastSyncedAt.value = snap.lastSyncedAt;
@@ -632,13 +665,13 @@ export function useMailbox(client: MailClient): Mailbox {
     const source = context.value;
     const cursor = nextCursor.value;
     const account = accountStatus.value?.account?.accountId;
-    if (source === 'inbox' || source === 'saved' || !cursor || !account || loadingMore.value || listState.value !== 'ready') return;
+    if (source === 'inbox' || source === 'saved' || source === 'reminders' || source === 'drafts' || !cursor || !account || loadingMore.value || listState.value !== 'ready') return;
     const token = ++listToken;
     loadingMore.value = true;
     try {
       const snap = source === 'search'
         ? await client.searchMail({ accountId: account, query: searchQuery.value, cachedOnly: searchCachedOnly.value, cursor })
-        : await (source === 'starred' ? client.listCachedStarred : client.listCachedDone)({ accountId: account, limit: 100, cursor });
+        : await readCachedPage(source, account, cursor);
       if (detached || token !== listToken || context.value !== source) return;
       conversations.value = [...conversations.value, ...snap.conversations.filter((row: ConversationSummaryLike) => matchesCachedFilters(row) && !conversations.value.some((old) => sameConversation(old.ref, row.ref)))];
       focusedRef.value = resolveFocus(conversations.value, focusedRef.value, conversations.value);

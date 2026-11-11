@@ -286,7 +286,8 @@ button:focus-visible {
 
 .header-glyph:hover:not(:disabled),
 .header-glyph:focus-visible,
-.header-glyph[aria-pressed='true'] {
+.header-glyph[aria-pressed='true'],
+.header-glyph[aria-current='page'] {
   color: var(--text-primary);
 }
 
@@ -367,7 +368,8 @@ button:focus-visible {
 }
 
 .split-tab:hover,
-.split-tab[aria-current='page'] {
+.split-tab[aria-current='page'],
+.split-tab[aria-selected='true'] {
   color: var(--text-primary);
 }
 
@@ -922,7 +924,7 @@ button:focus-visible {
   border-left: 1px solid var(--divider);
   box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
   overflow-y: auto;
-  /* Content edge = the contact pane's inset (DESIGN.md gap 18), 6px/12px rhythm. */
+  /* Content edge = the contact pane's inset (DESIGN.md gap 20), 6px/12px rhythm. */
   padding: 6px var(--contact-inset) var(--contact-inset);
   z-index: 30;
 }
@@ -946,8 +948,8 @@ button:focus-visible {
 }
 
 /*
- * Drawer rows (DESIGN.md "Drawer Row"): the one anatomy shared by Activity,
- * Drafts, Reminders and Cached Trash. A 36px row on 12px type, separated by
+ * Drawer rows (DESIGN.md "Drawer Row"): the one anatomy shared by Activity and
+ * Drafts. A 36px row on 12px type, separated by
  * rhythm alone (no borders). The text sits on the drawer's 24px content edge;
  * the Focus Stone fill reaches 6px past it, with a 4px radius. The primary
  * action is one real button (`.drawer-row-main`, marked `data-drawer-row` for
@@ -1002,21 +1004,12 @@ button:focus-visible {
   gap: 6px;
 }
 
-.drawer-subject,
-.drawer-sender {
+.drawer-subject {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.drawer-subject {
   flex: 1 1 auto;
-}
-
-.drawer-sender {
-  flex: 0 1 9em;
-  font-weight: var(--weight-strong);
 }
 
 .drawer-strong,
@@ -1025,14 +1018,12 @@ button:focus-visible {
 }
 
 .activity-action,
-.drawer-date,
-.drawer-flag {
+.drawer-date {
   flex: none;
   white-space: nowrap;
 }
 
 .drawer-date,
-.drawer-flag,
 .drawer-empty {
   color: var(--text-secondary);
 }
@@ -1085,18 +1076,6 @@ button:focus-visible {
   margin: 0 0 6px;
   font-size: var(--type-body);
   font-weight: var(--weight-strong);
-}
-
-.drawer-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 0 0 6px;
-}
-
-.drawer-toolbar > .drawer-note {
-  margin: 0;
 }
 
 .drawer-row-actions {
@@ -1164,15 +1143,8 @@ button:focus-visible {
 
 .drawer-line > .drawer-quiet:first-child,
 .drawer-line > .drawer-action:first-child,
-.drawer-row-actions > .drawer-quiet:first-child,
-.drawer-toolbar > .drawer-quiet:first-child,
-.drawer-toolbar > .drawer-action:first-child {
+.drawer-row-actions > .drawer-quiet:first-child {
   margin-left: -8px;
-}
-
-.drawer-toolbar > .drawer-quiet:last-child,
-.drawer-toolbar > .drawer-action:last-child {
-  margin-right: -8px;
 }
 
 .drawer-alert .drawer-quiet {
@@ -1188,14 +1160,6 @@ button:focus-visible {
   list-style: none;
   margin: 0;
   padding: 0 0 0 12px;
-}
-
-/* Cached Trash scrolls its own list; room for the row fill and the focus ring. */
-.cached-trash-list {
-  max-height: 55vh;
-  overflow-y: auto;
-  margin: 0 -6px;
-  padding: 3px 6px;
 }
 
 .reply-to {
@@ -1230,7 +1194,8 @@ button:focus-visible {
  * still cannot fit its subject/snippet floor does that row's sender shrink
  * further (to 72px); the metadata keeps its full content.
  */
-.inbox-row {
+.inbox-row,
+.context-row {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1245,18 +1210,21 @@ button:focus-visible {
   position: relative;
 }
 
-.inbox-row:focus {
+.inbox-row:focus,
+.context-row:focus {
   outline: none;
 }
 
 /* Focus: Focus Stone fill plus a 4px Dusk Lavender bar on the fill's own edge. */
-.inbox-row.focused {
+.inbox-row.focused,
+.context-row.focused {
   background: var(--focus-fill);
   box-shadow: inset 4px 0 0 var(--focus-accent);
 }
 
 /* Hover never changes focus or read state; it only lifts and reveals controls. */
-.inbox-row:not(.focused):hover {
+.inbox-row:not(.focused):hover,
+.context-row:not(.focused):hover {
   background: rgba(255, 255, 255, 0.03);
 }
 
@@ -1420,6 +1388,240 @@ button:focus-visible {
 
 .row-trailing > * {
   grid-area: 1 / 1;
+}
+
+/*
+ * Context rows (DESIGN.md "Context Row"): the Conversation Row geometry for
+ * list contexts whose rows are not threads (Reminders, later Drafts). The
+ * 36px row, 6px inset, 44px gutter, focus fill and lavender bar are the
+ * `.inbox-row` rules above. The row's one button (`.context-row-main`) carries
+ * the subject on the 50px content inset; quiet row actions appear on the
+ * current, hovered or focus-within row and stay Tab-reachable; the trailing
+ * slot (a full date, a status word) sits about 25px from the pane edge.
+ */
+.context-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.context-pane:focus {
+  outline: none;
+}
+
+/* Coverage line with one quiet action on its trailing side (Reminders, Drafts). */
+.context-coverage {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-right: 24px;
+}
+
+.context-coverage .cached-coverage {
+  padding-right: 0;
+}
+
+.context-coverage .drawer-quiet {
+  margin-right: -8px;
+}
+
+/* In-flow recovery and error lines above the rows, on the content inset. */
+.draft-notices:not(:empty) {
+  padding: 6px 24px 0 50px;
+}
+
+/* Drafts rows: the recipient is the row's button and keeps a bounded width; the subject takes the rest. */
+.drafts-pane .context-row-main {
+  flex: 0 1 16em;
+}
+
+.drafts-pane .context-row-secondary {
+  flex: 1 1 0;
+  padding: 0 12px;
+}
+
+.draft-subject:not(.drawer-empty) {
+  color: var(--text-primary);
+}
+
+/* The body preview follows the subject on the same clipped line: Ash, plain text. */
+.draft-preview {
+  margin-left: 0.75em;
+  color: var(--text-secondary);
+}
+
+/* The confirmation under its row: the editor's question, then two quiet 24px ghosts. */
+.draft-discard-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 6px;
+  color: var(--text-secondary);
+}
+
+.draft-discard-confirm .drawer-quiet:hover:not(:disabled):not([aria-disabled='true']) {
+  box-shadow: inset 0 0 0 1px var(--text-secondary);
+}
+
+/* Busy, but still focusable (focus must not drop to the page while a request runs). */
+.draft-discard-confirm .drawer-quiet[aria-disabled='true'] {
+  color: var(--text-tertiary);
+  background: transparent;
+  cursor: default;
+}
+
+/* Reserve the room of the `Reply` word on every row so Discard keeps one column. */
+.drafts-pane .context-row-trailing {
+  min-width: 8.5em;
+  justify-content: flex-end;
+}
+
+.draft-reply {
+  color: var(--text-secondary);
+}
+
+.draft-date {
+  min-width: 4em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.context-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.context-list:focus {
+  outline: none;
+}
+
+.context-item {
+  margin: 0;
+  padding: 0;
+}
+
+.context-row {
+  cursor: pointer;
+}
+
+.context-row-lead {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.context-row-main {
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.context-row-main:hover:not(:disabled) {
+  background: transparent;
+}
+
+/* The row's fill and lavender bar are its focus indicator, as in the Inbox. */
+.context-row-main:focus-visible {
+  outline: none;
+}
+
+.context-row-primary,
+.context-subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-subject {
+  display: block;
+  font-weight: var(--weight-strong);
+}
+
+.context-row-secondary {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.context-row-secondary:empty {
+  display: none;
+}
+
+.context-row-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  opacity: 0;
+}
+
+.context-row-actions:empty {
+  display: none;
+}
+
+.context-row:is(.focused, :hover, :focus-within) .context-row-actions {
+  opacity: 1;
+}
+
+/* Quiet Ash ghosts on a lit row: the fill already equals the hover fill, so a hovered button takes a ring. */
+.context-row-actions .drawer-quiet:hover:not(:disabled) {
+  box-shadow: inset 0 0 0 1px var(--text-secondary);
+}
+
+.context-row-trailing {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.context-date {
+  min-width: 12em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.context-phase {
+  min-width: 6em;
+}
+
+/* A quiet Ash caption before a run of rows (Reminders: Needs attention N): Body type on the 50px
+   inset, a 36px block, no rule. It is a presentation line, never a row or a stop. */
+.context-group {
+  display: flex;
+  align-items: flex-end;
+  min-height: 36px;
+  padding: 0 24px 6px 50px;
+  font-size: var(--type-body);
+  line-height: var(--leading-ui);
+  color: var(--text-secondary);
+}
+
+/* An exception under its row: Coral or Amber, on the content inset. */
+.context-row-note {
+  margin: 0;
+  padding: 0 24px 6px 50px;
+  font-size: var(--type-body);
+  line-height: var(--leading-ui);
 }
 
 /* Label: the month of a compact date is uppercase on screen only ("6 NOV");
@@ -2082,15 +2284,7 @@ button:focus-visible {
   color: var(--warning);
 }
 
-/* Local-only plain-text drafts (drawer): one column, list or editor. */
-.drafts-pane {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-}
-
-.draft-list,
+/* Local-only plain-text draft editors (compose card, docked reply composer). */
 .composer {
   min-width: 0;
 }
@@ -2111,14 +2305,6 @@ button:focus-visible {
   font-weight: var(--weight-strong);
   margin: 0.25rem 0;
   overflow-wrap: anywhere;
-}
-
-/* Informational note: secondary text, not a warning. Warnings stay on
-   status/error lines (draft-status, reply-source). */
-.draft-local-note {
-  margin: 0.3rem 0;
-  font-size: var(--type-body);
-  color: var(--text-secondary);
 }
 
 .draft-status {
@@ -2203,7 +2389,7 @@ button:focus-visible {
 }
 
 /* Composer footer, shared by the inline compose card, the docked reply
-   composer and the drafts-drawer editor: actions right-aligned above a rule. */
+   composer: actions right-aligned above a rule. */
 .composer-footer {
   display: flex;
   align-items: center;
@@ -2578,6 +2764,14 @@ button:focus-visible {
   padding: var(--composer-padding);
   font-size: var(--type-body);
   line-height: var(--leading-ui);
+}
+/* A reply draft edited here because its thread cannot host it: one Amber Notice line. */
+.compose-card-notice {
+  margin: 0 0 0.25rem;
+  color: var(--warning);
+  /* The reason is visible text: a long one wraps, it is never clipped. */
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 /* Docked at the bottom of the reader pane (editor active while a reader is
    open): same raised-surface card, compact. Full 1px border — no accent side

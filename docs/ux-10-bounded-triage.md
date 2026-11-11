@@ -35,8 +35,10 @@ This is a bounded local read destination, not provider-complete Trash discovery.
   cached or retained context; null exact total and local-cache coverage.
 - Fixture native backend rejects this Gmail-only read destination. Browser fake
   explicitly models synthetic membership in memory, never native durability.
-- Trash opens use an explicit read-only reader origin. Back reopens this surface;
-  adjacent navigation and shared mailbox actions are suppressed in this origin.
+- Cached Trash is a read-only list context in the main list pane (not a drawer),
+  and a Trash open uses it as its reader origin. Back returns to this list at the
+  same row; adjacent navigation and shared mailbox actions are suppressed in the
+  list and in this reader.
   Existing Activity, durable intent/Undo/groups, local drafts and normal close
   remain unchanged. No Trash mutation control or misleading Restore-to-Inbox.
 

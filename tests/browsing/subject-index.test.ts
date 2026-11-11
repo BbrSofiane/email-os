@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createSubjectIndex } from '../src/lib/subject-index';
+import { createSubjectIndex } from '../../src/lib/subject-index';
 
 const ref = (conversationId: string, accountId = 'acct') => ({ accountId, conversationId });
 
