@@ -103,14 +103,18 @@ describe('draft account transitions', () => {
     const loadedDraft = await fake.getDraft(receipt.ref);
     const pending = deferred<Awaited<ReturnType<MailClient['getDraft']>>>();
     let reads = 0;
+    // Preview reads belong to mounting the list; defer only the editor open.
+    let armed = false;
     const client: MailClient = {
       ...fake,
       getDraft: (ref) => {
+        if (!armed) return fake.getDraft(ref);
         reads += 1;
         return reads === 1 ? pending.promise : fake.getDraft(ref);
       },
     };
     const w = await mountDraftsApp(fake, client);
+    armed = true;
     await w.find(`[data-test="open-draft-${receipt.ref.draftId}"]`).trigger('click');
     await flushPromises();
     expect(reads).toBe(1);
@@ -131,6 +135,9 @@ describe('draft account transitions', () => {
     fake.controls.setAccount({ mode: 'gmail', connection: 'connected', emailAddress: 'operator@example.test', mutationAccess: 'read_only' });
     await flushPromises();
     await advanceUiUntil(() => w.find('[data-test="composer"]').exists() === false);
+    // Account changes return to Inbox; the suspended alert lives in Drafts.
+    await w.get('[data-test="rail-drafts"]').trigger('click');
+    await flushPromises();
     expect(w.text()).not.toContain('account one unacked');
     expect(w.find('[data-test="suspended-editor"]').text()).toContain('suspended in memory');
     expect(w.text()).toContain('No local drafts.');
