@@ -617,14 +617,5 @@ mod facade_tests {
         drop(reopened);
     }
 
-    fn wait_for(predicate: impl Fn() -> bool) -> bool {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !predicate() {
-            if Instant::now() >= deadline {
-                return predicate();
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        true
-    }
+    use crate::testing::until as wait_for;
 }

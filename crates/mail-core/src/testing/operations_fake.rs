@@ -404,11 +404,10 @@ impl FakeProvider {
         self.state.lock().unwrap().destination_admissions.len()
     }
     pub fn wait_for_destination_admissions(&self, baseline: usize, count: usize) {
-        let deadline = Instant::now() + TIMEOUT;
-        while self.destination_admission_count() < baseline + count {
-            assert!(Instant::now() < deadline, "provider call never admitted");
-            std::thread::sleep(Duration::from_millis(5));
-        }
+        assert!(
+            self.wait_for(|state| state.destination_admissions.len() >= baseline + count),
+            "provider call never admitted"
+        );
     }
 
     pub fn set_configured(&self, value: bool) {
@@ -482,42 +481,13 @@ impl FakeProvider {
         self.state.lock().unwrap().credentials
     }
     pub fn wait_for_calls(&self, prefix: &str, count: usize) -> bool {
-        let deadline = Instant::now() + TIMEOUT;
-        let mut state = self.state.lock().unwrap();
-        loop {
-            if state.calls.iter().filter(|c| c.starts_with(prefix)).count() >= count {
-                return true;
-            }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return false;
-            }
-            state = self.gate.wait_timeout(state, remaining).unwrap().0;
-        }
+        self.wait_for(|state| state.calls.iter().filter(|c| c.starts_with(prefix)).count() >= count)
     }
     pub fn wait_for_inflight(&self, count: usize) -> bool {
-        let deadline = Instant::now() + TIMEOUT;
-        let mut state = self.state.lock().unwrap();
-        while state.inflight < count {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return false;
-            }
-            state = self.gate.wait_timeout(state, remaining).unwrap().0;
-        }
-        true
+        self.wait_for(|state| state.inflight >= count)
     }
     pub fn wait_until_idle(&self) -> bool {
-        let deadline = Instant::now() + TIMEOUT;
-        let mut state = self.state.lock().unwrap();
-        while state.inflight > 0 {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return false;
-            }
-            state = self.gate.wait_timeout(state, remaining).unwrap().0;
-        }
-        true
+        self.wait_for(|state| state.inflight == 0)
     }
     fn enter(
         &self,
@@ -567,6 +537,7 @@ impl FakeProvider {
             .unwrap()
             .destination_admissions
             .push(expected.to_string());
+        self.gate.notify_all();
         loop {
             if cancel.is_cancelled() {
                 return Err(MailError::AuthCancelled);
