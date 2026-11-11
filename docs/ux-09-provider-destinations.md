@@ -136,7 +136,7 @@ synthetic Chrome evidence, not WKWebView, OAuth, Keychain or Gmail convergence.
 - `mise run typecheck`, `mise run test:ui`, `mise run build:web`: passed; UI
   **453 passed / 20 opt-in rendered-browser tests skipped** after the Escape fix.
   The focused App destination suite passed **7/7**.
-- `tests/provider_destinations.rs`: synthetic provider with real SQLite; an
+- `crates/mail-core/tests/provider_destinations.rs`: synthetic provider with real SQLite; an
   uncached thread never enters the inbox/action inventory; page cursors, provider
   errors, offline page/catalog restart recovery, and disconnect isolation.
   Post-review tests also cover foreign credentials, credentialless saved reads,

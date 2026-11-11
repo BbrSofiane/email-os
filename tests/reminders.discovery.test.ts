@@ -1,7 +1,7 @@
 import { afterEach, expect, it } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import App from '../src/App.vue';
-import RemindersPanel from '../src/components/RemindersPanel.vue';
+import RemindersList from '../src/components/RemindersList.vue';
 import ReminderSettings from '../src/components/ReminderSettings.vue';
 import { createBrowserFakeMailClient } from '../src/lib/ipc/browser-fake';
 
@@ -17,7 +17,7 @@ it('opens the clicked row reminder in read-only Gmail mode without provider writ
   await flushPromises();
   await app.get(`[data-test="row-remind-${target.conversationId}"]`).trigger('click');
   await flushPromises();
-  expect(app.getComponent(RemindersPanel).props('target')).toEqual(target);
+  expect(app.get('[data-test="reminder-form"]').attributes('data-source-conversation')).toBe(target.conversationId);
   expect((await client.listConversations()).activity).toEqual([]);
 });
 
@@ -46,13 +46,13 @@ it('schedules from the picker and returns focus to a surviving Inbox row', async
   await flushPromises();
   await app.get(`[data-test="row-remind-${target.conversationId}"]`).trigger('click');
   await flushPromises();
-  const panel = app.getComponent(RemindersPanel);
+  const panel = app.getComponent(RemindersList);
   await panel.get('#reminder-time-input').setValue('3 days');
   await panel.get('#reminder-time-input').trigger('keydown', { key: 'Enter' });
   await panel.get('select').setValue('regardless');
   await panel.findAll('button').find(button => button.text() === 'Schedule reminder')!.trigger('click');
   await flushPromises();
-  expect(app.findComponent(RemindersPanel).exists()).toBe(false);
+  expect(app.findComponent(RemindersList).exists()).toBe(false);
   expect(app.find(`[data-test="conversation-row-${target.conversationId}"]`).exists()).toBe(false);
   expect(document.activeElement?.getAttribute('data-test')).toMatch(/^conversation-row-/);
   expect((await client.reminders!.list())[0]).toMatchObject({ condition: 'regardless', phase: 'pending' });

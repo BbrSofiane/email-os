@@ -103,7 +103,7 @@ Earlier failed outputs remain `/tmp/ux08-integration-ui.log`,
 
 The documented queued-versus-claimed Undo race did **not** reproduce in either
 final full run. Passing runs do not prove it fixed; no scheduler tests were edited
-except resolving the unrelated GmailThread fixture fields in `tests/undo.rs`.
+except resolving the unrelated GmailThread fixture fields in `crates/mail-core/tests/undo.rs`.
 
 ## Independent review follow-up — consistent Starred sender identity
 

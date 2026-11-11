@@ -14,6 +14,7 @@ import {
   deferred,
   fixtureRef,
   focusedRow,
+  openDraftsList,
   openUtilityDrawer,
   type BrowserFake,
 } from './helpers';
@@ -201,7 +202,7 @@ describe('App (Slice 01 shell)', () => {
     const rows = conversationRows(w);
     expect(rows).toHaveLength(18);
     expect(w.find('[data-test="row-pending"]').exists()).toBe(true);
-    expect(w.text()).toContain('applying…');
+    expect(w.text()).toContain('Applying…');
 
     fake.controls.release();
     await settle();
@@ -217,7 +218,11 @@ describe('App (Slice 01 shell)', () => {
     await settle();
     await openUtilityDrawer(w, 'activity');
     expect(w.find('[data-test="activity-failed"]').exists()).toBe(true);
-    expect(w.find('[data-test="activity-failed"]').text()).toContain('failed (provider_rejected)');
+    // One status word; the failure kind moves to its title, the human reason stays inline.
+    const failed = w.get('[data-test="activity-failed"]');
+    expect(failed.get('.activity-status').text()).toBe('Failed');
+    expect(failed.get('.activity-status').attributes('title')).toContain('Failed (provider_rejected)');
+    expect(failed.get('[data-test="activity-error"]').text()).toBe('The provider rejected the requested state.');
     expect(conversationRows(w)).toHaveLength(18);
   });
 
@@ -919,23 +924,24 @@ describe('App (UX-01 compact browsing shell journey)', () => {
     const w = mount(App, { props: { client: fake, mode: 'browser-preview' }, attachTo: document.body });
     wrapper = w;
     await settle();
-    await openUtilityDrawer(w, 'drafts');
+    await openDraftsList(w);
     await w.find('[data-test="new-draft"]').trigger('click');
     await flushPromises();
     await w.find('[data-test="draft-body"]').setValue('draft text');
     await flushPromises();
 
-    // Close the drawer: the protected lifecycle flushes and closes the editor,
+    // Leave for the Inbox: the protected lifecycle flushes and closes the editor,
     // so the inbox is free and no hidden editor owns the mailbox shortcuts.
-    await closeUtilityDrawer(w);
+    await w.find('[data-test="rail-inbox"]').trigger('click');
     await flushPromises();
     // A successful protected close leaves no active editor behind to hide.
     expect(w.find('[data-test="drafts-pane"]').exists()).toBe(false);
+    expect(w.find('[data-test="composer"]').exists()).toBe(false);
     w.unmount();
     wrapper = null;
   });
 
-  it('keeps drafts recovery controls visible when the drawer is closed (P2)', async () => {
+  it('keeps drafts recovery controls visible when the editor surface is not left (P2)', async () => {
     const fake = createBrowserFakeMailClient();
     const client: MailClient = {
       ...fake,
@@ -944,7 +950,7 @@ describe('App (UX-01 compact browsing shell journey)', () => {
     const w = mount(App, { props: { client, mode: 'browser-preview' }, attachTo: document.body });
     wrapper = w;
     await settle();
-    await openUtilityDrawer(w, 'drafts');
+    await openDraftsList(w);
     await w.find('[data-test="new-draft"]').trigger('click');
     await flushPromises();
     await w.find('[data-test="draft-body"]').setValue('unsaved text');
@@ -957,7 +963,7 @@ describe('App (UX-01 compact browsing shell journey)', () => {
     await flushPromises();
     expect(w.find('[data-test="draft-close-recovery"]').exists()).toBe(false);
     expect(w.find('[data-test="draft-attention-open"]').exists()).toBe(false);
-    expect(w.find('[data-test="drafts-pane"]').exists()).toBe(true);
+    expect(w.find('[data-test="compose-card"]').exists()).toBe(true);
     expect(w.find('[data-test="draft-error"]').exists()).toBe(true);
     w.unmount();
     wrapper = null;
@@ -1120,7 +1126,7 @@ describe('App (UX-01 compact browsing shell journey)', () => {
     const w = mount(App, { props: { client, mode: 'browser-preview' }, attachTo: document.body });
     wrapper = w;
     await settle();
-    await openUtilityDrawer(w, 'drafts');
+    await openDraftsList(w);
     await w.find('[data-test="new-draft"]').trigger('click');
     await flushPromises();
     await w.find('[data-test="draft-body"]').setValue('must survive pending save');
@@ -1132,7 +1138,7 @@ describe('App (UX-01 compact browsing shell journey)', () => {
     await flushPromises();
     expect(w.find('[data-test="draft-body"]').exists()).toBe(true);
     expect((w.find('[data-test="draft-body"]').element as HTMLTextAreaElement).value).toBe('must survive pending save');
-    expect(w.find('[data-test="drafts-pane"]').exists()).toBe(true);
+    expect(w.find('[data-test="compose-card"]').exists()).toBe(true);
     w.unmount();
     wrapper = null;
   });

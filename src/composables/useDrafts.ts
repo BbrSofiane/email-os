@@ -45,6 +45,11 @@ function errorMessage(error: MailError): string {
   }
 }
 
+interface ClaimedRef { id: number; ref: DraftRef }
+function claims(list: readonly ClaimedRef[], ref: DraftRef): boolean {
+  return list.some((claim) => claim.ref.accountId === ref.accountId && claim.ref.draftId === ref.draftId);
+}
+
 export function useDrafts(client: MailClient, accountId: ComputedRef<string | null>, mode: ClientMode) {
   const summaries = ref<DraftSummary[]>([]);
   const listError = ref<MailError | null>(null);
@@ -71,6 +76,11 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
   const recoveryRequired = ref(false);
   const copyRetryEnvelope = ref<CreateDraft | null>(null);
   const transitioning = ref(false);
+  // Listed-draft claims: refs being opened (`openDraft` is pending) and refs with a Drafts-list delete in
+  // flight. Open and Discard of one draft exclude each other; both are reactive so the list can show it.
+  const openingRefs = ref<ClaimedRef[]>([]);
+  const discardingRefs = ref<ClaimedRef[]>([]);
+  let claimId = 0;
   const closeSetupError = ref<string | null>(null);
   const deletePending = ref(false);
   const isVisible = computed(() => !!activeRef.value && activeRef.value.accountId === accountId.value);
@@ -505,26 +515,40 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
     return token === generation && !!activeRef.value && result;
   }
 
-  async function openDraft(ref: DraftRef): Promise<boolean> {
-    if (transitioning.value || ref.accountId !== accountId.value || !(await switchEditor()) || transitioning.value) return false;
-    const token = ++generation;
+  /**
+   * Open a saved draft in the editor. `stillWanted` lets the caller withdraw
+   * the request while `getDraft` is pending (Back, another context): a draft
+   * that is no longer wanted is never installed and sets no error.
+   */
+  async function openDraft(ref: DraftRef, stillWanted: () => boolean = () => true): Promise<boolean> {
+    // A draft whose list delete is in flight is going away: it is never opened.
+    if (transitioning.value || ref.accountId !== accountId.value || claims(discardingRefs.value, ref)) return false;
+    // Claim the draft for the whole open, so the list cannot delete it while `getDraft` is pending.
+    const claim: ClaimedRef = { id: ++claimId, ref: { ...ref } };
+    openingRefs.value.push(claim);
     try {
-      const draft: Draft = await client.getDraft(ref);
-      if (token !== generation || ref.accountId !== accountId.value) return false;
-      activeRef.value = { ...draft.ref };
-      activeSource.value = draft.source;
-      content.value = copyContent(draft.content);
-      acknowledged.value = copyContent(draft.content);
-      revision.value = draft.revision;
-      hasReceipt.value = false;
-      conflict.value = false;
-      error.value = null;
-      createError.value = null;
-      void refresh();
-      return true;
-    } catch (raw) {
-      if (token === generation) createError.value = normalizeError(raw);
-      return false;
+      if (!(await switchEditor()) || transitioning.value) return false;
+      const token = ++generation;
+      try {
+        const draft: Draft = await client.getDraft(ref);
+        if (token !== generation || ref.accountId !== accountId.value || !stillWanted()) return false;
+        activeRef.value = { ...draft.ref };
+        activeSource.value = draft.source;
+        content.value = copyContent(draft.content);
+        acknowledged.value = copyContent(draft.content);
+        revision.value = draft.revision;
+        hasReceipt.value = false;
+        conflict.value = false;
+        error.value = null;
+        createError.value = null;
+        void refresh();
+        return true;
+      } catch (raw) {
+        if (token === generation && stillWanted()) createError.value = normalizeError(raw);
+        return false;
+      }
+    } finally {
+      openingRefs.value = openingRefs.value.filter((candidate) => candidate.id !== claim.id);
     }
   }
 
@@ -797,6 +821,41 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
     return sendDelete(command);
   }
 
+  /**
+   * Discard a draft from the Drafts list, after the list's own confirmation.
+   * The editor's discard (`askDiscard` / `discard`) acts on the open buffer
+   * (flush, revision of the buffer, `clearEditor`), so it cannot serve a row
+   * with no editor open. This sends the same revision-checked `DeleteDraft`
+   * through the same client call, and refreshes the list before it resolves.
+   * `listRequestId` stays the same across retries of one confirmation, so a
+   * delete whose acknowledgement was lost is repeated, never doubled.
+   * Returns `null` once the delete is confirmed, else the error; the draft is
+   * never removed locally before the client confirms. A draft that is open in
+   * the editor is refused (`busy`): the editor owns it.
+   */
+  async function discardListed(summary: DraftSummary, listRequestId: string): Promise<MailError | null> {
+    const target = summary.ref;
+    if (target.accountId !== accountId.value) return { kind: 'auth_required' };
+    const open = activeRef.value;
+    const openHere = !!open && open.accountId === target.accountId && open.draftId === target.draftId;
+    if (openHere || transitioning.value || closingForWindow.value
+      || claims(openingRefs.value, target) || claims(discardingRefs.value, target)) return { kind: 'busy' };
+    // Claim the draft until the delete and the list refresh are done: it cannot be opened meanwhile.
+    const claim: ClaimedRef = { id: ++claimId, ref: { ...target } };
+    discardingRefs.value.push(claim);
+    try {
+      try {
+        await client.deleteDraft({ ref: { ...target }, expectedRevision: summary.revision, requestId: listRequestId });
+      } catch (raw) {
+        return normalizeError(raw);
+      }
+      await refresh();
+      return null;
+    } finally {
+      discardingRefs.value = discardingRefs.value.filter((candidate) => candidate.id !== claim.id);
+    }
+  }
+
   function setContent(field: keyof DraftContent, value: string): void {
     const correctingCopyValidation = conflict.value && error.value?.kind === 'invalid_request' && !copyRetryEnvelope.value;
     if (!activeRef.value || transitioning.value || closingForWindow.value || (creating.value && activeSource.value?.kind === 'reply') || deleting.value || deletePending.value || (conflict.value && !correctingCopyValidation)) return;
@@ -974,8 +1033,8 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
     hasReceipt, creating, saving, conflict, error, createError, deleting, closingForWindow,
     closeError, closeRetryAvailable, closeSetupError, confirmDiscard, discardBusy, confirmReload, copyPending, copyRetryEnvelope,
     isVisible, canCancelReplyPreparation, recoveryRequired,
-    transitioning, deletePending, dirty, hasUnsavedWork, statusLabel, refresh, openNew, openDraft, flush, flushAndClose,
-    retrySave, reloadSaved, cancelReload, saveAsNew, askDiscard, discard, cancelDiscard, cancelReplyPreparation, setContent, scheduleSave, setTransitioning,
+    openingRefs, discardingRefs, transitioning, deletePending, dirty, hasUnsavedWork, statusLabel, refresh, openNew, openDraft, flush, flushAndClose,
+    retrySave, reloadSaved, cancelReload, saveAsNew, askDiscard, discard, discardListed, cancelDiscard, cancelReplyPreparation, setContent, scheduleSave, setTransitioning,
     retryDraftSubscription, retryClose, retryCloseSetup,
   };
 }

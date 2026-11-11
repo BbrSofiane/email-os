@@ -419,8 +419,8 @@ describe.skipIf(chromePath === '')('UX-03 discovery / UX-13 workspaces (real Chr
       await cdp!.cmd('Input.insertText', { text: 'Go to cached Trash' });
       await press('Enter');
       await cdp!.js('window.__h.wait(200)');
-      expect(await cdp!.js(`document.querySelector('[aria-label="Cached Trash browsing"]').textContent`)).toContain('not your complete Gmail Trash');
-      await click('button[data-id="conv-06"]');
+      expect(await cdp!.js(`document.querySelector('[data-test="trash-coverage"]').textContent`)).toContain('not your full Gmail Trash');
+      await click('[data-test="conversation-row-conv-06"]');
       await cdp!.js('window.__h.wait(200)');
       expect(await cdp!.js(`document.querySelector('[data-test="reader"]').textContent`)).toContain('<script>alert("body")</script>');
       expect(await cdp!.js(`document.querySelectorAll('[data-test="reader"] script, [data-test="reader"] img, [data-test="prepare-reply"]').length`)).toBe(0);
@@ -429,7 +429,7 @@ describe.skipIf(chromePath === '')('UX-03 discovery / UX-13 workspaces (real Chr
       expect(await cdp!.js('window.__trashWrites.length')).toBe(0);
       await press('Escape');
       await cdp!.js('window.__h.wait(150)');
-      expect(await cdp!.js('document.activeElement?.getAttribute("data-id")')).toBe('conv-06');
+      expect(await cdp!.js('document.activeElement?.getAttribute("data-test")')).toBe('conversation-row-conv-06');
       expect(await cdp!.js('window.__trashWrites.length')).toBe(0);
     }
   }, 30_000);

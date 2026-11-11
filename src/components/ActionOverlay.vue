@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import type { AvailableAction, BrowsingActionId } from '../lib/browsing-actions';
-import { actionAliases, actionGroupOf, actionGroups, compactShortcut, keyHints, matchesQuery } from '../lib/action-palette';
+import { actionAliases, actionGroupOf, actionGroups, compactShortcut, keyHints, matchesQuery, type KeyScope } from '../lib/action-palette';
 import CommandGlyph from './CommandGlyph.vue';
-const props = defineProps<{ kind: 'palette' | 'navigator'; actions: AvailableAction[]; idPrefix?: string; query?: string }>();
+const props = defineProps<{ kind: 'palette' | 'navigator'; actions: AvailableAction[]; idPrefix?: string; query?: string; keyScope?: KeyScope }>();
 const emit = defineEmits<{ close: []; execute: [id: BrowsingActionId]; 'update:query': [query: string] }>();
 const prefix = props.idPrefix ? `${props.idPrefix}-` : '';
 const queryId = `${prefix}action-query`;
@@ -28,7 +28,7 @@ const results = computed(() => props.actions
   .sort((a, b) => actionGroups.findIndex((g) => g.id === actionGroupOf[a.id]) - actionGroups.findIndex((g) => g.id === actionGroupOf[b.id]) || groupRank.indexOf(a.id) - groupRank.indexOf(b.id)));
 const showGroups = computed(() => props.kind === 'palette');
 // Keys with no command behind them: shown for teaching, never highlighted or executed.
-const hints = computed(() => props.kind === 'palette' ? keyHints.filter((hint) => matchesQuery(query.value, hint.label, hint.aliases, hint.keys)) : []);
+const hints = computed(() => props.kind === 'palette' ? keyHints.filter((hint) => (!hint.scope || hint.scope === props.keyScope) && matchesQuery(query.value, hint.label, hint.aliases, hint.keys)) : []);
 const emptyCopy = computed(() => {
   const noun = props.kind === 'palette' ? 'command' : 'destination';
   return query.value.trim() ? `No ${noun} matches “${query.value.trim()}”.` : `No ${noun}s available here.`;

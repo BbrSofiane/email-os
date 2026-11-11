@@ -1,7 +1,9 @@
 # Development guide
 
-This repository contains two deliberately separate native profiles: the durable
-synthetic fixture slice (Slice 01) and an explicit Gmail profile built in stages.
+This repository contains two deliberately separate native profiles: a durable
+synthetic fixture profile and an explicit Gmail profile built in stages. Slice 01
+describes the fixture baseline; the current core also includes Gmail OAuth, cache,
+sync, and provider operations.
 Slice 02 adds system-browser OAuth/PKCE, a macOS Keychain credential store,
 bounded inbox caching, and background sync. Slice 03 adds opt-in, durable Gmail
 archive/unarchive and explicit read/unread actions; Gmail remains read-only until
@@ -14,8 +16,9 @@ preview remains synthetic and in-memory. See
 the slice contracts for individual acceptance scope. UX-08 adds narrow Gmail-mode
 Star/Unstar singles/groups, durable Undo/reconciliation, cache-only Starred and a
 single cached starred filter; see [its contract and validation ledger](ux-08-stars.md).
-The legacy native fixture remains archive-only; unsupported star controls are
-absent there. No real provider writes are authorized by implementation tests.
+The legacy native fixture remains archive-only for mailbox operations; unsupported
+star controls are absent there. Reminders use local device storage in both native
+profiles. No real provider writes are authorized by implementation tests.
 UX-06 adds one durable local
 sender/domain split over Inbox, exact cached-count badges, and a single unread
 filter. See [the saved-split contract](ux-06-saved-split.md) for matching,
@@ -55,15 +58,15 @@ an empty list. Restart retains these snapshots; disconnect clears them.
 Provider Drafts are read-only snapshots, **not** the app's local editable drafts.
 The native fixture rejects both provider commands; browser preview models them
 in memory only. Label/Move, label badges on ordinary inbox rows, palette integration,
-and saved-view/search criteria are not implemented here. After rebasing onto
-`b4972ee`, the UX-06/07/08 contracts are preserved but not extended by this
-increment. See [the increment contract](ux-09-provider-destinations.md)
+and saved-view/search criteria are not implemented here. This increment preserves
+and coexists with the current UX-06/07/08 implementations. See
+[the increment contract](ux-09-provider-destinations.md)
 for evidence and remaining gates.
 
 ## Tooling
 
 All commands run through [mise](https://mise.jdx.dev) (pinned: node 24.4.1,
-pnpm 10.18.0, rust 1.89.0). First-time setup:
+pnpm 10.18.0, rust 1.89.0 with `rustfmt` and `clippy`). First-time setup:
 
 ```sh
 mise trust           # after inspecting the repository's mise.toml
@@ -71,6 +74,11 @@ mise install         # install the project-pinned runtimes/tools
 mise run setup:linux  # Debian/Ubuntu VMs only; installs OS packages with apt-get
 mise run install:ui   # locked frontend dependencies (pnpm install --frozen-lockfile)
 ```
+
+The Rust entry in `mise.toml` selects the minimal toolchain profile and explicitly
+installs `rustfmt` and `clippy`, so a fresh `mise install` supplies both lint tools.
+CI pins the mise installer action and mise version; it uses the same tool declaration.
+Verify with `mise exec -- cargo fmt --version` and `mise exec -- cargo clippy --version`.
 
 Rust dependencies resolve via the committed `Cargo.lock` on first `cargo`/`mise` use;
 no global configuration is needed.
@@ -150,7 +158,8 @@ Core and frontend gates run independently of native GTK/WebKit prerequisites:
 
 | Task | What it does |
 |---|---|
-| `mise run check` | Core tests, generated-contract check, core lint, UI tests and typecheck |
+| `mise run check` | Sequential core tests, generated-contract check, core lint, UI tests and typecheck; no GTK prerequisite |
+| `mise run check:all` | Sequential `check`, native lint, native bridge tests and web production build; native prerequisites required |
 | `mise run test:core` | `cargo test --locked -p mail-core` — synthetic fixture and Gmail auth/cache/sync tests; no real accounts or Google network |
 | `mise run check:contract` | Regenerates the TS wire contract to a temp file and **fails on drift** against `src/lib/ipc/generated.ts` |
 | `mise run gen:ts` | Regenerates `src/lib/ipc/generated.ts` from Rust DTOs |
@@ -159,11 +168,13 @@ Core and frontend gates run independently of native GTK/WebKit prerequisites:
 | `mise run typecheck` | `vue-tsc --noEmit` |
 | `mise run build:web` | Frontend production build to `dist/` |
 | `mise run check:native` | `cargo check --locked -p email-os --all-targets` — compiles the Tauri shell and native test targets; requires Linux GTK/WebKit development prerequisites |
+| `mise run lint:native` | `cargo clippy --locked -p email-os --all-targets -- -D warnings`; requires Linux GTK/WebKit development prerequisites |
 | `mise run test:native` | `cargo test --locked -p email-os` — command/event bridge tests; these do not launch a native window or prove OS integration |
 | `mise run dev:native` | Tauri dev app; GTK/WebKit development packages are required on Linux |
 | `mise run build:native` | Bundled native app |
 
-`mise run check` does not include native shell checks or `build:web`. The native
+`mise run check` does not include native shell checks or `build:web`; use
+`mise run check:all` for the sequential full gate. The native
 bridge tests exercise command and event behavior through test doubles. They do
 not validate a running Tauri window, GTK/WebKit, macOS WKWebView, Keychain,
 OAuth, or Gmail provider behavior. Native runtime, macOS, and disposable-account
@@ -194,8 +205,9 @@ workspaces**, each with its own labelled in-memory client and the same conversat
 IDs. These are not native tabs. Switch with the account buttons or the supported
 Switch account command; the current local editor must save/recover successfully
 before leaving. Each workspace retains navigation/Back, selection, command query,
-reader state, focus and scroll. There is no mail-search capability on this UX-05
-base (UX-06/07 are absent), real OAuth, credentials or mailbox access in preview.
+reader state, focus and scroll. Search and saved splits are synthetic in-memory
+preview capabilities; there is no real OAuth, credentials or mailbox access in
+preview.
 Native mode remains a single account/window and exposes no switch command. See
 [UX-13A's contract and remaining gates](ux-13-independent-workspaces.md).
 
@@ -227,10 +239,11 @@ startup or fall back to the fixture. Unsupported Keychain platforms fail closed.
 Mailbox controls stay disabled until the user selects **Enable mailbox actions**
 and Google returns a verified modify grant for the same authenticated account.
 That upgrade requests `https://www.googleapis.com/auth/gmail.modify`; Google's
-scope is broader than this app's implemented archive/unarchive and read/unread
-commands and can authorize other mailbox changes (including sending or deleting
-mail). The app does not provide those broader actions, arbitrary labels, or a
-composer. Denial or cancellation leaves the read-only account and cached reading
+scope is broader than this app's implemented archive/unarchive, read/unread,
+and star/unstar commands and can authorize other mailbox changes (including sending or deleting
+mail). The app does not provide those broader provider actions or arbitrary
+labels. Its plain-text composer saves local-only drafts; sending and
+provider-synced drafts are not implemented. Denial or cancellation leaves the read-only account and cached reading
 available.
 
 ### Google Desktop OAuth setup (disposable account only)
@@ -468,8 +481,9 @@ convergence (BROWSE-18) additionally requires the approved disposable account.
 Gmail mode exposes **Go to cached Trash (read only)** in Commands and Destinations.
 This lists known locally cached TRASH conversations, including operation-retained
 snapshots; it does not discover Gmail Trash or claim mailbox-complete coverage.
-Refresh is explicit, pagination is bounded, and Back preserves the loaded local
-browsing state. Trash-origin readers omit mailbox actions and Reply. Opening
+It is a list context in the main pane (Done and Starred are its siblings), not a
+drawer. It follows cache changes like Done, pagination is bounded, and Back
+preserves the loaded local browsing state. Trash-origin readers omit mailbox actions and Reply. Opening
 never marks read. The native fixture profile rejects this Gmail-only query;
 browser-preview fixtures can simulate it in memory.
 
