@@ -5367,6 +5367,29 @@ mod tests {
         (store, dir)
     }
 
+    #[test]
+    fn committed_current_schema_golden() {
+        let (store, _dir) = open_store("schema-golden");
+        let conn = store.lock_conn().expect("lock store");
+        let mut statement = conn
+            .prepare("SELECT type, name, tbl_name, COALESCE(sql, '') FROM sqlite_master ORDER BY type, name")
+            .expect("query schema");
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?))
+            })
+            .expect("read schema");
+        let normalized = rows
+            .map(|row| {
+                let (kind, name, table, sql) = row.expect("schema row");
+                let sql = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+                format!("{kind}|{name}|{table}|{sql}")
+            })
+            .collect::<Vec<_>>()
+            .join("\n") + "\n";
+        assert_eq!(normalized, include_str!("../../tests/fixtures/gmail-current-schema.txt"));
+    }
+
     use crate::testing::profile;
 
     fn message(id: &str, sent_at: &str) -> Message {
