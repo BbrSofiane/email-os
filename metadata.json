@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M74T6B4D2D3JA6VM5BKQB8KX",
+  "strategy": "manual-commit",
+  "branch": "maintenance/p3a-gmail-migrations",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "crates/mail-core/src/gmail/store.rs",
+    "crates/mail-core/tests/fixtures/gmail-current-schema.txt"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 394,
+    "cache_creation_tokens": 2424698,
+    "cache_read_tokens": 64985088,
+    "output_tokens": 168018,
+    "api_call_count": 195
+  }
+}
