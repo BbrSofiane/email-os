@@ -710,12 +710,15 @@ fn retry_clones_failed_targets_and_new_key_and_upgrade_cancel_isolated() {
     );
     // An unrelated active sync is not cancelled by a no-op upgrade cancel.
     readonly.set_history_blocked(true);
-    upgrading.request_sync().unwrap();
+    mail_core::testing::request_sync_when_idle(&upgrading);
     assert!(readonly.wait_for_history());
     upgrading.cancel_mutation_upgrade().unwrap();
     readonly.set_history_blocked(false);
     assert!(until(|| upgrading.account_status().unwrap().sync.state
         == mail_core::gmail::types::SyncState::Idle));
+    upgrading
+        .wait_for_test_idle(mail_core::testing::TIMEOUT)
+        .unwrap();
     upgrading.enable_mutations().unwrap();
     assert!(readonly.wait_for_grant());
     assert_eq!(
@@ -741,6 +744,9 @@ fn retry_clones_failed_targets_and_new_key_and_upgrade_cancel_isolated() {
     assert!(readonly.writes().is_empty());
     readonly.set_grant_blocked(false);
     readonly.set_grant_error(Some(MailError::PermissionRequired));
+    upgrading
+        .wait_for_test_idle(mail_core::testing::TIMEOUT)
+        .unwrap();
     upgrading.enable_mutations().unwrap();
     assert!(until(
         || upgrading.account_status().unwrap().sync.error == Some(MailError::PermissionRequired)

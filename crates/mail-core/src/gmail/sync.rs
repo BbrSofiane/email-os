@@ -2979,7 +2979,7 @@ mod worker_halt_tests {
             .test_sync_deadline
             .unwrap();
         clock.advance_seconds(2);
-        core.request_sync().unwrap();
+        crate::testing::request_sync_when_idle(&core);
         assert!(until(
             || core.account_status().unwrap().sync.error == Some(MailError::NetworkUnavailable)
         ));
@@ -3211,7 +3211,7 @@ mod worker_halt_tests {
         }));
 
         provider.block_history();
-        core.request_sync().expect("request synthetic sync");
+        crate::testing::request_sync_when_idle(&core);
         assert!(
             provider.wait_for_history(),
             "sync is held before queued setter dispatch"

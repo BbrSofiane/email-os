@@ -158,6 +158,7 @@ fn wait_initial_sync(core: &GmailCore) {
         "initial sync should complete: {:?}",
         status(core)
     );
+    core.wait_for_test_idle(TIMEOUT).unwrap();
     assert_eq!(inbox_ids(core).len(), 3);
 }
 
@@ -694,7 +695,7 @@ fn capped_expiry_rediscovery_drops_unseen_cached_inbox_threads_before_rebasing()
         None,
         history_page(&added_refs, &[], None, "hist-1001"),
     )]));
-    assert_eq!(core.request_sync(), Ok(()));
+    mail_core::testing::request_sync_when_idle(&core);
     assert!(until(|| {
         core.get_conversation(&conv_ref("new-07")).is_ok()
             && status(&core).sync.cached_conversations == 100
@@ -754,7 +755,7 @@ fn capped_expiry_rediscovery_drops_unseen_cached_inbox_threads_before_rebasing()
         "hist-2000",
     )));
     fake.expire_history_start("hist-1001");
-    assert_eq!(core.request_sync(), Ok(()));
+    mail_core::testing::request_sync_when_idle(&core);
     assert!(
         until(|| {
             status(&core).sync.state == SyncState::Idle
@@ -773,7 +774,7 @@ fn capped_expiry_rediscovery_drops_unseen_cached_inbox_threads_before_rebasing()
     // The cursor is now beyond the expired change. A subsequent catch-up does
     // not rediscover, and the archived thread must still remain absent.
     let discovery_calls = fake.calls_matching("list_inbox|-").len();
-    assert_eq!(core.request_sync(), Ok(()));
+    mail_core::testing::request_sync_when_idle(&core);
     assert!(until(|| {
         fake.calls_matching("history|hist-2000|-").len() == 2
             && status(&core).sync.state == SyncState::Idle
@@ -838,7 +839,7 @@ fn history_catch_up_reflects_external_changes_deletions_and_archives() {
     );
     fake.set_history(history);
 
-    assert_eq!(core.request_sync(), Ok(()), "request_sync enqueues");
+    mail_core::testing::request_sync_when_idle(&core);
     assert!(
         until(|| {
             let ids = inbox_ids(&core);
@@ -893,7 +894,7 @@ fn history_does_not_import_new_archived_thread_bodies_into_the_bounded_cache() {
         None,
         history_page(&["archived-only"], &[], None, "hist-1002"),
     )]));
-    assert_eq!(core.request_sync(), Ok(()));
+    mail_core::testing::request_sync_when_idle(&core);
     assert!(
         until(|| {
             status(&core).sync.state == SyncState::Idle
@@ -969,7 +970,7 @@ fn history_cursor_only_advances_after_all_pages_and_resumes_mid_batch() {
     fake.set_paused_method(Some("get_thread"));
     fake.pause_thread(Some("thr-2b"));
 
-    assert_eq!(core.request_sync(), Ok(()));
+    mail_core::testing::request_sync_when_idle(&core);
     assert!(
         fake.wait_for_calls("get_thread|thr-2b", 1),
         "paused mid-batch after page 1 committed"
@@ -1072,7 +1073,7 @@ fn cursor_expiry_triggers_bounded_rediscovery_and_reconciles_stale_members() {
         "hist-2000",
     )));
 
-    assert_eq!(core.request_sync(), Ok(()));
+    mail_core::testing::request_sync_when_idle(&core);
     assert!(
         until(|| {
             let ids = inbox_ids(&core);
@@ -1106,7 +1107,7 @@ fn cached_reads_survive_offline_and_auth_errors() {
     wait_initial_sync(&core);
 
     fake.set_sticky_error(Some(MailError::NetworkUnavailable));
-    assert_eq!(core.request_sync(), Ok(()));
+    mail_core::testing::request_sync_when_idle(&core);
     assert!(
         until(|| {
             let st = status(&core);
@@ -1129,7 +1130,7 @@ fn cached_reads_survive_offline_and_auth_errors() {
 
     // Credential/auth failure flips the connection hint but never the cache.
     fake.set_sticky_error(Some(MailError::AuthRequired));
-    assert_eq!(core.request_sync(), Ok(()));
+    mail_core::testing::request_sync_when_idle(&core);
     assert!(
         until(|| status(&core).connection == ConnectionState::AuthRequired),
         "auth required visible: {:?}",
@@ -1325,7 +1326,7 @@ fn subscribers_receive_a_progress_hint_after_history_checkpoint_before_next_page
     fake.set_history(history);
     fake.set_paused_method(Some("get_thread"));
     fake.pause_thread(Some("thr-2b"));
-    assert_eq!(core.request_sync(), Ok(()));
+    mail_core::testing::request_sync_when_idle(&core);
     assert!(
         fake.wait_for_calls("get_thread|thr-2b", 1),
         "second-page fetch is paused"
@@ -1353,7 +1354,7 @@ fn subscribers_observe_sync_start_before_a_paused_provider_call_returns() {
     });
     let before = notifications.load(Ordering::SeqCst);
     fake.set_paused_method(Some("history"));
-    assert_eq!(core.request_sync(), Ok(()));
+    mail_core::testing::request_sync_when_idle(&core);
     assert!(
         fake.wait_for_inflight(1),
         "history call reached its pause gate"
@@ -1391,7 +1392,7 @@ fn history_page_budget_yields_after_durable_checkpoints() {
         );
     }
     fake.set_history(pages);
-    assert_eq!(core.request_sync(), Ok(()));
+    mail_core::testing::request_sync_when_idle(&core);
     assert!(until(
         || status(&core).sync.error == Some(MailError::InvalidProviderResponse)
     ));
@@ -1507,7 +1508,7 @@ fn disconnect_cancels_in_flight_clears_state_and_blocks_repopulation() {
     fake.set_paused_method(Some("get_thread"));
     fake.pause_thread(Some("thr-2b"));
     let thread_calls_before_sync = fake.calls_matching("get_thread|thr-2b").len();
-    assert_eq!(core.request_sync(), Ok(()));
+    mail_core::testing::request_sync_when_idle(&core);
     assert!(fake.wait_for_calls("get_thread|thr-2b", thread_calls_before_sync + 1));
 
     // Disconnect cancels the in-flight call, deletes credentials, clears the
@@ -1649,7 +1650,7 @@ fn history_page_rejects_aggregate_retained_threads_without_advancing_cursor() {
         None,
         history_page(&["thr-1a"], &[], None, "hist-1002"),
     )]));
-    core.request_sync().unwrap();
+    mail_core::testing::request_sync_when_idle(&core);
     assert!(until(|| {
         let sync = status(&core).sync;
         sync.state == SyncState::Error && sync.error == Some(MailError::InvalidProviderResponse)
@@ -1668,7 +1669,7 @@ fn history_page_rejects_aggregate_retained_threads_without_advancing_cursor() {
         None,
         history_page(&[], &[], None, "hist-1003"),
     )]));
-    core.request_sync().unwrap();
+    mail_core::testing::request_sync_when_idle(&core);
     assert!(until(|| {
         fake.calls_matching("history|hist-1001|-").len() == 2
             && status(&core).sync.state == SyncState::Idle
