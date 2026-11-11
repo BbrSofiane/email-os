@@ -33,7 +33,12 @@ export async function startRenderedHarness(chromePath: string, profilePrefix: st
     const appUrl = server.resolvedUrls?.local?.[0] ?? '';
     if (!appUrl) throw new Error('Vite dev server did not report a local URL');
     profileDir = mkdtempSync(join(tmpdir(), profilePrefix));
-    chrome = spawn(chromePath, ['--headless=new', '--remote-debugging-port=0', '--no-first-run', '--no-default-browser-check', `--user-data-dir=${profileDir}`, 'about:blank'], { stdio: 'ignore' });
+    chrome = spawn(chromePath, ['--headless=new', '--remote-debugging-port=0', '--no-first-run', '--no-default-browser-check', `--user-data-dir=${profileDir}`, 'about:blank'], {
+      stdio: 'ignore',
+      // Headless test Chrome needs no DBus. Unanswered desktop-service calls can
+      // block its first navigation for 25s, beyond the 20s CDP command timeout.
+      env: { ...process.env, DBUS_SESSION_BUS_ADDRESS: 'unix:path=/nonexistent', DBUS_SYSTEM_BUS_ADDRESS: 'unix:path=/nonexistent' },
+    });
     const spawnError = new Promise<never>((_, reject) => chrome!.on('error', reject));
     cdp = await Promise.race([connectCdp(profileDir, startup.signal), spawnError]);
     await cdp.cmd('Page.enable');

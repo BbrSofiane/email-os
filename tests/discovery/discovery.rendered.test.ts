@@ -433,8 +433,13 @@ describe.skipIf(chromePath === '')('UX-03 discovery / UX-13 workspaces (real Chr
     // Pointer trigger owns origin in this journey, not the previously focused row.
     expect(await activeTest()).toBe('palette-trigger');
     await click('[data-test="palette-trigger"]'); await cdp!.js('window.__h.wait(60)');
+    const optionIds = await cdp!.js<string[]>(`[...document.querySelectorAll('[role="option"]')].map((option) => option.id)`);
+    expect(optionIds.length).toBeGreaterThan(1);
+    expect(await cdp!.js(`document.querySelector('[aria-selected="true"]').id`)).toBe(optionIds[0]);
     await press('ArrowDown');
-    expect(await cdp!.js(`document.querySelector('[aria-selected="true"]').textContent`)).toContain('Mark done');
+    const nextHighlight = await cdp!.js<string>(`document.querySelector('[aria-selected="true"]').id`);
+    expect(nextHighlight).toBe(optionIds[1]);
+    expect(await cdp!.js(`document.querySelector('[data-test="action-query"]').getAttribute('aria-activedescendant')`)).toBe(nextHighlight);
     expect(await cdp!.js(`getComputedStyle(document.querySelector('[aria-selected="true"]')).borderLeftColor`)).not.toBe('rgba(0, 0, 0, 0)');
     // The active result must remain visible even in a short scrolling palette.
     await cdp!.js(`document.querySelector('.action-overlay').style.maxHeight = '180px'`);
@@ -444,6 +449,7 @@ describe.skipIf(chromePath === '')('UX-03 discovery / UX-13 workspaces (real Chr
     expect(highlight.top).toBeGreaterThanOrEqual(highlight.outerTop);
     expect(highlight.bottom).toBeLessThanOrEqual(highlight.outerBottom);
     await press('Escape');
+    expect(await cdp!.js(`window.__fixture.controls.archiveCommands.length + window.__fixture.controls.readCommands.length`)).toBe(0);
   });
 
   it.each(['pointer', 'row-origin'] as const)('palette → cached Done → reader Back → context Back restores exact ID and nonzero list geometry (%s)', async (origin) => {
@@ -535,6 +541,9 @@ describe.skipIf(chromePath === '')('UX-03 discovery / UX-13 workspaces (real Chr
     await cdp!.cmd('Page.bringToFront');
   }
 
+  // These multi-workspace journeys issue many native-input CDP round trips.
+  // Use the existing 30s long-journey budget under CPU contention; individual
+  // CDP commands still have the harness's unchanged 20s cap.
   it('UX-13: command queries survive trusted dismissal, account switches and palette execution independently', async () => {
     await freshWorkspaceMount();
     const a = '[data-workspace="fixture-account"]';
@@ -577,7 +586,7 @@ describe.skipIf(chromePath === '')('UX-03 discovery / UX-13 workspaces (real Chr
     expect(await query(a)).toBe('cached');
     expect(await cdp!.js(`window.__sessions.map(s => s.client.controls.activity().length)`)).toEqual([0, 0]);
     await press('Escape');
-  });
+  }, 30_000);
 
   it('UX-13: pointer switches retain account-local focus/selection/scroll; inactive identical IDs stay inert', async () => {
     await freshWorkspaceMount();
@@ -636,6 +645,6 @@ describe.skipIf(chromePath === '')('UX-03 discovery / UX-13 workspaces (real Chr
     expect(await cdp!.js(`Array.from(document.querySelectorAll('${b} [data-test^="conversation-row-"]'), row => row.dataset.test)`))
       .toEqual(beforeLists[1]!.map(row => `conversation-row-${row.ref.conversationId}`));
     expect(await cdp!.js(`document.title`)).toContain('you@second.example.test');
-  });
+  }, 30_000);
 
 });
