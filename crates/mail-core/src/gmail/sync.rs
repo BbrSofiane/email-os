@@ -150,6 +150,8 @@ struct CtrlState {
     #[cfg(test)]
     test_sync_deadline: Option<Instant>,
     #[cfg(test)]
+    test_reminder_deadline: Option<Instant>,
+    #[cfg(test)]
     test_tick_due: bool,
     #[cfg(any(test, feature = "test-support"))]
     operations_paused: bool,
@@ -372,6 +374,8 @@ impl GmailCore {
                 test_wait_cycles: 0,
                 #[cfg(test)]
                 test_sync_deadline: None,
+                #[cfg(test)]
+                test_reminder_deadline: None,
                 #[cfg(test)]
                 test_tick_due: false,
                 #[cfg(any(test, feature = "test-support"))]
@@ -1943,6 +1947,11 @@ fn run(
                 let reminder_deadline = reminder_wait.map(|wait| {
                     Instant::now() + worker_wait(&st, wait.max(Duration::from_secs(1)))
                 });
+                #[cfg(test)]
+                {
+                    st.test_reminder_deadline = reminder_deadline;
+                    ctrl.wake.notify_all();
+                }
                 let deadline = reminder_deadline.map_or(sync_deadline, |d| d.min(sync_deadline));
                 loop {
                     let remaining = deadline.saturating_duration_since(Instant::now());
@@ -2962,6 +2971,8 @@ mod worker_halt_tests {
                 #[cfg(test)]
                 test_sync_deadline: None,
                 #[cfg(test)]
+                test_reminder_deadline: None,
+                #[cfg(test)]
                 test_tick_due: false,
                 #[cfg(any(test, feature = "test-support"))]
                 operations_paused: false,
@@ -3015,6 +3026,45 @@ mod worker_halt_tests {
         drop(store);
     }
 
+    // Virtual wall-clock jumps do not expire the worker's real Instant timer.
+    // Non-timer scenarios explicitly publish that clock event to the worker.
+    fn advance_reminder_clock(core: &GmailCore, clock: &crate::clock::FakeClock, seconds: i64) {
+        let mut state = core.inner.ctrl.state.lock().unwrap();
+        clock.advance_seconds(seconds);
+        state.reminder_work = true;
+        drop(state);
+        core.inner.ctrl.wake.notify_all();
+    }
+
+    // Keep the control guard so the caller can advance virtual time only after
+    // the real worker has armed its timer, without sending an artificial wake.
+    fn wait_for_reminder_timer(
+        core: &GmailCore,
+        before: Option<Instant>,
+    ) -> std::sync::MutexGuard<'_, CtrlState> {
+        let timeout = Instant::now() + crate::testing::TIMEOUT;
+        let mut state = core.inner.ctrl.state.lock().unwrap();
+        loop {
+            if state.test_reminder_deadline.is_some_and(|deadline| {
+                deadline > Instant::now() && before.is_none_or(|previous| deadline < previous)
+            }) {
+                return state;
+            }
+            let remaining = timeout.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                drop(state);
+                panic!("worker did not arm the requested reminder timer");
+            }
+            state = core
+                .inner
+                .ctrl
+                .wake
+                .wait_timeout(state, remaining)
+                .unwrap()
+                .0;
+        }
+    }
+
     #[test]
     fn due_read_reconciles_external_archive_without_provider_writes() {
         use crate::reminders::{PutReminder, ReminderCondition, ReminderPhase};
@@ -3041,7 +3091,7 @@ mod worker_halt_tests {
         })
         .unwrap();
         provider.state.lock().unwrap().archived = true;
-        clock.advance_seconds(2);
+        advance_reminder_clock(&core, &clock, 2);
         assert!(until(|| core
             .list_reminders()
             .is_ok_and(|r| r[0].phase == ReminderPhase::Returned)));
@@ -3199,13 +3249,9 @@ mod worker_halt_tests {
         };
         let first = core.put_reminder(&command).unwrap();
         assert!(core.list_conversations().unwrap().conversations.is_empty());
-        assert!(until(|| !core
-            .inner
-            .ctrl
-            .state
-            .lock()
-            .unwrap()
-            .reminder_work));
+        let long_deadline = wait_for_reminder_timer(&core, None)
+            .test_reminder_deadline
+            .unwrap();
         let revised = core
             .put_reminder(&PutReminder {
                 due_at: Some("2026-01-01T00:00:01Z".into()),
@@ -3214,14 +3260,10 @@ mod worker_halt_tests {
                 ..command.clone()
             })
             .unwrap();
-        assert!(until(|| !core
-            .inner
-            .ctrl
-            .state
-            .lock()
-            .unwrap()
-            .reminder_work));
-        clock.advance_seconds(2);
+        {
+            let _parked = wait_for_reminder_timer(&core, Some(long_deadline));
+            clock.advance_seconds(2);
+        }
         // No request_sync or list-side execution: the sleeping worker must wake itself.
         assert!(until(|| core
             .list_reminders()
@@ -3289,7 +3331,7 @@ mod worker_halt_tests {
                 request_id: "cancel-read".into(),
             })
             .unwrap();
-            clock.advance_seconds(2);
+            advance_reminder_clock(&core, &clock, 2);
             assert!(until(|| provider.state.lock().unwrap().thread_started));
             if disconnect {
                 core.disconnect_account().unwrap();
