@@ -5367,13 +5367,7 @@ mod tests {
         (store, dir)
     }
 
-    fn profile(account_id: &str, email: &str, history_id: &str) -> GmailProfile {
-        GmailProfile {
-            account_id: account_id.to_string(),
-            email_address: email.to_string(),
-            history_id: history_id.to_string(),
-        }
-    }
+    use crate::testing::profile;
 
     fn message(id: &str, sent_at: &str) -> Message {
         Message {
