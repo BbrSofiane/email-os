@@ -1,0 +1,33 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7495N1TWAA0W51MAHSBNTT4",
+  "strategy": "manual-commit",
+  "branch": "maintenance/p1-rust-test-foundations",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "crates/mail-core/src/gmail/sync.rs",
+    "crates/mail-core/src/testing.rs",
+    "crates/mail-core/src/testing/operations_fake.rs",
+    "crates/mail-core/tests/gmail_cache_sync.rs",
+    "crates/mail-core/tests/gmail_operations.rs",
+    "crates/mail-core/tests/reminders.rs",
+    "crates/mail-core/tests/undo.rs",
+    "src-tauri/src/main.rs"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 0,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 0,
+    "output_tokens": 0,
+    "api_call_count": 0
+  }
+}

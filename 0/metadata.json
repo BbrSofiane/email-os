@@ -1,0 +1,59 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7495N1TWAA0W51MAHSBNTT4",
+  "session_id": "51d622e1-6ef8-4cf7-94af-6048a9823193",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-11T03:07:08.756487676Z",
+  "branch": "maintenance/p1-rust-test-foundations",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "crates/mail-core/src/gmail/sync.rs",
+    "crates/mail-core/src/testing.rs",
+    "crates/mail-core/src/testing/operations_fake.rs",
+    "crates/mail-core/tests/gmail_cache_sync.rs",
+    "crates/mail-core/tests/gmail_operations.rs",
+    "crates/mail-core/tests/reminders.rs",
+    "crates/mail-core/tests/undo.rs",
+    "src-tauri/src/main.rs"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5-2",
+  "turn_id": "04adf217701e",
+  "checkpoint_transcript_start": 1225,
+  "transcript_lines_at_start": 1225,
+  "compact_transcript_start": 177,
+  "token_usage": {
+    "input_tokens": 0,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 0,
+    "output_tokens": 0,
+    "api_call_count": 0
+  },
+  "session_metrics": {
+    "turn_count": 1
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-11T03:07:08.51170595Z",
+    "agent_lines": 2005,
+    "agent_removed": 2128,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 2005,
+    "total_lines_changed": 4133,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 23,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".codex/hooks.json": 23
+      }
+    }
+  ]
+}
