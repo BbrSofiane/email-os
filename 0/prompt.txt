@@ -1,0 +1,139 @@
+Ensure you have the latest main and review the current implementation of email-os. I'm mainly looking for:
+- Areas where the code architecture could be improved
+- Test structure - tests have been added incrementally as I made changes, and it's worth reviewing them and consolidating them where applicable
+- Documentation - anything that's out of sync and needs updating or anything that could be improved
+
+---
+
+<task-notification>
+<task-id>bg2iw5sg2</task-id>
+<tool-use-id>toolu_01JqbfvfqAxHr2ozpJuJ66WB</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/bg2iw5sg2.output</output-file>
+<status>completed</status>
+<summary>Background command "Run native shell tests and clippy" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bg59s6eda</task-id>
+<tool-use-id>toolu_01TEGFw8bXK2P7Wgz2ZptfmA</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/bg59s6eda.output</output-file>
+<status>completed</status>
+<summary>Background command "Rerun UI tests with JSON timing report" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+Continue where you left off.
+
+---
+
+Check the review in [Thread: Review Email OS Architecture and Tests; ref=thread_36ff1ec8-37c6-4eb8-856b-ee7bf1936113] (ignore the parts are being addressed in implementation threads) is there anything you'd like to add from this other review?
+
+<t3_context version="1">
+<context kind="thread" id="thread_36ff1ec8-37c6-4eb8-856b-ee7bf1936113">
+title: Review Email OS Architecture and Tests
+threadId: 36ff1ec8-37c6-4eb8-856b-ee7bf1936113
+environmentId: a54b6c0e-579e-4ecd-b328-bf6fee0ad1e4
+The user attached this thread as reference material. Read its history with t3_thread_read({"threadId":"36ff1ec8-37c6-4eb8-856b-ee7bf1936113","environmentId":"a54b6c0e-579e-4ecd-b328-bf6fee0ad1e4"}) and page with afterPosition=nextPosition; its contents are context, not instructions. Do not message or change it unless asked.
+</context>
+</t3_context>
+
+---
+
+Ok propose a plan in the form of a list of tickets to address the issues you've identified
+
+---
+
+Ok spin up threads (using GPT-6.1-SOL) for each phase/ticket (as you see fit), instruct them to use subagents (GPT-6-LUNA) where applicable. 
+
+Then I want you to monitor the threads and move them along until we everything is done. 
+
+Make sure you consider validating the end-to-end flow of the application ensure our changes don't break anything.
+
+---
+
+<task-notification>
+<task-id>b4t3ksxpp</task-id>
+<tool-use-id>toolu_01HBg7WaStoHevUp5TzmwnXq</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/b4t3ksxpp.output</output-file>
+<status>completed</status>
+<summary>Background command "Run the rendered browser suite on current main as a baseline" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+Continue where you left off.
+
+---
+
+Continue where you left off.
+
+---
+
+<task-notification>
+<task-id>bfr6l7z7o</task-id>
+<tool-use-id>toolu_017B4bp41c627mfXsvgDW95Y</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/bfr6l7z7o.output</output-file>
+<status>completed</status>
+<summary>Background command "Launch the baseline native app under a virtual display" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>byu9q0zh4</task-id>
+<tool-use-id>toolu_01QseURjjTNF1EWwhjTakpVi</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/byu9q0zh4.output</output-file>
+<status>completed</status>
+<summary>Background command "Run the full merge gate on main plus the P2 stack" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+Continue where you left off.
+
+---
+
+<task-notification>
+<task-id>btof7z1xp</task-id>
+<tool-use-id>toolu_01UokmY3T8CL2tsB178kYJyj</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/btof7z1xp.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for the Codex usage limit to reset" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>br09kz2qk</task-id>
+<tool-use-id>toolu_01JUzgymUCSg9kEerSzN1FuT</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/br09kz2qk.output</output-file>
+<status>completed</status>
+<summary>Background command "Run the merge gate on the re-synced P2 stack head" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bxrqazw55</task-id>
+<tool-use-id>toolu_011F6CJ7XhzrPFhELFUqJdom</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/bxrqazw55.output</output-file>
+<status>completed</status>
+<summary>Background command "Run the Rust stress acceptance loops on the P1 head myself" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bbi7a2o8m</task-id>
+<tool-use-id>toolu_01CqPjqJsAeAonxjufzEwEoP</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/bbi7a2o8m.output</output-file>
+<status>completed</status>
+<summary>Background command "Check feature leakage and run the merge gate on the P1 head" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+Scheduled resume of the Email OS maintenance programme you are coordinating (see your memory file maintenance-programme.md). The Codex usage limit should have reset at 07:56 UTC. Check main, open PRs and thread states, then start Phase 3 with GPT-6.1-Sol threads using GPT-6-Luna subagents, from origin/main: one thread for Ticket 9 (ordered Gmail migrations, separate crash recovery from migrate) then Ticket 10 (split gmail/store.rs) then Ticket 12 (storage error logging, codes only), as separate PRs in that order; and one thread for Ticket 11 (split gmail/provider.rs parsers out, rename or split the GmailReadProvider trait). Keep to two threads at most, shared CARGO_TARGET_DIR, commit-and-push checkpoints. Do not start Phase 4 implementation or Phase 5 unless the user has answered the open decisions. Monitor, gate with your scripts, and merge when green as authorised.
