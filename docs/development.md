@@ -183,14 +183,17 @@ native compile attempt stopped because `pkg-config` and GTK development packages
 were missing; this is historical environment evidence, not a result from the
 baseline above. Do not install OS packages as part of a routine validation run.
 
-Rendered Chromium suites are opt-in tests included in `mise run test:ui`; the
-default fast run skips them without their browser environment. Each suite starts its
-own Vite server and synthetic in-memory fixture. For example:
+Rendered Chromium suites are opt-in and excluded from the default `mise run test:ui`.
+Each suite starts its own Vite server and synthetic in-memory fixture. Run all four:
 
 ```sh
 EMAIL_OS_RENDERED_LAYOUT_CHROME=/path/to/chromium \
-  mise exec -- pnpm exec vitest run tests/discovery.rendered.test.ts
+  mise run test:rendered
 ```
+
+The harness neutralises Chrome's session and system DBus addresses: headless test
+Chrome needs no desktop services, and unanswered DBus calls can otherwise stall
+its first navigation beyond the 20-second CDP command timeout.
 
 Use the suite's environment variable and command shown in its source for other
 rendered suites; some use `EMAIL_OS_DISCLOSURE_FOCUS_CHROME`. A passing rendered
@@ -554,15 +557,15 @@ No credentials or real provider were used for this increment.
 
 ### UX-13A validation boundaries
 
-`tests/workspaces.component.test.ts` and `browser-fake.accounts.test.ts` exercise
+`tests/workspaces.component.test.ts` and `tests/browser-fake/accounts.test.ts` exercise
 two synthetic identities with colliding conversation/message/draft/request IDs,
 late detail/list/action results, independent Back/focus/selection/command queries,
 save-before-switch, failed saves and serialized pending saves. This is in-memory
 frontend integration, not proof of native account/credential ownership.
 
-The existing opt-in `tests/discovery.rendered.test.ts` CDP harness also contains a
+The existing opt-in `tests/discovery/discovery.rendered.test.ts` CDP harness also contains a
 `UX-13:` pointer/keyboard journey (isolated temporary Chromium profile). Run with
-`EMAIL_OS_RENDERED_LAYOUT_CHROME=/path/to/chromium mise exec -- pnpm exec vitest run tests/discovery.rendered.test.ts -t 'UX-13:'`.
+`EMAIL_OS_RENDERED_LAYOUT_CHROME=/path/to/chromium mise exec -- pnpm exec vitest run tests/discovery/discovery.rendered.test.ts -t 'UX-13:'`.
 It checks actual inert focus rejection, independent IDs/selection, list scroll,
 reader Back and exact account-local action outcomes. It does not test WKWebView
 or native tabs. Existing core mail/Gmail/draft profile-lock tests remain the

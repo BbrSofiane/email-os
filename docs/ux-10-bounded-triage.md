@@ -108,7 +108,7 @@ arbitrary URL opener, hidden send path, filter creation or credential changes.
 
 ### Rendered synthetic browser evidence (not native/provider)
 
-`tests/discovery.rendered.test.ts`: **6 passed**, using trusted CDP keyboard/
+`tests/discovery/discovery.rendered.test.ts`: **6 passed**, using trusted CDP keyboard/
 mouse input with the existing Comet Chromium binary, a fresh temporary browser
 profile and only local Vite/synthetic data. The new UX-10 scenario runs at 1200
 and 999 CSS px: Commands → cached Trash → exact hostile-text fixture reader →
@@ -118,7 +118,7 @@ pixel parity, remote convergence or assistive technology behavior.
 
 ```sh
 EMAIL_OS_RENDERED_LAYOUT_CHROME=/Applications/Comet.app/Contents/MacOS/Comet \
-  mise exec -- pnpm exec vitest run tests/discovery.rendered.test.ts \
+  mise exec -- pnpm exec vitest run tests/discovery/discovery.rendered.test.ts \
   --maxWorkers=1 --minWorkers=1
 ```
 
@@ -191,7 +191,7 @@ Final gates on this rebased tree:
   skipped**. Contract generation, formatting, clippy and typecheck passed.
 - `mise run build:web`, `mise run check:native`: passed.
 - `mise run test:native`: **8 passed** (backend/bridge only).
-- Opt-in `tests/discovery.rendered.test.ts`: **14 passed**, including UX-06,
+- Opt-in `tests/discovery/discovery.rendered.test.ts`: **14 passed**, including UX-06,
   UX-08 and cached Trash at 1200/999 CSS px, using fresh Comet Chromium state.
 - Live browser preview at 1280×800: two synthetic Trash conversations and one
   synthetic Spam conversation excluded from Inbox; Trash drawer → hostile-text

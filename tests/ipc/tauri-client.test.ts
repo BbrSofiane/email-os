@@ -1,0 +1,400 @@
+import { readFileSync } from 'node:fs';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  LIST_PROVIDER_DESTINATIONS_COMMAND, BROWSE_PROVIDER_DESTINATION_COMMAND,
+  APP_CLOSE_REQUESTED_EVENT,
+  CANCEL_APP_CLOSE_COMMAND,
+  COMPLETE_APP_CLOSE_COMMAND,
+  CREATE_DRAFT_COMMAND,
+  DELETE_DRAFT_COMMAND,
+  DRAFTS_CHANGED_EVENT,
+  GET_APP_CLOSE_REQUEST_COMMAND,
+  GET_DRAFT_COMMAND,
+  SEARCH_MAIL_COMMAND,
+  CANCEL_SEARCH_MAIL_COMMAND,
+  LIST_CONVERSATIONS_COMMAND,
+  LIST_CACHED_DONE_COMMAND,
+  LIST_CACHED_TRASH_COMMAND,
+  LIST_DRAFTS_COMMAND,
+  LIST_OPERATION_GROUPS_COMMAND,
+  GET_OPERATION_GROUP_COMMAND,
+  SAVE_DRAFT_COMMAND,
+  SET_ARCHIVED_GROUP_COMMAND,
+  SET_READ_GROUP_COMMAND,
+  UNDO_OPERATION_COMMAND,
+  UNDO_OPERATION_GROUP_COMMAND,
+  isMailErrorShape,
+} from '../../src/lib/ipc/client';
+
+const mocks = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  listen: vi.fn(),
+  unlisten: vi.fn(),
+  order: [] as string[],
+  handlers: new Map<string, (event: { payload: unknown }) => void>(),
+}));
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }));
+vi.mock('@tauri-apps/api/event', () => ({ listen: mocks.listen }));
+
+import { createTauriMailClient } from '../../src/lib/ipc/tauri-client';
+
+describe('Tauri draft and close protocol adapter', () => {
+  beforeEach(() => {
+    mocks.invoke.mockReset();
+    mocks.listen.mockReset();
+    mocks.unlisten.mockReset();
+    mocks.order.length = 0;
+    mocks.handlers.clear();
+    mocks.listen.mockImplementation(async (eventName: string, handler: (event: { payload: unknown }) => void) => {
+      mocks.order.push(`listen:${eventName}`);
+      mocks.handlers.set(eventName, handler);
+      return mocks.unlisten;
+    });
+  });
+
+  it('transports stars with exact named commands, stable identities and typed errors', async () => {
+    const client = createTauriMailClient();
+    const command = {conversation:{accountId:'a',conversationId:'t'},starred:false,requestId:'s'};
+    const receipt = {operationId:'op',acceptedAt:'now'};
+    mocks.invoke.mockResolvedValue(receipt);
+    expect(await client.setStarred(command)).toBe(receipt);
+    expect(mocks.invoke).toHaveBeenLastCalledWith('set_starred',{command});
+    const group = {accountId:'a',members:[command.conversation],starred:true,requestId:'g'};
+    await client.setStarredGroup(group);
+    expect(mocks.invoke).toHaveBeenLastCalledWith('set_starred_group',{command:group});
+    const request = {accountId:'a',limit:25,cursor:null};
+    await client.listCachedStarred(request);
+    expect(mocks.invoke).toHaveBeenLastCalledWith('list_cached_starred',{request});
+    mocks.invoke.mockRejectedValue({kind:'permission_required'});
+    await expect(client.setStarred(command)).rejects.toEqual({kind:'permission_required'});
+    mocks.invoke.mockRejectedValue(new Error('lost bridge'));
+    await expect(client.listCachedStarred(request)).rejects.toEqual({kind:'storage_unavailable'});
+  });
+
+  it('transports the account-scoped local split without invoking mailbox mutations', async () => {
+    const client = createTauriMailClient();
+    const split = { name: 'Clients', criterion: 'domain' as const, value: 'example.com', enabled: true, hideWhenEmpty: true };
+    mocks.invoke.mockResolvedValue(split);
+    expect(await client.saveSavedSplit('account', split)).toBe(split);
+    expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith('save_saved_split', { accountId: 'account', split });
+    mocks.invoke.mockClear();
+    expect(await client.getSavedSplit('account')).toBe(split);
+    expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith('get_saved_split', { accountId: 'account' });
+    mocks.invoke.mockRejectedValue({ kind: 'storage_unavailable' });
+    await expect(client.saveSavedSplit('account', split)).rejects.toEqual({ kind: 'storage_unavailable' });
+    expect(mocks.listen).not.toHaveBeenCalled();
+  });
+
+  it('transports search/cancellation without converting native failures into empty results', async () => {
+    const client = createTauriMailClient();
+    const request = { accountId: 'account', query: 'from:alice OR subject:"old mail"', cursor: null, cachedOnly: false };
+    const page = { conversations: [], nextCursor: 'next', coverage: 'provider_candidates' };
+    mocks.invoke.mockResolvedValue(page);
+    expect(await client.searchMail(request)).toBe(page);
+    expect(mocks.invoke).toHaveBeenLastCalledWith(SEARCH_MAIL_COMMAND, { request });
+    const ref = { accountId: 'account', conversationId: 'exact-search-result' };
+    await client.getConversation(ref, true);
+    expect(mocks.invoke).toHaveBeenLastCalledWith('get_conversation', { ref, loadMissingSearchResult: true });
+    await client.cancelSearchMail();
+    expect(mocks.invoke).toHaveBeenLastCalledWith(CANCEL_SEARCH_MAIL_COMMAND, undefined);
+    mocks.invoke.mockRejectedValue({ kind: 'auth_required' });
+    await expect(client.searchMail(request)).rejects.toEqual({ kind: 'auth_required' });
+  });
+
+  it('transports provider reads with exact account/cache/cursor envelopes and typed failures', async () => {
+    const client = createTauriMailClient();
+    const catalog = { accountId: 'a', destinations: [], fetchedAt: 'now' };
+    mocks.invoke.mockResolvedValue(catalog);
+    expect(await client.listProviderDestinations('a', true)).toBe(catalog);
+    expect(mocks.invoke).toHaveBeenLastCalledWith(LIST_PROVIDER_DESTINATIONS_COMMAND, { accountId: 'a', cached: true });
+    const request = { accountId: 'a', destinationId: 'DRAFT', cursor: null, cached: false };
+    const page = { accountId: 'a', destinationId: 'DRAFT', conversations: [], nextCursor: null, fetchedAt: 'now' };
+    mocks.invoke.mockResolvedValue(page);
+    expect(await client.browseProviderDestination(request)).toBe(page);
+    expect(mocks.invoke).toHaveBeenLastCalledWith(BROWSE_PROVIDER_DESTINATION_COMMAND, { request });
+    mocks.invoke.mockRejectedValue({ kind: 'network_unavailable' });
+    await expect(client.browseProviderDestination(request)).rejects.toEqual({ kind: 'network_unavailable' });
+  });
+
+  it('transports local reminders with exact named command envelopes and propagates failures', async () => {
+    const client = createTauriMailClient();
+    const command = { conversation: { accountId: 'fixture-account', conversationId: 'conv-01' }, sourceMessageId: 'message-1', dueAt: '2030-11-03T01:30:00-05:00', condition: 'if_no_reply' as const, expectedRevision: null, requestId: 'reminder-key' };
+    mocks.invoke.mockResolvedValue([]);
+    await client.reminders!.list();
+    expect(mocks.invoke).toHaveBeenLastCalledWith('list_reminders', undefined);
+    const receipt = { ...command, revision: 1, phase: 'removing' };
+    mocks.invoke.mockResolvedValue(receipt);
+    expect(await client.reminders!.put(command)).toBe(receipt);
+    expect(mocks.invoke).toHaveBeenLastCalledWith('put_reminder', { command });
+    const cancel = { conversation: command.conversation, expectedRevision: 1, requestId: 'cancel-key' };
+    mocks.invoke.mockRejectedValue({ kind: 'invalid_request', field: 'revision' });
+    await expect(client.reminders!.cancel(cancel)).rejects.toEqual({ kind: 'invalid_request', field: 'revision' });
+    expect(mocks.invoke).toHaveBeenLastCalledWith('cancel_reminder', { command: cancel });
+  });
+
+  it('transports cached Trash only through the named read command and propagates rejection', async () => {
+    const client = createTauriMailClient();
+    const request = { accountId: 'account', limit: 1, cursor: null };
+    const page = { conversations: [], nextCursor: null, coverage: 'local_cache', exactTotal: null, lastSyncedAt: null };
+    mocks.invoke.mockResolvedValue(page);
+    expect(await client.listCachedTrash(request)).toBe(page);
+    expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith(LIST_CACHED_TRASH_COMMAND, { request });
+    mocks.invoke.mockRejectedValue({ kind: 'read_only' });
+    await expect(client.listCachedTrash(request)).rejects.toEqual({ kind: 'read_only' });
+  });
+
+  it('registers each UX-12 command only in the main-window scoped manifest', () => {
+    const manifest = readFileSync('src-tauri/build.rs', 'utf8');
+    const shell = readFileSync('src-tauri/src/main.rs', 'utf8');
+    const capability = JSON.parse(readFileSync('src-tauri/capabilities/main-window.json', 'utf8'));
+    expect(capability.windows).toEqual(['main']);
+    for (const name of ['list_attachments', 'save_attachment', 'cancel_attachment', 'open_external_link']) {
+      expect(manifest).toContain('"' + name + '"');
+      expect(shell).toContain(name + ',');
+      expect(capability.permissions).toContain('allow-' + name.replaceAll('_', '-'));
+      expect(readFileSync('src-tauri/permissions/autogenerated/' + name + '.toml', 'utf8')).toContain('commands.allow = ["' + name + '"]');
+    }
+    expect(capability.permissions.some((permission: string) => /shell:|fs:|opener:/.test(permission))).toBe(false);
+  });
+
+  it('transports attachment descriptors/save/cancel/external through named narrow commands', async () => {
+    const client = createTauriMailClient();
+    const target = { accountId: 'a', conversationId: 'c' };
+    const request = { conversation: target, messageId: 'm', attachmentId: 'f', requestId: 'r' };
+    mocks.invoke.mockResolvedValue([]);
+    await client.listAttachments(target);
+    expect(mocks.invoke).toHaveBeenLastCalledWith('list_attachments', { target });
+    mocks.invoke.mockResolvedValue({ filename: 'unique.download' });
+    await expect(client.saveAttachment(request)).resolves.toEqual({ filename: 'unique.download' });
+    expect(mocks.invoke).toHaveBeenLastCalledWith('save_attachment', { request });
+    await client.cancelAttachment('r');
+    expect(mocks.invoke).toHaveBeenLastCalledWith('cancel_attachment', { requestId: 'r' });
+    await client.openExternalLink('https://example.test');
+    expect(mocks.invoke).toHaveBeenLastCalledWith('open_external_link', { url: 'https://example.test' });
+    mocks.invoke.mockRejectedValue({ kind: 'network_unavailable' });
+    await expect(client.saveAttachment(request)).rejects.toEqual({ kind: 'network_unavailable' });
+    mocks.invoke.mockRejectedValue('unexpected raw error');
+    await expect(client.listAttachments(target)).rejects.toEqual({ kind: 'storage_unavailable' });
+  });
+
+  it('transports cached Done using only the named read query and exact request envelope', async () => {
+    const client = createTauriMailClient();
+    const request = { accountId: 'account', limit: 25, cursor: 'opaque-cursor' };
+    const snapshot = {
+      conversations: [{ ref: { accountId: 'account', conversationId: 'archived' },
+        subject: 'Archived', participants: [], preview: 'local recovery', lastMessageAt: '', pendingOperationId: 'pending' }],
+      nextCursor: 'next', coverage: 'local_cache', exactTotal: null, lastSyncedAt: null,
+    };
+    mocks.invoke.mockResolvedValue(snapshot);
+    const result = await client.listCachedDone(request);
+    expect(result).toBe(snapshot);
+    expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith(LIST_CACHED_DONE_COMMAND, { request });
+    expect(mocks.listen).not.toHaveBeenCalled();
+  });
+
+  it('does not turn cached Done validation/storage failures into an empty result', async () => {
+    const client = createTauriMailClient();
+    const request = { accountId: 'account', limit: 0, cursor: null };
+    mocks.invoke.mockRejectedValue({ kind: 'invalid_request', field: 'limit' });
+    await expect(client.listCachedDone(request)).rejects.toEqual({ kind: 'invalid_request', field: 'limit' });
+    mocks.invoke.mockRejectedValue(new Error('native bridge fault'));
+    await expect(client.listCachedDone(request)).rejects.toEqual({ kind: 'storage_unavailable' });
+  });
+
+  it('transports listConversations summaries unchanged, including primaryCorrespondent', async () => {
+    const client = createTauriMailClient();
+    const snapshot = {
+      conversations: [{
+        ref: { accountId: 'fixture-account', conversationId: 'conv-01' },
+        subject: 's',
+        participants: [{ displayName: null, mailbox: 'anon@example.test' }],
+        primaryCorrespondent: { displayName: null, mailbox: 'anon@example.test' },
+        preview: 'p',
+        lastMessageAt: '2026-01-12T08:19:00Z',
+        pendingOperationId: null,
+      }],
+      activity: [],
+    };
+    mocks.invoke.mockResolvedValue(snapshot);
+    await expect(client.listConversations()).resolves.toEqual(snapshot);
+    expect(mocks.invoke).toHaveBeenLastCalledWith(LIST_CONVERSATIONS_COMMAND, undefined);
+  });
+
+  it('maps the five draft commands to exact generated command names and argument objects', async () => {
+    const client = createTauriMailClient();
+    const ref = { accountId: 'fixture-account', draftId: 'draft-1' };
+    const source = { kind: 'new_message' as const };
+    const content = { to: ' raw ', cc: '', subject: 'x', bodyText: '✓' };
+    mocks.invoke.mockResolvedValue([]);
+    await client.listDrafts();
+    expect(mocks.invoke).toHaveBeenLastCalledWith(LIST_DRAFTS_COMMAND, undefined);
+    mocks.invoke.mockResolvedValue({ ref, revision: 1, createdAt: '', updatedAt: '', content, source, replyLink: null });
+    await client.getDraft(ref);
+    expect(mocks.invoke).toHaveBeenLastCalledWith(GET_DRAFT_COMMAND, { ref });
+    const create = { requestId: 'create-1', source, initialContent: content };
+    mocks.invoke.mockResolvedValue({ ref, revision: 1, savedAt: '' });
+    await client.createDraft(create);
+    expect(mocks.invoke).toHaveBeenLastCalledWith(CREATE_DRAFT_COMMAND, { command: create });
+    const save = { ref, expectedRevision: 1, requestId: 'save-1', content };
+    await client.saveDraft(save);
+    expect(mocks.invoke).toHaveBeenLastCalledWith(SAVE_DRAFT_COMMAND, { command: save });
+    const deletion = { ref, expectedRevision: 1, requestId: 'delete-1' };
+    await client.deleteDraft(deletion);
+    expect(mocks.invoke).toHaveBeenLastCalledWith(DELETE_DRAFT_COMMAND, { command: deletion });
+  });
+
+  it('transports undoOperation on the named command and preserves the typed receipt', async () => {
+    const client = createTauriMailClient();
+    const command = { operationId: 'op-1', requestId: 'undo-req-1' };
+    const receipt = {
+      undoneOperationId: 'op-1',
+      outcome: 'compensating',
+      operationIds: ['op-2', 'op-3'],
+      acceptedAt: '2026-01-01T00:00:00Z',
+    };
+    mocks.invoke.mockResolvedValue(receipt);
+    const result = await client.undoOperation(command);
+    expect(result).toBe(receipt);
+    expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith(UNDO_OPERATION_COMMAND, { command });
+    mocks.invoke.mockRejectedValue({ kind: 'undo_unavailable', reason: 'expired' });
+    await expect(client.undoOperation(command)).rejects.toEqual({
+      kind: 'undo_unavailable',
+      reason: 'expired',
+    });
+  });
+
+  it('maps the five UX-05 group commands to exact generated names and argument envelopes', async () => {
+    const client = createTauriMailClient();
+    const refs = [
+      { accountId: 'fixture-account', conversationId: 'conv-01' },
+      { accountId: 'fixture-account', conversationId: 'conv-03' },
+    ];
+    const groupCommand = { accountId: 'fixture-account', members: refs, archived: true, requestId: 'group-req-1' };
+    const groupReceipt = {
+      groupId: 'group-1',
+      requestId: 'group-req-1',
+      accountId: 'fixture-account',
+      kind: 'archive',
+      requestedArchived: true,
+      acceptedAt: '2026-01-01T00:00:00Z',
+      members: [
+        { ordinal: 0, conversation: refs[0], operationId: 'op-1', rejection: null },
+        { ordinal: 1, conversation: refs[1], operationId: null, rejection: 'conversation_missing' },
+      ],
+    };
+    mocks.invoke.mockResolvedValue(groupReceipt);
+    const accepted = await client.setArchivedGroup(groupCommand);
+    expect(accepted).toBe(groupReceipt);
+    expect(mocks.invoke).toHaveBeenLastCalledWith(SET_ARCHIVED_GROUP_COMMAND, { command: groupCommand });
+
+    const readCommand = { accountId: 'fixture-account', members: refs, read: true, requestId: 'group-req-2' };
+    mocks.invoke.mockResolvedValue({ ...groupReceipt, kind: 'read', requestedArchived: undefined, requestedRead: true });
+    await client.setReadGroup(readCommand);
+    expect(mocks.invoke).toHaveBeenLastCalledWith(SET_READ_GROUP_COMMAND, { command: readCommand });
+
+    const listRequest = { accountId: 'fixture-account', limit: 25, cursor: null };
+    const page = { groups: [], nextCursor: 'next' };
+    mocks.invoke.mockResolvedValue(page);
+    await expect(client.listOperationGroups(listRequest)).resolves.toBe(page);
+    expect(mocks.invoke).toHaveBeenLastCalledWith(LIST_OPERATION_GROUPS_COMMAND, { request: listRequest });
+  });
+
+  it('resolves a lost group acceptance as null without inventing a fresh request', async () => {
+    const client = createTauriMailClient();
+    const lookup = { accountId: 'fixture-account', requestId: 'lost-req-1' };
+    mocks.invoke.mockResolvedValue(null);
+    await expect(client.getOperationGroup(lookup)).resolves.toBeNull();
+    expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith(GET_OPERATION_GROUP_COMMAND, { request: lookup });
+    // Transport faults and validation errors stay typed rejections, never nulls.
+    mocks.invoke.mockRejectedValue(new Error('native bridge fault'));
+    await expect(client.getOperationGroup(lookup)).rejects.toEqual({ kind: 'storage_unavailable' });
+    mocks.invoke.mockRejectedValue({ kind: 'invalid_request', field: 'accountId' });
+    await expect(client.getOperationGroup(lookup)).rejects.toEqual({ kind: 'invalid_request', field: 'accountId' });
+  });
+
+  it('transports undoOperationGroup with durable per-member decisions and typed unavailability', async () => {
+    const client = createTauriMailClient();
+    const command = { groupId: 'group-1', requestId: 'undo-group-req-1' };
+    const receipt = {
+      groupId: 'group-1',
+      requestId: 'undo-group-req-1',
+      acceptedAt: '2026-01-01T00:00:00Z',
+      members: [
+        {
+          ordinal: 0,
+          conversation: { accountId: 'fixture-account', conversationId: 'conv-01' },
+          decision: { kind: 'cancelled' },
+          operationIds: [],
+        },
+        {
+          ordinal: 1,
+          conversation: { accountId: 'fixture-account', conversationId: 'conv-02' },
+          decision: { kind: 'compensating' },
+          operationIds: ['op-9'],
+        },
+        {
+          ordinal: 2,
+          conversation: { accountId: 'fixture-account', conversationId: 'conv-03' },
+          decision: { kind: 'skipped', reason: 'outcome_unknown' },
+          operationIds: [],
+        },
+      ],
+    };
+    mocks.invoke.mockResolvedValue(receipt);
+    const result = await client.undoOperationGroup(command);
+    expect(result).toBe(receipt);
+    expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith(UNDO_OPERATION_GROUP_COMMAND, { command });
+    mocks.invoke.mockRejectedValue({ kind: 'undo_unavailable', reason: 'superseded' });
+    await expect(client.undoOperationGroup(command)).rejects.toEqual({
+      kind: 'undo_unavailable',
+      reason: 'superseded',
+    });
+  });
+
+  it('accepts undo_unavailable errors only with a valid eligibility reason', () => {
+    for (const reason of [
+      'expired',
+      'superseded',
+      'already_undone',
+      'not_applicable',
+      'uncertain',
+      'unknown_prior',
+    ]) {
+      expect(isMailErrorShape({ kind: 'undo_unavailable', reason })).toBe(true);
+    }
+    expect(isMailErrorShape({ kind: 'undo_unavailable', reason: 'someday' })).toBe(false);
+    expect(isMailErrorShape({ kind: 'undo_unavailable' })).toBe(false);
+    expect(isMailErrorShape({ kind: 'not_found' })).toBe(true);
+    expect(isMailErrorShape({ kind: 'something_else' })).toBe(false);
+  });
+
+  it('subscribes to change hints and listens before querying and deduplicates pending close requests', async () => {
+    const client = createTauriMailClient();
+    const draftListener = vi.fn();
+    const unsubscribeDrafts = await client.subscribeDrafts(draftListener);
+    expect(mocks.order).toEqual([`listen:${DRAFTS_CHANGED_EVENT}`]);
+    mocks.handlers.get(DRAFTS_CHANGED_EVENT)?.({ payload: {} });
+    expect(draftListener).toHaveBeenCalledOnce();
+    unsubscribeDrafts();
+
+    const request = { requestId: 'close-1' };
+    const received: string[] = [];
+    mocks.invoke.mockImplementation(async (command: string) => {
+      mocks.order.push(`invoke:${command}`);
+      if (command === GET_APP_CLOSE_REQUEST_COMMAND) return request;
+      return undefined;
+    });
+    const unsubscribeClose = await client.subscribeAppClose((value) => received.push(value.requestId));
+    expect(mocks.order.slice(-2)).toEqual([`listen:${APP_CLOSE_REQUESTED_EVENT}`, `invoke:${GET_APP_CLOSE_REQUEST_COMMAND}`]);
+    expect(received).toEqual(['close-1']);
+    mocks.handlers.get(APP_CLOSE_REQUESTED_EVENT)?.({ payload: request });
+    expect(received).toEqual(['close-1']);
+    mocks.invoke.mockResolvedValue(undefined);
+    await client.completeAppClose('close-1');
+    expect(mocks.invoke).toHaveBeenLastCalledWith(COMPLETE_APP_CLOSE_COMMAND, { requestId: 'close-1' });
+    await client.cancelAppClose('close-2');
+    expect(mocks.invoke).toHaveBeenLastCalledWith(CANCEL_APP_CLOSE_COMMAND, { requestId: 'close-2' });
+    unsubscribeClose();
+  });
+});
