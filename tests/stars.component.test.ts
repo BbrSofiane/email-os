@@ -18,7 +18,7 @@ async function setup(mutationAccess: 'enabled' | 'read_only' | 'upgrading' = 'en
   await flushFakeClientAndVueUpdates(fake); return {fake,w:wrapper};
 }
 
-describe('UX-08 synthetic star browsing (memory only)', () => {
+describe('browses synthetic cached star facts in memory (UX-08)', () => {
   it('S stars without reading; archived mail appears in cache-scoped Starred; unstar removes it', async () => {
     const {fake,w} = await setup();
     const before = await fake.getConversation(fixtureRef('conv-01'));

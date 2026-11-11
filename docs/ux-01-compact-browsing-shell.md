@@ -139,12 +139,12 @@ AI or calendar control, and no empty reserved regions for them (BROWSE-20).
 
 | Checkpoint | Test/manual checkpoint | Evidence status |
 |---|---|---|
-| BROWSE-01 (six-conversation split, one focused row, compact rows, date groups, contact context, no body in contact pane) | `tests/app.component.test.ts` "UX-01 compact browsing shell journey" (six-conversation synthetic client in `tests/helpers.ts`): compact rows, non-selectable group headings, fourth-row focus/open/back with anchor restoration, contact correctness; `tests/inbox-list.component.test.ts` for row semantics | Passing Vitest/jsdom evidence only; visual calibration pending |
-| BROWSE-05 (conversation portion: move focus, open, return to the same row) | `tests/app.component.test.ts` "focuses the fourth row, opens it, and returns to the same row with a restored anchor" and the Slice 01 Enter/Escape focus-restoration tests | Passing in jsdom; parent Chrome probe also preserved conversation ID, scrollTop 170, and row viewport offset across a reader round trip. Native verification remains pending |
-| BROWSE-17 (new mail while focused; action keeps the original stable ID) | `tests/useMailbox.test.ts` insertion/removal/rollback focus tests; `tests/app.component.test.ts` "keeps an action targeted at the original id when a newer row is inserted (BROWSE-17)" | Passing |
-| BROWSE-20 (no AI/calendar controls or reserved regions) | `tests/app.component.test.ts` journey test asserts no calendar/AI buttons; layout reserves no slots for them | Passing |
-| UX-01 Contact focus handoff (breakpoint shrink/grow) | `tests/app.component.test.ts` "hands off focus to the surviving contact disclosure when shrinking across the breakpoint (P2)" and "does not steal focus during breakpoint shrink when focus was elsewhere (P2)" | Passing jsdom and parent Chrome checks: 999→1000 moves focus to the wide contact surface; 1000→999 moves it to the Contact control; list focus is not stolen |
-| UX-01 Inbox destination from overlays | `tests/app.component.test.ts` "leaves no Contact overlay after explicit Inbox navigation (P2)", "returns to Inbox (not Activity) when navigating from an Activity-origin reader (P2)", "still returns to Activity after an ordinary Escape from an Activity-origin reader (P2)", "does not hide the draft editor when Inbox navigation is requested while save is pending (P2)" | Passing in jsdom, including the pending-save guard. Parent Chrome checks also confirm Contact dismissal, explicit Inbox overriding Activity origin, and ordinary Escape restoring Activity. Native protected-close verification remains pending |
+| BROWSE-01 (six-conversation split, one focused row, compact rows, date groups, contact context, no body in contact pane) | `tests/app-shell/shell.test.ts` "UX-01 compact browsing shell journey" (six-conversation synthetic client in `tests/helpers.ts`): compact rows, non-selectable group headings, fourth-row focus/open/back with anchor restoration, contact correctness; `tests/browsing/inbox-list.test.ts` for row semantics | Passing Vitest/jsdom evidence only; visual calibration pending |
+| BROWSE-05 (conversation portion: move focus, open, return to the same row) | `tests/app-shell/shell.test.ts` "focuses the fourth row, opens it, and returns to the same row with a restored anchor" and the Slice 01 Enter/Escape focus-restoration tests | Passing in jsdom; parent Chrome probe also preserved conversation ID, scrollTop 170, and row viewport offset across a reader round trip. Native verification remains pending |
+| BROWSE-17 (new mail while focused; action keeps the original stable ID) | `tests/app-shell/useMailbox.test.ts` insertion/removal/rollback focus tests; `tests/app-shell/shell.test.ts` "keeps an action targeted at the original id when a newer row is inserted (BROWSE-17)" | Passing |
+| BROWSE-20 (no AI/calendar controls or reserved regions) | `tests/app-shell/shell.test.ts` journey test asserts no calendar/AI buttons; layout reserves no slots for them | Passing |
+| UX-01 Contact focus handoff (breakpoint shrink/grow) | `tests/app-shell/shell.test.ts` "hands off focus to the surviving contact disclosure when shrinking across the breakpoint (P2)" and "does not steal focus during breakpoint shrink when focus was elsewhere (P2)" | Passing jsdom and parent Chrome checks: 999→1000 moves focus to the wide contact surface; 1000→999 moves it to the Contact control; list focus is not stolen |
+| UX-01 Inbox destination from overlays | `tests/app-shell/shell.test.ts` "leaves no Contact overlay after explicit Inbox navigation (P2)", "returns to Inbox (not Activity) when navigating from an Activity-origin reader (P2)", "still returns to Activity after an ordinary Escape from an Activity-origin reader (P2)", "does not hide the draft editor when Inbox navigation is requested while save is pending (P2)" | Passing in jsdom, including the pending-save guard. Parent Chrome checks also confirm Contact dismissal, explicit Inbox overriding Activity origin, and ordinary Escape restoring Activity. Native protected-close verification remains pending |
 
 ## P1 rendered-layout regression: bounded row metadata at 1000px
 
@@ -164,7 +164,7 @@ AI or calendar control, and no empty reserved regions for them (BROWSE-20).
   padding whose compact labels carry the full accessible names
   (`aria-label="Mark read"/"Mark unread"`). All `data-test` selectors, the
   explicit archive/read controls, and the contact breakpoint are unchanged.
-- **Regression.** `tests/inbox-list.rendered-layout.test.ts` exercises real
+- **Regression.** `tests/browsing/inbox-list.rendered-layout.test.ts` exercises real
   rendered CSS/layout (not jsdom rectangles): an opt-in Vitest node-environment
   test that starts an ephemeral Vite dev server plus a headless Chrome profile
   (caller-supplied binary via `EMAIL_OS_RENDERED_LAYOUT_CHROME`, driven over
@@ -181,7 +181,7 @@ AI or calendar control, and no empty reserved regions for them (BROWSE-20).
 
   ```
   EMAIL_OS_RENDERED_LAYOUT_CHROME=/home/exedev/.cache/rod/browser/chromium-1321438/chrome \
-    pnpm vitest run tests/inbox-list.rendered-layout.test.ts
+    pnpm vitest run tests/browsing/inbox-list.rendered-layout.test.ts
   ```
 
   Against the pre-fix layout the same test fails (subject column 0px),
@@ -207,10 +207,10 @@ AI or calendar control, and no empty reserved regions for them (BROWSE-20).
   opens upward. This fixes the reproduced 1000px/20px-root-font overflow with
   unknown read facts, pending membership, and an old date without shrinking
   the user's root font or clipping actions.
-- **Durable browser coverage.** `tests/disclosure-focus.rendered.test.ts`
+- **Durable browser coverage.** `tests/layout/disclosure-focus.rendered.test.ts`
   exercises real Chrome Tab/Shift+Tab, Enter and pointer input with Activity
   and narrow Contact, including restored interaction after dismissal.
-  `tests/inbox-list.rendered-layout.test.ts` also exercises the 16px/20px,
+  `tests/browsing/inbox-list.rendered-layout.test.ts` also exercises the 16px/20px,
   old-date, unknown-plus-pending cases and operable compact actions. These
   tests use isolated synthetic previews and caller-supplied Chrome, not real
   accounts or native IPC.
@@ -226,9 +226,9 @@ Run the browser gates separately with the appropriate environment variable:
 
 ```sh
 EMAIL_OS_DISCLOSURE_FOCUS_CHROME=/path/to/chrome \
-  pnpm exec vitest run tests/disclosure-focus.rendered.test.ts
+  pnpm exec vitest run tests/layout/disclosure-focus.rendered.test.ts
 EMAIL_OS_RENDERED_LAYOUT_CHROME=/path/to/chrome \
-  pnpm exec vitest run tests/inbox-list.rendered-layout.test.ts
+  pnpm exec vitest run tests/browsing/inbox-list.rendered-layout.test.ts
 ```
 
 ## Executed validation

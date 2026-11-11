@@ -2,7 +2,7 @@ import { mountApp, press } from './helpers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, type VueWrapper } from '@vue/test-utils';
 
-import { createDiscoveryFixture } from './discovery.fixture';
+import { createDiscoveryFixture } from './support/fixtures/discovery.fixture';
 
 // The g-chord must never fall through to the plain-key meaning of its second
 // key (e = Archive). Timers are faked after mount so only the chord timers are

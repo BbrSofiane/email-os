@@ -5,7 +5,7 @@ import { fullDateLabel } from '../src/lib/browsing-dates';
 import type { Conversation, InboxSnapshot, MailClient } from '../src/lib/ipc/client';
 import { closeUtilityDrawer, conversationRows, countingClient, createBrowserFakeMailClient, deferred, fixtureRef, openUtilityDrawer, useGmailMode, type BrowserFake, type CountingClient, mountApp as sharedMountApp, createKeyEvent } from './helpers';
 
-describe('App (Slice 02 Gmail account states)', () => {
+describe('keeps Gmail account states and transitions explicit (Slice 02)', () => {
   let fake: BrowserFake;
   let counted: CountingClient;
   let wrapper: VueWrapper | null = null;
