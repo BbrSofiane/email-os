@@ -3,52 +3,23 @@
 //! provider; fixture cases run against `MailCore`. Every test name states the
 //! rule it proves. No real mail, credentials, or network is involved.
 
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Condvar, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use mail_core::testing::operations_fake::{ApplyPlan, FakeProvider};
+use mail_core::testing::{open_core_with_clock as open_core, temp_profile, until};
+use std::path::Path;
+use std::sync::Arc;
 
 use mail_core::clock::{utc, FakeClock};
 use mail_core::dto::{
-    Address, Conversation, ConversationRef, MailboxOperationKind, Message, OperationStatus,
-    RetryOperation, SetArchived, SetRead, UndoOperation, UndoOutcome, UndoUnavailableReason,
+    ConversationRef, MailboxOperationKind, Message, OperationStatus, RetryOperation, SetArchived,
+    SetRead, UndoOperation, UndoOutcome, UndoUnavailableReason,
 };
 use mail_core::error::MailError;
 use mail_core::gmail::sync::GmailCore;
-use mail_core::gmail::types::{
-    GmailHistoryError, GmailProfile, GmailReadProvider, GmailThread, HistoryPage, InboxPage,
-};
-use mail_core::CancelToken;
+use mail_core::gmail::types::GmailThread;
 use mail_core::{FakeArchiveProvider, MailCore};
 
-const TIMEOUT: Duration = Duration::from_secs(5);
 const ACCOUNT: &str = "acct-undo";
 const THREAD: &str = "thread-undo";
-
-fn temp_profile(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "mail-core-undo-{tag}-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    dir
-}
-
-fn until(mut predicate: impl FnMut() -> bool) -> bool {
-    let deadline = Instant::now() + TIMEOUT;
-    loop {
-        if predicate() {
-            return true;
-        }
-        if Instant::now() >= deadline {
-            return predicate();
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-}
 
 fn undo(operation_id: &str, request_id: &str) -> UndoOperation {
     UndoOperation {
@@ -64,308 +35,6 @@ fn undo_reason(error: &MailError) -> Option<UndoUnavailableReason> {
     }
 }
 
-// ------------------------------------------------------------------ Gmail fake
-
-#[derive(Clone)]
-enum ApplyPlan {
-    Success,
-    Error(MailError),
-    BeforeDispatchError(MailError),
-    BlockThenSuccess,
-}
-
-struct FakeState {
-    threads: Vec<GmailThread>,
-    apply_plan: ApplyPlan,
-    apply_blocked: bool,
-    writes: Vec<(MailboxOperationKind, bool, Vec<String>)>,
-    thread_fetches: usize,
-    before_dispatch_errors: usize,
-    changed_history: bool,
-}
-
-struct FakeProvider {
-    state: Mutex<FakeState>,
-    gate: Condvar,
-}
-
-impl FakeProvider {
-    fn new(threads: Vec<GmailThread>) -> Arc<Self> {
-        Arc::new(Self {
-            state: Mutex::new(FakeState {
-                threads,
-                apply_plan: ApplyPlan::Success,
-                apply_blocked: false,
-                writes: Vec::new(),
-                thread_fetches: 0,
-                before_dispatch_errors: 0,
-                changed_history: false,
-            }),
-            gate: Condvar::new(),
-        })
-    }
-
-    fn set_apply_plan(&self, plan: ApplyPlan) {
-        self.state.lock().unwrap().apply_plan = plan;
-        self.gate.notify_all();
-    }
-
-    fn set_changed_history(&self, changed: bool) {
-        self.state.lock().unwrap().changed_history = changed;
-    }
-
-    fn wait_for_thread_fetches(&self, count: usize) -> bool {
-        self.wait_for(|state| state.thread_fetches >= count)
-    }
-
-    fn wait_for_apply(&self, count: usize) -> bool {
-        self.wait_for(|state| state.writes.len() >= count)
-    }
-
-    fn wait_for(&self, mut predicate: impl FnMut(&FakeState) -> bool) -> bool {
-        let deadline = Instant::now() + TIMEOUT;
-        let mut state = self.state.lock().unwrap();
-        loop {
-            if predicate(&state) {
-                return true;
-            }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return false;
-            }
-            let (next, _) = self.gate.wait_timeout(state, remaining).unwrap();
-            state = next;
-        }
-    }
-
-    fn writes(&self) -> Vec<(MailboxOperationKind, bool, Vec<String>)> {
-        self.state.lock().unwrap().writes.clone()
-    }
-
-    /// A message that arrives after the original operation was accepted must
-    /// never enter its compensation targets (§3.3 explicit targets).
-    fn set_new_incoming_message(&self) {
-        let mut state = self.state.lock().unwrap();
-        let thread = &mut state.threads[0];
-        thread.inbox_message_ids.push("m-3".to_string());
-        if let Some(ids) = thread.message_ids.as_mut() {
-            ids.push("m-3".to_string());
-        }
-        thread.conversation.messages.push(Message {
-            id: "m-3".to_string(),
-            from: Address {
-                display_name: None,
-                mailbox: "sender@example.test".to_string(),
-            },
-            to: vec![],
-            sent_at: "2026-02-01T00:00:00Z".to_string(),
-            body_text: "new incoming".to_string(),
-            has_attachment: None,
-        });
-        drop(state);
-        self.gate.notify_all();
-    }
-
-    fn release_apply(&self) {
-        let mut state = self.state.lock().unwrap();
-        state.apply_blocked = false;
-        drop(state);
-        self.gate.notify_all();
-    }
-
-    fn apply(
-        &self,
-        kind: MailboxOperationKind,
-        ids: &[String],
-        value: bool,
-        cancel: &CancelToken,
-    ) -> Result<(), MailError> {
-        let plan = {
-            let mut state = self.state.lock().unwrap();
-            if let ApplyPlan::BeforeDispatchError(error) = state.apply_plan.clone() {
-                state.before_dispatch_errors += 1;
-                self.gate.notify_all();
-                return Err(error);
-            }
-            state.writes.push((kind, value, ids.to_vec()));
-            self.gate.notify_all();
-            state.apply_plan.clone()
-        };
-        match plan {
-            ApplyPlan::BlockThenSuccess => {
-                let mut state = self.state.lock().unwrap();
-                state.apply_blocked = true;
-                while state.apply_blocked && !cancel.is_cancelled() {
-                    let (next, _) = self
-                        .gate
-                        .wait_timeout(state, Duration::from_millis(10))
-                        .unwrap();
-                    state = next;
-                }
-                if cancel.is_cancelled() {
-                    return Err(MailError::AuthCancelled);
-                }
-                drop(state);
-            }
-            ApplyPlan::Error(error) => return Err(error),
-            ApplyPlan::BeforeDispatchError(_) => unreachable!("handled before dispatch"),
-            ApplyPlan::Success => {}
-        }
-        self.apply_remote(kind, ids, value);
-        Ok(())
-    }
-
-    fn apply_remote(&self, kind: MailboxOperationKind, ids: &[String], value: bool) {
-        let mut state = self.state.lock().unwrap();
-        for thread in &mut state.threads {
-            let relevant = ids.iter().any(|id| {
-                thread
-                    .message_ids
-                    .as_ref()
-                    .map(|all| all.contains(id))
-                    .unwrap_or_else(|| thread.inbox_message_ids.contains(id))
-                    || thread.conversation.messages.iter().any(|m| m.id == *id)
-            });
-            if !relevant {
-                continue;
-            }
-            match kind {
-                MailboxOperationKind::Star => panic!("star not used in this legacy scenario"),
-                MailboxOperationKind::Archive => {
-                    thread.inbox_message_ids.retain(|id| !ids.contains(id));
-                    if !value {
-                        for id in ids {
-                            if !thread.inbox_message_ids.contains(id) {
-                                thread.inbox_message_ids.push(id.clone());
-                            }
-                        }
-                    }
-                }
-                MailboxOperationKind::Read => {
-                    if let Some(unread) = thread.unread_message_ids.as_mut() {
-                        unread.retain(|id| !ids.contains(id));
-                        if !value {
-                            for id in ids {
-                                if !unread.contains(id) {
-                                    unread.push(id.clone());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            thread.conversation.is_in_inbox = !thread.inbox_message_ids.is_empty();
-            thread.conversation.is_read = thread
-                .unread_message_ids
-                .as_ref()
-                .map(|unread| unread.is_empty());
-        }
-    }
-}
-
-impl GmailReadProvider for FakeProvider {
-    fn mutation_access(&self) -> Result<bool, MailError> {
-        Ok(true)
-    }
-
-    fn enable_mutations(&self, _cancel: &CancelToken) -> Result<GmailProfile, MailError> {
-        Ok(profile())
-    }
-
-    fn apply_archive(
-        &self,
-        ids: &[String],
-        archived: bool,
-        cancel: &CancelToken,
-    ) -> Result<(), MailError> {
-        self.apply(MailboxOperationKind::Archive, ids, archived, cancel)
-    }
-
-    fn apply_read(
-        &self,
-        ids: &[String],
-        read: bool,
-        cancel: &CancelToken,
-    ) -> Result<(), MailError> {
-        self.apply(MailboxOperationKind::Read, ids, read, cancel)
-    }
-
-    fn is_configured(&self) -> bool {
-        true
-    }
-    fn has_credentials(&self) -> Result<bool, MailError> {
-        Ok(true)
-    }
-    fn connect(&self, _cancel: &CancelToken) -> Result<GmailProfile, MailError> {
-        Ok(profile())
-    }
-    fn disconnect(&self) -> Result<(), MailError> {
-        Ok(())
-    }
-    fn profile(&self, _cancel: &CancelToken) -> Result<GmailProfile, MailError> {
-        Ok(profile())
-    }
-    fn list_inbox(
-        &self,
-        _page: Option<&str>,
-        _cancel: &CancelToken,
-    ) -> Result<InboxPage, MailError> {
-        let state = self.state.lock().unwrap();
-        Ok(InboxPage {
-            thread_ids: state
-                .threads
-                .iter()
-                .map(|t| t.conversation.conversation_ref.conversation_id.clone())
-                .collect(),
-            next_page_token: None,
-        })
-    }
-    fn get_thread(
-        &self,
-        id: &str,
-        _cancel: &CancelToken,
-    ) -> Result<Option<GmailThread>, MailError> {
-        let mut state = self.state.lock().unwrap();
-        state.thread_fetches += 1;
-        self.gate.notify_all();
-        Ok(state
-            .threads
-            .iter()
-            .find(|t| t.conversation.conversation_ref.conversation_id == id)
-            .cloned())
-    }
-    fn history(
-        &self,
-        start: &str,
-        _page: Option<&str>,
-        _cancel: &CancelToken,
-    ) -> Result<HistoryPage, GmailHistoryError> {
-        let state = self.state.lock().unwrap();
-        Ok(HistoryPage {
-            changed_thread_ids: if state.changed_history {
-                state
-                    .threads
-                    .iter()
-                    .map(|t| t.conversation.conversation_ref.conversation_id.clone())
-                    .collect()
-            } else {
-                vec![]
-            },
-            deleted_message_ids: vec![],
-            next_page_token: None,
-            history_id: start.to_string(),
-        })
-    }
-}
-
-fn profile() -> GmailProfile {
-    GmailProfile {
-        account_id: ACCOUNT.to_string(),
-        email_address: "undo@example.test".to_string(),
-        history_id: "history-1".to_string(),
-    }
-}
-
 fn conversation_ref(conversation_id: &str) -> ConversationRef {
     ConversationRef {
         account_id: ACCOUNT.to_string(),
@@ -374,56 +43,35 @@ fn conversation_ref(conversation_id: &str) -> ConversationRef {
 }
 
 fn message(id: &str, sent_at: &str) -> Message {
-    Message {
-        id: id.to_string(),
-        from: Address {
-            display_name: None,
-            mailbox: "sender@example.test".to_string(),
-        },
-        to: vec![],
-        sent_at: sent_at.to_string(),
-        body_text: "synthetic body".to_string(),
-        has_attachment: None,
-    }
+    mail_core::testing::message(id, "sender@example.test", sent_at, "synthetic body")
 }
 
-#[allow(clippy::too_many_arguments)]
 fn thread(id: &str, msgs: Vec<Message>, inbox: &[&str], unread: &[&str]) -> GmailThread {
-    let is_in_inbox = !inbox.is_empty();
-    let message_ids: Vec<String> = msgs.iter().map(|m| m.id.clone()).collect();
-    GmailThread {
-        star_facts: None,
-        newest_sender: msgs
-            .iter()
-            .max_by(|a, b| (&a.sent_at, &a.id).cmp(&(&b.sent_at, &b.id)))
-            .map(|m| m.from.clone()),
-        attachments: Vec::new(),
-        conversation: Conversation {
-            stars: None,
-            conversation_ref: conversation_ref(id),
-            subject: format!("subject {id}"),
-            messages: msgs,
-            is_in_inbox,
-            is_read: None,
-            context_complete: Some(true),
-            unsupported_reason: None,
-            retained_snapshot_at: None,
-            reply_context: None,
-            pending_operation_id: None,
-        },
-        inbox_message_ids: inbox.iter().map(|s| s.to_string()).collect(),
-        message_ids: Some(message_ids),
-        unread_message_ids: Some(unread.iter().map(|s| s.to_string()).collect()),
-        trash_message_ids: None,
-        spam_message_ids: None,
-        history_id: "history-1".to_string(),
-    }
+    let newest = msgs
+        .iter()
+        .max_by(|a, b| (&a.sent_at, &a.id).cmp(&(&b.sent_at, &b.id)))
+        .map(|m| m.from.clone());
+    let mut thread = mail_core::testing::thread(
+        ACCOUNT,
+        id,
+        msgs,
+        inbox,
+        Some(unread.iter().map(|s| s.to_string()).collect()),
+        "history-1",
+    );
+    thread.newest_sender = newest;
+    thread.conversation.subject = format!("subject {id}");
+    thread
 }
 
-fn open_core(dir: &Path, provider: &Arc<FakeProvider>, clock: &Arc<FakeClock>) -> GmailCore {
-    GmailCore::open_with_clock(
+fn open_core_operations_paused(
+    dir: &Path,
+    provider: &Arc<FakeProvider>,
+    clock: &Arc<FakeClock>,
+) -> GmailCore {
+    GmailCore::open_with_clock_and_operations_paused(
         dir,
-        Arc::clone(provider) as Arc<dyn GmailReadProvider>,
+        provider.clone(),
         Arc::clone(clock) as Arc<dyn mail_core::clock::Clock>,
     )
     .unwrap()
@@ -440,6 +88,8 @@ fn wait_ready(core: &GmailCore) {
         "startup/sync did not complete: {:?}",
         core.account_status()
     );
+    core.wait_for_test_idle(mail_core::testing::TIMEOUT)
+        .unwrap();
 }
 
 fn wait_status(core: &GmailCore, operation_id: &str, status: OperationStatus) -> bool {
@@ -470,7 +120,7 @@ fn archived(value: bool, request_id: &str) -> SetArchived {
 fn undoing_an_archive_within_the_window_restores_only_originally_inbox_messages() {
     let dir = temp_profile("gmail-restore-preimage");
     let clock = Arc::new(FakeClock::new(utc("2026-01-01T00:00:00Z")));
-    let provider = FakeProvider::new(vec![thread(
+    let provider = FakeProvider::with_threads(vec![thread(
         THREAD,
         vec![
             message("m-1", "2026-01-01T00:00:00Z"),
@@ -479,7 +129,7 @@ fn undoing_an_archive_within_the_window_restores_only_originally_inbox_messages(
         &["m-1"],
         &["m-1", "m-2"],
     )]);
-    let core = open_core(&dir, &provider, &clock);
+    let core = open_core(dir.path(), &provider, &clock);
     wait_ready(&core);
 
     let archive = core.set_archived(&archived(true, "archive-1")).unwrap();
@@ -563,13 +213,13 @@ fn undoing_an_archive_within_the_window_restores_only_originally_inbox_messages(
 fn undo_after_the_ten_second_window_is_rejected_as_expired_and_enqueues_nothing() {
     let dir = temp_profile("gmail-expired");
     let clock = Arc::new(FakeClock::new(utc("2026-01-01T00:00:00Z")));
-    let provider = FakeProvider::new(vec![thread(
+    let provider = FakeProvider::with_threads(vec![thread(
         THREAD,
         vec![message("m-1", "2026-01-01T00:00:00Z")],
         &["m-1"],
         &["m-1"],
     )]);
-    let core = open_core(&dir, &provider, &clock);
+    let core = open_core(dir.path(), &provider, &clock);
     wait_ready(&core);
     let archive = core.set_archived(&archived(true, "archive-1")).unwrap();
     assert!(wait_status(
@@ -610,7 +260,7 @@ fn undo_after_the_ten_second_window_is_rejected_as_expired_and_enqueues_nothing(
 fn undo_of_a_still_queued_operation_cancels_in_place_with_zero_provider_calls() {
     let dir = temp_profile("gmail-cancel-in-place");
     let clock = Arc::new(FakeClock::new(utc("2026-01-01T00:00:00Z")));
-    let provider = FakeProvider::new(vec![
+    let provider = FakeProvider::with_threads(vec![
         thread(
             THREAD,
             vec![message("m-1", "2026-01-01T00:00:00Z")],
@@ -626,7 +276,7 @@ fn undo_of_a_still_queued_operation_cancels_in_place_with_zero_provider_calls() 
             &["m-u2-1"],
         ),
     ]);
-    let core = open_core(&dir, &provider, &clock);
+    let core = open_core_operations_paused(dir.path(), &provider, &clock);
     wait_ready(&core);
     provider.set_apply_plan(ApplyPlan::BeforeDispatchError(
         MailError::NetworkUnavailable,
@@ -661,6 +311,7 @@ fn undo_of_a_still_queued_operation_cancels_in_place_with_zero_provider_calls() 
     // operation: its write must be the only provider call, proving the
     // cancelled row is never claimed.
     provider.set_apply_plan(ApplyPlan::Success);
+    core.release_test_operations();
     let unrelated = core
         .set_archived(&SetArchived {
             conversation: conversation_ref("thread-undo-2"),
@@ -713,13 +364,13 @@ fn undo_of_a_still_queued_operation_cancels_in_place_with_zero_provider_calls() 
 fn undo_of_a_claimed_operation_falls_through_to_compensation_which_runs_after_it() {
     let dir = temp_profile("gmail-compensate-applying");
     let clock = Arc::new(FakeClock::new(utc("2026-01-01T00:00:00Z")));
-    let provider = FakeProvider::new(vec![thread(
+    let provider = FakeProvider::with_threads(vec![thread(
         THREAD,
         vec![message("m-1", "2026-01-01T00:00:00Z")],
         &["m-1"],
         &["m-1"],
     )]);
-    let core = open_core(&dir, &provider, &clock);
+    let core = open_core(dir.path(), &provider, &clock);
     wait_ready(&core);
     provider.set_apply_plan(ApplyPlan::BlockThenSuccess);
     let archive = core.set_archived(&archived(true, "archive-1")).unwrap();
@@ -785,13 +436,13 @@ fn undo_of_a_claimed_operation_falls_through_to_compensation_which_runs_after_it
 fn compensation_targets_exclude_messages_that_arrived_after_the_original() {
     let dir = temp_profile("gmail-new-arrival");
     let clock = Arc::new(FakeClock::new(utc("2026-01-01T00:00:00Z")));
-    let provider = FakeProvider::new(vec![thread(
+    let provider = FakeProvider::with_threads(vec![thread(
         THREAD,
         vec![message("m-1", "2026-01-01T00:00:00Z")],
         &["m-1"],
         &["m-1"],
     )]);
-    let core = open_core(&dir, &provider, &clock);
+    let core = open_core(dir.path(), &provider, &clock);
     wait_ready(&core);
     let archive = core.set_archived(&archived(true, "archive-1")).unwrap();
     assert!(wait_status(
@@ -803,7 +454,7 @@ fn compensation_targets_exclude_messages_that_arrived_after_the_original() {
     provider.set_new_incoming_message();
     provider.set_changed_history(true);
     let fetches = provider.state.lock().unwrap().thread_fetches;
-    core.request_sync().unwrap();
+    mail_core::testing::request_sync_when_idle(&core);
     assert!(provider.wait_for_thread_fetches(fetches + 1));
     assert!(until(|| {
         core.account_status().unwrap().sync.state == mail_core::gmail::types::SyncState::Idle
@@ -832,7 +483,7 @@ fn undo_of_a_read_operation_stages_one_compensation_per_distinct_prior_value() {
     // Mixed facts: m-1 was read, m-2 was unread.
     let dir = temp_profile("gmail-read-groups");
     let clock = Arc::new(FakeClock::new(utc("2026-01-01T00:00:00Z")));
-    let provider = FakeProvider::new(vec![thread(
+    let provider = FakeProvider::with_threads(vec![thread(
         THREAD,
         vec![
             message("m-1", "2026-01-01T00:00:00Z"),
@@ -841,7 +492,7 @@ fn undo_of_a_read_operation_stages_one_compensation_per_distinct_prior_value() {
         &["m-1", "m-2"],
         &["m-2"],
     )]);
-    let core = open_core(&dir, &provider, &clock);
+    let core = open_core(dir.path(), &provider, &clock);
     wait_ready(&core);
     let read = core
         .set_read(&SetRead {
@@ -875,7 +526,7 @@ fn undo_of_a_read_operation_stages_one_compensation_per_distinct_prior_value() {
     // Unknown prior: a target whose unread fact is unobserved cannot be
     // exactly undone.
     let dir2 = temp_profile("gmail-unknown-prior");
-    let provider2 = FakeProvider::new(vec![thread(
+    let provider2 = FakeProvider::with_threads(vec![thread(
         THREAD,
         vec![
             message("m-1", "2026-01-01T00:00:00Z"),
@@ -884,10 +535,10 @@ fn undo_of_a_read_operation_stages_one_compensation_per_distinct_prior_value() {
         &["m-1", "m-2"],
         &["m-2"],
     )]);
-    let core2 = open_core(&dir2, &provider2, &clock);
+    let core2 = open_core(dir2.path(), &provider2, &clock);
     wait_ready(&core2);
     {
-        let conn = rusqlite::Connection::open(dir2.join("gmail.db")).unwrap();
+        let conn = rusqlite::Connection::open(dir2.path().join("gmail.db")).unwrap();
         conn.execute(
             "UPDATE gmail_message_facts SET is_unread = NULL
              WHERE account_id = ?1 AND conversation_id = ?2 AND message_id = 'm-1'",
@@ -928,13 +579,13 @@ fn undo_of_a_read_operation_stages_one_compensation_per_distinct_prior_value() {
 fn a_newer_operation_supersedes_the_undo_target_and_a_retry_counts_as_newer() {
     let dir = temp_profile("gmail-superseded");
     let clock = Arc::new(FakeClock::new(utc("2026-01-01T00:00:00Z")));
-    let provider = FakeProvider::new(vec![thread(
+    let provider = FakeProvider::with_threads(vec![thread(
         THREAD,
         vec![message("m-1", "2026-01-01T00:00:00Z")],
         &["m-1"],
         &["m-1"],
     )]);
-    let core = open_core(&dir, &provider, &clock);
+    let core = open_core(dir.path(), &provider, &clock);
     wait_ready(&core);
     let older = core.set_archived(&archived(true, "older-archive")).unwrap();
     assert!(wait_status(
@@ -949,11 +600,12 @@ fn a_newer_operation_supersedes_the_undo_target_and_a_retry_counts_as_newer() {
             request_id: "newer-read".to_string(),
         })
         .unwrap();
-    assert!(wait_status(
-        &core,
-        &newer.operation_id,
-        OperationStatus::Confirmed
-    ));
+    assert!(
+        wait_status(&core, &newer.operation_id, OperationStatus::Confirmed),
+        "new operation did not confirm: {:?}; fake writes: {:?}",
+        core.list_conversations().unwrap().activity,
+        provider.writes()
+    );
 
     let error = core
         .undo_operation(&undo(&older.operation_id, "undo-older"))
@@ -969,14 +621,14 @@ fn a_newer_operation_supersedes_the_undo_target_and_a_retry_counts_as_newer() {
 
     // Retry counts as a newer operation: after retrying an uncertain op, the
     // uncertain original is superseded by the retry.
-    let provider = FakeProvider::new(vec![thread(
+    let provider = FakeProvider::with_threads(vec![thread(
         THREAD,
         vec![message("m-1", "2026-01-01T00:00:00Z")],
         &["m-1"],
         &["m-1"],
     )]);
     let clock2 = Arc::new(FakeClock::new(utc("2026-01-01T00:00:00Z")));
-    let core = open_core(&dir, &provider, &clock2);
+    let core = open_core(dir.path(), &provider, &clock2);
     wait_ready(&core);
     provider.set_apply_plan(ApplyPlan::Error(MailError::OutcomeUnknown));
     let uncertain = core
@@ -1018,13 +670,13 @@ fn a_newer_operation_supersedes_the_undo_target_and_a_retry_counts_as_newer() {
 fn undo_is_idempotent_per_request_id_and_a_new_request_is_already_undone() {
     let dir = temp_profile("gmail-idempotent");
     let clock = Arc::new(FakeClock::new(utc("2026-01-01T00:00:00Z")));
-    let provider = FakeProvider::new(vec![thread(
+    let provider = FakeProvider::with_threads(vec![thread(
         THREAD,
         vec![message("m-1", "2026-01-01T00:00:00Z")],
         &["m-1"],
         &["m-1"],
     )]);
-    let core = open_core(&dir, &provider, &clock);
+    let core = open_core(dir.path(), &provider, &clock);
     wait_ready(&core);
     let archive = core.set_archived(&archived(true, "archive-1")).unwrap();
     assert!(wait_status(
@@ -1058,13 +710,13 @@ fn undo_is_idempotent_per_request_id_and_a_new_request_is_already_undone() {
 fn uncertain_failed_and_compensating_operations_are_not_undoable() {
     let dir = temp_profile("gmail-not-undoable");
     let clock = Arc::new(FakeClock::new(utc("2026-01-01T00:00:00Z")));
-    let provider = FakeProvider::new(vec![thread(
+    let provider = FakeProvider::with_threads(vec![thread(
         THREAD,
         vec![message("m-1", "2026-01-01T00:00:00Z")],
         &["m-1"],
         &["m-1"],
     )]);
-    let core = open_core(&dir, &provider, &clock);
+    let core = open_core(dir.path(), &provider, &clock);
     wait_ready(&core);
     provider.set_apply_plan(ApplyPlan::Error(MailError::ProviderRejected));
     let failed = core.set_archived(&archived(true, "failed")).unwrap();
@@ -1133,13 +785,13 @@ fn uncertain_failed_and_compensating_operations_are_not_undoable() {
 fn undoable_until_survives_a_restart_within_the_window_and_expires_after_it() {
     let dir = temp_profile("gmail-restart-window");
     let clock = Arc::new(FakeClock::new(utc("2026-01-01T00:00:00Z")));
-    let provider = FakeProvider::new(vec![thread(
+    let provider = FakeProvider::with_threads(vec![thread(
         THREAD,
         vec![message("m-1", "2026-01-01T00:00:00Z")],
         &["m-1"],
         &["m-1"],
     )]);
-    let core = open_core(&dir, &provider, &clock);
+    let core = open_core(dir.path(), &provider, &clock);
     wait_ready(&core);
     provider.set_apply_plan(ApplyPlan::BeforeDispatchError(
         MailError::NetworkUnavailable,
@@ -1174,7 +826,7 @@ fn undoable_until_survives_a_restart_within_the_window_and_expires_after_it() {
 
     core.stop();
     drop(core);
-    let restarted = open_core(&dir, &provider, &clock);
+    let restarted = open_core_operations_paused(dir.path(), &provider, &clock);
     assert!(
         until(|| restarted
             .list_conversations()
@@ -1184,7 +836,7 @@ fn undoable_until_survives_a_restart_within_the_window_and_expires_after_it() {
             .any(|op| op.id == archive.operation_id
                 && op.status == OperationStatus::Queued
                 && op.last_error.as_ref() == Some(&MailError::NetworkUnavailable))),
-        "restart completed and requeued the queued operation"
+        "restart preserved the queued operation and its pre-dispatch error"
     );
     let activity_after = restarted.list_conversations().unwrap().activity;
     let until_after = activity_after
@@ -1206,13 +858,13 @@ fn undoable_until_survives_a_restart_within_the_window_and_expires_after_it() {
 
     // After the window (restart included) the same undo is expired.
     let dir2 = temp_profile("gmail-restart-expired");
-    let provider2 = FakeProvider::new(vec![thread(
+    let provider2 = FakeProvider::with_threads(vec![thread(
         THREAD,
         vec![message("m-1", "2026-01-01T00:00:00Z")],
         &["m-1"],
         &["m-1"],
     )]);
-    let core = open_core(&dir2, &provider2, &clock);
+    let core = open_core(dir2.path(), &provider2, &clock);
     wait_ready(&core);
     provider2.set_apply_plan(ApplyPlan::BeforeDispatchError(
         MailError::NetworkUnavailable,
@@ -1232,7 +884,7 @@ fn undoable_until_survives_a_restart_within_the_window_and_expires_after_it() {
     core.stop();
     drop(core);
     clock.advance_seconds(11);
-    let restarted = open_core(&dir2, &provider2, &clock);
+    let restarted = open_core(dir2.path(), &provider2, &clock);
     wait_ready(&restarted);
     let error = restarted
         .undo_operation(&undo(&archive.operation_id, "undo-expired"))
@@ -1243,13 +895,13 @@ fn undoable_until_survives_a_restart_within_the_window_and_expires_after_it() {
 
     // An interrupted compensation recovers like any operation across restart.
     let dir3 = temp_profile("gmail-interrupted-compensation");
-    let provider3 = FakeProvider::new(vec![thread(
+    let provider3 = FakeProvider::with_threads(vec![thread(
         THREAD,
         vec![message("m-1", "2026-01-01T00:00:00Z")],
         &["m-1"],
         &["m-1"],
     )]);
-    let core = open_core(&dir3, &provider3, &clock);
+    let core = open_core(dir3.path(), &provider3, &clock);
     wait_ready(&core);
     provider3.set_apply_plan(ApplyPlan::BlockThenSuccess);
     let archive = core.set_archived(&archived(true, "archive-comp")).unwrap();
@@ -1262,7 +914,7 @@ fn undoable_until_survives_a_restart_within_the_window_and_expires_after_it() {
     drop(core);
     provider3.set_apply_plan(ApplyPlan::Success);
     provider3.release_apply();
-    let restarted = open_core(&dir3, &provider3, &clock);
+    let restarted = open_core(dir3.path(), &provider3, &clock);
     assert!(until(|| {
         restarted
             .get_conversation(&conversation_ref(THREAD))
@@ -1303,12 +955,12 @@ fn cached_done_excludes_cancelled_and_undone_archives_but_keeps_failed_compensat
             )
         })
         .collect();
-    let provider = FakeProvider::new(threads);
-    let core = open_core(&dir, &provider, &clock);
+    let provider = FakeProvider::with_threads(threads);
+    let core = open_core(dir.path(), &provider, &clock);
     wait_ready(&core);
 
-    // A cancelled archive: accepted while the provider is unreachable, then
-    // undone before dispatch.
+    // A cancelled archive: observe its pre-dispatch failure, then pause claims
+    // before Undo so a queued row cannot be reclaimed during the assertion.
     provider.set_apply_plan(ApplyPlan::BeforeDispatchError(
         MailError::NetworkUnavailable,
     ));
@@ -1323,6 +975,8 @@ fn cached_done_excludes_cancelled_and_undone_archives_but_keeps_failed_compensat
     // pre-dispatch failure before waiting for its requeue; otherwise Undo can
     // race the first claim and legitimately return Compensating, not Cancelled.
     assert!(provider.wait_for(|state| state.before_dispatch_errors >= 1));
+    core.pause_test_operations(mail_core::testing::TIMEOUT)
+        .unwrap();
     assert!(wait_status(
         &core,
         &cancelled_archive.operation_id,
@@ -1334,6 +988,7 @@ fn cached_done_excludes_cancelled_and_undone_archives_but_keeps_failed_compensat
     assert_eq!(receipt.outcome, UndoOutcome::Cancelled);
 
     provider.set_apply_plan(ApplyPlan::Success);
+    core.release_test_operations();
     let failed_comp_archive = core
         .set_archived(&SetArchived {
             conversation: conversation_ref("failed-comp"),
@@ -1419,13 +1074,13 @@ fn cached_done_excludes_cancelled_and_undone_archives_but_keeps_failed_compensat
 fn retrying_a_failed_compensation_keeps_the_undo_linkage_and_is_not_undoable() {
     let dir = temp_profile("gmail-retry-compensation");
     let clock = Arc::new(FakeClock::new(utc("2026-01-01T00:00:00Z")));
-    let provider = FakeProvider::new(vec![thread(
+    let provider = FakeProvider::with_threads(vec![thread(
         THREAD,
         vec![message("m-1", "2026-01-01T00:00:00Z")],
         &["m-1"],
         &["m-1"],
     )]);
-    let core = open_core(&dir, &provider, &clock);
+    let core = open_core(dir.path(), &provider, &clock);
     wait_ready(&core);
     let archive = core.set_archived(&archived(true, "archive-1")).unwrap();
     assert!(wait_status(
@@ -1490,13 +1145,13 @@ fn retrying_a_failed_compensation_keeps_the_undo_linkage_and_is_not_undoable() {
 fn the_preimage_is_the_effective_value_under_a_pending_earlier_operation() {
     let dir = temp_profile("gmail-effective-preimage");
     let clock = Arc::new(FakeClock::new(utc("2026-01-01T00:00:00Z")));
-    let provider = FakeProvider::new(vec![thread(
+    let provider = FakeProvider::with_threads(vec![thread(
         THREAD,
         vec![message("m-1", "2026-01-01T00:00:00Z")],
         &["m-1"],
         &["m-1"],
     )]);
-    let core = open_core(&dir, &provider, &clock);
+    let core = open_core(dir.path(), &provider, &clock);
     wait_ready(&core);
 
     // A claims the worker and blocks inside the provider, so it stays
@@ -1586,7 +1241,7 @@ fn fixture_undo_within_the_window_restores_only_originally_inbox_messages() {
     let provider = Arc::new(FakeArchiveProvider::new());
     core.start_worker(provider.clone()).unwrap();
     {
-        let conn = rusqlite::Connection::open(dir.join("mail.db")).unwrap();
+        let conn = rusqlite::Connection::open(dir.path().join("mail.db")).unwrap();
         conn.execute(
             "UPDATE messages SET provider_inbox = 0
              WHERE account_id = ?1 AND conversation_id = 'conv-01' AND message_id = 'm-01-2'",
@@ -1631,7 +1286,7 @@ fn fixture_undo_within_the_window_restores_only_originally_inbox_messages() {
     }));
     // The originally-INBOX messages are back; the non-INBOX message stays out.
     {
-        let conn = rusqlite::Connection::open(dir.join("mail.db")).unwrap();
+        let conn = rusqlite::Connection::open(dir.path().join("mail.db")).unwrap();
         let inbox_of = |message_id: &str| -> bool {
             conn.query_row(
                 "SELECT provider_inbox FROM messages
@@ -1819,7 +1474,7 @@ fn fixture_migration_one_to_two_preserves_rows_and_request_keys_and_fails_closed
     let dir = temp_profile("fixture-migration-1-2");
     std::fs::create_dir_all(&dir).unwrap();
     {
-        let conn = rusqlite::Connection::open(dir.join("mail.db")).unwrap();
+        let conn = rusqlite::Connection::open(dir.path().join("mail.db")).unwrap();
         conn.execute_batch(
             "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
              INSERT INTO meta VALUES ('schema_version', '1');
@@ -1895,7 +1550,7 @@ fn fixture_migration_one_to_two_preserves_rows_and_request_keys_and_fails_closed
         Some(UndoUnavailableReason::UnknownPrior)
     );
     {
-        let conn = rusqlite::Connection::open(dir.join("mail.db")).unwrap();
+        let conn = rusqlite::Connection::open(dir.path().join("mail.db")).unwrap();
         let version: String = conn
             .query_row(
                 "SELECT value FROM meta WHERE key = 'schema_version'",
@@ -1914,7 +1569,7 @@ fn fixture_migration_one_to_two_preserves_rows_and_request_keys_and_fails_closed
     let dir2 = temp_profile("fixture-migration-unknown");
     std::fs::create_dir_all(&dir2).unwrap();
     {
-        let conn = rusqlite::Connection::open(dir2.join("mail.db")).unwrap();
+        let conn = rusqlite::Connection::open(dir2.path().join("mail.db")).unwrap();
         conn.execute_batch(
             "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
              INSERT INTO meta VALUES ('schema_version', '9');",

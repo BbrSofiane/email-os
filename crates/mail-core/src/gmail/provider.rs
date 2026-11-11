@@ -4820,15 +4820,8 @@ pub(crate) mod tests {
             ),
         )
         .unwrap();
-        let profile = std::env::temp_dir().join(format!(
-            "gmail-unsupported-store-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let store = GmailStore::open(&profile, Arc::new(SystemClock)).unwrap();
+        let profile = tempfile::tempdir().unwrap();
+        let store = GmailStore::open(profile.path(), Arc::new(SystemClock)).unwrap();
         store
             .begin_account(
                 &GmailProfile {
@@ -4879,7 +4872,6 @@ pub(crate) mod tests {
         assert_eq!(mixed.messages.len(), 1);
         assert_eq!(mixed.messages[0].body_text, "Cached plain context");
         assert_eq!(mixed.context_complete, Some(false));
-        let _ = std::fs::remove_dir_all(profile);
     }
 
     #[test]
@@ -4917,15 +4909,8 @@ pub(crate) mod tests {
         assert_eq!(history.changed_thread_ids, vec!["t-restore"]);
         assert!(history.deleted_message_ids.is_empty());
 
-        let profile_dir = std::env::temp_dir().join(format!(
-            "gmail-restore-store-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let store = GmailStore::open(&profile_dir, Arc::new(SystemClock)).unwrap();
+        let profile_dir = tempfile::tempdir().unwrap();
+        let store = GmailStore::open(profile_dir.path(), Arc::new(SystemClock)).unwrap();
         store
             .begin_account(
                 &GmailProfile {
@@ -4959,7 +4944,6 @@ pub(crate) mod tests {
             .unwrap();
         assert!(cached.is_in_inbox);
         assert_eq!(cached.messages[0].body_text, "restored body");
-        let _ = std::fs::remove_dir_all(profile_dir);
     }
 
     #[test]

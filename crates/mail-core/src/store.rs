@@ -2651,16 +2651,7 @@ mod tests {
     use crate::clock::SystemClock;
     use crate::dto::ConversationRef;
 
-    fn temp_dir(tag: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "mail-core-store-{tag}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock")
-                .as_nanos()
-        ))
-    }
+    use crate::testing::temp_profile as temp_dir;
 
     fn sample_command() -> SetArchived {
         SetArchived {
@@ -2676,7 +2667,7 @@ mod tests {
     #[test]
     fn fixture_reader_has_safe_synthetic_reply_context_without_reseeding() {
         let dir = temp_dir("fixture-reply-context");
-        let store = Store::open(&dir, Arc::new(SystemClock)).expect("store opens");
+        let store = Store::open(dir.path(), Arc::new(SystemClock)).expect("store opens");
         let conversation = store
             .get_conversation(&ConversationRef {
                 account_id: ACCOUNT_ID.to_string(),
@@ -2703,14 +2694,14 @@ mod tests {
                 .any(|recipient| recipient.mailbox == crate::FIXTURE_MAILBOX)
         }));
         drop(store);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Storage errors surface instead of being ignored (fail closed): an
     /// unusable profile directory fails at open time.
     #[test]
     fn open_fails_closed_on_unusable_profile_directory() {
-        let blocker = temp_dir("blocker");
+        let dir = temp_dir("blocker");
+        let blocker = dir.path().join("not-a-directory");
         std::fs::write(&blocker, b"not a directory").expect("write blocker file");
         let clock: Arc<dyn Clock> = Arc::new(SystemClock);
         match Store::open(&blocker, clock) {
@@ -2726,7 +2717,7 @@ mod tests {
     fn persistence_failure_is_surfaced_not_ignored() {
         let dir = temp_dir("injected");
         let clock: Arc<dyn Clock> = Arc::new(SystemClock);
-        let store = Store::open(&dir, clock).expect("store opens");
+        let store = Store::open(dir.path(), clock).expect("store opens");
         assert!(store.list_snapshot().is_ok());
         store.set_test_persistence_failure(true);
         assert_eq!(
@@ -2740,7 +2731,6 @@ mod tests {
         );
         store.set_test_persistence_failure(false);
         assert!(store.list_snapshot().is_ok());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // -------------------------------------------------- UX-05 group tests
@@ -2784,7 +2774,7 @@ mod tests {
         let clock: Arc<dyn Clock> = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let store = Store::open(&dir, clock).expect("store opens");
+        let store = Store::open(dir.path(), clock).expect("store opens");
         let receipt = store
             .set_archived_group(&group_command("group-req-1", &["conv-03", "conv-01"], true))
             .expect("group accepted");
@@ -2824,7 +2814,6 @@ mod tests {
             Err(MailError::RequestIdConflict)
         );
         assert_eq!(counts(&store), (2, 1), "two children, one group");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Structural invalidity, duplicates, bounds and cross-account targets
@@ -2833,7 +2822,7 @@ mod tests {
     fn invalid_group_commands_write_nothing() {
         let dir = temp_dir("group-invalid");
         let clock: Arc<dyn Clock> = Arc::new(SystemClock);
-        let store = Store::open(&dir, clock).expect("store opens");
+        let store = Store::open(dir.path(), clock).expect("store opens");
         // Empty members.
         assert!(matches!(
             store.set_archived_group(&group_command("bad-empty", &[], true)),
@@ -2900,7 +2889,6 @@ mod tests {
             Err(MailError::InvalidRequest { field }) if field == "requestId"
         ));
         assert_eq!(counts(&store), (0, 0), "no group or child writes");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A member that is gone gets a persisted rejected acceptance result with
@@ -2915,7 +2903,7 @@ mod tests {
         let clock: Arc<dyn Clock> = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let store = Store::open(&dir, clock).expect("store opens");
+        let store = Store::open(dir.path(), clock).expect("store opens");
         store
             .set_archived(&SetArchived {
                 conversation: group_member("conv-05"),
@@ -2945,14 +2933,13 @@ mod tests {
         let activity = store.list_snapshot().unwrap().activity;
         let single = activity.iter().find(|row| row.undo_of.is_none()).unwrap();
         assert!(single.undoable_until.is_some(), "undo slot not consumed");
-        let _ = std::fs::remove_dir_all(&dir);
 
         // Mixed case: rejected member persisted next to accepted siblings.
         let dir = temp_dir("group-mixed-rejection");
         let clock: Arc<dyn Clock> = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let store = Store::open(&dir, clock).expect("store opens");
+        let store = Store::open(dir.path(), clock).expect("store opens");
         let receipt = store
             .set_archived_group(&group_command(
                 "group-req-mixed",
@@ -2982,7 +2969,6 @@ mod tests {
         assert_eq!(status.members[0].status, GroupMemberStatus::Queued);
         assert!(status.undo.available);
         assert_eq!(counts(&store), (2, 1));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Injected storage failure at acceptance time rolls back the whole
@@ -2992,7 +2978,7 @@ mod tests {
     fn transaction_failure_rolls_back_whole_group_and_retry_is_safe() {
         let dir = temp_dir("group-rollback");
         let clock: Arc<dyn Clock> = Arc::new(SystemClock);
-        let store = Store::open(&dir, clock).expect("store opens");
+        let store = Store::open(dir.path(), clock).expect("store opens");
         store.set_test_persistence_failure(true);
         assert_eq!(
             store.set_archived_group(&group_command(
@@ -3013,7 +2999,6 @@ mod tests {
             .expect("same request retried safely");
         assert_eq!(receipt.members.len(), 2);
         assert_eq!(counts(&store), (2, 1));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Group Undo at 9 seconds (§7.6): queued member cancels in place,
@@ -3026,7 +3011,7 @@ mod tests {
         let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let store = Store::open(&dir, clock.clone() as Arc<dyn Clock>).expect("store opens");
+        let store = Store::open(dir.path(), clock.clone() as Arc<dyn Clock>).expect("store opens");
         let receipt = store
             .set_archived_group(&group_command(
                 "group-req-u",
@@ -3113,7 +3098,6 @@ mod tests {
             .conversations
             .iter()
             .any(|c| c.conversation_ref.conversation_id == "conv-01"));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Expiry at 10 seconds, supersession by a newer single/group, and the
@@ -3125,7 +3109,7 @@ mod tests {
         let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let store = Store::open(&dir, clock.clone() as Arc<dyn Clock>).expect("store opens");
+        let store = Store::open(dir.path(), clock.clone() as Arc<dyn Clock>).expect("store opens");
         let receipt = store
             .set_archived_group(&group_command("group-req-g", &["conv-01", "conv-02"], true))
             .expect("group accepted");
@@ -3207,7 +3191,6 @@ mod tests {
                 reason: UndoUnavailableReason::Expired
             })
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Execution and Undo touch only the original immutable message ids: a
@@ -3216,7 +3199,7 @@ mod tests {
     fn new_reply_after_acceptance_is_untouched_by_group_undo() {
         let dir = temp_dir("group-new-reply");
         let clock: Arc<dyn Clock> = Arc::new(SystemClock);
-        let store = Store::open(&dir, clock).expect("store opens");
+        let store = Store::open(dir.path(), clock).expect("store opens");
         let receipt = store
             .set_archived_group(&group_command("group-req-reply", &["conv-01"], true))
             .expect("group accepted");
@@ -3260,7 +3243,6 @@ mod tests {
         let targets: Vec<String> = serde_json::from_str(&targets).unwrap();
         assert!(!targets.iter().any(|id| id == "m-new-reply"));
         assert!(!targets.is_empty());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Group detail/list pagination and account fencing (§7.9): a group
@@ -3270,7 +3252,7 @@ mod tests {
     fn group_listing_paginates_and_fences_accounts() {
         let dir = temp_dir("group-pages");
         let clock: Arc<dyn Clock> = Arc::new(SystemClock);
-        let store = Store::open(&dir, clock).expect("store opens");
+        let store = Store::open(dir.path(), clock).expect("store opens");
         let mut group_ids = Vec::new();
         for i in 0..3 {
             let receipt = store
@@ -3347,7 +3329,6 @@ mod tests {
             })
             .unwrap()
             .is_none());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The UX-05 additive migration preserves every operation, request,
@@ -3358,7 +3339,7 @@ mod tests {
         let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let store = Store::open(&dir, clock.clone() as Arc<dyn Clock>).expect("store opens");
+        let store = Store::open(dir.path(), clock.clone() as Arc<dyn Clock>).expect("store opens");
         let single = store
             .set_archived(&SetArchived {
                 conversation: group_member("conv-01"),
@@ -3370,7 +3351,7 @@ mod tests {
 
         // Simulate a pre-UX-05 profile: stamp the previous schema version.
         {
-            let store = Store::open(&dir, clock.clone() as Arc<dyn Clock>).expect("reopen");
+            let store = Store::open(dir.path(), clock.clone() as Arc<dyn Clock>).expect("reopen");
             let conn = store.lock_conn().unwrap();
             conn.execute(
                 "UPDATE meta SET value = '2' WHERE key = 'schema_version'",
@@ -3378,7 +3359,7 @@ mod tests {
             )
             .unwrap();
         }
-        let store = Store::open(&dir, clock.clone() as Arc<dyn Clock>).expect("upgrade");
+        let store = Store::open(dir.path(), clock.clone() as Arc<dyn Clock>).expect("upgrade");
         {
             let conn = store.lock_conn().unwrap();
             let version: String = conn
@@ -3411,7 +3392,6 @@ mod tests {
             })
             .expect("historical single still undoable after migration");
         assert_eq!(undo.outcome, UndoOutcome::Compensating);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Genuine MID-TRANSACTION failure (§7.3): a TEMP trigger aborts the
@@ -3426,7 +3406,7 @@ mod tests {
         let clock: Arc<dyn Clock> = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let store = Store::open(&dir, clock).expect("store opens");
+        let store = Store::open(dir.path(), clock).expect("store opens");
         {
             let conn = store.lock_conn().unwrap();
             conn.execute_batch(
@@ -3472,7 +3452,6 @@ mod tests {
             .expect("same request retried safely after full rollback");
         assert_eq!(receipt.members.len(), 3);
         assert_eq!(counts(&store), (3, 1));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Worker claims and group Undo serialize on the same connection mutex:
@@ -3486,8 +3465,9 @@ mod tests {
         let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let store =
-            Arc::new(Store::open(&dir, clock.clone() as Arc<dyn Clock>).expect("store opens"));
+        let store = Arc::new(
+            Store::open(dir.path(), clock.clone() as Arc<dyn Clock>).expect("store opens"),
+        );
         let receipt = store
             .set_archived_group(&group_command(
                 "group-req-race",
@@ -3616,7 +3596,6 @@ mod tests {
                 }
             }
         }
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// An AUTHENTIC pre-UX-05 profile (hand-built UX-04-era schema: no
@@ -3627,9 +3606,8 @@ mod tests {
     #[test]
     fn authentic_pre_ux05_database_migrates_additively() {
         let dir = temp_dir("group-authentic-v2");
-        std::fs::create_dir_all(&dir).unwrap();
         {
-            let conn = Connection::open(dir.join("mail.db")).unwrap();
+            let conn = Connection::open(dir.path().join("mail.db")).unwrap();
             conn.pragma_update(None, "journal_mode", "WAL").unwrap();
             conn.execute_batch(
                 "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -3674,7 +3652,7 @@ mod tests {
         let clock: Arc<dyn Clock> = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let store = Store::open(&dir, clock.clone()).expect("pre-UX-05 profile migrates");
+        let store = Store::open(dir.path(), clock.clone()).expect("pre-UX-05 profile migrates");
         {
             let conn = store.lock_conn().unwrap();
             let version: String = conn
@@ -3721,7 +3699,6 @@ mod tests {
             })
             .expect("historical single still undoable from its preserved preimage");
         assert_eq!(undo.outcome, UndoOutcome::Compensating);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// An AUTHENTIC pre-P5a profile (v3 `messages` without `has_attachment`,
@@ -3732,9 +3709,8 @@ mod tests {
     #[test]
     fn authentic_pre_v4_database_migrates_with_unknown_attachment_facts() {
         let dir = temp_dir("attachment-migration-v3");
-        std::fs::create_dir_all(&dir).unwrap();
         {
-            let conn = Connection::open(dir.join("mail.db")).unwrap();
+            let conn = Connection::open(dir.path().join("mail.db")).unwrap();
             conn.pragma_update(None, "journal_mode", "WAL").unwrap();
             conn.execute_batch(
                 "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -3762,7 +3738,7 @@ mod tests {
         let clock: Arc<dyn Clock> = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let store = Store::open(&dir, clock).expect("pre-P5a v3 profile migrates");
+        let store = Store::open(dir.path(), clock).expect("pre-P5a v3 profile migrates");
         {
             let conn = store.lock_conn().unwrap();
             let version: String = conn
@@ -3811,7 +3787,6 @@ mod tests {
             row.has_attachments, None,
             "legacy cache: unknown, never guessed"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A fresh v4 profile gets the column directly, and the deterministic
@@ -3823,7 +3798,7 @@ mod tests {
         let clock: Arc<dyn Clock> = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let store = Store::open(&dir, clock).expect("fresh store opens at v4");
+        let store = Store::open(dir.path(), clock).expect("fresh store opens at v4");
         {
             let conn = store.lock_conn().unwrap();
             let version: String = conn
@@ -3884,16 +3859,14 @@ mod tests {
             .expect("seeded conversation");
         assert_eq!(conversation.messages[0].has_attachment, Some(true));
         assert_eq!(conversation.messages[1].has_attachment, None);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Older-than-supported schema versions still fail closed at open.
     #[test]
     fn unsupported_older_schema_version_fails_closed() {
         let dir = temp_dir("attachment-unsupported-version");
-        std::fs::create_dir_all(&dir).unwrap();
         {
-            let conn = Connection::open(dir.join("mail.db")).unwrap();
+            let conn = Connection::open(dir.path().join("mail.db")).unwrap();
             conn.execute_batch(
                 "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                  INSERT INTO meta VALUES ('schema_version', '0');",
@@ -3904,10 +3877,12 @@ mod tests {
             "2026-01-01T00:00:00Z",
         )));
         assert!(
-            matches!(Store::open(&dir, clock), Err(MailError::StorageUnavailable)),
+            matches!(
+                Store::open(dir.path(), clock),
+                Err(MailError::StorageUnavailable)
+            ),
             "version older than the supported floor must fail closed"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Restart after a partial group Undo: `get_operation_group` rebuilds the
@@ -3920,7 +3895,7 @@ mod tests {
         let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let store = Store::open(&dir, clock.clone() as Arc<dyn Clock>).expect("store opens");
+        let store = Store::open(dir.path(), clock.clone() as Arc<dyn Clock>).expect("store opens");
         let receipt = store
             .set_archived_group(&group_command(
                 "group-req-restart",
@@ -3948,7 +3923,7 @@ mod tests {
         drop(store);
 
         // Restart: the undo record is rebuilt from durable rows alone.
-        let store = Store::open(&dir, clock.clone() as Arc<dyn Clock>).expect("reopen");
+        let store = Store::open(dir.path(), clock.clone() as Arc<dyn Clock>).expect("reopen");
         let status = store
             .get_operation_group(&GetOperationGroupRequest {
                 account_id: ACCOUNT_ID.into(),
@@ -3992,7 +3967,7 @@ mod tests {
         assert_eq!(claimed.operation_id, compensation_id);
         store.confirm_op(&claimed).unwrap();
         drop(store);
-        let store = Store::open(&dir, clock as Arc<dyn Clock>).expect("reopen 2");
+        let store = Store::open(dir.path(), clock as Arc<dyn Clock>).expect("reopen 2");
         let status = store
             .get_operation_group(&GetOperationGroupRequest {
                 account_id: ACCOUNT_ID.into(),
@@ -4025,6 +4000,5 @@ mod tests {
             "compensations are ungrouped"
         );
         assert_eq!(compensation_row.undo_of.as_deref(), Some(child.as_str()));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

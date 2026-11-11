@@ -4,8 +4,8 @@ use mail_core::{MailCore, MailError, ACCOUNT_ID};
 
 #[test]
 fn list_cached_done_fixture_persists_pending_archive_and_restores_after_restart() {
-    let dir = std::env::temp_dir().join(format!("cached-done-fixture-{}", uuid::Uuid::new_v4()));
-    let core = MailCore::open(&dir).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let core = MailCore::open(dir.path()).unwrap();
     let mut request = CachedDoneRequest {
         account_id: ACCOUNT_ID.into(),
         limit: 1,
@@ -28,7 +28,7 @@ fn list_cached_done_fixture_persists_pending_archive_and_restores_after_restart(
         .unwrap();
     }
     drop(core);
-    let core = MailCore::open(&dir).unwrap();
+    let core = MailCore::open(dir.path()).unwrap();
     let page = core.list_cached_done(&request).unwrap();
     assert_eq!(page.conversations.len(), 1);
     assert_eq!(page.conversations[0].conversation_ref, first);
@@ -79,14 +79,13 @@ fn list_cached_done_fixture_persists_pending_archive_and_restores_after_restart(
         matches!(core.list_cached_done(&request), Err(MailError::InvalidRequest { field }) if field == "cursor")
     );
     drop(core);
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
 fn list_cached_done_caps_large_sqlite_result_and_pages_equal_dates_by_id() {
-    let dir = std::env::temp_dir().join(format!("cached-done-bounds-{}", uuid::Uuid::new_v4()));
-    let core = MailCore::open(&dir).unwrap();
-    let conn = rusqlite::Connection::open(dir.join("mail.db")).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let core = MailCore::open(dir.path()).unwrap();
+    let conn = rusqlite::Connection::open(dir.path().join("mail.db")).unwrap();
     for index in (0..137).rev() {
         let id = format!("bounded-{index:03}");
         conn.execute(

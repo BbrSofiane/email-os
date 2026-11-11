@@ -8,11 +8,8 @@ use mail_core::dto::{Address, Conversation, ConversationRef, Message};
 use mail_core::gmail::types::AccountInfo;
 use mail_core::MailError;
 use rusqlite::Connection;
-use uuid::Uuid;
 
-fn temp_profile() -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("mail-core-drafts-{}", Uuid::new_v4()))
-}
+use mail_core::testing::temp_profile;
 fn account(id: &str, email: &str) -> AccountInfo {
     AccountInfo {
         account_id: id.into(),
@@ -90,7 +87,7 @@ fn assert_error<T>(result: Result<T, MailError>, expected: fn(&MailError) -> boo
 
 #[test]
 fn drafts_reopen_exact_raw_text_and_are_account_scoped() {
-    let dir = temp_profile();
+    let dir = temp_profile("drafts");
     let a = account("acct", "me@example.test");
     let b = account("other", "other@example.test");
     let initial = content(
@@ -99,8 +96,8 @@ fn drafts_reopen_exact_raw_text_and_are_account_scoped() {
         "  café\u{301} ✉  ",
         "line one\r\n🙂\0 raw",
     );
-    let core = DraftCore::open(&dir).unwrap();
-    assert_error(DraftCore::open(&dir), |e| {
+    let core = DraftCore::open(dir.path()).unwrap();
+    assert_error(DraftCore::open(dir.path()), |e| {
         matches!(e, MailError::ProfileInUse)
     });
     let accepted = core
@@ -117,7 +114,7 @@ fn drafts_reopen_exact_raw_text_and_are_account_scoped() {
     });
     drop(core);
 
-    let reopened = DraftCore::open(&dir).unwrap();
+    let reopened = DraftCore::open(dir.path()).unwrap();
     let draft = reopened.get_draft(&a, &accepted.draft_ref).unwrap();
     assert_eq!(
         draft.content,
@@ -134,13 +131,12 @@ fn drafts_reopen_exact_raw_text_and_are_account_scoped() {
         draft.content.subject
     );
     drop(reopened);
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
 fn receipts_are_atomic_stable_and_conflict_across_operations() {
-    let dir = temp_profile();
-    let core = DraftCore::open(&dir).unwrap();
+    let dir = temp_profile("drafts");
+    let core = DraftCore::open(dir.path()).unwrap();
     let a = account("acct", "me@example.test");
     let first = new_command("create-key", Some(content("x", "", "first", "body")));
     let accepted = core.create_draft(&a, &first, None).unwrap();
@@ -207,19 +203,18 @@ fn receipts_are_atomic_stable_and_conflict_across_operations() {
     });
     drop(core);
 
-    let reopened = DraftCore::open(&dir).unwrap();
+    let reopened = DraftCore::open(dir.path()).unwrap();
     assert_eq!(reopened.create_draft(&a, &first, None).unwrap(), accepted);
     assert_eq!(reopened.save_draft(&a, &save1).unwrap(), receipt1);
     assert_eq!(reopened.delete_draft(&a, &deletion).unwrap(), deleted);
     assert!(reopened.list_drafts(&a).unwrap().is_empty());
     drop(reopened);
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
 fn concurrent_cas_has_one_winner_and_stale_writes_never_overwrite() {
-    let dir = temp_profile();
-    let core = DraftCore::open(&dir).unwrap();
+    let dir = temp_profile("drafts");
+    let core = DraftCore::open(dir.path()).unwrap();
     let a = account("acct", "me@example.test");
     let created = core
         .create_draft(&a, &new_command("create", None), None)
@@ -264,19 +259,18 @@ fn concurrent_cas_has_one_winner_and_stale_writes_never_overwrite() {
     );
     assert_eq!(core.get_draft(&a, &created.draft_ref).unwrap().revision, 2);
     drop(core);
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
 fn failed_commit_creates_neither_draft_nor_request_receipt() {
-    let dir = temp_profile();
-    let core = DraftCore::open(&dir).unwrap();
+    let dir = temp_profile("drafts");
+    let core = DraftCore::open(dir.path()).unwrap();
     let a = account("acct", "me@example.test");
     let command = new_command(
         "retry-after-storage-failure",
         Some(content("", "", "s", "b")),
     );
-    let external = Connection::open(dir.join("drafts.db")).unwrap();
+    let external = Connection::open(dir.path().join("drafts.db")).unwrap();
     external.execute_batch("CREATE TRIGGER reject_draft BEFORE INSERT ON drafts BEGIN SELECT RAISE(ABORT, 'test failure'); END;").unwrap();
     assert_error(core.create_draft(&a, &command, None), |e| {
         matches!(e, MailError::StorageUnavailable)
@@ -307,13 +301,12 @@ fn failed_commit_creates_neither_draft_nor_request_receipt() {
     assert_eq!(core.save_draft(&a, &update).unwrap().revision, 2);
     drop(external);
     drop(core);
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
 fn reply_defaults_are_strict_and_reply_link_survives_cache_loss() {
-    let dir = temp_profile();
-    let core = DraftCore::open(&dir).unwrap();
+    let dir = temp_profile("drafts");
+    let core = DraftCore::open(dir.path()).unwrap();
     let a = account("acct", "me@example.test");
     let conv = conversation(Some(reply_context(
         "sender@example.test",
@@ -369,13 +362,12 @@ fn reply_defaults_are_strict_and_reply_link_survives_cache_loss() {
         |e| matches!(e, MailError::RequestIdConflict),
     );
     drop(core);
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
 fn reply_to_absence_falls_back_but_malformed_or_stale_context_is_denied() {
-    let dir = temp_profile();
-    let core = DraftCore::open(&dir).unwrap();
+    let dir = temp_profile("drafts");
+    let core = DraftCore::open(dir.path()).unwrap();
     let a = account("acct", "me@example.test");
     let fallback = conversation(Some(reply_context("sender@example.test", None)));
     let source = DraftSource::Reply {
@@ -544,13 +536,12 @@ fn reply_to_absence_falls_back_but_malformed_or_stale_context_is_denied() {
         |e| matches!(e, MailError::ReplyUnavailable),
     );
     drop(core);
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
 fn limits_overflow_and_profile_lock_fail_closed() {
-    let dir = temp_profile();
-    let core = DraftCore::open(&dir).unwrap();
+    let dir = temp_profile("drafts");
+    let core = DraftCore::open(dir.path()).unwrap();
     let a = account("acct", "me@example.test");
     let too_large = content("x".repeat(16 * 1024 + 1).as_str(), "", "", "");
     assert_error(
@@ -560,7 +551,7 @@ fn limits_overflow_and_profile_lock_fail_closed() {
     let created = core
         .create_draft(&a, &new_command("overflow", None), None)
         .unwrap();
-    let external = Connection::open(dir.join("drafts.db")).unwrap();
+    let external = Connection::open(dir.path().join("drafts.db")).unwrap();
     external
         .execute(
             "UPDATE drafts SET revision=?1 WHERE account_id='acct' AND draft_id=?2",
@@ -579,10 +570,9 @@ fn limits_overflow_and_profile_lock_fail_closed() {
         ),
         |e| matches!(e, MailError::StorageUnavailable),
     );
-    assert!(DraftCore::open(&dir).is_err());
+    assert!(DraftCore::open(dir.path()).is_err());
     drop(external);
     drop(core);
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[allow(dead_code)]

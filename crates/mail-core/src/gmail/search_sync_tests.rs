@@ -31,7 +31,7 @@ fn search_reconnect_on_preflight(
 
 #[test]
 fn search_deferred_single_rejects_same_account_reconnect_before_provider_read() {
-    let (core, provider, dir) = search_test_core();
+    let (core, provider, _dir) = search_test_core();
     let generation = core.inner.store.generation().unwrap();
     let reads = provider.search_reads.load(Ordering::SeqCst);
     let (listener, fired) = search_reconnect_on_preflight(&core, false);
@@ -50,12 +50,11 @@ fn search_deferred_single_rejects_same_account_reconnect_before_provider_read() 
     core.set_read(&command).unwrap();
     core.stop();
     drop(core);
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
 fn search_deferred_offline_group_rejects_same_account_reconnect_without_accepting_cached_sibling() {
-    let (core, provider, dir) = search_test_core();
+    let (core, provider, _dir) = search_test_core();
     let reads = provider.search_reads.load(Ordering::SeqCst);
     let (listener, fired) = search_reconnect_on_preflight(&core, true);
     let command = crate::groups::SetReadGroup {
@@ -68,13 +67,14 @@ fn search_deferred_offline_group_rejects_same_account_reconnect_without_acceptin
     assert!(fired.load(Ordering::SeqCst));
     assert_eq!(provider.search_reads.load(Ordering::SeqCst), reads);
     assert!(core.list_conversations().unwrap().activity.is_empty());
-    assert!(core
-        .get_operation_group(&crate::groups::GetOperationGroupRequest {
+    assert!(
+        core.get_operation_group(&crate::groups::GetOperationGroupRequest {
             account_id: TEST_ACCOUNT.into(),
             request_id: command.request_id.clone(),
         })
         .unwrap()
-        .is_none());
+        .is_none()
+    );
     drop(listener);
     // Without a lifecycle transition, offline partial acceptance is unchanged.
     core.set_read_group(&command).unwrap();
@@ -92,12 +92,11 @@ fn search_deferred_offline_group_rejects_same_account_reconnect_without_acceptin
     );
     core.stop();
     drop(core);
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
 fn search_deferred_provider_read_is_cancelled_by_real_disconnect_and_reconnect() {
-    let (core, provider, dir) = search_test_core();
+    let (core, provider, _dir) = search_test_core();
     let reconnect = core.clone();
     let generation = core.inner.store.generation().unwrap();
     let finished = Arc::new(Mutex::new(None));
@@ -136,13 +135,12 @@ fn search_deferred_provider_read_is_cancelled_by_real_disconnect_and_reconnect()
     );
     core.stop();
     drop(core);
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
 fn search_deferred_final_transaction_fences_generation_but_allows_durable_replay() {
     for group in [false, true] {
-        let (core, provider, dir) = search_test_core();
+        let (core, provider, _dir) = search_test_core();
         // The read has finished and passed its cancellation check before the
         // final permission gate advances the real store's disconnect checkpoint.
         // This isolates the transactional fence from the provider-read guard.
@@ -216,14 +214,13 @@ fn search_deferred_final_transaction_fences_generation_but_allows_durable_replay
         provider.release_history();
         core.stop();
         drop(core);
-        let _ = std::fs::remove_dir_all(dir);
     }
 }
 
 #[test]
 fn search_evicted_recovery_context_accepts_fresh_local_setters_and_mixed_group_without_reads() {
     for error in [MailError::NetworkUnavailable, MailError::RateLimited] {
-        let (core, provider, dir) = search_test_core();
+        let (core, provider, _dir) = search_test_core();
         search_load_six_pages(&core);
         provider.block_history();
         core.request_sync().unwrap();
@@ -293,43 +290,23 @@ fn search_evicted_recovery_context_accepts_fresh_local_setters_and_mixed_group_w
                 "search-119"
             ]
         );
-        assert!(core
-            .get_conversation(&search_ref("search-000"))
-            .unwrap()
-            .retained_snapshot_at
-            .is_some());
+        assert!(
+            core.get_conversation(&search_ref("search-000"))
+                .unwrap()
+                .retained_snapshot_at
+                .is_some()
+        );
         provider.release_history();
         core.stop();
         drop(core);
-        let _ = std::fs::remove_dir_all(dir);
     }
 }
 
-fn search_test_thread(id: &str) -> GmailThread {
-    let mut thread = test_thread();
-    thread.conversation.conversation_ref.conversation_id = id.into();
-    thread.conversation.subject = format!("synthetic {id}");
-    let message = format!("message-{id}");
-    thread.conversation.messages[0].id = message.clone();
-    thread.conversation.is_in_inbox = false;
-    thread.conversation.is_read = Some(false);
-    thread.inbox_message_ids.clear();
-    thread.message_ids = Some(vec![message.clone()]);
-    thread.unread_message_ids = Some(vec![message]);
-    thread
-}
 
-fn search_test_core() -> (GmailCore, Arc<HaltTestProvider>, std::path::PathBuf) {
-    let dir = std::env::temp_dir().join(format!(
-        "mail-search-p1-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    let provider = HaltTestProvider::new();
-    let core = GmailCore::open(&dir, provider.clone()).unwrap();
+fn search_test_core() -> (GmailCore, Arc<HaltTestProvider>, tempfile::TempDir) {
+    let dir = crate::testing::temp_profile("gmail-search");
+    let provider = provider();
+    let core = GmailCore::open(dir.path(), provider.clone()).unwrap();
     assert!(until(|| core
         .account_status()
         .is_ok_and(|s| s.connection == ConnectionState::Connected
@@ -375,7 +352,7 @@ fn search_load_six_pages(core: &GmailCore) {
 
 #[test]
 fn search_evicted_exact_single_and_mixed_group_actions_rehydrate_atomically() {
-    let (core, provider, dir) = search_test_core();
+    let (core, provider, _dir) = search_test_core();
     search_load_six_pages(&core);
     // Hold serial execution so acceptance/target assertions are deterministic.
     provider.block_history();
@@ -481,20 +458,20 @@ fn search_evicted_exact_single_and_mixed_group_actions_rehydrate_atomically() {
     );
     // This already-cached selected member sat at the LRU tail during admission
     // of a missing sibling. Deferred eviction must preserve its accepted context.
-    assert!(core
-        .get_conversation(&search_ref("search-037"))
-        .unwrap()
-        .retained_snapshot_at
-        .is_some());
+    assert!(
+        core.get_conversation(&search_ref("search-037"))
+            .unwrap()
+            .retained_snapshot_at
+            .is_some()
+    );
     provider.release_history();
     core.stop();
     drop(core);
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
 fn search_page_and_explicit_load_reject_concurrent_history_deletion() {
-    let (core, provider, dir) = search_test_core();
+    let (core, provider, _dir) = search_test_core();
     core.search_mail(&search_request()).unwrap();
     assert!(core.get_conversation(&search_ref("search-000")).is_ok());
     let inner = core.inner.clone();
@@ -556,12 +533,11 @@ fn search_page_and_explicit_load_reject_concurrent_history_deletion() {
     );
     core.stop();
     drop(core);
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
 fn search_action_rehydration_rejects_concurrent_update_before_acceptance() {
-    let (core, provider, dir) = search_test_core();
+    let (core, provider, _dir) = search_test_core();
     search_load_six_pages(&core);
     let inner = core.inner.clone();
     *provider.search_hook.lock().unwrap() = Some(Box::new(move || {
@@ -602,12 +578,11 @@ fn search_action_rehydration_rejects_concurrent_update_before_acceptance() {
     .unwrap();
     core.stop();
     drop(core);
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
 fn search_known_expired_auth_requires_explicit_cached_only() {
-    let (core, provider, dir) = search_test_core();
+    let (core, provider, _dir) = search_test_core();
     core.search_mail(&search_request()).unwrap();
     provider.state.lock().unwrap().auth_expired = true;
     core.request_sync().unwrap();
@@ -647,5 +622,4 @@ fn search_known_expired_auth_requires_explicit_cached_only() {
     ));
     core.stop();
     drop(core);
-    let _ = std::fs::remove_dir_all(dir);
 }

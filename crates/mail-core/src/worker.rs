@@ -159,24 +159,19 @@ fn signal_wait(signal: &Arc<WorkerSignal>, timeout: Duration) -> bool {
 mod tests {
     use super::*;
     use crate::clock::{Clock, SystemClock};
-    use std::time::Instant;
 
     /// The worker must halt and surface a persistence failure through the
     /// halt sink instead of logging-and-ignoring it (fail closed).
     #[test]
     fn worker_halts_and_surfaces_persistence_failure() {
-        let dir = std::env::temp_dir().join(format!(
-            "mail-core-worker-halt-{}-{}",
-            std::process::id(),
-            Instant::now().elapsed().as_nanos()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = tempfile::tempdir().unwrap();
         let clock: Arc<dyn Clock> = Arc::new(SystemClock);
-        let store = Arc::new(Store::open(&dir, clock).expect("store opens"));
+        let store = Arc::new(Store::open(dir.path(), clock).expect("store opens"));
         store.set_test_persistence_failure(true);
         let halted: Arc<Mutex<Option<MailError>>> = Arc::new(Mutex::new(None));
         let signal = Arc::new(WorkerSignal::new());
-        let profile = Arc::new(crate::lock::ProfileGuard::acquire(&dir).expect("profile guard"));
+        let profile =
+            Arc::new(crate::lock::ProfileGuard::acquire(dir.path()).expect("profile guard"));
         let handle = spawn(
             store,
             Arc::new(crate::provider::FakeArchiveProvider::new()),
@@ -195,6 +190,5 @@ mod tests {
         handle.join().expect("worker exits after halting");
         let halted = halted.lock().expect("halt sink poisoned");
         assert_eq!(halted.as_ref(), Some(&MailError::StorageUnavailable));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

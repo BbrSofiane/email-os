@@ -2,8 +2,8 @@
 
 #[test]
 fn saved_definition_and_newest_sender_survive_exact_star_group_and_reopen() {
-    let dir = std::env::temp_dir().join(format!("split-stars-{}", uuid::Uuid::new_v4()));
-    let store = GmailStore::open(&dir, Arc::new(SystemClock)).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let store = GmailStore::open(dir.path(), Arc::new(SystemClock)).unwrap();
     store
         .begin_account(
             &GmailProfile {
@@ -68,7 +68,7 @@ fn saved_definition_and_newest_sender_survive_exact_star_group_and_reopen() {
     drop(stmt);
     drop(conn);
     drop(store);
-    let store = GmailStore::open(&dir, Arc::new(SystemClock)).unwrap();
+    let store = GmailStore::open(dir.path(), Arc::new(SystemClock)).unwrap();
     assert_eq!(store.get_saved_split("acct").unwrap(), Some(definition));
     assert_eq!(
         summary(&store).primary_correspondent,
@@ -80,7 +80,6 @@ fn saved_definition_and_newest_sender_survive_exact_star_group_and_reopen() {
     store.clear_account().unwrap();
     assert_eq!(store.get_saved_split("acct"), Err(MailError::NotFound));
     drop(store);
-    std::fs::remove_dir_all(dir).unwrap();
 }
 use super::*;
 use crate::clock::SystemClock;
@@ -89,8 +88,8 @@ use serde_json::{json, Value};
 
 #[test]
 fn starred_summary_uses_newest_sender_and_never_falls_back_to_snapshot_bodies() {
-    let dir = std::env::temp_dir().join(format!("starred-sender-{}", uuid::Uuid::new_v4()));
-    let store = GmailStore::open(&dir, Arc::new(SystemClock)).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let store = GmailStore::open(dir.path(), Arc::new(SystemClock)).unwrap();
     store
         .begin_account(
             &GmailProfile {
@@ -138,7 +137,7 @@ fn starred_summary_uses_newest_sender_and_never_falls_back_to_snapshot_bodies() 
         "bob@new.test"
     );
     drop(store);
-    let store = GmailStore::open(&dir, Arc::new(SystemClock)).unwrap();
+    let store = GmailStore::open(dir.path(), Arc::new(SystemClock)).unwrap();
     assert_eq!(
         starred(&store).primary_correspondent,
         summary(&store).primary_correspondent
@@ -200,7 +199,6 @@ fn starred_summary_uses_newest_sender_and_never_falls_back_to_snapshot_bodies() 
         None
     );
     drop(store);
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 fn body(from: Option<&str>, reversed: bool) -> String {
@@ -260,8 +258,8 @@ fn refresh(store: &GmailStore, thread: GmailThread) {
 
 #[test]
 fn newest_sender_provider_storage_and_membership_wire_contract() {
-    let dir = std::env::temp_dir().join(format!("newest-sender-{}", uuid::Uuid::new_v4()));
-    let store = GmailStore::open(&dir, Arc::new(SystemClock)).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let store = GmailStore::open(dir.path(), Arc::new(SystemClock)).unwrap();
     store
         .begin_account(
             &GmailProfile {
@@ -304,7 +302,7 @@ fn newest_sender_provider_storage_and_membership_wire_contract() {
     refresh(&store, reverse);
     assert_eq!(summary(&store), bob_summary);
     drop(store);
-    let store = GmailStore::open(&dir, Arc::new(SystemClock)).unwrap();
+    let store = GmailStore::open(dir.path(), Arc::new(SystemClock)).unwrap();
     assert_eq!(summary(&store), bob_summary, "metadata survives reopen");
     let detail = store
         .get_conversation(&bob_summary.conversation_ref)
@@ -364,7 +362,7 @@ fn newest_sender_provider_storage_and_membership_wire_contract() {
     }
     let unknown_summary = summary(&store);
     drop(store);
-    let store = GmailStore::open(&dir, Arc::new(SystemClock)).unwrap();
+    let store = GmailStore::open(dir.path(), Arc::new(SystemClock)).unwrap();
     assert_eq!(summary(&store), unknown_summary, "unknown survives reopen");
 
     // This checked-in wire fixture is also consumed by the TS membership test;
@@ -384,7 +382,7 @@ fn newest_sender_provider_storage_and_membership_wire_contract() {
         .execute_batch("ALTER TABLE gmail_conversations DROP COLUMN newest_sender_json")
         .unwrap();
     drop(store);
-    let store = GmailStore::open(&dir, Arc::new(SystemClock)).unwrap();
+    let store = GmailStore::open(dir.path(), Arc::new(SystemClock)).unwrap();
     assert_eq!(
         summary(&store).primary_correspondent,
         None,
@@ -416,5 +414,4 @@ fn newest_sender_provider_storage_and_membership_wire_contract() {
         "bob@new.test"
     );
     drop(store);
-    std::fs::remove_dir_all(dir).unwrap();
 }

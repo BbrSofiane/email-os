@@ -98,12 +98,8 @@ mod tests {
 
     #[test]
     fn destination_storage_is_bounded_and_generation_fenced_without_touching_checkpoints() {
-        let path = std::env::temp_dir().join(format!(
-            "ux09-store-{}-{}",
-            std::process::id(),
-            chrono::Utc::now().timestamp_nanos_opt().unwrap()
-        ));
-        let store = GmailStore::open(&path, Arc::new(crate::clock::SystemClock)).unwrap();
+        let path = tempfile::tempdir().unwrap();
+        let store = GmailStore::open(path.path(), Arc::new(crate::clock::SystemClock)).unwrap();
         let generation = store.generation().unwrap();
         let profile = GmailProfile {
             account_id: "a".into(),
@@ -151,6 +147,5 @@ mod tests {
             .unwrap();
         assert_eq!(store.destination_snapshot("a", "Label_24").unwrap(), None);
         drop(store);
-        let _ = std::fs::remove_dir_all(path);
     }
 }
