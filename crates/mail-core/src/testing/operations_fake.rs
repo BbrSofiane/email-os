@@ -799,6 +799,14 @@ impl FakeProvider {
                 state.before_dispatch_errors += 1;
                 return Err(error.clone());
             }
+            // Publish the gate before advertising the call. Otherwise a test
+            // could release after wait_for_apply but before the gate is armed.
+            if matches!(
+                plan,
+                ApplyPlan::BlockThenSuccess | ApplyPlan::ApplyThenBlock
+            ) {
+                state.apply_blocked = true;
+            }
             state.writes.push((kind, value, ids.to_vec()));
             self.gate.notify_all();
             plan
@@ -806,7 +814,6 @@ impl FakeProvider {
         match plan {
             ApplyPlan::BlockThenSuccess => {
                 let mut state = self.state.lock().unwrap();
-                state.apply_blocked = true;
                 while state.apply_blocked && !cancel.is_cancelled() {
                     let (next, _) = self
                         .gate
@@ -822,7 +829,6 @@ impl FakeProvider {
             ApplyPlan::ApplyThenBlock => {
                 self.apply_remote(kind, ids, value);
                 let mut state = self.state.lock().unwrap();
-                state.apply_blocked = true;
                 while state.apply_blocked && !cancel.is_cancelled() {
                     let (next, _) = self
                         .gate

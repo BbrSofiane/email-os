@@ -184,7 +184,7 @@ fn confirmed_unarchive_is_a_barrier_over_an_older_unknown_archive() {
         )));
     provider.set_changed_history(true);
     let thread_fetches = provider.state.lock().unwrap().thread_fetches;
-    core.request_sync().unwrap();
+    mail_core::testing::request_sync_when_idle(&core);
     assert!(provider.wait_for_thread_fetches(thread_fetches + 1));
     assert!(until(|| core
         .list_conversations()
@@ -317,7 +317,7 @@ fn incoming_message_after_acceptance_is_not_added_to_target_snapshot() {
     ));
     provider.set_changed_history(true);
     let thread_fetches = provider.state.lock().unwrap().thread_fetches;
-    core.request_sync().unwrap();
+    mail_core::testing::request_sync_when_idle(&core);
     assert!(provider.wait_for_thread_fetches(thread_fetches + 1));
     assert!(until(|| core
         .list_conversations()
@@ -442,7 +442,7 @@ fn token_refresh_failures_keep_receipt_queued_and_retry_original_targets() {
             )));
 
         provider.set_apply_plan(ApplyPlan::Success);
-        core.request_sync().unwrap();
+        mail_core::testing::request_sync_when_idle(&core);
         assert!(until(|| core
             .list_conversations()
             .unwrap()
@@ -488,7 +488,7 @@ fn predispatch_setter_network_failure_stays_queued_until_sync_retries() {
         )));
 
     provider.set_apply_plan(ApplyPlan::Success);
-    core.request_sync().unwrap();
+    mail_core::testing::request_sync_when_idle(&core);
     assert!(until(|| core
         .list_conversations()
         .unwrap()
@@ -544,7 +544,7 @@ fn later_eligible_uncertain_operation_is_not_starved_by_oldest() {
 
     provider.set_thread_fetch_error(None);
     provider.set_external_read(true);
-    core.request_sync().unwrap();
+    mail_core::testing::request_sync_when_idle(&core);
     assert!(until(|| core
         .list_conversations()
         .unwrap()

@@ -128,3 +128,18 @@ pub fn open_profile<P: crate::gmail::types::GmailReadProvider + 'static>(
     let core = open_core(dir.path(), provider);
     (core, dir)
 }
+
+/// Start a sync only after previous accepted worker work has drained. A timer
+/// can become due between the barrier and admission, so retry only Busy.
+pub fn request_sync_when_idle(core: &crate::gmail::sync::GmailCore) {
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        core.wait_for_test_idle(deadline.saturating_duration_since(Instant::now()))
+            .expect("Gmail worker did not become idle");
+        match core.request_sync() {
+            Ok(()) => return,
+            Err(crate::MailError::Busy) if Instant::now() < deadline => {}
+            result => panic!("sync admission failed: {result:?}"),
+        }
+    }
+}

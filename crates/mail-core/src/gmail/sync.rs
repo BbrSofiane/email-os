@@ -140,6 +140,27 @@ struct CtrlState {
     backoff: u32,
     #[cfg(test)]
     wait_divisor: u32,
+    #[cfg(test)]
+    test_wait_cycles: usize,
+    #[cfg(test)]
+    test_sync_deadline: Option<Instant>,
+    #[cfg(test)]
+    test_tick_due: bool,
+    #[cfg(any(test, feature = "test-support"))]
+    operations_paused: bool,
+}
+
+#[inline]
+fn test_operations_paused(state: &CtrlState) -> bool {
+    #[cfg(any(test, feature = "test-support"))]
+    {
+        state.operations_paused
+    }
+    #[cfg(not(any(test, feature = "test-support")))]
+    {
+        let _ = state;
+        false
+    }
 }
 
 fn cancel_independent_reads(st: &mut CtrlState) {
@@ -272,6 +293,29 @@ impl GmailCore {
         provider: Arc<dyn GmailReadProvider>,
         clock: Arc<dyn Clock>,
     ) -> Result<GmailCore, MailError> {
+        Self::open_with_clock_config(profile_dir, provider, clock, false)
+    }
+
+    /// Test seam that keeps queued mailbox mutations durable until explicitly
+    /// released. Authentication, synchronization, reminders, and storage use
+    /// the same worker and stores as the normal constructor.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn open_with_clock_and_operations_paused(
+        profile_dir: impl AsRef<Path>,
+        provider: Arc<dyn GmailReadProvider>,
+        clock: Arc<dyn Clock>,
+    ) -> Result<GmailCore, MailError> {
+        Self::open_with_clock_config(profile_dir, provider, clock, true)
+    }
+
+    fn open_with_clock_config(
+        profile_dir: impl AsRef<Path>,
+        provider: Arc<dyn GmailReadProvider>,
+        clock: Arc<dyn Clock>,
+        operations_paused: bool,
+    ) -> Result<GmailCore, MailError> {
+        #[cfg(not(any(test, feature = "test-support")))]
+        let _ = operations_paused;
         let profile_dir = profile_dir.as_ref();
         let profile = Arc::new(ProfileGuard::acquire(profile_dir)?);
         let store = Arc::new(GmailStore::open(profile_dir, clock)?);
@@ -319,6 +363,14 @@ impl GmailCore {
                 backoff: 0,
                 #[cfg(test)]
                 wait_divisor: 1,
+                #[cfg(test)]
+                test_wait_cycles: 0,
+                #[cfg(test)]
+                test_sync_deadline: None,
+                #[cfg(test)]
+                test_tick_due: false,
+                #[cfg(any(test, feature = "test-support"))]
+                operations_paused,
             }),
             wake: Condvar::new(),
         });
@@ -346,6 +398,60 @@ impl GmailCore {
                 next_enrichment_id: AtomicU64::new(1),
             }),
         })
+    }
+
+    /// Release queued mutation work in deterministic integration tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn release_test_operations(&self) {
+        let mut state = self.inner.ctrl.state.lock().expect("gmail ctrl poisoned");
+        state.operations_paused = false;
+        drop(state);
+        self.inner.ctrl.wake.notify_all();
+    }
+
+    /// Pause future claims and drain a currently running pass before assertions.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn pause_test_operations(&self, timeout: Duration) -> Result<(), MailError> {
+        self.inner
+            .ctrl
+            .state
+            .lock()
+            .expect("gmail ctrl poisoned")
+            .operations_paused = true;
+        self.inner.ctrl.wait_until_idle(timeout)
+    }
+
+    /// Wait for both accepted worker requests and active reads to drain.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn wait_for_test_idle(&self, timeout: Duration) -> Result<(), MailError> {
+        let deadline = Instant::now() + timeout;
+        let mut st = self.inner.ctrl.state.lock().expect("gmail ctrl poisoned");
+        loop {
+            let requested = st.auth_requested
+                || (st.connection == ConnectionState::Connected
+                    && (st.sync_requested
+                        || st.upgrade_requested
+                        || (st.operations_requested && !st.operations_paused)));
+            if !requested
+                && !st.pass_in_flight
+                && st.reply_enrichments.is_empty()
+                && st.destination_read.is_none()
+                && st.reminder_read.is_none()
+            {
+                return Ok(());
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(MailError::Busy);
+            }
+            st = self
+                .inner
+                .ctrl
+                .wake
+                .wait_timeout(st, remaining)
+                .expect("gmail ctrl poisoned")
+                .0;
+        }
     }
 
     /// Effective inbox plus (empty) activity, served entirely from the local
@@ -1795,11 +1901,23 @@ fn run(
             if st.stop || st.halted {
                 return;
             }
+            #[cfg(test)]
+            {
+                if st.test_tick_due {
+                    sync_deadline = Instant::now();
+                    st.test_tick_due = false;
+                }
+                st.test_sync_deadline = Some(sync_deadline);
+                st.test_wait_cycles += 1;
+                ctrl.wake.notify_all();
+            }
             let mut tick_due = Instant::now() >= sync_deadline;
             let runnable_request = |st: &CtrlState| {
                 st.auth_requested
                     || (st.connection == ConnectionState::Connected
-                        && (st.upgrade_requested || st.sync_requested || st.operations_requested))
+                        && (st.upgrade_requested
+                            || st.sync_requested
+                            || (st.operations_requested && !test_operations_paused(st))))
             };
             if !runnable_request(&st) && !st.reminder_work && !tick_due {
                 // No runnable request pending: wait for one or the periodic
@@ -1837,6 +1955,12 @@ fn run(
                     if st.stop || st.halted {
                         return;
                     }
+                    #[cfg(test)]
+                    if st.test_tick_due {
+                        sync_deadline = Instant::now();
+                        st.test_tick_due = false;
+                        break;
+                    }
                     if st.disconnecting || st.reminder_work || runnable_request(&st) {
                         break;
                     }
@@ -1866,7 +1990,10 @@ fn run(
             } else if st.connection == ConnectionState::Connected && st.sync_requested {
                 st.sync_requested = false;
                 PassAction::Sync
-            } else if st.connection == ConnectionState::Connected && st.operations_requested {
+            } else if st.connection == ConnectionState::Connected
+                && st.operations_requested
+                && !test_operations_paused(&st)
+            {
                 st.operations_requested = false;
                 PassAction::Mutations
             } else if st.connection == ConnectionState::Connected && tick_due {
@@ -2718,6 +2845,14 @@ mod worker_halt_tests {
                 backoff: 0,
                 #[cfg(test)]
                 wait_divisor: 1,
+                #[cfg(test)]
+                test_wait_cycles: 0,
+                #[cfg(test)]
+                test_sync_deadline: None,
+                #[cfg(test)]
+                test_tick_due: false,
+                #[cfg(any(test, feature = "test-support"))]
+                operations_paused: false,
             }),
             wake: Condvar::new(),
         });
@@ -2821,7 +2956,6 @@ mod worker_halt_tests {
             .ctrl
             .wait_until_idle(Duration::from_secs(5))
             .unwrap();
-        core.inner.ctrl.state.lock().unwrap().wait_divisor = 100;
         core.put_reminder(&PutReminder {
             conversation: test_thread().conversation.conversation_ref,
             source_message_id: "message-1".into(),
@@ -2836,6 +2970,14 @@ mod worker_halt_tests {
             state.incomplete = true;
             state.fail_history = true;
         }
+        let previous_deadline = core
+            .inner
+            .ctrl
+            .state
+            .lock()
+            .unwrap()
+            .test_sync_deadline
+            .unwrap();
         clock.advance_seconds(2);
         core.request_sync().unwrap();
         assert!(until(
@@ -2845,15 +2987,54 @@ mod worker_halt_tests {
             .ctrl
             .wait_until_idle(Duration::from_secs(5))
             .unwrap();
+        assert!(until(|| core
+            .inner
+            .ctrl
+            .state
+            .lock()
+            .unwrap()
+            .test_sync_deadline
+            .is_some_and(|deadline| deadline > previous_deadline)));
         let calls = provider.state.lock().unwrap().halt_history_calls;
         provider.state.lock().unwrap().fail_history = false;
-        // 120s sync backoff becomes 1.2s; overdue reminder retries are 0.6s.
-        std::thread::sleep(Duration::from_millis(700));
-        assert_eq!(
-            provider.state.lock().unwrap().halt_history_calls,
-            calls,
-            "reminder wake must not shorten sync backoff"
-        );
+        // Observe completed reminder wake cycles while the real sync deadline
+        // remains fixed. Advance only that timer after proving it was preserved.
+        let deadline = core
+            .inner
+            .ctrl
+            .state
+            .lock()
+            .unwrap()
+            .test_sync_deadline
+            .unwrap();
+        for _ in 0..3 {
+            let cycle = {
+                let mut st = core.inner.ctrl.state.lock().unwrap();
+                let cycle = st.test_wait_cycles;
+                st.reminder_work = true;
+                cycle
+            };
+            core.inner.ctrl.wake.notify_all();
+            assert!(until(|| core
+                .inner
+                .ctrl
+                .state
+                .lock()
+                .unwrap()
+                .test_wait_cycles
+                > cycle));
+            assert_eq!(
+                core.inner.ctrl.state.lock().unwrap().test_sync_deadline,
+                Some(deadline)
+            );
+            assert_eq!(
+                provider.state.lock().unwrap().halt_history_calls,
+                calls,
+                "reminder wake must not shorten sync backoff"
+            );
+        }
+        core.inner.ctrl.state.lock().unwrap().test_tick_due = true;
+        core.inner.ctrl.wake.notify_all();
         assert!(
             until(|| provider.state.lock().unwrap().halt_history_calls > calls),
             "periodic sync must recover while reminder evidence stays incomplete"

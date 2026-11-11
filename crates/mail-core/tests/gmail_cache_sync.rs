@@ -1537,7 +1537,7 @@ fn disconnect_cancels_in_flight_clears_state_and_blocks_repopulation() {
         }),
         "the cancelled catch-up call ran exactly once"
     );
-    std::thread::sleep(Duration::from_millis(150));
+    core.wait_for_test_idle(TIMEOUT).unwrap();
     assert!(
         core.list_conversations()
             .expect("snapshot")
@@ -1712,7 +1712,6 @@ fn subscription_fires_on_sync_changes() {
     subscription.unsubscribe();
     let quiet = *count.lock().expect("counter poisoned");
     core.stop();
-    std::thread::sleep(Duration::from_millis(100));
     assert_eq!(
         *count.lock().expect("counter poisoned"),
         quiet,

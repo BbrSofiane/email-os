@@ -1,3 +1,4 @@
+use mail_core::testing::until;
 use mail_core::{
     clock::{utc, Clock, FakeClock},
     dto::{ConversationRef, OperationStatus},
@@ -9,15 +10,8 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
-fn until(mut f: impl FnMut() -> bool) {
-    let end = Instant::now() + Duration::from_secs(3);
-    while !f() {
-        assert!(Instant::now() < end, "fixture worker did not converge");
-        std::thread::sleep(Duration::from_millis(5));
-    }
-}
 // Observe worker polls without relying on a fixed sleep or counting clock reads
 // from the test's own snapshot queries. The time source is still FakeClock.
 struct ObservedClock {
@@ -68,7 +62,10 @@ fn serial_fake_provider_fires_future_reminder_once_while_worker_stays_alive() {
     })
     .unwrap();
     assert!(provider.wait_for_calls(1, Duration::from_secs(2)));
-    until(|| core.list_reminders().unwrap()[0].phase == ReminderPhase::Pending);
+    assert!(
+        until(|| core.list_reminders().unwrap()[0].phase == ReminderPhase::Pending),
+        "fixture worker did not converge"
+    );
     let removed = core.list_conversations().unwrap();
     assert_eq!(removed.activity.len(), 1);
     assert_eq!(removed.activity[0].status, OperationStatus::Confirmed);
@@ -86,7 +83,10 @@ fn serial_fake_provider_fires_future_reminder_once_while_worker_stays_alive() {
     // Neither a restart nor a direct reconcile drives the deadline transition.
     clock.fake.advance_seconds(61);
     assert!(provider.wait_for_calls(2, Duration::from_secs(2)));
-    until(|| core.list_reminders().unwrap()[0].phase == ReminderPhase::Returned);
+    assert!(
+        until(|| core.list_reminders().unwrap()[0].phase == ReminderPhase::Returned),
+        "fixture worker did not converge"
+    );
     let returned = core.list_reminders().unwrap();
     let snapshot = core.list_conversations().unwrap();
     assert_eq!(snapshot.activity.len(), 2);
@@ -139,7 +139,10 @@ fn serial_fake_provider_fires_future_reminder_once_while_worker_stays_alive() {
         let reads = clock.worker_reads.load(Ordering::SeqCst);
         // Three more worker clock reads guarantee multiple reconciliation
         // passes after advancing time, not just a fast assertion before a poll.
-        until(|| clock.worker_reads.load(Ordering::SeqCst) >= reads + 3);
+        assert!(
+            until(|| clock.worker_reads.load(Ordering::SeqCst) >= reads + 3),
+            "fixture worker did not converge"
+        );
         assert!(core.is_worker_running());
         assert_eq!(core.list_reminders().unwrap(), returned);
         assert_eq!(
@@ -190,17 +193,27 @@ fn serial_fake_provider_resumes_overdue_once_after_native_fixture_restart() {
     assert_eq!(core.put_reminder(&command).unwrap(), receipt);
     let provider = Arc::new(FakeArchiveProvider::new());
     core.start_worker(provider.clone()).unwrap();
-    until(|| core.list_reminders().unwrap()[0].phase == ReminderPhase::Returned);
+    assert!(
+        until(|| core.list_reminders().unwrap()[0].phase == ReminderPhase::Returned),
+        "fixture worker did not converge"
+    );
     assert_eq!(provider.call_count(), 2);
     let snapshot = core.list_conversations().unwrap();
     assert_eq!(snapshot.activity.len(), 2);
     assert!(core.get_conversation(&target).unwrap().is_in_inbox);
     core.stop_worker();
     drop(core);
-    let core = MailCore::open(dir.path()).unwrap();
+    let observed = Arc::new(ObservedClock {
+        fake: FakeClock::new(utc("2030-01-01T00:02:00Z")),
+        worker_reads: AtomicUsize::new(0),
+    });
+    let core = MailCore::open_with_clock(dir.path(), observed.clone()).unwrap();
     let provider = Arc::new(FakeArchiveProvider::new());
     core.start_worker(provider.clone()).unwrap();
-    std::thread::sleep(Duration::from_millis(150));
+    assert!(
+        until(|| observed.worker_reads.load(Ordering::SeqCst) >= 3),
+        "restarted worker completed repeated reconciliation polls"
+    );
     assert_eq!(core.list_conversations().unwrap().activity.len(), 2);
     assert_eq!(provider.call_count(), 0);
     core.stop_worker();

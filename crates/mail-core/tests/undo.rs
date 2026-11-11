@@ -5,6 +5,7 @@
 
 use mail_core::testing::operations_fake::{ApplyPlan, FakeProvider};
 use mail_core::testing::{open_core_with_clock as open_core, temp_profile, until};
+use std::path::Path;
 use std::sync::Arc;
 
 use mail_core::clock::{utc, FakeClock};
@@ -63,6 +64,19 @@ fn thread(id: &str, msgs: Vec<Message>, inbox: &[&str], unread: &[&str]) -> Gmai
     thread
 }
 
+fn open_core_operations_paused(
+    dir: &Path,
+    provider: &Arc<FakeProvider>,
+    clock: &Arc<FakeClock>,
+) -> GmailCore {
+    GmailCore::open_with_clock_and_operations_paused(
+        dir,
+        provider.clone(),
+        Arc::clone(clock) as Arc<dyn mail_core::clock::Clock>,
+    )
+    .unwrap()
+}
+
 fn wait_ready(core: &GmailCore) {
     assert!(
         until(|| {
@@ -74,6 +88,8 @@ fn wait_ready(core: &GmailCore) {
         "startup/sync did not complete: {:?}",
         core.account_status()
     );
+    core.wait_for_test_idle(mail_core::testing::TIMEOUT)
+        .unwrap();
 }
 
 fn wait_status(core: &GmailCore, operation_id: &str, status: OperationStatus) -> bool {
@@ -260,7 +276,7 @@ fn undo_of_a_still_queued_operation_cancels_in_place_with_zero_provider_calls() 
             &["m-u2-1"],
         ),
     ]);
-    let core = open_core(dir.path(), &provider, &clock);
+    let core = open_core_operations_paused(dir.path(), &provider, &clock);
     wait_ready(&core);
     provider.set_apply_plan(ApplyPlan::BeforeDispatchError(
         MailError::NetworkUnavailable,
@@ -295,6 +311,7 @@ fn undo_of_a_still_queued_operation_cancels_in_place_with_zero_provider_calls() 
     // operation: its write must be the only provider call, proving the
     // cancelled row is never claimed.
     provider.set_apply_plan(ApplyPlan::Success);
+    core.release_test_operations();
     let unrelated = core
         .set_archived(&SetArchived {
             conversation: conversation_ref("thread-undo-2"),
@@ -437,7 +454,7 @@ fn compensation_targets_exclude_messages_that_arrived_after_the_original() {
     provider.set_new_incoming_message();
     provider.set_changed_history(true);
     let fetches = provider.state.lock().unwrap().thread_fetches;
-    core.request_sync().unwrap();
+    mail_core::testing::request_sync_when_idle(&core);
     assert!(provider.wait_for_thread_fetches(fetches + 1));
     assert!(until(|| {
         core.account_status().unwrap().sync.state == mail_core::gmail::types::SyncState::Idle
@@ -809,7 +826,7 @@ fn undoable_until_survives_a_restart_within_the_window_and_expires_after_it() {
 
     core.stop();
     drop(core);
-    let restarted = open_core(dir.path(), &provider, &clock);
+    let restarted = open_core_operations_paused(dir.path(), &provider, &clock);
     assert!(
         until(|| restarted
             .list_conversations()
@@ -819,7 +836,7 @@ fn undoable_until_survives_a_restart_within_the_window_and_expires_after_it() {
             .any(|op| op.id == archive.operation_id
                 && op.status == OperationStatus::Queued
                 && op.last_error.as_ref() == Some(&MailError::NetworkUnavailable))),
-        "restart completed and requeued the queued operation"
+        "restart preserved the queued operation and its pre-dispatch error"
     );
     let activity_after = restarted.list_conversations().unwrap().activity;
     let until_after = activity_after
@@ -942,8 +959,8 @@ fn cached_done_excludes_cancelled_and_undone_archives_but_keeps_failed_compensat
     let core = open_core(dir.path(), &provider, &clock);
     wait_ready(&core);
 
-    // A cancelled archive: accepted while the provider is unreachable, then
-    // undone before dispatch.
+    // A cancelled archive: observe its pre-dispatch failure, then pause claims
+    // before Undo so a queued row cannot be reclaimed during the assertion.
     provider.set_apply_plan(ApplyPlan::BeforeDispatchError(
         MailError::NetworkUnavailable,
     ));
@@ -958,6 +975,8 @@ fn cached_done_excludes_cancelled_and_undone_archives_but_keeps_failed_compensat
     // pre-dispatch failure before waiting for its requeue; otherwise Undo can
     // race the first claim and legitimately return Compensating, not Cancelled.
     assert!(provider.wait_for(|state| state.before_dispatch_errors >= 1));
+    core.pause_test_operations(mail_core::testing::TIMEOUT)
+        .unwrap();
     assert!(wait_status(
         &core,
         &cancelled_archive.operation_id,
@@ -969,6 +988,7 @@ fn cached_done_excludes_cancelled_and_undone_archives_but_keeps_failed_compensat
     assert_eq!(receipt.outcome, UndoOutcome::Cancelled);
 
     provider.set_apply_plan(ApplyPlan::Success);
+    core.release_test_operations();
     let failed_comp_archive = core
         .set_archived(&SetArchived {
             conversation: conversation_ref("failed-comp"),

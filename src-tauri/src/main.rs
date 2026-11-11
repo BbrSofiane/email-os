@@ -1441,7 +1441,6 @@ mod tests {
         assert_command_sets_match(&registered, &client_names, "tauri-client.ts invocations");
     }
 
-
     #[test]
     fn fixture_status_is_explicit_and_gmail_mutations_require_verified_access() {
         let dir = temp_dir("status");
