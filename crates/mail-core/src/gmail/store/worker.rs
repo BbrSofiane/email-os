@@ -4,9 +4,7 @@ impl GmailStore {
     pub(crate) fn claim_next_operation(&self) -> Result<Option<OperationRecord>, MailError> {
         self.persistence_gate()?;
         let mut conn = self.lock_conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let tx = conn.transaction().map_err(storage_err())?;
         let account_id = match meta_get(&tx, "account_id")? {
             Some(id) => id,
             None => return Ok(None),
@@ -20,21 +18,21 @@ impl GmailStore {
                 |row| row.get::<_, String>(0),
             )
             .optional()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         let Some(operation_id) = operation else {
-            tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+            tx.commit().map_err(storage_err())?;
             return Ok(None);
         };
         let record = load_operation(&tx, &account_id, &operation_id)?
-            .ok_or(MailError::StorageUnavailable)?;
+            .ok_or_else(|| storage_fault("missing_persisted_row"))?;
         if record.status == OperationStatus::Queued {
             tx.execute(
                 "UPDATE gmail_operations SET status = 'applying', last_error = NULL WHERE account_id = ?1 AND operation_id = ?2 AND status = 'queued'",
                 params![account_id, operation_id],
             )
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         }
-        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        tx.commit().map_err(storage_err())?;
         Ok(Some(record))
     }
 
@@ -52,7 +50,7 @@ impl GmailStore {
              WHERE account_id = ?1 AND status = 'outcome_unknown'",
             params![account_id],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
         Ok(())
     }
 
@@ -70,7 +68,7 @@ impl GmailStore {
                 params![account_id],
                 |row| row.get(0),
             )
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         Ok(count as usize)
     }
 
@@ -179,9 +177,7 @@ impl GmailStore {
     ) -> Result<(), MailError> {
         self.persistence_gate()?;
         let mut conn = self.lock_conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let tx = conn.transaction().map_err(storage_err())?;
         let account_id = account_id_of(&tx)?;
         if account_id != record.account_id || !generation_matches(&tx, record.generation)? {
             return Ok(());
@@ -201,7 +197,7 @@ impl GmailStore {
                             VALUES (?1, ?2, ?3, ?4)
                             ON CONFLICT(account_id, conversation_id, message_id) DO UPDATE SET is_starred = excluded.is_starred",
                             params![account_id, record.conversation_id, message_id, i64::from(record.value)])
-                            .map_err(|_| MailError::StorageUnavailable)?;
+                            .map_err(storage_err())?;
                     }
                     MailboxOperationKind::Archive => {
                         let inbox = (!record.value) as i64;
@@ -210,7 +206,7 @@ impl GmailStore {
                              VALUES (?1, ?2, ?3, ?4, NULL)
                              ON CONFLICT(account_id, conversation_id, message_id) DO UPDATE SET in_inbox = excluded.in_inbox",
                             params![account_id, record.conversation_id, message_id, inbox],
-                        ).map_err(|_| MailError::StorageUnavailable)?;
+                        ).map_err(storage_err())?;
                     }
                     MailboxOperationKind::Read => {
                         let unread = (!record.value) as i64;
@@ -219,7 +215,7 @@ impl GmailStore {
                              VALUES (?1, ?2, ?3, NULL, ?4)
                              ON CONFLICT(account_id, conversation_id, message_id) DO UPDATE SET is_unread = excluded.is_unread",
                             params![account_id, record.conversation_id, message_id, unread],
-                        ).map_err(|_| MailError::StorageUnavailable)?;
+                        ).map_err(storage_err())?;
                     }
                 }
             }
@@ -237,7 +233,7 @@ impl GmailStore {
                 error.map(|e| serde_json::to_string(&e).unwrap_or_default())
             ],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
-        tx.commit().map_err(|_| MailError::StorageUnavailable)
+        .map_err(storage_err())?;
+        tx.commit().map_err(storage_err())
     }
 }

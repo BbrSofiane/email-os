@@ -11,7 +11,7 @@ impl GmailStore {
             return Err(MailError::NotFound);
         }
         conn.query_row("SELECT snapshot_json FROM gmail_destination_snapshots WHERE account_id=?1 AND destination_id=?2",
-            params![account, id], |r| r.get(0)).optional().map_err(|_| MailError::StorageUnavailable)
+            params![account, id], |r| r.get(0)).optional().map_err(storage_err())
     }
 
     /// Fails with `NotFound` unless the stored account binding names
@@ -35,9 +35,7 @@ impl GmailStore {
     ) -> Result<(), MailError> {
         self.persistence_gate()?;
         let mut conn = self.lock_conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let tx = conn.transaction().map_err(storage_err())?;
         if !generation_matches(&tx, generation)?
             || meta_get(&tx, "account_id")?.as_deref() != Some(account)
         {
@@ -45,11 +43,11 @@ impl GmailStore {
         }
         tx.execute("INSERT INTO gmail_destination_snapshots(account_id,destination_id,snapshot_json) VALUES (?1,?2,?3)
             ON CONFLICT(account_id,destination_id) DO UPDATE SET snapshot_json=excluded.snapshot_json",
-            params![account, id, json]).map_err(|_| MailError::StorageUnavailable)?;
+            params![account, id, json]).map_err(storage_err())?;
         // Retain at most 20 destination pages plus the catalog. Never evict mail/recovery facts.
         tx.execute("DELETE FROM gmail_destination_snapshots WHERE destination_id <> '' AND rowid NOT IN
             (SELECT rowid FROM gmail_destination_snapshots WHERE destination_id <> '' ORDER BY rowid DESC LIMIT 20)", [])
-            .map_err(|_| MailError::StorageUnavailable)?;
-        tx.commit().map_err(|_| MailError::StorageUnavailable)
+            .map_err(storage_err())?;
+        tx.commit().map_err(storage_err())
     }
 }

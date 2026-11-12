@@ -26,7 +26,7 @@ pub(super) fn insert_group_member_row(
             member.rejection.map(crate::groups::rejection_name),
         ],
     )
-    .map_err(|_| MailError::StorageUnavailable)?;
+    .map_err(storage_err())?;
     Ok(())
 }
 
@@ -85,7 +85,7 @@ pub(super) fn existing_group_receipt(
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .optional()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let Some((saved_payload, group_id)) = existing else {
         return Ok(None);
     };
@@ -115,14 +115,14 @@ pub(super) fn existing_group_undo_receipt(
             },
         )
         .optional()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let Some((saved_payload, group_id, accepted_at)) = existing else {
         return Ok(None);
     };
     if saved_payload != payload {
         return Err(MailError::RequestIdConflict);
     }
-    let accepted_at = accepted_at.ok_or(MailError::StorageUnavailable)?;
+    let accepted_at = accepted_at.ok_or_else(|| storage_fault("missing_persisted_row"))?;
     reconstruct_group_undo_receipt(conn, account_id, &group_id, request_id, &accepted_at).map(Some)
 }
 
@@ -156,7 +156,7 @@ pub(super) fn load_group_header(
             },
         )
         .optional()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let Some((request_id, kind, requested_value, accepted_at, undone_at)) = row else {
         return Ok(None);
     };
@@ -192,7 +192,7 @@ pub(super) fn load_group_undo_rows(
              FROM gmail_operation_group_members
              WHERE account_id = ?1 AND group_id = ?2 ORDER BY ordinal",
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let rows = stmt
         .query_map(params![account_id, group_id], |row| {
             Ok((
@@ -205,9 +205,9 @@ pub(super) fn load_group_undo_rows(
                 row.get::<_, Option<String>>(6)?,
             ))
         })
-        .map_err(|_| MailError::StorageUnavailable)?
+        .map_err(storage_err())?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     rows.into_iter()
         .map(
             |(
@@ -222,7 +222,7 @@ pub(super) fn load_group_undo_rows(
                 let rejection = rejection
                     .map(|name| {
                         crate::groups::rejection_from_name(&name)
-                            .ok_or(MailError::StorageUnavailable)
+                            .ok_or_else(|| storage_fault("missing_persisted_row"))
                     })
                     .transpose()?;
                 Ok(GroupMemberRow {
@@ -259,8 +259,8 @@ pub(super) fn load_group_receipt(
     account_id: &str,
     group_id: &str,
 ) -> Result<OperationGroupReceipt, MailError> {
-    let header =
-        load_group_header(conn, account_id, group_id)?.ok_or(MailError::StorageUnavailable)?;
+    let header = load_group_header(conn, account_id, group_id)?
+        .ok_or_else(|| storage_fault("missing_persisted_row"))?;
     let members = load_group_undo_rows(conn, account_id, group_id)?;
     Ok(group_receipt(
         &header.group_id,
@@ -320,8 +320,8 @@ pub(super) fn load_group_status(
     group_id: &str,
     now: String,
 ) -> Result<OperationGroupStatus, MailError> {
-    let header =
-        load_group_header(conn, account_id, group_id)?.ok_or(MailError::StorageUnavailable)?;
+    let header = load_group_header(conn, account_id, group_id)?
+        .ok_or_else(|| storage_fault("missing_persisted_row"))?;
     let members = load_group_undo_rows(conn, account_id, group_id)?;
     let mut views = Vec::with_capacity(members.len());
     for member in &members {
@@ -329,7 +329,7 @@ pub(super) fn load_group_status(
             (crate::groups::GroupMemberStatus::Rejected, None)
         } else {
             let Some(operation_id) = &member.operation_id else {
-                return Err(MailError::StorageUnavailable);
+                return Err(storage_fault("invalid_persisted_state"));
             };
             let row = conn
                 .query_row(
@@ -339,8 +339,8 @@ pub(super) fn load_group_status(
                     |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
                 )
                 .optional()
-                .map_err(|_| MailError::StorageUnavailable)?
-                .ok_or(MailError::StorageUnavailable)?;
+                .map_err(storage_err())?
+                .ok_or_else(|| storage_fault("missing_persisted_row"))?;
             let failure = row.1.map(|f| {
                 if f == "providerunavailable" {
                     OperationFailure::ProviderUnavailable
@@ -395,11 +395,11 @@ pub(super) fn persisted_group_undo_record(
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let Some((request_id, accepted_at)) = undo_request else {
         return Ok(None);
     };
-    let accepted_at = accepted_at.ok_or(MailError::StorageUnavailable)?;
+    let accepted_at = accepted_at.ok_or_else(|| storage_fault("missing_persisted_row"))?;
     let mut views = Vec::with_capacity(members.len());
     for member in members {
         let Some(decision_json) = &member.undo_decision else {
@@ -415,15 +415,15 @@ pub(super) fn persisted_group_undo_record(
                     .undo_skip_reason
                     .as_deref()
                     .and_then(crate::groups::skip_reason_from_name)
-                    .ok_or(MailError::StorageUnavailable)?;
+                    .ok_or_else(|| storage_fault("missing_persisted_row"))?;
                 crate::groups::GroupMemberUndoDecision::Skipped { reason }
             }
-            _ => return Err(MailError::StorageUnavailable),
+            _ => return Err(storage_fault("invalid_persisted_state")),
         };
         let compensation_ids: Vec<String> = member
             .undo_operation_ids
             .as_deref()
-            .map(|json| serde_json::from_str(json).map_err(|_| MailError::StorageUnavailable))
+            .map(|json| serde_json::from_str(json).map_err(storage_err()))
             .transpose()?
             .unwrap_or_default();
         let mut compensations = Vec::with_capacity(compensation_ids.len());
@@ -436,8 +436,8 @@ pub(super) fn persisted_group_undo_record(
                     |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
                 )
                 .optional()
-                .map_err(|_| MailError::StorageUnavailable)?
-                .ok_or(MailError::StorageUnavailable)?;
+                .map_err(storage_err())?
+                .ok_or_else(|| storage_fault("missing_persisted_row"))?;
             let failure = row.1.map(|f| {
                 if f == "providerunavailable" {
                     OperationFailure::ProviderUnavailable
@@ -566,10 +566,10 @@ pub(super) fn decide_member_undo(
         ));
     }
     let Some(operation_id) = &member.operation_id else {
-        return Err(MailError::StorageUnavailable);
+        return Err(storage_fault("invalid_persisted_state"));
     };
     let Some(target) = load_undo_target(tx, account_id, operation_id)? else {
-        return Err(MailError::StorageUnavailable);
+        return Err(storage_fault("invalid_persisted_state"));
     };
     match target.status {
         OperationStatus::Failed => Ok((
@@ -597,7 +597,7 @@ pub(super) fn decide_member_undo(
                      WHERE account_id = ?1 AND operation_id = ?2 AND status = 'queued'",
                     params![account_id, target.operation_id],
                 )
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
             if cancelled == 1 {
                 Ok((
                     crate::groups::GroupMemberUndoDecision::Cancelled,
@@ -657,15 +657,15 @@ pub(super) fn reconstruct_group_undo_receipt(
                     .undo_skip_reason
                     .as_deref()
                     .and_then(crate::groups::skip_reason_from_name)
-                    .ok_or(MailError::StorageUnavailable)?;
+                    .ok_or_else(|| storage_fault("missing_persisted_row"))?;
                 crate::groups::GroupMemberUndoDecision::Skipped { reason }
             }
-            _ => return Err(MailError::StorageUnavailable),
+            _ => return Err(storage_fault("invalid_persisted_state")),
         };
         let operation_ids = member
             .undo_operation_ids
             .as_deref()
-            .map(|json| serde_json::from_str(json).map_err(|_| MailError::StorageUnavailable))
+            .map(|json| serde_json::from_str(json).map_err(storage_err()))
             .transpose()?
             .unwrap_or_default();
         results.push(crate::groups::GroupMemberUndoResult {

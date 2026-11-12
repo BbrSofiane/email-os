@@ -18,9 +18,7 @@ impl GmailStore {
     ) -> Result<Commit, MailError> {
         self.persistence_gate()?;
         let mut conn = self.lock_conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let tx = conn.transaction().map_err(storage_err())?;
         if !generation_matches(&tx, expected_generation)? {
             return Ok(Commit::Discarded);
         }
@@ -33,7 +31,7 @@ impl GmailStore {
         let fresh_run = meta_get(&tx, "discovery_state")?.as_deref() != Some("running");
         if fresh_run {
             tx.execute("DELETE FROM gmail_discovery_seen", [])
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
         }
         for fetch in fetched {
             match fetch {
@@ -44,7 +42,7 @@ impl GmailStore {
                 "INSERT OR IGNORE INTO gmail_discovery_seen (conversation_id) VALUES (?1)",
                 params![fetch.id()],
             )
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         }
         // Keep every durable checkpoint within the advertised cap. Current
         // discovery observations win over older cached conversations.
@@ -62,14 +60,14 @@ impl GmailStore {
                          (SELECT conversation_id FROM gmail_discovery_seen UNION SELECT conversation_id FROM gmail_search_cache WHERE account_id=?1 UNION SELECT conversation_id FROM gmail_reminders WHERE account_id=?1 AND json_extract(data,'$.phase')='pending')",
                     params![account_id],
                 )
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
                 tx.execute(
                     "DELETE FROM gmail_inbox_membership
                      WHERE account_id = ?1 AND conversation_id NOT IN
                          (SELECT conversation_id FROM gmail_discovery_seen UNION SELECT conversation_id FROM gmail_reminders WHERE account_id=?1 AND json_extract(data,'$.phase')='pending')",
                     params![account_id],
                 )
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
                 // Recovery readers need the current conversation inventory,
                 // including later Trash/Spam messages outside immutable targets.
                 // Retain facts only under existing recovery/operation ownership;
@@ -93,14 +91,14 @@ impl GmailStore {
                            AND s.conversation_id = gmail_message_facts.conversation_id)",
                     params![account_id],
                 )
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
                 tx.execute(
                     "DELETE FROM gmail_conversations
                      WHERE account_id = ?1 AND conversation_id NOT IN
                          (SELECT conversation_id FROM gmail_discovery_seen UNION SELECT conversation_id FROM gmail_search_cache WHERE account_id=?1 UNION SELECT conversation_id FROM gmail_reminders WHERE account_id=?1 AND json_extract(data,'$.phase')='pending')",
                     params![account_id],
                 )
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
             } else {
                 // Complete uncapped discovery: cached in-inbox conversations
                 // not observed were archived or deleted externally; drop their
@@ -112,24 +110,24 @@ impl GmailStore {
                            (SELECT conversation_id FROM gmail_discovery_seen)",
                     params![account_id],
                 )
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
                 tx.execute(
                     "UPDATE gmail_message_facts SET in_inbox = 0
                      WHERE account_id = ?1 AND conversation_id NOT IN
                          (SELECT conversation_id FROM gmail_discovery_seen)",
                     params![account_id],
                 )
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
                 tx.execute(
                     "DELETE FROM gmail_inbox_membership
                      WHERE account_id = ?1 AND conversation_id NOT IN
                          (SELECT conversation_id FROM gmail_discovery_seen)",
                     params![account_id],
                 )
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
             }
             tx.execute("DELETE FROM gmail_discovery_seen", [])
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
             meta_set(&tx, "discovery_state", "done")?;
             meta_del(&tx, "discovery_page_token")?;
             meta_set(&tx, "last_synced_at", &self.clock.now_iso())?;
@@ -140,7 +138,7 @@ impl GmailStore {
                 None => meta_del(&tx, "discovery_page_token")?,
             }
         }
-        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        tx.commit().map_err(storage_err())?;
         Ok(Commit::Applied)
     }
 
@@ -157,9 +155,7 @@ impl GmailStore {
     ) -> Result<Commit, MailError> {
         self.persistence_gate()?;
         let mut conn = self.lock_conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let tx = conn.transaction().map_err(storage_err())?;
         if !generation_matches(&tx, expected_generation)? {
             return Ok(Commit::Discarded);
         }
@@ -176,17 +172,17 @@ impl GmailStore {
                 "DELETE FROM gmail_messages WHERE account_id = ?1 AND message_id = ?2",
                 params![account_id, message_id],
             )
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
             tx.execute(
                 "DELETE FROM gmail_inbox_membership WHERE account_id = ?1 AND message_id = ?2",
                 params![account_id, message_id],
             )
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
             tx.execute(
                 "DELETE FROM gmail_message_facts WHERE account_id = ?1 AND message_id = ?2",
                 params![account_id, message_id],
             )
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         }
         // Conversations left with no messages disappear from the cache.
         tx.execute(
@@ -201,7 +197,7 @@ impl GmailStore {
                    AND i.conversation_id = gmail_conversations.conversation_id)",
             params![account_id],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
         if page.next_page_token.is_none() {
             meta_set(&tx, "history_id", &page.history_id)?;
             meta_del(&tx, "history_batch_start")?;
@@ -215,7 +211,7 @@ impl GmailStore {
                 page.next_page_token.as_deref().unwrap_or_default(),
             )?;
         }
-        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        tx.commit().map_err(storage_err())?;
         Ok(Commit::Applied)
     }
 
@@ -229,9 +225,7 @@ impl GmailStore {
     ) -> Result<Commit, MailError> {
         self.persistence_gate()?;
         let mut conn = self.lock_conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let tx = conn.transaction().map_err(storage_err())?;
         if !generation_matches(&tx, expected_generation)? {
             return Ok(Commit::Discarded);
         }
@@ -242,8 +236,8 @@ impl GmailStore {
         meta_del(&tx, "history_batch_start")?;
         meta_del(&tx, "history_page_token")?;
         tx.execute("DELETE FROM gmail_discovery_seen", [])
-            .map_err(|_| MailError::StorageUnavailable)?;
-        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
+        tx.commit().map_err(storage_err())?;
         Ok(Commit::Applied)
     }
 }

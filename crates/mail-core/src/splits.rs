@@ -1,4 +1,5 @@
 //! UX-06: one account-scoped local view. No provider mutations or classification.
+use crate::storage_log::storage_err;
 use crate::MailError;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -70,8 +71,8 @@ pub(crate) fn get(conn: &Connection, account: &str) -> Result<Option<SavedSplit>
             |r| r.get(0),
         )
         .optional()
-        .map_err(|_| MailError::StorageUnavailable)?;
-    json.map(|json| serde_json::from_str(&json).map_err(|_| MailError::StorageUnavailable))
+        .map_err(storage_err())?;
+    json.map(|json| serde_json::from_str(&json).map_err(storage_err()))
         .transpose()
 }
 
@@ -81,9 +82,9 @@ pub(crate) fn save(
     split: &SavedSplit,
 ) -> Result<SavedSplit, MailError> {
     let split = split.normalized()?;
-    let json = serde_json::to_string(&split).map_err(|_| MailError::StorageUnavailable)?;
+    let json = serde_json::to_string(&split).map_err(storage_err())?;
     conn.execute("INSERT INTO meta(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        params![format!("saved_split:{account}"), json]).map_err(|_| MailError::StorageUnavailable)?;
+        params![format!("saved_split:{account}"), json]).map_err(storage_err())?;
     Ok(split)
 }
 

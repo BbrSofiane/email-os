@@ -7,11 +7,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod close_gate;
+mod diagnostics;
 use mail_core::attachments::{AttachmentDescriptor, AttachmentSaved, SaveAttachment};
 use mail_core::CancelToken;
 use std::collections::{HashMap, VecDeque};
 
 use close_gate::CloseGate;
+use diagnostics::{cause, init_logging, storage_failure};
 use mail_core::drafts::types::{
     AppCloseRequest, CreateDraft, DeleteDraft, Draft, DraftDeleteReceipt, DraftReceipt, DraftRef,
     DraftSource, DraftSummary, SaveDraft,
@@ -544,7 +546,7 @@ where
 {
     tauri::async_runtime::spawn_blocking(move || f(&backend))
         .await
-        .map_err(|_| MailError::StorageUnavailable)?
+        .map_err(|_| storage_failure(cause::TASK_JOIN))?
 }
 
 #[tauri::command]
@@ -722,11 +724,11 @@ async fn save_attachment(
     let directory = app
         .path()
         .download_dir()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(|_| storage_failure(cause::PATH_UNAVAILABLE))?;
     let transfers = Arc::clone(&state.attachment_transfers);
     let cancel = transfers
         .lock()
-        .map_err(|_| MailError::StorageUnavailable)?
+        .map_err(|_| storage_failure(cause::LOCK_POISONED))?
         .begin(&request.request_id)?;
     let id = request.request_id.clone();
     let result = run_blocking(state.backend.clone(), move |backend| {
@@ -735,7 +737,7 @@ async fn save_attachment(
     .await;
     transfers
         .lock()
-        .map_err(|_| MailError::StorageUnavailable)?
+        .map_err(|_| storage_failure(cause::LOCK_POISONED))?
         .active
         .remove(&id);
     result
@@ -749,7 +751,7 @@ fn cancel_attachment(state: State<'_, AppState>, request_id: String) -> Result<(
     state
         .attachment_transfers
         .lock()
-        .map_err(|_| MailError::StorageUnavailable)?
+        .map_err(|_| storage_failure(cause::LOCK_POISONED))?
         .cancel(&request_id);
     Ok(())
 }
@@ -901,7 +903,7 @@ async fn connect_account(state: State<'_, AppState>) -> Result<(), MailError> {
     run_blocking(backend, move |backend| {
         let mut lifecycle = lifecycle
             .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
         backend.connect_account()?;
         lifecycle.advance();
         Ok(())
@@ -916,7 +918,7 @@ async fn disconnect_account(state: State<'_, AppState>) -> Result<(), MailError>
     run_blocking(backend, move |backend| {
         let mut lifecycle = lifecycle
             .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
         lifecycle.advance();
         backend.disconnect_account()
     })
@@ -931,7 +933,7 @@ async fn list_drafts(state: State<'_, AppState>) -> Result<Vec<DraftSummary>, Ma
     run_blocking(backend, move |backend| {
         let _lifecycle = lifecycle
             .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
         let account = active_account(backend)?;
         drafts.list_drafts(&account)
     })
@@ -946,7 +948,7 @@ async fn get_draft(state: State<'_, AppState>, r#ref: DraftRef) -> Result<Draft,
     run_blocking(backend, move |backend| {
         let _lifecycle = lifecycle
             .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
         let account = active_account(backend)?;
         require_draft_account(&account, &r#ref)?;
         drafts.get_draft(&account, &r#ref)
@@ -966,7 +968,7 @@ async fn create_draft(
     let receipt = run_blocking(backend, move |backend| {
         let lifecycle_guard = lifecycle
             .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
         let account = active_account(backend)?;
         if let Some(receipt) = drafts.lookup_create_receipt(&account, &command)? {
             return Ok(receipt);
@@ -992,7 +994,7 @@ async fn create_draft(
 
                 let lifecycle_guard = lifecycle
                     .lock()
-                    .map_err(|_| MailError::StorageUnavailable)?;
+                    .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
                 if !lifecycle_guard.is_current(session_epoch)
                     || active_account(backend)?.account_id != account.account_id
                 {
@@ -1024,7 +1026,7 @@ async fn save_draft(
     let receipt = run_blocking(backend, move |backend| {
         let _lifecycle = lifecycle
             .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
         let account = active_account(backend)?;
         require_draft_account(&account, &command.draft_ref)?;
         drafts.save_draft(&account, &command)
@@ -1046,7 +1048,7 @@ async fn delete_draft(
     let receipt = run_blocking(backend, move |backend| {
         let _lifecycle = lifecycle
             .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
         let account = active_account(backend)?;
         require_draft_account(&account, &command.draft_ref)?;
         drafts.delete_draft(&account, &command)
@@ -1062,7 +1064,7 @@ fn get_app_close_request(state: State<'_, AppState>) -> Result<Option<AppCloseRe
         .close_gate
         .lock()
         .map(|gate| gate.pending())
-        .map_err(|_| MailError::StorageUnavailable)
+        .map_err(|_| storage_failure(cause::LOCK_POISONED))
 }
 
 #[tauri::command]
@@ -1074,7 +1076,7 @@ fn complete_app_close(
     let mut gate = state
         .close_gate
         .lock()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
     if !gate.complete(&request_id) {
         return Err(MailError::InvalidRequest {
             field: "requestId".to_owned(),
@@ -1090,7 +1092,7 @@ fn cancel_app_close(state: State<'_, AppState>, request_id: String) -> Result<()
     let mut gate = state
         .close_gate
         .lock()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
     if !gate.cancel(&request_id) {
         return Err(MailError::InvalidRequest {
             field: "requestId".to_owned(),
@@ -1184,6 +1186,7 @@ mod attachment_transfer_tests {
 }
 
 fn main() {
+    init_logging();
     let app = tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             list_provider_destinations,

@@ -11,9 +11,7 @@ impl GmailStore {
         validate_request_id(&command.request_id)?;
         self.persistence_gate()?;
         let mut conn = self.lock_conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let tx = conn.transaction().map_err(storage_err())?;
         let account_id = match meta_get(&tx, "account_id")? {
             Some(id) => id,
             // Rule 1: the operation must belong to the active account.
@@ -23,7 +21,7 @@ impl GmailStore {
         if let Some(receipt) =
             existing_undo_receipt(&tx, &account_id, &command.request_id, &payload)?
         {
-            tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+            tx.commit().map_err(storage_err())?;
             return Ok(receipt);
         }
         let target = load_undo_target(&tx, &account_id, &command.operation_id)?
@@ -41,7 +39,7 @@ impl GmailStore {
                      WHERE account_id = ?1 AND operation_id = ?2 AND status = 'queued'",
                     params![account_id, target.operation_id],
                 )
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
             if cancelled == 1 {
                 UndoReceipt {
                     undone_operation_id: target.operation_id.clone(),
@@ -67,8 +65,8 @@ impl GmailStore {
                 accepted_at
             ],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
-        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
+        tx.commit().map_err(storage_err())?;
         Ok(receipt)
     }
 }

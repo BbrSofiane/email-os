@@ -27,26 +27,26 @@ pub(super) fn accept_operation_tx(
                 "SELECT message_id FROM gmail_operation_targets
              WHERE account_id = ?1 AND operation_id = ?2 ORDER BY message_id",
             )
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         targets = stmt
             .query_map(params![account_id, original_id], |row| row.get(0))
-            .map_err(|_| MailError::StorageUnavailable)?
+            .map_err(storage_err())?
             .collect::<Result<Vec<String>, _>>()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
     } else {
         let mut stmt = tx
             .prepare(
                 "SELECT message_id FROM gmail_message_facts
              WHERE account_id = ?1 AND conversation_id = ?2 ORDER BY message_id",
             )
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         targets = stmt
             .query_map(params![account_id, conversation.conversation_id], |row| {
                 row.get(0)
             })
-            .map_err(|_| MailError::StorageUnavailable)?
+            .map_err(storage_err())?
             .collect::<Result<Vec<String>, _>>()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
     }
     targets.sort();
     targets.dedup();
@@ -67,7 +67,7 @@ pub(super) fn accept_operation_tx(
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let (snapshot_json, snapshot_saved_at) = if let Some(original_id) = clone_targets_from {
         // A retry restores the same prior world as the operation it retries,
         // so it clones the original's preimage instead of capturing a new one.
@@ -78,7 +78,7 @@ pub(super) fn accept_operation_tx(
              WHERE account_id = ?1 AND operation_id = ?3",
             params![account_id, operation_id, original_id],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
         existing_snapshot.ok_or(MailError::NotFound)?
     } else if let Some(built) = build_conversation(tx, account_id, &conversation.conversation_id)? {
         let effective = effective_conversation_state_with_coverage(
@@ -113,7 +113,7 @@ pub(super) fn accept_operation_tx(
             pending_operation_id: effective.pending_operation_id,
         };
         (
-            serde_json::to_string(&current).map_err(|_| MailError::StorageUnavailable)?,
+            serde_json::to_string(&current).map_err(storage_err())?,
             accepted_at.to_string(),
         )
     } else {
@@ -140,7 +140,7 @@ pub(super) fn accept_operation_tx(
             params![account_id],
             |row| row.get(0),
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     // Top-level action identity (docs/ux-05-safe-bulk-processing.md §5):
     // group children share their group's identity; standalone setters and
     // retries are their own action; compensations are never top-level.
@@ -172,20 +172,20 @@ pub(super) fn accept_operation_tx(
             retry_of,
         ],
     )
-    .map_err(|_| MailError::StorageUnavailable)?;
+    .map_err(storage_err())?;
     for message_id in targets {
         tx.execute(
             "INSERT INTO gmail_operation_targets (account_id, operation_id, conversation_id, message_id)
              VALUES (?1, ?2, ?3, ?4)",
             params![account_id, operation_id, conversation.conversation_id, message_id],
-        ).map_err(|_| MailError::StorageUnavailable)?;
+        ).map_err(storage_err())?;
     }
     tx.execute(
         "INSERT INTO gmail_operation_requests (account_id, request_id, payload, operation_id)
          VALUES (?1, ?2, ?3, ?4)",
         params![account_id, request_id, payload, operation_id],
     )
-    .map_err(|_| MailError::StorageUnavailable)?;
+    .map_err(storage_err())?;
     tx.execute(
         "INSERT INTO gmail_operation_snapshots
          (account_id, conversation_id, snapshot_json, snapshot_saved_at, last_message_at)
@@ -201,7 +201,7 @@ pub(super) fn accept_operation_tx(
             snapshot_saved_at
         ],
     )
-    .map_err(|_| MailError::StorageUnavailable)?;
+    .map_err(storage_err())?;
     Ok(OperationReceipt {
         operation_id,
         accepted_at: accepted_at.to_string(),
@@ -241,7 +241,7 @@ pub(super) fn capture_preimages(
                 prior_value.map(|v| v as i64)
             ],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     }
     Ok(())
 }
@@ -259,7 +259,7 @@ pub(super) fn parse_kind(kind: &str) -> Result<MailboxOperationKind, MailError> 
         "archive" => Ok(MailboxOperationKind::Archive),
         "read" => Ok(MailboxOperationKind::Read),
         "star" => Ok(MailboxOperationKind::Star),
-        _ => Err(MailError::StorageUnavailable),
+        _ => Err(storage_fault("invalid_persisted_value")),
     }
 }
 
@@ -282,7 +282,7 @@ pub(super) fn parse_status(status: &str) -> Result<OperationStatus, MailError> {
         "failed" => Ok(OperationStatus::Failed),
         "outcome_unknown" => Ok(OperationStatus::OutcomeUnknown),
         "cancelled" => Ok(OperationStatus::Cancelled),
-        _ => Err(MailError::StorageUnavailable),
+        _ => Err(storage_fault("invalid_persisted_value")),
     }
 }
 
@@ -306,7 +306,7 @@ pub(super) fn load_operation(
             },
         )
         .optional()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let Some((conversation_id, kind, value, status)) = raw else {
         return Ok(None);
     };
@@ -315,12 +315,12 @@ pub(super) fn load_operation(
             "SELECT message_id FROM gmail_operation_targets
          WHERE account_id = ?1 AND operation_id = ?2 ORDER BY message_id",
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let message_ids = stmt
         .query_map(params![account_id, operation_id], |row| row.get(0))
-        .map_err(|_| MailError::StorageUnavailable)?
+        .map_err(storage_err())?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     Ok(Some(OperationRecord {
         account_id: account_id.to_string(),
         operation_id: operation_id.to_string(),

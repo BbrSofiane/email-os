@@ -26,6 +26,7 @@ use crate::gmail::types::{
     SyncInfo, SyncState,
 };
 use crate::lock::ProfileGuard;
+use crate::storage_log::storage_err;
 use crate::CancelToken;
 
 /// Disclosed discovery cap (`SyncInfo.coverageLimit`).
@@ -210,10 +211,7 @@ struct DestinationRead {
 
 impl DestinationRead {
     fn begin(ctrl: &Arc<Ctrl>) -> Result<Self, MailError> {
-        let mut st = ctrl
-            .state
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut st = ctrl.state.lock().map_err(storage_err())?;
         if st.stop || st.halted {
             return Err(MailError::StorageUnavailable);
         }
@@ -479,12 +477,7 @@ impl GmailCore {
         &self,
         command: &crate::reminders::PutReminder,
     ) -> Result<crate::reminders::Reminder, MailError> {
-        let mut state = self
-            .inner
-            .ctrl
-            .state
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut state = self.inner.ctrl.state.lock().map_err(storage_err())?;
         if state.stop || state.halted {
             return Err(MailError::StorageUnavailable);
         }
@@ -507,12 +500,7 @@ impl GmailCore {
         &self,
         command: &crate::reminders::CancelReminder,
     ) -> Result<crate::reminders::Reminder, MailError> {
-        let mut state = self
-            .inner
-            .ctrl
-            .state
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut state = self.inner.ctrl.state.lock().map_err(storage_err())?;
         if state.stop || state.halted {
             return Err(MailError::StorageUnavailable);
         }
@@ -610,11 +598,7 @@ impl GmailCore {
         };
         let work = self.begin_reply_enrichment()?;
         {
-            let mut slot = self
-                .inner
-                .search_cancel
-                .lock()
-                .map_err(|_| MailError::StorageUnavailable)?;
+            let mut slot = self.inner.search_cancel.lock().map_err(storage_err())?;
             if let Some(old) = slot.replace(work.cancel.clone()) {
                 old.cancel();
             }
@@ -734,8 +718,7 @@ impl GmailCore {
         use super::browsing::*;
         if cached {
             let saved = self.inner.store.destination_snapshot(account_id, "")?;
-            return serde_json::from_str(&saved.ok_or(MailError::NotFound)?)
-                .map_err(|_| MailError::StorageUnavailable);
+            return serde_json::from_str(&saved.ok_or(MailError::NotFound)?).map_err(storage_err());
         }
         let job = DestinationRead::begin(&self.inner.ctrl)?;
         let generation = self.inner.store.generation()?;
@@ -755,7 +738,7 @@ impl GmailCore {
         if job.cancel.is_cancelled() {
             return Err(MailError::AuthCancelled);
         }
-        let json = serde_json::to_string(&result).map_err(|_| MailError::StorageUnavailable)?;
+        let json = serde_json::to_string(&result).map_err(storage_err())?;
         self.inner
             .store
             .save_destination_snapshot(account_id, "", &json, generation)?;
@@ -789,8 +772,7 @@ impl GmailCore {
                 .store
                 .destination_snapshot(&request.account_id, &request.destination_id)?
                 .ok_or(MailError::NotFound)?;
-            let page: DestinationPage =
-                serde_json::from_str(&json).map_err(|_| MailError::StorageUnavailable)?;
+            let page: DestinationPage = serde_json::from_str(&json).map_err(storage_err())?;
             if page.account_id != request.account_id
                 || page.destination_id != request.destination_id
             {
@@ -807,7 +789,7 @@ impl GmailCore {
                 .destination_snapshot(&request.account_id, "")?
                 .ok_or(MailError::NotFound)?,
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
         if catalog.account_id != request.account_id
             || !catalog
                 .destinations
@@ -886,10 +868,10 @@ impl GmailCore {
                     serde_json::to_string(&(&request.account_id, &request.destination_id, token))
                 })
                 .transpose()
-                .map_err(|_| MailError::StorageUnavailable)?,
+                .map_err(storage_err())?,
             fetched_at: chrono::Utc::now().to_rfc3339(),
         };
-        let json = serde_json::to_string(&result).map_err(|_| MailError::StorageUnavailable)?;
+        let json = serde_json::to_string(&result).map_err(storage_err())?;
         self.inner.store.save_destination_snapshot(
             &request.account_id,
             &request.destination_id,
@@ -941,12 +923,7 @@ impl GmailCore {
         crate::attachments::check_cancel(cancel)?;
         // Hold control across the short local save so disconnect cannot complete
         // between generation validation and publication.
-        let st = self
-            .inner
-            .ctrl
-            .state
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let st = self.inner.ctrl.state.lock().map_err(storage_err())?;
         if st.disconnecting
             || st.stop
             || self.inner.store.generation()? != generation
@@ -966,12 +943,7 @@ impl GmailCore {
     }
 
     fn begin_read_transfer(&self, cancel: CancelToken) -> Result<ReplyEnrichment, MailError> {
-        let mut st = self
-            .inner
-            .ctrl
-            .state
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut st = self.inner.ctrl.state.lock().map_err(storage_err())?;
         if st.stop || st.halted {
             return Err(MailError::StorageUnavailable);
         }
@@ -1066,12 +1038,7 @@ impl GmailCore {
     /// failures; connection and sync error hints come from worker outcomes.
     pub fn account_status(&self) -> Result<AccountStatus, MailError> {
         let (connection, mut error, pass_in_flight, upgrading) = {
-            let st = self
-                .inner
-                .ctrl
-                .state
-                .lock()
-                .map_err(|_| MailError::StorageUnavailable)?;
+            let st = self.inner.ctrl.state.lock().map_err(storage_err())?;
             (
                 st.connection,
                 st.error.clone(),
@@ -1122,11 +1089,7 @@ impl GmailCore {
         if !inner.provider.is_configured() {
             return Err(MailError::NotConfigured);
         }
-        let mut st = inner
-            .ctrl
-            .state
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut st = inner.ctrl.state.lock().map_err(storage_err())?;
         if st.halted || st.stop {
             return Err(MailError::StorageUnavailable);
         }
@@ -1171,11 +1134,7 @@ impl GmailCore {
     /// revoke a completed grant or cancel sync, restore, or mutation work.
     pub fn cancel_mutation_upgrade(&self) -> Result<(), MailError> {
         let inner = &*self.inner;
-        let mut st = inner
-            .ctrl
-            .state
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut st = inner.ctrl.state.lock().map_err(storage_err())?;
         if st.upgrade_requested {
             st.upgrade_requested = false;
             inner.ctrl.wake.notify_all();
@@ -1276,11 +1235,7 @@ impl GmailCore {
     /// executor, so no mutation-access gate is applied here.
     pub fn undo_operation(&self, command: &UndoOperation) -> Result<UndoReceipt, MailError> {
         let inner = &*self.inner;
-        let mut st = inner
-            .ctrl
-            .state
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut st = inner.ctrl.state.lock().map_err(storage_err())?;
         if st.halted || st.stop {
             return Err(MailError::StorageUnavailable);
         }
@@ -1329,11 +1284,7 @@ impl GmailCore {
         command: &crate::groups::UndoOperationGroup,
     ) -> Result<crate::groups::GroupUndoReceipt, MailError> {
         let inner = &*self.inner;
-        let mut st = inner
-            .ctrl
-            .state
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut st = inner.ctrl.state.lock().map_err(storage_err())?;
         if st.halted || st.stop {
             return Err(MailError::StorageUnavailable);
         }
@@ -1412,7 +1363,7 @@ impl GmailCore {
             .ctrl
             .state
             .lock()
-            .map_err(|_| MailError::StorageUnavailable)?
+            .map_err(storage_err())?
             .connection
             != ConnectionState::Connected
         {
@@ -1454,11 +1405,7 @@ impl GmailCore {
         accept: impl FnOnce(&GmailStore) -> Result<T, MailError>,
     ) -> Result<T, MailError> {
         let inner = &*self.inner;
-        let mut st = inner
-            .ctrl
-            .state
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut st = inner.ctrl.state.lock().map_err(storage_err())?;
         if st.halted || st.stop {
             return Err(MailError::StorageUnavailable);
         }
@@ -1518,11 +1465,7 @@ impl GmailCore {
         if !inner.provider.is_configured() {
             return Err(MailError::NotConfigured);
         }
-        let mut st = inner
-            .ctrl
-            .state
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut st = inner.ctrl.state.lock().map_err(storage_err())?;
         if st.halted || st.stop {
             return Err(MailError::StorageUnavailable);
         }
@@ -1549,18 +1492,11 @@ impl GmailCore {
     /// cleared unless credential deletion succeeded.
     pub fn disconnect_account(&self) -> Result<(), MailError> {
         let inner = &*self.inner;
-        let _serial = inner
-            .disconnect_lock
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let _serial = inner.disconnect_lock.lock().map_err(storage_err())?;
         // Publish an admission barrier and cancellation together. The worker
         // cannot activate another pass until credentials and cache are cleared.
         {
-            let mut st = inner
-                .ctrl
-                .state
-                .lock()
-                .map_err(|_| MailError::StorageUnavailable)?;
+            let mut st = inner.ctrl.state.lock().map_err(storage_err())?;
             st.disconnecting = true;
             st.auth_requested = false;
             st.auth_auto_retry = false;
@@ -1589,11 +1525,7 @@ impl GmailCore {
             Ok(false)
         };
         {
-            let mut st = inner
-                .ctrl
-                .state
-                .lock()
-                .map_err(|_| MailError::StorageUnavailable)?;
+            let mut st = inner.ctrl.state.lock().map_err(storage_err())?;
             st.disconnecting = false;
             st.upgrade_in_flight = false;
             st.active_action = None;
@@ -1627,12 +1559,7 @@ impl GmailCore {
     /// while a pass is in flight is rejected typed as `busy` so there is
     /// never a concurrent cursor writer.
     pub fn request_sync(&self) -> Result<(), MailError> {
-        let mut st = self
-            .inner
-            .ctrl
-            .state
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut st = self.inner.ctrl.state.lock().map_err(storage_err())?;
         if st.halted || st.stop {
             return Err(MailError::StorageUnavailable);
         }
@@ -1874,7 +1801,7 @@ fn spawn_worker(
     std::thread::Builder::new()
         .name("gmail-sync-worker".to_string())
         .spawn(move || run(store, provider, ctrl, hub, profile))
-        .map_err(|_| MailError::StorageUnavailable)
+        .map_err(storage_err())
 }
 
 fn run(
@@ -2162,10 +2089,7 @@ fn process_due_reminders(
             false
         } else {
             let connected = {
-                let state = ctrl
-                    .state
-                    .lock()
-                    .map_err(|_| MailError::StorageUnavailable)?;
+                let state = ctrl.state.lock().map_err(storage_err())?;
                 state.connection == ConnectionState::Connected
                     && !state.disconnecting
                     && !state.stop
@@ -2185,10 +2109,7 @@ fn process_due_reminders(
             let observation = store.observation_revision()?;
             let cancel = CancelToken::default();
             {
-                let mut st = ctrl
-                    .state
-                    .lock()
-                    .map_err(|_| MailError::StorageUnavailable)?;
+                let mut st = ctrl.state.lock().map_err(storage_err())?;
                 if st.stop || st.halted || st.disconnecting {
                     continue;
                 }
@@ -2250,10 +2171,7 @@ fn process_due_reminders(
             if !complete {
                 continue;
             }
-            let st = ctrl
-                .state
-                .lock()
-                .map_err(|_| MailError::StorageUnavailable)?;
+            let st = ctrl.state.lock().map_err(storage_err())?;
             if st.stop || st.halted || st.disconnecting {
                 continue;
             }
@@ -2272,10 +2190,7 @@ fn process_due_reminders(
         };
         let generation = store.generation()?;
         let observation = store.observation_revision()?;
-        let st = ctrl
-            .state
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let st = ctrl.state.lock().map_err(storage_err())?;
         if st.stop || st.halted || st.disconnecting {
             continue;
         }

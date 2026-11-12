@@ -23,7 +23,7 @@ impl GmailStore {
                 |row| row.get(0),
             )
             .optional()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         let Some(group_id) = group_id else {
             return Ok(None);
         };
@@ -56,7 +56,7 @@ impl GmailStore {
                    AND (?2 IS NULL OR group_seq < ?2)
                  ORDER BY group_seq DESC LIMIT ?3",
             )
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         let mut rows = stmt
             .query_map(
                 params![account_id, before_seq, request.limit as i64 + 1],
@@ -72,9 +72,9 @@ impl GmailStore {
                     ))
                 },
             )
-            .map_err(|_| MailError::StorageUnavailable)?
+            .map_err(storage_err())?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         let has_more = rows.len() > request.limit as usize;
         rows.truncate(request.limit as usize);
         let mut summaries = Vec::with_capacity(rows.len());

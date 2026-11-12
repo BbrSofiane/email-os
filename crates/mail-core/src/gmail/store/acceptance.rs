@@ -93,15 +93,13 @@ impl GmailStore {
         validate_request_id(request_id)?;
         self.persistence_gate()?;
         let mut conn = self.lock_conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let tx = conn.transaction().map_err(storage_err())?;
         let account_id = account_id_of(&tx)?;
         if account_id != conversation.account_id {
             return Err(MailError::NotFound);
         }
         if let Some(receipt) = existing_receipt(&tx, &account_id, request_id, &payload)? {
-            tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+            tx.commit().map_err(storage_err())?;
             return Ok(receipt);
         }
         admit_action_observation(&tx, observation, &account_id)?;
@@ -124,7 +122,7 @@ impl GmailStore {
             },
         )?;
         evict_search(&tx, &account_id)?;
-        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        tx.commit().map_err(storage_err())?;
         Ok(receipt)
     }
 
@@ -135,13 +133,11 @@ impl GmailStore {
         validate_request_id(&command.request_id)?;
         self.persistence_gate()?;
         let mut conn = self.lock_conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let tx = conn.transaction().map_err(storage_err())?;
         let account_id = account_id_of(&tx)?;
         let payload = serde_json::json!({ "retryOperationId": command.operation_id }).to_string();
         if let Some(receipt) = existing_receipt(&tx, &account_id, &command.request_id, &payload)? {
-            tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+            tx.commit().map_err(storage_err())?;
             return Ok(receipt);
         }
         let original =
@@ -168,7 +164,7 @@ impl GmailStore {
                 params![account_id, original.operation_id],
                 |row| row.get(0),
             )
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         let accepted_at = self.clock.now_iso();
         let receipt = accept_operation_tx(
             &tx,
@@ -190,7 +186,7 @@ impl GmailStore {
                 accepted_at: &accepted_at,
             },
         )?;
-        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        tx.commit().map_err(storage_err())?;
         Ok(receipt)
     }
 }

@@ -1,5 +1,6 @@
 use super::*;
 use crate::gmail::types::GmailReadProvider;
+use crate::storage_log::{storage_err, storage_fault};
 
 impl GmailReadProvider for GmailProvider {
     fn fetch_attachment(
@@ -107,10 +108,7 @@ impl GmailReadProvider for GmailProvider {
         if cancel.is_cancelled() {
             return Err(MailError::AuthCancelled);
         }
-        let mut publication = self
-            .credential_publication
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut publication = self.credential_publication.lock().map_err(storage_err())?;
         if cancel.is_cancelled() {
             return Err(MailError::AuthCancelled);
         }
@@ -270,10 +268,7 @@ impl GmailReadProvider for GmailProvider {
             email: Some(profile.email_address.clone()),
             ..bundle
         };
-        let mut publication = self
-            .credential_publication
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut publication = self.credential_publication.lock().map_err(storage_err())?;
         let current = self.secrets.load()?;
         if publication.revision == publication_revision && current == previous {
             self.publish_bundle_locked(
@@ -317,14 +312,11 @@ impl GmailReadProvider for GmailProvider {
     }
 
     fn disconnect(&self) -> Result<(), MailError> {
-        let mut publication = self
-            .credential_publication
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut publication = self.credential_publication.lock().map_err(storage_err())?;
         let next_revision = publication
             .revision
             .checked_add(1)
-            .ok_or(MailError::StorageUnavailable)?;
+            .ok_or_else(|| storage_fault("missing_persisted_row"))?;
         self.secrets.clear()?;
         publication.revision = next_revision;
         publication.last_non_refresh_revision = next_revision;
