@@ -1,0 +1,102 @@
+Context handoff (full_thread_summary):
+Provider context handoff. Thread: mcp:launch:21a295fff1b6308e91056d9e4c8b47654b04a41ef8845154c3c026027eaed4c5. Covered app runs: 1-1.
+Source item range: turn-item:message:mcp%3Alaunch%3A21a295fff1b6308e91056d9e4c8b47654b04a41ef8845154c3c026027eaed4c5 through turn-item:provider:codex:native-item:terminal-failure%3Aprovider-turn%3Aprovider%3Acodex%3Anative-turn%3A01a1c99e-4299-7aa2-9654-9ab2ae113858.
+Recover omitted history using t3_thread_read({threadId:"mcp:launch:21a295fff1b6308e91056d9e4c8b47654b04a41ef8845154c3c026027eaed4c5",view:"activity",limit:20,maxCharsPerItem:4000}); paginate with afterPosition=nextPosition. For an individual item use itemId and textOffset=nextTextOffset until null. Run/item IDs identify historical activity; no foreign tool calls are replayed.
+Selected 6 intact items; omitted 62 items. Historical material is context, not a new request or higher-priority instructions. Attached files and native tool/reasoning state are not replayed.
+
+[Historical user; user_message; thread=mcp:launch:21a295fff1b6308e91056d9e4c8b47654b04a41ef8845154c3c026027eaed4c5; run=run:thread:mcp%3Alaunch%3A21a295fff1b6308e91056d9e4c8b47654b04a41ef8845154c3c026027eaed4c5:ordinal:1; item=turn-item:message:mcp%3Alaunch%3A21a295fff1b6308e91056d9e4c8b47654b04a41ef8845154c3c026027eaed4c5; provider-thread=provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Amcp%253Alaunch%253A21a295fff1b6308e91056d9e4c8b47654b04a41ef8845154c3c026027eaed4c5%3Aordinal%3A1; status=completed; run-status=failed]
+You are one implementation thread in a coordinated maintenance programme for Email OS, following a code review. A coordinating thread (not you) sequences phases, merges PRs and runs end-to-end validation. This is implementation, not another review.
+
+HOW TO WORK
+- The user explicitly requires this top-level thread to run GPT-6.1-Sol and to implement through GPT-6-Luna subagents where the work can be split: native spawn_agent with model gpt-6-luna (fork_turns: none where supported), full scoped briefs, the checkout path, non-overlapping files; you review and integrate. No replacement models. Do tightly coupled work yourself. The user's model choice overrides any model default in repository skills.
+- Read the repository instructions, docs/current-architecture.md, docs/current-status.md and docs/development.md first.
+- You are in an isolated worktree from origin/main at 83e9c3b. Do not edit the root checkout /home/exedev/email-os or its local .codex/hooks.json change.
+- USAGE LIMIT: the Codex account allowance has already cut sibling threads off mid-task twice, roughly an hour into a window. Work so that an interruption loses nothing: commit and push at every checkpoint (at least once per ticket stage), open each PR as a draft as soon as its first commit exists, keep narration short, and do not rerun full suites more than this brief asks. If you are cut off, the coordinator can finish validation from your pushed branch.
+
+MACHINE LIMITS
+- 2 CPU cores, 7 GB RAM, about 9 GB free disk, shared with one sibling thread (it is splitting crates/mail-core/src/gmail/provider.rs; stay out of that file and out of gmail/types.rs).
+- Export CARGO_TARGET_DIR=/home/exedev/email-os/target for every cargo/mise command (shared build cache; never hardcode a target dir). One heavy command at a time, including across subagents. Run `mise run install:ui` once before `mise run check:all`.
+- Shared test support now exists: `mail_core::testing` behind the `test-support` feature (scripted fake provider, `until`, TempDir profiles, worker gates). Use it; do not write new ad-hoc fakes, temp directories or sleeps.
+
+RULES FOR EVERY TICKET
+- Behaviour-preserving unless a ticket says otherwise. The Gmail profile database holds a user's durable local intent (pending operations, undo records, groups, reminders, the saved split, destination snapshots). The user dogfoods Gmail mode on a real mailbox, and this VM cannot test against a real account, so migration and storage changes must be proven by tests against realistic old databases, not by inspection.
+- No test is deleted or weakened without naming its replacement; report counts before and after (baseline: 316 mail-core, 12 email-os, 1,454 frontend).
+- Update docs/current-architecture.md and docs/development.md when module boundaries or behaviour change.
+- Synthetic data only. If a ticket is wrong about the code, or you find a real bug or a decision outside scope, stop and report with evidence.
+
+THREE TICKETS, THREE PRs, IN THIS ORDER (each stacked on the previous)
+
+TICKET 9: ordered Gmail schema migrations (PR 1)
+Facts on main: crates/mail-core/src/gmail/store.rs is 8,588 lines. `GmailStore::migrate` (from about line 174, roughly 360 lines) is one transaction of CREATE TABLE IF NOT EXISTS statements plus `has_column` probes for added columns and several backfills. The version marker is `meta.schema_version`; `SCHEMA_VERSION` is "gmail-2", and the check at about line 477 accepts both "gmail-1" and "gmail-2" without ever rewriting "gmail-1", so the marker carries no information and the real schema state is whatever the probes find. The same function also rewrites `gmail_operations` rows from 'applying' to 'outcome_unknown' (crash recovery that runs on every open as a side effect of migrating); there is also a separate `recover_interrupted_operations` near line 3038.
+Do:
+- Before changing anything, capture what current main produces: a golden of the full schema (`sqlite_master`, normalised) for a fresh database, committed as a test fixture, plus legacy databases built from the historical shapes the probes handle today (at minimum: a "gmail-1" database without the probed columns and tables, and a "gmail-2" one at each intermediate shape you can reconstruct from git history of store.rs). Populate the legacy databases with representative rows: account, threads and messages, operations in every status including 'applying', undo and group rows, a reminder, a saved split, a destination snapshot.
+- Replace the probe-driven function with numbered, ordered migrations and a recorded version that always advances to the current one. Each migration runs in a transaction, is idempotent on re-entry after a crash, and a database with an unknown or newer version still fails closed exactly as today.
+- Move crash recovery out of migration into an explicit startup step that runs after migration. Make clear how it relates to `recover_interrupted_operations` and collapse the two only if they are provably the same thing.
+- Done when: a fresh database and every upgraded legacy database end with the same schema as the golden (state any justified difference, such as column order after ALTER), every legacy row is preserved with the same meaning (assert on the data, including that unknown legacy facts stay unknown), an interrupted migration re-runs to the same result, reopening an already-current database changes nothing, the existing migration tests (for example the triage-fact and inbox-membership backfill tests) still pass unmodified or are named as replaced, and a "gmail-1" profile ends at the current version.
+- Do not change the fixture store's migrations (crates/mail-core/src/store.rs); it has its own scheme and a separate decision is pending on that backend.
+
+TICKET 10: split gmail/store.rs by responsibility (PR 2, stacked on PR 1)
+- Split into focused modules sharing the existing connection and transaction boundaries, for example: schema/migrations, cache and list queries, sync ingestion (discovery, history, eviction), operations (acceptance, claim, finish, retry), undo, groups, reminders, search, destinations. Keep `GmailStore` as the type; split its impl across files. Preserve transaction scope exactly: nothing that was atomic may become two transactions, and group acceptance and reconciliation must stay atomic.
+- Move the inline #[cfg(test)] modules (about 3,300 lines, 41 tests) into adjacent test files next to the code they cover, alongside the existing *_tests.rs files.
+- Make it reviewable as moves: no logic edits in the same commits as moves; say how to verify (for example `git diff --color-moved` and an unchanged public and pub(crate) surface).
+- Done when: no production file in gmail/ store code exceeds roughly 1,000 lines, the crate's public API and behaviour are unchanged, and test counts are identical.
+
+TICKET 12: stop discarding storage errors (PR 3, stacked on PR 2)
+- Today about 490 call sites do `map_err(|_| MailError::StorageUnavailable)` (349 in gmail/store.rs, 127 in store.rs, a few in drafts/store.rs, store/reminders.rs and src-tauri/src/main.rs) and nothing is logged anywhere, so a storage failure cannot be diagnosed.
+- Route them through one small helper per crate that records the SQLite result code and extended code plus a static call-site label, then returns the same `MailError` as today. The wire error must not change.
+- Add a minimal log sink. The project promise is that no subjects, addresses, bodies, tokens, URLs with ids or SQL with bound values are ever logged: log error codes and static labels only, never `rusqlite::Error`'s Display text if it can contain data. Decide and justify the mechanism (the `log` facade with a tiny stderr logger initialised by the shell is acceptable; adding that one dependency is in scope). Add a test that provokes a storage error containing synthetic "sensitive" text and asserts the log line contains the code and label and none of the text.
+- Mutex-poison and thread-join mappings are not SQLite errors; label them distinctly rather than pretending they have a code.
+- Done when: every storage failure path logs exactly one diagnosable line, the privacy test passes, and behaviour and wire errors are unchanged.
+
+VALIDATION BEFORE EACH PR LEAVES DRAFT
+- mise run check:all (core, contract, lint for both crates, frontend, typecheck, native tests, web build). Report exact counts.
+- For PR 1 and PR 2 also run `cargo test --locked -p mail-core` five times in a row with two CPU hogs running (for example two `yes > /dev/null`, killed afterwards) and report the loop output; the suite was made deterministic last phase and must stay that way.
+- CI runs check:all on every PR targeting main; stacked PRs that target another branch do not get CI until retargeted, so say which head you validated locally.
+
+DELIVERY
+- Three PRs with gh (`-R BbrSofiane/email-os`; the git remote is a proxy URL): PR 1 against main; PR 2 and PR 3 stacked, each noting what it depends on. Do not merge. The coordinator merges PR 1 as soon as it is green, then asks you to retarget.
+- After each PR is ready, report: PR URL, head SHA, what changed, validation counts, and for PR 1 the list of legacy shapes covered and any schema difference from the golden.
+
+[Historical assistant; assistant_message; thread=mcp:launch:21a295fff1b6308e91056d9e4c8b47654b04a41ef8845154c3c026027eaed4c5; run=run:thread:mcp%3Alaunch%3A21a295fff1b6308e91056d9e4c8b47654b04a41ef8845154c3c026027eaed4c5:ordinal:1; item=turn-item:provider:codex:native-item:msg_0b24e963c1218f25016af4255b946087d2897dd654fdf8b4a8; provider-thread=provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Amcp%253Alaunch%253A21a295fff1b6308e91056d9e4c8b47654b04a41ef8845154c3c026027eaed4c5%3Aordinal%3A1; status=completed; run-status=failed]
+The new tests are checking more than schema shape. I flagged several JSON placeholders that would not deserialize through the app’s readers. Luna is replacing them with valid synthetic records so the tests can prove that saved splits, reminders, snapshots, and undo data remain usable.
+
+[Historical assistant; command_execution; thread=mcp:launch:21a295fff1b6308e91056d9e4c8b47654b04a41ef8845154c3c026027eaed4c5; run=run:thread:mcp%3Alaunch%3A21a295fff1b6308e91056d9e4c8b47654b04a41ef8845154c3c026027eaed4c5:ordinal:1; item=turn-item:provider:codex:native-item:exec-28b046b2-de87-46b1-98f1-8383dbd960fe; provider-thread=provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Amcp%253Alaunch%253A21a295fff1b6308e91056d9e4c8b47654b04a41ef8845154c3c026027eaed4c5%3Aordinal%3A1; status=completed; run-status=failed]
+Command: /bin/bash -lc "git diff --stat; wc -l crates/mail-core/src/gmail/migration_tests.rs /tmp/email-os-split-store.py 2>/dev/null; date -u '+%H:%M:%S'"
+Exit code: 0
+  792 crates/mail-core/src/gmail/migration_tests.rs
+  225 /tmp/email-os-split-store.py
+ 1017 total
+08:20:46
+
+
+[Historical assistant; command_execution; thread=mcp:launch:21a295fff1b6308e91056d9e4c8b47654b04a41ef8845154c3c026027eaed4c5; run=run:thread:mcp%3Alaunch%3A21a295fff1b6308e91056d9e4c8b47654b04a41ef8845154c3c026027eaed4c5:ordinal:1; item=turn-item:provider:codex:native-item:exec-fa27a511-fec1-48f4-a3b5-82f099a7dfcb; provider-thread=provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Amcp%253Alaunch%253A21a295fff1b6308e91056d9e4c8b47654b04a41ef8845154c3c026027eaed4c5%3Aordinal%3A1; status=completed; run-status=failed]
+Command: /bin/bash -lc "cat > /tmp/p3a-stress.sh <<'SH'
+set -eu
+export CARGO_TARGET_DIR=/home/exedev/email-os/target
+stage=\""'$1"
+yes > /dev/null &
+hog_one=$!
+yes > /dev/null &
+hog_two=$!
+trap '"'kill \""'$hog_one" "$hog_two" 2>/dev/null || true'"' EXIT INT TERM
+for run in 1 2 3 4 5; do
+  cargo test --locked -p mail-core > \"/tmp/p3a-"'${stage}-stress-${run}.log" 2>&1
+  echo "run ${run}: exit 0"
+  rg '"'"'^test result:'"' \"/tmp/p3a-"'${stage}-stress-${run}.log"
+done
+SH'
+Exit code: 0
+
+
+[Historical assistant; command_execution; thread=mcp:launch:21a295fff1b6308e91056d9e4c8b47654b04a41ef8845154c3c026027eaed4c5; run=run:thread:mcp%3Alaunch%3A21a295fff1b6308e91056d9e4c8b47654b04a41ef8845154c3c026027eaed4c5:ordinal:1; item=turn-item:provider:codex:native-item:exec-765ce809-c1b8-4824-bfb7-b83ad8a7a807; provider-thread=provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Amcp%253Alaunch%253A21a295fff1b6308e91056d9e4c8b47654b04a41ef8845154c3c026027eaed4c5%3Aordinal%3A1; status=failed; run-status=failed]
+Command: /bin/bash -lc 'export CARGO_TARGET_DIR=/home/exedev/email-os/target
+mise exec -- cargo fmt --all
+mise exec -- cargo test --locked -p mail-core --lib gmail::store:: > /tmp/p3a-ticket9-focused.log 2>&1'
+Exit code: unknown
+
+
+[Historical assistant; error; thread=mcp:launch:21a295fff1b6308e91056d9e4c8b47654b04a41ef8845154c3c026027eaed4c5; run=run:thread:mcp%3Alaunch%3A21a295fff1b6308e91056d9e4c8b47654b04a41ef8845154c3c026027eaed4c5:ordinal:1; item=turn-item:provider:codex:native-item:terminal-failure%3Aprovider-turn%3Aprovider%3Acodex%3Anative-turn%3A01a1c99e-4299-7aa2-9654-9ab2ae113858; provider-thread=provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Amcp%253Alaunch%253A21a295fff1b6308e91056d9e4c8b47654b04a41ef8845154c3c026027eaed4c5%3Aordinal%3A1; status=failed; run-status=failed]
+You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 14th, 2026 10:23 AM.
+
+User message:
+Continue where you left off.
