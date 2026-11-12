@@ -1,0 +1,39 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M77EJAC0HCVSJ5VSDQDCGWWR",
+  "strategy": "manual-commit",
+  "branch": "maintenance/p3a-gmail-store-split",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "crates/mail-core/src/gmail/store.rs",
+    "crates/mail-core/src/gmail/store/acceptance.rs",
+    "crates/mail-core/src/gmail/store/cache.rs",
+    "crates/mail-core/src/gmail/store/destinations.rs",
+    "crates/mail-core/src/gmail/store/group_acceptance.rs",
+    "crates/mail-core/src/gmail/store/group_queries.rs",
+    "crates/mail-core/src/gmail/store/group_undo.rs",
+    "crates/mail-core/src/gmail/store/ingestion.rs",
+    "crates/mail-core/src/gmail/store/profile.rs",
+    "crates/mail-core/src/gmail/store/reminders.rs",
+    "crates/mail-core/src/gmail/store/search.rs",
+    "crates/mail-core/src/gmail/store/undo.rs",
+    "crates/mail-core/src/gmail/store/worker.rs",
+    "crates/mail-core/src/gmail/store_tests.rs"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 42,
+    "cache_creation_tokens": 25782,
+    "cache_read_tokens": 2117832,
+    "output_tokens": 9282,
+    "api_call_count": 18
+  }
+}

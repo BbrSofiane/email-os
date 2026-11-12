@@ -1,0 +1,62 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M77EJAC0HCVSJ5VSDQDCGWWR",
+  "session_id": "b491f32e-f641-4398-b607-aefb1a73d3ee",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-12T08:39:11.895382767Z",
+  "branch": "maintenance/p3a-gmail-store-split",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "crates/mail-core/src/gmail/store.rs",
+    "crates/mail-core/src/gmail/store/acceptance.rs",
+    "crates/mail-core/src/gmail/store/cache.rs",
+    "crates/mail-core/src/gmail/store/destinations.rs",
+    "crates/mail-core/src/gmail/store/group_acceptance.rs",
+    "crates/mail-core/src/gmail/store/group_queries.rs",
+    "crates/mail-core/src/gmail/store/group_undo.rs",
+    "crates/mail-core/src/gmail/store/ingestion.rs",
+    "crates/mail-core/src/gmail/store/profile.rs",
+    "crates/mail-core/src/gmail/store/reminders.rs",
+    "crates/mail-core/src/gmail/store/search.rs",
+    "crates/mail-core/src/gmail/store/undo.rs",
+    "crates/mail-core/src/gmail/store/worker.rs",
+    "crates/mail-core/src/gmail/store_tests.rs"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "ed0bc767605f",
+  "checkpoint_transcript_start": 373,
+  "transcript_lines_at_start": 373,
+  "compact_transcript_start": 52,
+  "token_usage": {
+    "input_tokens": 42,
+    "cache_creation_tokens": 25782,
+    "cache_read_tokens": 2117832,
+    "output_tokens": 9282,
+    "api_call_count": 18
+  },
+  "session_metrics": {
+    "turn_count": 4
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-12T08:39:11.84969258Z",
+    "agent_lines": 5959,
+    "agent_removed": 5899,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 5959,
+    "total_lines_changed": 11858,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}
