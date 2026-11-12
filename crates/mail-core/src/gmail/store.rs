@@ -6355,7 +6355,12 @@ mod tests {
                 [],
             )
             .expect("simulate legacy schema");
-        legacy.execute("UPDATE meta SET value = 'gmail-2' WHERE key = 'schema_version'", []).unwrap();
+        legacy
+            .execute(
+                "UPDATE meta SET value = 'gmail-2' WHERE key = 'schema_version'",
+                [],
+            )
+            .unwrap();
         drop(legacy);
         let migrated =
             GmailStore::open(dir.path(), Arc::new(SystemClock)).expect("additive migration");
@@ -7392,7 +7397,11 @@ mod tests {
             .unwrap();
             conn.execute("DELETE FROM gmail_conversations WHERE account_id = 'acct' AND conversation_id = 'a'", []).unwrap();
             // Simulate a pre-UX03 profile: reopen must backfill lightweight sort metadata.
-            conn.execute("UPDATE meta SET value = 'gmail-2' WHERE key = 'schema_version'", []).unwrap();
+            conn.execute(
+                "UPDATE meta SET value = 'gmail-2' WHERE key = 'schema_version'",
+                [],
+            )
+            .unwrap();
             conn.execute(
                 "ALTER TABLE gmail_operation_snapshots DROP COLUMN last_message_at",
                 [],
