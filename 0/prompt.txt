@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>b0avgwkci</task-id>
+<tool-use-id>toolu_011zik1c8Cpb5Z6B7bfH8ep1</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-maintenance-p3a-gmail-m-f8c6c0cd4824c8f9/b491f32e-f641-4398-b607-aefb1a73d3ee/tasks/b0avgwkci.output</output-file>
+<status>completed</status>
+<summary>Background command "export CARGO_TARGET_DIR=/home/exedev/email-os/target; (mise run check:all &gt; /tmp/p3a-check-t10.log 2&gt;&amp;1; echo "EXIT $?" &gt;&gt; /tmp/p3a-check-t10.log; bash /tmp/p3a-stress.sh t10 &gt; /tmp/p3a-stress-t10.out 2&gt;&amp;1; echo "EXIT $?" &gt;&gt; /tmp/p3a-stress-t10.out)" completed (exit code 0)</summary>
+</task-notification>

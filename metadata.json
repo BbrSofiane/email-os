@@ -1,0 +1,61 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M77FBA3K0H5D4YWY9FG2C3J2",
+  "strategy": "manual-commit",
+  "branch": "maintenance/p3a-storage-errors",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "Cargo.lock",
+    "crates/mail-core/Cargo.toml",
+    "crates/mail-core/src/attachments.rs",
+    "crates/mail-core/src/drafts/store.rs",
+    "crates/mail-core/src/gmail/provider.rs",
+    "crates/mail-core/src/gmail/provider/api.rs",
+    "crates/mail-core/src/gmail/store.rs",
+    "crates/mail-core/src/gmail/store/acceptance.rs",
+    "crates/mail-core/src/gmail/store/activity.rs",
+    "crates/mail-core/src/gmail/store/cache.rs",
+    "crates/mail-core/src/gmail/store/cache_rows.rs",
+    "crates/mail-core/src/gmail/store/destinations.rs",
+    "crates/mail-core/src/gmail/store/group_acceptance.rs",
+    "crates/mail-core/src/gmail/store/group_queries.rs",
+    "crates/mail-core/src/gmail/store/group_rows.rs",
+    "crates/mail-core/src/gmail/store/group_undo.rs",
+    "crates/mail-core/src/gmail/store/ingestion.rs",
+    "crates/mail-core/src/gmail/store/operation_rows.rs",
+    "crates/mail-core/src/gmail/store/profile.rs",
+    "crates/mail-core/src/gmail/store/reminders.rs",
+    "crates/mail-core/src/gmail/store/search.rs",
+    "crates/mail-core/src/gmail/store/search_support.rs",
+    "crates/mail-core/src/gmail/store/undo.rs",
+    "crates/mail-core/src/gmail/store/undo_support.rs",
+    "crates/mail-core/src/gmail/store/worker.rs",
+    "crates/mail-core/src/gmail/store_schema.rs",
+    "crates/mail-core/src/gmail/sync.rs",
+    "crates/mail-core/src/lib.rs",
+    "crates/mail-core/src/lock.rs",
+    "crates/mail-core/src/splits.rs",
+    "crates/mail-core/src/storage_log.rs",
+    "crates/mail-core/src/store.rs",
+    "crates/mail-core/src/store/reminders.rs",
+    "src-tauri/Cargo.toml",
+    "src-tauri/src/diagnostics.rs",
+    "src-tauri/src/main.rs"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 62,
+    "cache_creation_tokens": 60508,
+    "cache_read_tokens": 5279711,
+    "output_tokens": 32836,
+    "api_call_count": 30
+  }
+}
