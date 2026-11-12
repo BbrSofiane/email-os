@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::clock::SystemClock;
 use crate::dto::Message;

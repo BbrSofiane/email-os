@@ -665,3 +665,17 @@ assertions. Their setup now resets the marker to a legacy version when it
 removes columns/tables. A numbered current profile is no longer implicitly
 repaired after manual schema changes. Fixture-store migrations are independent
 and unchanged.
+
+## Reviewing the Gmail store split
+
+`gmail/store.rs` was split by responsibility (see
+[current architecture](current-architecture.md)) in two move-only steps, with no
+logic edits: first the `impl GmailStore` methods and the inline test module,
+then the free helper functions. To verify, run
+`git diff --color-moved=dimmed-zebra --color-moved-ws=allow-indentation-change`
+over each step; every function body appears as a move. Visibility changes are
+limited to `fn` becoming `pub(super)` (items shared between sibling modules)
+and three previously private methods widened to `pub(super)`; the
+`pub`/`pub(crate)` surface of `GmailStore` is unchanged. Add new store code to
+the module that owns its responsibility and keep each file under about 1,000
+lines.
