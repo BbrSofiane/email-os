@@ -1,0 +1,52 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M77DZY5M2E8R1HVATAKGSKGG",
+  "session_id": "b491f32e-f641-4398-b607-aefb1a73d3ee",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-12T08:29:10.466828919Z",
+  "branch": "maintenance/p3a-gmail-migrations",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "crates/mail-core/tests/support/stars.rs"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "361120d185a8",
+  "checkpoint_transcript_start": 286,
+  "transcript_lines_at_start": 286,
+  "compact_transcript_start": 36,
+  "token_usage": {
+    "input_tokens": 14,
+    "cache_creation_tokens": 5934,
+    "cache_read_tokens": 584910,
+    "output_tokens": 1929,
+    "api_call_count": 6
+  },
+  "session_metrics": {
+    "turn_count": 1
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-12T08:29:10.437764547Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 0,
+    "total_lines_changed": 0,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 6,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "crates/mail-core/tests/support/stars.rs": 6
+      }
+    }
+  ]
+}
