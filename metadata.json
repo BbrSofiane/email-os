@@ -1,0 +1,51 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M77DR461NJFC3BFADKN620ZB",
+  "strategy": "manual-commit",
+  "branch": "maintenance/p3a-gmail-migrations",
+  "checkpoints_count": 5,
+  "files_touched": [
+    "src/components/ActivityPanel.vue",
+    "src/components/CachedTrashPanel.vue",
+    "src/components/DraftsPanel.vue",
+    "src/components/RemindersPanel.vue",
+    "src/composables/useDrawerRows.ts",
+    "src/lib/reminder-presets.ts",
+    "src/lib/subject-index.ts",
+    "tests/account.component.test.ts",
+    "tests/activity-panel.test.ts",
+    "tests/app.component.test.ts",
+    "tests/cached-trash.component.test.ts",
+    "tests/discovery.rendered.test.ts",
+    "tests/draft-recipient-label.component.test.ts",
+    "tests/drafts-panel.component.test.ts",
+    "tests/drafts.component.test.ts",
+    "tests/drawer-panels.app.test.ts",
+    "tests/reminders.drawer.test.ts",
+    "tests/subject-index.test.ts",
+    "tests/use-drawer-rows.component.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 550,
+    "cache_creation_tokens": 1769928,
+    "cache_read_tokens": 37040735,
+    "output_tokens": 195067,
+    "api_call_count": 240,
+    "subagent_tokens": {
+      "input_tokens": 26,
+      "cache_creation_tokens": 8802,
+      "cache_read_tokens": 4929567,
+      "output_tokens": 5984,
+      "api_call_count": 12
+    }
+  }
+}
