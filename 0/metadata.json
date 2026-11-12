@@ -1,0 +1,50 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M77FKZE142QRQA115VZ2DYS6",
+  "session_id": "b491f32e-f641-4398-b607-aefb1a73d3ee",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-12T08:57:34.653826364Z",
+  "branch": "maintenance/p3a-storage-errors",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "docs/current-architecture.md",
+    "docs/development.md"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "a2eb549588ae",
+  "checkpoint_transcript_start": 896,
+  "transcript_lines_at_start": 896,
+  "compact_transcript_start": 115,
+  "token_usage": {
+    "input_tokens": 6,
+    "cache_creation_tokens": 1882,
+    "cache_read_tokens": 416781,
+    "output_tokens": 1501,
+    "api_call_count": 2
+  },
+  "session_metrics": {
+    "turn_count": 6
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-12T08:57:34.58531454Z",
+    "agent_lines": 27,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 27,
+    "total_lines_changed": 27,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}

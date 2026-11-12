@@ -1,0 +1,15 @@
+<task-notification>
+<task-id>b869c7hcn</task-id>
+<tool-use-id>toolu_01EquZ91CdMPF6kZTTZhhVN1</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-maintenance-p3a-gmail-m-f8c6c0cd4824c8f9/b491f32e-f641-4398-b607-aefb1a73d3ee/tasks/b869c7hcn.output</output-file>
+<status>completed</status>
+<summary>Background command "git add -A &amp;&amp; git commit -qm "feat: log storage failures as codes and static call sites, never data
+
+Route the discarded storage errors through one helper per crate that records the
+SQLite result code, extended code and a static call-site label (or a distinct
+cause tag for lock-poison, thread-join and invariant faults), then returns the
+same MailError as before. A tiny stderr logger over the log facade is installed
+by the shell and only passes the storage targets. Adds the log dependency.
+
+Co-Authored-By: Claude Sonnet 5.5 &lt;noreply@anthropic.com&gt;" &amp;&amp; git push -u origin HEAD 2&gt;&amp;1 | tail -2; export CARGO_TARGET_DIR=/home/exedev/email-os/target; (mise run check:all &gt; /tmp/p3a-check-t12.log 2&gt;&amp;1; echo "EXIT $?" &gt;&gt; /tmp/p3a-check-t12.log)" completed (exit code 0)</summary>
+</task-notification>
