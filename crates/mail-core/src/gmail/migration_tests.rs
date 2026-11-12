@@ -44,8 +44,7 @@ fn insert_historical_row(conn: &Connection, table: &str, fields: &[(&str, Value)
         .map(|(name, _)| *name)
         .collect::<Vec<_>>()
         .join(", ");
-    let placeholders = std::iter::repeat("?")
-        .take(selected.len())
+    let placeholders = std::iter::repeat_n("?", selected.len())
         .collect::<Vec<_>>()
         .join(", ");
     // Fixtures already carry a schema_version row; the seed overrides meta values.
@@ -518,14 +517,14 @@ fn historical_row_snapshot(conn: &Connection, shape: Option<&RowSnapshot>) -> Ro
         .into_iter()
         .filter(|(kind, name, _, _)| kind == "table" && !name.starts_with("sqlite_"))
         .map(|(_, name, _, _)| name)
-        .filter(|name| shape.map_or(true, |shape| shape.iter().any(|(t, _, _)| t == name)))
+        .filter(|name| shape.is_none_or(|shape| shape.iter().any(|(t, _, _)| t == name)))
         .collect::<Vec<_>>();
     let mut snapshot = Vec::new();
     for table in tables {
         let columns = columns_for(conn, &table)
             .into_iter()
             .filter(|column| {
-                shape.map_or(true, |shape| {
+                shape.is_none_or(|shape| {
                     shape
                         .iter()
                         .any(|(t, cols, _)| *t == table && cols.contains(column))
@@ -535,9 +534,10 @@ fn historical_row_snapshot(conn: &Connection, shape: Option<&RowSnapshot>) -> Ro
         let selected = columns
             .iter()
             .filter(|column| {
-                !(table == "meta" && *column == "value")
-                    && !(table == "gmail_operations"
-                        && matches!(column.as_str(), "status" | "last_error" | "action_id"))
+                let volatile_meta = table == "meta" && *column == "value";
+                let derived_operation = table == "gmail_operations"
+                    && matches!(column.as_str(), "status" | "last_error" | "action_id");
+                !volatile_meta && !derived_operation
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -589,13 +589,14 @@ fn authentic_gmail_1_profile_migrates_without_losing_cached_meaning() {
         .expect("cached body"),
         "legacy body"
     );
-    let fact: (
+    type Facts = (
         Option<i64>,
         Option<i64>,
         Option<i64>,
         Option<i64>,
         Option<i64>,
-    ) = conn
+    );
+    let fact: Facts = conn
         .query_row(
             "SELECT in_inbox, is_unread, is_starred, in_trash, in_spam
              FROM gmail_message_facts WHERE message_id='message-legacy'",
