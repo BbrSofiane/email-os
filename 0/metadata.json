@@ -1,0 +1,50 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M77ENB0P11NEE5HT99VD45T6",
+  "session_id": "b491f32e-f641-4398-b607-aefb1a73d3ee",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-12T08:40:50.658213879Z",
+  "branch": "maintenance/p3a-gmail-store-split",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "crates/mail-core/src/gmail/store.rs",
+    "crates/mail-core/src/gmail/store/activity.rs",
+    "crates/mail-core/src/gmail/store/cache_rows.rs",
+    "crates/mail-core/src/gmail/store/group_rows.rs",
+    "crates/mail-core/src/gmail/store/operation_rows.rs",
+    "crates/mail-core/src/gmail/store/search_support.rs",
+    "crates/mail-core/src/gmail/store/undo_support.rs",
+    "crates/mail-core/src/gmail/store_tests.rs",
+    "docs/current-architecture.md",
+    "docs/development.md",
+    "docs/ux-04-trustworthy-undo.md"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "ed0bc767605f",
+  "checkpoint_transcript_start": 526,
+  "transcript_lines_at_start": 526,
+  "compact_transcript_start": 72,
+  "token_usage": {
+    "input_tokens": 16,
+    "cache_creation_tokens": 13628,
+    "cache_read_tokens": 1109176,
+    "output_tokens": 8584,
+    "api_call_count": 8
+  },
+  "session_metrics": {
+    "turn_count": 4
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-12T08:40:50.619326366Z",
+    "agent_lines": 2300,
+    "agent_removed": 2229,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 2300,
+    "total_lines_changed": 4529,
+    "agent_percentage": 100,
+    "metric_version": 2
+  }
+}
