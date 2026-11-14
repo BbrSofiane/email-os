@@ -1,0 +1,15 @@
+{
+  "tool_use_id": "toolu_011e7PhSpSr3kLCyZZvubmhX",
+  "agent_id": "a4429127f7b44d7bf",
+  "subagent_type": "general-purpose",
+  "task_description": "Review session policy diff",
+  "token_usage": {
+    "input_tokens": 48,
+    "cache_creation_tokens": 102800,
+    "cache_read_tokens": 1799879,
+    "output_tokens": 25946,
+    "api_call_count": 24
+  },
+  "started_at": "2026-11-14T15:50:56.580447485Z",
+  "completed_at": "2026-11-14T15:54:42.817146336Z"
+}

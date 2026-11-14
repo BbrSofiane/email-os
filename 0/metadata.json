@@ -1,0 +1,57 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7DCJBDKG66MHHB8N60BGPK3",
+  "session_id": "7290746f-2115-4cce-a765-a94e6b68740b",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-14T15:59:43.757784718Z",
+  "branch": "maintenance/p4-synthetic-stage2",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "crates/mail-core/src/gmail/session.rs",
+    "crates/mail-core/src/gmail/sync.rs",
+    "crates/mail-core/tests/contract_scenarios.rs",
+    "crates/mail-core/tests/synthetic_core_policy.rs",
+    "tests/fixtures/contract-scenarios/group-undo-without-an-accepted-member.json"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "9eb644054df0",
+  "checkpoint_transcript_start": 1077,
+  "transcript_lines_at_start": 1077,
+  "compact_transcript_start": 129,
+  "token_usage": {
+    "input_tokens": 22,
+    "cache_creation_tokens": 35434,
+    "cache_read_tokens": 4514699,
+    "output_tokens": 12940,
+    "api_call_count": 11,
+    "subagent_tokens": {
+      "input_tokens": 48,
+      "cache_creation_tokens": 102800,
+      "cache_read_tokens": 1799879,
+      "output_tokens": 25946,
+      "api_call_count": 24
+    }
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-14T15:59:43.537131793Z",
+    "agent_lines": 195,
+    "agent_removed": 5,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 195,
+    "total_lines_changed": 200,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}

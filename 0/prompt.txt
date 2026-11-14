@@ -1,0 +1,90 @@
+<task-notification>
+<task-id>a4429127f7b44d7bf</task-id>
+<tool-use-id>toolu_011e7PhSpSr3kLCyZZvubmhX</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-maintenance-p4-syntheti-4a65a23bc29bdbf9/7290746f-2115-4cce-a765-a94e6b68740b/tasks/a4429127f7b44d7bf.output</output-file>
+<status>completed</status>
+<summary>Agent "Review session policy diff" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>**Review of `git diff maintenance/p4-synthetic-stage1..HEAD`.** I found one real behavioural bug (queued writes stuck after a failure in a synthetic session) and a few lower-severity items. I made no edits and ran no builds or tests.
+
+## Findings
+
+**1. BUG (medium) – `crates/mail-core/src/gmail/sync.rs:2123-2125`, `:2196`, `:2223`**
+- **Scenario:** A group archive queues N operations and the first one fails definitely (`fail_next` gives `ProviderRejected`, so `run_one` returns `Err` and the outcome is `SyncError`).
+  - The Mutations pass cleared `operations_requested` when it was selected (`:2121`). Only a `Complete` pass re-arms it from `more_claimable_mutations` (`:2196`).
+  - On Gmail, the next 60 s periodic `Sync` completes and sets `operations_requested = true`, which drains the siblings. That is the "next retry tick" that KD-1 in `contract_scenarios.rs:53` refers to.
+  - With `periodic_sync()` false, nothing re-arms it. Siblings stay `queued` until the user makes another write or reopens. The legacy fixture drained them, so this is a regression for the fixture.
+- **Also affects:** any `requeue_operation` path, such as a wrapped provider whose `mutation_access` disagrees with the policy, and `outcome_unknown` rows deferred with `last_error`.
+- **The KD-1 text for the synthetic profile is wrong.** It says "same cause as the gmail profile", but the "until next retry tick" premise no longer holds, so the stall is permanent.
+- **Fix:** keep the tick, but make a due tick in a synthetic session re-arm the operations pass instead of running Sync.
+  - In the `else` branch, when `tick_due &amp;&amp; !policy.periodic_sync()`, set `st.operations_requested = true`. Do not add an immediate retry on `SyncError`, because a persistently failing operation would then spin.
+  - Keep the `sync_deadline = now + worker_wait(backoff_delay(..))` reset in that branch. An `Idle` pass does not reschedule, so omitting it would make the due tick spin.
+  - Alternative: have the Mutations `SyncError` path leave `sync_deadline` as set and add a tick-driven `PassAction::Mutations` for synthetic.
+  - Either way, update the KD-1 wording.
+
+**2. NIT – `sync.rs:746-775` (`load_search_conversation`)**
+- Search is meant to be cached only, but a cache miss in a synthetic session still takes `account_status`, `begin_reply_enrichment`, then `provider.get_thread` and `save_search`.
+- After bootstrap, every fixture id is already cached, so this is unreachable in practice. It is a policy hole, though.
+- **Fix:** add `if self.inner.policy.cached_only_search() { return Err(MailError::NotFound); }` in the `NotFound` arm, before the provider call.
+
+**3. NIT / risk-low – `sync.rs:1523` against `operations.rs:147-152`**
+- Admission uses `policy.mutation_access()`, which is `Ok(true)` for synthetic. The worker's `require_mutation_access` still calls `provider.mutation_access()` directly.
+- With the real `SyntheticGmailProvider` they agree. With a decorator provider that returns `false` or `Err`, writes are accepted and then requeued with `PermissionRequired`. Combined with finding 1, they would be stuck.
+- **Fix:** acceptable as is. Add a comment that the provider must answer `Ok(true)`, or route `run_one` through the policy.
+
+**4. NIT – `sync.rs:1901`**
+- If `provider.get_thread(id)` returns `None` for a preload id, bootstrap silently `continue`s and open succeeds with that conversation missing. Requirement 3 says to fail closed.
+- Not reachable with the real provider, since the ids come from the provider's own list.
+- **Fix:** return `InvalidProviderResponse`, or `storage_fault("synthetic_bootstrap_missing_thread")`.
+
+**5. NIT (test only) – `sync.rs:3723`**
+- `let _ = conversation("conv-01");` exists only to silence an unused import. Drop it and the `conversation` import.
+- `fire_periodic_tick` (`:3655`) can pass early. If a worker iteration bumps `test_wait_cycles` before the tick flag is set, the wait finishes without the tick being consumed. This cannot cause a false failure, and the Gmail control half does a real wait.
+
+## Requirement checks
+
+**1. Gmail behaviour unchanged: no findings.**
+- Every added guard is `Ok(())` or `Gmail`-identity for Gmail. This covers `enable_mutations`, `cancel_mutation_upgrade`, `connect_account`, `disconnect_account`, `request_sync`, `list_cached_trash`, both destination methods, `search_mail`, `accept_operation`, `account_status` and the worker's `periodic_sync` gate.
+- Each new call is the first statement of its method. No Gmail early return was added before an existing check, and lock order is unchanged.
+- `request_sync` is now `admit_lifecycle()` followed by the old body (`admit_sync`), so behaviour is identical.
+- `search_mail` places the cached-only branch after the `parse`, generation and account checks, so Gmail never reaches it.
+- Gmail open only moved `GmailHub` creation earlier, which has no effect.
+
+**2. Synthetic never erases local state: no findings.**
+- All five lifecycle entry points reject with `InvalidRequest{mode}` as their first statement, before `disconnect_lock`, `pass_cancel`, generation advance or `upgrade_requested`.
+- Cached Trash returns `InvalidRequest{mode}`.
+- Destination catalog, cached and live, and browse return `ReadOnly` before id validation or any lock.
+- Search is cached only apart from the nit in finding 2.
+- Nothing can start a Connect auth pass or a `provider.disconnect` for a synthetic session.
+
+**3. Bootstrap: no findings beyond finding 4.**
+- It runs on the caller's thread before `spawn_worker`, so there is no race with the worker.
+- Failure returns `Err` from `open`, and the `Arc&lt;ProfileGuard&gt;` is dropped on the early return.
+- Reopen is idempotent. `begin_account` accepts the same account, discovery is `Done`, and `get_conversation` is `Ok` for already cached ids.
+- conv-06 and conv-15 go in through `save_search`. That writes a `gmail_search_cache` row and `upsert_thread` with an empty `inbox_message_ids`, so they get no inbox membership.
+- Done evidence comes only from `gmail_operations`, so they are not Done evidence either.
+- The 100-row search-cache eviction is not a concern: only the two archived conversations are search-cache rows, and nothing else saves to the search cache in a synthetic session.
+
+**4. Privacy: no findings.**
+- The only new error text is the static `storage_fault` tags. There are no `format!`, log or SQL-with-values additions in non-test code.
+
+**5. Test code in production: no findings.**
+- `synthetic/` and `session.rs` import neither `crate::testing` nor `test-support`. The only matches are comments in `synthetic/mod.rs`.
+- `request_test_sync`, `open_synthetic_wrapping` and the `crate::testing` module are all `cfg(any(test, feature = "test-support"))`.
+- `open_synthetic` is intentionally ungated.
+
+**6. Races and scheduling: no spin or starvation beyond finding 1.**
+- A due tick with periodic sync off falls into the existing `else` branch. It resets `sync_deadline` to now plus the backoff delay and continues. That is one cheap iteration per interval (60 s, longer after errors), the same as Gmail while disconnected.
+- The first iteration with `operations_requested: true` runs one Mutations pass. If it returns `Idle`, the deadline is still "now", so the next iteration takes the `else` branch and resets it. That is one extra loop, not a spin.
+- `synthetic_account_status` reports `SyncState::Error` plus the error whenever `halted` is set. Every path that sets `halted` also sets `st.error`. If the store gate is latched, `account()` returns `Err`, the same as Gmail.
+- `Connected` from the first call is consistent with the worker's `Complete` handling.</result>
+<usage><subagent_tokens>124966</subagent_tokens><tool_uses>25</tool_uses><duration_ms>226570</duration_ms></usage>
+</task-notification>
+
+---
+
+Coordinator: #56 received; my gate is running on it merged onto main 56275b4 (it uses the shared cargo target, so your builds may wait on the lock for a few minutes). I checked the seed move is pure and the KD-3 commit. Two answers:
+1. Seeding Inbox mail unread: keep it for now. Put it in the stage 4 UI inventory as an owner choice (all 16 unread, versus a mix), with what each would look like. Do not change it again without asking.
+2. Interrupted write becoming `outcome_unknown` with no auto-replay: that is the Gmail core's existing rule and the fixture adopting it is expected. Put it in the inventory with where it surfaces in the UI.
+I also noticed the fake now reports `superseded` instead of `not_applicable` for a group with no accepted child, in both the attempt and the advertised status. If a scenario or Rust test pins that for both stores, name it in the stage 2 PR description; if nothing pins it, add a scenario.
+Carry on with stage 2.
