@@ -121,8 +121,16 @@ impl From<MailError> for GmailHistoryError {
     }
 }
 
+/// The whole provider surface the Gmail core consumes: auth and session
+/// (`is_configured`, `has_credentials`, `connect`, `disconnect`, `profile`),
+/// reads (inbox, search, threads, history, destinations, attachments) and
+/// writes (`mutation_access`, `enable_mutations`, `apply_*`). It is one trait
+/// on purpose: `LiveGmailProvider` implements it over Google REST and the
+/// test fakes implement all of it, so a second backend replaces the whole
+/// surface at once.
+///
 /// Synchronous calls run exclusively on background/blocking threads, outside DB locks.
-pub trait GmailReadProvider: Send + Sync {
+pub trait GmailProvider: Send + Sync {
     /// Account-bound live destination catalog read. Implementations must
     /// admit the network read only from a coherent credential snapshot whose
     /// published identity is `expected_account_id`, dispatch with that
@@ -138,7 +146,7 @@ pub trait GmailReadProvider: Send + Sync {
         Err(MailError::AuthFailed)
     }
     /// Account-bound live destination page read; see
-    /// [`GmailReadProvider::list_destinations_for_account`] for the
+    /// [`GmailProvider::list_destinations_for_account`] for the
     /// admission contract. The default fails closed.
     fn list_destination_for_account(
         &self,
@@ -150,7 +158,7 @@ pub trait GmailReadProvider: Send + Sync {
         Err(MailError::AuthFailed)
     }
     /// Account-bound live thread GET used by destination browsing; see
-    /// [`GmailReadProvider::list_destinations_for_account`] for the
+    /// [`GmailProvider::list_destinations_for_account`] for the
     /// admission contract. The default fails closed.
     fn get_thread_for_account(
         &self,

@@ -1,4 +1,4 @@
-//! Gmail provider: the synchronous [`crate::gmail::types::GmailReadProvider`] backing the cache/sync
+//! Gmail provider: the synchronous [`crate::gmail::types::GmailProvider`] backing the cache/sync
 //! lane, with mailbox writes denied until an explicit verified scope upgrade.
 //!
 //! Fixed HTTPS Google endpoints (tests override with loopback URLs), no

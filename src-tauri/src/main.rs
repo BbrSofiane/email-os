@@ -1259,7 +1259,7 @@ fn main() {
                 "gmail" => {
                     let profile_dir = app_data_dir.join("gmail-profile");
                     let provider = LiveGmailProvider::from_env(Arc::new(KeychainSecrets::new()))?;
-                    let provider: Arc<dyn mail_core::gmail::types::GmailReadProvider> =
+                    let provider: Arc<dyn mail_core::gmail::types::GmailProvider> =
                         Arc::new(provider);
                     (
                         Backend::Gmail(GmailCore::open(&profile_dir, provider)?),

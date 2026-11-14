@@ -1,6 +1,6 @@
 use super::*;
 use crate::gmail::parse::MAX_PART_BODY_BYTES;
-use crate::gmail::types::GmailReadProvider;
+use crate::gmail::types::GmailProvider;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use serde_json::{json, Value};

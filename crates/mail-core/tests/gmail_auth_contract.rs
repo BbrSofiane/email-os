@@ -13,7 +13,7 @@ use mail_core::gmail::provider::LiveGmailProvider;
 #[cfg(not(target_os = "macos"))]
 use mail_core::gmail::secrets::KeychainSecrets;
 use mail_core::gmail::secrets::{MemorySecrets, Secrets, TokenBundle};
-use mail_core::gmail::types::GmailReadProvider;
+use mail_core::gmail::types::GmailProvider;
 use mail_core::provider::CancelToken;
 
 /// `GoogleConfig::from_env` reads the launch environment; mutating process
@@ -127,7 +127,7 @@ fn provider_requires_client_id_and_is_object_safe_over_the_trait() {
     assert!(provider.is_configured());
 
     // The frozen sync-lane seam accepts this provider as a trait object.
-    let provider: Arc<dyn GmailReadProvider> = Arc::new(provider);
+    let provider: Arc<dyn GmailProvider> = Arc::new(provider);
     assert!(provider.is_configured());
 }
 
@@ -149,7 +149,7 @@ fn provider_from_env_exposes_missing_configuration_state() {
 #[test]
 fn has_credentials_and_disconnect_reflect_the_secret_store() {
     let secrets = Arc::new(MemorySecrets::new());
-    let provider: Arc<dyn GmailReadProvider> =
+    let provider: Arc<dyn GmailProvider> =
         Arc::new(LiveGmailProvider::new(test_config(), secrets.clone()).unwrap());
     assert!(matches!(provider.has_credentials(), Ok(false)));
     secrets.store(&synthetic_bundle()).unwrap();
@@ -190,7 +190,7 @@ fn has_credentials_and_disconnect_reflect_the_secret_store() {
 
 #[test]
 fn auth_required_without_credentials_on_the_trait_surface() {
-    let provider: Arc<dyn GmailReadProvider> =
+    let provider: Arc<dyn GmailProvider> =
         Arc::new(LiveGmailProvider::new(test_config(), Arc::new(MemorySecrets::new())).unwrap());
     let cancel = CancelToken::default();
     assert!(matches!(
