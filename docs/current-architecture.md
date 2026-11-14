@@ -26,6 +26,26 @@ migration: globally applying operations become uncertain and lose `last_error`.
 Reconnect recovery remains account-scoped and additionally clears `failure`;
 these distinct semantics are preserved.
 
+`GmailStore` stays one type owning the single SQLite connection; its impl and
+helpers are split by responsibility under `gmail/store/`. `store.rs` holds the
+shared types and the struct; every method that opens a transaction still opens
+exactly one, so acceptance and reconciliation keep their atomic scope.
+
+| Module | Responsibility |
+| --- | --- |
+| `profile` | open and startup recovery, account identity, generation, sync checkpoints, disconnect cleanup, saved split |
+| `cache`, `cache_rows` | cached conversation reads; thread and fact upserts, eviction, conversation building, `meta` helpers |
+| `ingestion` | discovery and history pages, rediscovery |
+| `search`, `search_support` | cached search, done, trash and starred lists; search admission and eviction |
+| `acceptance`, `operation_rows` | single-operation acceptance and retry; acceptance transaction, preimages, operation row codecs |
+| `worker` | claim, confirm, reconcile, defer, requeue and finish |
+| `undo`, `undo_support` | single-operation undo and its compensation helpers |
+| `group_acceptance`, `group_queries`, `group_undo`, `group_rows` | group acceptance, status queries, group undo and the shared group row helpers |
+| `activity` | effective conversation state and the activity list |
+| `reminders`, `destinations` | local reminders; destination snapshots |
+
+Store tests live in `gmail/store_tests.rs` beside `migration_tests.rs`.
+
 Drafts are stored in a separate `<selected-profile>/local-drafts` SQLite database by [drafts/store.rs](../crates/mail-core/src/drafts/store.rs), with revision and account identity types in [drafts/types.rs](../crates/mail-core/src/drafts/types.rs). The store uses WAL and FULL synchronous mode. Saves and deletes are revision-checked and return receipts after commit; deletion records request tombstones so a late save cannot recreate a removed draft. The frontend draft composable and editor coordinate local edits, acknowledged saves, and error recovery in [useDrafts.ts](../src/composables/useDrafts.ts), [DraftEditorCore.vue](../src/components/DraftEditorCore.vue), and [ReplyComposer.vue](../src/components/ReplyComposer.vue). Drafts remain local to the profile and do not sync to Gmail.
 
 The native close path uses a request/acknowledgement gate in [close_gate.rs](../src-tauri/src/close_gate.rs). The shell asks the frontend to flush and close dirty draft state; the frontend acknowledges only after the latest save is committed, and cancels close when save fails. Frontend coordination lives in [App.vue](../src/App.vue) and the draft composable. The governing contract is [vertical slice 04](vertical-slice-04.md).
