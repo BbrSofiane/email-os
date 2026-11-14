@@ -24,7 +24,6 @@ import type {
   CachedTrashRequest,
   CachedTrashSnapshot,
   AccountStatus,
-  SessionCapabilities,
   AppCloseRequest,
   Conversation,
   ConversationRef,
