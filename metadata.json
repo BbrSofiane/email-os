@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7E6N05PHB402PR92YXJHAXM",
+  "strategy": "manual-commit",
+  "branch": "maintenance/p4c-thin-shell",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "tests/transition/gate.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 10,
+    "cache_creation_tokens": 4320,
+    "cache_read_tokens": 746640,
+    "output_tokens": 3299,
+    "api_call_count": 5
+  }
+}
