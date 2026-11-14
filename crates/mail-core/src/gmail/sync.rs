@@ -2051,7 +2051,15 @@ fn run(
     _profile: Arc<ProfileGuard>,
     policy: SessionPolicy,
 ) {
-    let mut sync_deadline = Instant::now();
+    // Gmail catches up immediately at startup. A synthetic session has nothing
+    // to discover; its first beat (which only re-arms queued writes) is one
+    // interval away, so a write that fails right after startup is retried on
+    // the same schedule as any other, not by a startup artefact.
+    let mut sync_deadline = if policy.periodic_sync() {
+        Instant::now()
+    } else {
+        Instant::now() + PERIODIC_INTERVAL
+    };
     loop {
         {
             let state = ctrl.state.lock().expect("gmail ctrl poisoned");
