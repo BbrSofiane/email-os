@@ -1,41 +1,7 @@
-/** Frontend discovery only; execution still uses the named typed MailClient methods. */
-export const browsingActions = [
-  { id: 'open', label: 'Open conversation', shortcut: 'Enter' },
-  { id: 'back', label: 'Back', shortcut: 'Escape' },
-  { id: 'compose', label: 'Compose new local draft', shortcut: 'C' },
-  { id: 'reply', label: 'Reply', shortcut: 'R' },
-  { id: 'archive', label: 'Mark done', shortcut: 'E', aliases: ['archive'] },
-  { id: 'unarchive', label: 'Mark not done', shortcut: 'Shift+E', aliases: ['unarchive', 'restore to inbox'] },
-  { id: 'remind', label: 'Remind me (this device)', shortcut: 'H' },
-  { id: 'reminders', label: 'Go to local Reminders', shortcut: 'G then H' },
-  { id: 'reminder-settings', label: 'Reminder Settings', shortcut: '' },
-  { id: 'undo', label: 'Undo last action', shortcut: 'Z' },
-  { id: 'star', label: 'Star', shortcut: 'S' },
-  { id: 'unstar', label: 'Unstar', shortcut: 'S' },
-  { id: 'read', label: 'Mark read', shortcut: '' },
-  { id: 'unread', label: 'Mark unread', shortcut: 'Shift+U' },
-  { id: 'select-all-loaded', label: 'Select all loaded', shortcut: '' },
-  { id: 'clear-selection', label: 'Clear selection', shortcut: 'Escape' },
-  { id: 'search', label: 'Find older mail', shortcut: '/' },
-  { id: 'inbox', label: 'Go to Inbox', shortcut: '' },
-  { id: 'saved', label: 'Go to saved split', shortcut: '' },
-  { id: 'create-split', label: 'Create split', shortcut: '' },
-  { id: 'edit-split', label: 'Edit split', shortcut: '' },
-  { id: 'toggle-unread-filter', label: 'Show unread only', shortcut: '' },
-  { id: 'done', label: 'Go to cached Done', shortcut: 'G then E' },
-  { id: 'starred', label: 'Go to cached Starred', shortcut: '' },
-  { id: 'destinations', label: 'Go to Provider mail (read only)', shortcut: '' },
-  { id: 'trash', label: 'Go to cached Trash (read only)', shortcut: 'G then T' },
-  { id: 'account', label: 'Go to Account', shortcut: 'G then A' },
-  { id: 'activity', label: 'Go to Activity', shortcut: '' },
-  { id: 'drafts', label: 'Go to local Drafts', shortcut: 'G then D' },
-  { id: 'switch-account', label: 'Switch account', shortcut: '' },
-  { id: 'connect', label: 'Connect Gmail', shortcut: '' },
-  { id: 'sync', label: 'Sync now', shortcut: '' },
-] as const;
-export type BrowsingActionId = typeof browsingActions[number]['id'];
-export interface AvailableAction { id: BrowsingActionId; label: string; shortcut: string; aliases?: readonly string[]; disabledReason?: string }
-export function actionLabel(id: BrowsingActionId): string {
-  const action = browsingActions.find((item) => item.id === id)!;
-  return `${action.label}${action.shortcut ? ` — ${action.shortcut}` : ''}`;
-}
+import { actionLabel as registryActionLabel, actionRegistry, type ActionId, type AvailableAction as RegistryAvailableAction } from './action-registry';
+
+/** Frontend discovery only; execution still uses the named typed MailClient methods. Derived from the registry. */
+export const browsingActions = actionRegistry.map(({ id, label, shortcut, aliases }) => ({ id, label, shortcut, aliases }));
+export type BrowsingActionId = ActionId;
+export type AvailableAction = RegistryAvailableAction;
+export const actionLabel = registryActionLabel;
