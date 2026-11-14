@@ -11,6 +11,7 @@ use crate::gmail::types::{GmailProfile, GmailThread};
 pub const TIMEOUT: Duration = Duration::from_secs(5);
 
 pub mod operations_fake;
+pub mod synthetic;
 
 pub fn temp_profile(tag: &str) -> tempfile::TempDir {
     tempfile::Builder::new()

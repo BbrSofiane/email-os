@@ -1,6 +1,17 @@
 # ADR 0002: Fixture mode as a synthetic provider
 
-**Status:** Proposed
+**Status:** Accepted (stages 1–3)
+
+## Decisions
+
+Taken on 2026-11-14 on the coordinating thread's recommendation, after the project owner asked for the remaining maintenance tickets to run. They authorise **stages 1 to 3** only. The owner can still redirect before stage 4 (switching the default and deleting the legacy backend); nothing below is a user-facing change until then.
+
+1. **Staged unification**, as recommended above. The legacy `MailCore` backend stays the default and is not touched until stage 4.
+2. **The unified fixture gains read and star.** Synthetic fixture mode admits archive, read and star (single and group), and the cached Starred list works. This departs from the "archive-only" wording in the stages and inventory below, which was about preserving today's errors. Cached Trash and provider destinations stay rejected with today's error variants. Connect, disconnect, permission upgrade and manual sync stay rejected with `InvalidRequest { field: "mode" }`, and nothing in synthetic mode may erase local state the way a Gmail disconnect does.
+3. **Synthetic reminders follow the Gmail core's local rules** (hide locally, no provider write). The legacy fixture's archive/restore reminder phases are retired when stage 4 lands, not before.
+4. **The on-disk transition (stage 4) is a one-time reset with disclosure and a retained backup**, local drafts untouched. It is planned, not implemented, in stages 1–3.
+
+Unchanged by these decisions: wire mode stays `fixture`, the account stays `fixture-account`, no OAuth, no Keychain, no HTTP client, cached-only search, all 18 conversations present (including the two initially archived `conv-06` and `conv-15`), and the fake pause/reject environment controls apply only to synthetic writes and never reach the live provider.
 
 ## Question and recommendation
 
