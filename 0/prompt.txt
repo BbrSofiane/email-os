@@ -1,0 +1,5 @@
+Add an automation every day at 2 AM to scan for rust build that are worth clearing to avoid my disk getting full
+
+---
+
+Make a week, 30 days is too long
