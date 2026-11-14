@@ -419,7 +419,20 @@ export type SyncInfo = { state: SyncState, lastSyncedAt: string | null, error: M
 
 export type MutationAccess = "read_only" | "upgrading" | "enabled";
 
-export type AccountStatus = { mode: MailMode, connection: ConnectionState, account: AccountInfo | null, sync: SyncInfo, mutationAccess?: MutationAccess, };
+export type SessionCapabilities = {
+/**
+ * The session has read state, read/unread and star controls, the cached
+ * Starred view and Retry. Whether the user may act on them right now is
+ * still `mutationAccess` (Gmail) or always (a synthetic session).
+ */
+triageSurfaces: boolean, };
+
+export type AccountStatus = { mode: MailMode, connection: ConnectionState, account: AccountInfo | null, sync: SyncInfo, mutationAccess?: MutationAccess,
+/**
+ * Absent on sessions that predate the field (Gmail today): clients then
+ * fall back to their previous behaviour for that session.
+ */
+capabilities?: SessionCapabilities, };
 
 export type ReplyContext = { sourceMessageId: string, fromMailbox: string,
 /**

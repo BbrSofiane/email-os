@@ -55,6 +55,17 @@ pub enum MutationAccess {
     Enabled,
 }
 
+/// What this session's mailbox surfaces can do, stated explicitly so the UI
+/// never infers it from the mode name (ADR 0002 decision 2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionCapabilities {
+    /// The session has read state, read/unread and star controls, the cached
+    /// Starred view and Retry. Whether the user may act on them right now is
+    /// still `mutationAccess` (Gmail) or always (a synthetic session).
+    pub triage_surfaces: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountStatus {
@@ -65,6 +76,11 @@ pub struct AccountStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub mutation_access: Option<MutationAccess>,
+    /// Absent on sessions that predate the field (Gmail today): clients then
+    /// fall back to their previous behaviour for that session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub capabilities: Option<SessionCapabilities>,
 }
 
 #[derive(Clone, PartialEq, Eq)]

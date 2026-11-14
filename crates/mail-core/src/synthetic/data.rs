@@ -36,6 +36,25 @@ const TO_ANA: &[Participant] = &[INBOX_ANA];
 const TO_BORIS: &[Participant] = &[INBOX_BORIS];
 
 pub(crate) const SEED_VERSION: &str = "1";
+
+/// Seeded read state (ADR 0002 decision 2). The Inbox arrives as a realistic
+/// mix rather than uniformly unread:
+/// * mail the user sent is read;
+/// * a conversation whose newest message the user wrote is read (conv-02,
+///   conv-04, conv-14, conv-16), as is a thread the user already dealt with;
+/// * a few others are read (the invoice conv-03 and the digest conv-10);
+/// * everything else in the Inbox is unread (10 of the 16 conversations), and
+///   the two initially archived conversations are read.
+pub(crate) const SEEDED_READ_CONVERSATIONS: &[&str] = &[
+    "conv-02", "conv-03", "conv-04", "conv-10", "conv-14", "conv-16",
+];
+
+/// Whether a seeded message starts unread.
+pub(crate) fn seeded_unread(conversation: &SeedConversation, message: &SeedMessage) -> bool {
+    conversation.in_inbox
+        && !SEEDED_READ_CONVERSATIONS.contains(&conversation.id)
+        && message.from.1 != crate::FIXTURE_MAILBOX
+}
 pub(crate) fn fixtures() -> Vec<SeedConversation> {
     vec![
         SeedConversation {

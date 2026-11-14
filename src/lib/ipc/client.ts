@@ -70,6 +70,7 @@ export type {
   CachedTrashRequest,
   CachedTrashSnapshot,
   AccountStatus,
+  SessionCapabilities,
   AppCloseRequest,
   GetOperationGroupRequest,
   GroupMemberReceipt,

@@ -11,6 +11,13 @@ Taken on 2026-11-14 on the coordinating thread's recommendation, after the proje
 3. **Synthetic reminders follow the Gmail core's local rules** (hide locally, no provider write). The legacy fixture's archive/restore reminder phases are retired when stage 4 lands, not before.
 4. **The on-disk transition (stage 4) is a one-time reset with disclosure and a retained backup**, local drafts untouched. It is planned, not implemented, in stages 1–3.
 
+### Stage 4 decisions (owner, 2026-11-15)
+
+5. **Interrupted writes are requeued by the synthetic policy.** A write interrupted before the provider recorded it is reconciled against the provider's durable facts at startup: landed means confirmed, unlanded means requeued and applied again. This matches the legacy fixture and is a session-policy method (`replay_unlanded_interrupted_writes`), not a mode check. Gmail keeps its rule of never replaying on its own.
+6. **Read, star, Starred, Retry and read state are shown by capability, not by mode name.** `AccountStatus.capabilities.triageSurfaces` states it explicitly (a synthetic session sets it; Gmail leaves the field absent and clients keep their previous behaviour). The seeded Inbox is a realistic read/unread mix: the user's own messages are read, conversations whose newest message the user wrote are read (`conv-02`, `conv-04`, `conv-14`, `conv-16`), a few others are read (`conv-03`, `conv-10`), the two initially archived conversations are read, and the remaining 10 of the 16 Inbox conversations are unread.
+7. **The one-time reset is disclosed on a startup gate** backed by two new IPC commands (status and accept). Backup, reset and the failure paths are described in the stage 4 plan and implemented with the transition state machine.
+8. **Reminders** keep the Gmail local rules; copy for the retired archive/restore phases and any fixture text that became untrue is updated. Provider-flavoured error copy does not appear for fixture operations.
+
 Unchanged by these decisions: wire mode stays `fixture`, the account stays `fixture-account`, no OAuth, no Keychain, no HTTP client, cached-only search, all 18 conversations present (including the two initially archived `conv-06` and `conv-15`), and the fake pause/reject environment controls apply only to synthetic writes and never reach the live provider.
 
 ## Question and recommendation

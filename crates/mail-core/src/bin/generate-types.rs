@@ -26,7 +26,8 @@ use mail_core::gmail::browsing::{
     DestinationCatalog, DestinationPage, DestinationRequest, ProviderDestination,
 };
 use mail_core::gmail::types::{
-    AccountInfo, AccountStatus, ConnectionState, MailMode, MutationAccess, SyncInfo, SyncState,
+    AccountInfo, AccountStatus, ConnectionState, MailMode, MutationAccess, SessionCapabilities,
+    SyncInfo, SyncState,
 };
 use mail_core::groups::{
     GetOperationGroupRequest, GroupCompensationStatus, GroupMemberReceipt, GroupMemberRejection,
@@ -119,6 +120,7 @@ fn declarations() -> Vec<String> {
         AccountInfo::decl(),
         SyncInfo::decl(),
         MutationAccess::decl(),
+        SessionCapabilities::decl(),
         AccountStatus::decl(),
         ReplyContext::decl(),
         DraftRef::decl(),
