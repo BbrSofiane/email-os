@@ -1,0 +1,39 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7E0ZNBZ1NYPWV0VBYAET52T",
+  "strategy": "manual-commit",
+  "branch": "stage4/a-policy",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "crates/mail-core/src/bin/generate-types.rs",
+    "crates/mail-core/src/gmail/operations.rs",
+    "crates/mail-core/src/gmail/session.rs",
+    "crates/mail-core/src/gmail/sync.rs",
+    "crates/mail-core/src/gmail/types.rs",
+    "crates/mail-core/src/synthetic/data.rs",
+    "crates/mail-core/src/synthetic/facts.rs",
+    "crates/mail-core/tests/synthetic_core_lifecycle.rs",
+    "crates/mail-core/tests/synthetic_core_policy.rs",
+    "docs/adr/0002-fixture-as-synthetic-provider.md",
+    "src-tauri/src/main.rs",
+    "src/lib/ipc/client.ts",
+    "src/lib/ipc/generated.ts",
+    "tests/fixtures/contract-scenarios/mailboxes.json"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 38,
+    "cache_creation_tokens": 43505,
+    "cache_read_tokens": 12403641,
+    "output_tokens": 29657,
+    "api_call_count": 19
+  }
+}

@@ -1,0 +1,20 @@
+Coordinator: #62 is merged (main 228bd29) after my full gate; the synthetic opt-in smoke now passes. Thank you.
+
+The owner has decided stage 4. Please implement it in this thread, using your stage 4 plan, with these decisions:
+
+1. **Interrupted writes: requeue automatically.** The synthetic session policy requeues interrupted, unlanded local writes on startup (they are local and idempotent), matching today's fixture. Gmail keeps its rule of never auto-replaying. This is a policy method, not an `if fixture`.
+2. **Read, star, Starred, Retry and read state are shown by capability, not by mode name.** Fixture mode then shows them. Also seed a realistic read/unread mix (some of the user's own threads and a few others read; most of the Inbox unread) instead of all 16 unread, and record the mix in the ADR.
+3. **Disclosure: a startup gate backed by two new IPC commands** (status and accept), as a Vue startup screen. This is an authorised contract change: update the Rust DTOs, the generated TypeScript, the command manifests (all four sources) and `client.ts`, `tauri-client.ts` and the browser fake. Use the backup/reset state machine from your plan, with every failure path tested (cancel, crash or restart at each step, insufficient disk, backup failure, verified-backup-before-delete). It never touches `gmail-profile`, credentials or `local-drafts`. Drafts must reopen with valid references after the reset.
+4. **Reminders:** the Gmail local rules stand. Update the reminder copy for the phases that no longer exist and any fixture text that becomes untrue.
+5. Provider-flavoured error copy ("may have reached Google" and so on) must not appear for fixture operations. Make that copy say what is true for the session.
+
+Then switch the default, delete the legacy backend as listed in your plan, update the browser fake (closes KD-2) and the docs, and remove the `EMAIL_OS_SYNTHETIC_CORE` opt-in.
+
+Rules:
+- Several PRs, each green and shippable on its own. Suggested order: (a) the core policy (requeue, seed mix) plus the capability signal; (b) the frontend capability gating, copy fixes and browser fake; (c) the transition state machine plus the two IPC commands plus the disclosure screen, with the default switch; (d) the deletions and docs. At no commit may the UI offer an action the running backend rejects. If the capability must be on the wire, that is part of the authorised contract change; prefer one explicit capability field to inferring from mode.
+- The owner has uncommitted Android work in the root checkout that touches `src/App.vue`, `src-tauri/src/main.rs`, `crates/mail-core/src/error.rs` and `generated.ts`. Keep your edits to those four files as small as you can: logic goes in composables, components and modules, and `App.vue` gets only the wiring. Do not split `main.rs`; that is ticket 16, which waits for the Android work.
+- Gmail behaviour stays the same except where a shared fix is unavoidable. If one is, ask me first.
+- `check:all` before each PR is ready. Run the rendered suite too when you touch the frontend. Message me as each PR is ready. I will gate each one, including my native smoke and an upgrade from a real legacy fixture profile.
+- The same machine rules as before apply. Commit work in progress at checkpoints.
+
+Final report: the PRs, test counts, every existing test edited and why, the final disclosure copy verbatim, and what you could not verify.
