@@ -1,0 +1,34 @@
+Coordinator: your run stopped at 16:42 UTC on the Claude 5-hour usage limit, which has now reset. Continue stage 3 where you left off.
+
+State as I see it: your worktree is on `maintenance/p4-synthetic-stage3` with a clean tree and one local commit, a4b4cb7 ("synthetic reminders, native bridge and EMAIL_OS_SYNTHETIC_CORE opt-in launch"), not yet pushed. #56 and #58 are merged; main is now 97cc20f (it also has the large-text row fix and the action registry, both frontend only). Rebase stage 3 onto `origin/main` before opening its PR (base `main`), so CI runs on it directly.
+
+The machine was restarted since your last run: free disk is now about 36 GB, still 2 cores and 7 GB RAM, and the shared target directory survived. My earlier message about stage 3 still applies (put the synthetic provider's test counters and waiters behind `cfg(any(test, feature = "test-support"))` or into the test overlay, keep runtime controls non-public unless the shell needs them, and replace `.expect("synthetic controls poisoned")` on production paths with typed errors via `storage_err`).
+
+Then finish as the brief says: stage 3 PR, and the final report with the stage 4 plan and the UI impact inventory. Commit work in progress at checkpoints so a usage-limit stop loses nothing.
+
+---
+
+<task-notification>
+<task-id>bqoe2ubuo</task-id>
+<tool-use-id>toolu_011xpqxcWB8ULegpks5FVSLW</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-maintenance-p4-syntheti-4a65a23bc29bdbf9/7290746f-2115-4cce-a765-a94e6b68740b/tasks/bqoe2ubuo.output</output-file>
+<status>completed</status>
+<summary>Background command "cat &gt;&gt; crates/mail-core/tests/synthetic_core_reminders.rs &lt;&lt;'EOF'
+
+/// Legacy (triage half of `reschedule_cancel_fire_cas_failure_and_superseding_triage`):
+/// what happens when ordinary triage targets a conversation a reminder hides.
+#[test]
+fn triage_of_a_reminded_conversation_is_fenced_and_never_resurrects_it() {
+    let s = Synthetic::open("reminder-triage");
+    s.core
+        .put_reminder(&amp;put("conv-01", Some("2026-02-01T00:01:00Z"), ReminderCondition::Regardless, "schedule"))
+        .unwrap();
+    let outcome = s.core.set_archived(&amp;set_archived("conv-01", true, "new-triage"));
+    println!("triage outcome while hidden: {outcome:?}");
+    advance_and_observe(&amp;s, 61);
+    s.core.wait_for_test_idle(mail_core::testing::TIMEOUT).unwrap();
+    println!("reminder: {:?}; in_inbox: {}", s.core.list_reminders().unwrap(), in_inbox(&amp;s.core, "conv-01"));
+}
+EOF
+export CARGO_TARGET_DIR=/home/exedev/email-os/target; (cargo test --locked -p mail-core --test synthetic_core_reminders triage -- --nocapture 2&gt;&amp;1 | grep -E "triage outcome|reminder:|test result|^error" -A3 | head)" completed (exit code 0)</summary>
+</task-notification>
