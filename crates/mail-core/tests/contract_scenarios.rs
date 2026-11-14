@@ -39,7 +39,14 @@ const GMAIL_ACCOUNT: &str = "acct-contract";
 /// Named, VISIBLE divergences: `(scenario, profile, why)`. The runner still
 /// executes these and requires them to FAIL; when the divergence is fixed the
 /// run fails until the entry is removed, so nothing is silently skipped.
-const KNOWN_DIVERGENCES: &[(&str, &str, &str)] = &[];
+const KNOWN_DIVERGENCES: &[(&str, &str, &str)] = &[(
+    "group-member-failure-does-not-stop-siblings",
+    "gmail",
+    "KD-1: after a definite provider failure the Gmail worker ends its pass in sync-error backoff \
+     (gmail/operations.rs run_one returns Err, sync.rs PassOutcome::SyncError), so queued siblings \
+     stay `queued` until the next retry tick; the fixture worker keeps draining serially. \
+     docs/ux-05 §4.1 only says children run serially and failures do not roll back siblings.",
+)];
 
 // ------------------------------------------------------------------ backends
 
@@ -137,6 +144,14 @@ fn gmail_thread(conversation: &Value) -> GmailThread {
     );
     thread.newest_sender = newest;
     thread.conversation.subject = format!("subject {id}");
+    // Star facts are known only for messages that declare `starred`.
+    let known: std::collections::HashMap<String, bool> = messages_json
+        .iter()
+        .filter_map(|m| Some((m["id"].as_str()?.to_string(), m["starred"].as_bool()?)))
+        .collect();
+    if !known.is_empty() {
+        thread.star_facts = Some(known);
+    }
     thread
 }
 
@@ -495,9 +510,10 @@ fn matches(
             };
             if items.len() != got.len() {
                 return Err(format!(
-                    "{path}: expected {} items, got {}: {actual}",
+                    "{path}: expected {} items, got {}: {}",
                     items.len(),
-                    got.len()
+                    got.len(),
+                    short(actual)
                 ));
             }
             for (index, (want, have)) in items.iter().zip(got).enumerate() {
@@ -741,13 +757,26 @@ fn run_scenario(scenario: &Scenario, backend: &dyn Backend) -> Result<(), String
     Ok(())
 }
 
-fn compact(value: &Value) -> String {
+fn short(value: &Value) -> String {
     let text = value.to_string();
-    if text.len() > 3000 {
-        format!("{}…", &text[..3000])
-    } else {
-        text
+    match text.char_indices().nth(400) {
+        Some((cut, _)) => format!("{}…", &text[..cut]),
+        None => text,
     }
+}
+
+/// Failure output: Inbox ids plus the full activity, not every summary field.
+fn compact(value: &Value) -> String {
+    if value.get("activity").is_some() && value.get("conversations").is_some() {
+        let inbox: Vec<&str> = value["conversations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|c| c["ref"]["conversationId"].as_str())
+            .collect();
+        return format!("inbox {inbox:?} activity {}", value["activity"]);
+    }
+    short(value)
 }
 
 fn check_result(

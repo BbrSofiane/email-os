@@ -1,0 +1,77 @@
+{
+  "scenario": "undo-rejected-for-a-failed-operation",
+  "description": "A definitely failed operation drops its overlay (the conversation is back in the Inbox) and is not undoable.",
+  "rules": "docs/ux-04 \u00a73.2 rule 6 (failed -> not_applicable)",
+  "profiles": [
+    "gmail",
+    "fixture"
+  ],
+  "mailbox": "triage",
+  "steps": [
+    {
+      "name": "provider rejects the next call",
+      "do": {
+        "provider": "reject_next"
+      },
+      "expect": {}
+    },
+    {
+      "name": "archive conv-01 fails",
+      "do": {
+        "cmd": "setArchived",
+        "args": {
+          "conversation": "conv-01",
+          "archived": true,
+          "requestId": "req-a"
+        }
+      },
+      "expect": {
+        "ok": {
+          "operationId": "$A",
+          "acceptedAt": "@+0"
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02",
+            "conv-01"
+          ],
+          "activity": [
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "failed",
+              "failure": {
+                "kind": "provider_rejected"
+              },
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": null,
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "undo of a failed operation",
+      "do": {
+        "cmd": "undoOperation",
+        "args": {
+          "operationId": "$A",
+          "requestId": "req-undo"
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "undo_unavailable",
+          "reason": "not_applicable"
+        }
+      }
+    }
+  ]
+}

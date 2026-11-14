@@ -1,0 +1,186 @@
+{
+  "scenario": "read-and-star-groups",
+  "description": "Read and star groups use the same acceptance contract as archive groups: one receipt carrying the requested value, per-member operation ids, children linked by group id.",
+  "rules": "docs/ux-05 \u00a74.1/\u00a74.2 (set_read_group Gmail-only); docs/ux-08-stars.md (star groups)",
+  "profiles": [
+    "gmail"
+  ],
+  "mailbox": "mixed",
+  "steps": [
+    {
+      "name": "read group",
+      "do": {
+        "cmd": "setReadGroup",
+        "args": {
+          "members": [
+            "thr-mixed",
+            "thr-other"
+          ],
+          "read": true,
+          "requestId": "grp-read"
+        }
+      },
+      "expect": {
+        "ok": {
+          "groupId": "$GR",
+          "requestId": "grp-read",
+          "kind": "read",
+          "requestedRead": true,
+          "acceptedAt": "@+0",
+          "members": [
+            {
+              "ordinal": 0,
+              "conversation": {
+                "conversationId": "thr-mixed"
+              },
+              "operationId": "$R0",
+              "rejection": null
+            },
+            {
+              "ordinal": 1,
+              "conversation": {
+                "conversationId": "thr-other"
+              },
+              "operationId": "$R1",
+              "rejection": null
+            }
+          ]
+        },
+        "snapshot": {
+          "conversations": [
+            {
+              "ref": {
+                "conversationId": "thr-other"
+              },
+              "isRead": true
+            },
+            {
+              "ref": {
+                "conversationId": "thr-mixed"
+              },
+              "isRead": true
+            }
+          ],
+          "activity": [
+            {
+              "id": "$R1",
+              "conversation": {
+                "conversationId": "thr-other"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$GR",
+              "undoableUntil": null,
+              "kind": "read",
+              "requestedRead": true
+            },
+            {
+              "id": "$R0",
+              "conversation": {
+                "conversationId": "thr-mixed"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$GR",
+              "undoableUntil": null,
+              "kind": "read",
+              "requestedRead": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "star group",
+      "do": {
+        "cmd": "setStarredGroup",
+        "args": {
+          "members": [
+            "thr-other"
+          ],
+          "starred": true,
+          "requestId": "grp-star"
+        }
+      },
+      "expect": {
+        "ok": {
+          "groupId": "$GS",
+          "requestId": "grp-star",
+          "kind": "star",
+          "requestedStarred": true,
+          "acceptedAt": "@+0",
+          "members": [
+            {
+              "ordinal": 0,
+              "conversation": {
+                "conversationId": "thr-other"
+              },
+              "operationId": "$S0",
+              "rejection": null
+            }
+          ]
+        },
+        "snapshot": {
+          "conversations": [
+            {
+              "ref": {
+                "conversationId": "thr-other"
+              },
+              "stars": {
+                "starredMessages": 1
+              }
+            },
+            {
+              "ref": {
+                "conversationId": "thr-mixed"
+              }
+            }
+          ],
+          "activity": [
+            {
+              "id": "$S0",
+              "conversation": {
+                "conversationId": "thr-other"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$GS",
+              "undoableUntil": null,
+              "kind": "star",
+              "requestedStarred": true
+            },
+            {
+              "id": "$R1",
+              "conversation": {
+                "conversationId": "thr-other"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$GR",
+              "undoableUntil": null,
+              "kind": "read",
+              "requestedRead": true
+            },
+            {
+              "id": "$R0",
+              "conversation": {
+                "conversationId": "thr-mixed"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$GR",
+              "undoableUntil": null,
+              "kind": "read",
+              "requestedRead": true
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

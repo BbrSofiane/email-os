@@ -1,0 +1,64 @@
+{
+  "scenario": "star-with-unknown-prior-is-not-undoable",
+  "description": "When a message's star fact was never observed, a star operation has an unknown preimage: it is accepted and confirmed but advertises no undo, and undo is refused as unknown_prior rather than claiming an exact restore.",
+  "rules": "docs/ux-04 \u00a73.2 rule 7 (unknown prior values are not exactly undoable); docs/ux-08-stars.md (unknown prior values cannot claim exact Undo)",
+  "profiles": [
+    "gmail"
+  ],
+  "mailbox": "unknown-star",
+  "steps": [
+    {
+      "name": "star thr-nostar",
+      "do": {
+        "cmd": "setStarred",
+        "args": {
+          "conversation": "thr-nostar",
+          "starred": true,
+          "requestId": "req-star"
+        }
+      },
+      "expect": {
+        "ok": {
+          "operationId": "$A",
+          "acceptedAt": "@+0"
+        },
+        "snapshot": {
+          "inbox": [
+            "thr-nostar"
+          ],
+          "activity": [
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "thr-nostar"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": null,
+              "kind": "star",
+              "requestedStarred": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "undo is unknown_prior",
+      "do": {
+        "cmd": "undoOperation",
+        "args": {
+          "operationId": "$A",
+          "requestId": "req-undo"
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "undo_unavailable",
+          "reason": "unknown_prior"
+        }
+      }
+    }
+  ]
+}

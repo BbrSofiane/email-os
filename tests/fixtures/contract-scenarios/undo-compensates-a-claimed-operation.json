@@ -1,0 +1,156 @@
+{
+  "scenario": "undo-compensates-a-claimed-operation",
+  "description": "Undo of an operation the worker already claimed (applying) falls through to compensation, which runs after the original once the provider call is released.",
+  "rules": "docs/ux-04 \u00a73.3 (applying -> compensation); tests/undo.rs undo_of_a_claimed_operation_falls_through_to_compensation",
+  "profiles": [
+    "gmail",
+    "fixture"
+  ],
+  "mailbox": "triage",
+  "steps": [
+    {
+      "name": "provider blocks inside the first call",
+      "do": {
+        "provider": "hold_applying"
+      },
+      "expect": {}
+    },
+    {
+      "name": "archive conv-01 (worker claims it)",
+      "do": {
+        "cmd": "setArchived",
+        "args": {
+          "conversation": "conv-01",
+          "archived": true,
+          "requestId": "req-archive"
+        }
+      },
+      "expect": {
+        "ok": {
+          "operationId": "$A",
+          "acceptedAt": "@+0"
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02"
+          ],
+          "activity": [
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "applying",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": "@+10",
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "undo falls through to compensation",
+      "do": {
+        "cmd": "undoOperation",
+        "args": {
+          "operationId": "$A",
+          "requestId": "req-undo"
+        }
+      },
+      "expect": {
+        "ok": {
+          "undoneOperationId": "$A",
+          "outcome": "compensating",
+          "operationIds": [
+            "$U"
+          ],
+          "acceptedAt": "@+0"
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02",
+            "conv-01"
+          ],
+          "activity": [
+            {
+              "id": "$U",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "queued",
+              "failure": null,
+              "undoOf": "$A",
+              "groupId": null,
+              "undoableUntil": null,
+              "requestedArchived": false
+            },
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "applying",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": null,
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "provider released: original then compensation confirm",
+      "do": {
+        "provider": "release"
+      },
+      "expect": {
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02",
+            "conv-01"
+          ],
+          "activity": [
+            {
+              "id": "$U",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": "$A",
+              "groupId": null,
+              "undoableUntil": null,
+              "requestedArchived": false
+            },
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": null,
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,129 @@
+{
+  "scenario": "star-setter-and-undo",
+  "description": "Star applies to every target message and shows in the star coverage of the summary; undo restores the prior (unstarred) value with one compensation.",
+  "rules": "docs/ux-08-stars.md (setters, durable undo); docs/ux-04 \u00a73.3",
+  "profiles": [
+    "gmail"
+  ],
+  "mailbox": "mixed",
+  "steps": [
+    {
+      "name": "star thr-other",
+      "do": {
+        "cmd": "setStarred",
+        "args": {
+          "conversation": "thr-other",
+          "starred": true,
+          "requestId": "req-star"
+        }
+      },
+      "expect": {
+        "ok": {
+          "operationId": "$A",
+          "acceptedAt": "@+0"
+        },
+        "snapshot": {
+          "conversations": [
+            {
+              "ref": {
+                "conversationId": "thr-other"
+              },
+              "stars": {
+                "totalMessages": 1,
+                "knownMessages": 1,
+                "starredMessages": 1
+              }
+            },
+            {
+              "ref": {
+                "conversationId": "thr-mixed"
+              }
+            }
+          ],
+          "activity": [
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "thr-other"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": "@+10",
+              "kind": "star",
+              "requestedStarred": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "undo unstars",
+      "do": {
+        "cmd": "undoOperation",
+        "args": {
+          "operationId": "$A",
+          "requestId": "req-undo"
+        }
+      },
+      "expect": {
+        "ok": {
+          "undoneOperationId": "$A",
+          "outcome": "compensating",
+          "operationIds": [
+            "$U"
+          ],
+          "acceptedAt": "@+0"
+        },
+        "snapshot": {
+          "conversations": [
+            {
+              "ref": {
+                "conversationId": "thr-other"
+              },
+              "stars": {
+                "totalMessages": 1,
+                "knownMessages": 1,
+                "starredMessages": 0
+              }
+            },
+            {
+              "ref": {
+                "conversationId": "thr-mixed"
+              }
+            }
+          ],
+          "activity": [
+            {
+              "id": "$U",
+              "conversation": {
+                "conversationId": "thr-other"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": "$A",
+              "groupId": null,
+              "undoableUntil": null,
+              "kind": "star",
+              "requestedStarred": false
+            },
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "thr-other"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": null,
+              "kind": "star",
+              "requestedStarred": true
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

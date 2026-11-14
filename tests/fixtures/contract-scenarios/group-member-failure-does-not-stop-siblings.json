@@ -1,0 +1,372 @@
+{
+  "scenario": "group-member-failure-does-not-stop-siblings",
+  "description": "One member of a group definitely fails at the provider; the remaining members are still dispatched and confirmed (no rollback, no stall), and group undo then skips the failed and the rejected member with typed reasons while compensating the confirmed sibling; the same undo request replays the same decisions, a second undo request is already_undone, and the group status then carries the undo record with live compensation outcomes.",
+  "rules": "docs/ux-05 \u00a74.1 (accepted children run serially; no rollback of successful siblings on failure), \u00a75 (skipped members persisted, one attempt per group)",
+  "profiles": [
+    "gmail",
+    "fixture"
+  ],
+  "mailbox": "triage",
+  "steps": [
+    {
+      "name": "provider rejects the next call",
+      "do": {
+        "provider": "reject_next"
+      },
+      "expect": {}
+    },
+    {
+      "name": "group archive: first member fails",
+      "do": {
+        "cmd": "setArchivedGroup",
+        "args": {
+          "members": [
+            "conv-01",
+            "ghost-1",
+            "conv-02"
+          ],
+          "archived": true,
+          "requestId": "grp-1"
+        }
+      },
+      "expect": {
+        "ok": {
+          "groupId": "$G",
+          "members": [
+            {
+              "ordinal": 0,
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "operationId": "$M0",
+              "rejection": null
+            },
+            {
+              "ordinal": 1,
+              "conversation": {
+                "conversationId": "ghost-1"
+              },
+              "operationId": null,
+              "rejection": "conversation_missing"
+            },
+            {
+              "ordinal": 2,
+              "conversation": {
+                "conversationId": "conv-02"
+              },
+              "operationId": "$M2",
+              "rejection": null
+            }
+          ]
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-01"
+          ],
+          "activity": [
+            {
+              "id": "$M2",
+              "conversation": {
+                "conversationId": "conv-02"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$G",
+              "undoableUntil": null,
+              "requestedArchived": true
+            },
+            {
+              "id": "$M0",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "failed",
+              "failure": {
+                "kind": "provider_rejected"
+              },
+              "undoOf": null,
+              "groupId": "$G",
+              "undoableUntil": null,
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "clock moves 2 s",
+      "do": {
+        "advance": 2
+      },
+      "expect": {}
+    },
+    {
+      "name": "group undo",
+      "do": {
+        "cmd": "undoOperationGroup",
+        "args": {
+          "groupId": "$G",
+          "requestId": "undo-1"
+        }
+      },
+      "expect": {
+        "ok": {
+          "groupId": "$G",
+          "requestId": "undo-1",
+          "acceptedAt": "@+2",
+          "members": [
+            {
+              "ordinal": 0,
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "decision": {
+                "kind": "skipped",
+                "reason": "failed"
+              },
+              "operationIds": []
+            },
+            {
+              "ordinal": 1,
+              "conversation": {
+                "conversationId": "ghost-1"
+              },
+              "decision": {
+                "kind": "skipped",
+                "reason": "acceptance_rejected"
+              },
+              "operationIds": []
+            },
+            {
+              "ordinal": 2,
+              "conversation": {
+                "conversationId": "conv-02"
+              },
+              "decision": {
+                "kind": "compensating"
+              },
+              "operationIds": [
+                "$C"
+              ]
+            }
+          ]
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02",
+            "conv-01"
+          ],
+          "activity": [
+            {
+              "id": "$C",
+              "conversation": {
+                "conversationId": "conv-02"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": "$M2",
+              "groupId": null,
+              "undoableUntil": null,
+              "requestedArchived": false
+            },
+            {
+              "id": "$M2",
+              "conversation": {
+                "conversationId": "conv-02"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$G",
+              "undoableUntil": null,
+              "requestedArchived": true
+            },
+            {
+              "id": "$M0",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "failed",
+              "failure": {
+                "kind": "provider_rejected"
+              },
+              "undoOf": null,
+              "groupId": "$G",
+              "undoableUntil": null,
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "same undo request replays the decisions",
+      "do": {
+        "cmd": "undoOperationGroup",
+        "args": {
+          "groupId": "$G",
+          "requestId": "undo-1"
+        }
+      },
+      "expect": {
+        "ok": {
+          "groupId": "$G",
+          "requestId": "undo-1",
+          "acceptedAt": "@+2",
+          "members": [
+            {
+              "ordinal": 0,
+              "decision": {
+                "kind": "skipped",
+                "reason": "failed"
+              },
+              "operationIds": []
+            },
+            {
+              "ordinal": 1,
+              "decision": {
+                "kind": "skipped",
+                "reason": "acceptance_rejected"
+              },
+              "operationIds": []
+            },
+            {
+              "ordinal": 2,
+              "decision": {
+                "kind": "compensating"
+              },
+              "operationIds": [
+                "$C"
+              ]
+            }
+          ]
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02",
+            "conv-01"
+          ],
+          "activity": [
+            {
+              "id": "$C",
+              "conversation": {
+                "conversationId": "conv-02"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": "$M2",
+              "groupId": null,
+              "undoableUntil": null,
+              "requestedArchived": false
+            },
+            {
+              "id": "$M2",
+              "conversation": {
+                "conversationId": "conv-02"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$G",
+              "undoableUntil": null,
+              "requestedArchived": true
+            },
+            {
+              "id": "$M0",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "failed",
+              "failure": {
+                "kind": "provider_rejected"
+              },
+              "undoOf": null,
+              "groupId": "$G",
+              "undoableUntil": null,
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a different undo request is already_undone",
+      "do": {
+        "cmd": "undoOperationGroup",
+        "args": {
+          "groupId": "$G",
+          "requestId": "undo-2"
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "undo_unavailable",
+          "reason": "already_undone"
+        }
+      }
+    },
+    {
+      "name": "group status after undo",
+      "do": {
+        "cmd": "getOperationGroup",
+        "args": {
+          "requestId": "grp-1"
+        }
+      },
+      "expect": {
+        "ok": {
+          "undo": {
+            "available": false,
+            "reason": "already_undone",
+            "undoableUntil": null
+          },
+          "undoReceipt": {
+            "requestId": "undo-1",
+            "acceptedAt": "@+2",
+            "members": [
+              {
+                "ordinal": 0,
+                "decision": {
+                  "kind": "skipped",
+                  "reason": "failed"
+                },
+                "compensations": []
+              },
+              {
+                "ordinal": 1,
+                "decision": {
+                  "kind": "skipped",
+                  "reason": "acceptance_rejected"
+                },
+                "compensations": []
+              },
+              {
+                "ordinal": 2,
+                "decision": {
+                  "kind": "compensating"
+                },
+                "compensations": [
+                  {
+                    "operationId": "$C",
+                    "status": "confirmed",
+                    "failure": null
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,188 @@
+{
+  "scenario": "group-archive-mixed-membership",
+  "description": "A group of three where one member does not exist: local acceptance is atomic, the missing member gets a typed rejection in the receipt (no fabricated failed operation), valid siblings are accepted, children carry the group id and never advertise individual undo, and the group is addressable by request id and in the recent-groups list.",
+  "rules": "docs/ux-05 \u00a74.1, \u00a74.2, \u00a75 (children share the group's action; not individually undoable)",
+  "profiles": [
+    "gmail",
+    "fixture"
+  ],
+  "mailbox": "triage",
+  "steps": [
+    {
+      "name": "group archive with a missing member",
+      "do": {
+        "cmd": "setArchivedGroup",
+        "args": {
+          "members": [
+            "conv-01",
+            "ghost-1",
+            "conv-02"
+          ],
+          "archived": true,
+          "requestId": "grp-1"
+        }
+      },
+      "expect": {
+        "ok": {
+          "groupId": "$G",
+          "requestId": "grp-1",
+          "kind": "archive",
+          "requestedArchived": true,
+          "acceptedAt": "@+0",
+          "members": [
+            {
+              "ordinal": 0,
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "operationId": "$M0",
+              "rejection": null
+            },
+            {
+              "ordinal": 1,
+              "conversation": {
+                "conversationId": "ghost-1"
+              },
+              "operationId": null,
+              "rejection": "conversation_missing"
+            },
+            {
+              "ordinal": 2,
+              "conversation": {
+                "conversationId": "conv-02"
+              },
+              "operationId": "$M2",
+              "rejection": null
+            }
+          ]
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03"
+          ],
+          "activity": [
+            {
+              "id": "$M2",
+              "conversation": {
+                "conversationId": "conv-02"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$G",
+              "undoableUntil": null,
+              "requestedArchived": true
+            },
+            {
+              "id": "$M0",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$G",
+              "undoableUntil": null,
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "lookup by request id",
+      "do": {
+        "cmd": "getOperationGroup",
+        "args": {
+          "requestId": "grp-1"
+        }
+      },
+      "expect": {
+        "ok": {
+          "group": {
+            "groupId": "$G",
+            "requestId": "grp-1"
+          },
+          "members": [
+            {
+              "ordinal": 0,
+              "operationId": "$M0",
+              "status": "confirmed",
+              "failure": null,
+              "rejection": null
+            },
+            {
+              "ordinal": 1,
+              "operationId": null,
+              "status": "rejected",
+              "failure": null,
+              "rejection": "conversation_missing"
+            },
+            {
+              "ordinal": 2,
+              "operationId": "$M2",
+              "status": "confirmed",
+              "failure": null,
+              "rejection": null
+            }
+          ],
+          "undo": {
+            "available": true,
+            "reason": null,
+            "undoableUntil": "@+10"
+          },
+          "undoReceipt": null
+        }
+      }
+    },
+    {
+      "name": "lookup of an uncommitted request resolves null",
+      "do": {
+        "cmd": "getOperationGroup",
+        "args": {
+          "requestId": "grp-never"
+        }
+      },
+      "expect": {
+        "ok": null
+      }
+    },
+    {
+      "name": "recent groups",
+      "do": {
+        "cmd": "listOperationGroups",
+        "args": {
+          "limit": 10
+        }
+      },
+      "expect": {
+        "ok": {
+          "groups": [
+            {
+              "groupId": "$G",
+              "requestId": "grp-1",
+              "kind": "archive",
+              "requestedArchived": true,
+              "acceptedAt": "@+0",
+              "members": [
+                {
+                  "conversationId": "conv-01"
+                },
+                {
+                  "conversationId": "ghost-1"
+                },
+                {
+                  "conversationId": "conv-02"
+                }
+              ],
+              "undone": false
+            }
+          ],
+          "nextCursor": null
+        }
+      }
+    }
+  ]
+}

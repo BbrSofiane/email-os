@@ -1,0 +1,137 @@
+{
+  "scenario": "read-setter-and-undo",
+  "description": "Mark read applies to every target message, the conversation summary reports it read, and undo restores each message's own prior value with one compensating operation per distinct prior value (here two: one unread message and one that was already read).",
+  "rules": "docs/ux-04 \u00a73.1 (per-message preimage), \u00a73.3 (one compensation per distinct prior value); tests/undo.rs undo_of_a_read_operation_stages_one_compensation_per_distinct_prior_value",
+  "profiles": [
+    "gmail"
+  ],
+  "mailbox": "mixed",
+  "steps": [
+    {
+      "name": "mark thr-mixed read",
+      "do": {
+        "cmd": "setRead",
+        "args": {
+          "conversation": "thr-mixed",
+          "read": true,
+          "requestId": "req-read"
+        }
+      },
+      "expect": {
+        "ok": {
+          "operationId": "$A",
+          "acceptedAt": "@+0"
+        },
+        "snapshot": {
+          "conversations": [
+            {
+              "ref": {
+                "conversationId": "thr-other"
+              },
+              "isRead": false
+            },
+            {
+              "ref": {
+                "conversationId": "thr-mixed"
+              },
+              "isRead": true
+            }
+          ],
+          "activity": [
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "thr-mixed"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": "@+10",
+              "kind": "read",
+              "requestedRead": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "undo restores both prior values",
+      "do": {
+        "cmd": "undoOperation",
+        "args": {
+          "operationId": "$A",
+          "requestId": "req-undo"
+        }
+      },
+      "expect": {
+        "ok": {
+          "undoneOperationId": "$A",
+          "outcome": "compensating",
+          "operationIds": [
+            "$U1",
+            "$U2"
+          ],
+          "acceptedAt": "@+0"
+        },
+        "snapshot": {
+          "conversations": [
+            {
+              "ref": {
+                "conversationId": "thr-other"
+              },
+              "isRead": false
+            },
+            {
+              "ref": {
+                "conversationId": "thr-mixed"
+              },
+              "isRead": false
+            }
+          ],
+          "activity": [
+            {
+              "id": "$U2",
+              "conversation": {
+                "conversationId": "thr-mixed"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": "$A",
+              "groupId": null,
+              "undoableUntil": null,
+              "kind": "read",
+              "requestedRead": true
+            },
+            {
+              "id": "$U1",
+              "conversation": {
+                "conversationId": "thr-mixed"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": "$A",
+              "groupId": null,
+              "undoableUntil": null,
+              "kind": "read",
+              "requestedRead": false
+            },
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "thr-mixed"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": null,
+              "kind": "read",
+              "requestedRead": true
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
