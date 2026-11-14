@@ -1,0 +1,194 @@
+{
+  "scenario": "undo-cancels-a-queued-operation",
+  "description": "Undo of a still-queued operation cancels it in place: it never reaches the provider, the overlay disappears, Activity keeps a cancelled row, the same undo request replays the same receipt and a new undo request is already_undone.",
+  "rules": "docs/ux-04 \u00a73.3 (still queued -> cancelled), \u00a73.2 rule 5; tests/undo.rs undo_of_a_still_queued_operation_cancels_in_place",
+  "profiles": [
+    "gmail",
+    "fixture"
+  ],
+  "mailbox": "triage",
+  "steps": [
+    {
+      "name": "worker holds queued work",
+      "do": {
+        "provider": "hold_queued"
+      },
+      "expect": {}
+    },
+    {
+      "name": "archive conv-01 (stays queued)",
+      "do": {
+        "cmd": "setArchived",
+        "args": {
+          "conversation": "conv-01",
+          "archived": true,
+          "requestId": "req-archive"
+        }
+      },
+      "expect": {
+        "ok": {
+          "operationId": "$A",
+          "acceptedAt": "@+0"
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02"
+          ],
+          "activity": [
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "queued",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": "@+10",
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "clock moves 3 s",
+      "do": {
+        "advance": 3
+      },
+      "expect": {}
+    },
+    {
+      "name": "undo cancels in place",
+      "do": {
+        "cmd": "undoOperation",
+        "args": {
+          "operationId": "$A",
+          "requestId": "req-undo"
+        }
+      },
+      "expect": {
+        "ok": {
+          "undoneOperationId": "$A",
+          "outcome": "cancelled",
+          "operationIds": [],
+          "acceptedAt": "@+3"
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02",
+            "conv-01"
+          ],
+          "activity": [
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "cancelled",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": null,
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "same undo request replays the receipt",
+      "do": {
+        "cmd": "undoOperation",
+        "args": {
+          "operationId": "$A",
+          "requestId": "req-undo"
+        }
+      },
+      "expect": {
+        "ok": {
+          "undoneOperationId": "$A",
+          "outcome": "cancelled",
+          "operationIds": [],
+          "acceptedAt": "@+3"
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02",
+            "conv-01"
+          ],
+          "activity": [
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "cancelled",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": null,
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a new undo request is already_undone",
+      "do": {
+        "cmd": "undoOperation",
+        "args": {
+          "operationId": "$A",
+          "requestId": "req-undo-2"
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "undo_unavailable",
+          "reason": "already_undone"
+        }
+      }
+    },
+    {
+      "name": "worker released; the cancelled row is never dispatched",
+      "do": {
+        "provider": "release"
+      },
+      "expect": {
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02",
+            "conv-01"
+          ],
+          "activity": [
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "cancelled",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": null,
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

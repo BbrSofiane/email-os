@@ -1,0 +1,53 @@
+{
+  "scenario": "unarchive-restores-inbox",
+  "description": "Not Done on an archived conversation accepts, returns it to the Inbox in its date position, and confirms.",
+  "rules": "vertical-slice-01 archive/unarchive",
+  "profiles": [
+    "gmail",
+    "fixture"
+  ],
+  "mailbox": "triage",
+  "steps": [
+    {
+      "name": "unarchive conv-06",
+      "do": {
+        "cmd": "setArchived",
+        "args": {
+          "conversation": "conv-06",
+          "archived": false,
+          "requestId": "req-1"
+        }
+      },
+      "expect": {
+        "ok": {
+          "operationId": "$A",
+          "acceptedAt": "@+0"
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02",
+            "conv-01",
+            "conv-06"
+          ],
+          "activity": [
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "conv-06"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": "@+10",
+              "requestedArchived": false
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

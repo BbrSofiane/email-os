@@ -1,0 +1,115 @@
+{
+  "scenario": "fixture-rejects-unsupported-commands",
+  "description": "The archive-only fixture backend rejects every command it does not implement with the typed error the native shell returns today: read, retry and the read group are invalid_request on mode; star and the star group are read_only. Nothing is accepted.",
+  "rules": "src-tauri/src/main.rs Backend::Fixture dispatch; docs/current-architecture.md (Stars: fixture rejects star setters); docs/ux-05 \u00a74.2 (set_read_group Gmail-only)",
+  "profiles": [
+    "fixture"
+  ],
+  "mailbox": "triage",
+  "steps": [
+    {
+      "name": "setRead",
+      "do": {
+        "cmd": "setRead",
+        "args": {
+          "conversation": "conv-01",
+          "read": true,
+          "requestId": "req-1"
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid_request",
+          "field": "mode"
+        }
+      }
+    },
+    {
+      "name": "setStarred",
+      "do": {
+        "cmd": "setStarred",
+        "args": {
+          "conversation": "conv-01",
+          "starred": true,
+          "requestId": "req-2"
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "read_only"
+        }
+      }
+    },
+    {
+      "name": "retryOperation",
+      "do": {
+        "cmd": "retryOperation",
+        "args": {
+          "operationId": "op-x",
+          "requestId": "req-3"
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid_request",
+          "field": "mode"
+        }
+      }
+    },
+    {
+      "name": "setReadGroup",
+      "do": {
+        "cmd": "setReadGroup",
+        "args": {
+          "members": [
+            "conv-01"
+          ],
+          "read": true,
+          "requestId": "grp-1"
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid_request",
+          "field": "mode"
+        }
+      }
+    },
+    {
+      "name": "setStarredGroup",
+      "do": {
+        "cmd": "setStarredGroup",
+        "args": {
+          "members": [
+            "conv-01"
+          ],
+          "starred": true,
+          "requestId": "grp-2"
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "read_only"
+        }
+      }
+    },
+    {
+      "name": "nothing was accepted",
+      "do": {
+        "advance": 0
+      },
+      "expect": {
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02",
+            "conv-01"
+          ],
+          "activity": []
+        }
+      }
+    }
+  ]
+}

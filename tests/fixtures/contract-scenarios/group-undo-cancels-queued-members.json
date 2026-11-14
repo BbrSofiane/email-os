@@ -1,0 +1,198 @@
+{
+  "scenario": "group-undo-cancels-queued-members",
+  "description": "Group undo while members are still queued cancels them in place (no compensation, nothing reaches the provider), restores the Inbox, and keeps cancelled rows in Activity.",
+  "rules": "docs/ux-05 \u00a75 (queued -> atomic cancel)",
+  "profiles": [
+    "gmail",
+    "fixture"
+  ],
+  "mailbox": "triage",
+  "steps": [
+    {
+      "name": "worker holds queued work",
+      "do": {
+        "provider": "hold_queued"
+      },
+      "expect": {}
+    },
+    {
+      "name": "group archive stays queued",
+      "do": {
+        "cmd": "setArchivedGroup",
+        "args": {
+          "members": [
+            "conv-01",
+            "conv-02"
+          ],
+          "archived": true,
+          "requestId": "grp-1"
+        }
+      },
+      "expect": {
+        "ok": {
+          "groupId": "$G",
+          "members": [
+            {
+              "ordinal": 0,
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "operationId": "$M0",
+              "rejection": null
+            },
+            {
+              "ordinal": 1,
+              "conversation": {
+                "conversationId": "conv-02"
+              },
+              "operationId": "$M1",
+              "rejection": null
+            }
+          ]
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03"
+          ],
+          "activity": [
+            {
+              "id": "$M1",
+              "conversation": {
+                "conversationId": "conv-02"
+              },
+              "status": "queued",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$G",
+              "undoableUntil": null,
+              "requestedArchived": true
+            },
+            {
+              "id": "$M0",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "queued",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$G",
+              "undoableUntil": null,
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "group undo cancels both",
+      "do": {
+        "cmd": "undoOperationGroup",
+        "args": {
+          "groupId": "$G",
+          "requestId": "undo-1"
+        }
+      },
+      "expect": {
+        "ok": {
+          "groupId": "$G",
+          "members": [
+            {
+              "ordinal": 0,
+              "decision": {
+                "kind": "cancelled"
+              },
+              "operationIds": []
+            },
+            {
+              "ordinal": 1,
+              "decision": {
+                "kind": "cancelled"
+              },
+              "operationIds": []
+            }
+          ]
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02",
+            "conv-01"
+          ],
+          "activity": [
+            {
+              "id": "$M1",
+              "conversation": {
+                "conversationId": "conv-02"
+              },
+              "status": "cancelled",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$G",
+              "undoableUntil": null,
+              "requestedArchived": true
+            },
+            {
+              "id": "$M0",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "cancelled",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$G",
+              "undoableUntil": null,
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "released worker does not dispatch cancelled members",
+      "do": {
+        "provider": "release"
+      },
+      "expect": {
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02",
+            "conv-01"
+          ],
+          "activity": [
+            {
+              "id": "$M1",
+              "conversation": {
+                "conversationId": "conv-02"
+              },
+              "status": "cancelled",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$G",
+              "undoableUntil": null,
+              "requestedArchived": true
+            },
+            {
+              "id": "$M0",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "cancelled",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$G",
+              "undoableUntil": null,
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

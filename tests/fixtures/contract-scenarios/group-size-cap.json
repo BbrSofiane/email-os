@@ -1,0 +1,225 @@
+{
+  "scenario": "group-size-cap",
+  "description": "A group carries 1 to 100 unique members: 101 is invalid_request on members and accepts nothing; exactly 100 is valid. A valid group whose members are all rejected is still durably receipted with zero child operations and does not supersede an earlier undoable action.",
+  "rules": "docs/ux-05 \u00a73.1/\u00a74.1 (1-100 unique refs; all-rejected receipt consumes no undo slot); mail_core::groups::OPERATION_GROUP_MAX_MEMBERS",
+  "profiles": [
+    "gmail",
+    "fixture"
+  ],
+  "mailbox": "triage",
+  "steps": [
+    {
+      "name": "single archive conv-01",
+      "do": {
+        "cmd": "setArchived",
+        "args": {
+          "conversation": "conv-01",
+          "archived": true,
+          "requestId": "req-a"
+        }
+      },
+      "expect": {
+        "ok": {
+          "operationId": "$A"
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02"
+          ],
+          "activity": [
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": "@+10",
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "101 members is rejected",
+      "do": {
+        "cmd": "setArchivedGroup",
+        "args": {
+          "members": {
+            "generate": {
+              "prefix": "bulk-",
+              "count": 101
+            }
+          },
+          "archived": true,
+          "requestId": "grp-101"
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid_request",
+          "field": "members"
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02"
+          ],
+          "activity": [
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": "@+10",
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "100 members, none exist: all rejected, one receipt",
+      "do": {
+        "cmd": "setArchivedGroup",
+        "args": {
+          "members": {
+            "generate": {
+              "prefix": "bulk-",
+              "count": 100
+            }
+          },
+          "archived": true,
+          "requestId": "grp-100"
+        }
+      },
+      "expect": {
+        "ok": {
+          "groupId": "$G",
+          "requestId": "grp-100",
+          "acceptedAt": "@+0",
+          "members": {
+            "$length": 100,
+            "$each": {
+              "operationId": null,
+              "rejection": "conversation_missing"
+            }
+          }
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02"
+          ],
+          "activity": [
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": "@+10",
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "the all-rejected group is addressable and idempotent",
+      "do": {
+        "cmd": "getOperationGroup",
+        "args": {
+          "requestId": "grp-100"
+        }
+      },
+      "expect": {
+        "ok": {
+          "group": {
+            "groupId": "$G"
+          },
+          "members": {
+            "$length": 100,
+            "$each": {
+              "status": "rejected"
+            }
+          },
+          "undo": {
+            "available": false
+          }
+        }
+      }
+    },
+    {
+      "name": "the earlier single is still undoable",
+      "do": {
+        "cmd": "undoOperation",
+        "args": {
+          "operationId": "$A",
+          "requestId": "undo-a"
+        }
+      },
+      "expect": {
+        "ok": {
+          "undoneOperationId": "$A",
+          "outcome": "compensating",
+          "operationIds": [
+            "$U"
+          ]
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02",
+            "conv-01"
+          ],
+          "activity": [
+            {
+              "id": "$U",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": "$A",
+              "groupId": null,
+              "undoableUntil": null,
+              "requestedArchived": false
+            },
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": null,
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,115 @@
+{
+  "scenario": "retry-of-a-failed-operation",
+  "description": "Retrying a definitely failed operation is a new top-level action linked by retryOf; the failed original stays failed and is not rewritten.",
+  "rules": "docs/ux-05 \u00a74.3 (retries are new top-level actions, never rewrite the original); docs/ux-04 \u00a73.1 (retry copies the original preimage)",
+  "profiles": [
+    "gmail"
+  ],
+  "mailbox": "triage",
+  "steps": [
+    {
+      "name": "provider rejects the next call",
+      "do": {
+        "provider": "reject_next"
+      },
+      "expect": {}
+    },
+    {
+      "name": "archive fails",
+      "do": {
+        "cmd": "setArchived",
+        "args": {
+          "conversation": "conv-01",
+          "archived": true,
+          "requestId": "req-a"
+        }
+      },
+      "expect": {
+        "ok": {
+          "operationId": "$A"
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02",
+            "conv-01"
+          ],
+          "activity": [
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "failed",
+              "failure": {
+                "kind": "provider_rejected"
+              },
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": null,
+              "kind": "archive",
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "retry",
+      "do": {
+        "cmd": "retryOperation",
+        "args": {
+          "operationId": "$A",
+          "requestId": "req-retry"
+        }
+      },
+      "expect": {
+        "ok": {
+          "operationId": "$R",
+          "acceptedAt": "@+0"
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02"
+          ],
+          "activity": [
+            {
+              "id": "$R",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": "@+10",
+              "kind": "archive",
+              "requestedArchived": true,
+              "retryOf": "$A"
+            },
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "failed",
+              "failure": {
+                "kind": "provider_rejected"
+              },
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": null,
+              "kind": "archive",
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,199 @@
+{
+  "scenario": "group-idempotent-replay",
+  "description": "Replaying the same group request returns the original receipt unchanged, with the ORIGINAL member order, even when the replay lists the members in another order; a changed value or a changed member set is request_id_conflict.",
+  "rules": "docs/ux-05 \u00a74.1 (canonical fingerprint = sorted member identities; preserve original ordering on replay)",
+  "profiles": [
+    "gmail",
+    "fixture"
+  ],
+  "mailbox": "triage",
+  "steps": [
+    {
+      "name": "group archive",
+      "do": {
+        "cmd": "setArchivedGroup",
+        "args": {
+          "members": [
+            "conv-01",
+            "conv-02"
+          ],
+          "archived": true,
+          "requestId": "grp-1"
+        }
+      },
+      "expect": {
+        "ok": {
+          "groupId": "$G",
+          "acceptedAt": "@+0",
+          "members": [
+            {
+              "ordinal": 0,
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "operationId": "$M0",
+              "rejection": null
+            },
+            {
+              "ordinal": 1,
+              "conversation": {
+                "conversationId": "conv-02"
+              },
+              "operationId": "$M1",
+              "rejection": null
+            }
+          ]
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03"
+          ],
+          "activity": [
+            {
+              "id": "$M1",
+              "conversation": {
+                "conversationId": "conv-02"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$G",
+              "undoableUntil": null,
+              "requestedArchived": true
+            },
+            {
+              "id": "$M0",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$G",
+              "undoableUntil": null,
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "clock moves",
+      "do": {
+        "advance": 4
+      },
+      "expect": {}
+    },
+    {
+      "name": "replay with reordered members",
+      "do": {
+        "cmd": "setArchivedGroup",
+        "args": {
+          "members": [
+            "conv-02",
+            "conv-01"
+          ],
+          "archived": true,
+          "requestId": "grp-1"
+        }
+      },
+      "expect": {
+        "ok": {
+          "groupId": "$G",
+          "acceptedAt": "@+0",
+          "members": [
+            {
+              "ordinal": 0,
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "operationId": "$M0",
+              "rejection": null
+            },
+            {
+              "ordinal": 1,
+              "conversation": {
+                "conversationId": "conv-02"
+              },
+              "operationId": "$M1",
+              "rejection": null
+            }
+          ]
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03"
+          ],
+          "activity": [
+            {
+              "id": "$M1",
+              "conversation": {
+                "conversationId": "conv-02"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$G",
+              "undoableUntil": null,
+              "requestedArchived": true
+            },
+            {
+              "id": "$M0",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$G",
+              "undoableUntil": null,
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "same request id, other value",
+      "do": {
+        "cmd": "setArchivedGroup",
+        "args": {
+          "members": [
+            "conv-01",
+            "conv-02"
+          ],
+          "archived": false,
+          "requestId": "grp-1"
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "request_id_conflict"
+        }
+      }
+    },
+    {
+      "name": "same request id, other members",
+      "do": {
+        "cmd": "setArchivedGroup",
+        "args": {
+          "members": [
+            "conv-01",
+            "conv-03"
+          ],
+          "archived": true,
+          "requestId": "grp-1"
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "request_id_conflict"
+        }
+      }
+    }
+  ]
+}

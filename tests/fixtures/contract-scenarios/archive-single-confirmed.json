@@ -1,0 +1,23 @@
+{
+  "scenario": "archive-single-confirmed",
+  "description": "A single archive is accepted with a receipt, leaves the Inbox at once, and is confirmed by the worker; the confirmed row advertises its 10 s undo window.",
+  "rules": "docs/ux-04-trustworthy-undo.md §3.2 rule 3 and §3.3; vertical-slice-01 acceptance",
+  "profiles": ["gmail", "fixture"],
+  "mailbox": "triage",
+  "steps": [
+    {
+      "name": "archive conv-01",
+      "do": { "cmd": "setArchived", "args": { "conversation": "conv-01", "archived": true, "requestId": "req-archive-1" } },
+      "expect": {
+        "ok": { "operationId": "$A", "acceptedAt": "@+0" },
+        "snapshot": {
+          "inbox": ["conv-05", "conv-04", "conv-03", "conv-02"],
+          "activity": [
+            { "id": "$A", "conversation": { "conversationId": "conv-01" }, "requestedArchived": true,
+              "status": "confirmed", "failure": null, "undoOf": null, "groupId": null, "undoableUntil": "@+10" }
+          ]
+        }
+      }
+    }
+  ]
+}

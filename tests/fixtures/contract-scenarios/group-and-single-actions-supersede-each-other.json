@@ -1,0 +1,268 @@
+{
+  "scenario": "group-and-single-actions-supersede-each-other",
+  "description": "A group is one top-level action in the shared action order: a newer group supersedes an older single, and a newer single supersedes an older group; the newest action stays undoable. Group children are never individually undoable.",
+  "rules": "docs/ux-05 \u00a75 (newer single/group supersedes the older; children cannot be individually undone)",
+  "profiles": [
+    "gmail",
+    "fixture"
+  ],
+  "mailbox": "triage",
+  "steps": [
+    {
+      "name": "single archive conv-01",
+      "do": {
+        "cmd": "setArchived",
+        "args": {
+          "conversation": "conv-01",
+          "archived": true,
+          "requestId": "req-a"
+        }
+      },
+      "expect": {
+        "ok": {
+          "operationId": "$A"
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02"
+          ],
+          "activity": [
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": "@+10",
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "newer group archive",
+      "do": {
+        "cmd": "setArchivedGroup",
+        "args": {
+          "members": [
+            "conv-02",
+            "conv-03"
+          ],
+          "archived": true,
+          "requestId": "grp-1"
+        }
+      },
+      "expect": {
+        "ok": {
+          "groupId": "$G",
+          "members": [
+            {
+              "ordinal": 0,
+              "conversation": {
+                "conversationId": "conv-02"
+              },
+              "operationId": "$M0",
+              "rejection": null
+            },
+            {
+              "ordinal": 1,
+              "conversation": {
+                "conversationId": "conv-03"
+              },
+              "operationId": "$M1",
+              "rejection": null
+            }
+          ]
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04"
+          ],
+          "activity": [
+            {
+              "id": "$M1",
+              "conversation": {
+                "conversationId": "conv-03"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$G",
+              "undoableUntil": null,
+              "requestedArchived": true
+            },
+            {
+              "id": "$M0",
+              "conversation": {
+                "conversationId": "conv-02"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$G",
+              "undoableUntil": null,
+              "requestedArchived": true
+            },
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": null,
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "older single is superseded by the group",
+      "do": {
+        "cmd": "undoOperation",
+        "args": {
+          "operationId": "$A",
+          "requestId": "undo-a"
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "undo_unavailable",
+          "reason": "superseded"
+        }
+      }
+    },
+    {
+      "name": "a group child is not individually undoable",
+      "do": {
+        "cmd": "undoOperation",
+        "args": {
+          "operationId": "$M1",
+          "requestId": "undo-m1"
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "undo_unavailable",
+          "reason": "not_applicable"
+        }
+      }
+    },
+    {
+      "name": "newer single archive conv-04",
+      "do": {
+        "cmd": "setArchived",
+        "args": {
+          "conversation": "conv-04",
+          "archived": true,
+          "requestId": "req-b"
+        }
+      },
+      "expect": {
+        "ok": {
+          "operationId": "$B"
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05"
+          ],
+          "activity": [
+            {
+              "id": "$B",
+              "conversation": {
+                "conversationId": "conv-04"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": "@+10",
+              "requestedArchived": true
+            },
+            {
+              "id": "$M1",
+              "conversation": {
+                "conversationId": "conv-03"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$G",
+              "undoableUntil": null,
+              "requestedArchived": true
+            },
+            {
+              "id": "$M0",
+              "conversation": {
+                "conversationId": "conv-02"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$G",
+              "undoableUntil": null,
+              "requestedArchived": true
+            },
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": null,
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "the group is superseded by the newer single",
+      "do": {
+        "cmd": "undoOperationGroup",
+        "args": {
+          "groupId": "$G",
+          "requestId": "undo-g"
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "undo_unavailable",
+          "reason": "superseded"
+        }
+      }
+    },
+    {
+      "name": "group status reports superseded",
+      "do": {
+        "cmd": "getOperationGroup",
+        "args": {
+          "requestId": "grp-1"
+        }
+      },
+      "expect": {
+        "ok": {
+          "undo": {
+            "available": false,
+            "reason": "superseded",
+            "undoableUntil": null
+          }
+        }
+      }
+    }
+  ]
+}
