@@ -1,0 +1,100 @@
+<cross-session-message from="uds:/run/user/1000/cc-socks/123515.sock" from-name="P4b: fixture on the Gmail core (ticket 14, stages 1–3)" from-mode="bypass">
+Stage 4 PR (a) is ready: #64, base main, head cfd6677 (remote head confirmed).
+- `mise run check:all` passed locally on that head. mail-core 390, email-os 25, frontend 1,856 in 102 files, check:contract clean. No Gmail test edited.
+- Contents:
+  - The synthetic policy requeues unlanded interrupted writes, as a policy method.
+  - The seeded Inbox is a read/unread mix: 6 of 16 conversations read, 10 unread. It is recorded in the ADR along with the other stage 4 decisions.
+  - `AccountStatus.capabilities.triageSurfaces` is a new optional wire field. Gmail leaves it absent, so Gmail status JSON is unchanged.
+  - In `main.rs` it is one line, `capabilities: None` in the legacy status.
+- The UI shows nothing new in this PR. The default backend is still the legacy one, which does not send the field.
+- Flake note: one KD-1 synthetic scenario run in `check:all` showed an unexpected pass once. My stage 2 re-arm beat could fire right after startup. I fixed it by pushing the first synthetic beat one interval out. It was 0 of 8 runs afterwards.
+- PR (b), the frontend capability gating, copy and browser fake, is stacked on this branch; I'm starting it now.
+</cross-session-message>
+
+---
+
+<cross-session-message from="uds:/run/user/1000/cc-socks/123515.sock" from-name="P4b: fixture on the Gmail core (ticket 14, stages 1–3)" from-mode="bypass">
+Stage 4 PR (b) is ready: #65, stacked on #64 (base stage4/a-policy; retarget to main after #64 merges). Head 356263c, remote head confirmed.
+- `mise run check:all` passed locally on that head: mail-core 390, email-os 25, frontend 1,864 in 103 files. `mise run test:rendered` also passed (5 files, 45 tests). No Rust changed.
+- Contents:
+  - Read state, read/star, Starred and Retry now follow `capabilities.triageSurfaces`. A status without the field keeps the old mode-based behaviour, so Gmail is unchanged.
+  - The `App.vue` change is wiring only (8 lines).
+  - Fixture error copy no longer mentions Google, and the reminder copy is truthful.
+  - The browser fake mirrors the unified fixture, which closes KD-2.
+- At this commit the default native backend does not send the capability, so the UI is unchanged there. The opt-in `EMAIL_OS_SYNTHETIC_CORE=1` path will show the new surfaces. That is a good smoke target for you: Starred rail, unread rows, read/star keys, Retry in Activity.
+- The PR lists 10 existing frontend tests that asserted the legacy fixture and the reason for each.
+- Starting PR (c) now (transition state machine, two IPC commands, startup gate, default switch).
+</cross-session-message>
+
+---
+
+<cross-session-message from="uds:/run/user/1000/cc-socks/123515.sock" from-name="P4b: fixture on the Gmail core (ticket 14, stages 1–3)" from-mode="bypass">
+#64 and #65 are rebased onto main 44b44a7 and force-pushed with `--force-with-lease`. The remote heads match local.
+- **#64 (a):** head 58bb310.
+  - The only Rust shell change is the single `capabilities: None` line, now in `src-tauri/src/lib.rs`. The conflict was only in the old `main.rs`; I took main's 5-line `main.rs`.
+  - No Android change was touched: `lock.rs`, `error.rs`, the Android gen/, the Android task and CI job.
+  - `check:all` passed on this head: mail-core 391, email-os 25, frontend 1,858 in 102 files. check:contract is clean.
+- **#65 (b):** head 964c1dc, stacked on #64.
+  - `check:all` passed: mail-core 391, email-os 25, frontend 1,866 in 103 files.
+  - The rendered suite also passed (5 files, 45 tests).
+  - `App.vue` merged cleanly with the Android `:android` prop change.
+- **Android checks I could run here:** this machine has the SDK, NDK 27.2.12479018, JDK 17 and both Android Rust targets.
+  - `mise run android:doctor` passes.
+  - `cargo check --locked -p mail-core --target aarch64-linux-android` is clean on #64. That is the only mail-core Android compile check I ran.
+  - I have NOT run `android:build` (APK/Gradle). I'll rely on your CI job for it, and I'll try a shell-target `cargo check` on (c).
+- **Libc note for (c):** it adds `libc` under `cfg(unix)` for `statvfs` (free-disk preflight), next to Android's existing `libc` entry in the `cfg(target_os = "android")` table. `libc::statvfs` exists on bionic.
+- Continuing PR (c) on top of the rebased (b).
+</cross-session-message>
+
+---
+
+<cross-session-message from="uds:/run/user/1000/cc-socks/123515.sock" from-name="P4b: fixture on the Gmail core (ticket 14, stages 1–3)" from-mode="bypass">
+Stage 4 PR (c) is ready: #66, stacked on #65 (base stage4/b-frontend). Head 8430766, remote head confirmed.
+- `mise run check:all` passed locally on that head: mail-core 403, email-os 18, frontend 1,886 in 104 files. check:contract and clippy -D warnings are clean. `mise run test:rendered` also passed (5 files, 45 tests).
+- Contents:
+  - Fixture mode now runs the synthetic core on desktop and Android, through the shared `setup` in `lib.rs`.
+  - `EMAIL_OS_SYNTHETIC_CORE` and `Backend::Fixture` are gone.
+  - The two new IPC commands are in all four manifest sources.
+  - The `mail_core::fixture_transition` state machine is covered by 12 tests on a real legacy `mail.db` fixture: cancel, a crash at each of the 11 steps, insufficient disk, backup failure at each stage, verified-backup-before-delete, a WAL-only row in the backup, and drafts untouched.
+  - `StartupRoot.vue` and `FixtureTransitionGate.vue` show the disclosure; `App.vue` is unchanged here.
+- The PR body has the disclosure copy verbatim.
+- Android:
+  - `cargo check` for aarch64-linux-android is clean for mail-core and the email-os lib.
+  - `android:doctor` passes.
+  - I did NOT run `android:build` or the emulator smoke; I'm relying on your CI.
+  - On Android there is no window-close, so cancelling means leaving the app, and the gate shows again on the next launch.
+- For your upgrade-from-legacy test: launch with a profile that has `fixture-profile/mail.db`. You should see the gate. After "Back up and start fresh" expect:
+  - `fixture-profile/backups/mail-<utc>.db` exists, and `mail.db` and its -wal/-shm are gone.
+  - `fixture-transition.json` says `done`.
+  - The 18 conversations are in their original state, and the drafts are untouched.
+- Next: PR (d), the deletions and docs.
+</cross-session-message>
+
+---
+
+<cross-session-message from="uds:/run/user/1000/cc-socks/123515.sock" from-name="P4b: fixture on the Gmail core (ticket 14, stages 1–3)" from-mode="bypass">
+Stage 4 PR (d) is ready: #67, stacked on #66 (base stage4/c-transition). Head 9f7c68d, remote head confirmed. Net -7,390 lines against #66.
+- `mise run check:all` passed locally on that head: mail-core 349, email-os 18, frontend 1,885 in 104 files. check:contract is clean. `mise run test:rendered` also passed. The `aarch64-linux-android` `cargo check` is clean for mail-core and the email-os lib.
+- Deleted:
+  - `MailCore`, `store.rs`, the worker, `seed.rs`, `provider.rs` and `ProviderError`.
+  - The legacy tests, the contract runner's `fixture` backend and the KD-2 scenario.
+  - `CancelToken` moved to `cancel.rs`.
+- Docs updated: README, current-status, current-architecture, development. ADR 0002 is now marked Implemented.
+- The only edit to an existing Gmail test is one import path in `gmail_auth_contract.rs`, `mail_core::provider::CancelToken` to `mail_core::CancelToken`. It is mechanical and listed in the PR.
+- Stack: all four stage 4 PRs are open and linked. They are #64 (a, base main), #65 (b, base a), #66 (c, base b) and #67 (d, base c). Merge them in order and retarget as each lands, so CI runs on the full tree.
+- Since I'm done, the final report follows now as my last message. Tell me if you want anything changed in the PRs first.
+</cross-session-message>
+
+---
+
+<task-notification>
+<task-id>bayv948w7</task-id>
+<tool-use-id>toolu_01Rrr3Dufywh8KnX3gDznyMe</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/bayv948w7.output</output-file>
+<status>completed</status>
+<summary>Background command "Use a logical drafts comparison, then gate the whole stage 4 stack" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+T3 Code stopped watching pull request #67 (https://github.int.exe.xyz/bbrsofiane/email-os/pull/67) because it failed to read it from the host 8 times in a row. Check it yourself, and call watch_pull_request to watch it again.
