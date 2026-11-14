@@ -2334,7 +2334,9 @@ function onKeydown(event: KeyboardEvent): void {
   const isContextRow = event.target instanceof HTMLElement && event.target.hasAttribute('data-drawer-row');
   const remindersRowOwns = remindersList.value && isContextRow && !!remindersPane.value?.el?.contains(event.target as Node);
   const draftsRowOwns = draftsList.value && isContextRow && !!draftsPane.value?.el?.contains(event.target as Node);
-  const browsingOwns = !readerIsOpen && (!buttonOwns(event.target) || remindersRowOwns || draftsRowOwns) && (event.target === document.body || (event.target instanceof Node && (!!inboxList.value?.$el?.contains(event.target) || !!remindersPane.value?.el?.contains(event.target) || !!draftsPane.value?.el?.contains(event.target))) || event.target === emptyState.value);
+  // The empty line's action takes focus on its own (see emptyLineOwnsAction), so it keeps the browsing keys.
+  const emptyActionOwns = !!emptyAction.value && event.target === emptyAction.value;
+  const browsingOwns = !readerIsOpen && (!buttonOwns(event.target) || remindersRowOwns || draftsRowOwns || emptyActionOwns) && (event.target === document.body || emptyActionOwns || (event.target instanceof Node && (!!inboxList.value?.$el?.contains(event.target) || !!remindersPane.value?.el?.contains(event.target) || !!draftsPane.value?.el?.contains(event.target))) || event.target === emptyState.value);
   // Split navigation is deliberately nonwrapping and owns only the list,
   // not form fields, toolbar buttons, the reader, or other destinations.
   const splitListOwns = browsingOwns && event.target === document.activeElement

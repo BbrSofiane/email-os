@@ -80,15 +80,26 @@ describe('empty line action: keyboard reach and one live action', () => {
       expect(document.activeElement).toBe(document.body);
     });
 
+    it('keeps the browsing keys: g a and Left still work with focus on the action', async () => {
+      gmail(none);
+      const w = mountApp();
+      await flushFakeClientWithMacrotasks(fake, 3);
+      expect(document.activeElement).toBe(action(w).element);
+      press('g', { bubbles: true, cancelable: true });
+      press('a', { bubbles: true, cancelable: true });
+      await flushFakeClientWithMacrotasks(fake, 3);
+      expect(w.find('[data-test="account-panel"]').exists()).toBe(true);
+    });
+
     it('does not scroll the page to the action', async () => {
       const focus = vi.spyOn(HTMLElement.prototype, 'focus');
       gmail(none);
       const w = mountApp();
       await flushFakeClientWithMacrotasks(fake, 3);
-      const calls = focus.mock.instances.map((instance, index) => [instance, focus.mock.calls[index]] as const)
-        .filter(([instance]) => instance === action(w).element);
+      const target = action(w).element;
+      const calls = focus.mock.contexts.flatMap((context, index) => (context === target ? [focus.mock.calls[index]?.[0]] : []));
       expect(calls.length).toBeGreaterThan(0);
-      for (const [, args] of calls) expect(args[0]).toEqual({ preventScroll: true });
+      for (const options of calls) expect(options).toEqual({ preventScroll: true });
     });
   });
 
