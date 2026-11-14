@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
-  "description": "Main window only: approved named mail/search commands including read-only cached Trash, UX-08 star commands, two UX-09 read-only provider-destination commands, UX-05 operation-group commands, local-draft commands, local reminder commands, close-protocol commands, four UX-12 download/link commands, and the core event listener. No plugins, no shell, no broad capability grants.",
+  "description": "Main window only: approved named mail/search commands including read-only cached Trash, UX-08 star commands, two UX-09 read-only provider-destination commands, UX-05 operation-group commands, local-draft commands, local reminder commands, close-protocol commands, the two one-time fixture-transition commands, four UX-12 download/link commands, and the core event listener. No plugins, no shell, no broad capability grants.",
   "windows": ["main"],
   "permissions": [
     "core:event:allow-listen",
@@ -48,6 +48,8 @@
     "allow-delete-draft",
     "allow-get-app-close-request",
     "allow-complete-app-close",
-    "allow-cancel-app-close"
+    "allow-cancel-app-close",
+    "allow-get-fixture-transition-status",
+    "allow-accept-fixture-transition"
   ]
 }

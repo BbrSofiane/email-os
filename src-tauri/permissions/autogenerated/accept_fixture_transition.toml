@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-accept-fixture-transition"
+description = "Enables the accept_fixture_transition command without any pre-configured scope."
+commands.allow = ["accept_fixture_transition"]
+
+[[permission]]
+identifier = "deny-accept-fixture-transition"
+description = "Denies the accept_fixture_transition command without any pre-configured scope."
+commands.deny = ["accept_fixture_transition"]

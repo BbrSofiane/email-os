@@ -46,6 +46,8 @@ export const DELETE_DRAFT_COMMAND = 'delete_draft';
 export const DRAFTS_CHANGED_EVENT = 'drafts_changed';
 export const APP_CLOSE_REQUESTED_EVENT = 'app_close_requested';
 export const GET_APP_CLOSE_REQUEST_COMMAND = 'get_app_close_request';
+export const GET_FIXTURE_TRANSITION_STATUS_COMMAND = 'get_fixture_transition_status';
+export const ACCEPT_FIXTURE_TRANSITION_COMMAND = 'accept_fixture_transition';
 export const COMPLETE_APP_CLOSE_COMMAND = 'complete_app_close';
 export const CANCEL_APP_CLOSE_COMMAND = 'cancel_app_close';
 
@@ -426,6 +428,17 @@ export type SessionCapabilities = {
  * still `mutationAccess` (Gmail) or always (a synthetic session).
  */
 triageSurfaces: boolean, };
+
+export type FixtureTransitionState = "not_needed" | "needs_disclosure" | "done" | "failed";
+
+export type FixtureTransitionFailure = { "kind": "insufficient_disk", requiredMegabytes: number, availableMegabytes: number, } | { "kind": "backup_failed" } | { "kind": "reset_failed" };
+
+export type FixtureTransitionStatus = { state: FixtureTransitionState,
+/**
+ * Size of the existing synthetic data in whole megabytes (at least 1),
+ * present while `needsDisclosure`.
+ */
+legacyMegabytes?: number, failure?: FixtureTransitionFailure, };
 
 export type AccountStatus = { mode: MailMode, connection: ConnectionState, account: AccountInfo | null, sync: SyncInfo, mutationAccess?: MutationAccess,
 /**

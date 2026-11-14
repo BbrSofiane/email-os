@@ -11,6 +11,7 @@ pub mod clock;
 pub mod drafts;
 pub mod dto;
 pub mod error;
+pub mod fixture_transition;
 pub mod gmail;
 pub mod groups;
 mod lock;

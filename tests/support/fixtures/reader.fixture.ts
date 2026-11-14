@@ -407,6 +407,8 @@ export function createReaderFixtureClient(): ReaderFixture {
       account: { accountId: READER_ACCOUNT_ID, emailAddress: ACCOUNT_EMAIL },
       sync: { state: 'idle', lastSyncedAt: READ_NOW, error: null, cachedConversations: 4, initialSyncComplete: true, coverageLimit: 0 },
     } satisfies AccountStatus),
+    getFixtureTransitionStatus: () => Promise.resolve({ state: 'not_needed' }),
+    acceptFixtureTransition: () => Promise.resolve({ state: 'not_needed' }),
     connectAccount: () => Promise.resolve(),
     disconnectAccount: () => Promise.resolve(),
     requestSync: () => Promise.resolve(),

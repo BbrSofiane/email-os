@@ -31,6 +31,8 @@ import {
   APP_CLOSE_REQUESTED_EVENT,
   DISCONNECT_ACCOUNT_COMMAND,
   GET_ACCOUNT_STATUS_COMMAND,
+  GET_FIXTURE_TRANSITION_STATUS_COMMAND,
+  ACCEPT_FIXTURE_TRANSITION_COMMAND,
   GET_APP_CLOSE_REQUEST_COMMAND,
   GET_DRAFT_COMMAND,
   GET_CONVERSATION_COMMAND,
@@ -57,6 +59,7 @@ import {
   UNDO_OPERATION_COMMAND,
   type AccountStatus,
   type AppCloseRequest,
+  type FixtureTransitionStatus,
   type CreateDraft,
   type DeleteDraft,
   type Draft,
@@ -176,6 +179,12 @@ export function createTauriMailClient(): MailClient {
     },
     getAccountStatus(): Promise<AccountStatus> {
       return call<AccountStatus>(GET_ACCOUNT_STATUS_COMMAND);
+    },
+    getFixtureTransitionStatus(): Promise<FixtureTransitionStatus> {
+      return call<FixtureTransitionStatus>(GET_FIXTURE_TRANSITION_STATUS_COMMAND);
+    },
+    acceptFixtureTransition(): Promise<FixtureTransitionStatus> {
+      return call<FixtureTransitionStatus>(ACCEPT_FIXTURE_TRANSITION_COMMAND);
     },
     connectAccount(): Promise<void> {
       return call<void>(CONNECT_ACCOUNT_COMMAND);
