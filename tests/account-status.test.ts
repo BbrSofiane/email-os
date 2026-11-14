@@ -5,11 +5,13 @@ import {
   accountNotice,
   describeMailError,
   describeSyncFailure,
+  drawerShowsSameFailure,
   emptyLineOwnsStatus,
   headerNoteAnnounces,
   headerNoticeAction,
   inboxEmptyState,
   readOnlyHintShown,
+  splitNoticeText,
 } from '../src/lib/account-status';
 import type { AccountStatus, ConnectionState, MailError, MutationAccess, SyncInfo } from '../src/lib/ipc/client';
 
@@ -233,6 +235,58 @@ describe('inboxEmptyState', () => {
   });
 });
 
+describe('inboxEmptyState tone (the empty line echoes the header note tone)', () => {
+  it('is danger for a failed sync, warning for an expired sign-in and neutral for everything else', () => {
+    expect(inboxEmptyState(status({ sync: { state: 'error', error: { kind: 'network_unavailable' } as MailError } }))!.tone).toBe('danger');
+    expect(inboxEmptyState(status({ sync: { state: 'error', error: null } }))!.tone).toBe('danger');
+    expect(inboxEmptyState(status({ connection: 'auth_required' }))!.tone).toBe('warning');
+    for (const patch of [
+      { connection: 'not_configured' as const },
+      { connection: 'disconnected' as const },
+      { connection: 'authenticating' as const },
+      { sync: { state: 'syncing' as const, initialSyncComplete: false } },
+      { sync: { state: 'idle' as const, initialSyncComplete: false } },
+      {},
+    ]) {
+      expect(inboxEmptyState(status(patch))!.tone, JSON.stringify(patch)).toBe('neutral');
+    }
+  });
+
+  it('never disagrees with the header note: where both exist they have the same tone', () => {
+    for (const patch of [
+      { connection: 'not_configured' as const },
+      { connection: 'disconnected' as const },
+      { connection: 'auth_required' as const },
+      { connection: 'authenticating' as const },
+      { sync: { state: 'syncing' as const, initialSyncComplete: false } },
+      { sync: { state: 'error' as const, error: { kind: 'rate_limited' } as MailError } },
+      { sync: { state: 'error' as const, error: null } },
+    ]) {
+      const next = status(patch);
+      expect(inboxEmptyState(next)!.tone, JSON.stringify(patch)).toBe(accountNotice(next)!.tone);
+    }
+  });
+});
+
+describe('splitNoticeText', () => {
+  it('splits at the first separator so the lead can stay whole and the detail can yield', () => {
+    expect(splitNoticeText('Sync failed · no network · 0 cached')).toEqual({ lead: 'Sync failed', detail: ' · no network · 0 cached' });
+    expect(splitNoticeText('Syncing first mail · 7 cached')).toEqual({ lead: 'Syncing first mail', detail: ' · 7 cached' });
+  });
+
+  it('keeps a note with no separator as one lead', () => {
+    expect(splitNoticeText('Sign-in expired')).toEqual({ lead: 'Sign-in expired', detail: '' });
+    expect(splitNoticeText('Syncing…')).toEqual({ lead: 'Syncing…', detail: '' });
+  });
+
+  it('joins back to the visible text for every note', () => {
+    const notice = accountNotice(status({ sync: { state: 'error', error: { kind: 'network_unavailable' } as MailError, initialSyncComplete: false } }))!;
+    const { lead, detail } = splitNoticeText(notice.text);
+    expect(lead + detail).toBe(notice.text);
+    expect(lead).toBe('Sync failed');
+  });
+});
+
 describe('emptyLineOwnsStatus', () => {
   it('gives the status sentence to the empty line in every zero-row state that has one', () => {
     for (const patch of [
@@ -267,5 +321,30 @@ describe('headerNoteAnnounces', () => {
     expect(headerNoteAnnounces(status({ connection: 'auth_required' }), true)).toBe(true);
     expect(headerNoteAnnounces(status({ sync: { state: 'syncing' } }), true)).toBe(true);
     expect(headerNoteAnnounces(null, true)).toBe(true);
+  });
+});
+
+describe('drawerShowsSameFailure', () => {
+  it('is true only while the Account drawer is open and shows the typed sync failure as its alert', () => {
+    const failed = status({ sync: { state: 'error', error: { kind: 'network_unavailable' } as MailError } });
+    expect(drawerShowsSameFailure(failed, true)).toBe(true);
+    expect(drawerShowsSameFailure(failed, false)).toBe(false);
+    expect(drawerShowsSameFailure(status({ sync: { state: 'error', error: null } }), true)).toBe(false);
+    expect(drawerShowsSameFailure(status({ connection: 'auth_required' }), true)).toBe(false);
+    expect(drawerShowsSameFailure(status({ sync: { state: 'syncing' } }), true)).toBe(false);
+    expect(drawerShowsSameFailure(status({ mode: 'fixture' }), true)).toBe(false);
+    expect(drawerShowsSameFailure(null, true)).toBe(false);
+  });
+
+  it('is the exact opposite of the header note announcing', () => {
+    for (const next of [
+      status({ sync: { state: 'error', error: { kind: 'network_unavailable' } as MailError } }),
+      status({ sync: { state: 'error', error: null } }),
+      status({ connection: 'auth_required' }),
+      status(),
+      null,
+    ]) {
+      for (const open of [true, false]) expect(headerNoteAnnounces(next, open)).toBe(!drawerShowsSameFailure(next, open));
+    }
   });
 });

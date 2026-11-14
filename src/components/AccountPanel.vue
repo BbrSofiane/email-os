@@ -96,7 +96,16 @@ const coverageText = computed(() => sync.value.coverageLimit > 0
 /** The inline Retry beside the error covers Sync now; without a typed error there is no Retry. */
 const retryShown = computed(() => errorLine.value !== '');
 
-const showConnect = computed(() => connection.value === 'not_configured' || connection.value === 'disconnected' || connection.value === 'auth_required');
+/** Not configured has no Google client ID to connect with: Connect would only fail, so the next step is the note instead. */
+const showConnect = computed(() => connection.value === 'disconnected' || connection.value === 'auth_required');
+/**
+ * While sign-in has expired the cache and the last sync date are real, but "Idle" (a sync state) and
+ * "Never synced" (a claim about a past this device cannot confirm without a sign-in) are not: they drop out,
+ * and the cached count stays.
+ */
+const signedOut = computed(() => connection.value === 'auth_required');
+const stateWordShown = computed(() => !retryShown.value && !(signedOut.value && sync.value.state === 'idle'));
+const lastSyncedShown = computed(() => !!sync.value.lastSyncedAt || !signedOut.value);
 const canEnable = computed(() => access.value === 'read_only' && connection.value === 'connected');
 const showPermissions = computed(() => canEnable.value || access.value === 'upgrading' || access.value === 'enabled');
 const showSession = computed(() => props.status.account !== null || connection.value === 'auth_required' || connection.value === 'authenticating');
@@ -160,12 +169,14 @@ watch(connection, (next) => { if (next === 'authenticating') confirming.value = 
     <div v-if="syncShown" class="account-section">
       <h3 class="account-label">Sync</h3>
       <p class="account-line account-sync-line">
-        <template v-if="!retryShown">
+        <template v-if="stateWordShown">
           <span data-test="account-sync-state">{{ syncLabel }}</span>
           <span class="account-sep" aria-hidden="true">·</span>
         </template>
-        <span data-test="account-last-synced"><template v-if="sync.lastSyncedAt">Last synced <FullDate :at="sync.lastSyncedAt" /></template><template v-else>Never synced</template></span>
-        <span class="account-sep" aria-hidden="true">·</span>
+        <template v-if="lastSyncedShown">
+          <span data-test="account-last-synced"><template v-if="sync.lastSyncedAt">Last synced <FullDate :at="sync.lastSyncedAt" /></template><template v-else>Never synced</template></span>
+          <span class="account-sep" aria-hidden="true">·</span>
+        </template>
         <span data-test="account-cached">{{ cachedLabel }}</span>
       </p>
       <p v-if="coverageText" class="account-note" data-test="account-coverage">{{ coverageText }}</p>

@@ -123,6 +123,17 @@ export function headerNoticeAction(
   return notice.kind === 'not_configured' ? { action: 'account', label: 'Account' } : null;
 }
 
+/**
+ * The note's words as a lead and a detail, split at the first " · ". The lead
+ * ("Sync failed", "Sign-in expired") is what the header keeps whole while the
+ * detail (the cause, the cached count) ellipsizes first. `lead + detail` is
+ * always the original text.
+ */
+export function splitNoticeText(text: string): { lead: string; detail: string } {
+  const at = text.indexOf(' · ');
+  return at === -1 ? { lead: text, detail: '' } : { lead: text.slice(0, at), detail: text.slice(at) };
+}
+
 /** Null in fixture mode, without a status, and while connected and idle. */
 export function accountNotice(status: AccountStatus | null): AccountNotice | null {
   if (!status || status.mode !== 'gmail') return null;
@@ -188,6 +199,12 @@ export const NOT_CONFIGURED_HINT = 'Add a Google client ID to the launch environ
 export interface InboxEmpty {
   kind: InboxEmptyKind;
   text: string;
+  /**
+   * The same tone the header note has for this state: Coral Fault for a failed
+   * sync, Amber Notice for an expired sign-in, Ash otherwise. The words carry the
+   * status; the tone only echoes them.
+   */
+  tone: AccountNotice['tone'];
   /** One quieter line under the sentence; absent in most states. */
   hint?: string;
   action: InboxEmptyAction | null;
@@ -204,28 +221,29 @@ export function inboxEmptyState(status: AccountStatus | null): InboxEmpty | null
   const { sync } = status;
   switch (status.connection) {
     case 'not_configured':
-      return { kind: 'not_configured', text: 'Gmail is not configured on this device.', hint: NOT_CONFIGURED_HINT, action: 'account', actionLabel: 'Account' };
+      return { kind: 'not_configured', text: 'Gmail is not configured on this device.', tone: 'neutral', hint: NOT_CONFIGURED_HINT, action: 'account', actionLabel: 'Account' };
     case 'disconnected':
-      return { kind: 'disconnected', text: 'Not connected.', hint: FIRST_RUN_HINT, action: 'connect', actionLabel: 'Connect Gmail' };
+      return { kind: 'disconnected', text: 'Not connected.', tone: 'neutral', hint: FIRST_RUN_HINT, action: 'connect', actionLabel: 'Connect Gmail' };
     case 'auth_required':
-      return { kind: 'auth_required', text: 'Sign-in expired.', action: 'connect', actionLabel: 'Sign in again' };
+      return { kind: 'auth_required', text: 'Sign-in expired.', tone: 'warning', action: 'connect', actionLabel: 'Sign in again' };
     case 'authenticating':
-      return { kind: 'authenticating', text: 'Finish sign-in in your browser.', action: 'cancel', actionLabel: 'Cancel sign-in' };
+      return { kind: 'authenticating', text: 'Finish sign-in in your browser.', tone: 'neutral', action: 'cancel', actionLabel: 'Cancel sign-in' };
     case 'connected':
       break;
   }
   if (sync.state === 'error') {
     // No typed cause reads "Sync failed: Unknown error.": a failure with an unknown cause, not a made-up one.
-    return { kind: 'sync_error', text: sync.error ? describeSyncFailure(sync.error) : 'Sync failed: Unknown error.', action: 'sync', actionLabel: 'Retry' };
+    return { kind: 'sync_error', text: sync.error ? describeSyncFailure(sync.error) : 'Sync failed: Unknown error.', tone: 'danger', action: 'sync', actionLabel: 'Retry' };
   }
   if (!sync.initialSyncComplete) {
     return sync.state === 'syncing'
-      ? { kind: 'syncing', text: `Syncing first mail… ${sync.cachedConversations} cached.`, action: null, actionLabel: '' }
-      : { kind: 'sync_unfinished', text: 'Initial sync has not finished.', action: 'sync', actionLabel: 'Sync now' };
+      ? { kind: 'syncing', text: `Syncing first mail… ${sync.cachedConversations} cached.`, tone: 'neutral', action: null, actionLabel: '' }
+      : { kind: 'sync_unfinished', text: 'Initial sync has not finished.', tone: 'neutral', action: 'sync', actionLabel: 'Sync now' };
   }
   return {
     kind: 'empty',
     text: status.mutationAccess === 'enabled' ? INBOX_EMPTY_RECOVERABLE : INBOX_EMPTY_READ_ONLY,
+    tone: 'neutral',
     action: null,
     actionLabel: '',
   };
@@ -242,12 +260,18 @@ export function emptyLineOwnsStatus(empty: InboxEmpty | null, emptyLineShown: bo
 }
 
 /**
- * The header note is a polite status. While the Account drawer is open and shows
- * the same sync failure as its alert, the note goes silent (its words and Retry
- * stay) so the failure is announced once. Connection notes are not repeated by
- * the drawer's alert, so they keep announcing.
+ * True while the Account drawer is open and shows the typed sync failure as its
+ * own `role="alert"` (with its Retry). The header note says the same thing, so it
+ * then drops its visible words and link and goes silent: the failure is seen and
+ * announced once. A failure with no typed cause has no drawer alert, and a
+ * connection note is not repeated by the drawer's alert, so neither is hidden.
  */
+export function drawerShowsSameFailure(status: AccountStatus | null, accountDrawerOpen: boolean): boolean {
+  if (!accountDrawerOpen || !status || status.mode !== 'gmail') return false;
+  return status.connection === 'connected' && status.sync.state === 'error' && !!status.sync.error;
+}
+
+/** The header note is a polite status; it goes silent exactly while the drawer shows the same failure. */
 export function headerNoteAnnounces(status: AccountStatus | null, accountDrawerOpen: boolean): boolean {
-  if (!accountDrawerOpen || !status || status.mode !== 'gmail') return true;
-  return !(status.connection === 'connected' && status.sync.state === 'error' && !!status.sync.error);
+  return !drawerShowsSameFailure(status, accountDrawerOpen);
 }

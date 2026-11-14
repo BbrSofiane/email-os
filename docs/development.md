@@ -496,7 +496,10 @@ mail… N cached**, **Sync failed: …** with **Retry** (the network cause alway
 **no network**), **Initial sync has not finished** with **Sync now**, or (not
 configured) a link to Account with the next step (add a Google client ID to the
 launch environment, then restart). Only a connected, fully synced, empty account
-shows the real empty text. Under **Not connected** one line says what Connect does
+shows the real empty text. In a zero-row state the sentence echoes its tone, the
+same as the header note: Coral Fault for a failed sync, Amber Notice for an
+expired sign-in, Ash otherwise (the words stay; the action link and hint keep their
+own colours). Under **Not connected** one line says what Connect does
 (it opens Google sign-in in the browser and starts read-only, so Email OS cannot
 change mail until you enable mailbox actions). **In a zero-row state the empty line
 owns the status sentence:** the header shows only the Preview tag, and its status
@@ -505,16 +508,28 @@ repeats the connection or sync fact (Not connected, Sign-in expired, Syncing…,
 Sync failed with its cause in words, for example Sync failed · no network; there
 is no Offline wording); its action link is shown only when the empty line is not
 carrying the action. While the Account drawer shows a sync failure as an alert,
-the header note stays silent so it is announced once. Any status note replaces the
-read-only hint, which at 1100px and below collapses to its Review access link.
+the header note drops its words and link and stays silent, so the failure and its
+Retry are seen and announced once (the Preview tag stays). Any status note replaces
+the read-only hint, which at 1100px and below collapses to its Review access link.
+At 1100px and below the Preview tag yields first (short `Preview`, then only its
+accessible text while a note or the hint needs room); `Sync failed` and the action
+link never clip, and only the cause words ellipsize. jsdom cannot measure layout:
+the CSS is pinned by `tests/account-header.layout-css.test.ts` and was measured once
+in headless Chromium against the in-memory fake.
 The note is absent while connected and idle. One name per action everywhere:
 **Connect Gmail**, **Sign in again**, **Cancel sign-in**, **Retry**, **Sync now**.
 The Account drawer shows the permission mode and the Sync section only where they
-are real (not while disconnected, not configured or signing in). **Connect Gmail**
-(or **Sign in again**) and **Sync now** are palette commands only while they can run
+are real (not while disconnected, not configured or signing in); a signed-out
+account keeps its mode and cached count but not the `Idle` or `Never synced` words.
+**Connect Gmail** is offered only while disconnected and **Sign in again** after
+expiry: a device that is not configured has no client ID to connect with, so there
+is no Connect button, palette command or Provider mail link, only the next step.
+**Connect Gmail** (or **Sign in again**) and **Sync now** are palette commands only while they can run
 (Connect ranks above Go to; during a sync failure the Account group leads the
 palette), and `G` then `A` (within 1 second, Gmail mode only) opens Account. The
-contact pane says nothing about a missing correspondent while the list has no rows.
+contact column is not rendered while a ready list has no rows (no reader, no reply
+target): the list takes its width and, below 1000px, the rail has no Contact button.
+It returns as soon as rows exist, and stays while the list is loading or failed.
 None of these gates mailbox actions: actions depend on `mutationAccess`, not on the
 connection. All of it is verified with the synthetic in-memory fake; real OAuth,
 sync and Keychain behavior stay operator-gated.

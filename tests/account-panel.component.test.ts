@@ -75,10 +75,28 @@ describe('AccountPanel structure', () => {
     expect(test(ar, 'account-connect').text()).toBe('Sign in again');
   });
 
-  it('names the connect button Connect Gmail wherever it is not a re-sign-in', () => {
-    for (const connection of ['disconnected', 'not_configured'] as const) {
-      expect(test(mountPanel(status({ connection, account: null })), 'account-connect').text()).toBe('Connect Gmail');
-    }
+  it('names the connect button Connect Gmail when disconnected, and offers none when not configured (nothing to connect with)', () => {
+    expect(test(mountPanel(status({ connection: 'disconnected', account: null })), 'account-connect').text()).toBe('Connect Gmail');
+    const nc = mountPanel(status({ connection: 'not_configured', account: null }));
+    expect(test(nc, 'account-connect').exists()).toBe(false);
+    expect(nc.text()).not.toMatch(/Connect Gmail/);
+    expect(test(nc, 'account-not-configured').text()).toContain('Add a Google client ID to the launch environment, then restart.');
+  });
+
+  it('says only the facts that are still true after sign-in expires: the cache stays, the idle and never-synced words do not', () => {
+    const expired = mountPanel(status({ connection: 'auth_required', sync: { state: 'idle', lastSyncedAt: null, cachedConversations: 18 } }));
+    // The mode is a real grant and the cache is real, so both stay.
+    expect(test(expired, 'account-mode').exists()).toBe(true);
+    expect(test(expired, 'account-cached').text()).toBe('18 conversations cached');
+    // "Idle" is a sync state and "Never synced" a claim about the past; neither is known while signed out.
+    expect(test(expired, 'account-sync-state').exists()).toBe(false);
+    expect(expired.text()).not.toMatch(/Idle|Never synced/);
+    // A known last sync date is still real and still shown.
+    const synced = mountPanel(status({ connection: 'auth_required', sync: { lastSyncedAt: '2025-01-01T00:00:00.000Z', cachedConversations: 18 } }));
+    expect(test(synced, 'account-last-synced').text()).toContain('Last synced');
+    expect(test(synced, 'account-sync-state').exists()).toBe(false);
+    // A connected account keeps the state word.
+    expect(test(mountPanel(status()), 'account-sync-state').text()).toBe('Idle');
   });
 
   it('shows the permission mode only where a grant is real (connected or signed out), not before there is an account', () => {

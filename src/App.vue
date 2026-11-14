@@ -46,7 +46,7 @@ import SelectionBar from './components/SelectionBar.vue';
 import HeaderGlyph from './components/HeaderGlyph.vue';
 import PaneGlyph from './components/PaneGlyph.vue';
 import { browsingActions, actionLabel, type BrowsingActionId } from './lib/browsing-actions';
-import { INBOX_EMPTY_RECOVERABLE, accountNotice, emptyLineOwnsStatus, headerNoteAnnounces, headerNoticeAction, inboxEmptyState, readOnlyHintShown, type AccountNoticeAction, type InboxEmptyAction } from './lib/account-status';
+import { INBOX_EMPTY_RECOVERABLE, accountNotice, drawerShowsSameFailure, emptyLineOwnsStatus, headerNoteAnnounces, headerNoticeAction, inboxEmptyState, readOnlyHintShown, splitNoticeText, type AccountNoticeAction, type InboxEmptyAction } from './lib/account-status';
 import { groupRowsBySender, isSingleFromQuery, senderGroupKey, validateSearch } from './lib/search';
 import InboxList from './components/InboxList.vue';
 import SplitEditor from './components/SplitEditor.vue';
@@ -430,9 +430,13 @@ const headerAction = computed(() => headerNoticeAction(statusNotice.value, empty
 // One sentence, one place: while the empty line carries the status sentence, the header note drops its visible
 // words (the Preview tag stays) and keeps only its one announcement, so the sentence and the ticking cached
 // count are never shown twice.
-const noteWordsHidden = computed(() => emptyLineOwnsStatus(inboxEmpty.value, emptyLineShown.value));
-// While the Account drawer shows the same sync failure as its alert, the note stays silent (no double announcement).
+// While the Account drawer shows the same sync failure as its alert (with its own Retry), the note drops its
+// words and link too, and stays silent: the failure and its fix are seen and announced once. The Preview tag stays.
+const drawerHasFailure = computed(() => drawerShowsSameFailure(accountStatus.value, drawer.value === 'account'));
+const noteWordsHidden = computed(() => emptyLineOwnsStatus(inboxEmpty.value, emptyLineShown.value) || drawerHasFailure.value);
 const noteAnnounces = computed(() => headerNoteAnnounces(accountStatus.value, drawer.value === 'account'));
+// The lead ("Sync failed") stays whole; the detail (cause, cached count) is what ellipsizes first.
+const noteParts = computed(() => splitNoticeText(statusNotice.value?.text ?? ''));
 // The contact pane says nothing about a missing correspondent when no row can be focused.
 const contactListEmpty = computed(() => !readerOpen.value && mailbox.conversations.value.length === 0);
 // Provider mail with no account: Connect (or Account when nothing can be connected), never an action of its own.
@@ -781,7 +785,7 @@ function onViewportChange(event: MediaQueryListEvent): void {
 }
 
 async function toggleContactDisclosure(): Promise<void> {
-  if (wideViewport.value) return;
+  if (wideViewport.value || contactCollapsed.value) return;
   // Leaving an active drafts editor must go through its protected lifecycle
   // rather than unmounting the panel silently; on failure it stays visible.
   if ((drawer.value === 'drafts' || replyComposerOpen.value || composeCardOpen.value) && !contactDisclosure.value) {
@@ -902,6 +906,28 @@ const composeTarget = computed<ContactInfo | null>(() => {
   const to = drafts.content.value.to;
   return to.trim() ? { displayName: null, mailbox: to } : null;
 });
+// A ready list with no rows, no open reader and no reply target has no conversation to have a contact: the
+// column takes no width (the list does) and the rail has no Contact button. While loading or failed, rows may
+// still arrive, so nothing collapses then. With rows and a selected conversation nothing changes.
+const contactCollapsed = computed(() => accountReady.value && mailbox.listState.value === 'ready'
+  && mailbox.conversations.value.length === 0 && !readerOpen.value && !composeTarget.value);
+// The column or the disclosure disappears with the last row: close the disclosure, and if focus was inside
+// the contact surface hand it to the empty line instead of dropping it to <body>.
+watch(contactCollapsed, (collapsed) => {
+  if (!collapsed) return;
+  const active = document.activeElement;
+  const hadFocus = active instanceof Node && (
+    (contactColumnEl.value?.contains(active) ?? false)
+    || (contactPanelEl.value?.contains(active) ?? false)
+    || active === contactDisclosureButton.value
+  );
+  contactDisclosure.value = false;
+  if (!hadFocus) return;
+  void nextTick().then(() => {
+    if (workspaceActive.value && !overlay.value && !drawer.value) emptyState.value?.focus({ preventScroll: true });
+  });
+}, { flush: 'pre' });
+
 const drawerRecipientLabel = computed<string | null>(() => {
   const target = composeTarget.value;
   return target ? (target.displayName ?? target.mailbox) : null;
@@ -1713,8 +1739,9 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   if (['inbox', 'done', 'activity'].includes(id)) return !!accountId.value;
   if (id === 'search') return !!accountId.value && !drawer.value && !contactDisclosure.value;
   if (id === 'account') return gmailMode.value;
+  // Not configured has no client ID to connect with, so Connect would only fail: the next step is in Account.
   if (id === 'connect') return gmailMode.value && accountActionsIdle.value
-    && ['not_configured', 'disconnected', 'auth_required'].includes(accountStatus.value?.connection ?? '');
+    && ['disconnected', 'auth_required'].includes(accountStatus.value?.connection ?? '');
   if (id === 'sync') return gmailMode.value && accountActionsIdle.value
     && accountStatus.value?.connection === 'connected' && accountStatus.value.sync.state !== 'syncing';
   if (id === 'destinations') return (gmailMode.value || props.mode === 'browser-preview') && !!accountId.value;
@@ -2296,7 +2323,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
 
 <template>
   <div ref="appRoot" class="app" :data-client-mode="props.mode">
-    <main class="app-main" :inert="!!overlay || !!attachmentConversation || undefined">
+    <main class="app-main" :class="{ 'contact-collapsed': contactCollapsed }" :inert="!!overlay || !!attachmentConversation || undefined">
       <!-- Split header (DESIGN.md "Split Tabs"): one borderless 78px strip in
            the list column. Destinations hamburger on the left, split tabs on
            the 50px content inset, quiet notes and glyphs on the right. It sits
@@ -2326,12 +2353,12 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
                announced; empty (display: none) when idle. It grows leftward in
                the trail, so the glyphs never move. -->
           <span class="chord-hint" role="status" data-test="chord-hint"><template v-if="goPending"><span aria-hidden="true">g…</span><span class="visually-hidden">{{ goHintLabel }}</span></template></span>
-          <p v-if="props.mode === 'browser-preview'" class="header-note preview-tag" data-test="preview-banner" role="note" :title="BROWSER_PREVIEW_DISCLOSURE"><span aria-hidden="true">Preview · in-memory</span><span class="visually-hidden">{{ BROWSER_PREVIEW_DISCLOSURE }}</span></p>
+          <p v-if="props.mode === 'browser-preview'" class="header-note preview-tag" data-test="preview-banner" role="note" :title="BROWSER_PREVIEW_DISCLOSURE"><span aria-hidden="true"><span class="preview-word">Preview</span><span class="preview-detail"> · in-memory</span></span><span class="visually-hidden">{{ BROWSER_PREVIEW_DISCLOSURE }}</span></p>
           <!-- One account fact (connection or sync), same pattern as the preview tag: terse
                visible words, the full sentence as the title and visually hidden text. The hidden
                text never carries the ticking cached count, so it is announced once. -->
           <p v-if="statusNotice" class="header-note account-status-note" :class="[`tone-${statusNotice.tone}`, { 'visually-hidden': noteWordsHidden }]" :role="noteAnnounces ? 'status' : undefined" data-test="account-status-note" :data-kind="statusNotice.kind" :title="statusNotice.title">
-            <span class="note-text" aria-hidden="true">{{ statusNotice.text }}</span><span class="visually-hidden" :aria-hidden="noteAnnounces ? undefined : 'true'">{{ statusNotice.title }}</span>
+            <span class="note-text" aria-hidden="true"><span class="note-lead">{{ noteParts.lead }}</span><span v-if="noteParts.detail" class="note-detail">{{ noteParts.detail }}</span></span><span class="visually-hidden" :aria-hidden="noteAnnounces ? undefined : 'true'">{{ statusNotice.title }}</span>
             <template v-if="!noteWordsHidden && headerAction && (headerAction.action === 'account' || accountActionsIdle)"><span class="note-sep" aria-hidden="true">·</span><button type="button" class="header-link" data-test="account-status-action" @click="accountNoticeAction(headerAction.action, 'header')">{{ headerAction.label }}</button></template>
           </p>
           <p v-if="readOnlyHint" class="header-note access-hint" data-test="mailbox-access-hint">
@@ -2448,7 +2475,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               @click="toggleDrawer('drafts')"
             ><PaneGlyph name="drafts" /><span class="rail-label">Drafts</span></button>
             <button
-              v-if="!wideViewport"
+              v-if="!wideViewport && !contactCollapsed"
               type="button"
               class="rail-item"
               data-test="contact-disclosure"
@@ -2584,6 +2611,8 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             <p
               v-else-if="mailbox.conversations.value.length === 0"
               class="list-state"
+              :class="inboxEmpty ? `tone-${inboxEmpty.tone}` : undefined"
+              :data-tone="inboxEmpty?.tone"
               data-test="inbox-empty"
               ref="emptyState"
               tabindex="-1"
@@ -2744,7 +2773,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
         <!-- The fixed drawer overlays this column too; its copy controls must
              not stay focusable while covered (same inert contract as central). -->
         <aside
-          v-if="wideViewport"
+          v-if="wideViewport && !contactCollapsed"
           class="contact-column"
           data-test="contact-column"
           tabindex="-1"

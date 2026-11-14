@@ -69,7 +69,9 @@ independently retrievable regardless of the browsing filter.
   window; in the other mode that second key is an ordinary key.
 - Palette order: groups are fixed (Conversation, Selection, View, Go to, Account);
   while Connect can run, Account moves right above Go to so `Connect Gmail`
-  outranks `Go to Account`. While a sync has failed and Sync now can run, Account
+  outranks `Go to Account`. A device that is not configured has no `Connect
+  Gmail` command (there is no client ID to connect with); `Go to Account` is its
+  way forward. While a sync has failed and Sync now can run, Account
   leads the whole palette so `Sync now` is the highlighted first row. Account
   commands carry the same names as every other surface: `Connect Gmail`, `Sign in
   again`, `Sync now`. The Keys list drops the row keys (J/K, X, Shift+J/K) while

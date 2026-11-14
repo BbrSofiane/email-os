@@ -324,20 +324,18 @@ describe('App (Slice 02 Gmail account states)', () => {
     expect(fake.controls.activity().find((op) => op.id === original.operationId)?.status).toBe('confirmed');
   });
 
-  it('shows a visible not_configured state with no mailbox content and no fallback', async () => {
+  it('shows a visible not_configured state with no mailbox content, no fallback and nothing to connect with', async () => {
     gmail({ connection: 'not_configured', emailAddress: null, cachedConversations: 0, initialSyncComplete: false });
     const w = mountApp();
     await settle();
     await openUtilityDrawer(w, 'account');
     expect(w.find('[data-test="account-not-configured"]').exists()).toBe(true);
+    expect(w.find('[data-test="account-not-configured"]').text()).toContain('Add a Google client ID to the launch environment, then restart.');
     expect(conversationRows(w)).toHaveLength(0);
-    const connect = w.find('[data-test="account-connect"]');
-    expect(connect.exists()).toBe(true);
-
-    await connect.trigger('click');
-    await settle();
-    expect(w.find('[data-test="account-connection"]').text()).toContain('Connected');
-    expect(conversationRows(w)).toHaveLength(18);
+    // Connect would only fail: it is not offered. The connection stays what it is.
+    expect(w.find('[data-test="account-connect"]').exists()).toBe(false);
+    expect(w.find('[data-test="account-connection"]').text()).toContain('Not configured');
+    expect(conversationRows(w)).toHaveLength(0);
   });
 
   it('moves from disconnected to connected through the connect control', async () => {
