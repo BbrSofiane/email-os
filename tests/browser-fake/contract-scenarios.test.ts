@@ -40,16 +40,6 @@ const KNOWN_DIVERGENCES: Array<{ scenario: string; profile: Profile; why: string
     profile: 'fixture',
     why: 'KD-2: the native shell answers setRead/setReadGroup in fixture mode with invalid_request{field:mode}; the fake (and the client.ts contract comment) say read_only, and tests/browser-fake/groups.test.ts asserts read_only. Needs a decision on which is intended.',
   },
-  {
-    scenario: 'group-undo-without-an-eligible-member',
-    profile: 'gmail',
-    why: 'KD-3: both Rust stores accept an undo attempt on an all-ineligible group (every member skipped, group marked undone) while their status reports undo unavailable (not_applicable); the fake rejects the attempt with not_applicable (existing test review U16). Needs a decision on which is intended.',
-  },
-  {
-    scenario: 'group-undo-without-an-eligible-member',
-    profile: 'fixture',
-    why: 'KD-3: same as the gmail profile.',
-  },
 ];
 
 function mailboxOf(scenario: Scenario): MailboxJson {

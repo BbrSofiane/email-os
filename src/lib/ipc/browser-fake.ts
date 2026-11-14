@@ -673,16 +673,30 @@ export function createBrowserFakeMailClient(
       || groups.some((g) => g.acceptedChildren > 0 && g.seq > seq);
   }
 
-  /** One group's undo window: latest top-level action, 10 s from group
-   * acceptance, and at least one member still eligible (an all-ineligible
-   * group offers no enabled Undo, §5). */
-  function groupUndoBlocker(group: InternalGroup): MailError | null {
+  /** The rules a group Undo ATTEMPT must pass, in the order the Rust stores
+   * apply them (`check_group_undoable`): not already undone, inside the 10 s
+   * window from group acceptance, and still the latest top-level action. A
+   * group with no accepted child never holds the action slot, so it is
+   * `superseded`. Member eligibility is NOT checked here: an attempt on a
+   * group with no eligible member is accepted as the group's one attempt with
+   * every member skipped (typed reasons), exactly as Rust does. */
+  function groupAttemptBlocker(group: InternalGroup): MailError | null {
     if (group.undone) return { kind: 'undo_unavailable', reason: 'already_undone' } satisfies MailError;
-    if (group.acceptedChildren === 0) return { kind: 'undo_unavailable', reason: 'not_applicable' } satisfies MailError;
     if (Date.parse(now()) >= Date.parse(group.acceptedAt) + UNDO_WINDOW_MS) {
       return { kind: 'undo_unavailable', reason: 'expired' } satisfies MailError;
     }
-    if (supersededByNewerAction(group.seq)) return { kind: 'undo_unavailable', reason: 'superseded' } satisfies MailError;
+    if (group.acceptedChildren === 0 || supersededByNewerAction(group.seq)) {
+      return { kind: 'undo_unavailable', reason: 'superseded' } satisfies MailError;
+    }
+    return null;
+  }
+
+  /** Undo AVAILABILITY as advertised by the group status: the attempt rules
+   * plus at least one still-eligible member (an all-ineligible group offers
+   * no enabled Undo, §5, but a direct attempt is still accepted). */
+  function groupUndoBlocker(group: InternalGroup): MailError | null {
+    const attempt = groupAttemptBlocker(group);
+    if (attempt) return attempt;
     // Per-member eligibility mirrors Rust: some accepted child must be live
     // (queued/applying/confirmed), not already compensated, with known priors.
     const anyEligible = group.members.some((member) => {
@@ -1683,7 +1697,7 @@ export function createBrowserFakeMailClient(
       }
       const group = groups.find((entry) => entry.groupId === command.groupId);
       if (!group) throw failNotShown();
-      const blocker = groupUndoBlocker(group);
+      const blocker = groupAttemptBlocker(group);
       if (blocker) throw blocker;
       // Per-member decisions in persisted ordinal order; failures never roll back
       // eligible siblings (UX-05 §5).
