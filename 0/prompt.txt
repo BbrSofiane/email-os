@@ -1,0 +1,17 @@
+Continue where you left off. Your last turn was cut short, so a command or other action it started may have finished or may still be running. Before you repeat one that changes state, confirm it did not take effect and is not still running; if you cannot tell, say so instead of repeating it.
+
+---
+
+Coordinator: #61 passed my full gate and is merged (main b33b023), so stages 1–3 are done. Excellent report. Stage 4 stays on hold until the owner decides the points you raised.
+
+One diagnosis task now, investigation first, no Gmail-path code change without my OK.
+
+My native smoke on the opt-in path (`EMAIL_OS_SYNTHETIC_CORE=1`) fails deterministically (3 of 3 runs, quiet machine). Journey: j, Enter, Escape, e (archives conv A, the second Inbox row), wait 2 s, z (undo), wait 2 s, e. The notice says "Restored" and the row is back, but focus stays on the next row (B) instead of returning to A, so the second e archives B. On the default legacy path the same journey returns focus to A and passes.
+
+The focus code is `undoFromNotice` in `src/App.vue`: after `mailbox.undoLastAction()` returns a receipt (which awaits `refresh()`), it focuses the target only if `mailbox.conversations.value` already contains it. My guess: on the Gmail core, right after `undo_operation` returns for a confirmed archive, `list_conversations` does not yet include the conversation (the compensating unarchive is queued and the Inbox projection waits for confirmation), so the row appears only on a later refresh and the focus branch is skipped.
+
+Please:
+1. Confirm or refute that with a Rust test: on a synthetic session AND on a Gmail-policy core with the scripted provider, archive and confirm, undo, then call `list_conversations` immediately after the undo receipt. Does it contain the conversation? Compare with what the legacy store returns.
+2. Say whether real Gmail mode has the same user-visible problem today (the code path is shared, so I expect yes).
+3. Propose the fix and where it belongs: the core's projection (show a queued unarchive's target in Inbox immediately, as an honest pending state), or the frontend (re-focus when the restored row arrives). Weigh it against the honest-state rules in PRODUCT.md. Include the test that would pin it.
+Report back as text with the evidence. Do not change Gmail-path code or the frontend yet.
