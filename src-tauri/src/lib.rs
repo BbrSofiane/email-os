@@ -17,9 +17,9 @@ use close_gate::CloseGate;
 use diagnostics::{cause, init_logging, storage_failure};
 use mail_core::drafts::types::{
     AppCloseRequest, CreateDraft, DeleteDraft, Draft, DraftDeleteReceipt, DraftReceipt, DraftRef,
-    DraftSource, DraftSummary, SaveDraft,
+    DraftSummary, SaveDraft,
 };
-use mail_core::drafts::DraftCore;
+use mail_core::drafts::{DraftCore, DraftService};
 use mail_core::dto::{
     CachedDoneRequest, CachedDoneSnapshot, CachedTrashRequest, CachedTrashSnapshot, Conversation,
     ConversationRef, InboxSnapshot, OperationReceipt, RetryOperation, SetArchived, SetRead,
@@ -31,7 +31,7 @@ use mail_core::gmail::browsing::{DestinationCatalog, DestinationPage, Destinatio
 use mail_core::gmail::provider::LiveGmailProvider;
 use mail_core::gmail::secrets::KeychainSecrets;
 use mail_core::gmail::sync::{GmailCore, GmailUnsubscribe};
-use mail_core::gmail::types::{AccountInfo, AccountStatus};
+use mail_core::gmail::types::AccountStatus;
 use mail_core::groups::{
     GetOperationGroupRequest, GroupUndoReceipt, ListOperationGroupsRequest, OperationGroupPage,
     OperationGroupReceipt, OperationGroupStatus, SetArchivedGroup, SetReadGroup,
@@ -77,26 +77,10 @@ impl AttachmentTransfers {
 
 struct AppState {
     core: GmailCore,
-    drafts: DraftCore,
-    draft_lifecycle: Arc<Mutex<DraftLifecycle>>,
+    drafts: DraftService,
     attachment_transfers: Arc<Mutex<AttachmentTransfers>>,
     close_gate: Arc<Mutex<CloseGate>>,
     _subscription: GmailUnsubscribe,
-}
-
-#[derive(Default)]
-struct DraftLifecycle {
-    session_epoch: u64,
-}
-
-impl DraftLifecycle {
-    fn advance(&mut self) {
-        self.session_epoch = self.session_epoch.wrapping_add(1);
-    }
-
-    fn is_current(&self, epoch: u64) -> bool {
-        self.session_epoch == epoch
-    }
 }
 
 impl AppState {
@@ -107,9 +91,8 @@ impl AppState {
     ) -> Self {
         let subscription = core.subscribe(on_change);
         Self {
+            drafts: DraftService::new(core.clone(), drafts),
             core,
-            drafts,
-            draft_lifecycle: Arc::new(Mutex::new(DraftLifecycle::default())),
             attachment_transfers: Arc::new(Mutex::new(AttachmentTransfers::default())),
             close_gate: Arc::new(Mutex::new(CloseGate::default())),
             _subscription: subscription,
@@ -134,65 +117,14 @@ fn open_fixture_core(
     Ok((core, profile_dir))
 }
 
-fn active_account(core: &GmailCore) -> Result<AccountInfo, MailError> {
-    core.account_status()?
-        .account
-        .ok_or(MailError::AuthRequired)
-}
-
-fn require_draft_account(account: &AccountInfo, draft_ref: &DraftRef) -> Result<(), MailError> {
-    if draft_ref.account_id == account.account_id {
-        Ok(())
-    } else {
-        Err(MailError::NotFound)
-    }
-}
-
-fn validate_reply_conversation(
-    conversation: &Conversation,
-    expected_ref: &ConversationRef,
-    source_message_id: &str,
-) -> Result<(), MailError> {
-    if &conversation.conversation_ref != expected_ref
-        || conversation.context_complete != Some(true)
-        || conversation.retained_snapshot_at.is_some()
-        || conversation
-            .messages
-            .last()
-            .map(|message| message.id.as_str())
-            != Some(source_message_id)
-    {
-        return Err(MailError::ReplyUnavailable);
-    }
-    Ok(())
-}
-
-/// The core's reply-context load, re-checked against the displayed
-/// conversation before a reply draft may be built from it.
-fn load_validated_reply_context(
-    core: &GmailCore,
-    r#ref: &ConversationRef,
-    source_message_id: &str,
-) -> Result<Conversation, MailError> {
-    let conversation = core.load_reply_context(r#ref, source_message_id)?;
-    validate_reply_conversation(&conversation, r#ref, source_message_id)?;
-    if conversation
-        .reply_context
-        .as_ref()
-        .is_none_or(|context| context.source_message_id != source_message_id)
-    {
-        return Err(MailError::ReplyUnavailable);
-    }
-    Ok(conversation)
-}
-
 /// Run all synchronous core/storage operations outside Tauri's async/UI threads.
-async fn run_blocking<T, F>(core: GmailCore, f: F) -> Result<T, MailError>
+async fn run_blocking<S, T, F>(subject: S, f: F) -> Result<T, MailError>
 where
-    F: FnOnce(&GmailCore) -> Result<T, MailError> + Send + 'static,
+    S: Send + 'static,
+    F: FnOnce(&S) -> Result<T, MailError> + Send + 'static,
     T: Send + 'static,
 {
-    tauri::async_runtime::spawn_blocking(move || f(&core))
+    tauri::async_runtime::spawn_blocking(move || f(&subject))
         .await
         .map_err(|_| storage_failure(cause::TASK_JOIN))?
 }
@@ -540,62 +472,22 @@ async fn get_account_status(state: State<'_, AppState>) -> Result<AccountStatus,
 
 #[tauri::command]
 async fn connect_account(state: State<'_, AppState>) -> Result<(), MailError> {
-    let core = state.core.clone();
-    let lifecycle = Arc::clone(&state.draft_lifecycle);
-    run_blocking(core, move |core| {
-        let mut lifecycle = lifecycle
-            .lock()
-            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
-        core.connect_account()?;
-        lifecycle.advance();
-        Ok(())
-    })
-    .await
+    run_blocking(state.drafts.clone(), DraftService::connect_account).await
 }
 
 #[tauri::command]
 async fn disconnect_account(state: State<'_, AppState>) -> Result<(), MailError> {
-    let core = state.core.clone();
-    let lifecycle = Arc::clone(&state.draft_lifecycle);
-    run_blocking(core, move |core| {
-        let mut lifecycle = lifecycle
-            .lock()
-            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
-        lifecycle.advance();
-        core.disconnect_account()
-    })
-    .await
+    run_blocking(state.drafts.clone(), DraftService::disconnect_account).await
 }
 
 #[tauri::command]
 async fn list_drafts(state: State<'_, AppState>) -> Result<Vec<DraftSummary>, MailError> {
-    let core = state.core.clone();
-    let drafts = state.drafts.clone();
-    let lifecycle = Arc::clone(&state.draft_lifecycle);
-    run_blocking(core, move |core| {
-        let _lifecycle = lifecycle
-            .lock()
-            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
-        let account = active_account(core)?;
-        drafts.list_drafts(&account)
-    })
-    .await
+    run_blocking(state.drafts.clone(), DraftService::list_drafts).await
 }
 
 #[tauri::command]
 async fn get_draft(state: State<'_, AppState>, r#ref: DraftRef) -> Result<Draft, MailError> {
-    let core = state.core.clone();
-    let drafts = state.drafts.clone();
-    let lifecycle = Arc::clone(&state.draft_lifecycle);
-    run_blocking(core, move |core| {
-        let _lifecycle = lifecycle
-            .lock()
-            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
-        let account = active_account(core)?;
-        require_draft_account(&account, &r#ref)?;
-        drafts.get_draft(&account, &r#ref)
-    })
-    .await
+    run_blocking(state.drafts.clone(), move |drafts| drafts.get_draft(&r#ref)).await
 }
 
 #[tauri::command]
@@ -604,52 +496,8 @@ async fn create_draft(
     state: State<'_, AppState>,
     command: CreateDraft,
 ) -> Result<DraftReceipt, MailError> {
-    let core = state.core.clone();
-    let drafts = state.drafts.clone();
-    let lifecycle = Arc::clone(&state.draft_lifecycle);
-    let receipt = run_blocking(core, move |core| {
-        let lifecycle_guard = lifecycle
-            .lock()
-            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
-        let account = active_account(core)?;
-        if let Some(receipt) = drafts.lookup_create_receipt(&account, &command)? {
-            return Ok(receipt);
-        }
-        match &command.source {
-            DraftSource::NewMessage => drafts.create_draft(&account, &command, None),
-            DraftSource::Reply {
-                conversation,
-                source_message_id,
-            } => {
-                if conversation.account_id != account.account_id {
-                    return Err(MailError::ReplyUnavailable);
-                }
-                let displayed = core.get_conversation(conversation)?;
-                validate_reply_conversation(&displayed, conversation, source_message_id)?;
-                let session_epoch = lifecycle_guard.session_epoch;
-                drop(lifecycle_guard);
-
-                // This helper is a cache hit when metadata is ready. A legacy
-                // metadata fetch is readonly and deliberately happens unlocked.
-                let reply_conversation =
-                    load_validated_reply_context(core, conversation, source_message_id)?;
-
-                let lifecycle_guard = lifecycle
-                    .lock()
-                    .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
-                if !lifecycle_guard.is_current(session_epoch)
-                    || active_account(core)?.account_id != account.account_id
-                {
-                    return Err(MailError::AuthRequired);
-                }
-                let current = core.get_conversation(conversation)?;
-                validate_reply_conversation(&current, conversation, source_message_id)?;
-                if current.reply_context != reply_conversation.reply_context {
-                    return Err(MailError::ReplyUnavailable);
-                }
-                drafts.create_draft(&account, &command, Some(&reply_conversation))
-            }
-        }
+    let receipt = run_blocking(state.drafts.clone(), move |drafts| {
+        drafts.create_draft(&command)
     })
     .await?;
     let _ = app.emit("drafts_changed", ());
@@ -662,16 +510,8 @@ async fn save_draft(
     state: State<'_, AppState>,
     command: SaveDraft,
 ) -> Result<DraftReceipt, MailError> {
-    let core = state.core.clone();
-    let drafts = state.drafts.clone();
-    let lifecycle = Arc::clone(&state.draft_lifecycle);
-    let receipt = run_blocking(core, move |core| {
-        let _lifecycle = lifecycle
-            .lock()
-            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
-        let account = active_account(core)?;
-        require_draft_account(&account, &command.draft_ref)?;
-        drafts.save_draft(&account, &command)
+    let receipt = run_blocking(state.drafts.clone(), move |drafts| {
+        drafts.save_draft(&command)
     })
     .await?;
     let _ = app.emit("drafts_changed", ());
@@ -684,16 +524,8 @@ async fn delete_draft(
     state: State<'_, AppState>,
     command: DeleteDraft,
 ) -> Result<DraftDeleteReceipt, MailError> {
-    let core = state.core.clone();
-    let drafts = state.drafts.clone();
-    let lifecycle = Arc::clone(&state.draft_lifecycle);
-    let receipt = run_blocking(core, move |core| {
-        let _lifecycle = lifecycle
-            .lock()
-            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
-        let account = active_account(core)?;
-        require_draft_account(&account, &command.draft_ref)?;
-        drafts.delete_draft(&account, &command)
+    let receipt = run_blocking(state.drafts.clone(), move |drafts| {
+        drafts.delete_draft(&command)
     })
     .await?;
     let _ = app.emit("drafts_changed", ());
@@ -1142,6 +974,8 @@ mod tests {
 #[cfg(test)]
 mod synthetic_bridge_tests {
     use super::*;
+    use mail_core::drafts::types::DraftSource;
+    use mail_core::drafts::{load_validated_reply_context, require_draft_account, DraftLifecycle};
     use mail_core::gmail::types::{ConnectionState, MailMode};
     use mail_core::synthetic::WriteControls;
     use mail_core::testing::{temp_profile, until, TIMEOUT};
@@ -1182,7 +1016,7 @@ mod synthetic_bridge_tests {
         assert_eq!(status.mutation_access, None);
         assert_eq!(status.sync.coverage_limit, 0);
         assert_eq!(status.sync.cached_conversations, 18);
-        let account = active_account(&core).unwrap();
+        let account = core.active_account().unwrap();
         assert_eq!(account.account_id, ACCOUNT_ID);
         assert_eq!(account.email_address, mail_core::FIXTURE_MAILBOX);
         core.stop();
@@ -1316,7 +1150,7 @@ mod synthetic_bridge_tests {
     fn draft_scope_and_reply_sources_come_from_the_synthetic_account() {
         let dir = temp_profile("synthetic-drafts");
         let core = open(dir.path(), WriteControls::default());
-        let account = active_account(&core).unwrap();
+        let account = core.active_account().unwrap();
         assert_eq!(account.account_id, ACCOUNT_ID);
         assert_eq!(
             require_draft_account(
@@ -1341,11 +1175,11 @@ mod synthetic_bridge_tests {
         );
         // A session change invalidates reply reads (core-independent).
         let mut lifecycle = DraftLifecycle::default();
-        let before = lifecycle.session_epoch;
+        let before = lifecycle.session_epoch();
         assert!(lifecycle.is_current(before));
         lifecycle.advance();
         assert!(!lifecycle.is_current(before));
-        assert!(lifecycle.is_current(lifecycle.session_epoch));
+        assert!(lifecycle.is_current(lifecycle.session_epoch()));
         core.stop();
     }
 
@@ -1543,7 +1377,7 @@ mod synthetic_bridge_tests {
 
         // A reply draft written under the legacy core (same account, same IDs).
         let drafts = DraftCore::open(profile.join("local-drafts")).unwrap();
-        let account = active_account(&core).unwrap();
+        let account = core.active_account().unwrap();
         let detail = core.get_conversation(&conv("conv-01")).unwrap();
         let source = detail.messages.last().unwrap().id.clone();
         let receipt = drafts

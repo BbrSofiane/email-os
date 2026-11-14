@@ -23,7 +23,8 @@ use crate::gmail::store::{
     Commit, DiscoveryProgress, GmailStore, HistoryProgress, ThreadFetch, DISCOVERY_CAP,
 };
 use crate::gmail::types::{
-    AccountStatus, ConnectionState, GmailProvider, GmailThread, MutationAccess, SyncInfo, SyncState,
+    AccountInfo, AccountStatus, ConnectionState, GmailProvider, GmailThread, MutationAccess,
+    SyncInfo, SyncState,
 };
 use crate::lock::ProfileGuard;
 use crate::storage_log::storage_err;
@@ -1157,6 +1158,13 @@ impl GmailCore {
             return Err(MailError::ReplyUnavailable);
         }
         Ok(enriched)
+    }
+
+    /// The signed-in account, or `AuthRequired` when there is none.
+    pub fn active_account(&self) -> Result<AccountInfo, MailError> {
+        self.account_status()?
+            .account
+            .ok_or(MailError::AuthRequired)
     }
 
     /// Wire-facing mode/connection/sync status. Typed errors surface storage
