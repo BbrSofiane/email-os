@@ -1,6 +1,7 @@
 //! Concrete single-operation executor for durable Gmail mailbox setters.
 use crate::dto::{MailboxOperationKind, OperationStatus};
 use crate::error::MailError;
+use crate::gmail::session::SessionPolicy;
 use crate::gmail::store::{GmailStore, OperationRecord};
 use crate::gmail::types::{GmailProvider, GmailThread};
 use crate::CancelToken;
@@ -12,6 +13,7 @@ pub(crate) fn run_one(
     store: &GmailStore,
     provider: &dyn GmailProvider,
     cancel: &CancelToken,
+    policy: SessionPolicy,
 ) -> Result<bool, MailError> {
     let Some(record) = store.claim_next_operation()? else {
         return Ok(false);
@@ -51,7 +53,7 @@ pub(crate) fn run_one(
     }
 
     if uncertain {
-        return reconcile(store, provider, cancel, &record);
+        return reconcile(store, provider, cancel, &record, policy);
     }
 
     // The grant may have been revoked between enqueue and dispatch. Check the
@@ -76,7 +78,7 @@ pub(crate) fn run_one(
         Err(MailError::OutcomeUnknown | MailError::AuthCancelled) => {
             store.unknown_operation(&record)?;
             if !cancel.is_cancelled() {
-                return reconcile(store, provider, cancel, &record);
+                return reconcile(store, provider, cancel, &record, policy);
             }
         }
         Err(error @ MailError::StorageUnavailable) => return Err(error),
@@ -107,6 +109,7 @@ fn reconcile(
     provider: &dyn GmailProvider,
     cancel: &CancelToken,
     record: &OperationRecord,
+    policy: SessionPolicy,
 ) -> Result<bool, MailError> {
     let fetched = match provider.get_thread(&record.conversation_id, cancel) {
         Ok(Some(thread)) => thread,
@@ -127,8 +130,7 @@ fn reconcile(
     }
     let all_ids = observed_ids(&fetched);
     if !record.message_ids.iter().all(|id| all_ids.contains(id)) {
-        store.reconcile_operation(record, &fetched, false)?;
-        return Ok(true);
+        return finish_unlanded(store, record, &fetched, policy);
     }
     let matches_all = record.message_ids.iter().all(|id| match record.kind {
         MailboxOperationKind::Star => {
@@ -140,7 +142,26 @@ fn reconcile(
             .as_ref()
             .is_some_and(|ids| ids.contains(id) != record.value),
     });
-    store.reconcile_operation(record, &fetched, matches_all)?;
+    if matches_all {
+        store.reconcile_operation(record, &fetched, true)?;
+        return Ok(true);
+    }
+    finish_unlanded(store, record, &fetched, policy)
+}
+
+/// The provider's facts do not show the write. Gmail records the uncertainty;
+/// a session whose policy allows it requeues the write instead.
+fn finish_unlanded(
+    store: &GmailStore,
+    record: &OperationRecord,
+    fetched: &GmailThread,
+    policy: SessionPolicy,
+) -> Result<bool, MailError> {
+    if policy.replay_unlanded_interrupted_writes() {
+        store.requeue_operation(record, &MailError::OutcomeUnknown)?;
+    } else {
+        store.reconcile_operation(record, fetched, false)?;
+    }
     Ok(true)
 }
 

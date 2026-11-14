@@ -158,7 +158,7 @@ fn archive_read_and_star_are_admitted_for_singles_and_groups_and_undo_works() {
     let read = s
         .core
         .set_read(&SetRead {
-            conversation: conversation("conv-02"),
+            conversation: conversation("conv-11"),
             read: true,
             request_id: "r-1".into(),
         })
@@ -227,7 +227,7 @@ fn archive_read_and_star_are_admitted_for_singles_and_groups_and_undo_works() {
             .find(|c| c.conversation_ref.conversation_id == id)
             .and_then(|c| c.is_read)
     };
-    assert_eq!(read_state("conv-02"), Some(true));
+    assert_eq!(read_state("conv-11"), Some(true));
     assert_eq!(
         read_state("conv-09"),
         Some(false),
@@ -411,4 +411,65 @@ fn local_readiness_needs_no_credentials_or_network() {
         s.core.account_status().unwrap().connection,
         ConnectionState::Connected
     );
+}
+
+#[test]
+fn status_states_the_triage_capability_explicitly() {
+    let s = Synthetic::open("policy-capabilities");
+    let status = s.core.account_status().unwrap();
+    assert_eq!(
+        status.capabilities,
+        Some(mail_core::gmail::types::SessionCapabilities {
+            triage_surfaces: true
+        })
+    );
+    let json = serde_json::to_value(&status).unwrap();
+    assert_eq!(json["capabilities"]["triageSurfaces"], true);
+}
+
+/// ADR 0002 decision 2: a realistic read/unread mix, not 16 unread rows.
+#[test]
+fn seeded_inbox_is_a_realistic_read_unread_mix() {
+    let s = Synthetic::open("policy-seed-mix");
+    let snapshot = s.core.list_conversations().unwrap();
+    let read: Vec<&str> = snapshot
+        .conversations
+        .iter()
+        .filter(|c| c.is_read == Some(true))
+        .map(|c| c.conversation_ref.conversation_id.as_str())
+        .collect();
+    let mut read_sorted = read.clone();
+    read_sorted.sort_unstable();
+    assert_eq!(
+        read_sorted,
+        vec!["conv-02", "conv-03", "conv-04", "conv-10", "conv-14", "conv-16"]
+    );
+    let unread = snapshot
+        .conversations
+        .iter()
+        .filter(|c| c.is_read == Some(false))
+        .count();
+    assert_eq!(unread, 10, "most of the 16 Inbox conversations are unread");
+    // Threads the user wrote last are read; the user's own messages inside an
+    // unread thread are read too.
+    let conv01 = s.core.get_conversation(&conversation("conv-01")).unwrap();
+    assert_eq!(conv01.is_read, Some(false));
+    use mail_core::gmail::types::GmailProvider;
+    let thread = s
+        .synthetic
+        .get_thread("conv-01", &mail_core::CancelToken::default())
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        thread.unread_message_ids.unwrap(),
+        vec!["m-01-1".to_string(), "m-01-3".to_string()],
+        "m-01-2 is the user's own message"
+    );
+    // The two initially archived conversations are read.
+    for id in ["conv-06", "conv-15"] {
+        assert_eq!(
+            s.core.get_conversation(&conversation(id)).unwrap().is_read,
+            Some(true)
+        );
+    }
 }

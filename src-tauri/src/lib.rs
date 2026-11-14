@@ -241,6 +241,7 @@ impl Backend {
             Self::Fixture(_) => Ok(AccountStatus {
                 mode: MailMode::Fixture,
                 mutation_access: None,
+                capabilities: None,
                 connection: mail_core::gmail::types::ConnectionState::Connected,
                 account: Some(AccountInfo {
                     account_id: ACCOUNT_ID.to_owned(),

@@ -136,56 +136,37 @@ fn receipt_is_durable_and_request_key_dedups_or_conflicts() {
     assert_eq!(replay, receipt, "receipt survived restart");
 }
 
-/// Legacy: `interrupted_applying_returns_to_queued_on_startup`. The Gmail
-/// ledger does not blindly requeue an interrupted write: the row becomes
-/// `outcome_unknown` and is reconciled against the provider's durable facts.
-/// It is never replayed automatically (it may have landed); the user retries.
-/// Case 1: the write never reached the provider (paused, then cancelled).
+/// Legacy: `interrupted_applying_returns_to_queued_on_startup`. A synthetic
+/// session reconciles an interrupted write against the provider's durable
+/// facts and, if it had not landed, requeues it (ADR 0002 decision 1; see
+/// `interrupted_unlanded_write_is_requeued_and_applied_at_startup`). Case 1
+/// here: it had not landed, and the retry path is no longer needed.
 #[test]
-fn interrupted_applying_is_reconciled_against_durable_facts_when_the_write_never_landed() {
+fn interrupted_applying_is_requeued_when_the_write_never_landed() {
     let s = Synthetic::open_with("recovery-unlanded", |p| p.set_paused(true));
     let receipt = s
         .core
         .set_archived(&set_archived("conv-01", true, "req-1"))
         .unwrap();
     assert!(s.synthetic.wait_for_write_calls(1, TIMEOUT));
+    let thread = |s: &Synthetic| {
+        s.synthetic
+            .get_thread("conv-01", &mail_core::CancelToken::default())
+            .unwrap()
+            .unwrap()
+    };
     assert_eq!(
-        status_of(&s.core, &receipt.operation_id),
-        Some(OperationStatus::Applying)
+        thread(&s).inbox_message_ids.len(),
+        3,
+        "the paused write changed nothing"
     );
     let s = s.reopen();
-    s.core.wait_for_test_idle(TIMEOUT).unwrap();
-    // The facts say conv-01 is still in the Inbox, so the interrupted
-    // archive is reconciled as NOT applied: uncertain, never confirmed, and
-    // never replayed on its own.
-    assert_eq!(
-        status_of(&s.core, &receipt.operation_id),
-        Some(OperationStatus::OutcomeUnknown)
-    );
-    assert_eq!(s.synthetic.write_call_count(), 0, "no automatic replay");
-    let thread = s
-        .synthetic
-        .get_thread("conv-01", &mail_core::CancelToken::default())
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        thread.inbox_message_ids.len(),
-        3,
-        "unlanded write changed nothing"
-    );
-    // The explicit retry lands the write exactly once.
-    let retry = s
-        .core
-        .retry_operation(&mail_core::dto::RetryOperation {
-            operation_id: receipt.operation_id.clone(),
-            request_id: "retry-1".into(),
-        })
-        .unwrap();
     assert!(wait_for_status(
         &s.core,
-        std::slice::from_ref(&retry.operation_id),
+        std::slice::from_ref(&receipt.operation_id),
         OperationStatus::Confirmed
     ));
+    assert!(thread(&s).inbox_message_ids.is_empty());
     assert_eq!(s.synthetic.write_call_count(), 1);
 }
 
@@ -355,14 +336,13 @@ fn shutdown_completes_while_provider_paused_and_work_stays_durable() {
         "paused write released"
     );
     let s = s.reopen();
-    // The interrupted operation is durable: still present, never lost, and
-    // never silently confirmed without the provider's fact.
-    s.core.wait_for_test_idle(TIMEOUT).unwrap();
-    assert_eq!(
-        status_of(&s.core, &receipt.operation_id),
-        Some(OperationStatus::OutcomeUnknown),
-        "interrupted operation stays in the ledger as uncertain"
-    );
+    // The interrupted operation is durable and is never lost; the synthetic
+    // policy requeues it and it completes against the healthy provider.
+    assert!(wait_for_status(
+        &s.core,
+        std::slice::from_ref(&receipt.operation_id),
+        OperationStatus::Confirmed
+    ));
 }
 
 /// Legacy: `profile_lock_rejects_a_second_writer`.
@@ -550,4 +530,74 @@ fn worker_halt_remains_visible_through_commands_after_storage_recovers() {
     assert!(restarted
         .set_archived(&set_archived("conv-01", true, "after-restart"))
         .is_ok());
+}
+
+/// ADR 0002 decision 1: the synthetic policy requeues an interrupted write
+/// whose effect the provider's durable facts do not show, and applies it
+/// again at startup (as the legacy fixture did). Gmail never replays on its
+/// own; that rule is covered by the Gmail tests and unchanged.
+#[test]
+fn interrupted_unlanded_write_is_requeued_and_applied_at_startup() {
+    let s = Synthetic::open_with("recovery-requeue", |p| p.set_paused(true));
+    let receipt = s
+        .core
+        .set_archived(&set_archived("conv-01", true, "req-1"))
+        .unwrap();
+    assert!(s.synthetic.wait_for_write_calls(1, TIMEOUT));
+    assert_eq!(
+        status_of(&s.core, &receipt.operation_id),
+        Some(OperationStatus::Applying)
+    );
+    // Quit while the write is in flight, then relaunch with a healthy provider.
+    let s = s.reopen();
+    assert!(wait_for_status(
+        &s.core,
+        std::slice::from_ref(&receipt.operation_id),
+        OperationStatus::Confirmed
+    ));
+    assert!(
+        !in_inbox(&s.core, "conv-01"),
+        "the interrupted archive was applied"
+    );
+    assert_eq!(
+        s.synthetic.write_call_count(),
+        1,
+        "applied exactly once after restart"
+    );
+    let thread = s
+        .synthetic
+        .get_thread("conv-01", &mail_core::CancelToken::default())
+        .unwrap()
+        .unwrap();
+    assert!(thread.inbox_message_ids.is_empty());
+}
+
+/// Requeueing is bounded by the provider: a write the provider definitely
+/// rejects after the restart ends as a typed failure, not a loop.
+#[test]
+fn requeued_write_that_the_provider_rejects_fails_once_and_is_not_replayed() {
+    let s = Synthetic::open_with("recovery-requeue-reject", |p| p.set_paused(true));
+    let receipt = s
+        .core
+        .set_archived(&set_archived("conv-01", true, "req-1"))
+        .unwrap();
+    assert!(s.synthetic.wait_for_write_calls(1, TIMEOUT));
+    let dir = s.dir.path().to_path_buf();
+    let clock = s.clock.clone();
+    s.core.stop();
+    drop(s.core);
+    let provider = new_provider(&dir);
+    provider.fail_next();
+    let core = open_core_on(&dir, provider.clone(), &clock);
+    assert!(wait_for_status(
+        &core,
+        std::slice::from_ref(&receipt.operation_id),
+        OperationStatus::Failed
+    ));
+    core.wait_for_test_idle(TIMEOUT).unwrap();
+    assert_eq!(
+        provider.write_call_count(),
+        1,
+        "one attempt, then a definite failure"
+    );
 }

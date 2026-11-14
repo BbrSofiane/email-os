@@ -16,7 +16,7 @@ use std::sync::Mutex;
 
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
-use super::data::{fixtures, SEED_VERSION};
+use super::data::{fixtures, seeded_unread, SEED_VERSION};
 use crate::dto::MailboxOperationKind;
 use crate::error::MailError;
 use crate::storage_log::storage_err;
@@ -258,11 +258,7 @@ impl FactStore {
 fn seed(tx: &rusqlite::Transaction<'_>) -> Result<(), MailError> {
     for conversation in fixtures() {
         for message in conversation.messages {
-            // Seeded Inbox mail arrives unread (so read controls have
-            // something to show) and the two initially archived
-            // conversations are read. Nothing starts starred. This matches
-            // the shared contract scenarios' `triage` mailbox declaration.
-            let unread = conversation.in_inbox;
+            let unread = seeded_unread(&conversation, message);
             tx.execute(
                 "INSERT INTO synthetic_messages
                     (message_id, conversation_id, in_inbox, unread, starred)

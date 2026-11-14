@@ -16,6 +16,9 @@
 //! | permission upgrade       |                                  | (nothing is ever erased)                   |
 //! | cached Trash             | observed cache                   | `InvalidRequest { field: "mode" }`         |
 //! | provider destinations    | live catalog                     | `ReadOnly`                                 |
+//! | interrupted, unlanded    | stay `outcome_unknown`; the user | requeued and applied again at startup      |
+//! | write (restart)          | retries (never auto-replayed)    | (local and idempotent)                     |
+//! | capabilities             | absent (client falls back)       | `triageSurfaces` (read, star, Starred, Retry) |
 //! | search                   | cached, then provider candidates | cached only                                |
 //! | periodic discovery       | every 60 s (backoff on error)    | never (facts change only through writes)   |
 //!
@@ -59,6 +62,25 @@ impl SessionPolicy {
     /// its own writes, so there is nothing to poll for.
     pub(crate) fn periodic_sync(self) -> bool {
         self == Self::Gmail
+    }
+
+    /// What the status advertises. Only a synthetic session states it; Gmail
+    /// leaves the field absent and clients keep their previous behaviour.
+    pub(crate) fn capabilities(self) -> crate::gmail::types::SessionCapabilities {
+        crate::gmail::types::SessionCapabilities {
+            triage_surfaces: self.is_synthetic(),
+        }
+    }
+
+    /// A write interrupted before the provider recorded it (quit, crash or
+    /// cancellation) is reconciled against the provider's durable facts. If it
+    /// had landed it is confirmed. If it had not: Gmail leaves it
+    /// `outcome_unknown` for the user to retry and never replays it on its
+    /// own, because a replay could duplicate a real remote write; a synthetic
+    /// provider is local and idempotent, so the unlanded write is requeued and
+    /// applied again, exactly as the legacy fixture did.
+    pub(crate) fn replay_unlanded_interrupted_writes(self) -> bool {
+        self.is_synthetic()
     }
 
     /// Search never leaves the local cache in a synthetic session.

@@ -1191,6 +1191,7 @@ impl GmailCore {
         Ok(AccountStatus {
             mode: self.inner.policy.mode(),
             mutation_access: Some(mutation_access),
+            capabilities: None,
             connection,
             account: self.inner.store.account()?,
             sync: SyncInfo {
@@ -1237,6 +1238,7 @@ impl GmailCore {
                 coverage_limit: 0,
             },
             mutation_access: None,
+            capabilities: Some(self.inner.policy.capabilities()),
         })
     }
 
@@ -1925,6 +1927,7 @@ fn bootstrap_synthetic(
         &cancel,
         PassAction::Auth(AuthKind::Restore),
         hub,
+        SessionPolicy::Synthetic,
     ) {
         PassOutcome::Complete => {}
         PassOutcome::Halt(error)
@@ -2210,7 +2213,14 @@ fn run(
         hub.dispatch();
         // The pass runs network calls strictly outside the ctrl lock and
         // outside any SQLite lock.
-        let mut outcome = run_pass(&store, provider.as_ref(), &pass_cancel, action, &hub);
+        let mut outcome = run_pass(
+            &store,
+            provider.as_ref(),
+            &pass_cancel,
+            action,
+            &hub,
+            policy,
+        );
         let mut more_claimable_mutations = false;
         if action == PassAction::Mutations && matches!(&outcome, PassOutcome::Complete) {
             match store.claimable_operation_count() {
@@ -2462,6 +2472,7 @@ fn run_pass(
     cancel: &CancelToken,
     action: PassAction,
     hub: &GmailHub,
+    policy: SessionPolicy,
 ) -> PassOutcome {
     let generation = match store.generation() {
         Ok(generation) => generation,
@@ -2489,7 +2500,7 @@ fn run_pass(
         };
     }
     if action == PassAction::Mutations {
-        return match crate::gmail::operations::run_one(store, provider, cancel) {
+        return match crate::gmail::operations::run_one(store, provider, cancel, policy) {
             Ok(true) => PassOutcome::Complete,
             Ok(false) => PassOutcome::Idle,
             Err(MailError::StorageUnavailable) => PassOutcome::Halt(MailError::StorageUnavailable),
