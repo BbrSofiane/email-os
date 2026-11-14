@@ -1,0 +1,7 @@
+Coordinator: very good diagnosis. Go ahead with the preferred fix, as one small PR:
+
+- Branch `fix/undo-refresh-focus` from `origin/main` (b33b023), PR base `main`. The frontend boundary from your brief is lifted for `src/composables/useMailbox.ts` and its tests only; still no `App.vue` change.
+- The fix: a superseded `refresh()` resolves only once the newest in-flight refresh has published (your `latestRefresh` idea). Keep the session and epoch guards exactly as they are; a refresh superseded by a session change must still resolve without publishing stale data. Bound the chain as you described, and say in the PR what happens when events keep arriving.
+- Tests, in this order: (1) the composable case that fails before the fix (commit it first and show it failing in the PR description), folded into the existing `useMailbox` tests; (2) the App-level journey (archive, undo, archive, with a delayed list read and a second event) asserting the second archive targets the restored row; (3) the Rust pin that `list_conversations` contains the restored conversation with the compensation pending right after the undo receipt, on the synthetic session and the Gmail-policy core. Drop the probe files.
+- Check every other caller that awaits `refresh()` and then reads `conversations` or `listState`, and list them in the PR, with whether this changes their behaviour.
+- `mise run check:all` before marking ready, then message me. I will run my native smoke on the default path and the synthetic opt-in path; the synthetic one fails today on exactly this.
