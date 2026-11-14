@@ -1,0 +1,35 @@
+index|sqlite_autoindex_gmail_conversations_1|gmail_conversations|
+index|sqlite_autoindex_gmail_destination_snapshots_1|gmail_destination_snapshots|
+index|sqlite_autoindex_gmail_discovery_seen_1|gmail_discovery_seen|
+index|sqlite_autoindex_gmail_inbox_membership_1|gmail_inbox_membership|
+index|sqlite_autoindex_gmail_message_facts_1|gmail_message_facts|
+index|sqlite_autoindex_gmail_messages_1|gmail_messages|
+index|sqlite_autoindex_gmail_operation_group_members_1|gmail_operation_group_members|
+index|sqlite_autoindex_gmail_operation_groups_1|gmail_operation_groups|
+index|sqlite_autoindex_gmail_operation_groups_2|gmail_operation_groups|
+index|sqlite_autoindex_gmail_operation_preimages_1|gmail_operation_preimages|
+index|sqlite_autoindex_gmail_operation_requests_1|gmail_operation_requests|
+index|sqlite_autoindex_gmail_operation_snapshots_1|gmail_operation_snapshots|
+index|sqlite_autoindex_gmail_operation_targets_1|gmail_operation_targets|
+index|sqlite_autoindex_gmail_operations_1|gmail_operations|
+index|sqlite_autoindex_gmail_reminder_requests_1|gmail_reminder_requests|
+index|sqlite_autoindex_gmail_reminders_1|gmail_reminders|
+index|sqlite_autoindex_gmail_search_cache_1|gmail_search_cache|
+index|sqlite_autoindex_meta_1|meta|
+table|gmail_conversations|gmail_conversations|CREATE TABLE gmail_conversations ( account_id TEXT NOT NULL, conversation_id TEXT NOT NULL, subject TEXT NOT NULL, context_complete INTEGER NOT NULL CHECK (context_complete IN (0, 1)), unsupported_reason TEXT, reply_context_json TEXT, attachments_json TEXT, newest_sender_json TEXT, PRIMARY KEY (account_id, conversation_id) )
+table|gmail_destination_snapshots|gmail_destination_snapshots|CREATE TABLE gmail_destination_snapshots ( account_id TEXT NOT NULL, destination_id TEXT NOT NULL, snapshot_json TEXT NOT NULL, PRIMARY KEY(account_id, destination_id) )
+table|gmail_discovery_seen|gmail_discovery_seen|CREATE TABLE gmail_discovery_seen ( conversation_id TEXT PRIMARY KEY )
+table|gmail_inbox_membership|gmail_inbox_membership|CREATE TABLE gmail_inbox_membership ( account_id TEXT NOT NULL, conversation_id TEXT NOT NULL, message_id TEXT NOT NULL, PRIMARY KEY (account_id, conversation_id, message_id) )
+table|gmail_message_facts|gmail_message_facts|CREATE TABLE gmail_message_facts ( account_id TEXT NOT NULL, conversation_id TEXT NOT NULL, message_id TEXT NOT NULL, in_inbox INTEGER, is_unread INTEGER, is_starred INTEGER, in_trash INTEGER, in_spam INTEGER, PRIMARY KEY (account_id, conversation_id, message_id) )
+table|gmail_messages|gmail_messages|CREATE TABLE gmail_messages ( account_id TEXT NOT NULL, conversation_id TEXT NOT NULL, message_id TEXT NOT NULL, from_display TEXT, from_mailbox TEXT NOT NULL, to_json TEXT NOT NULL, sent_at TEXT NOT NULL, body_text TEXT NOT NULL, in_inbox INTEGER NOT NULL CHECK (in_inbox IN (0, 1)), has_attachment INTEGER, PRIMARY KEY (account_id, conversation_id, message_id) )
+table|gmail_operation_group_members|gmail_operation_group_members|CREATE TABLE gmail_operation_group_members ( account_id TEXT NOT NULL, group_id TEXT NOT NULL, ordinal INTEGER NOT NULL, conversation_id TEXT NOT NULL, operation_id TEXT, rejection TEXT, undo_decision TEXT, undo_skip_reason TEXT, undo_operation_ids TEXT, PRIMARY KEY (account_id, group_id, ordinal) )
+table|gmail_operation_groups|gmail_operation_groups|CREATE TABLE gmail_operation_groups ( group_id TEXT PRIMARY KEY, account_id TEXT NOT NULL, request_id TEXT NOT NULL, kind TEXT NOT NULL, requested_value INTEGER NOT NULL CHECK (requested_value IN (0, 1)), accepted_at TEXT NOT NULL, undone_at TEXT, group_seq INTEGER NOT NULL, UNIQUE (account_id, request_id) )
+table|gmail_operation_preimages|gmail_operation_preimages|CREATE TABLE gmail_operation_preimages ( account_id TEXT NOT NULL, operation_id TEXT NOT NULL, message_id TEXT NOT NULL, prior_value INTEGER NULL CHECK (prior_value IN (0, 1)), PRIMARY KEY (account_id, operation_id, message_id) )
+table|gmail_operation_requests|gmail_operation_requests|CREATE TABLE gmail_operation_requests ( account_id TEXT NOT NULL, request_id TEXT NOT NULL, payload TEXT NOT NULL, operation_id TEXT NOT NULL, accepted_at TEXT, PRIMARY KEY (account_id, request_id) )
+table|gmail_operation_snapshots|gmail_operation_snapshots|CREATE TABLE gmail_operation_snapshots ( account_id TEXT NOT NULL, conversation_id TEXT NOT NULL, snapshot_json TEXT NOT NULL, snapshot_saved_at TEXT NOT NULL, last_message_at TEXT NOT NULL DEFAULT '', PRIMARY KEY (account_id, conversation_id) )
+table|gmail_operation_targets|gmail_operation_targets|CREATE TABLE gmail_operation_targets ( account_id TEXT NOT NULL, operation_id TEXT NOT NULL, conversation_id TEXT NOT NULL, message_id TEXT NOT NULL, PRIMARY KEY (account_id, operation_id, message_id) )
+table|gmail_operations|gmail_operations|CREATE TABLE gmail_operations ( account_id TEXT NOT NULL, operation_id TEXT NOT NULL, conversation_id TEXT NOT NULL, kind TEXT NOT NULL, requested_value INTEGER NOT NULL, status TEXT NOT NULL, failure TEXT, last_error TEXT, accepted_seq INTEGER NOT NULL, accepted_at TEXT NOT NULL, request_id TEXT NOT NULL, undo_of TEXT, action_id TEXT, retry_of TEXT, PRIMARY KEY (account_id, operation_id) )
+table|gmail_reminder_requests|gmail_reminder_requests|CREATE TABLE gmail_reminder_requests ( account_id TEXT NOT NULL, request_id TEXT NOT NULL, payload TEXT NOT NULL, receipt TEXT NOT NULL, PRIMARY KEY(account_id, request_id) )
+table|gmail_reminders|gmail_reminders|CREATE TABLE gmail_reminders ( account_id TEXT NOT NULL, conversation_id TEXT NOT NULL, data TEXT NOT NULL, baseline_ids TEXT NOT NULL, snapshot_json TEXT NOT NULL, PRIMARY KEY(account_id, conversation_id) )
+table|gmail_search_cache|gmail_search_cache|CREATE TABLE gmail_search_cache ( account_id TEXT NOT NULL, conversation_id TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(account_id, conversation_id))
+table|meta|meta|CREATE TABLE meta ( key TEXT PRIMARY KEY, value TEXT NOT NULL )

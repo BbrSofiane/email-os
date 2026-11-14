@@ -1,146 +1,10 @@
 use super::*;
 use crate::drafts::types::ReplyContext;
-use crate::gmail::types::{GmailHistoryError, GmailProfile, HistoryPage, InboxPage};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use crate::gmail::types::GmailProfile;
 
-type ReplyReadHook = Arc<dyn Fn(&CancelToken) + Send + Sync>;
+type ReplyReadProvider = crate::testing::operations_fake::FakeProvider;
 
-struct ReplyReadProvider {
-    thread: Mutex<GmailThread>,
-    error: Mutex<Option<MailError>>,
-    get_thread_calls: AtomicUsize,
-    active_provider_reads: AtomicUsize,
-    configured: std::sync::atomic::AtomicBool,
-    credentials: std::sync::atomic::AtomicBool,
-    disconnect_calls: AtomicUsize,
-    premature_disconnect: std::sync::atomic::AtomicBool,
-    on_get_thread: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
-    on_get_thread_cancel: Mutex<Option<ReplyReadHook>>,
-}
-
-impl ReplyReadProvider {
-    fn new(thread: GmailThread) -> Self {
-        Self {
-            thread: Mutex::new(thread),
-            error: Mutex::new(None),
-            get_thread_calls: AtomicUsize::new(0),
-            active_provider_reads: AtomicUsize::new(0),
-            configured: std::sync::atomic::AtomicBool::new(false),
-            credentials: std::sync::atomic::AtomicBool::new(false),
-            disconnect_calls: AtomicUsize::new(0),
-            premature_disconnect: std::sync::atomic::AtomicBool::new(false),
-            on_get_thread: Mutex::new(None),
-            on_get_thread_cancel: Mutex::new(None),
-        }
-    }
-}
-
-impl GmailReadProvider for ReplyReadProvider {
-    fn fetch_attachment(
-        &self,
-        _account_id: &str,
-        _message: &str,
-        _attachment: &str,
-        cancel: &CancelToken,
-    ) -> Result<Vec<u8>, MailError> {
-        self.active_provider_reads.fetch_add(1, Ordering::SeqCst);
-        if let Some(hook) = self.on_get_thread_cancel.lock().unwrap().clone() {
-            hook(cancel);
-        }
-        self.active_provider_reads.fetch_sub(1, Ordering::SeqCst);
-        crate::attachments::check_cancel(cancel)?;
-        if let Some(error) = self.error.lock().unwrap().clone() {
-            return Err(error);
-        }
-        Ok(b"%PDF-1.7\n".to_vec())
-    }
-
-    fn is_configured(&self) -> bool {
-        self.configured.load(Ordering::SeqCst)
-    }
-
-    fn has_credentials(&self) -> Result<bool, MailError> {
-        Ok(self.credentials.load(Ordering::SeqCst))
-    }
-
-    fn connect(&self, _cancel: &CancelToken) -> Result<GmailProfile, MailError> {
-        Err(MailError::AuthRequired)
-    }
-
-    fn disconnect(&self) -> Result<(), MailError> {
-        self.disconnect_calls.fetch_add(1, Ordering::SeqCst);
-        if self.active_provider_reads.load(Ordering::SeqCst) != 0 {
-            self.premature_disconnect.store(true, Ordering::SeqCst);
-        }
-        self.credentials.store(false, Ordering::SeqCst);
-        Ok(())
-    }
-
-    fn profile(&self, _cancel: &CancelToken) -> Result<GmailProfile, MailError> {
-        Err(MailError::AuthRequired)
-    }
-
-    fn list_inbox(
-        &self,
-        _page_token: Option<&str>,
-        _cancel: &CancelToken,
-    ) -> Result<InboxPage, MailError> {
-        Ok(InboxPage {
-            thread_ids: Vec::new(),
-            next_page_token: None,
-        })
-    }
-
-    fn get_thread(
-        &self,
-        _thread_id: &str,
-        cancel: &CancelToken,
-    ) -> Result<Option<GmailThread>, MailError> {
-        self.get_thread_calls.fetch_add(1, Ordering::SeqCst);
-        self.active_provider_reads.fetch_add(1, Ordering::SeqCst);
-        let result = (|| {
-            let cancel_hook = self.on_get_thread_cancel.lock().unwrap().clone();
-            if let Some(hook) = cancel_hook {
-                hook(cancel);
-            }
-            let hook = self.on_get_thread.lock().unwrap().clone();
-            if let Some(hook) = hook {
-                hook();
-            }
-            if let Some(error) = self.error.lock().unwrap().clone() {
-                return Err(error);
-            }
-            Ok(Some(self.thread.lock().unwrap().clone()))
-        })();
-        self.active_provider_reads.fetch_sub(1, Ordering::SeqCst);
-        result
-    }
-
-    fn history(
-        &self,
-        start_history_id: &str,
-        _page_token: Option<&str>,
-        _cancel: &CancelToken,
-    ) -> Result<HistoryPage, GmailHistoryError> {
-        Ok(HistoryPage {
-            changed_thread_ids: Vec::new(),
-            deleted_message_ids: Vec::new(),
-            next_page_token: None,
-            history_id: start_history_id.to_string(),
-        })
-    }
-}
-
-fn temp_dir(tag: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!(
-        "mail-core-reply-context-{tag}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos()
-    ))
-}
+use crate::testing::temp_profile as temp_dir;
 
 fn reply_context(source_message_id: &str) -> ReplyContext {
     ReplyContext {
@@ -180,36 +44,24 @@ fn thread(context: Option<ReplyContext>, complete: bool) -> GmailThread {
             has_attachment: None,
         },
     ];
-    GmailThread {
-        star_facts: None,
-        newest_sender: messages
-            .iter()
-            .max_by(|a, b| (&a.sent_at, &a.id).cmp(&(&b.sent_at, &b.id)))
-            .map(|m| m.from.clone()),
-        attachments: Vec::new(),
-        conversation: Conversation {
-            stars: None,
-            conversation_ref: ConversationRef {
-                account_id: "acct-reply".to_string(),
-                conversation_id: "thread-reply".to_string(),
-            },
-            subject: "Synthetic reply context".to_string(),
-            messages,
-            is_in_inbox: true,
-            is_read: Some(true),
-            context_complete: Some(complete),
-            unsupported_reason: None,
-            retained_snapshot_at: None,
-            reply_context: context,
-            pending_operation_id: None,
-        },
-        inbox_message_ids: vec!["m-latest".to_string()],
-        message_ids: Some(vec!["m-earlier".to_string(), "m-latest".to_string()]),
-        unread_message_ids: Some(Vec::new()),
-        trash_message_ids: None,
-        spam_message_ids: None,
-        history_id: "history-2".to_string(),
-    }
+    let newest_sender = messages
+        .iter()
+        .max_by(|a, b| (&a.sent_at, &a.id).cmp(&(&b.sent_at, &b.id)))
+        .map(|m| m.from.clone());
+    let mut thread = crate::testing::thread(
+        "acct-reply",
+        "thread-reply",
+        messages,
+        &["m-latest"],
+        Some(vec![]),
+        "history-2",
+    );
+    thread.newest_sender = newest_sender;
+    thread.conversation.subject = "Synthetic reply context".to_string();
+    thread.conversation.is_read = Some(true);
+    thread.conversation.context_complete = Some(complete);
+    thread.conversation.reply_context = context;
+    thread
 }
 
 fn setup(
@@ -221,16 +73,12 @@ fn setup(
 ) -> (
     GmailCore,
     Arc<ReplyReadProvider>,
-    std::path::PathBuf,
+    tempfile::TempDir,
     ConversationRef,
 ) {
     let dir = temp_dir(tag);
-    let provider = Arc::new(ReplyReadProvider::new(thread(
-        remote_context,
-        remote_complete,
-    )));
-    let core = GmailCore::open(&dir, Arc::clone(&provider) as Arc<dyn GmailReadProvider>)
-        .expect("core opens");
+    let provider = ReplyReadProvider::with_thread(thread(remote_context, remote_complete));
+    let core = GmailCore::open(&dir, provider.clone()).expect("core opens");
     core.inner
         .store
         .begin_account(
@@ -266,10 +114,10 @@ fn setup(
     )
 }
 
-fn close(core: GmailCore, dir: std::path::PathBuf) {
+fn close(core: GmailCore, dir: tempfile::TempDir) {
     core.stop();
     drop(core);
-    let _ = std::fs::remove_dir_all(dir);
+    drop(dir);
 }
 
 #[test]
@@ -332,12 +180,12 @@ fn attachment_download_checks_identity_offline_size_and_cancellation() {
         Err(MailError::NotFound)
     );
     request.attachment_id = "a1".into();
-    *provider.error.lock().unwrap() = Some(MailError::NetworkUnavailable);
+    provider.set_reply_error(Some(MailError::NetworkUnavailable));
     assert_eq!(
         core.download_attachment(&request, &CancelToken::default(), downloads.path()),
         Err(MailError::NetworkUnavailable)
     );
-    *provider.error.lock().unwrap() = None;
+    provider.set_reply_error(None);
     let cancel = CancelToken::default();
     cancel.cancel();
     assert_eq!(
@@ -392,11 +240,11 @@ fn attachment_disconnect_drains_and_cancels_without_publishing_file() {
     };
     let downloads = test_directory();
     let (entered_tx, entered_rx) = std::sync::mpsc::channel();
-    *provider.on_get_thread_cancel.lock().unwrap() = Some(Arc::new(move |cancel| {
+    provider.set_reply_get_thread_cancel_hook(Some(Arc::new(move |cancel| {
         entered_tx.send(()).unwrap();
         assert!(cancel.wait_until_cancelled(Duration::from_secs(4)));
-    }));
-    provider.configured.store(true, Ordering::SeqCst);
+    })));
+    provider.set_reply_configured(true);
     let reader = core.clone();
     let destination = downloads.path().to_path_buf();
     let transfer = std::thread::spawn(move || {
@@ -405,7 +253,7 @@ fn attachment_disconnect_drains_and_cancels_without_publishing_file() {
     entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
     core.disconnect_account().unwrap();
     assert_eq!(transfer.join().unwrap(), Err(MailError::AuthCancelled));
-    assert!(!provider.premature_disconnect.load(Ordering::SeqCst));
+    assert!(!provider.premature_disconnect());
     assert_eq!(std::fs::read_dir(downloads.path()).unwrap().count(), 0);
     close(core, dir);
 }
@@ -434,12 +282,12 @@ fn reply_metadata_cache_hit_is_network_free_and_requires_the_explicit_latest_sou
         .load_reply_context(&target, "m-latest")
         .expect("cache hit");
     assert_eq!(loaded.reply_context, Some(reply_context("m-latest")));
-    assert_eq!(provider.get_thread_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(provider.reply_thread_calls(), 0);
     assert_eq!(
         core.load_reply_context(&target, "m-earlier"),
         Err(MailError::ReplyUnavailable)
     );
-    assert_eq!(provider.get_thread_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(provider.reply_thread_calls(), 0);
     close(core, dir);
 }
 
@@ -453,7 +301,7 @@ fn legacy_reply_metadata_enrichment_is_readonly_and_survives_restart() {
         .load_reply_context(&target, "m-latest")
         .expect("enriched reader");
     assert_eq!(loaded.reply_context, Some(reply_context("m-latest")));
-    assert_eq!(provider.get_thread_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(provider.reply_thread_calls(), 1);
     assert_eq!(loaded.messages, before.messages);
     assert_eq!(loaded.subject, before.subject);
     assert_eq!(loaded.is_in_inbox, before.is_in_inbox);
@@ -464,7 +312,7 @@ fn legacy_reply_metadata_enrichment_is_readonly_and_survives_restart() {
 
     core.stop();
     drop(core);
-    let reopened = GmailStore::open(&dir, Arc::new(SystemClock)).expect("reopen cache");
+    let reopened = GmailStore::open(dir.path(), Arc::new(SystemClock)).expect("reopen cache");
     assert_eq!(
         reopened
             .get_conversation(&target)
@@ -474,7 +322,7 @@ fn legacy_reply_metadata_enrichment_is_readonly_and_survives_restart() {
     );
     drop(reopened);
     drop(provider);
-    let _ = std::fs::remove_dir_all(dir);
+    drop(dir);
 }
 
 #[test]
@@ -495,7 +343,7 @@ fn incomplete_or_mismatched_fetched_context_is_not_cached() {
         None,
         "failed enrichment must leave metadata absent"
     );
-    assert_eq!(provider.get_thread_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(provider.reply_thread_calls(), 1);
     close(core, dir);
 
     let (core, provider, dir, target) = setup(
@@ -510,7 +358,7 @@ fn incomplete_or_mismatched_fetched_context_is_not_cached() {
         Err(MailError::ReplyUnavailable)
     );
     assert_eq!(core.get_conversation(&target).unwrap().reply_context, None);
-    assert_eq!(provider.get_thread_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(provider.reply_thread_calls(), 1);
     close(core, dir);
 }
 
@@ -523,7 +371,7 @@ fn provider_error_and_generation_source_account_races_leave_no_metadata_write() 
         true,
         true,
     );
-    *provider.error.lock().unwrap() = Some(MailError::ProviderUnavailable);
+    provider.set_reply_error(Some(MailError::ProviderUnavailable));
     let before = core.get_conversation(&target).expect("reader before error");
     let cursor_before = core.inner.store.cursor().expect("cursor before error");
     assert_eq!(
@@ -576,7 +424,7 @@ fn provider_error_and_generation_source_account_races_leave_no_metadata_write() 
             "m-latest".to_string(),
             "m-newer".to_string(),
         ]);
-        *provider.on_get_thread.lock().unwrap() = Some(Arc::new(move || match race {
+        provider.set_reply_get_thread_hook(Some(Arc::new(move || match race {
             "generation" => store.advance_generation().expect("advance generation"),
             "source" => {
                 store
@@ -591,7 +439,7 @@ fn provider_error_and_generation_source_account_races_leave_no_metadata_write() 
             }
             "account" => store.clear_account().expect("clear account"),
             _ => unreachable!(),
-        }));
+        })));
         assert_eq!(
             core.load_reply_context(&target, "m-latest"),
             Err(MailError::ReplyUnavailable),
@@ -630,7 +478,7 @@ mod enrichment_lifecycle_tests {
         let cancelled_hook = Arc::clone(&cancelled);
         let release_hook = Arc::clone(&release);
         let publishes_credentials = Arc::clone(provider);
-        *provider.on_get_thread_cancel.lock().unwrap() = Some(Arc::new(move |cancel| {
+        provider.set_reply_get_thread_cancel_hook(Some(Arc::new(move |cancel| {
             entered_hook.wait();
             let observed = cancel.wait_until_cancelled(Duration::from_secs(10));
             cancel_tx
@@ -640,10 +488,8 @@ mod enrichment_lifecycle_tests {
             release_hook.wait();
             // Model a refresh response that commits credentials after the
             // caller was cancelled; cancellation cannot be trusted as a join.
-            publishes_credentials
-                .credentials
-                .store(true, Ordering::SeqCst);
-        }));
+            publishes_credentials.set_reply_credentials(true);
+        })));
         ReadBarriers {
             entered,
             cancelled,
@@ -661,7 +507,7 @@ mod enrichment_lifecycle_tests {
             true,
             true,
         );
-        provider.configured.store(true, Ordering::SeqCst);
+        provider.set_reply_configured(true);
         let generation_before_disconnect = core
             .inner
             .store
@@ -698,8 +544,8 @@ mod enrichment_lifecycle_tests {
             Err(MailError::Busy),
             "disconnect's admission barrier rejects another enrichment"
         );
-        assert_eq!(provider.disconnect_calls.load(Ordering::SeqCst), 0);
-        assert!(!provider.credentials.load(Ordering::SeqCst));
+        assert_eq!(provider.reply_disconnect_calls(), 0);
+        assert!(!provider.reply_credentials());
 
         let generation_deadline = std::time::Instant::now() + Duration::from_secs(2);
         while core
@@ -733,9 +579,9 @@ mod enrichment_lifecycle_tests {
             .expect("disconnect drains the reads")
             .expect("disconnect succeeds after drain");
         disconnect.join().expect("disconnect thread completes");
-        assert!(!provider.premature_disconnect.load(Ordering::SeqCst));
-        assert!(!provider.credentials.load(Ordering::SeqCst));
-        assert_eq!(provider.disconnect_calls.load(Ordering::SeqCst), 1);
+        assert!(!provider.premature_disconnect());
+        assert!(!provider.reply_credentials());
+        assert_eq!(provider.reply_disconnect_calls(), 1);
         assert_eq!(core.inner.store.account().unwrap(), None);
         assert!(core
             .inner
@@ -748,8 +594,8 @@ mod enrichment_lifecycle_tests {
 
         core.stop();
         drop(core);
-        let reopened = GmailCore::open(&dir, Arc::clone(&provider) as Arc<dyn GmailReadProvider>)
-            .expect("profile reopens after disconnect");
+        let reopened =
+            GmailCore::open(&dir, provider.clone()).expect("profile reopens after disconnect");
         assert_eq!(reopened.account_status().unwrap().account, None);
         assert_eq!(
             reopened.account_status().unwrap().connection,
@@ -757,7 +603,7 @@ mod enrichment_lifecycle_tests {
         );
         reopened.stop();
         drop(reopened);
-        let _ = std::fs::remove_dir_all(dir);
+        drop(dir);
     }
 
     #[test]
@@ -769,7 +615,7 @@ mod enrichment_lifecycle_tests {
             true,
             true,
         );
-        provider.configured.store(true, Ordering::SeqCst);
+        provider.set_reply_configured(true);
         let barriers = block_refresh_after_cancel(&provider, 1);
         let reader = core.clone();
         let target_for_read = target.clone();
@@ -794,8 +640,8 @@ mod enrichment_lifecycle_tests {
             .expect("disconnect returns on its bounded timeout");
         assert_eq!(timed_out, Err(MailError::Busy));
         disconnect.join().expect("disconnect thread completes");
-        assert_eq!(provider.disconnect_calls.load(Ordering::SeqCst), 0);
-        assert!(!provider.premature_disconnect.load(Ordering::SeqCst));
+        assert_eq!(provider.reply_disconnect_calls(), 0);
+        assert!(!provider.premature_disconnect());
         assert_eq!(
             core.inner
                 .store
@@ -812,14 +658,14 @@ mod enrichment_lifecycle_tests {
             read.join().expect("reply read finishes after release"),
             Err(MailError::ReplyUnavailable)
         );
-        assert!(provider.credentials.load(Ordering::SeqCst));
+        assert!(provider.reply_credentials());
         core.disconnect_account()
             .expect("retry succeeds after the timed-out read drained");
-        assert!(!provider.credentials.load(Ordering::SeqCst));
+        assert!(!provider.reply_credentials());
         assert_eq!(core.inner.store.account().unwrap(), None);
         core.stop();
         drop(core);
-        let _ = std::fs::remove_dir_all(dir);
+        drop(dir);
     }
 
     #[test]

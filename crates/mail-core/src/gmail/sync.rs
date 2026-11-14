@@ -22,10 +22,11 @@ use crate::gmail::store::{
     Commit, DiscoveryProgress, GmailStore, HistoryProgress, ThreadFetch, DISCOVERY_CAP,
 };
 use crate::gmail::types::{
-    AccountStatus, ConnectionState, GmailReadProvider, GmailThread, MailMode, MutationAccess,
-    SyncInfo, SyncState,
+    AccountStatus, ConnectionState, GmailProvider, GmailThread, MailMode, MutationAccess, SyncInfo,
+    SyncState,
 };
 use crate::lock::ProfileGuard;
+use crate::storage_log::storage_err;
 use crate::CancelToken;
 
 /// Disclosed discovery cap (`SyncInfo.coverageLimit`).
@@ -66,7 +67,7 @@ pub struct GmailCore {
 struct GmailInner {
     search_cancel: Mutex<Option<CancelToken>>,
     store: Arc<GmailStore>,
-    provider: Arc<dyn GmailReadProvider>,
+    provider: Arc<dyn GmailProvider>,
     /// Profile lock is owned for the full core lifetime and additionally
     /// shared with the worker thread: a running or detached worker can never
     /// outlive the lock (a second writer is rejected instead of two
@@ -88,7 +89,12 @@ struct GmailInner {
 struct Ctrl {
     state: Mutex<CtrlState>,
     wake: Condvar,
+    #[cfg(test)]
+    after_mutation_count: Mutex<Option<MutationCountHook>>,
 }
+
+#[cfg(test)]
+type MutationCountHook = Box<dyn FnOnce(bool) + Send>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AuthKind {
@@ -121,6 +127,7 @@ struct CtrlState {
     auth_kind: AuthKind,
     auth_auto_retry: bool,
     sync_requested: bool,
+    reminder_work: bool,
     operations_requested: bool,
     upgrade_requested: bool,
     upgrade_in_flight: bool,
@@ -133,9 +140,35 @@ struct CtrlState {
     /// `None` means no live destination job is active; overlaps are typed
     /// `Busy` instead of accumulating unbounded provider reads.
     destination_read: Option<CancelToken>,
+    reminder_read: Option<CancelToken>,
     connection: ConnectionState,
     error: Option<MailError>,
     backoff: u32,
+    #[cfg(test)]
+    wait_divisor: u32,
+    #[cfg(test)]
+    test_wait_cycles: usize,
+    #[cfg(test)]
+    test_sync_deadline: Option<Instant>,
+    #[cfg(test)]
+    test_reminder_deadline: Option<Instant>,
+    #[cfg(test)]
+    test_tick_due: bool,
+    #[cfg(any(test, feature = "test-support"))]
+    operations_paused: bool,
+}
+
+#[inline]
+fn test_operations_paused(state: &CtrlState) -> bool {
+    #[cfg(any(test, feature = "test-support"))]
+    {
+        state.operations_paused
+    }
+    #[cfg(not(any(test, feature = "test-support")))]
+    {
+        let _ = state;
+        false
+    }
 }
 
 fn cancel_independent_reads(st: &mut CtrlState) {
@@ -143,6 +176,9 @@ fn cancel_independent_reads(st: &mut CtrlState) {
         cancel.cancel();
     }
     if let Some(cancel) = &st.destination_read {
+        cancel.cancel();
+    }
+    if let Some(cancel) = &st.reminder_read {
         cancel.cancel();
     }
 }
@@ -175,10 +211,7 @@ struct DestinationRead {
 
 impl DestinationRead {
     fn begin(ctrl: &Arc<Ctrl>) -> Result<Self, MailError> {
-        let mut st = ctrl
-            .state
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut st = ctrl.state.lock().map_err(storage_err())?;
         if st.stop || st.halted {
             return Err(MailError::StorageUnavailable);
         }
@@ -253,7 +286,7 @@ impl GmailCore {
     /// wires the auth component's Gmail provider, tests inject fakes.
     pub fn open(
         profile_dir: impl AsRef<Path>,
-        provider: Arc<dyn GmailReadProvider>,
+        provider: Arc<dyn GmailProvider>,
     ) -> Result<GmailCore, MailError> {
         Self::open_with_clock(profile_dir, provider, Arc::new(SystemClock))
     }
@@ -262,9 +295,32 @@ impl GmailCore {
     /// [`crate::clock::FakeClock`] for deterministic undo-window behavior.
     pub fn open_with_clock(
         profile_dir: impl AsRef<Path>,
-        provider: Arc<dyn GmailReadProvider>,
+        provider: Arc<dyn GmailProvider>,
         clock: Arc<dyn Clock>,
     ) -> Result<GmailCore, MailError> {
+        Self::open_with_clock_config(profile_dir, provider, clock, false)
+    }
+
+    /// Test seam that keeps queued mailbox mutations durable until explicitly
+    /// released. Authentication, synchronization, reminders, and storage use
+    /// the same worker and stores as the normal constructor.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn open_with_clock_and_operations_paused(
+        profile_dir: impl AsRef<Path>,
+        provider: Arc<dyn GmailProvider>,
+        clock: Arc<dyn Clock>,
+    ) -> Result<GmailCore, MailError> {
+        Self::open_with_clock_config(profile_dir, provider, clock, true)
+    }
+
+    fn open_with_clock_config(
+        profile_dir: impl AsRef<Path>,
+        provider: Arc<dyn GmailProvider>,
+        clock: Arc<dyn Clock>,
+        operations_paused: bool,
+    ) -> Result<GmailCore, MailError> {
+        #[cfg(not(any(test, feature = "test-support")))]
+        let _ = operations_paused;
         let profile_dir = profile_dir.as_ref();
         let profile = Arc::new(ProfileGuard::acquire(profile_dir)?);
         let store = Arc::new(GmailStore::open(profile_dir, clock)?);
@@ -296,6 +352,7 @@ impl GmailCore {
                 auth_kind: AuthKind::Restore,
                 auth_auto_retry: false,
                 sync_requested: false,
+                reminder_work: false,
                 operations_requested: true,
                 upgrade_requested: false,
                 upgrade_in_flight: false,
@@ -305,11 +362,26 @@ impl GmailCore {
                 pass_cancel: CancelToken::default(),
                 reply_enrichments: HashMap::new(),
                 destination_read: None,
+                reminder_read: None,
                 connection,
                 error,
                 backoff: 0,
+                #[cfg(test)]
+                wait_divisor: 1,
+                #[cfg(test)]
+                test_wait_cycles: 0,
+                #[cfg(test)]
+                test_sync_deadline: None,
+                #[cfg(test)]
+                test_reminder_deadline: None,
+                #[cfg(test)]
+                test_tick_due: false,
+                #[cfg(any(test, feature = "test-support"))]
+                operations_paused,
             }),
             wake: Condvar::new(),
+            #[cfg(test)]
+            after_mutation_count: Mutex::new(None),
         });
         let hub = Arc::new(GmailHub {
             listeners: Mutex::new(HashMap::new()),
@@ -337,10 +409,114 @@ impl GmailCore {
         })
     }
 
+    /// Release queued mutation work in deterministic integration tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn release_test_operations(&self) {
+        let mut state = self.inner.ctrl.state.lock().expect("gmail ctrl poisoned");
+        state.operations_paused = false;
+        drop(state);
+        self.inner.ctrl.wake.notify_all();
+    }
+
+    /// Pause future claims and drain a currently running pass before assertions.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn pause_test_operations(&self, timeout: Duration) -> Result<(), MailError> {
+        self.inner
+            .ctrl
+            .state
+            .lock()
+            .expect("gmail ctrl poisoned")
+            .operations_paused = true;
+        self.inner.ctrl.wait_until_idle(timeout)
+    }
+
+    /// Wait for both accepted worker requests and active reads to drain.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn wait_for_test_idle(&self, timeout: Duration) -> Result<(), MailError> {
+        let deadline = Instant::now() + timeout;
+        let mut st = self.inner.ctrl.state.lock().expect("gmail ctrl poisoned");
+        loop {
+            let requested = st.auth_requested
+                || (st.connection == ConnectionState::Connected
+                    && (st.sync_requested
+                        || st.upgrade_requested
+                        || (st.operations_requested && !st.operations_paused)));
+            if !requested
+                && !st.pass_in_flight
+                && st.reply_enrichments.is_empty()
+                && st.destination_read.is_none()
+                && st.reminder_read.is_none()
+            {
+                return Ok(());
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(MailError::Busy);
+            }
+            st = self
+                .inner
+                .ctrl
+                .wake
+                .wait_timeout(st, remaining)
+                .expect("gmail ctrl poisoned")
+                .0;
+        }
+    }
+
     /// Effective inbox plus (empty) activity, served entirely from the local
     /// cache: cached reads survive offline and authentication errors.
     pub fn list_conversations(&self) -> Result<InboxSnapshot, MailError> {
         self.inner.store.list_snapshot()
+    }
+
+    pub fn list_reminders(&self) -> Result<Vec<crate::reminders::Reminder>, MailError> {
+        self.inner.store.list_reminders()
+    }
+
+    pub fn put_reminder(
+        &self,
+        command: &crate::reminders::PutReminder,
+    ) -> Result<crate::reminders::Reminder, MailError> {
+        let mut state = self.inner.ctrl.state.lock().map_err(storage_err())?;
+        if state.stop || state.halted {
+            return Err(MailError::StorageUnavailable);
+        }
+        if state.disconnecting {
+            return Err(MailError::Busy);
+        }
+        let result = self.inner.store.put_reminder(command);
+        if let Err(error) = &result {
+            latch_admission_storage_error(&mut state, &self.inner.ctrl, error);
+        } else {
+            state.reminder_work = true;
+        }
+        drop(state);
+        self.inner.ctrl.wake.notify_all();
+        self.inner.hub.dispatch();
+        result
+    }
+
+    pub fn cancel_reminder(
+        &self,
+        command: &crate::reminders::CancelReminder,
+    ) -> Result<crate::reminders::Reminder, MailError> {
+        let mut state = self.inner.ctrl.state.lock().map_err(storage_err())?;
+        if state.stop || state.halted {
+            return Err(MailError::StorageUnavailable);
+        }
+        if state.disconnecting {
+            return Err(MailError::Busy);
+        }
+        let result = self.inner.store.cancel_reminder(command);
+        if let Err(error) = &result {
+            latch_admission_storage_error(&mut state, &self.inner.ctrl, error);
+        } else {
+            state.reminder_work = true;
+        }
+        drop(state);
+        self.inner.ctrl.wake.notify_all();
+        self.inner.hub.dispatch();
+        result
     }
 
     pub fn list_cached_starred(
@@ -422,11 +598,7 @@ impl GmailCore {
         };
         let work = self.begin_reply_enrichment()?;
         {
-            let mut slot = self
-                .inner
-                .search_cancel
-                .lock()
-                .map_err(|_| MailError::StorageUnavailable)?;
+            let mut slot = self.inner.search_cancel.lock().map_err(storage_err())?;
             if let Some(old) = slot.replace(work.cancel.clone()) {
                 old.cancel();
             }
@@ -546,8 +718,7 @@ impl GmailCore {
         use super::browsing::*;
         if cached {
             let saved = self.inner.store.destination_snapshot(account_id, "")?;
-            return serde_json::from_str(&saved.ok_or(MailError::NotFound)?)
-                .map_err(|_| MailError::StorageUnavailable);
+            return serde_json::from_str(&saved.ok_or(MailError::NotFound)?).map_err(storage_err());
         }
         let job = DestinationRead::begin(&self.inner.ctrl)?;
         let generation = self.inner.store.generation()?;
@@ -567,7 +738,7 @@ impl GmailCore {
         if job.cancel.is_cancelled() {
             return Err(MailError::AuthCancelled);
         }
-        let json = serde_json::to_string(&result).map_err(|_| MailError::StorageUnavailable)?;
+        let json = serde_json::to_string(&result).map_err(storage_err())?;
         self.inner
             .store
             .save_destination_snapshot(account_id, "", &json, generation)?;
@@ -601,8 +772,7 @@ impl GmailCore {
                 .store
                 .destination_snapshot(&request.account_id, &request.destination_id)?
                 .ok_or(MailError::NotFound)?;
-            let page: DestinationPage =
-                serde_json::from_str(&json).map_err(|_| MailError::StorageUnavailable)?;
+            let page: DestinationPage = serde_json::from_str(&json).map_err(storage_err())?;
             if page.account_id != request.account_id
                 || page.destination_id != request.destination_id
             {
@@ -619,7 +789,7 @@ impl GmailCore {
                 .destination_snapshot(&request.account_id, "")?
                 .ok_or(MailError::NotFound)?,
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
         if catalog.account_id != request.account_id
             || !catalog
                 .destinations
@@ -698,10 +868,10 @@ impl GmailCore {
                     serde_json::to_string(&(&request.account_id, &request.destination_id, token))
                 })
                 .transpose()
-                .map_err(|_| MailError::StorageUnavailable)?,
+                .map_err(storage_err())?,
             fetched_at: chrono::Utc::now().to_rfc3339(),
         };
-        let json = serde_json::to_string(&result).map_err(|_| MailError::StorageUnavailable)?;
+        let json = serde_json::to_string(&result).map_err(storage_err())?;
         self.inner.store.save_destination_snapshot(
             &request.account_id,
             &request.destination_id,
@@ -753,12 +923,7 @@ impl GmailCore {
         crate::attachments::check_cancel(cancel)?;
         // Hold control across the short local save so disconnect cannot complete
         // between generation validation and publication.
-        let st = self
-            .inner
-            .ctrl
-            .state
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let st = self.inner.ctrl.state.lock().map_err(storage_err())?;
         if st.disconnecting
             || st.stop
             || self.inner.store.generation()? != generation
@@ -778,12 +943,7 @@ impl GmailCore {
     }
 
     fn begin_read_transfer(&self, cancel: CancelToken) -> Result<ReplyEnrichment, MailError> {
-        let mut st = self
-            .inner
-            .ctrl
-            .state
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut st = self.inner.ctrl.state.lock().map_err(storage_err())?;
         if st.stop || st.halted {
             return Err(MailError::StorageUnavailable);
         }
@@ -878,12 +1038,7 @@ impl GmailCore {
     /// failures; connection and sync error hints come from worker outcomes.
     pub fn account_status(&self) -> Result<AccountStatus, MailError> {
         let (connection, mut error, pass_in_flight, upgrading) = {
-            let st = self
-                .inner
-                .ctrl
-                .state
-                .lock()
-                .map_err(|_| MailError::StorageUnavailable)?;
+            let st = self.inner.ctrl.state.lock().map_err(storage_err())?;
             (
                 st.connection,
                 st.error.clone(),
@@ -934,11 +1089,7 @@ impl GmailCore {
         if !inner.provider.is_configured() {
             return Err(MailError::NotConfigured);
         }
-        let mut st = inner
-            .ctrl
-            .state
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut st = inner.ctrl.state.lock().map_err(storage_err())?;
         if st.halted || st.stop {
             return Err(MailError::StorageUnavailable);
         }
@@ -983,11 +1134,7 @@ impl GmailCore {
     /// revoke a completed grant or cancel sync, restore, or mutation work.
     pub fn cancel_mutation_upgrade(&self) -> Result<(), MailError> {
         let inner = &*self.inner;
-        let mut st = inner
-            .ctrl
-            .state
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut st = inner.ctrl.state.lock().map_err(storage_err())?;
         if st.upgrade_requested {
             st.upgrade_requested = false;
             inner.ctrl.wake.notify_all();
@@ -1088,11 +1235,7 @@ impl GmailCore {
     /// executor, so no mutation-access gate is applied here.
     pub fn undo_operation(&self, command: &UndoOperation) -> Result<UndoReceipt, MailError> {
         let inner = &*self.inner;
-        let mut st = inner
-            .ctrl
-            .state
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut st = inner.ctrl.state.lock().map_err(storage_err())?;
         if st.halted || st.stop {
             return Err(MailError::StorageUnavailable);
         }
@@ -1141,11 +1284,7 @@ impl GmailCore {
         command: &crate::groups::UndoOperationGroup,
     ) -> Result<crate::groups::GroupUndoReceipt, MailError> {
         let inner = &*self.inner;
-        let mut st = inner
-            .ctrl
-            .state
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut st = inner.ctrl.state.lock().map_err(storage_err())?;
         if st.halted || st.stop {
             return Err(MailError::StorageUnavailable);
         }
@@ -1224,7 +1363,7 @@ impl GmailCore {
             .ctrl
             .state
             .lock()
-            .map_err(|_| MailError::StorageUnavailable)?
+            .map_err(storage_err())?
             .connection
             != ConnectionState::Connected
         {
@@ -1266,11 +1405,7 @@ impl GmailCore {
         accept: impl FnOnce(&GmailStore) -> Result<T, MailError>,
     ) -> Result<T, MailError> {
         let inner = &*self.inner;
-        let mut st = inner
-            .ctrl
-            .state
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut st = inner.ctrl.state.lock().map_err(storage_err())?;
         if st.halted || st.stop {
             return Err(MailError::StorageUnavailable);
         }
@@ -1330,11 +1465,7 @@ impl GmailCore {
         if !inner.provider.is_configured() {
             return Err(MailError::NotConfigured);
         }
-        let mut st = inner
-            .ctrl
-            .state
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut st = inner.ctrl.state.lock().map_err(storage_err())?;
         if st.halted || st.stop {
             return Err(MailError::StorageUnavailable);
         }
@@ -1361,18 +1492,11 @@ impl GmailCore {
     /// cleared unless credential deletion succeeded.
     pub fn disconnect_account(&self) -> Result<(), MailError> {
         let inner = &*self.inner;
-        let _serial = inner
-            .disconnect_lock
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let _serial = inner.disconnect_lock.lock().map_err(storage_err())?;
         // Publish an admission barrier and cancellation together. The worker
         // cannot activate another pass until credentials and cache are cleared.
         {
-            let mut st = inner
-                .ctrl
-                .state
-                .lock()
-                .map_err(|_| MailError::StorageUnavailable)?;
+            let mut st = inner.ctrl.state.lock().map_err(storage_err())?;
             st.disconnecting = true;
             st.auth_requested = false;
             st.auth_auto_retry = false;
@@ -1401,11 +1525,7 @@ impl GmailCore {
             Ok(false)
         };
         {
-            let mut st = inner
-                .ctrl
-                .state
-                .lock()
-                .map_err(|_| MailError::StorageUnavailable)?;
+            let mut st = inner.ctrl.state.lock().map_err(storage_err())?;
             st.disconnecting = false;
             st.upgrade_in_flight = false;
             st.active_action = None;
@@ -1439,12 +1559,7 @@ impl GmailCore {
     /// while a pass is in flight is rejected typed as `busy` so there is
     /// never a concurrent cursor writer.
     pub fn request_sync(&self) -> Result<(), MailError> {
-        let mut st = self
-            .inner
-            .ctrl
-            .state
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut st = self.inner.ctrl.state.lock().map_err(storage_err())?;
         if st.halted || st.stop {
             return Err(MailError::StorageUnavailable);
         }
@@ -1565,7 +1680,10 @@ impl Ctrl {
     fn wait_until_idle(&self, timeout: Duration) -> Result<(), MailError> {
         let deadline = Instant::now() + timeout;
         let mut st = self.state.lock().expect("gmail ctrl poisoned");
-        while st.pass_in_flight || !st.reply_enrichments.is_empty() || st.destination_read.is_some()
+        while st.pass_in_flight
+            || !st.reply_enrichments.is_empty()
+            || st.destination_read.is_some()
+            || st.reminder_read.is_some()
         {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
@@ -1659,11 +1777,23 @@ fn backoff_delay(backoff: u32) -> Duration {
         .unwrap_or(MAX_BACKOFF_INTERVAL)
 }
 
+// Per-worker time compression for lifecycle tests; production uses real durations.
+fn worker_wait(_state: &CtrlState, wait: Duration) -> Duration {
+    #[cfg(test)]
+    {
+        wait / _state.wait_divisor
+    }
+    #[cfg(not(test))]
+    {
+        wait
+    }
+}
+
 // ------------------------------------------------------------------- worker
 
 fn spawn_worker(
     store: Arc<GmailStore>,
-    provider: Arc<dyn GmailReadProvider>,
+    provider: Arc<dyn GmailProvider>,
     ctrl: Arc<Ctrl>,
     hub: Arc<GmailHub>,
     profile: Arc<ProfileGuard>,
@@ -1671,20 +1801,34 @@ fn spawn_worker(
     std::thread::Builder::new()
         .name("gmail-sync-worker".to_string())
         .spawn(move || run(store, provider, ctrl, hub, profile))
-        .map_err(|_| MailError::StorageUnavailable)
+        .map_err(storage_err())
 }
 
 fn run(
     store: Arc<GmailStore>,
-    provider: Arc<dyn GmailReadProvider>,
+    provider: Arc<dyn GmailProvider>,
     ctrl: Arc<Ctrl>,
     hub: Arc<GmailHub>,
     // Held for the whole thread: a running or detached worker can never
     // outlive the profile lock.
     _profile: Arc<ProfileGuard>,
 ) {
-    let mut first_tick = true;
+    let mut sync_deadline = Instant::now();
     loop {
+        {
+            let state = ctrl.state.lock().expect("gmail ctrl poisoned");
+            if state.stop || state.halted {
+                return;
+            }
+        }
+        if let Err(error) = process_due_reminders(&store, provider.as_ref(), &ctrl, &hub) {
+            let mut st = ctrl.state.lock().expect("gmail ctrl poisoned");
+            if latch_admission_storage_error(&mut st, &ctrl, &error) {
+                drop(st);
+                hub.dispatch();
+                return;
+            }
+        }
         // Select the next action: request-driven work runs immediately,
         // tick-driven catch-up waits for the periodic/backoff interval.
         let (action, pass_cancel) = {
@@ -1695,20 +1839,55 @@ fn run(
             if st.stop || st.halted {
                 return;
             }
-            let mut tick_due = first_tick;
+            #[cfg(test)]
+            {
+                if st.test_tick_due {
+                    sync_deadline = Instant::now();
+                    st.test_tick_due = false;
+                }
+                st.test_sync_deadline = Some(sync_deadline);
+                st.test_wait_cycles += 1;
+                ctrl.wake.notify_all();
+            }
+            let mut tick_due = Instant::now() >= sync_deadline;
             let runnable_request = |st: &CtrlState| {
                 st.auth_requested
                     || (st.connection == ConnectionState::Connected
-                        && (st.upgrade_requested || st.sync_requested || st.operations_requested))
+                        && (st.upgrade_requested
+                            || st.sync_requested
+                            || (st.operations_requested && !test_operations_paused(st))))
             };
-            if !runnable_request(&st) && !first_tick {
+            if !runnable_request(&st) && !st.reminder_work && !tick_due {
                 // No runnable request pending: wait for one or the periodic
                 // catch-up/backoff deadline.
-                let deadline = Instant::now() + backoff_delay(st.backoff);
+                let reminder_wait = match store.reminder_wait() {
+                    Ok(value) => value,
+                    Err(error) => {
+                        if latch_admission_storage_error(&mut st, &ctrl, &error) {
+                            drop(st);
+                            hub.dispatch();
+                            return;
+                        }
+                        None
+                    }
+                };
+                let reminder_deadline = reminder_wait.map(|wait| {
+                    Instant::now() + worker_wait(&st, wait.max(Duration::from_secs(1)))
+                });
+                #[cfg(test)]
+                {
+                    st.test_reminder_deadline = reminder_deadline;
+                    ctrl.wake.notify_all();
+                }
+                let deadline = reminder_deadline.map_or(sync_deadline, |d| d.min(sync_deadline));
                 loop {
                     let remaining = deadline.saturating_duration_since(Instant::now());
                     if remaining.is_zero() {
-                        tick_due = true;
+                        let now = Instant::now();
+                        tick_due = now >= sync_deadline;
+                        if reminder_deadline.is_some_and(|d| now >= d) {
+                            st.reminder_work = true;
+                        }
                         break;
                     }
                     let (guard, _) = ctrl
@@ -1719,7 +1898,13 @@ fn run(
                     if st.stop || st.halted {
                         return;
                     }
-                    if st.disconnecting || runnable_request(&st) {
+                    #[cfg(test)]
+                    if st.test_tick_due {
+                        sync_deadline = Instant::now();
+                        st.test_tick_due = false;
+                        break;
+                    }
+                    if st.disconnecting || st.reminder_work || runnable_request(&st) {
                         break;
                     }
                 }
@@ -1731,11 +1916,15 @@ fn run(
                 drop(st);
                 continue;
             }
-            first_tick = false;
+            tick_due |= Instant::now() >= sync_deadline;
+            st.reminder_work = false;
             let action = if st.auth_requested {
                 st.auth_requested = false;
                 PassAction::Auth(st.auth_kind)
-            } else if st.connection == ConnectionState::Authenticating && st.auth_auto_retry {
+            } else if st.connection == ConnectionState::Authenticating
+                && st.auth_auto_retry
+                && tick_due
+            {
                 PassAction::Auth(AuthKind::Restore)
             } else if st.connection == ConnectionState::Connected && st.upgrade_requested {
                 st.upgrade_requested = false;
@@ -1744,12 +1933,18 @@ fn run(
             } else if st.connection == ConnectionState::Connected && st.sync_requested {
                 st.sync_requested = false;
                 PassAction::Sync
-            } else if st.connection == ConnectionState::Connected && st.operations_requested {
+            } else if st.connection == ConnectionState::Connected
+                && st.operations_requested
+                && !test_operations_paused(&st)
+            {
                 st.operations_requested = false;
                 PassAction::Mutations
             } else if st.connection == ConnectionState::Connected && tick_due {
                 PassAction::Sync
             } else {
+                if tick_due {
+                    sync_deadline = Instant::now() + worker_wait(&st, backoff_delay(st.backoff));
+                }
                 // Nothing runnable (not configured / disconnected / auth
                 // required): go back to waiting without running a pass.
                 drop(st);
@@ -1776,6 +1971,16 @@ fn run(
                 Ok(count) => more_claimable_mutations = count > 0,
                 Err(error) => outcome = PassOutcome::Halt(error),
             }
+            #[cfg(test)]
+            let callback = ctrl
+                .after_mutation_count
+                .lock()
+                .expect("test mutation-count hook poisoned")
+                .take();
+            #[cfg(test)]
+            if let Some(callback) = callback {
+                callback(more_claimable_mutations);
+            }
         }
 
         let mut halted = false;
@@ -1786,6 +1991,7 @@ fn run(
             if action == PassAction::MutationUpgrade {
                 st.upgrade_in_flight = false;
             }
+            let reschedule = !matches!(outcome, PassOutcome::Idle | PassOutcome::Cancelled);
             if st.halted {
                 halted = true;
             } else {
@@ -1802,7 +2008,8 @@ fn run(
                         {
                             st.operations_requested = true;
                         } else if action == PassAction::Mutations {
-                            st.operations_requested = more_claimable_mutations;
+                            // Preserve acceptances published after the count above.
+                            st.operations_requested |= more_claimable_mutations;
                         }
                     }
                     PassOutcome::Idle => {}
@@ -1855,6 +2062,9 @@ fn run(
                     }
                 }
             }
+            if reschedule {
+                sync_deadline = Instant::now() + worker_wait(&st, backoff_delay(st.backoff));
+            }
             ctrl.wake.notify_all();
         }
         hub.dispatch();
@@ -1864,9 +2074,145 @@ fn run(
     }
 }
 
+/// Process local deadlines from the serial worker. A conditional reminder is
+/// decided only after a complete fresh thread read; an error or partial thread
+/// stays pending and remains visible through its due marker.
+fn process_due_reminders(
+    store: &GmailStore,
+    provider: &dyn GmailProvider,
+    ctrl: &Arc<Ctrl>,
+    hub: &GmailHub,
+) -> Result<(), MailError> {
+    let due = store.due_reminders()?;
+    for (reminder, baseline) in due {
+        let replied = if reminder.condition == crate::reminders::ReminderCondition::Regardless {
+            false
+        } else {
+            let connected = {
+                let state = ctrl.state.lock().map_err(storage_err())?;
+                state.connection == ConnectionState::Connected
+                    && !state.disconnecting
+                    && !state.stop
+                    && !state.halted
+            };
+            if !connected {
+                continue;
+            }
+            let account = match store.account() {
+                Ok(Some(account)) if account.account_id == reminder.conversation.account_id => {
+                    account
+                }
+                Err(error) => return Err(error),
+                _ => continue,
+            };
+            let generation = store.generation()?;
+            let observation = store.observation_revision()?;
+            let cancel = CancelToken::default();
+            {
+                let mut st = ctrl.state.lock().map_err(storage_err())?;
+                if st.stop || st.halted || st.disconnecting {
+                    continue;
+                }
+                st.reminder_read = Some(cancel.clone());
+            }
+            let thread = match provider.get_thread_for_account(
+                &account.account_id,
+                &reminder.conversation.conversation_id,
+                &cancel,
+            ) {
+                Ok(Some(thread)) => thread,
+                Err(error) => {
+                    clear_reminder_read(ctrl);
+                    if error == MailError::StorageUnavailable {
+                        return Err(error);
+                    }
+                    continue;
+                }
+                _ => {
+                    clear_reminder_read(ctrl);
+                    continue;
+                }
+            };
+            clear_reminder_read(ctrl);
+            if thread.conversation.conversation_ref != reminder.conversation {
+                continue;
+            }
+            let Some(ids) = thread.message_ids.as_ref() else {
+                continue;
+            };
+            if thread.conversation.context_complete != Some(true) {
+                continue;
+            }
+            let senders: HashMap<String, String> = thread
+                .conversation
+                .messages
+                .iter()
+                .map(|message| (message.id.clone(), message.from.mailbox.clone()))
+                .collect();
+            if ids.iter().any(|id| !senders.contains_key(id))
+                || senders.keys().any(|id| !ids.contains(id))
+            {
+                continue;
+            }
+            let mut has_reply = false;
+            let mut complete = true;
+            for id in ids.iter().filter(|id| !baseline.contains(id)) {
+                match senders.get(id) {
+                    Some(sender) if !sender.eq_ignore_ascii_case(&account.email_address) => {
+                        has_reply = true
+                    }
+                    Some(_) => {}
+                    None => {
+                        complete = false;
+                        break;
+                    }
+                }
+            }
+            if !complete {
+                continue;
+            }
+            let st = ctrl.state.lock().map_err(storage_err())?;
+            if st.stop || st.halted || st.disconnecting {
+                continue;
+            }
+            let changed = store.finish_due_reminder_with_thread(
+                &reminder,
+                generation,
+                observation,
+                has_reply,
+                Some(&thread),
+            )?;
+            drop(st);
+            if changed {
+                hub.dispatch();
+            }
+            continue;
+        };
+        let generation = store.generation()?;
+        let observation = store.observation_revision()?;
+        let st = ctrl.state.lock().map_err(storage_err())?;
+        if st.stop || st.halted || st.disconnecting {
+            continue;
+        }
+        let changed = store.finish_due_reminder(&reminder, generation, observation, replied)?;
+        drop(st);
+        if changed {
+            hub.dispatch();
+        }
+    }
+    Ok(())
+}
+
+fn clear_reminder_read(ctrl: &Ctrl) {
+    if let Ok(mut st) = ctrl.state.lock() {
+        st.reminder_read = None;
+        ctrl.wake.notify_all();
+    }
+}
+
 fn run_pass(
     store: &GmailStore,
-    provider: &dyn GmailReadProvider,
+    provider: &dyn GmailProvider,
     cancel: &CancelToken,
     action: PassAction,
     hub: &GmailHub,
@@ -1971,7 +2317,7 @@ fn run_pass(
 
 fn run_discovery(
     store: &GmailStore,
-    provider: &dyn GmailReadProvider,
+    provider: &dyn GmailProvider,
     cancel: &CancelToken,
     generation: u64,
     hub: &GmailHub,
@@ -2088,7 +2434,7 @@ fn run_discovery(
 
 fn run_history(
     store: &GmailStore,
-    provider: &dyn GmailReadProvider,
+    provider: &dyn GmailProvider,
     cancel: &CancelToken,
     generation: u64,
     hub: &GmailHub,
@@ -2166,7 +2512,7 @@ fn run_history(
 /// Fetches changed threads with per-page dedup; `None` responses become
 /// removals. Pathological provider data (mismatched ids) fails typed.
 fn fetch_changed_threads(
-    provider: &dyn GmailReadProvider,
+    provider: &dyn GmailProvider,
     changed_thread_ids: &[String],
     cancel: &CancelToken,
 ) -> Result<Vec<ThreadFetch>, MailError> {
@@ -2347,288 +2693,584 @@ fn retained_thread_bytes(thread: &GmailThread) -> usize {
 #[cfg(test)]
 mod worker_halt_tests {
     use super::*;
-    use crate::dto::{Address, Message};
-    use crate::gmail::types::{GmailHistoryError, GmailProfile, HistoryPage, InboxPage};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use crate::gmail::types::{GmailProfile, HistoryPage};
 
     const TEST_ACCOUNT: &str = "halt-test-account";
     const TEST_THREAD: &str = "halt-test-thread";
 
-    struct ProviderState {
-        block_history: bool,
-        history_started: bool,
-        writes: usize,
-        mutation_granted: bool,
-        auth_expired: bool,
+    type HaltTestProvider = crate::testing::operations_fake::FakeProvider;
+
+    fn provider() -> Arc<HaltTestProvider> {
+        HaltTestProvider::with_halt_thread(test_thread())
     }
 
-    struct HaltTestProvider {
-        mutation_hook: Mutex<Option<Box<dyn FnOnce() + Send>>>,
-        search_error: Mutex<Option<MailError>>,
-        search_hook: Mutex<Option<Box<dyn FnOnce() + Send>>>,
-        search_reads: std::sync::atomic::AtomicUsize,
-        state: Mutex<ProviderState>,
-        wake: Condvar,
-    }
-
-    impl HaltTestProvider {
-        fn new() -> Arc<Self> {
-            Arc::new(Self {
-                mutation_hook: Mutex::new(None),
-                search_error: Mutex::new(None),
-                search_hook: Mutex::new(None),
-                search_reads: std::sync::atomic::AtomicUsize::new(0),
-                state: Mutex::new(ProviderState {
-                    block_history: false,
-                    history_started: false,
-                    writes: 0,
-                    mutation_granted: true,
-                    auth_expired: false,
-                }),
-                wake: Condvar::new(),
-            })
-        }
-
-        fn block_history(&self) {
-            let mut state = self.state.lock().unwrap();
-            state.block_history = true;
-            state.history_started = false;
-        }
-
-        fn wait_for_history(&self) -> bool {
-            let deadline = Instant::now() + Duration::from_secs(5);
-            let mut state = self.state.lock().unwrap();
-            while !state.history_started {
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                if remaining.is_zero() {
-                    return false;
-                }
-                let (next, _) = self.wake.wait_timeout(state, remaining).unwrap();
-                state = next;
-            }
-            true
-        }
-
-        fn release_history(&self) {
-            let mut state = self.state.lock().unwrap();
-            state.block_history = false;
-            drop(state);
-            self.wake.notify_all();
-        }
-
-        fn writes(&self) -> usize {
-            self.state.lock().unwrap().writes
-        }
-
-        fn set_mutation_access(&self, granted: bool) {
-            self.state.lock().unwrap().mutation_granted = granted;
-        }
-    }
-
-    fn until(mut predicate: impl FnMut() -> bool) -> bool {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            if predicate() {
-                return true;
-            }
-            if Instant::now() >= deadline {
-                return predicate();
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-    }
+    use crate::testing::until;
 
     fn test_profile() -> GmailProfile {
-        GmailProfile {
-            account_id: TEST_ACCOUNT.to_string(),
-            email_address: "halt@example.test".to_string(),
-            history_id: "history-1".to_string(),
-        }
+        crate::testing::profile(TEST_ACCOUNT, "halt@example.test", "history-1")
     }
 
     fn test_thread() -> GmailThread {
-        GmailThread {
-            star_facts: None,
-            newest_sender: None,
-            attachments: Vec::new(),
-            conversation: Conversation {
-                stars: None,
-                conversation_ref: ConversationRef {
-                    account_id: TEST_ACCOUNT.to_string(),
-                    conversation_id: TEST_THREAD.to_string(),
+        let message = crate::testing::message(
+            "message-1",
+            "sender@example.test",
+            "2026-01-01T00:00:00Z",
+            "synthetic body",
+        );
+        let mut thread = crate::testing::thread(
+            TEST_ACCOUNT,
+            TEST_THREAD,
+            vec![message],
+            &["message-1"],
+            Some(vec![]),
+            "history-1",
+        );
+        thread.conversation.subject = "synthetic halt test".to_string();
+        thread.conversation.is_read = Some(true);
+        thread
+    }
+
+    #[test]
+    fn mutation_accepted_after_post_pass_count_is_dispatched_without_another_wakeup() {
+        use std::sync::mpsc;
+
+        use crate::testing::TIMEOUT;
+        let dir = crate::testing::temp_profile("gmail-lost-wakeup");
+        let provider = provider();
+        let core = GmailCore::open(dir.path(), provider.clone()).expect("open Gmail core");
+        assert!(until(|| {
+            core.account_status().is_ok_and(|status| {
+                status.connection == ConnectionState::Connected
+                    && status.sync.initial_sync_complete
+                    && status.sync.state == SyncState::Idle
+            }) && core
+                .list_conversations()
+                .is_ok_and(|snapshot| !snapshot.conversations.is_empty())
+        }));
+        core.wait_for_test_idle(TIMEOUT).expect("startup work idle");
+
+        let (count_tx, count_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        *core.inner.ctrl.after_mutation_count.lock().unwrap() = Some(Box::new(move |count| {
+            let _ = count_tx.send(count);
+            let _ = release_rx.recv_timeout(TIMEOUT);
+        }));
+        let conversation = ConversationRef {
+            account_id: TEST_ACCOUNT.into(),
+            conversation_id: TEST_THREAD.into(),
+        };
+        core.set_archived(&SetArchived {
+            conversation: conversation.clone(),
+            archived: true,
+            request_id: "lost-wakeup-a".into(),
+        })
+        .expect("accept mutation A");
+        assert!(
+            !count_rx
+                .recv_timeout(TIMEOUT)
+                .expect("post-pass count observed"),
+            "A was the only claimable operation at the post-pass count"
+        );
+
+        core.set_archived(&SetArchived {
+            conversation,
+            archived: false,
+            request_id: "lost-wakeup-b".into(),
+        })
+        .expect("accept mutation B during the count/update gap");
+        assert_eq!(
+            core.list_conversations().unwrap().activity[0].status,
+            crate::dto::OperationStatus::Queued,
+            "B is durably queued while the worker is held"
+        );
+        let cycle_before_release = core.inner.ctrl.state.lock().unwrap().test_wait_cycles;
+        assert!(core.inner.ctrl.state.lock().unwrap().operations_requested);
+        release_tx.send(()).expect("release worker boundary");
+
+        assert!(
+            until(|| {
+                core.inner.ctrl.state.lock().unwrap().test_wait_cycles > cycle_before_release
+            }),
+            "worker must pass the post-pass control update and reach its next wait cycle"
+        );
+        let boundary_state = {
+            let state = core.inner.ctrl.state.lock().unwrap();
+            let status = core.list_conversations().unwrap().activity[0].status;
+            (
+                state.operations_requested
+                    || state.active_action == Some(PassAction::Mutations)
+                    || status == crate::dto::OperationStatus::Confirmed,
+                status,
+            )
+        };
+        if !boundary_state.0 {
+            core.stop();
+            drop(core);
+            panic!(
+                "B was stranded after the worker returned to waiting: {:?}",
+                boundary_state.1
+            );
+        }
+        assert!(
+            until(|| {
+                core.list_conversations().is_ok_and(|snapshot| {
+                    snapshot.activity[0].status == crate::dto::OperationStatus::Confirmed
+                })
+            }),
+            "B must dispatch without another command or sync wake"
+        );
+        assert_eq!(provider.halt_writes(), 2, "A and B both dispatch");
+        core.stop();
+        drop(core);
+    }
+
+    #[test]
+    fn gmail_no_reply_deadline_defers_offline_then_uses_fresh_thread_read() {
+        use crate::reminders::{PutReminder, ReminderCondition, ReminderPhase};
+        let dir = crate::testing::temp_profile("gmail-reminder-worker");
+        let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+            "2026-01-01T00:00:00Z",
+        )));
+        let store = GmailStore::open(dir.path(), clock.clone()).unwrap();
+        store.begin_account(&test_profile(), 0).unwrap();
+        store
+            .apply_discovery_page(
+                &[ThreadFetch::Cached(Box::new(test_thread()))],
+                None,
+                true,
+                false,
+                0,
+            )
+            .unwrap();
+        store
+            .put_reminder(&PutReminder {
+                conversation: ConversationRef {
+                    account_id: TEST_ACCOUNT.into(),
+                    conversation_id: TEST_THREAD.into(),
                 },
-                subject: "synthetic halt test".to_string(),
-                messages: vec![Message {
-                    id: "message-1".to_string(),
-                    from: Address {
-                        display_name: None,
-                        mailbox: "sender@example.test".to_string(),
-                    },
-                    to: vec![],
-                    sent_at: "2026-01-01T00:00:00Z".to_string(),
-                    body_text: "synthetic body".to_string(),
-                    has_attachment: None,
-                }],
-                is_in_inbox: true,
-                is_read: Some(true),
-                context_complete: Some(true),
-                unsupported_reason: None,
-                retained_snapshot_at: None,
-                reply_context: None,
-                pending_operation_id: None,
-            },
-            inbox_message_ids: vec!["message-1".to_string()],
-            message_ids: Some(vec!["message-1".to_string()]),
-            unread_message_ids: Some(vec![]),
-            trash_message_ids: None,
-            spam_message_ids: None,
-            history_id: "history-1".to_string(),
+                source_message_id: "message-1".into(),
+                due_at: Some("2026-01-01T00:01:00Z".into()),
+                condition: ReminderCondition::IfNoReply,
+                expected_revision: None,
+                request_id: "gmail-reminder-put".into(),
+            })
+            .unwrap();
+        clock.advance_seconds(60);
+        let provider = provider();
+        let ctrl = Arc::new(Ctrl {
+            state: Mutex::new(CtrlState {
+                stop: false,
+                halted: false,
+                auth_requested: false,
+                auth_kind: AuthKind::Restore,
+                auth_auto_retry: false,
+                sync_requested: false,
+                reminder_work: false,
+                operations_requested: false,
+                upgrade_requested: false,
+                upgrade_in_flight: false,
+                active_action: None,
+                pass_in_flight: false,
+                disconnecting: false,
+                pass_cancel: CancelToken::default(),
+                reply_enrichments: HashMap::new(),
+                destination_read: None,
+                reminder_read: None,
+                connection: ConnectionState::Disconnected,
+                error: None,
+                backoff: 0,
+                #[cfg(test)]
+                wait_divisor: 1,
+                #[cfg(test)]
+                test_wait_cycles: 0,
+                #[cfg(test)]
+                test_sync_deadline: None,
+                #[cfg(test)]
+                test_reminder_deadline: None,
+                #[cfg(test)]
+                test_tick_due: false,
+                #[cfg(any(test, feature = "test-support"))]
+                operations_paused: false,
+            }),
+            wake: Condvar::new(),
+            #[cfg(test)]
+            after_mutation_count: Mutex::new(None),
+        });
+        let hub = GmailHub {
+            listeners: Mutex::new(HashMap::new()),
+        };
+        process_due_reminders(&store, provider.as_ref(), &ctrl, &hub).unwrap();
+        assert_eq!(
+            store.list_reminders().unwrap()[0].phase,
+            ReminderPhase::Pending,
+            "offline cannot prove no reply"
+        );
+        ctrl.state.lock().unwrap().connection = ConnectionState::Connected;
+        process_due_reminders(&store, provider.as_ref(), &ctrl, &hub).unwrap();
+        assert_eq!(
+            store.list_reminders().unwrap()[0].phase,
+            ReminderPhase::Returned,
+            "complete fresh thread evidence resolves the due reminder"
+        );
+        store
+            .put_reminder(&PutReminder {
+                conversation: ConversationRef {
+                    account_id: TEST_ACCOUNT.into(),
+                    conversation_id: TEST_THREAD.into(),
+                },
+                source_message_id: "message-1".into(),
+                due_at: Some("2026-01-01T00:02:00Z".into()),
+                condition: ReminderCondition::IfNoReply,
+                expected_revision: None,
+                request_id: "gmail-reminder-put-reply".into(),
+            })
+            .unwrap();
+        provider.state.lock().unwrap().include_reply = true;
+        clock.advance_seconds(60);
+        process_due_reminders(&store, provider.as_ref(), &ctrl, &hub).unwrap();
+        assert_eq!(
+            store.list_reminders().unwrap()[0].phase,
+            ReminderPhase::Suppressed,
+            "new external message IDs in fresh thread evidence suppress a conditional reminder"
+        );
+        assert_eq!(
+            provider.state.lock().unwrap().halt_writes,
+            0,
+            "reminder handling performs no provider mutation"
+        );
+        drop(store);
+    }
+
+    // Virtual wall-clock jumps do not expire the worker's real Instant timer.
+    // Non-timer scenarios explicitly publish that clock event to the worker.
+    fn advance_reminder_clock(core: &GmailCore, clock: &crate::clock::FakeClock, seconds: i64) {
+        let mut state = core.inner.ctrl.state.lock().unwrap();
+        clock.advance_seconds(seconds);
+        state.reminder_work = true;
+        drop(state);
+        core.inner.ctrl.wake.notify_all();
+    }
+
+    // Keep the control guard so the caller can advance virtual time only after
+    // the real worker has armed its timer, without sending an artificial wake.
+    fn wait_for_reminder_timer(
+        core: &GmailCore,
+        before: Option<Instant>,
+    ) -> std::sync::MutexGuard<'_, CtrlState> {
+        let timeout = Instant::now() + crate::testing::TIMEOUT;
+        let mut state = core.inner.ctrl.state.lock().unwrap();
+        loop {
+            if state.test_reminder_deadline.is_some_and(|deadline| {
+                deadline > Instant::now() && before.is_none_or(|previous| deadline < previous)
+            }) {
+                return state;
+            }
+            let remaining = timeout.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                drop(state);
+                panic!("worker did not arm the requested reminder timer");
+            }
+            state = core
+                .inner
+                .ctrl
+                .wake
+                .wait_timeout(state, remaining)
+                .unwrap()
+                .0;
         }
     }
 
-    impl GmailReadProvider for HaltTestProvider {
-        fn mutation_access(&self) -> Result<bool, MailError> {
-            let hook = self.mutation_hook.lock().unwrap().take();
-            if let Some(hook) = hook {
-                hook();
-            }
-            Ok(self.state.lock().unwrap().mutation_granted)
-        }
+    #[test]
+    fn due_read_reconciles_external_archive_without_provider_writes() {
+        use crate::reminders::{PutReminder, ReminderCondition, ReminderPhase};
+        let dir = crate::testing::temp_profile("due-archive");
+        let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+            "2026-01-01T00:00:00Z",
+        )));
+        let provider = provider();
+        let core = GmailCore::open_with_clock(dir.path(), provider.clone(), clock.clone()).unwrap();
+        assert!(until(|| core
+            .list_conversations()
+            .is_ok_and(|s| s.conversations.len() == 1)));
+        core.inner
+            .ctrl
+            .wait_until_idle(Duration::from_secs(5))
+            .unwrap();
+        core.put_reminder(&PutReminder {
+            conversation: test_thread().conversation.conversation_ref,
+            source_message_id: "message-1".into(),
+            due_at: Some("2026-01-01T00:00:01Z".into()),
+            condition: ReminderCondition::IfNoReply,
+            expected_revision: None,
+            request_id: "archive-due".into(),
+        })
+        .unwrap();
+        provider.state.lock().unwrap().archived = true;
+        advance_reminder_clock(&core, &clock, 2);
+        assert!(until(|| core
+            .list_reminders()
+            .is_ok_and(|r| r[0].phase == ReminderPhase::Returned)));
+        assert!(
+            core.list_conversations().unwrap().conversations.is_empty(),
+            "fresh external archive must survive local reminder return"
+        );
+        assert_eq!(provider.halt_writes(), 0);
+        core.stop();
+        drop(core);
+    }
 
-        fn apply_read(
-            &self,
-            _message_ids: &[String],
-            _read: bool,
-            _cancel: &CancelToken,
-        ) -> Result<(), MailError> {
-            self.state.lock().unwrap().writes += 1;
-            Ok(())
+    #[test]
+    fn reminder_wakes_do_not_starve_sync_recovery() {
+        use crate::reminders::{PutReminder, ReminderCondition, ReminderPhase};
+        let dir = crate::testing::temp_profile("sync-reminder-retry");
+        let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+            "2026-01-01T00:00:00Z",
+        )));
+        let provider = provider();
+        let core = GmailCore::open_with_clock(dir.path(), provider.clone(), clock.clone()).unwrap();
+        assert!(until(|| core
+            .list_conversations()
+            .is_ok_and(|s| s.conversations.len() == 1)));
+        core.inner
+            .ctrl
+            .wait_until_idle(Duration::from_secs(5))
+            .unwrap();
+        core.put_reminder(&PutReminder {
+            conversation: test_thread().conversation.conversation_ref,
+            source_message_id: "message-1".into(),
+            due_at: Some("2026-01-01T00:00:01Z".into()),
+            condition: ReminderCondition::IfNoReply,
+            expected_revision: None,
+            request_id: "incomplete-due".into(),
+        })
+        .unwrap();
+        {
+            let mut state = provider.state.lock().unwrap();
+            state.incomplete = true;
+            state.fail_history = true;
         }
-
-        fn apply_archive(
-            &self,
-            _message_ids: &[String],
-            _archived: bool,
-            _cancel: &CancelToken,
-        ) -> Result<(), MailError> {
-            self.state.lock().unwrap().writes += 1;
-            Ok(())
+        let previous_deadline = core
+            .inner
+            .ctrl
+            .state
+            .lock()
+            .unwrap()
+            .test_sync_deadline
+            .unwrap();
+        clock.advance_seconds(2);
+        crate::testing::request_sync_when_idle(&core);
+        assert!(until(
+            || core.account_status().unwrap().sync.error == Some(MailError::NetworkUnavailable)
+        ));
+        core.inner
+            .ctrl
+            .wait_until_idle(Duration::from_secs(5))
+            .unwrap();
+        assert!(until(|| core
+            .inner
+            .ctrl
+            .state
+            .lock()
+            .unwrap()
+            .test_sync_deadline
+            .is_some_and(|deadline| deadline > previous_deadline)));
+        let calls = provider.state.lock().unwrap().halt_history_calls;
+        provider.state.lock().unwrap().fail_history = false;
+        // Observe completed reminder wake cycles while the real sync deadline
+        // remains fixed. Advance only that timer after proving it was preserved.
+        let deadline = core
+            .inner
+            .ctrl
+            .state
+            .lock()
+            .unwrap()
+            .test_sync_deadline
+            .unwrap();
+        for _ in 0..3 {
+            let cycle = {
+                let mut st = core.inner.ctrl.state.lock().unwrap();
+                let cycle = st.test_wait_cycles;
+                st.reminder_work = true;
+                cycle
+            };
+            core.inner.ctrl.wake.notify_all();
+            assert!(until(|| core
+                .inner
+                .ctrl
+                .state
+                .lock()
+                .unwrap()
+                .test_wait_cycles
+                > cycle));
+            assert_eq!(
+                core.inner.ctrl.state.lock().unwrap().test_sync_deadline,
+                Some(deadline)
+            );
+            assert_eq!(
+                provider.state.lock().unwrap().halt_history_calls,
+                calls,
+                "reminder wake must not shorten sync backoff"
+            );
         }
+        core.inner.ctrl.state.lock().unwrap().test_tick_due = true;
+        core.inner.ctrl.wake.notify_all();
+        assert!(
+            until(|| provider.state.lock().unwrap().halt_history_calls > calls),
+            "periodic sync must recover while reminder evidence stays incomplete"
+        );
+        assert_eq!(
+            core.list_reminders().unwrap()[0].phase,
+            ReminderPhase::Pending
+        );
+        assert_eq!(provider.halt_writes(), 0);
+        core.stop();
+        drop(core);
+    }
 
-        fn is_configured(&self) -> bool {
-            true
-        }
-
-        fn has_credentials(&self) -> Result<bool, MailError> {
-            Ok(true)
-        }
-
-        fn connect(&self, _cancel: &CancelToken) -> Result<GmailProfile, MailError> {
-            Ok(test_profile())
-        }
-
-        fn disconnect(&self) -> Result<(), MailError> {
-            Ok(())
-        }
-
-        fn profile(&self, _cancel: &CancelToken) -> Result<GmailProfile, MailError> {
-            Ok(test_profile())
-        }
-
-        fn list_inbox(
-            &self,
-            _page_token: Option<&str>,
-            _cancel: &CancelToken,
-        ) -> Result<InboxPage, MailError> {
-            Ok(InboxPage {
-                thread_ids: vec![TEST_THREAD.to_string()],
-                next_page_token: None,
+    #[test]
+    fn local_reminder_worker_reschedules_deadline_and_catches_up_after_reopen() {
+        use crate::reminders::{PutReminder, ReminderCondition, ReminderPhase};
+        let dir = crate::testing::temp_profile("reminder-worker-public");
+        let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+            "2026-01-01T00:00:00Z",
+        )));
+        let provider = provider();
+        let core = GmailCore::open_with_clock(dir.path(), provider.clone(), clock.clone()).unwrap();
+        assert!(until(|| core
+            .account_status()
+            .is_ok_and(|s| s.sync.initial_sync_complete)
+            && core
+                .list_conversations()
+                .is_ok_and(|s| !s.conversations.is_empty())));
+        core.inner
+            .ctrl
+            .wait_until_idle(Duration::from_secs(5))
+            .unwrap();
+        // A real consumer may synchronously read status in its change listener.
+        let observed = core.clone();
+        let listener = core.subscribe(move || {
+            observed.account_status().unwrap();
+        });
+        let command = PutReminder {
+            conversation: ConversationRef {
+                account_id: TEST_ACCOUNT.into(),
+                conversation_id: TEST_THREAD.into(),
+            },
+            source_message_id: "message-1".into(),
+            due_at: Some("2026-01-01T00:01:00Z".into()),
+            condition: ReminderCondition::Regardless,
+            expected_revision: None,
+            request_id: "public-long".into(),
+        };
+        let first = core.put_reminder(&command).unwrap();
+        assert!(core.list_conversations().unwrap().conversations.is_empty());
+        let long_deadline = wait_for_reminder_timer(&core, None)
+            .test_reminder_deadline
+            .unwrap();
+        let revised = core
+            .put_reminder(&PutReminder {
+                due_at: Some("2026-01-01T00:00:01Z".into()),
+                expected_revision: Some(first.revision),
+                request_id: "public-short".into(),
+                ..command.clone()
             })
+            .unwrap();
+        {
+            let _parked = wait_for_reminder_timer(&core, Some(long_deadline));
+            clock.advance_seconds(2);
         }
-
-        fn search_threads(
-            &self,
-            page: Option<&str>,
-            _cancel: &CancelToken,
-        ) -> Result<InboxPage, MailError> {
-            let page: usize = page.unwrap_or("0").parse().unwrap();
-            Ok(InboxPage {
-                thread_ids: (page * 20..page * 20 + 20)
-                    .map(|n| format!("search-{n:03}"))
-                    .collect(),
-                next_page_token: (page < 5).then(|| (page + 1).to_string()),
+        // No request_sync or list-side execution: the sleeping worker must wake itself.
+        assert!(until(|| core
+            .list_reminders()
+            .is_ok_and(|rows| rows[0].phase == ReminderPhase::Returned)));
+        assert_eq!(
+            core.list_reminders().unwrap()[0].revision,
+            revised.revision + 1
+        );
+        assert_eq!(core.list_conversations().unwrap().conversations.len(), 1);
+        let next = core
+            .put_reminder(&PutReminder {
+                due_at: Some("2026-01-01T00:00:03Z".into()),
+                request_id: "public-restart".into(),
+                ..command
             })
-        }
+            .unwrap();
+        listener.unsubscribe();
+        core.stop();
+        drop(core);
+        clock.advance_seconds(2);
+        let reopened = GmailCore::open_with_clock(dir.path(), provider.clone(), clock).unwrap();
+        assert!(until(|| reopened
+            .list_reminders()
+            .is_ok_and(|r| r[0].phase == ReminderPhase::Returned)));
+        assert_eq!(
+            reopened.list_reminders().unwrap()[0].revision,
+            next.revision + 1
+        );
+        assert_eq!(provider.halt_writes(), 0);
+        reopened.stop();
+        drop(reopened);
+    }
 
-        fn get_thread(
-            &self,
-            thread_id: &str,
-            _cancel: &CancelToken,
-        ) -> Result<Option<GmailThread>, MailError> {
-            if thread_id == TEST_THREAD {
-                return Ok(Some(test_thread()));
-            }
-            self.search_reads
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            if let Some(error) = self.search_error.lock().unwrap().clone() {
-                return Err(error);
-            }
-            let thread = thread_id
-                .starts_with("search-")
-                .then(|| search_test_thread(thread_id));
-            let hook = self.search_hook.lock().unwrap().take();
-            if let Some(hook) = hook {
-                hook();
-            }
-            Ok(thread)
-        }
-
-        fn history(
-            &self,
-            start_history_id: &str,
-            _page_token: Option<&str>,
-            cancel: &CancelToken,
-        ) -> Result<HistoryPage, GmailHistoryError> {
-            let mut state = self.state.lock().unwrap();
-            if state.auth_expired {
-                return Err(GmailHistoryError::Mail(MailError::AuthRequired));
-            }
-            if state.block_history {
-                state.history_started = true;
-                self.wake.notify_all();
-                while state.block_history && !cancel.is_cancelled() {
-                    let (next, _) = self
-                        .wake
-                        .wait_timeout(state, Duration::from_millis(10))
-                        .unwrap();
-                    state = next;
-                }
-            }
-            if cancel.is_cancelled() {
-                return Err(GmailHistoryError::Mail(MailError::AuthCancelled));
-            }
-            Ok(HistoryPage {
-                changed_thread_ids: vec![],
-                deleted_message_ids: vec![],
-                next_page_token: None,
-                history_id: start_history_id.to_string(),
+    #[test]
+    fn local_reminder_thread_read_is_cancelled_on_stop_and_disconnect() {
+        use crate::reminders::{PutReminder, ReminderCondition, ReminderPhase};
+        for disconnect in [false, true] {
+            let dir = crate::testing::temp_profile("reminder-read-cancel");
+            let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+                "2026-01-01T00:00:00Z",
+            )));
+            let provider = provider();
+            let core =
+                GmailCore::open_with_clock(dir.path(), provider.clone(), clock.clone()).unwrap();
+            assert!(until(|| core
+                .account_status()
+                .is_ok_and(|s| s.sync.initial_sync_complete)
+                && core
+                    .list_conversations()
+                    .is_ok_and(|s| !s.conversations.is_empty())));
+            core.inner
+                .ctrl
+                .wait_until_idle(Duration::from_secs(5))
+                .unwrap();
+            provider.state.lock().unwrap().block_thread = true;
+            core.put_reminder(&PutReminder {
+                conversation: ConversationRef {
+                    account_id: TEST_ACCOUNT.into(),
+                    conversation_id: TEST_THREAD.into(),
+                },
+                source_message_id: "message-1".into(),
+                due_at: Some("2026-01-01T00:00:01Z".into()),
+                condition: ReminderCondition::IfNoReply,
+                expected_revision: None,
+                request_id: "cancel-read".into(),
             })
+            .unwrap();
+            advance_reminder_clock(&core, &clock, 2);
+            assert!(until(|| provider.state.lock().unwrap().thread_started));
+            if disconnect {
+                core.disconnect_account().unwrap();
+                assert!(core.list_reminders().unwrap().is_empty());
+                assert!(core.list_conversations().unwrap().conversations.is_empty());
+            } else {
+                core.stop();
+                assert_eq!(
+                    core.list_reminders().unwrap()[0].phase,
+                    ReminderPhase::Pending
+                );
+            }
+            assert_eq!(provider.halt_writes(), 0);
+            core.stop();
+            drop(core);
         }
     }
 
     #[test]
     fn mutation_admission_precheck_storage_halt_stops_queued_setters_until_restart() {
-        let dir = std::env::temp_dir().join(format!(
-            "mail-core-gmail-worker-halt-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let provider = HaltTestProvider::new();
-        let core = GmailCore::open(&dir, Arc::clone(&provider) as Arc<dyn GmailReadProvider>)
-            .expect("open synthetic Gmail core");
+        let dir = crate::testing::temp_profile("gmail-worker-halt");
+        let provider = provider();
+        let core =
+            GmailCore::open(dir.path(), provider.clone()).expect("open synthetic Gmail core");
         assert!(until(|| {
             core.account_status().is_ok_and(|status| {
                 status.connection == ConnectionState::Connected
@@ -2640,7 +3282,7 @@ mod worker_halt_tests {
         }));
 
         provider.block_history();
-        core.request_sync().expect("request synthetic sync");
+        crate::testing::request_sync_when_idle(&core);
         assert!(
             provider.wait_for_history(),
             "sync is held before queued setter dispatch"
@@ -2681,7 +3323,7 @@ mod worker_halt_tests {
         }));
 
         assert_eq!(
-            provider.writes(),
+            provider.halt_writes(),
             0,
             "halted worker never dispatches queued action after storage recovery"
         );
@@ -2699,7 +3341,6 @@ mod worker_halt_tests {
         );
         core.stop();
         drop(core);
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     include!("search_sync_tests.rs");
@@ -2710,17 +3351,10 @@ mod worker_halt_tests {
     /// action and compensation dispatches immediately.
     #[test]
     fn gmail_core_group_gate_acceptance_execution_and_undo() {
-        let dir = std::env::temp_dir().join(format!(
-            "mail-core-gmail-group-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let provider = HaltTestProvider::new();
-        let core = GmailCore::open(&dir, Arc::clone(&provider) as Arc<dyn GmailReadProvider>)
-            .expect("open synthetic Gmail core");
+        let dir = crate::testing::temp_profile("gmail-group");
+        let provider = provider();
+        let core =
+            GmailCore::open(dir.path(), provider.clone()).expect("open synthetic Gmail core");
         assert!(until(|| {
             core.account_status().is_ok_and(|status| {
                 status.connection == ConnectionState::Connected && status.sync.initial_sync_complete
@@ -2756,7 +3390,7 @@ mod worker_halt_tests {
         provider.set_mutation_access(true);
 
         // Accepted group executes through the serial worker.
-        let writes_before = provider.writes();
+        let writes_before = provider.halt_writes();
         let receipt = core
             .set_read_group(&crate::groups::SetReadGroup {
                 account_id: TEST_ACCOUNT.into(),
@@ -2772,7 +3406,7 @@ mod worker_halt_tests {
                 .iter()
                 .any(|row| row.status == crate::dto::OperationStatus::Confirmed)
         }));
-        assert_eq!(provider.writes(), writes_before + 1);
+        assert_eq!(provider.halt_writes(), writes_before + 1);
         let status = core
             .get_operation_group(&crate::groups::GetOperationGroupRequest {
                 account_id: TEST_ACCOUNT.into(),
@@ -2818,7 +3452,6 @@ mod worker_halt_tests {
         );
         core.stop();
         drop(core);
-        let _ = std::fs::remove_dir_all(dir);
     }
 }
 

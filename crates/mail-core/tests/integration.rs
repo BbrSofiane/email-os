@@ -9,35 +9,19 @@
 //! listeners); the only polling is bounded assertion loops. The fake
 //! provider is pure memory: no test opens sockets or performs network I/O.
 
-use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use mail_core::dto::{
     ConversationRef, InboxSnapshot, OperationFailure, OperationStatus, SetArchived,
 };
 use mail_core::{FakeArchiveProvider, MailCore, MailError};
 
-const TIMEOUT: Duration = Duration::from_secs(5);
+use mail_core::testing::{temp_profile, TIMEOUT};
 
-/// Unique temp profile per test; stale dirs from crashed runs are tolerated.
-fn temp_profile(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "mail-core-it-{}-{}-{}",
-        tag,
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    dir
-}
-
-fn open_core(tag: &str) -> (MailCore, PathBuf) {
+fn open_core(tag: &str) -> (MailCore, tempfile::TempDir) {
     let dir = temp_profile(tag);
-    let core = MailCore::open(&dir).expect("open core");
+    let core = MailCore::open(dir.path()).expect("open core");
     (core, dir)
 }
 
@@ -136,7 +120,7 @@ fn seeds_18_conversations_exactly_once_and_survives_restart() {
     drop(core);
 
     // Restart: no reseed, no duplicate rows, facts and history intact.
-    let core = MailCore::open(&dir).expect("reopen core");
+    let core = MailCore::open(dir.path()).expect("reopen core");
     let snapshot = core.list_conversations().expect("snapshot after restart");
     assert_eq!(snapshot.conversations.len(), 16);
     for i in 1..=18 {
@@ -176,7 +160,7 @@ fn restart_preserves_confirmed_facts_and_operation_history() {
     core.stop_worker();
     drop(core);
 
-    let core = MailCore::open(&dir).expect("reopen");
+    let core = MailCore::open(dir.path()).expect("reopen");
     let snapshot = core.list_conversations().expect("snapshot");
     assert!(
         !in_inbox(&core, "conv-01"),
@@ -233,7 +217,7 @@ fn receipt_is_durable_and_request_key_dedups_or_conflicts() {
     // Receipt is durable across restart.
     core.stop_worker();
     drop(core);
-    let core = MailCore::open(&dir).expect("reopen");
+    let core = MailCore::open(dir.path()).expect("reopen");
     let replay = core
         .set_archived(&set_archived("conv-01", true, "req-1"))
         .expect("replay after restart");
@@ -265,7 +249,7 @@ fn interrupted_applying_returns_to_queued_on_startup() {
     drop(core);
 
     // Startup recovery: applying -> queued in original sequence.
-    let core = MailCore::open(&dir).expect("reopen");
+    let core = MailCore::open(dir.path()).expect("reopen");
     assert_eq!(
         status_of(
             &core.list_conversations().expect("snapshot"),
@@ -485,7 +469,7 @@ fn shutdown_completes_while_provider_paused_and_work_stays_durable() {
     drop(core);
 
     // Interrupted work is durable and recovered at next launch.
-    let core = MailCore::open(&dir).expect("reopen");
+    let core = MailCore::open(dir.path()).expect("reopen");
     assert_eq!(
         status_of(
             &core.list_conversations().expect("snapshot"),
@@ -500,12 +484,12 @@ fn shutdown_completes_while_provider_paused_and_work_stays_durable() {
 #[test]
 fn profile_lock_rejects_a_second_writer() {
     let (core, dir) = open_core("profile-lock");
-    match MailCore::open(&dir).map(|_| ()) {
+    match MailCore::open(dir.path()).map(|_| ()) {
         Err(MailError::ProfileInUse) => {}
         other => panic!("second open must be rejected with profile_in_use: {other:?}"),
     }
     drop(core);
-    let core = MailCore::open(&dir).expect("reopen after release");
+    let core = MailCore::open(dir.path()).expect("reopen after release");
     core.stop_worker();
 }
 
@@ -529,7 +513,7 @@ fn dropping_core_stops_worker_and_releases_profile_lock() {
     drop(core);
     // The profile lock was held by the worker thread until it exited, so the
     // immediate reopen both proves exclusivity and succeeds.
-    let core = MailCore::open(&dir).expect("lock released after drop");
+    let core = MailCore::open(dir.path()).expect("lock released after drop");
     assert_eq!(
         status_of(
             &core.list_conversations().expect("snapshot"),

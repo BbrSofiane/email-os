@@ -1,7 +1,9 @@
 # Development guide
 
-This repository contains two deliberately separate native profiles: the durable
-synthetic fixture slice (Slice 01) and an explicit Gmail profile built in stages.
+This repository contains two deliberately separate native profiles: a durable
+synthetic fixture profile and an explicit Gmail profile built in stages. Slice 01
+describes the fixture baseline; the current core also includes Gmail OAuth, cache,
+sync, and provider operations.
 Slice 02 adds system-browser OAuth/PKCE, a macOS Keychain credential store,
 bounded inbox caching, and background sync. Slice 03 adds opt-in, durable Gmail
 archive/unarchive and explicit read/unread actions; Gmail remains read-only until
@@ -14,8 +16,9 @@ preview remains synthetic and in-memory. See
 the slice contracts for individual acceptance scope. UX-08 adds narrow Gmail-mode
 Star/Unstar singles/groups, durable Undo/reconciliation, cache-only Starred and a
 single cached starred filter; see [its contract and validation ledger](ux-08-stars.md).
-The legacy native fixture remains archive-only; unsupported star controls are
-absent there. No real provider writes are authorized by implementation tests.
+The legacy native fixture remains archive-only for mailbox operations; unsupported
+star controls are absent there. Reminders use local device storage in both native
+profiles. No real provider writes are authorized by implementation tests.
 UX-06 adds one durable local
 sender/domain split over Inbox, exact cached-count badges, and a single unread
 filter. See [the saved-split contract](ux-06-saved-split.md) for matching,
@@ -59,15 +62,15 @@ an empty list. Restart retains these snapshots; disconnect clears them.
 Provider Drafts are read-only snapshots, **not** the app's local editable drafts.
 The native fixture rejects both provider commands; browser preview models them
 in memory only. Label/Move, label badges on ordinary inbox rows, palette integration,
-and saved-view/search criteria are not implemented here. After rebasing onto
-`b4972ee`, the UX-06/07/08 contracts are preserved but not extended by this
-increment. See [the increment contract](ux-09-provider-destinations.md)
+and saved-view/search criteria are not implemented here. This increment preserves
+and coexists with the current UX-06/07/08 implementations. See
+[the increment contract](ux-09-provider-destinations.md)
 for evidence and remaining gates.
 
 ## Tooling
 
 All commands run through [mise](https://mise.jdx.dev) (pinned: node 24.4.1,
-pnpm 10.18.0, rust 1.89.0). First-time setup:
+pnpm 10.18.0, rust 1.89.0 with `rustfmt` and `clippy`). First-time setup:
 
 ```sh
 mise trust           # after inspecting the repository's mise.toml
@@ -75,6 +78,11 @@ mise install         # install the project-pinned runtimes/tools
 mise run setup:linux  # Debian/Ubuntu VMs only; installs OS packages with apt-get
 mise run install:ui   # locked frontend dependencies (pnpm install --frozen-lockfile)
 ```
+
+The Rust entry in `mise.toml` selects the minimal toolchain profile and explicitly
+installs `rustfmt` and `clippy`, so a fresh `mise install` supplies both lint tools.
+CI pins the mise installer action and mise version; it uses the same tool declaration.
+Verify with `mise exec -- cargo fmt --version` and `mise exec -- cargo clippy --version`.
 
 Rust dependencies resolve via the committed `Cargo.lock` on first `cargo`/`mise` use;
 no global configuration is needed.
@@ -141,22 +149,60 @@ a fresh OAuth flow. Never paste credentials into the app, logs, screenshots, or 
 
 ## Validation gates
 
+See [current status](current-status.md) for the maintained feature and validation
+matrix. The commands below describe what each gate checks; the baseline recorded
+there is evidence supplied for `main` at `f361f57c4051c0af578af43277bed8170905548a`,
+not a rerun by this documentation update. That baseline reports `mise run check`
+passing (315 Rust core tests, 1,162 frontend tests, 34 skipped),
+`mise run test:native` passing (11 tests), and `mise run build:web` passing in
+this VM. It does not establish macOS, provider, browser-rendered, or native app
+runtime behavior.
+
 Core and frontend gates run independently of native GTK/WebKit prerequisites:
 
 | Task | What it does |
 |---|---|
-| `mise run check` | Core tests, generated-contract check, core lint, UI tests and typecheck |
-| `mise run test:core` | `cargo test -p mail-core` — synthetic fixture and Gmail auth/cache/sync tests; no real accounts or Google network |
+| `mise run check` | Sequential core tests, generated-contract check, core lint, UI tests and typecheck; no GTK prerequisite |
+| `mise run check:all` | Sequential `check`, native lint, native bridge tests and web production build; native prerequisites required |
+| `mise run test:core` | `cargo test --locked -p mail-core` — synthetic fixture and Gmail auth/cache/sync tests; no real accounts or Google network |
 | `mise run check:contract` | Regenerates the TS wire contract to a temp file and **fails on drift** against `src/lib/ipc/generated.ts` |
 | `mise run gen:ts` | Regenerates `src/lib/ipc/generated.ts` from Rust DTOs |
 | `mise run lint:core` | Workspace formatting and `clippy -D warnings` for mail-core |
 | `mise run test:ui` | Vitest component/transport tests |
 | `mise run typecheck` | `vue-tsc --noEmit` |
 | `mise run build:web` | Frontend production build to `dist/` |
-| `mise run check:native` | Locked compile-check of the Tauri shell and native tests |
-| `mise run test:native` | Native shell bridge tests |
+| `mise run check:native` | `cargo check --locked -p email-os --all-targets` — compiles the Tauri shell and native test targets; requires Linux GTK/WebKit development prerequisites |
+| `mise run lint:native` | `cargo clippy --locked -p email-os --all-targets -- -D warnings`; requires Linux GTK/WebKit development prerequisites |
+| `mise run test:native` | `cargo test --locked -p email-os` — command/event bridge tests; these do not launch a native window or prove OS integration |
 | `mise run dev:native` | Tauri dev app; GTK/WebKit development packages are required on Linux |
 | `mise run build:native` | Bundled native app |
+
+`mise run check` does not include native shell checks or `build:web`; use
+`mise run check:all` for the sequential full gate. The native
+bridge tests exercise command and event behavior through test doubles. They do
+not validate a running Tauri window, GTK/WebKit, macOS WKWebView, Keychain,
+OAuth, or Gmail provider behavior. Native runtime, macOS, and disposable-account
+provider checks remain separate operator gates. The previously recorded Linux
+native compile attempt stopped because `pkg-config` and GTK development packages
+were missing; this is historical environment evidence, not a result from the
+baseline above. Do not install OS packages as part of a routine validation run.
+
+Rendered Chromium suites are opt-in and excluded from the default `mise run test:ui`.
+Each suite starts its own Vite server and synthetic in-memory fixture. Run all five:
+
+```sh
+EMAIL_OS_RENDERED_LAYOUT_CHROME=/path/to/chromium \
+  mise run test:rendered
+```
+
+The harness neutralises Chrome's session and system DBus addresses: headless test
+Chrome needs no desktop services, and unanswered DBus calls can otherwise stall
+its first navigation beyond the 20-second CDP command timeout.
+
+Use the suite's environment variable and command shown in its source for other
+rendered suites; some use `EMAIL_OS_DISCLOSURE_FOCUS_CHROME`. A passing rendered
+suite is browser interaction evidence only. It does not validate native IPC,
+WKWebView, real mail, or provider behavior.
 
 ## Running the app
 
@@ -166,8 +212,9 @@ workspaces**, each with its own labelled in-memory client and the same conversat
 IDs. These are not native tabs. Switch with the account buttons or the supported
 Switch account command; the current local editor must save/recover successfully
 before leaving. Each workspace retains navigation/Back, selection, command query,
-reader state, focus and scroll. There is no mail-search capability on this UX-05
-base (UX-06/07 are absent), real OAuth, credentials or mailbox access in preview.
+reader state, focus and scroll. Search and saved splits are synthetic in-memory
+preview capabilities; there is no real OAuth, credentials or mailbox access in
+preview.
 Native mode remains a single account/window and exposes no switch command. See
 [UX-13A's contract and remaining gates](ux-13-independent-workspaces.md).
 
@@ -199,10 +246,11 @@ startup or fall back to the fixture. Unsupported Keychain platforms fail closed.
 Mailbox controls stay disabled until the user selects **Enable mailbox actions**
 and Google returns a verified modify grant for the same authenticated account.
 That upgrade requests `https://www.googleapis.com/auth/gmail.modify`; Google's
-scope is broader than this app's implemented archive/unarchive and read/unread
-commands and can authorize other mailbox changes (including sending or deleting
-mail). The app does not provide those broader actions, arbitrary labels, or a
-composer. Denial or cancellation leaves the read-only account and cached reading
+scope is broader than this app's implemented archive/unarchive, read/unread,
+and star/unstar commands and can authorize other mailbox changes (including sending or deleting
+mail). The app does not provide those broader provider actions or arbitrary
+labels. Its plain-text composer saves local-only drafts; sending and
+provider-synced drafts are not implemented. Denial or cancellation leaves the read-only account and cached reading
 available.
 
 ### Google Desktop OAuth setup (disposable account only)
@@ -383,10 +431,9 @@ disposable Mac/profile and no production account:
 - Verify fixture native restart recovery and that browser preview continues to
   label its memory-only drafts as non-durable.
 
-Slice 04 synthetic core/UI checks pass in this VM. Native Tauri compile-check
-currently stops at the missing `pkg-config`/GTK prerequisites described below;
-no OS packages were installed. Native close handling and this Mac checkpoint
-remain pending operator validation.
+Slice 04 native close handling and this Mac checkpoint remain pending operator
+validation. The historical Linux compile attempt stopped at missing
+`pkg-config`/GTK prerequisites; no OS packages were installed for that attempt.
 
 ### Safe bulk selection and processing (UX-05)
 
@@ -443,8 +490,9 @@ convergence (BROWSE-18) additionally requires the approved disposable account.
 Gmail mode exposes **Go to cached Trash (read only)** in Commands and Destinations.
 This lists known locally cached TRASH conversations, including operation-retained
 snapshots; it does not discover Gmail Trash or claim mailbox-complete coverage.
-Refresh is explicit, pagination is bounded, and Back preserves the loaded local
-browsing state. Trash-origin readers omit mailbox actions and Reply. Opening
+It is a list context in the main pane (Done and Starred are its siblings), not a
+drawer. It follows cache changes like Done, pagination is bounded, and Back
+preserves the loaded local browsing state. Trash-origin readers omit mailbox actions and Reply. Opening
 never marks read. The native fixture profile rejects this Gmail-only query;
 browser-preview fixtures can simulate it in memory.
 
@@ -514,8 +562,9 @@ the read-only hint, which at 1100px and below collapses to its Review access lin
 At 1100px and below the Preview tag yields first (short `Preview`, then only its
 accessible text while a note or the hint needs room); `Sync failed` and the action
 link never clip, and only the cause words ellipsize. jsdom cannot measure layout:
-the CSS is pinned by `tests/account-header.layout-css.test.ts` and was measured once
-in headless Chromium against the in-memory fake.
+the CSS is pinned by `tests/layout/account-header-css.test.ts`, and the widths at
+1030px and the contact-column collapse by the opt-in rendered suite
+`tests/layout/account-header.rendered.test.ts` (real Chrome, in-memory fake).
 The note is absent while connected and idle. One name per action everywhere:
 **Connect Gmail**, **Sign in again**, **Cancel sign-in**, **Retry**, **Sync now**.
 The Account drawer shows the permission mode and the Sync section only where they
@@ -534,39 +583,43 @@ None of these gates mailbox actions: actions depend on `mutationAccess`, not on 
 connection. All of it is verified with the synthetic in-memory fake; real OAuth,
 sync and Keychain behavior stay operator-gated.
 
-## Desktop-local reminder increment (UX-11, fixture only)
+## Desktop-local reminder increment (UX-11)
 
-See [the frozen contract and acceptance evidence](ux-11-local-reminders.md) and
-ADR 0001's explicit reminder-deferral amendment. Native synthetic fixture mode
-supports H / Remind me for one Inbox conversation, explicit offset-bearing
-RFC3339 time (or unscheduled Someday), default If no reply / Regardless, and
+See [the local reminder contract](ux-11-local-reminders.md) and
+ADR 0001's reminder boundary. H / Remind me supports one Inbox conversation,
+local time presets and free-text dates (or unscheduled Someday),
+default If no reply / Regardless, and
 Reminders pending/returned/history destinations (also G then H and palette).
 Cancel/recover and reschedule are revisioned, durable commands. Pending stages
 are not provider confirmation; returned membership requires confirmed return.
 The existing fixture worker executes while running and reconciles overdue work
 on launch. No execution while fully quit, cross-device state or calendar.
 
-**Not Gmail support:** reminder commands reject Gmail mode, and UI discovery
-hides them. The ordinary browser fake deliberately has no reminder transport;
-component tests inject a labelled synthetic capability but do not establish
-SQLite or native convergence. Gmail's bounded cache is not complete fresh reply
-evidence. Fresh thread reconciliation, pinned recovery inventory and atomic
-Gmail reminder/setter acceptance remain concrete implementation blockers before
-Gmail exposure. No credentials or real provider were used for this increment.
+Gmail commands use local `gmail.db` reminders, immutable baseline IDs, a pinned
+reader snapshot, account-scoped request receipts, and revision checks. They do
+not enqueue Gmail archive or unarchive operations. Pending Inbox hiding ends
+when a new message ID is observed. Regardless deadlines resolve locally. A
+no-reply deadline needs a connected, complete fresh thread read. Offline,
+incomplete, and failed reads stay pending. A provider reply can arrive after the
+observed checkpoint and before commit; the decision is local and is not an
+atomic provider absence guarantee. The browser fake supports memory-only reminder transport for UI tests and
+development. Its due transitions reconcile on synthetic reads; they do not
+establish native persistence or worker execution.
+No credentials or real provider were used for this increment.
 
 ## Synthetic account workspaces (UX-13A)
 
 ### UX-13A validation boundaries
 
-`tests/workspaces.component.test.ts` and `browser-fake.accounts.test.ts` exercise
+`tests/workspaces.component.test.ts` and `tests/browser-fake/accounts.test.ts` exercise
 two synthetic identities with colliding conversation/message/draft/request IDs,
 late detail/list/action results, independent Back/focus/selection/command queries,
 save-before-switch, failed saves and serialized pending saves. This is in-memory
 frontend integration, not proof of native account/credential ownership.
 
-The existing opt-in `tests/discovery.rendered.test.ts` CDP harness also contains a
+The existing opt-in `tests/discovery/discovery.rendered.test.ts` CDP harness also contains a
 `UX-13:` pointer/keyboard journey (isolated temporary Chromium profile). Run with
-`EMAIL_OS_RENDERED_LAYOUT_CHROME=/path/to/chromium mise exec -- pnpm exec vitest run tests/discovery.rendered.test.ts -t 'UX-13:'`.
+`EMAIL_OS_RENDERED_LAYOUT_CHROME=/path/to/chromium mise exec -- pnpm exec vitest run tests/discovery/discovery.rendered.test.ts -t 'UX-13:'`.
 It checks actual inert focus rejection, independent IDs/selection, list scroll,
 reader Back and exact account-local action outcomes. It does not test WKWebView
 or native tabs. Existing core mail/Gmail/draft profile-lock tests remain the
@@ -649,3 +702,46 @@ addresses, bodies, OAuth codes, or credentials. Gmail history catch-up does not
 import arbitrary newly observed archived-thread bodies; the disclosed cache is
 limited to up to 100 discovered conversations and may omit inbox threads outside
 the bounded view.
+
+## Gmail schema migration regression fixtures
+
+`crates/mail-core/tests/fixtures/gmail-current-schema.txt` captures the full,
+whitespace-normalized `sqlite_master` produced by the unmodified store at
+`83e9c3b`, including autoindexes. `gmail/current-schema.sql` is the canonical
+fresh schema. Historical SQL fixtures record pre-numbered layouts and use
+synthetic rows only. Migration tests cover legacy intent preservation, nullable
+unknown facts, transaction rollback/re-entry, version rejection and startup
+recovery. Legacy ALTER paths can retain a different column order or equivalent
+CREATE whitespace; table rebuilds solely for cosmetic order are avoided.
+
+The triage-fact and inbox-membership backfill regression tests retain their
+assertions. Their setup now resets the marker to a legacy version when it
+removes columns/tables. A numbered current profile is no longer implicitly
+repaired after manual schema changes. Fixture-store migrations are independent
+and unchanged.
+
+## Reviewing the Gmail store split
+
+`gmail/store.rs` was split by responsibility (see
+[current architecture](current-architecture.md)) in two move-only steps, with no
+logic edits: first the `impl GmailStore` methods and the inline test module,
+then the free helper functions. To verify, run
+`git diff --color-moved=dimmed-zebra --color-moved-ws=allow-indentation-change`
+over each step; every function body appears as a move. Visibility changes are
+limited to `fn` becoming `pub(super)` (items shared between sibling modules)
+and three previously private methods widened to `pub(super)`; the
+`pub`/`pub(crate)` surface of `GmailStore` is unchanged. Add new store code to
+the module that owns its responsibility and keep each file under about 1,000
+lines.
+
+## Storage error logging
+
+Do not write `.map_err(|_| MailError::StorageUnavailable)`. Use
+`.map_err(storage_err())` (or `storage_fault("static_reason")` where there is no
+underlying error) from `crate::storage_log`, and `diagnostics::storage_failure`
+in the shell. A new error type needs a `StorageCause` impl that classifies it
+without reading its message. Never add a log call that interpolates a
+subject, address, body, token, URL with ids or SQL with bound values; the
+privacy test in `storage_log.rs` provokes SQLite errors whose own text quotes
+synthetic sensitive strings and asserts none reaches the log line. Logs go to
+stderr in the app; to see them when running the shell, run it from a terminal.

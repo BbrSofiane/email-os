@@ -26,20 +26,23 @@
 import { actionLabel } from '../lib/browsing-actions';
 import { compactDateLabel, fullDateLabel, machineDateTime } from '../lib/browsing-dates';
 import { messageSnippet } from '../lib/message-snippet';
+import { revealDelta } from '../lib/reveal-in-view';
+import { replyBlockedReason as replyBlockedReasonOf } from '../lib/reply-context';
 import { bodyNeedsMonospace, splitMessageBody, type MessageBodyParts } from '../lib/message-body-format';
-import { computed, nextTick, reactive, ref, useId, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, useId, watch } from 'vue';
 import HeaderGlyph from './HeaderGlyph.vue';
 import MessageAttachments from './MessageAttachments.vue';
 import { useAttachmentTransfer } from '../composables/useAttachmentTransfer';
 import type { Address, Conversation, ConversationRef, DraftSource, MailClient, MailError, Message } from '../lib/ipc/client';
 import type { AttachmentDescriptor } from '../lib/ipc/generated';
-import type { DetailState } from '../composables/useMailbox';
+import type { BrowseContext, DetailState } from '../composables/useMailbox';
 
 const props = defineProps<{
   conversation: Conversation | null;
   state: DetailState;
   error: MailError | null;
   commandInFlight: boolean;
+  reminderEnabled?: boolean;
   /** The conversation reference the shell currently wants displayed. */
   openRef: ConversationRef | null;
   /**
@@ -56,7 +59,7 @@ const props = defineProps<{
    * offers explicit count-labelled desired-state controls instead of the open
    * conversation's single-state toggles (mixed selections included). */
   selectionCount?: number;
-  selectionContext?: 'inbox' | 'saved' | 'done' | 'starred' | 'search';
+  selectionContext?: BrowseContext;
   /** Header slots the quiet icon actions are teleported into; inline when null. */
   backHost?: HTMLElement | null;
   actionsHost?: HTMLElement | null;
@@ -67,6 +70,8 @@ const props = defineProps<{
   client?: MailClient;
   /** Browser preview: saves are modelled in memory and say so. */
   preview?: boolean;
+  /** A reply composer is docked under the thread: keep the message being answered (the latest) in view. */
+  replyDocked?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -75,6 +80,7 @@ const emit = defineEmits<{
   move: [delta: number];
   attachments: [origin: HTMLElement];
   archive: [];
+  remind: [];
   unarchive: [];
   setRead: [read: boolean];
   prepareReply: [source: DraftSource];
@@ -124,13 +130,7 @@ function starCoverageDetail(stars: StarCoverage): string {
 }
 
 const latestMessage = computed(() => props.conversation?.messages.at(-1) ?? null);
-const replyBlockedReason = computed(() => {
-  if (!props.conversation || !latestMessage.value) return 'No displayed latest message is available as a reply source.';
-  if (props.conversation.retainedSnapshotAt) return 'Reply preparation is blocked for a retained snapshot; current message headers cannot be verified.';
-  if (props.conversation.contextComplete === false) return 'Reply preparation is blocked because this cached conversation is incomplete.';
-  if (props.conversation.replyContext && props.conversation.replyContext.sourceMessageId !== latestMessage.value.id) return 'Reply preparation is blocked because cached reply headers do not match the displayed latest message.';
-  return null;
-});
+const replyBlockedReason = computed(() => replyBlockedReasonOf(props.conversation));
 
 const replySourceId = `reader-reply-source-${useId()}`;
 const replyTargetLabel = computed(() => latestMessage.value
@@ -150,7 +150,10 @@ const hasMetaRow = computed(() => {
   return !!(props.readOnly || props.showReadControls || bulkScope.value);
 });
 
-/** The one rule for whether Prepare reply may run (button, glyph and the R key). */
+/** Whether the loaded reader will have a meta row; the loading line then takes that row's slot. */
+const expectsMetaRow = computed(() => !!(props.readOnly || props.showReadControls || bulkScope.value));
+
+/** The one rule for whether Reply may run (button, glyph and the R key). */
 function canPrepareReply(): boolean {
   return actionable.value && !props.browsingOnly && !!latestMessage.value && replyBlockedReason.value === null;
 }
@@ -201,9 +204,9 @@ function describeError(error: MailError): string {
     case 'not_found':
       return 'That conversation is no longer available.';
     case 'invalid_request':
-      return `The request was rejected (invalid field: ${error.field}).`;
+      return 'The request was rejected.';
     case 'request_id_conflict':
-      return 'The request conflicted with an earlier request ID.';
+      return 'The request conflicted with an earlier one.';
     case 'storage_unavailable':
       return 'Local storage is unavailable. The operation was not confirmed.';
     case 'profile_in_use':
@@ -318,6 +321,41 @@ function pruneVisit(visit: VisitState, nextIds: string[]): void {
   visit.quoteOpenIds = new Set([...visit.quoteOpenIds].filter((id) => present.has(id)));
   visit.order = [...nextIds];
 }
+
+// While a reply is docked the card shrinks this scroller, which would leave the
+// message being answered behind it. The latest message is brought fully into view
+// when the reply opens and kept there as the card grows (Cc / Subject), until the
+// user scrolls or moves through the thread themselves. Scroll only: focus stays.
+let followLatest = false;
+let resizeObserver: ResizeObserver | null = null;
+
+function revealLatest(): void {
+  const scroller = scrollerEl.value;
+  const id = latestMessage.value?.id;
+  const el = id ? messageEls.get(id) : undefined;
+  if (!scroller || !el) return;
+  const delta = revealDelta(scroller.getBoundingClientRect(), el.getBoundingClientRect());
+  if (delta !== 0) scroller.scrollTop += delta;
+}
+
+function stopFollowing(): void {
+  followLatest = false;
+}
+
+watch(() => props.replyDocked, async (docked) => {
+  followLatest = !!docked;
+  if (!docked) return;
+  await nextTick();
+  if (followLatest) revealLatest();
+}, { immediate: true });
+
+onMounted(() => {
+  if (typeof ResizeObserver === 'undefined' || !scrollerEl.value) return;
+  resizeObserver = new ResizeObserver(() => { if (followLatest && props.replyDocked) revealLatest(); });
+  resizeObserver.observe(scrollerEl.value);
+  if (followLatest) revealLatest();
+});
+onBeforeUnmount(() => { resizeObserver?.disconnect(); resizeObserver = null; });
 
 function captureScrollAnchor(visit: VisitState): MessageAnchor | null {
   const scroller = scrollerEl.value;
@@ -549,6 +587,15 @@ watch(
   },
 );
 
+/**
+ * The one accessible name of a participant: the display name and the real
+ * address once, or the bare mailbox when there is no name (never repeated).
+ * The visible `Name <mailbox>` text is aria-hidden so it is not read again.
+ */
+function participantName(address: Address): string {
+  return address.displayName && address.displayName !== address.mailbox ? `${address.displayName}, ${address.mailbox}` : address.mailbox;
+}
+
 function sameParticipant(
   current: { messageId: string; address: Address } | null,
   messageId: string,
@@ -697,6 +744,7 @@ function onDetailsToggle(event: Event, message: Message): void {
 
 /** N/P: move message focus without implicitly expanding (no wrap). */
 function moveMessage(delta: number): void {
+  followLatest = false;
   const visit = displayedVisit();
   const messages = props.conversation?.messages ?? [];
   if (!visit || messages.length === 0) return;
@@ -751,8 +799,8 @@ type AttachmentLoad = { state: 'ready'; files: AttachmentDescriptor[] } | { stat
 
 /** Descriptor lists per conversation, kept for this reader session: J/K revisits never refetch. */
 const attachmentLoads = reactive(new Map<string, AttachmentLoad>());
-const attachmentRequests = new Map<string, number>();
-let attachmentSeq = 0;
+/** Conversation keys with a descriptor request in flight (at most one per key). */
+const attachmentLoading = reactive(new Set<string>());
 const displayedKey = computed(() => keyOfDisplayed());
 const attachmentTransfer = useAttachmentTransfer({
   client: () => props.client!,
@@ -771,20 +819,26 @@ async function loadAttachments(key: string, ref: ConversationRef): Promise<void>
   const client = props.client;
   if (!client) return;
   const known = attachmentLoads.get(key);
-  // A list already loaded (or loading) is final for this visit; only a failure is retried.
-  if ((known && known.state === 'ready') || (!known && attachmentRequests.has(key))) return;
-  const token = ++attachmentSeq;
-  attachmentRequests.set(key, token);
+  // A list already loaded is final for this visit, and one request per key is
+  // enough while it is in flight; only a failure is asked for again.
+  if (known?.state === 'ready' || attachmentLoading.has(key)) return;
+  attachmentLoading.add(key);
   let result: AttachmentLoad;
   try {
     result = { state: 'ready', files: await client.listAttachments({ ...ref }) };
   } catch {
     result = { state: 'failed' };
   }
-  // A newer request for this key owns the result. The result is stored under
-  // its own conversation key, so it can never show on another conversation.
-  if (attachmentRequests.get(key) !== token) return;
+  // The result is stored under its own conversation key, so it can never show
+  // on another conversation.
   attachmentLoads.set(key, result);
+  attachmentLoading.delete(key);
+}
+
+/** The Retry button of a failed file-details note. */
+function retryAttachments(): void {
+  const conversation = props.conversation;
+  if (conversation) void loadAttachments(visitKey(conversation.ref), conversation.ref);
 }
 
 // After the ready snapshot has rendered: never blocks the J/K hot path.
@@ -804,12 +858,13 @@ watch(displayedKey, (key, previous) => {
  * What a message's inline list shows. Only `hasAttachment === true` ever claims
  * files (false and unknown show nothing); null while the list is still loading.
  */
-function attachmentRow(message: Message): { loadState: 'ready' | 'failed'; files: AttachmentDescriptor[] } | null {
+function attachmentRow(message: Message): { loadState: 'ready' | 'failed'; retrying: boolean; files: AttachmentDescriptor[] } | null {
   if (message.hasAttachment !== true || !props.conversation) return null;
-  const load = attachmentLoads.get(visitKey(props.conversation.ref));
+  const key = visitKey(props.conversation.ref);
+  const load = attachmentLoads.get(key);
   if (!load) return null;
-  if (load.state === 'failed') return { loadState: 'failed', files: [] };
-  return { loadState: 'ready', files: load.files.filter((file) => file.messageId === message.id) };
+  if (load.state === 'failed') return { loadState: 'failed', retrying: attachmentLoading.has(key), files: [] };
+  return { loadState: 'ready', retrying: false, files: load.files.filter((file) => file.messageId === message.id) };
 }
 
 const transferTargetKey = computed(() => attachmentTransfer.target.value);
@@ -853,6 +908,7 @@ defineExpose({
     </Teleport>
     <Teleport :to="props.actionsHost ?? undefined" :disabled="!props.actionsHost">
       <div class="reader-actions" data-test="reader-toolbar">
+        <button v-if="actionsShown && props.reminderEnabled && !bulkScope && props.conversation?.isInInbox" type="button" class="header-glyph" data-test="reader-remind" title="Remind me on this device" :disabled="!actionable || props.commandInFlight" @click="emit('remind')"><HeaderGlyph name="remind" /><span class="visually-hidden">Remind me on this device</span></button>
         <button
           v-if="actionsShown && !props.readOnly && !bulkScope"
           type="button"
@@ -884,7 +940,7 @@ defineExpose({
           :aria-describedby="actionable ? replySourceId : undefined"
           :disabled="!actionable || !!replyBlockedReason"
           @click="prepareReply"
-        ><HeaderGlyph name="reply" /><span class="visually-hidden">Prepare reply</span></button>
+        ><HeaderGlyph name="reply" /><span class="visually-hidden">Reply</span></button>
         <span
           v-if="!props.browsingOnly && actionable && latestMessage"
           :id="replySourceId"
@@ -896,22 +952,27 @@ defineExpose({
       </div>
     </Teleport>
 
-    <div class="reader-scroll" ref="scrollerEl" data-test="reader-scroll">
+    <div class="reader-scroll" ref="scrollerEl" data-test="reader-scroll" @wheel.passive="stopFollowing" @touchmove.passive="stopFollowing" @pointerdown="stopFollowing">
       <template v-if="props.state === 'loading' && !held">
-        <!-- The list row's own subject, sender and date: truthful while the detail loads. -->
-        <template v-if="props.loadingIdentity">
-          <h2 class="reader-subject" data-test="reader-loading-subject">{{ props.loadingIdentity.subject }}</h2>
-          <p class="reader-loading-identity" data-test="reader-loading-identity">
-            <span v-if="props.loadingIdentity.sender" data-test="reader-loading-sender">{{ props.loadingIdentity.sender }}</span>
-            <time v-if="props.loadingIdentity.at" :datetime="machineDateTime(props.loadingIdentity.at)" :title="fullDateLabel(props.loadingIdentity.at)">{{ compactDateLabel(props.loadingIdentity.at) }}</time>
+        <!-- The list row's own subject: truthful while the detail loads. Without one, a hidden
+             placeholder with the real subject's class (same margins and line box). -->
+        <h2 v-if="props.loadingIdentity" class="reader-subject" data-test="reader-loading-subject">{{ props.loadingIdentity.subject }}</h2>
+        <h2 v-else class="reader-subject" aria-hidden="true" data-test="reader-skeleton-subject"><span class="reader-skeleton-subject"></span></h2>
+        <!-- One line holds the row's sender and date and the status. Where the loaded reader has a meta row
+             (read controls, read-only, a selection scope) it takes that row's slot; otherwise it is drawn
+             over the first placeholder row, out of flow. Either way the rows start where the first message
+             will, so the pane does not jump when the conversation arrives. Static, no motion. -->
+        <div class="reader-loading-stage" :class="{ 'is-overlay': !expectsMetaRow }" data-test="reader-loading-stage">
+          <p class="reader-loading-line" :class="{ 'reader-meta-row': expectsMetaRow }" data-test="reader-loading-line">
+            <template v-if="props.loadingIdentity">
+              <span v-if="props.loadingIdentity.sender" class="reader-loading-sender" data-test="reader-loading-sender">{{ props.loadingIdentity.sender }}</span>
+              <time v-if="props.loadingIdentity.at" :datetime="machineDateTime(props.loadingIdentity.at)" :title="fullDateLabel(props.loadingIdentity.at)">{{ compactDateLabel(props.loadingIdentity.at) }}</time>
+            </template>
+            <span class="reader-loading-quiet" data-test="reader-loading" role="status">Loading conversation…</span>
           </p>
-        </template>
-        <p data-test="reader-loading" role="status" :class="{ 'reader-loading-quiet': props.loadingIdentity }">Loading conversation…</p>
-        <!-- Static placeholder of the loaded shape (subject, then message rows) so the
-             pane does not jump when the conversation arrives. No motion; hidden from assistive tech. -->
-        <div class="reader-skeleton" aria-hidden="true" data-test="reader-skeleton">
-          <span v-if="!props.loadingIdentity" class="reader-skeleton-subject"></span>
-          <span v-for="n in 3" :key="n" class="reader-skeleton-row"></span>
+          <div class="reader-skeleton" aria-hidden="true" data-test="reader-skeleton">
+            <span v-for="n in 3" :key="n" class="reader-skeleton-row"></span>
+          </div>
         </div>
       </template>
       <p v-else-if="props.state === 'error' && props.error" data-test="reader-error" role="alert">
@@ -989,7 +1050,7 @@ defineExpose({
         >
           This cached conversation may be incomplete; some context was unavailable in plain text.
         </p>
-        <p v-if="props.conversation.pendingOperationId" data-test="reader-pending" class="reader-pending">
+        <p v-if="props.conversation.pendingOperationId" data-test="reader-pending" class="reader-pending" role="status">
           A mailbox action is pending for this conversation.
         </p>
         <ol class="messages" data-test="reader-messages">
@@ -1022,13 +1083,13 @@ defineExpose({
                 </time>
               </button>
               <!-- Quiet reply glyph: only on the displayed latest message while it is
-                   active; same gating and event as the toolbar Prepare reply. -->
+                   active; same gating and event as the toolbar Reply. -->
               <button
                 v-if="!props.browsingOnly && isActive(message) && message.id === latestMessage?.id"
                 type="button"
                 class="message-reply"
                 :data-test="`message-reply-${message.id}`"
-                aria-label="Prepare reply"
+                aria-label="Reply to latest message"
                 :title="replyTitle"
                 :disabled="!actionable || !!replyBlockedReason"
                 @click="prepareReply"
@@ -1053,12 +1114,14 @@ defineExpose({
                   <span
                     class="participant"
                     :data-test="`participant-from-${message.id}`"
+                    role="group"
+                    :aria-label="participantName(message.from)"
                     tabindex="0"
                     @mouseenter="onParticipantEnter(message, message.from)"
                     @mouseleave="onParticipantLeave(message, message.from)"
                     @focus="onParticipantFocus(message, message.from)"
                     @blur="onParticipantBlur(message, message.from)"
-                  >{{ message.from.displayName ?? message.from.mailbox }} &lt;{{ message.from.mailbox }}&gt;</span>
+                  ><span aria-hidden="true">{{ message.from.displayName ?? message.from.mailbox }} &lt;{{ message.from.mailbox }}&gt;</span></span>
                 </div>
                 <div class="message-field">
                   <span class="message-field-label">To</span>
@@ -1068,13 +1131,24 @@ defineExpose({
                       :key="participant.mailbox"
                       class="participant"
                       :data-test="`participant-to-${message.id}-${participant.mailbox}`"
+                      role="group"
+                      :aria-label="participantName(participant)"
                       tabindex="0"
                       @mouseenter="onParticipantEnter(message, participant)"
                       @mouseleave="onParticipantLeave(message, participant)"
                       @focus="onParticipantFocus(message, participant)"
                       @blur="onParticipantBlur(message, participant)"
-                    >{{ participant.displayName ?? participant.mailbox }} &lt;{{ participant.mailbox }}&gt;</span>
+                    ><span aria-hidden="true">{{ participant.displayName ?? participant.mailbox }} &lt;{{ participant.mailbox }}&gt;</span></span>
                   </span>
+                </div>
+                <!-- The cached Message has no Cc: say so instead of implying there is none. -->
+                <div class="message-field">
+                  <span class="message-field-label">Cc</span>
+                  <span
+                    class="message-field-note"
+                    :data-test="`message-cc-${message.id}`"
+                    title="Cc is not stored in the local cache; reply recipients are not inferred from it."
+                  >Not cached</span>
                 </div>
                 <div class="message-field">
                   <span class="message-field-label">Sent</span>
@@ -1104,6 +1178,7 @@ defineExpose({
               :message-id="message.id"
               :files="attachmentRow(message)!.files"
               :load-state="attachmentRow(message)!.loadState"
+              :retrying="attachmentRow(message)!.retrying"
               :retained="!!props.conversation.retainedSnapshotAt"
               :pending="pendingTransferKey"
               :target="transferTargetKey"
@@ -1111,6 +1186,7 @@ defineExpose({
               :error="attachmentTransfer.error.value"
               @save="attachmentTransfer.save"
               @cancel="attachmentTransfer.cancel"
+              @retry="retryAttachments"
             />
           </li>
         </ol>

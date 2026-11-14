@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Keyboard-first fixture and read-only Gmail inbox UI. Browser preview is synthetic and in-memory only.",
+  "description": "Keyboard-first email client with local drafts and opt-in Gmail mailbox actions. Browser preview is synthetic and in-memory only.",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit -p tsconfig.json && vite build",

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import type { AvailableAction, BrowsingActionId } from '../lib/browsing-actions';
-import { actionAliases, actionGroupOf, actionGroups, compactShortcut, keyHints, matchesQuery } from '../lib/action-palette';
+import { actionAliases, actionGroupOf, actionGroups, compactShortcut, keyHints, matchesQuery, type KeyScope } from '../lib/action-palette';
 import CommandGlyph from './CommandGlyph.vue';
 const props = withDefaults(defineProps<{
   kind: 'palette' | 'navigator';
@@ -14,6 +14,8 @@ const props = withDefaults(defineProps<{
   accountTop?: boolean;
   /** False when the list has no rows: J/K, X and Shift+J/K then have nothing to act on. */
   rowKeys?: boolean;
+  /** The list context that owns the context-scoped key hints. */
+  keyScope?: KeyScope;
 }>(), { accountFirst: false, accountTop: false, rowKeys: true });
 const emit = defineEmits<{ close: []; execute: [id: BrowsingActionId]; 'update:query': [query: string] }>();
 const prefix = props.idPrefix ? `${props.idPrefix}-` : '';
@@ -48,7 +50,7 @@ const results = computed(() => props.actions
 const showGroups = computed(() => props.kind === 'palette');
 // Keys with no command behind them: shown for teaching, never highlighted or executed.
 const hints = computed(() => props.kind === 'palette'
-  ? keyHints.filter((hint) => (props.rowKeys || !hint.needsRows) && matchesQuery(query.value, hint.label, hint.aliases, hint.keys))
+  ? keyHints.filter((hint) => (props.rowKeys || !hint.needsRows) && (!hint.scope || hint.scope === props.keyScope) && matchesQuery(query.value, hint.label, hint.aliases, hint.keys))
   : []);
 const emptyCopy = computed(() => {
   const noun = props.kind === 'palette' ? 'command' : 'destination';

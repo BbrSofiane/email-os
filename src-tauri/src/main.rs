@@ -7,11 +7,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod close_gate;
+mod diagnostics;
 use mail_core::attachments::{AttachmentDescriptor, AttachmentSaved, SaveAttachment};
 use mail_core::CancelToken;
 use std::collections::{HashMap, VecDeque};
 
 use close_gate::CloseGate;
+use diagnostics::{cause, init_logging, storage_failure};
 use mail_core::drafts::types::{
     AppCloseRequest, CreateDraft, DeleteDraft, Draft, DraftDeleteReceipt, DraftReceipt, DraftRef,
     DraftSource, DraftSummary, SaveDraft,
@@ -24,7 +26,7 @@ use mail_core::dto::{
 };
 use mail_core::error::MailError;
 use mail_core::gmail::browsing::{DestinationCatalog, DestinationPage, DestinationRequest};
-use mail_core::gmail::provider::GmailProvider;
+use mail_core::gmail::provider::LiveGmailProvider;
 use mail_core::gmail::secrets::KeychainSecrets;
 use mail_core::gmail::sync::GmailCore;
 use mail_core::gmail::types::{AccountInfo, AccountStatus, MailMode, SyncInfo, SyncState};
@@ -49,12 +51,22 @@ enum Backend {
 }
 
 impl Backend {
-    fn reminder_core(&self) -> Result<&MailCore, MailError> {
+    fn list_reminders(&self) -> Result<Vec<Reminder>, MailError> {
         match self {
-            Self::Fixture(core) => Ok(core),
-            Self::Gmail(_) => Err(MailError::InvalidRequest {
-                field: "remindersUnavailable".into(),
-            }),
+            Self::Fixture(core) => core.list_reminders(),
+            Self::Gmail(core) => core.list_reminders(),
+        }
+    }
+    fn put_reminder(&self, command: &PutReminder) -> Result<Reminder, MailError> {
+        match self {
+            Self::Fixture(core) => core.put_reminder(command),
+            Self::Gmail(core) => core.put_reminder(command),
+        }
+    }
+    fn cancel_reminder(&self, command: &CancelReminder) -> Result<Reminder, MailError> {
+        match self {
+            Self::Fixture(core) => core.cancel_reminder(command),
+            Self::Gmail(core) => core.cancel_reminder(command),
         }
     }
     fn list_provider_destinations(
@@ -534,7 +546,7 @@ where
 {
     tauri::async_runtime::spawn_blocking(move || f(&backend))
         .await
-        .map_err(|_| MailError::StorageUnavailable)?
+        .map_err(|_| storage_failure(cause::TASK_JOIN))?
 }
 
 #[tauri::command]
@@ -605,10 +617,7 @@ async fn cancel_search_mail(state: State<'_, AppState>) -> Result<(), MailError>
 
 #[tauri::command]
 async fn list_reminders(state: State<'_, AppState>) -> Result<Vec<Reminder>, MailError> {
-    run_blocking(state.backend.clone(), |backend| {
-        backend.reminder_core()?.list_reminders()
-    })
-    .await
+    run_blocking(state.backend.clone(), |backend| backend.list_reminders()).await
 }
 #[tauri::command]
 async fn put_reminder(
@@ -616,7 +625,7 @@ async fn put_reminder(
     command: PutReminder,
 ) -> Result<Reminder, MailError> {
     run_blocking(state.backend.clone(), move |backend| {
-        backend.reminder_core()?.put_reminder(&command)
+        backend.put_reminder(&command)
     })
     .await
 }
@@ -626,7 +635,7 @@ async fn cancel_reminder(
     command: CancelReminder,
 ) -> Result<Reminder, MailError> {
     run_blocking(state.backend.clone(), move |backend| {
-        backend.reminder_core()?.cancel_reminder(&command)
+        backend.cancel_reminder(&command)
     })
     .await
 }
@@ -715,11 +724,11 @@ async fn save_attachment(
     let directory = app
         .path()
         .download_dir()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(|_| storage_failure(cause::PATH_UNAVAILABLE))?;
     let transfers = Arc::clone(&state.attachment_transfers);
     let cancel = transfers
         .lock()
-        .map_err(|_| MailError::StorageUnavailable)?
+        .map_err(|_| storage_failure(cause::LOCK_POISONED))?
         .begin(&request.request_id)?;
     let id = request.request_id.clone();
     let result = run_blocking(state.backend.clone(), move |backend| {
@@ -728,7 +737,7 @@ async fn save_attachment(
     .await;
     transfers
         .lock()
-        .map_err(|_| MailError::StorageUnavailable)?
+        .map_err(|_| storage_failure(cause::LOCK_POISONED))?
         .active
         .remove(&id);
     result
@@ -742,7 +751,7 @@ fn cancel_attachment(state: State<'_, AppState>, request_id: String) -> Result<(
     state
         .attachment_transfers
         .lock()
-        .map_err(|_| MailError::StorageUnavailable)?
+        .map_err(|_| storage_failure(cause::LOCK_POISONED))?
         .cancel(&request_id);
     Ok(())
 }
@@ -894,7 +903,7 @@ async fn connect_account(state: State<'_, AppState>) -> Result<(), MailError> {
     run_blocking(backend, move |backend| {
         let mut lifecycle = lifecycle
             .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
         backend.connect_account()?;
         lifecycle.advance();
         Ok(())
@@ -909,7 +918,7 @@ async fn disconnect_account(state: State<'_, AppState>) -> Result<(), MailError>
     run_blocking(backend, move |backend| {
         let mut lifecycle = lifecycle
             .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
         lifecycle.advance();
         backend.disconnect_account()
     })
@@ -924,7 +933,7 @@ async fn list_drafts(state: State<'_, AppState>) -> Result<Vec<DraftSummary>, Ma
     run_blocking(backend, move |backend| {
         let _lifecycle = lifecycle
             .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
         let account = active_account(backend)?;
         drafts.list_drafts(&account)
     })
@@ -939,7 +948,7 @@ async fn get_draft(state: State<'_, AppState>, r#ref: DraftRef) -> Result<Draft,
     run_blocking(backend, move |backend| {
         let _lifecycle = lifecycle
             .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
         let account = active_account(backend)?;
         require_draft_account(&account, &r#ref)?;
         drafts.get_draft(&account, &r#ref)
@@ -959,7 +968,7 @@ async fn create_draft(
     let receipt = run_blocking(backend, move |backend| {
         let lifecycle_guard = lifecycle
             .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
         let account = active_account(backend)?;
         if let Some(receipt) = drafts.lookup_create_receipt(&account, &command)? {
             return Ok(receipt);
@@ -985,7 +994,7 @@ async fn create_draft(
 
                 let lifecycle_guard = lifecycle
                     .lock()
-                    .map_err(|_| MailError::StorageUnavailable)?;
+                    .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
                 if !lifecycle_guard.is_current(session_epoch)
                     || active_account(backend)?.account_id != account.account_id
                 {
@@ -1017,7 +1026,7 @@ async fn save_draft(
     let receipt = run_blocking(backend, move |backend| {
         let _lifecycle = lifecycle
             .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
         let account = active_account(backend)?;
         require_draft_account(&account, &command.draft_ref)?;
         drafts.save_draft(&account, &command)
@@ -1039,7 +1048,7 @@ async fn delete_draft(
     let receipt = run_blocking(backend, move |backend| {
         let _lifecycle = lifecycle
             .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
         let account = active_account(backend)?;
         require_draft_account(&account, &command.draft_ref)?;
         drafts.delete_draft(&account, &command)
@@ -1055,7 +1064,7 @@ fn get_app_close_request(state: State<'_, AppState>) -> Result<Option<AppCloseRe
         .close_gate
         .lock()
         .map(|gate| gate.pending())
-        .map_err(|_| MailError::StorageUnavailable)
+        .map_err(|_| storage_failure(cause::LOCK_POISONED))
 }
 
 #[tauri::command]
@@ -1067,7 +1076,7 @@ fn complete_app_close(
     let mut gate = state
         .close_gate
         .lock()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
     if !gate.complete(&request_id) {
         return Err(MailError::InvalidRequest {
             field: "requestId".to_owned(),
@@ -1083,7 +1092,7 @@ fn cancel_app_close(state: State<'_, AppState>, request_id: String) -> Result<()
     let mut gate = state
         .close_gate
         .lock()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
     if !gate.cancel(&request_id) {
         return Err(MailError::InvalidRequest {
             field: "requestId".to_owned(),
@@ -1145,11 +1154,8 @@ mod attachment_transfer_tests {
     }
     #[test]
     fn fixture_download_revalidates_exact_targets_and_never_opens_documents() {
-        let dir = std::env::temp_dir().join(format!(
-            "email-os-attachment-shell-{}",
-            fresh_close_request_id()
-        ));
-        let core = MailCore::open(dir.join("profile")).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let core = MailCore::open(dir.path().join("profile")).unwrap();
         let backend = Backend::Fixture(core);
         let target = backend.list_conversations().unwrap().conversations[0]
             .conversation_ref
@@ -1162,16 +1168,16 @@ mod attachment_transfer_tests {
             request_id: "r1".into(),
         };
         let saved = backend
-            .download_attachment(&request, &CancelToken::default(), &dir)
+            .download_attachment(&request, &CancelToken::default(), dir.path())
             .unwrap();
         assert_eq!(
-            std::fs::read(dir.join(saved.filename)).unwrap(),
+            std::fs::read(dir.path().join(saved.filename)).unwrap(),
             b"Synthetic attachment only.\n"
         );
         let mut wrong = request.clone();
         wrong.message_id = "another-message".into();
         assert_eq!(
-            backend.download_attachment(&wrong, &CancelToken::default(), &dir),
+            backend.download_attachment(&wrong, &CancelToken::default(), dir.path()),
             Err(MailError::NotFound)
         );
         drop(backend);
@@ -1180,6 +1186,7 @@ mod attachment_transfer_tests {
 }
 
 fn main() {
+    init_logging();
     let app = tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             list_provider_destinations,
@@ -1251,8 +1258,8 @@ fn main() {
                 }
                 "gmail" => {
                     let profile_dir = app_data_dir.join("gmail-profile");
-                    let provider = GmailProvider::from_env(Arc::new(KeychainSecrets::new()))?;
-                    let provider: Arc<dyn mail_core::gmail::types::GmailReadProvider> =
+                    let provider = LiveGmailProvider::from_env(Arc::new(KeychainSecrets::new()))?;
+                    let provider: Arc<dyn mail_core::gmail::types::GmailProvider> =
                         Arc::new(provider);
                     (
                         Backend::Gmail(GmailCore::open(&profile_dir, provider)?),
@@ -1303,19 +1310,138 @@ fn main() {
 mod tests {
     use super::*;
     use std::{
+        collections::BTreeSet,
+        fs,
         sync::{mpsc, Arc},
-        time::{Duration, SystemTime, UNIX_EPOCH},
+        time::Duration,
     };
 
-    fn temp_dir(tag: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "email-os-bridge-{tag}-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ))
+    use mail_core::testing::temp_profile as temp_dir;
+
+    fn quoted_values(source: &str, marker: &str) -> BTreeSet<String> {
+        source
+            .lines()
+            .filter_map(|line| {
+                let value = if marker == "\"" {
+                    line.trim()
+                } else {
+                    line.split_once(marker)?.1.trim()
+                };
+                let value = value.trim();
+                let value = value.strip_prefix('"')?.split('"').next()?;
+                Some(value.to_owned())
+            })
+            .collect()
+    }
+
+    fn assert_command_sets_match(
+        expected: &BTreeSet<String>,
+        actual: &BTreeSet<String>,
+        source: &str,
+    ) {
+        let missing: Vec<_> = expected.difference(actual).collect();
+        let extra: Vec<_> = actual.difference(expected).collect();
+        assert!(
+            missing.is_empty() && extra.is_empty(),
+            "{source} differs from generate_handler!: missing {missing:?}; extra {extra:?}"
+        );
+    }
+
+    #[test]
+    fn native_command_manifests_match_across_all_sources() {
+        let main = include_str!("main.rs");
+        let handler = main
+            .split_once("tauri::generate_handler![")
+            .unwrap()
+            .1
+            .split_once("])")
+            .unwrap()
+            .0;
+        let registered: BTreeSet<String> = handler
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .collect();
+        let build_source = include_str!("../build.rs");
+        let build_block = build_source
+            .split_once(".commands(&[")
+            .unwrap()
+            .1
+            .split_once("])")
+            .unwrap()
+            .0;
+        let build = quoted_values(build_block, "\"");
+        assert_command_sets_match(&registered, &build, "build.rs");
+
+        let capability: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/main-window.json")).unwrap();
+        let allowed: BTreeSet<String> = capability["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|value| {
+                value
+                    .as_str()?
+                    .strip_prefix("allow-")
+                    .map(|name| name.replace('-', "_"))
+            })
+            .collect();
+        assert_command_sets_match(&registered, &allowed, "main-window.json allow permissions");
+
+        let permissions_dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("permissions/autogenerated");
+        let mut permission_commands = BTreeSet::new();
+        let mut denied_commands = BTreeSet::new();
+        for entry in fs::read_dir(permissions_dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("toml") {
+                continue;
+            }
+            let source = fs::read_to_string(path).unwrap();
+            permission_commands.extend(quoted_values(&source, "commands.allow = ["));
+            denied_commands.extend(quoted_values(&source, "commands.deny = ["));
+        }
+        assert_command_sets_match(
+            &registered,
+            &permission_commands,
+            "autogenerated commands.allow",
+        );
+        assert_command_sets_match(&registered, &denied_commands, "autogenerated commands.deny");
+
+        let client = include_str!("../../src/lib/ipc/tauri-client.ts");
+        let invoked_constants: BTreeSet<String> = client
+            .match_indices("call")
+            .filter_map(|(offset, _)| {
+                let rest = &client[offset + 4..];
+                if !rest.starts_with('<') && !rest.starts_with('(') {
+                    return None;
+                }
+                let rest = if rest.starts_with('<') {
+                    rest.split_once('>')?.1
+                } else {
+                    rest
+                };
+                let rest = rest.trim_start().strip_prefix('(')?.trim_start();
+                let name: String = rest
+                    .chars()
+                    .take_while(|ch| ch.is_ascii_uppercase() || *ch == '_')
+                    .collect();
+                (!name.is_empty()).then_some(name)
+            })
+            .collect();
+        let generated = include_str!("../../src/lib/ipc/generated.ts");
+        let client_names: BTreeSet<String> = generated
+            .lines()
+            .filter_map(|line| {
+                let (name, value) = line.split_once(" = '")?;
+                if !invoked_constants.contains(name.strip_prefix("export const ")?) {
+                    return None;
+                }
+                Some(value.split('\'').next()?.to_owned())
+            })
+            .collect();
+        assert_command_sets_match(&registered, &client_names, "tauri-client.ts invocations");
     }
 
     #[test]
@@ -1328,66 +1454,13 @@ mod tests {
         assert_eq!(status.sync.coverage_limit, 0);
         // The Gmail variant cannot dispatch to the fixture archive core; this
         // construction-level guard is covered without real credentials/network.
-        struct ReadOnlyProvider;
-        impl mail_core::gmail::types::GmailReadProvider for ReadOnlyProvider {
-            fn is_configured(&self) -> bool {
-                false
-            }
-            fn has_credentials(&self) -> Result<bool, MailError> {
-                Ok(false)
-            }
-            fn connect(
-                &self,
-                _: &mail_core::CancelToken,
-            ) -> Result<mail_core::gmail::types::GmailProfile, MailError> {
-                Err(MailError::NotConfigured)
-            }
-            fn disconnect(&self) -> Result<(), MailError> {
-                Ok(())
-            }
-            fn profile(
-                &self,
-                _: &mail_core::CancelToken,
-            ) -> Result<mail_core::gmail::types::GmailProfile, MailError> {
-                Err(MailError::NotConfigured)
-            }
-            fn list_inbox(
-                &self,
-                _: Option<&str>,
-                _: &mail_core::CancelToken,
-            ) -> Result<mail_core::gmail::types::InboxPage, MailError> {
-                Ok(mail_core::gmail::types::InboxPage {
-                    thread_ids: Vec::new(),
-                    next_page_token: None,
-                })
-            }
-            fn get_thread(
-                &self,
-                _: &str,
-                _: &mail_core::CancelToken,
-            ) -> Result<Option<mail_core::gmail::types::GmailThread>, MailError> {
-                Ok(None)
-            }
-            fn history(
-                &self,
-                _: &str,
-                _: Option<&str>,
-                _: &mail_core::CancelToken,
-            ) -> Result<
-                mail_core::gmail::types::HistoryPage,
-                mail_core::gmail::types::GmailHistoryError,
-            > {
-                Err(mail_core::gmail::types::GmailHistoryError::Mail(
-                    MailError::NotConfigured,
-                ))
-            }
-        }
-        let gmail =
-            GmailCore::open(temp_dir("gmail-readonly"), Arc::new(ReadOnlyProvider)).unwrap();
+        let provider = mail_core::testing::operations_fake::FakeProvider::new(false);
+        provider.set_configured(false);
+        provider.set_credentials(false);
+        let dir = temp_dir("gmail-readonly");
+        let gmail = GmailCore::open(dir.path(), provider).unwrap();
         let gmail = Backend::Gmail(gmail);
-        assert!(
-            matches!(gmail.reminder_core(), Err(MailError::InvalidRequest { field }) if field == "remindersUnavailable")
-        );
+        assert!(gmail.list_reminders().unwrap().is_empty());
         let status = gmail.account_status().unwrap();
         assert_eq!(status.mode, MailMode::Gmail);
         assert_eq!(
@@ -1457,28 +1530,11 @@ mod tests {
             expected_revision: None,
             request_id: "bridge-reminder".into(),
         };
-        let receipt = backend
-            .reminder_core()
-            .unwrap()
-            .put_reminder(&command)
-            .unwrap();
-        assert_eq!(
-            backend
-                .reminder_core()
-                .unwrap()
-                .put_reminder(&command)
-                .unwrap(),
-            receipt
-        );
-        assert_eq!(
-            backend.reminder_core().unwrap().list_reminders().unwrap(),
-            vec![receipt]
-        );
+        let receipt = backend.put_reminder(&command).unwrap();
+        assert_eq!(backend.put_reminder(&command).unwrap(), receipt);
+        assert_eq!(backend.list_reminders().unwrap(), vec![receipt]);
         command.conversation.account_id = "foreign".into();
-        assert_eq!(
-            backend.reminder_core().unwrap().put_reminder(&command),
-            Err(MailError::NotFound)
-        );
+        assert_eq!(backend.put_reminder(&command), Err(MailError::NotFound));
         backend.stop();
         drop(backend);
         std::fs::remove_dir_all(dir).unwrap();
@@ -1487,14 +1543,6 @@ mod tests {
     #[test]
     fn fixture_rejects_gmail_only_mailbox_commands() {
         // UX-08 stays fail-closed on the legacy archive-only fixture backend.
-        let source = include_str!("main.rs");
-        for command in ["list_cached_starred", "set_starred", "set_starred_group"] {
-            assert!(source.contains(&format!("async fn {command}(")));
-            assert!(include_str!("../build.rs").contains(&format!("\"{command}\"")));
-            assert!(include_str!("../capabilities/main-window.json")
-                .contains(&command.replace('_', "-")));
-        }
-
         let dir = temp_dir("fixture-gmail-actions");
         let core = MailCore::open(&dir).unwrap();
         let backend = Backend::Fixture(core);
@@ -1577,18 +1625,6 @@ mod tests {
 
     #[test]
     fn saved_split_bridge_coexists_with_gmail_only_star_surface() {
-        for command in [
-            "get_saved_split",
-            "save_saved_split",
-            "list_cached_starred",
-            "set_starred",
-            "set_starred_group",
-        ] {
-            assert!(include_str!("main.rs").contains(&format!("async fn {command}(")));
-            assert!(include_str!("../build.rs").contains(&format!("\"{command}\"")));
-            assert!(include_str!("../capabilities/main-window.json")
-                .contains(&command.replace('_', "-")));
-        }
         let dir = temp_dir("split-stars");
         let backend = Backend::Fixture(MailCore::open(&dir).unwrap());
         let split = mail_core::splits::SavedSplit {
@@ -1662,7 +1698,7 @@ mod tests {
         let dir = temp_dir("events");
         let core = MailCore::open(&dir).unwrap();
         let (tx, rx) = mpsc::channel();
-        let drafts = DraftCore::open(dir.join("local-drafts")).unwrap();
+        let drafts = DraftCore::open(dir.path().join("local-drafts")).unwrap();
         let state = AppState::new(Backend::Fixture(core), drafts, move || {
             let _ = tx.send(());
         });

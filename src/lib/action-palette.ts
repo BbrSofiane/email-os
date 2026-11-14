@@ -22,7 +22,7 @@ export const actionGroupOf: Record<BrowsingActionId, ActionGroup> = {
   read: 'conversation', unread: 'conversation',
   'select-all-loaded': 'selection', 'clear-selection': 'selection',
   search: 'view', 'create-split': 'view', 'edit-split': 'view', 'toggle-unread-filter': 'view',
-  inbox: 'goto', saved: 'goto', done: 'goto', starred: 'goto', destinations: 'goto', trash: 'goto', reminders: 'goto',
+  inbox: 'goto', saved: 'goto', done: 'goto', starred: 'goto', destinations: 'goto', trash: 'goto', reminders: 'goto', 'reminder-settings': 'goto',
   drafts: 'goto', activity: 'goto', account: 'goto', 'switch-account': 'goto',
   connect: 'account', sync: 'account',
 };
@@ -54,6 +54,7 @@ export const actionAliases: Record<BrowsingActionId, readonly string[]> = {
   destinations: ['provider', 'labels', 'folders', 'all mail'],
   trash: ['bin', 'deleted', 'delete'],
   reminders: ['snoozed', 'later'],
+  'reminder-settings': ['reminder', 'time', 'defaults', 'settings'],
   drafts: ['compose', 'draft', 'writing'],
   activity: ['operations', 'history', 'log', 'queue', 'pending'],
   account: ['settings', 'google', 'gmail', 'permissions', 'access'],
@@ -63,15 +64,21 @@ export const actionAliases: Record<BrowsingActionId, readonly string[]> = {
 };
 
 /** Bound keys that move or select without being a command; shown, never executed. */
-export interface KeyHint { id: string; label: string; keys: readonly string[]; aliases: readonly string[]; needsRows?: boolean }
+export type KeyScope = 'reminders' | 'drafts';
+/** `scope` limits a hint to the list context where the key works; no scope means everywhere. `needsRows` hides it while the list has no rows. */
+export interface KeyHint { id: string; label: string; keys: readonly string[]; aliases: readonly string[]; scope?: KeyScope; needsRows?: boolean }
 export const keyHints: readonly KeyHint[] = [
   { id: 'move', label: 'Next and previous conversation', keys: ['J', 'K'], aliases: ['down', 'up', 'arrow', 'move', 'navigate'], needsRows: true },
   { id: 'select', label: 'Select conversation', keys: ['X'], aliases: ['check', 'toggle', 'mark'], needsRows: true },
   { id: 'extend', label: 'Extend selection', keys: ['Shift+J', 'Shift+K'], aliases: ['range', 'multiple', 'select'], needsRows: true },
   { id: 'destinations', label: 'Open destinations', keys: ['←'], aliases: ['navigator', 'left', 'go to'] },
+  { id: 'reminder-tabs', label: 'Previous and next reminders tab', keys: ['[', ']'], aliases: ['pending', 'returned', 'history', 'tab', 'switch'], scope: 'reminders' },
+  { id: 'reminder-reschedule', label: 'Reschedule focused reminder', keys: ['H'], aliases: ['remind', 'snooze', 'time'], scope: 'reminders' },
+  { id: 'reminder-cancel', label: 'Cancel focused reminder', keys: ['Shift+H'], aliases: ['remove', 'unremind', 'restore'], scope: 'reminders' },
+  { id: 'draft-discard', label: 'Discard focused draft (asks first)', keys: ['Delete', 'Backspace'], aliases: ['delete', 'remove', 'trash'], scope: 'drafts' },
 ];
 
-/** "G then E (within 1 second)" → "G then E"; the timing stays in the tooltip. */
+/** Strips a trailing parenthetical from a shortcut hint, e.g. "G then E (note)" → "G then E". */
 export function compactShortcut(shortcut: string): string {
   return shortcut.replace(/\s*\([^)]*\)\s*$/, '');
 }

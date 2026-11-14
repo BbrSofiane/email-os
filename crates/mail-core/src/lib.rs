@@ -1,10 +1,9 @@
-//! `mail-core`: headless fixture mail core for vertical slice 01.
+//! `mail-core`: headless fixture and Gmail mail core.
 //!
-//! Owns the frozen wire DTOs, a concrete SQLite store with a seed-once
-//! synthetic inbox, durable receipts with request-key dedup, a single serial
-//! cancellable archive worker, an injectable clock, an OS-backed profile
-//! lock, and change subscription. No Tauri, no OAuth, no network, no mail
-//! beyond the synthetic fixture account. See `docs/vertical-slice-01.md`.
+//! Owns the frozen wire DTOs, fixture and Gmail SQLite stores, durable receipts,
+//! request-key deduplication, cancellable workers, OAuth/profile lifecycle,
+//! provider sync and mailbox operations. The fixture profile uses a seed-once
+//! synthetic inbox. The Gmail profile uses bounded provider reads and sync.
 
 pub mod attachments;
 mod cached_done;
@@ -21,9 +20,13 @@ pub mod search;
 mod seed;
 pub mod splits;
 pub mod stars;
+mod storage_log;
 mod store;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
 mod worker;
 
+use crate::storage_log::storage_err;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -250,21 +253,13 @@ impl MailCore {
     /// twice is rejected; it is not a valid request field, but the shell
     /// treats `invalid_request` with field `worker` as a programming bug.
     pub fn start_worker(&self, provider: Arc<dyn ArchiveProvider>) -> Result<(), MailError> {
-        let mut worker = self
-            .inner
-            .worker
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut worker = self.inner.worker.lock().map_err(storage_err())?;
         if worker.is_some() {
             return Err(MailError::InvalidRequest {
                 field: "worker".to_string(),
             });
         }
-        *self
-            .inner
-            .halt_sink
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)? = None;
+        *self.inner.halt_sink.lock().map_err(storage_err())? = None;
         let handle = worker::spawn(
             Arc::clone(&self.inner.store),
             provider,
@@ -333,11 +328,7 @@ impl MailCore {
     }
 
     fn ensure_worker_healthy(&self) -> Result<(), MailError> {
-        let halt = self
-            .inner
-            .halt_sink
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let halt = self.inner.halt_sink.lock().map_err(storage_err())?;
         match halt.as_ref() {
             Some(error) => Err(error.clone()),
             None => Ok(()),
@@ -419,8 +410,8 @@ mod facade_tests {
 
     #[test]
     fn worker_halt_remains_visible_through_commands_after_storage_recovers() {
-        let dir = std::env::temp_dir().join(format!("mail-core-halt-{}", uuid::Uuid::new_v4()));
-        let core = MailCore::open(&dir).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let core = MailCore::open(dir.path()).unwrap();
         let (tx, rx) = std::sync::mpsc::channel();
         let _subscription = core.subscribe(move || {
             let _ = tx.send(());
@@ -462,10 +453,9 @@ mod facade_tests {
             .activity
             .is_empty());
         drop(core);
-        let restarted = MailCore::open(&dir).unwrap();
+        let restarted = MailCore::open(dir.path()).unwrap();
         assert!(restarted.list_conversations().is_ok());
         drop(restarted);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// Core forwarding for the UX-05 group path (docs/ux-05-safe-bulk-processing.md
@@ -474,8 +464,8 @@ mod facade_tests {
     /// group Undo dispatches compensation immediately.
     #[test]
     fn group_children_execute_serially_and_group_undo_compensates() {
-        let dir = std::env::temp_dir().join(format!("mail-core-group-{}", uuid::Uuid::new_v4()));
-        let core = MailCore::open(&dir).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let core = MailCore::open(dir.path()).unwrap();
         core.start_worker(Arc::new(FakeArchiveProvider::new()))
             .unwrap();
         let receipt = core
@@ -580,7 +570,7 @@ mod facade_tests {
         // Restart: the group, member outcomes and receipt replay survive.
         core.stop_worker();
         drop(core);
-        let reopened = MailCore::open(&dir).unwrap();
+        let reopened = MailCore::open(dir.path()).unwrap();
         assert_eq!(
             reopened
                 .set_archived_group(&crate::groups::SetArchivedGroup {
@@ -615,17 +605,7 @@ mod facade_tests {
             "group undo outcome survives restart"
         );
         drop(reopened);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
-    fn wait_for(predicate: impl Fn() -> bool) -> bool {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !predicate() {
-            if Instant::now() >= deadline {
-                return predicate();
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        true
-    }
+    use crate::testing::until as wait_for;
 }

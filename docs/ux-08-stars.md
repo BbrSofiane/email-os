@@ -176,7 +176,7 @@ rerun for this follow-up. No P2 UI/browser-fake changes are included.
 
 ### Rendered browser evidence (separate, pending)
 
-`tests/discovery.rendered.test.ts` adds an opt-in trusted CDP journey for S →
+`tests/discovery/discovery.rendered.test.ts` adds an opt-in trusted CDP journey for S →
 archive → cached Starred → unstar/empty → context Back, using only the labelled
 in-memory fake and a temporary Chrome profile. It was **not executed** here:
 `EMAIL_OS_RENDERED_LAYOUT_CHROME` was not configured and the standard Chrome

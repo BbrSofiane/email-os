@@ -28,6 +28,15 @@ unknown-size and missing attachment bodies fail closed. Fetch verifies cached
 account+conversation+message+attachment identity, generation and cancellation.
 Retained snapshots cannot fetch; no new scope or mutation permission.
 
+The button is labelled `Save` on every surface (the inline list and the Cmd+O
+chooser). Its accessible name is `Save <file name>`, with bidirectional control
+characters removed, so a screen-reader user can tell the files apart. The
+success line still says where the file went: `Saved to Downloads as <name>. No
+file was opened.` If the descriptor list cannot load, the inline note
+(`Could not load file details.`) has a ghost `Retry` button. It asks again,
+stays in place and inert (`aria-disabled`) while it waits, and hands focus to
+the attachments group when the list arrives.
+
 Save is deliberately narrow: a new uniquely named file in the OS Downloads
 folder, never a frontend path and never overwrite. Sender filenames are reduced
 to ASCII inert names; every download ends `.download` (including Office/HTML),
@@ -117,8 +126,8 @@ bytes. No document parser, decompressor, renderer or resource loader is involved
 Existing bulk/Undo/retained snapshot/draft/close tests remain passing.
 
 Tests and implementation live in `crates/mail-core/src/attachments.rs`, Gmail
-provider/store/sync tests, `tests/attachments.component.test.ts`,
-`tests/tauri-client.test.ts`, and the native attachment-transfer tests.
+provider/store/sync tests, `tests/attachments/component.test.ts`,
+`tests/ipc/tauri-client.test.ts`, and the native attachment-transfer tests.
 
 ### P1 review fix — long opaque attachment handles
 
@@ -171,7 +180,7 @@ Using the existing opt-in Chrome/CDP runner, existing cached Chrome for Testing
 
 ```sh
 EMAIL_OS_RENDERED_LAYOUT_CHROME='<existing Chrome executable>' \
-  mise exec -- pnpm exec vitest run tests/reader.rendered.test.ts \
+  mise exec -- pnpm exec vitest run tests/reader/reader.rendered.test.ts \
   -t UX-12 --maxWorkers=1 --minWorkers=1
 ```
 
@@ -217,7 +226,8 @@ real OS key events (System Events) and window screenshots. Not provider evidence
 - Real **Cmd+O** opened the Files and links chooser listing the single synthetic
   `example.txt` (text/plain, 27 bytes) and "No HTTP(S) links"; focus moved to
   Back to message and the reader behind was inert.
-- Tab then Space on **Save to Downloads** wrote
+- Tab then Space on the file button (labelled `Save to Downloads` at capture
+  time; since renamed `Save`, see above) wrote
   `~/Downloads/<uuid>-example.txt.download`: 27 bytes, mode `0600`, ASCII text
   `Synthetic attachment only.`; the UI reported "No file was opened."
   The file carries `com.apple.provenance`/`macl` attributes but no

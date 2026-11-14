@@ -109,21 +109,21 @@ rather than claiming Inbox zero. The filter resets on account disconnect/change.
 
 ## Validation
 
-- `tests/saved-split.test.ts`: exact matching and badge boundaries; overlap,
+- `tests/saved-split/saved-split.test.ts`: exact matching and badge boundaries; overlap,
   archive/Undo, selection isolation, disabling, unread unknowns, stale navigation,
   inline editing, nonwrapping keyboard navigation, reader return, hidden commands.
-- `tests/useMailbox.saved-split-safety.test.ts`: delayed/stale/failed rule and list
+- `tests/saved-split/useMailbox-safety.test.ts`: delayed/stale/failed rule and list
   reads, atomic projection publication, old-target fencing, unchanged-rule browsing,
   and independent Activity/Done ownership.
-- `tests/app.saved-split-activity.test.ts`: archived Activity recovery from a saved
+- `tests/saved-split/app-activity.test.ts`: archived Activity recovery from a saved
   split, restore actions, and the Activity-origin reader return path.
-- `tests/create-split-command.test.ts`: command-only creation, context transitions,
+- `tests/saved-split/create-command.test.ts`: command-only creation, context transitions,
   native Cmd+K, editor focus, save/cancel return focus, and command-only editing
   of existing, disabled and hidden definitions.
-- `tests/unread-filter-command.test.ts`: command-only filtering and reverse label,
+- `tests/commands/unread-filter.test.ts`: command-only filtering and reverse label,
   unknown/read exclusion, total badges, context/account lifecycle, reader closure,
   empty-state recovery, read-only access and delayed-refresh focus ownership.
-- `tests/split-editor.component.test.ts`: failure focus restoration and ownership,
+- `tests/saved-split/editor.test.ts`: failure focus restoration and ownership,
   in-flight submission/cancel fencing, and successful-save focus behavior.
 - `crates/mail-core/tests/saved_split.rs`: save/reopen, account scoping, rejected
   updates, disabling without moving mail or superseding an existing Undo.
@@ -133,8 +133,8 @@ rather than claiming Inbox zero. The filter resets on account disconnect/change.
   unknown From updates, reopen, old-schema migration and account fencing. Its
   exact native wire results are checked against
   `tests/fixtures/newest-sender-summaries.json`, also consumed by
-  `tests/saved-split.native-sender.test.ts` for sender/domain membership.
-- `tests/discovery.rendered.test.ts`: opt-in real Chrome trusted-input journey
+  `tests/saved-split/saved-split.test.ts` for sender/domain membership.
+- `tests/discovery/discovery.rendered.test.ts`: opt-in real Chrome trusted-input journey
   through the inline editor, split Tab/Shift+Tab, reader archive, Undo, and Inbox
   overlap. Run rendered suites with `--no-file-parallelism` to avoid shared Vite
   dependency-cache races between ephemeral test servers.

@@ -1,5 +1,5 @@
 /**
- * Frontend transport seam (Slices 01–04).
+ * Frontend transport seam for native IPC and synthetic browser preview.
  *
  * The UI depends only on this interface. Two implementations exist:
  * - `tauri-client.ts`: narrow Tauri adapter over the approved named commands and the
@@ -188,7 +188,7 @@ export interface MailClient {
   cancelSearchMail(): Promise<void>;
   listProviderDestinations(accountId: string, cached: boolean): Promise<DestinationCatalog>;
   browseProviderDestination(request: DestinationRequest): Promise<DestinationPage>;
-  /** Optional transport capability; currently native fixture only, never Gmail. */
+  /** Optional app-owned, device-local reminder capability. */
   reminders?: {
     list(): Promise<Reminder[]>;
     put(command: PutReminder): Promise<Reminder>;

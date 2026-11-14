@@ -4,10 +4,10 @@ use crate::{
     reminders::*,
 };
 
-fn setup() -> (std::path::PathBuf, Arc<FakeClock>, Store) {
-    let dir = std::env::temp_dir().join(format!("reminder-tests-{}", uuid::Uuid::new_v4()));
+fn setup() -> (tempfile::TempDir, Arc<FakeClock>, Store) {
+    let dir = tempfile::tempdir().unwrap();
     let clock = Arc::new(FakeClock::new(utc("2030-01-01T00:00:00Z")));
-    let store = Store::open(&dir, clock.clone()).unwrap();
+    let store = Store::open(dir.path(), clock.clone()).unwrap();
     (dir, clock, store)
 }
 fn command(s: &Store, condition: ReminderCondition) -> PutReminder {
@@ -54,7 +54,7 @@ fn fire_once_exact_inventory_restart_and_receipt_replay() {
     incoming(&s, "friend@example.test");
     clock.advance_seconds(61);
     drop(s);
-    let s = Store::open(&dir, clock).unwrap();
+    let s = Store::open(dir.path(), clock).unwrap();
     s.recover_applying().unwrap();
     assert_eq!(s.put_reminder(&c).unwrap(), accepted);
     assert!(s.reconcile_reminders().unwrap());
@@ -70,7 +70,6 @@ fn fire_once_exact_inventory_restart_and_receipt_replay() {
     conflict.due_at = None;
     assert_eq!(s.put_reminder(&conflict), Err(MailError::RequestIdConflict));
     drop(s);
-    std::fs::remove_dir_all(dir).unwrap();
 }
 #[test]
 fn reply_suppresses_only_conditional_and_self_does_not_qualify() {
@@ -91,7 +90,7 @@ fn reply_suppresses_only_conditional_and_self_does_not_qualify() {
             ReminderPhase::Returning,
         ),
     ] {
-        let (dir, clock, s) = setup();
+        let (_dir, clock, s) = setup();
         s.put_reminder(&command(&s, condition)).unwrap();
         confirm(&s);
         incoming(&s, mailbox);
@@ -104,12 +103,11 @@ fn reply_suppresses_only_conditional_and_self_does_not_qualify() {
                 .is_in_inbox
         );
         drop(s);
-        std::fs::remove_dir_all(dir).unwrap();
     }
 }
 #[test]
 fn someday_never_fires_and_cancellation_orders_after_inflight_removal() {
-    let (dir, clock, s) = setup();
+    let (_dir, clock, s) = setup();
     let mut c = command(&s, ReminderCondition::IfNoReply);
     c.due_at = None;
     s.put_reminder(&c).unwrap();
@@ -127,8 +125,8 @@ fn someday_never_fires_and_cancellation_orders_after_inflight_removal() {
     assert_eq!(row(&s).phase, ReminderPhase::Cancelled);
     assert_eq!(s.cancel_reminder(&cancel).unwrap(), receipt);
     drop(s);
-    std::fs::remove_dir_all(dir).unwrap();
-    let (dir, clock, s) = setup();
+
+    let (_dir, clock, s) = setup();
     let mut c = command(&s, ReminderCondition::Regardless);
     c.due_at = None;
     s.put_reminder(&c).unwrap();
@@ -138,11 +136,10 @@ fn someday_never_fires_and_cancellation_orders_after_inflight_removal() {
     assert!(!s.reconcile_reminders().unwrap());
     assert_eq!(row(&s).phase, ReminderPhase::Pending);
     drop(s);
-    std::fs::remove_dir_all(dir).unwrap();
 }
 #[test]
 fn reschedule_cancel_fire_cas_failure_and_superseding_triage() {
-    let (dir, clock, s) = setup();
+    let (_dir, clock, s) = setup();
     let mut c = command(&s, ReminderCondition::Regardless);
     s.put_reminder(&c).unwrap();
     confirm(&s);
@@ -178,8 +175,8 @@ fn reschedule_cancel_fire_cas_failure_and_superseding_triage() {
     confirm(&s);
     assert_eq!(row(&s).phase, ReminderPhase::Cancelled);
     drop(s);
-    std::fs::remove_dir_all(dir).unwrap();
-    let (dir, clock, s) = setup();
+
+    let (_dir, clock, s) = setup();
     let c = command(&s, ReminderCondition::Regardless);
     s.put_reminder(&c).unwrap();
     confirm(&s);
@@ -206,11 +203,10 @@ fn reschedule_cancel_fire_cas_failure_and_superseding_triage() {
             .is_in_inbox
     );
     drop(s);
-    std::fs::remove_dir_all(dir).unwrap();
 }
 #[test]
 fn source_account_time_and_persistence_fail_closed_and_undo_slot_survives() {
-    let (dir, _, s) = setup();
+    let (_dir, _, s) = setup();
     let c = command(&s, ReminderCondition::IfNoReply);
     for due in [
         "2030-11-03T01:30:00",
@@ -252,5 +248,4 @@ fn source_account_time_and_persistence_fail_closed_and_undo_slot_survives() {
     })
     .unwrap();
     drop(s);
-    std::fs::remove_dir_all(dir).unwrap();
 }

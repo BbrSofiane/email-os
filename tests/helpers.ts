@@ -1,6 +1,63 @@
 import { createBrowserFakeMailClient, type BrowserFake, type FakeAccountState } from '../src/lib/ipc/browser-fake';
 import type { ConversationRef, InboxSnapshot, MailClient, SetArchived } from '../src/lib/ipc/client';
-import { flushPromises, type VueWrapper } from '@vue/test-utils';
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
+import App from '../src/App.vue';
+import { afterEach } from 'vitest';
+
+/** Build a keydown event with caller-supplied flags. This function does not dispatch it. */
+export function createKeyEvent(key: string, init: KeyboardEventInit & { keyCode?: number } = {}): KeyboardEvent {
+  const event = new KeyboardEvent('keydown', { key, ...init });
+  if (init.keyCode !== undefined) Object.defineProperty(event, 'keyCode', { get: () => init.keyCode });
+  return event;
+}
+
+/**
+ * Dispatch a keydown event. The default target is document.activeElement ?? document.body.
+ * Pass window or a specific element as the third argument when the test needs that target.
+ * Event flags are not inferred; pass bubbles, cancelable, and other options explicitly.
+ */
+export function press(key: string, init: KeyboardEventInit & { keyCode?: number } = {}, target: EventTarget = document.activeElement ?? document.body): KeyboardEvent {
+  const event = createKeyEvent(key, init);
+  target.dispatchEvent(event);
+  return event;
+}
+
+const mountedApps = new Set<VueWrapper>();
+afterEach(() => {
+  for (const wrapper of mountedApps) {
+    if (wrapper.exists()) wrapper.unmount();
+  }
+  mountedApps.clear();
+});
+
+/** Mount App with the requested client and mode. Preserve all other Vue Test Utils options. */
+export function mountApp(
+  client: MailClient,
+  mode: 'native' | 'browser-preview',
+  options: Omit<NonNullable<Parameters<typeof mount>[1]>, 'props'> & { attachTo?: Element | string; props?: Record<string, unknown> } = {},
+): VueWrapper {
+  const { props = {}, ...mountOptions } = options;
+  const wrapper = mount(App, { ...mountOptions, props: { ...props, client, mode } }) as VueWrapper;
+  mountedApps.add(wrapper);
+  return wrapper;
+}
+
+/** Drain pending promise continuations and Vue updates. */
+export async function flushVuePromises(): Promise<void> { await flushPromises(); }
+
+/** Drain promise continuations, one 0ms macrotask, then promise/Vue work it schedules. */
+export async function flushVueAndMacrotask(): Promise<void> {
+  await flushPromises();
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  await flushPromises();
+}
+
+/** Flush Vue promise work, fake-client queues, then Vue work triggered by the fake. */
+export async function flushFakeClientAndVueUpdates(fake: BrowserFake): Promise<void> {
+  await flushPromises();
+  await fake.controls.flush();
+  await flushPromises();
+}
 
 /** Switches the labelled fake into a synthetic Gmail mode for UI tests. */
 export function useGmailMode(fake: BrowserFake, patch: Partial<FakeAccountState> = {}): void {
@@ -57,14 +114,11 @@ export function countingClient(inner: MailClient): CountingClient {
   const commands: SetArchived[] = [];
   const readCommands: import('../src/lib/ipc/client').SetRead[] = [];
   const retryCommands: import('../src/lib/ipc/client').RetryOperation[] = [];
-  const client: MailClient = {
-    ...accountMethods(inner),
-    ...groupMethods(inner),
+  const client = decorateClient(inner, {
     listConversations: () => {
       list += 1;
       return inner.listConversations();
     },
-    getConversation: (ref) => inner.getConversation(ref),
     setArchived: (command) => {
       commands.push(command);
       return inner.setArchived(command);
@@ -77,10 +131,7 @@ export function countingClient(inner: MailClient): CountingClient {
       retryCommands.push(command);
       return inner.retryOperation(command);
     },
-    subscribe: (listener) => inner.subscribe(listener),
-    enableMailboxActions: () => inner.enableMailboxActions(),
-    cancelMailboxActionUpgrade: () => inner.cancelMailboxActionUpgrade(),
-  };
+  });
   return { client, commands, readCommands, retryCommands, listCalls: () => list };
 }
 
@@ -90,39 +141,8 @@ export function countingClient(inner: MailClient): CountingClient {
  */
 export function accountMethods(
   inner: MailClient,
-): Pick<MailClient, 'listAttachments' | 'saveAttachment' | 'cancelAttachment' | 'openExternalLink' | 'getSavedSplit' | 'saveSavedSplit' | 'searchMail' | 'cancelSearchMail' | 'listProviderDestinations' | 'browseProviderDestination' | 'listCachedTrash' | 'listCachedDone' | 'getAccountStatus' | 'connectAccount' | 'disconnectAccount' | 'requestSync' | 'enableMailboxActions' | 'cancelMailboxActionUpgrade' | 'setRead' | 'retryOperation' | 'undoOperation' | 'listDrafts' | 'getDraft' | 'createDraft' | 'saveDraft' | 'deleteDraft' | 'subscribeDrafts' | 'subscribeAppClose' | 'completeAppClose' | 'cancelAppClose'> {
-  return {
-    getSavedSplit: (accountId) => inner.getSavedSplit(accountId),
-    saveSavedSplit: (accountId, split) => inner.saveSavedSplit(accountId, split),
-    searchMail: (request) => inner.searchMail(request),
-    cancelSearchMail: () => inner.cancelSearchMail(),
-    listProviderDestinations: (accountId, cached) => inner.listProviderDestinations(accountId, cached),
-    browseProviderDestination: (request) => inner.browseProviderDestination(request),
-    listAttachments: (target) => inner.listAttachments(target),
-    saveAttachment: (request) => inner.saveAttachment(request),
-    cancelAttachment: (id) => inner.cancelAttachment(id),
-    openExternalLink: (url) => inner.openExternalLink(url),
-    listCachedDone: (request) => inner.listCachedDone(request),
-    listCachedTrash: (request) => inner.listCachedTrash(request),
-    listDrafts: () => inner.listDrafts(),
-    getDraft: (ref) => inner.getDraft(ref),
-    createDraft: (command) => inner.createDraft(command),
-    saveDraft: (command) => inner.saveDraft(command),
-    deleteDraft: (command) => inner.deleteDraft(command),
-    subscribeDrafts: (listener) => inner.subscribeDrafts(listener),
-    subscribeAppClose: (listener) => inner.subscribeAppClose(listener),
-    completeAppClose: (requestId) => inner.completeAppClose(requestId),
-    cancelAppClose: (requestId) => inner.cancelAppClose(requestId),
-    getAccountStatus: () => inner.getAccountStatus(),
-    connectAccount: () => inner.connectAccount(),
-    disconnectAccount: () => inner.disconnectAccount(),
-    requestSync: () => inner.requestSync(),
-    enableMailboxActions: () => inner.enableMailboxActions(),
-    cancelMailboxActionUpgrade: () => inner.cancelMailboxActionUpgrade(),
-    setRead: (command) => inner.setRead(command),
-    retryOperation: (command) => inner.retryOperation(command),
-    undoOperation: (command) => inner.undoOperation(command),
-  };
+): Pick<MailClient, 'listAttachments' | 'saveAttachment' | 'cancelAttachment' | 'openExternalLink' | 'getSavedSplit' | 'saveSavedSplit' | 'searchMail' | 'cancelSearchMail' | 'listProviderDestinations' | 'browseProviderDestination' | 'listCachedTrash' | 'listCachedDone' | 'getAccountStatus' | 'connectAccount' | 'disconnectAccount' | 'requestSync' | 'enableMailboxActions' | 'cancelMailboxActionUpgrade' | 'setRead' | 'retryOperation' | 'undoOperation' | 'listDrafts' | 'getDraft' | 'createDraft' | 'saveDraft' | 'deleteDraft' | 'subscribeDrafts' | 'subscribeAppClose' | 'completeAppClose' | 'cancelAppClose' | 'reminders'> {
+  return delegateMethods(inner, ['listAttachments', 'saveAttachment', 'cancelAttachment', 'openExternalLink', 'getSavedSplit', 'saveSavedSplit', 'searchMail', 'cancelSearchMail', 'listProviderDestinations', 'browseProviderDestination', 'listCachedTrash', 'listCachedDone', 'getAccountStatus', 'connectAccount', 'disconnectAccount', 'requestSync', 'enableMailboxActions', 'cancelMailboxActionUpgrade', 'setRead', 'retryOperation', 'undoOperation', 'listDrafts', 'getDraft', 'createDraft', 'saveDraft', 'deleteDraft', 'subscribeDrafts', 'subscribeAppClose', 'completeAppClose', 'cancelAppClose']);
 }
 
 export function fixtureRef(conversationId: string): ConversationRef {
@@ -132,17 +152,35 @@ export function fixtureRef(conversationId: string): ConversationRef {
 /** Delegates the five UX-05 group methods to a full client (e.g. the fake). */
 export function groupMethods(
   inner: MailClient,
-): Pick<MailClient, 'listCachedStarred' | 'setStarred' | 'setStarredGroup' | 'setArchivedGroup' | 'setReadGroup' | 'getOperationGroup' | 'listOperationGroups' | 'undoOperationGroup'> {
-  return {
-    listCachedStarred: (request) => inner.listCachedStarred(request),
-    setStarred: (command) => inner.setStarred(command),
-    setStarredGroup: (command) => inner.setStarredGroup(command),
-    setArchivedGroup: (command) => inner.setArchivedGroup(command),
-    setReadGroup: (command) => inner.setReadGroup(command),
-    getOperationGroup: (request) => inner.getOperationGroup(request),
-    listOperationGroups: (request) => inner.listOperationGroups(request),
-    undoOperationGroup: (command) => inner.undoOperationGroup(command),
-  };
+): Pick<MailClient, 'listCachedStarred' | 'setStarred' | 'setStarredGroup' | 'setArchivedGroup' | 'setReadGroup' | 'getOperationGroup' | 'listOperationGroups' | 'undoOperationGroup' | 'reminders'> {
+  return delegateMethods(inner, ['listCachedStarred', 'setStarred', 'setStarredGroup', 'setArchivedGroup', 'setReadGroup', 'getOperationGroup', 'listOperationGroups', 'undoOperationGroup']);
+}
+
+type DelegatedClientMethods<K extends keyof MailClient> = Pick<MailClient, K | 'reminders'>;
+
+function delegateMethods<K extends keyof MailClient>(inner: MailClient, methods: readonly K[]): DelegatedClientMethods<K> {
+  const delegated: Partial<MailClient> = { reminders: inner.reminders };
+  for (const method of methods) {
+    const value = inner[method];
+    if (typeof value === 'function') {
+      // Bind to the source client so method implementations that use `this` keep working.
+      (delegated as Record<keyof MailClient, unknown>)[method] = value.bind(inner);
+    }
+  }
+  return delegated as DelegatedClientMethods<K>;
+}
+
+/** Decorate a client without changing its shape or optional capabilities. */
+function decorateClient(inner: MailClient, overrides: Partial<MailClient>): MailClient {
+  return new Proxy(inner, {
+    get(target, property) {
+      if (Object.prototype.hasOwnProperty.call(overrides, property)) {
+        return Reflect.get(overrides, property);
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
 }
 
 /**
@@ -190,9 +228,15 @@ export function focusedRow(wrapper: VueWrapper): ReturnType<VueWrapper['find']> 
 /** Utility surfaces live in explicit disclosures; tests open them explicitly. */
 export async function openUtilityDrawer(
   wrapper: VueWrapper,
-  name: 'account' | 'activity' | 'drafts',
+  name: 'account' | 'activity',
 ): Promise<void> {
   await wrapper.find(`[data-test="rail-${name}"]`).trigger('click');
+  await flushPromises();
+}
+
+/** Drafts is a list context in the main pane, not a drawer: the rail item navigates to it. */
+export async function openDraftsList(wrapper: VueWrapper): Promise<void> {
+  await wrapper.find('[data-test="rail-drafts"]').trigger('click');
   await flushPromises();
 }
 

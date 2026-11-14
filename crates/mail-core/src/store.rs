@@ -33,6 +33,7 @@ use crate::groups::{
     OperationGroupSummary, SetArchivedGroup, UndoOperationGroup,
 };
 use crate::seed::{self, SeedConversation};
+use crate::storage_log::{storage_err, storage_fault};
 use crate::ACCOUNT_ID;
 
 /// Longest plain-text preview appended to conversation summaries.
@@ -82,15 +83,15 @@ impl std::fmt::Debug for Store {
 
 impl Store {
     pub(crate) fn open(profile_dir: &Path, clock: Arc<dyn Clock>) -> Result<Store, MailError> {
-        std::fs::create_dir_all(profile_dir).map_err(|_| MailError::StorageUnavailable)?;
+        std::fs::create_dir_all(profile_dir).map_err(storage_err())?;
         let db_path = profile_dir.join("mail.db");
-        let conn = Connection::open(&db_path).map_err(|_| MailError::StorageUnavailable)?;
+        let conn = Connection::open(&db_path).map_err(storage_err())?;
         conn.pragma_update(None, "journal_mode", "WAL")
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         conn.pragma_update(None, "synchronous", "FULL")
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         conn.pragma_update(None, "foreign_keys", "ON")
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         let store = Store {
             conn: Mutex::new(conn),
             clock,
@@ -105,7 +106,7 @@ impl Store {
     fn persistence_gate(&self) -> Result<(), MailError> {
         #[cfg(test)]
         if self.injected_persistence_failure.load(Ordering::SeqCst) {
-            return Err(MailError::StorageUnavailable);
+            return Err(storage_fault("invalid_persisted_state"));
         }
         Ok(())
     }
@@ -142,14 +143,12 @@ impl Store {
     }
 
     fn lock_conn(&self) -> Result<MutexGuard<'_, Connection>, MailError> {
-        self.conn.lock().map_err(|_| MailError::StorageUnavailable)
+        self.conn.lock().map_err(storage_err())
     }
 
     fn migrate_and_seed(&self) -> Result<(), MailError> {
         let mut conn = self.lock_conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let tx = conn.transaction().map_err(storage_err())?;
         reminders::migrate(&tx)?;
         tx.execute_batch(
             "CREATE TABLE IF NOT EXISTS meta (
@@ -225,7 +224,7 @@ impl Store {
                 PRIMARY KEY (account_id, group_id, ordinal)
             );",
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
         let schema_version: Option<String> = tx
             .query_row(
                 "SELECT value FROM meta WHERE key = 'schema_version'",
@@ -233,7 +232,7 @@ impl Store {
                 |row| row.get(0),
             )
             .optional()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         match schema_version {
             Some(version) if version == "4" => {}
             Some(version) if version == "3" || version == "2" || version == "1" => {
@@ -271,7 +270,7 @@ impl Store {
                                 request_id, NULL, NULL FROM operations_v1;
                          DROP TABLE operations_v1;",
                     )
-                    .map_err(|_| MailError::StorageUnavailable)?;
+                    .map_err(storage_err())?;
                 }
                 // UX-05 migration (docs/ux-05-safe-bulk-processing.md §4.2):
                 // group tables are created by the idempotent batch above; the
@@ -282,25 +281,25 @@ impl Store {
                 let has_action_id_column = has_column(&tx, "operations", "action_id")?;
                 if !has_action_id_column {
                     tx.execute("ALTER TABLE operations ADD COLUMN action_id TEXT", [])
-                        .map_err(|_| MailError::StorageUnavailable)?;
+                        .map_err(storage_err())?;
                 }
                 let has_retry_of_column = has_column(&tx, "operations", "retry_of")?;
                 if !has_retry_of_column {
                     tx.execute("ALTER TABLE operations ADD COLUMN retry_of TEXT", [])
-                        .map_err(|_| MailError::StorageUnavailable)?;
+                        .map_err(storage_err())?;
                 }
                 tx.execute(
                     "UPDATE operations SET action_id = operation_id
                      WHERE undo_of IS NULL AND action_id IS NULL",
                     [],
                 )
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
                 tx.execute(
                     "INSERT INTO meta (key, value) VALUES ('schema_version', '4')
                      ON CONFLICT(key) DO UPDATE SET value = '4'",
                     [],
                 )
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
                 // P5a v3→v4: copy-rebuild `messages` in the same transaction to
                 // add the per-message attachment fact, preserving every row.
                 // Legacy rows get has_attachment = 0, which carries NO fact
@@ -330,16 +329,16 @@ impl Store {
                          FROM messages_v3;
                          DROP TABLE messages_v3;",
                     )
-                    .map_err(|_| MailError::StorageUnavailable)?;
+                    .map_err(storage_err())?;
                 }
             }
-            Some(_) => return Err(MailError::StorageUnavailable),
+            Some(_) => return Err(storage_fault("invalid_persisted_state")),
             None => {
                 tx.execute(
                     "INSERT INTO meta (key, value) VALUES ('schema_version', '4')",
                     [],
                 )
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
             }
         }
 
@@ -350,11 +349,11 @@ impl Store {
                 |row| row.get(0),
             )
             .optional()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         if seeded.is_none() {
             let existing: i64 = tx
                 .query_row("SELECT COUNT(*) FROM conversations", [], |row| row.get(0))
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
             if existing == 0 {
                 let seeded_at = self.clock.now_iso();
                 for conversation in seed::fixtures() {
@@ -365,9 +364,9 @@ impl Store {
                 "INSERT INTO meta (key, value) VALUES ('seed_version', ?1)",
                 [seed::SEED_VERSION],
             )
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         }
-        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        tx.commit().map_err(storage_err())?;
         Ok(())
     }
 
@@ -377,16 +376,14 @@ impl Store {
     pub(crate) fn recover_applying(&self) -> Result<usize, MailError> {
         self.persistence_gate()?;
         let mut conn = self.lock_conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let tx = conn.transaction().map_err(storage_err())?;
         let recovered = tx
             .execute(
                 "UPDATE operations SET status = 'queued' WHERE status = 'applying'",
                 [],
             )
-            .map_err(|_| MailError::StorageUnavailable)?;
-        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
+        tx.commit().map_err(storage_err())?;
         Ok(recovered)
     }
 
@@ -411,9 +408,7 @@ impl Store {
         );
         self.persistence_gate()?;
         let mut conn = self.lock_conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let tx = conn.transaction().map_err(storage_err())?;
 
         let exists: bool = tx
             .query_row(
@@ -425,7 +420,7 @@ impl Store {
                 |_| Ok(()),
             )
             .optional()
-            .map_err(|_| MailError::StorageUnavailable)?
+            .map_err(storage_err())?
             .is_some();
         if !exists {
             return Err(MailError::NotFound);
@@ -446,7 +441,7 @@ impl Store {
                 },
             )
             .optional()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         if let Some((operation_id, stored_fingerprint, accepted_at)) = existing {
             if stored_fingerprint == fingerprint {
                 return Ok(OperationReceipt {
@@ -479,14 +474,12 @@ impl Store {
                     .effective_inbox
                     .get(message_id)
                     .copied()
-                    .ok_or(MailError::StorageUnavailable)?;
+                    .ok_or_else(|| storage_fault("missing_persisted_row"))?;
                 Ok((message_id.as_str(), !in_inbox))
             })
             .collect::<Result<BTreeMap<&str, bool>, MailError>>()?;
-        let prior_values_json =
-            serde_json::to_string(&prior_values).map_err(|_| MailError::StorageUnavailable)?;
-        let message_ids_json =
-            serde_json::to_string(&message_ids).map_err(|_| MailError::StorageUnavailable)?;
+        let prior_values_json = serde_json::to_string(&prior_values).map_err(storage_err())?;
+        let message_ids_json = serde_json::to_string(&message_ids).map_err(storage_err())?;
         tx.execute(
             "INSERT INTO operations
                 (operation_id, account_id, conversation_id, requested_archived, status,
@@ -505,7 +498,7 @@ impl Store {
                 operation_id,
             ],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
         tx.execute(
             "INSERT INTO request_keys
                 (account_id, request_id, operation_id, fingerprint, accepted_at)
@@ -518,8 +511,8 @@ impl Store {
                 accepted_at,
             ],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
-        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
+        tx.commit().map_err(storage_err())?;
         Ok(OperationReceipt {
             operation_id,
             accepted_at,
@@ -537,9 +530,7 @@ impl Store {
         }
         self.persistence_gate()?;
         let mut conn = self.lock_conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let tx = conn.transaction().map_err(storage_err())?;
         let fingerprint = format!("undo_operation|v1|operation={}", command.operation_id);
         let existing = tx
             .query_row(
@@ -555,11 +546,11 @@ impl Store {
                 },
             )
             .optional()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         if let Some((operation_id, stored_fingerprint, accepted_at)) = existing {
             if stored_fingerprint == fingerprint {
                 let receipt = reconstruct_undo_receipt(&tx, &operation_id, accepted_at)?;
-                tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+                tx.commit().map_err(storage_err())?;
                 return Ok(receipt);
             }
             return Err(MailError::RequestIdConflict);
@@ -579,7 +570,7 @@ impl Store {
                      WHERE operation_id = ?1 AND status = 'queued'",
                     params![target.operation_id],
                 )
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
             if cancelled == 1 {
                 UndoReceipt {
                     undone_operation_id: target.operation_id.clone(),
@@ -605,8 +596,8 @@ impl Store {
                 accepted_at,
             ],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
-        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
+        tx.commit().map_err(storage_err())?;
         Ok(receipt)
     }
 
@@ -633,16 +624,14 @@ impl Store {
         );
         self.persistence_gate()?;
         let mut conn = self.lock_conn()?;
-        let mut tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut tx = conn.transaction().map_err(storage_err())?;
 
         // Same request/payload returns the original receipt — including the
         // original persisted member ordering (§4.1 step 1).
         if let Some(receipt) =
             existing_group_receipt(&tx, ACCOUNT_ID, &command.request_id, &fingerprint)?
         {
-            tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+            tx.commit().map_err(storage_err())?;
             return Ok(receipt);
         }
 
@@ -654,7 +643,7 @@ impl Store {
             // Member savepoint (§4.1 step 3): a rejected member rolls back to
             // a clean slate and keeps its typed rejection; valid siblings are
             // unaffected; storage errors still abort the whole acceptance.
-            let mut savepoint = tx.savepoint().map_err(|_| MailError::StorageUnavailable)?;
+            let mut savepoint = tx.savepoint().map_err(storage_err())?;
             let outcome = accept_fixture_operation_tx(
                 &savepoint,
                 ACCOUNT_ID,
@@ -666,9 +655,7 @@ impl Store {
             );
             match outcome {
                 Ok(operation_id) => {
-                    savepoint
-                        .commit()
-                        .map_err(|_| MailError::StorageUnavailable)?;
+                    savepoint.commit().map_err(storage_err())?;
                     member_rows.push(GroupMemberInsert {
                         ordinal,
                         conversation_id: member.conversation_id.clone(),
@@ -677,9 +664,7 @@ impl Store {
                     });
                 }
                 Err(MailError::NotFound) => {
-                    savepoint
-                        .rollback()
-                        .map_err(|_| MailError::StorageUnavailable)?;
+                    savepoint.rollback().map_err(storage_err())?;
                     member_rows.push(GroupMemberInsert {
                         ordinal,
                         conversation_id: member.conversation_id.clone(),
@@ -688,9 +673,7 @@ impl Store {
                     });
                 }
                 Err(MailError::InvalidRequest { field }) if field == "targets" => {
-                    savepoint
-                        .rollback()
-                        .map_err(|_| MailError::StorageUnavailable)?;
+                    savepoint.rollback().map_err(storage_err())?;
                     member_rows.push(GroupMemberInsert {
                         ordinal,
                         conversation_id: member.conversation_id.clone(),
@@ -709,7 +692,7 @@ impl Store {
                 params![ACCOUNT_ID],
                 |row| row.get(0),
             )
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         tx.execute(
             "INSERT INTO operation_groups
                 (group_id, account_id, request_id, kind, requested_value, accepted_at,
@@ -724,7 +707,7 @@ impl Store {
                 group_seq,
             ],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
         for member in &member_rows {
             insert_group_member_row(&tx, ACCOUNT_ID, &group_id, member)?;
         }
@@ -744,8 +727,8 @@ impl Store {
                 accepted_at
             ],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
-        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
+        tx.commit().map_err(storage_err())?;
         Ok(group_receipt(
             &group_id,
             &command.request_id,
@@ -778,7 +761,7 @@ impl Store {
                 |row| row.get(0),
             )
             .optional()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         let Some(group_id) = group_id else {
             return Ok(None);
         };
@@ -810,7 +793,7 @@ impl Store {
                    AND (?2 IS NULL OR group_seq < ?2)
                  ORDER BY group_seq DESC LIMIT ?3",
             )
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         let mut rows = stmt
             .query_map(
                 params![ACCOUNT_ID, before_seq, request.limit as i64 + 1,],
@@ -826,9 +809,9 @@ impl Store {
                     ))
                 },
             )
-            .map_err(|_| MailError::StorageUnavailable)?
+            .map_err(storage_err())?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         let has_more = rows.len() > request.limit as usize;
         rows.truncate(request.limit as usize);
         let mut summaries = Vec::with_capacity(rows.len());
@@ -868,9 +851,7 @@ impl Store {
         crate::groups::validate_group_request_id(&command.request_id)?;
         self.persistence_gate()?;
         let mut conn = self.lock_conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let tx = conn.transaction().map_err(storage_err())?;
         let fingerprint = format!("undo_operation_group|v1|group={}", command.group_id);
         if let Some(existing) = tx
             .query_row(
@@ -886,7 +867,7 @@ impl Store {
                 },
             )
             .optional()
-            .map_err(|_| MailError::StorageUnavailable)?
+            .map_err(storage_err())?
         {
             let (group_id, stored_fingerprint, accepted_at) = existing;
             if stored_fingerprint == fingerprint {
@@ -897,7 +878,7 @@ impl Store {
                     &command.request_id,
                     &accepted_at,
                 )?;
-                tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+                tx.commit().map_err(storage_err())?;
                 return Ok(receipt);
             }
             return Err(MailError::RequestIdConflict);
@@ -923,11 +904,10 @@ impl Store {
                     member.ordinal,
                     decision_name(&decision),
                     decision_skip_reason(&decision).map(crate::groups::skip_reason_name),
-                    serde_json::to_string(&operation_ids)
-                        .map_err(|_| MailError::StorageUnavailable)?,
+                    serde_json::to_string(&operation_ids).map_err(storage_err())?,
                 ],
             )
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
             results.push(GroupMemberUndoResult {
                 ordinal: member.ordinal as u32,
                 conversation: ConversationRef {
@@ -943,7 +923,7 @@ impl Store {
              WHERE account_id = ?1 AND group_id = ?2",
             params![ACCOUNT_ID, command.group_id, accepted_at],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
         tx.execute(
             "INSERT INTO request_keys
                 (account_id, request_id, operation_id, fingerprint, accepted_at)
@@ -956,8 +936,8 @@ impl Store {
                 accepted_at
             ],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
-        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
+        tx.commit().map_err(storage_err())?;
         Ok(GroupUndoReceipt {
             group_id: command.group_id.clone(),
             request_id: command.request_id.clone(),
@@ -973,12 +953,12 @@ impl Store {
         let conversation_ids: Vec<String> = {
             let mut stmt = conn
                 .prepare("SELECT conversation_id FROM conversations WHERE account_id = ?1")
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
             let collected = stmt
                 .query_map([ACCOUNT_ID], |row| row.get::<_, String>(0))
-                .map_err(|_| MailError::StorageUnavailable)?
+                .map_err(storage_err())?
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
             collected
         };
 
@@ -1030,11 +1010,11 @@ impl Store {
         let conn = self.lock_conn()?;
         let ids = conn
             .prepare("SELECT conversation_id FROM conversations WHERE account_id = ?1")
-            .map_err(|_| MailError::StorageUnavailable)?
+            .map_err(storage_err())?
             .query_map([ACCOUNT_ID], |row| row.get::<_, String>(0))
-            .map_err(|_| MailError::StorageUnavailable)?
+            .map_err(storage_err())?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         drop(conn);
         let rows = ids
             .into_iter()
@@ -1074,7 +1054,7 @@ impl Store {
              WHERE ?2 IS NULL OR date < ?2 OR (date = ?2 AND conversation_id > ?3)
              ORDER BY date DESC, conversation_id ASC LIMIT ?4",
             )
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         let candidates = stmt
             .query_map(
                 params![
@@ -1085,9 +1065,9 @@ impl Store {
                 ],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             )
-            .map_err(|_| MailError::StorageUnavailable)?
+            .map_err(storage_err())?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         let mut summaries = Vec::new();
         for (_, id) in candidates.iter().take(request.limit as usize) {
             let built = build_conversation_view(&conn, ACCOUNT_ID, id)?;
@@ -1165,7 +1145,7 @@ impl Store {
                            AND m.operation_id = o.operation_id)
                  FROM operations o WHERE o.account_id = ?1 ORDER BY o.seq DESC",
             )
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         let rows = stmt
             .query_map([ACCOUNT_ID], |row| {
                 Ok(OperationRow {
@@ -1182,9 +1162,9 @@ impl Store {
                     group_id: row.get(10)?,
                 })
             })
-            .map_err(|_| MailError::StorageUnavailable)?
+            .map_err(storage_err())?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         rows.into_iter()
             .map(|row| {
                 let undoable_until = if row.undo_of.is_none()
@@ -1230,9 +1210,7 @@ impl Store {
     pub(crate) fn claim_next_queued(&self) -> Result<Option<ClaimedOp>, MailError> {
         self.persistence_gate()?;
         let mut conn = self.lock_conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let tx = conn.transaction().map_err(storage_err())?;
         let claimed = tx
             .query_row(
                 "SELECT operation_id, account_id, conversation_id, requested_archived, message_ids
@@ -1249,7 +1227,7 @@ impl Store {
                 },
             )
             .optional()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         let claimed = claimed
             .map(
                 |(operation_id, account_id, conversation_id, requested_archived, message_ids)| {
@@ -1268,9 +1246,9 @@ impl Store {
                 "UPDATE operations SET status = 'applying' WHERE operation_id = ?1",
                 params![op.operation_id],
             )
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         }
-        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        tx.commit().map_err(storage_err())?;
         Ok(claimed)
     }
 
@@ -1280,15 +1258,13 @@ impl Store {
     pub(crate) fn confirm_op(&self, op: &ClaimedOp) -> Result<(), MailError> {
         self.persistence_gate()?;
         let mut conn = self.lock_conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let tx = conn.transaction().map_err(storage_err())?;
         tx.execute(
             "UPDATE operations SET status = 'confirmed', confirmed_at = ?2
              WHERE operation_id = ?1 AND status = 'applying'",
             params![op.operation_id, self.clock.now_iso()],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
         let fact: i64 = if op.requested_archived { 0 } else { 1 };
         for message_id in &op.message_ids {
             tx.execute(
@@ -1296,9 +1272,9 @@ impl Store {
                  WHERE account_id = ?1 AND conversation_id = ?2 AND message_id = ?3",
                 params![op.account_id, op.conversation_id, message_id, fact],
             )
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         }
-        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        tx.commit().map_err(storage_err())?;
         Ok(())
     }
 
@@ -1311,7 +1287,7 @@ impl Store {
              WHERE operation_id = ?1 AND status = 'applying'",
             params![operation_id, failure_kind],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
         Ok(())
     }
 }
@@ -1325,7 +1301,7 @@ fn insert_seed_conversation(
         "INSERT INTO conversations (account_id, conversation_id, subject) VALUES (?1, ?2, ?3)",
         params![ACCOUNT_ID, conversation.id, conversation.subject],
     )
-    .map_err(|_| MailError::StorageUnavailable)?;
+    .map_err(storage_err())?;
     for (index, message) in conversation.messages.iter().enumerate() {
         let to_json = serde_json::to_string(
             &message
@@ -1337,7 +1313,7 @@ fn insert_seed_conversation(
                 })
                 .collect::<Vec<_>>(),
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
         // P5a: the fixture attachment model is deterministic — exactly one
         // synthetic 'fixture-text' attachment on each conversation's FIRST
         // message (src-tauri `list_attachments` Fixture arm; browser-fake
@@ -1362,7 +1338,7 @@ fn insert_seed_conversation(
                 has_attachment,
             ],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     }
     Ok(())
 }
@@ -1378,10 +1354,10 @@ fn non_empty(s: &str) -> Option<String> {
 fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool, MailError> {
     let mut stmt = conn
         .prepare(&format!("PRAGMA table_info({table})"))
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let found = stmt
         .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|_| MailError::StorageUnavailable)?
+        .map_err(storage_err())?
         .any(|name| name.map(|n| n == column).unwrap_or(false));
     Ok(found)
 }
@@ -1397,17 +1373,17 @@ fn snapshot_message_ids(
              WHERE account_id = ?1 AND conversation_id = ?2
              ORDER BY sent_at ASC, message_id ASC",
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let collected = stmt
         .query_map(params![account_id, conversation_id], |row| row.get(0))
-        .map_err(|_| MailError::StorageUnavailable)?
+        .map_err(storage_err())?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     Ok(collected)
 }
 
 fn parse_ids(json: &str) -> Result<Vec<String>, MailError> {
-    serde_json::from_str(json).map_err(|_| MailError::StorageUnavailable)
+    serde_json::from_str(json).map_err(storage_err())
 }
 
 /// The persisted facts about a fixture operation needed to decide Undo.
@@ -1446,7 +1422,7 @@ fn load_undo_target(
             },
         )
         .optional()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let Some((conversation_id, status, undo_of, accepted_at, prior_values, action_id)) = row else {
         return Ok(None);
     };
@@ -1488,7 +1464,7 @@ fn check_undoable(tx: &Transaction<'_>, target: &UndoTarget, now: &str) -> Resul
             params![ACCOUNT_ID, target.operation_id],
             |row| row.get(0),
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     if undone {
         return Err(undo_unavailable(UndoUnavailableReason::AlreadyUndone));
     }
@@ -1527,9 +1503,9 @@ fn compensate_fixture_tx(
         target
             .prior_values
             .as_deref()
-            .ok_or(MailError::StorageUnavailable)?,
+            .ok_or_else(|| storage_fault("missing_persisted_row"))?,
     )
-    .map_err(|_| MailError::StorageUnavailable)?;
+    .map_err(storage_err())?;
     let message_ids: Vec<String> = parse_ids(&target_message_ids(tx, target)?)?;
     let mut restore_group = Vec::new();
     let mut reapply_group = Vec::new();
@@ -1557,7 +1533,7 @@ fn compensate_fixture_tx(
                     .effective_inbox
                     .get(message_id)
                     .copied()
-                    .ok_or(MailError::StorageUnavailable)?;
+                    .ok_or_else(|| storage_fault("missing_persisted_row"))?;
                 Ok((message_id.as_str(), !in_inbox))
             })
             .collect::<Result<BTreeMap<&str, bool>, MailError>>()?;
@@ -1573,13 +1549,13 @@ fn compensate_fixture_tx(
                 target.conversation_id,
                 value as i64,
                 accepted_at,
-                serde_json::to_string(&ids).map_err(|_| MailError::StorageUnavailable)?,
+                serde_json::to_string(&ids).map_err(storage_err())?,
                 request_id,
                 target.operation_id,
-                serde_json::to_string(&own_prior).map_err(|_| MailError::StorageUnavailable)?,
+                serde_json::to_string(&own_prior).map_err(storage_err())?,
             ],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
         tx.execute(
             "INSERT INTO request_keys
                 (account_id, request_id, operation_id, fingerprint, accepted_at)
@@ -1595,7 +1571,7 @@ fn compensate_fixture_tx(
                 accepted_at,
             ],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
         operation_ids.push(operation_id);
     }
     Ok(UndoReceipt {
@@ -1612,7 +1588,7 @@ fn target_message_ids(tx: &Transaction<'_>, target: &UndoTarget) -> Result<Strin
         params![ACCOUNT_ID, target.operation_id],
         |row| row.get(0),
     )
-    .map_err(|_| MailError::StorageUnavailable)
+    .map_err(storage_err())
 }
 
 /// Rebuilds a committed undo receipt from the durable compensating rows.
@@ -1626,12 +1602,12 @@ fn reconstruct_undo_receipt(
             "SELECT operation_id FROM operations
              WHERE account_id = ?1 AND undo_of = ?2 ORDER BY seq",
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let operation_ids = stmt
         .query_map(params![ACCOUNT_ID, undone_operation_id], |row| row.get(0))
-        .map_err(|_| MailError::StorageUnavailable)?
+        .map_err(storage_err())?
         .collect::<Result<Vec<String>, _>>()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let outcome = if operation_ids.is_empty() {
         UndoOutcome::Cancelled
     } else {
@@ -1658,7 +1634,7 @@ fn latest_action_id(conn: &Connection, account_id: &str) -> Result<Option<String
         |row| row.get(0),
     )
     .optional()
-    .map_err(|_| MailError::StorageUnavailable)
+    .map_err(storage_err())
 }
 
 /// Transaction-local child acceptance used by group acceptance (§4.1 step 3):
@@ -1681,7 +1657,7 @@ fn accept_fixture_operation_tx(
             |_| Ok(()),
         )
         .optional()
-        .map_err(|_| MailError::StorageUnavailable)?
+        .map_err(storage_err())?
         .is_some();
     if !exists {
         return Err(MailError::NotFound);
@@ -1704,14 +1680,12 @@ fn accept_fixture_operation_tx(
                 .effective_inbox
                 .get(message_id)
                 .copied()
-                .ok_or(MailError::StorageUnavailable)?;
+                .ok_or_else(|| storage_fault("missing_persisted_row"))?;
             Ok((message_id.as_str(), !in_inbox))
         })
         .collect::<Result<BTreeMap<&str, bool>, MailError>>()?;
-    let prior_values_json =
-        serde_json::to_string(&prior_values).map_err(|_| MailError::StorageUnavailable)?;
-    let message_ids_json =
-        serde_json::to_string(&message_ids).map_err(|_| MailError::StorageUnavailable)?;
+    let prior_values_json = serde_json::to_string(&prior_values).map_err(storage_err())?;
+    let message_ids_json = serde_json::to_string(&message_ids).map_err(storage_err())?;
     tx.execute(
         "INSERT INTO operations
             (operation_id, account_id, conversation_id, requested_archived, status,
@@ -1730,7 +1704,7 @@ fn accept_fixture_operation_tx(
             action_id,
         ],
     )
-    .map_err(|_| MailError::StorageUnavailable)?;
+    .map_err(storage_err())?;
     Ok(operation_id)
 }
 
@@ -1760,7 +1734,7 @@ fn insert_group_member_row(
             member.rejection.map(crate::groups::rejection_name),
         ],
     )
-    .map_err(|_| MailError::StorageUnavailable)?;
+    .map_err(storage_err())?;
     Ok(())
 }
 
@@ -1823,7 +1797,7 @@ fn existing_group_receipt(
             },
         )
         .optional()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let Some((group_id, stored_fingerprint, accepted_at)) = existing else {
         return Ok(None);
     };
@@ -1863,7 +1837,7 @@ fn load_group_header(
             },
         )
         .optional()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let Some((request_id, kind, requested_value, accepted_at, undone_at)) = row else {
         return Ok(None);
     };
@@ -1899,7 +1873,7 @@ fn load_group_undo_rows(
              FROM operation_group_members
              WHERE account_id = ?1 AND group_id = ?2 ORDER BY ordinal",
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let rows = stmt
         .query_map(params![account_id, group_id], |row| {
             Ok((
@@ -1912,9 +1886,9 @@ fn load_group_undo_rows(
                 row.get::<_, Option<String>>(6)?,
             ))
         })
-        .map_err(|_| MailError::StorageUnavailable)?
+        .map_err(storage_err())?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     rows.into_iter()
         .map(
             |(
@@ -1929,7 +1903,7 @@ fn load_group_undo_rows(
                 let rejection = rejection
                     .map(|name| {
                         crate::groups::rejection_from_name(&name)
-                            .ok_or(MailError::StorageUnavailable)
+                            .ok_or_else(|| storage_fault("missing_persisted_row"))
                     })
                     .transpose()?;
                 Ok(GroupMemberRow {
@@ -1952,8 +1926,8 @@ fn load_group_receipt(
     group_id: &str,
     accepted_at: &str,
 ) -> Result<OperationGroupReceipt, MailError> {
-    let header =
-        load_group_header(conn, account_id, group_id)?.ok_or(MailError::StorageUnavailable)?;
+    let header = load_group_header(conn, account_id, group_id)?
+        .ok_or_else(|| storage_fault("missing_persisted_row"))?;
     let members = load_group_undo_rows(conn, account_id, group_id)?;
     Ok(OperationGroupReceipt {
         requested_starred: None,
@@ -2000,7 +1974,7 @@ fn parse_group_kind(s: &str) -> Result<MailboxOperationKind, MailError> {
     match s {
         "archive" => Ok(MailboxOperationKind::Archive),
         "read" => Ok(MailboxOperationKind::Read),
-        _ => Err(MailError::StorageUnavailable),
+        _ => Err(storage_fault("invalid_persisted_value")),
     }
 }
 
@@ -2044,8 +2018,8 @@ fn load_group_status(
     group_id: &str,
     now: String,
 ) -> Result<OperationGroupStatus, MailError> {
-    let header =
-        load_group_header(conn, account_id, group_id)?.ok_or(MailError::StorageUnavailable)?;
+    let header = load_group_header(conn, account_id, group_id)?
+        .ok_or_else(|| storage_fault("missing_persisted_row"))?;
     let members = load_group_undo_rows(conn, account_id, group_id)?;
     let mut views = Vec::with_capacity(members.len());
     for member in &members {
@@ -2053,7 +2027,7 @@ fn load_group_status(
             (GroupMemberStatus::Rejected, None)
         } else {
             let Some(operation_id) = &member.operation_id else {
-                return Err(MailError::StorageUnavailable);
+                return Err(storage_fault("invalid_persisted_state"));
             };
             let row = conn
                 .query_row(
@@ -2063,8 +2037,8 @@ fn load_group_status(
                     |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
                 )
                 .optional()
-                .map_err(|_| MailError::StorageUnavailable)?
-                .ok_or(MailError::StorageUnavailable)?;
+                .map_err(storage_err())?
+                .ok_or_else(|| storage_fault("missing_persisted_row"))?;
             (
                 member_status_of(status_from_str(&row.0)),
                 failure_from_str(&row.1),
@@ -2115,7 +2089,7 @@ fn persisted_group_undo_record(
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let Some((request_id, accepted_at)) = undo_request else {
         return Ok(None);
     };
@@ -2134,15 +2108,15 @@ fn persisted_group_undo_record(
                     .undo_skip_reason
                     .as_deref()
                     .and_then(crate::groups::skip_reason_from_name)
-                    .ok_or(MailError::StorageUnavailable)?;
+                    .ok_or_else(|| storage_fault("missing_persisted_row"))?;
                 GroupMemberUndoDecision::Skipped { reason }
             }
-            _ => return Err(MailError::StorageUnavailable),
+            _ => return Err(storage_fault("invalid_persisted_state")),
         };
         let compensation_ids: Vec<String> = member
             .undo_operation_ids
             .as_deref()
-            .map(|json| serde_json::from_str(json).map_err(|_| MailError::StorageUnavailable))
+            .map(|json| serde_json::from_str(json).map_err(storage_err()))
             .transpose()?
             .unwrap_or_default();
         let mut compensations = Vec::with_capacity(compensation_ids.len());
@@ -2155,8 +2129,8 @@ fn persisted_group_undo_record(
                     |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
                 )
                 .optional()
-                .map_err(|_| MailError::StorageUnavailable)?
-                .ok_or(MailError::StorageUnavailable)?;
+                .map_err(storage_err())?
+                .ok_or_else(|| storage_fault("missing_persisted_row"))?;
             compensations.push(crate::groups::GroupCompensationStatus {
                 operation_id: compensation_id,
                 status: status_from_str(&row.0),
@@ -2220,7 +2194,7 @@ fn group_undo_availability(
                 |row| row.get::<_, String>(0),
             )
             .optional()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         let Some(status) = row else {
             continue;
         };
@@ -2283,10 +2257,10 @@ fn decide_member_undo(
         ));
     }
     let Some(operation_id) = &member.operation_id else {
-        return Err(MailError::StorageUnavailable);
+        return Err(storage_fault("invalid_persisted_state"));
     };
     let Some(target) = load_undo_target(tx, operation_id)? else {
-        return Err(MailError::StorageUnavailable);
+        return Err(storage_fault("invalid_persisted_state"));
     };
     match target.status {
         OperationStatus::Failed => Ok((
@@ -2314,7 +2288,7 @@ fn decide_member_undo(
                      WHERE operation_id = ?1 AND status = 'queued'",
                     params![target.operation_id],
                 )
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
             if cancelled == 1 {
                 Ok((GroupMemberUndoDecision::Cancelled, Vec::new()))
             } else {
@@ -2367,15 +2341,15 @@ fn reconstruct_group_undo_receipt(
                     .undo_skip_reason
                     .as_deref()
                     .and_then(crate::groups::skip_reason_from_name)
-                    .ok_or(MailError::StorageUnavailable)?;
+                    .ok_or_else(|| storage_fault("missing_persisted_row"))?;
                 GroupMemberUndoDecision::Skipped { reason }
             }
-            _ => return Err(MailError::StorageUnavailable),
+            _ => return Err(storage_fault("invalid_persisted_state")),
         };
         let operation_ids = member
             .undo_operation_ids
             .as_deref()
-            .map(|json| serde_json::from_str(json).map_err(|_| MailError::StorageUnavailable))
+            .map(|json| serde_json::from_str(json).map_err(storage_err()))
             .transpose()?
             .unwrap_or_default();
         results.push(GroupMemberUndoResult {
@@ -2421,7 +2395,7 @@ fn undo_rows_exist(conn: &Connection, operation_id: &str) -> Result<bool, MailEr
         params![ACCOUNT_ID, operation_id],
         |row| row.get(0),
     )
-    .map_err(|_| MailError::StorageUnavailable)
+    .map_err(storage_err())
 }
 
 /// Rule 7: a preimage row must exist for the operation. Fixture facts are
@@ -2433,7 +2407,7 @@ fn prior_values_present(conn: &Connection, operation_id: &str) -> Result<bool, M
         params![ACCOUNT_ID, operation_id],
         |row| row.get(0),
     )
-    .map_err(|_| MailError::StorageUnavailable)
+    .map_err(storage_err())
 }
 
 struct ConversationView {
@@ -2462,7 +2436,7 @@ fn build_conversation_view(
             |row| row.get(0),
         )
         .optional()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let Some(subject) = subject else {
         return Ok(ConversationView {
             conversation_ref: ConversationRef {
@@ -2485,7 +2459,7 @@ fn build_conversation_view(
              WHERE account_id = ?1 AND conversation_id = ?2
              ORDER BY sent_at ASC, message_id ASC",
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let mut messages: Vec<(Message, bool)> = message_stmt
         .query_map(params![account_id, conversation_id], |row| {
             let from_display: Option<String> = row.get(1)?;
@@ -2517,9 +2491,9 @@ fn build_conversation_view(
                 row.get::<_, i64>(6)? != 0,
             ))
         })
-        .map_err(|_| MailError::StorageUnavailable)?
+        .map_err(storage_err())?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
 
     let mut op_stmt = conn
         .prepare(
@@ -2527,7 +2501,7 @@ fn build_conversation_view(
              WHERE account_id = ?1 AND conversation_id = ?2 AND status IN ('queued', 'applying')
              ORDER BY seq ASC",
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let pending: Vec<(String, bool, Vec<String>)> = op_stmt
         .query_map(params![account_id, conversation_id], |row| {
             let ids_json: String = row.get(2)?;
@@ -2540,9 +2514,9 @@ fn build_conversation_view(
             })?;
             Ok((row.get(0)?, row.get::<_, i64>(1)? != 0, ids))
         })
-        .map_err(|_| MailError::StorageUnavailable)?
+        .map_err(storage_err())?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
 
     // Overlay: each pending operation applies, in acceptance order, to the
     // message ids it snapshotted at acceptance time.
@@ -2651,16 +2625,7 @@ mod tests {
     use crate::clock::SystemClock;
     use crate::dto::ConversationRef;
 
-    fn temp_dir(tag: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "mail-core-store-{tag}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock")
-                .as_nanos()
-        ))
-    }
+    use crate::testing::temp_profile as temp_dir;
 
     fn sample_command() -> SetArchived {
         SetArchived {
@@ -2676,7 +2641,7 @@ mod tests {
     #[test]
     fn fixture_reader_has_safe_synthetic_reply_context_without_reseeding() {
         let dir = temp_dir("fixture-reply-context");
-        let store = Store::open(&dir, Arc::new(SystemClock)).expect("store opens");
+        let store = Store::open(dir.path(), Arc::new(SystemClock)).expect("store opens");
         let conversation = store
             .get_conversation(&ConversationRef {
                 account_id: ACCOUNT_ID.to_string(),
@@ -2703,14 +2668,14 @@ mod tests {
                 .any(|recipient| recipient.mailbox == crate::FIXTURE_MAILBOX)
         }));
         drop(store);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Storage errors surface instead of being ignored (fail closed): an
     /// unusable profile directory fails at open time.
     #[test]
     fn open_fails_closed_on_unusable_profile_directory() {
-        let blocker = temp_dir("blocker");
+        let dir = temp_dir("blocker");
+        let blocker = dir.path().join("not-a-directory");
         std::fs::write(&blocker, b"not a directory").expect("write blocker file");
         let clock: Arc<dyn Clock> = Arc::new(SystemClock);
         match Store::open(&blocker, clock) {
@@ -2726,7 +2691,7 @@ mod tests {
     fn persistence_failure_is_surfaced_not_ignored() {
         let dir = temp_dir("injected");
         let clock: Arc<dyn Clock> = Arc::new(SystemClock);
-        let store = Store::open(&dir, clock).expect("store opens");
+        let store = Store::open(dir.path(), clock).expect("store opens");
         assert!(store.list_snapshot().is_ok());
         store.set_test_persistence_failure(true);
         assert_eq!(
@@ -2740,7 +2705,6 @@ mod tests {
         );
         store.set_test_persistence_failure(false);
         assert!(store.list_snapshot().is_ok());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // -------------------------------------------------- UX-05 group tests
@@ -2784,7 +2748,7 @@ mod tests {
         let clock: Arc<dyn Clock> = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let store = Store::open(&dir, clock).expect("store opens");
+        let store = Store::open(dir.path(), clock).expect("store opens");
         let receipt = store
             .set_archived_group(&group_command("group-req-1", &["conv-03", "conv-01"], true))
             .expect("group accepted");
@@ -2824,7 +2788,6 @@ mod tests {
             Err(MailError::RequestIdConflict)
         );
         assert_eq!(counts(&store), (2, 1), "two children, one group");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Structural invalidity, duplicates, bounds and cross-account targets
@@ -2833,7 +2796,7 @@ mod tests {
     fn invalid_group_commands_write_nothing() {
         let dir = temp_dir("group-invalid");
         let clock: Arc<dyn Clock> = Arc::new(SystemClock);
-        let store = Store::open(&dir, clock).expect("store opens");
+        let store = Store::open(dir.path(), clock).expect("store opens");
         // Empty members.
         assert!(matches!(
             store.set_archived_group(&group_command("bad-empty", &[], true)),
@@ -2900,7 +2863,6 @@ mod tests {
             Err(MailError::InvalidRequest { field }) if field == "requestId"
         ));
         assert_eq!(counts(&store), (0, 0), "no group or child writes");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A member that is gone gets a persisted rejected acceptance result with
@@ -2915,7 +2877,7 @@ mod tests {
         let clock: Arc<dyn Clock> = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let store = Store::open(&dir, clock).expect("store opens");
+        let store = Store::open(dir.path(), clock).expect("store opens");
         store
             .set_archived(&SetArchived {
                 conversation: group_member("conv-05"),
@@ -2945,14 +2907,13 @@ mod tests {
         let activity = store.list_snapshot().unwrap().activity;
         let single = activity.iter().find(|row| row.undo_of.is_none()).unwrap();
         assert!(single.undoable_until.is_some(), "undo slot not consumed");
-        let _ = std::fs::remove_dir_all(&dir);
 
         // Mixed case: rejected member persisted next to accepted siblings.
         let dir = temp_dir("group-mixed-rejection");
         let clock: Arc<dyn Clock> = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let store = Store::open(&dir, clock).expect("store opens");
+        let store = Store::open(dir.path(), clock).expect("store opens");
         let receipt = store
             .set_archived_group(&group_command(
                 "group-req-mixed",
@@ -2982,7 +2943,6 @@ mod tests {
         assert_eq!(status.members[0].status, GroupMemberStatus::Queued);
         assert!(status.undo.available);
         assert_eq!(counts(&store), (2, 1));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Injected storage failure at acceptance time rolls back the whole
@@ -2992,7 +2952,7 @@ mod tests {
     fn transaction_failure_rolls_back_whole_group_and_retry_is_safe() {
         let dir = temp_dir("group-rollback");
         let clock: Arc<dyn Clock> = Arc::new(SystemClock);
-        let store = Store::open(&dir, clock).expect("store opens");
+        let store = Store::open(dir.path(), clock).expect("store opens");
         store.set_test_persistence_failure(true);
         assert_eq!(
             store.set_archived_group(&group_command(
@@ -3013,7 +2973,6 @@ mod tests {
             .expect("same request retried safely");
         assert_eq!(receipt.members.len(), 2);
         assert_eq!(counts(&store), (2, 1));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Group Undo at 9 seconds (§7.6): queued member cancels in place,
@@ -3026,7 +2985,7 @@ mod tests {
         let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let store = Store::open(&dir, clock.clone() as Arc<dyn Clock>).expect("store opens");
+        let store = Store::open(dir.path(), clock.clone() as Arc<dyn Clock>).expect("store opens");
         let receipt = store
             .set_archived_group(&group_command(
                 "group-req-u",
@@ -3113,7 +3072,6 @@ mod tests {
             .conversations
             .iter()
             .any(|c| c.conversation_ref.conversation_id == "conv-01"));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Expiry at 10 seconds, supersession by a newer single/group, and the
@@ -3125,7 +3083,7 @@ mod tests {
         let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let store = Store::open(&dir, clock.clone() as Arc<dyn Clock>).expect("store opens");
+        let store = Store::open(dir.path(), clock.clone() as Arc<dyn Clock>).expect("store opens");
         let receipt = store
             .set_archived_group(&group_command("group-req-g", &["conv-01", "conv-02"], true))
             .expect("group accepted");
@@ -3207,7 +3165,6 @@ mod tests {
                 reason: UndoUnavailableReason::Expired
             })
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Execution and Undo touch only the original immutable message ids: a
@@ -3216,7 +3173,7 @@ mod tests {
     fn new_reply_after_acceptance_is_untouched_by_group_undo() {
         let dir = temp_dir("group-new-reply");
         let clock: Arc<dyn Clock> = Arc::new(SystemClock);
-        let store = Store::open(&dir, clock).expect("store opens");
+        let store = Store::open(dir.path(), clock).expect("store opens");
         let receipt = store
             .set_archived_group(&group_command("group-req-reply", &["conv-01"], true))
             .expect("group accepted");
@@ -3260,7 +3217,6 @@ mod tests {
         let targets: Vec<String> = serde_json::from_str(&targets).unwrap();
         assert!(!targets.iter().any(|id| id == "m-new-reply"));
         assert!(!targets.is_empty());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Group detail/list pagination and account fencing (§7.9): a group
@@ -3270,7 +3226,7 @@ mod tests {
     fn group_listing_paginates_and_fences_accounts() {
         let dir = temp_dir("group-pages");
         let clock: Arc<dyn Clock> = Arc::new(SystemClock);
-        let store = Store::open(&dir, clock).expect("store opens");
+        let store = Store::open(dir.path(), clock).expect("store opens");
         let mut group_ids = Vec::new();
         for i in 0..3 {
             let receipt = store
@@ -3347,7 +3303,6 @@ mod tests {
             })
             .unwrap()
             .is_none());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The UX-05 additive migration preserves every operation, request,
@@ -3358,7 +3313,7 @@ mod tests {
         let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let store = Store::open(&dir, clock.clone() as Arc<dyn Clock>).expect("store opens");
+        let store = Store::open(dir.path(), clock.clone() as Arc<dyn Clock>).expect("store opens");
         let single = store
             .set_archived(&SetArchived {
                 conversation: group_member("conv-01"),
@@ -3370,7 +3325,7 @@ mod tests {
 
         // Simulate a pre-UX-05 profile: stamp the previous schema version.
         {
-            let store = Store::open(&dir, clock.clone() as Arc<dyn Clock>).expect("reopen");
+            let store = Store::open(dir.path(), clock.clone() as Arc<dyn Clock>).expect("reopen");
             let conn = store.lock_conn().unwrap();
             conn.execute(
                 "UPDATE meta SET value = '2' WHERE key = 'schema_version'",
@@ -3378,7 +3333,7 @@ mod tests {
             )
             .unwrap();
         }
-        let store = Store::open(&dir, clock.clone() as Arc<dyn Clock>).expect("upgrade");
+        let store = Store::open(dir.path(), clock.clone() as Arc<dyn Clock>).expect("upgrade");
         {
             let conn = store.lock_conn().unwrap();
             let version: String = conn
@@ -3411,7 +3366,6 @@ mod tests {
             })
             .expect("historical single still undoable after migration");
         assert_eq!(undo.outcome, UndoOutcome::Compensating);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Genuine MID-TRANSACTION failure (§7.3): a TEMP trigger aborts the
@@ -3426,7 +3380,7 @@ mod tests {
         let clock: Arc<dyn Clock> = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let store = Store::open(&dir, clock).expect("store opens");
+        let store = Store::open(dir.path(), clock).expect("store opens");
         {
             let conn = store.lock_conn().unwrap();
             conn.execute_batch(
@@ -3472,7 +3426,6 @@ mod tests {
             .expect("same request retried safely after full rollback");
         assert_eq!(receipt.members.len(), 3);
         assert_eq!(counts(&store), (3, 1));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Worker claims and group Undo serialize on the same connection mutex:
@@ -3486,8 +3439,9 @@ mod tests {
         let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let store =
-            Arc::new(Store::open(&dir, clock.clone() as Arc<dyn Clock>).expect("store opens"));
+        let store = Arc::new(
+            Store::open(dir.path(), clock.clone() as Arc<dyn Clock>).expect("store opens"),
+        );
         let receipt = store
             .set_archived_group(&group_command(
                 "group-req-race",
@@ -3616,7 +3570,6 @@ mod tests {
                 }
             }
         }
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// An AUTHENTIC pre-UX-05 profile (hand-built UX-04-era schema: no
@@ -3627,9 +3580,8 @@ mod tests {
     #[test]
     fn authentic_pre_ux05_database_migrates_additively() {
         let dir = temp_dir("group-authentic-v2");
-        std::fs::create_dir_all(&dir).unwrap();
         {
-            let conn = Connection::open(dir.join("mail.db")).unwrap();
+            let conn = Connection::open(dir.path().join("mail.db")).unwrap();
             conn.pragma_update(None, "journal_mode", "WAL").unwrap();
             conn.execute_batch(
                 "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -3674,7 +3626,7 @@ mod tests {
         let clock: Arc<dyn Clock> = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let store = Store::open(&dir, clock.clone()).expect("pre-UX-05 profile migrates");
+        let store = Store::open(dir.path(), clock.clone()).expect("pre-UX-05 profile migrates");
         {
             let conn = store.lock_conn().unwrap();
             let version: String = conn
@@ -3721,7 +3673,6 @@ mod tests {
             })
             .expect("historical single still undoable from its preserved preimage");
         assert_eq!(undo.outcome, UndoOutcome::Compensating);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// An AUTHENTIC pre-P5a profile (v3 `messages` without `has_attachment`,
@@ -3732,9 +3683,8 @@ mod tests {
     #[test]
     fn authentic_pre_v4_database_migrates_with_unknown_attachment_facts() {
         let dir = temp_dir("attachment-migration-v3");
-        std::fs::create_dir_all(&dir).unwrap();
         {
-            let conn = Connection::open(dir.join("mail.db")).unwrap();
+            let conn = Connection::open(dir.path().join("mail.db")).unwrap();
             conn.pragma_update(None, "journal_mode", "WAL").unwrap();
             conn.execute_batch(
                 "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -3762,7 +3712,7 @@ mod tests {
         let clock: Arc<dyn Clock> = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let store = Store::open(&dir, clock).expect("pre-P5a v3 profile migrates");
+        let store = Store::open(dir.path(), clock).expect("pre-P5a v3 profile migrates");
         {
             let conn = store.lock_conn().unwrap();
             let version: String = conn
@@ -3811,7 +3761,6 @@ mod tests {
             row.has_attachments, None,
             "legacy cache: unknown, never guessed"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A fresh v4 profile gets the column directly, and the deterministic
@@ -3823,7 +3772,7 @@ mod tests {
         let clock: Arc<dyn Clock> = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let store = Store::open(&dir, clock).expect("fresh store opens at v4");
+        let store = Store::open(dir.path(), clock).expect("fresh store opens at v4");
         {
             let conn = store.lock_conn().unwrap();
             let version: String = conn
@@ -3884,16 +3833,14 @@ mod tests {
             .expect("seeded conversation");
         assert_eq!(conversation.messages[0].has_attachment, Some(true));
         assert_eq!(conversation.messages[1].has_attachment, None);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Older-than-supported schema versions still fail closed at open.
     #[test]
     fn unsupported_older_schema_version_fails_closed() {
         let dir = temp_dir("attachment-unsupported-version");
-        std::fs::create_dir_all(&dir).unwrap();
         {
-            let conn = Connection::open(dir.join("mail.db")).unwrap();
+            let conn = Connection::open(dir.path().join("mail.db")).unwrap();
             conn.execute_batch(
                 "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                  INSERT INTO meta VALUES ('schema_version', '0');",
@@ -3904,10 +3851,12 @@ mod tests {
             "2026-01-01T00:00:00Z",
         )));
         assert!(
-            matches!(Store::open(&dir, clock), Err(MailError::StorageUnavailable)),
+            matches!(
+                Store::open(dir.path(), clock),
+                Err(MailError::StorageUnavailable)
+            ),
             "version older than the supported floor must fail closed"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Restart after a partial group Undo: `get_operation_group` rebuilds the
@@ -3920,7 +3869,7 @@ mod tests {
         let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
             "2026-01-01T00:00:00Z",
         )));
-        let store = Store::open(&dir, clock.clone() as Arc<dyn Clock>).expect("store opens");
+        let store = Store::open(dir.path(), clock.clone() as Arc<dyn Clock>).expect("store opens");
         let receipt = store
             .set_archived_group(&group_command(
                 "group-req-restart",
@@ -3948,7 +3897,7 @@ mod tests {
         drop(store);
 
         // Restart: the undo record is rebuilt from durable rows alone.
-        let store = Store::open(&dir, clock.clone() as Arc<dyn Clock>).expect("reopen");
+        let store = Store::open(dir.path(), clock.clone() as Arc<dyn Clock>).expect("reopen");
         let status = store
             .get_operation_group(&GetOperationGroupRequest {
                 account_id: ACCOUNT_ID.into(),
@@ -3992,7 +3941,7 @@ mod tests {
         assert_eq!(claimed.operation_id, compensation_id);
         store.confirm_op(&claimed).unwrap();
         drop(store);
-        let store = Store::open(&dir, clock as Arc<dyn Clock>).expect("reopen 2");
+        let store = Store::open(dir.path(), clock as Arc<dyn Clock>).expect("reopen 2");
         let status = store
             .get_operation_group(&GetOperationGroupRequest {
                 account_id: ACCOUNT_ID.into(),
@@ -4025,6 +3974,5 @@ mod tests {
             "compensations are ungrouped"
         );
         assert_eq!(compensation_row.undo_of.as_deref(), Some(child.as_str()));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

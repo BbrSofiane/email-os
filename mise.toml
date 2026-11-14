@@ -1,7 +1,7 @@
 [tools]
 node = "24.4.1"
 pnpm = "10.18.0"
-rust = "1.89.0"
+rust = { version = "1.89.0", profile = "minimal", components = "rustfmt,clippy" }
 
 [tasks."setup:linux"]
 description = "Install Debian/Ubuntu VM prerequisites for native builds and screenshots (uses apt-get)"
@@ -50,8 +50,12 @@ diff -u src/lib/ipc/generated.ts "$tmp"
 """
 
 [tasks."lint:core"]
-description = "Workspace formatting and headless core clippy checks"
+description = "Workspace formatting and mail-core clippy checks with warnings denied"
 run = "cargo fmt --all -- --check && cargo clippy --locked -p mail-core --all-targets -- -D warnings"
+
+[tasks."lint:native"]
+description = "Clippy checks for the native shell and all targets with warnings denied (needs GTK/WebKit dev prerequisites)"
+run = "cargo clippy --locked -p email-os --all-targets -- -D warnings"
 
 [tasks."test:ui"]
 description = "Run frontend component and contract tests"
@@ -66,19 +70,19 @@ description = "Build the frontend assets for browser preview and native shell"
 run = "pnpm build"
 
 [tasks."dev:web"]
-description = "Run the fixture-only browser preview"
+description = "Run the synthetic in-memory browser preview"
 run = "pnpm dev"
 
 [tasks."dev:native"]
-description = "Run the native shell (fixture default; EMAIL_OS_MODE=gmail opts into read-only Gmail)"
+description = "Run the native shell (synthetic fixture default; Gmail starts read-only until mailbox actions are enabled)"
 run = "pnpm tauri dev"
 
 [tasks."build:native"]
-description = "Build the native fixture shell bundle (needs native prerequisites)"
+description = "Build the native shell bundle for fixture and Gmail profiles (needs native prerequisites)"
 run = "pnpm tauri build"
 
 [tasks."check:native"]
-description = "Type-check the native shell (needs GTK/WebKit dev prerequisites; see docs/development.md)"
+description = "Type-check the native shell and all targets (needs GTK/WebKit dev prerequisites; see docs/development.md)"
 run = "cargo check --locked -p email-os --all-targets"
 
 [tasks."test:native"]
@@ -87,4 +91,23 @@ run = "cargo test --locked -p email-os"
 
 [tasks.check]
 description = "Validate core, contract generation, frontend tests and types (no native prerequisites needed)"
-depends = ["test:core", "check:contract", "lint:core", "test:ui", "typecheck"]
+run = "mise run test:core && mise run check:contract && mise run lint:core && mise run test:ui && mise run typecheck"
+
+[tasks."check:all"]
+description = "Run the full check, native lint and bridge tests, and web production build sequentially (native prerequisites required)"
+run = "mise run check && mise run lint:native && mise run test:native && mise run build:web"
+
+[tasks."test:rendered"]
+description = "Run opt-in rendered browser regressions with an explicit Chrome/Chromium binary"
+run = '''
+if [ -z "${EMAIL_OS_RENDERED_LAYOUT_CHROME:-}" ]; then
+  echo "EMAIL_OS_RENDERED_LAYOUT_CHROME is required (path to Chrome or Chromium)." >&2
+  echo "Set it, then run: mise run test:rendered" >&2
+  exit 1
+fi
+if ! command -v "$EMAIL_OS_RENDERED_LAYOUT_CHROME" >/dev/null 2>&1 && [ ! -x "$EMAIL_OS_RENDERED_LAYOUT_CHROME" ]; then
+  echo "Chrome/Chromium binary not found or not executable: $EMAIL_OS_RENDERED_LAYOUT_CHROME" >&2
+  exit 1
+fi
+EMAIL_OS_RUN_RENDERED=1 pnpm vitest run --config vitest.config.ts tests/reader/reader.rendered.test.ts tests/discovery/discovery.rendered.test.ts tests/layout/disclosure-focus.rendered.test.ts tests/layout/account-header.rendered.test.ts tests/browsing/inbox-list.rendered-layout.test.ts
+'''

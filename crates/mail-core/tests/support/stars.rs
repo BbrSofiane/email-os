@@ -114,7 +114,7 @@ fn starred_browsing_retains_offline_operation_snapshot_after_body_eviction() {
     drop(core);
     // Model the cache-eviction boundary: recovery snapshot and immutable target
     // facts survive, while normal cached bodies/membership are removed.
-    let db = rusqlite::Connection::open(dir.join("gmail.db")).unwrap();
+    let db = rusqlite::Connection::open(dir.path().join("gmail.db")).unwrap();
     for table in [
         "gmail_messages",
         "gmail_conversations",
@@ -178,7 +178,7 @@ fn cache_trim_preserves_starred_arrival_outside_original_operation_targets() {
 
     // Seed newer synthetic bodies, not a manual eviction. The next history
     // checkpoint must run the production 100-conversation cache trimmer.
-    let db = rusqlite::Connection::open(dir.join("gmail.db")).unwrap();
+    let db = rusqlite::Connection::open(dir.path().join("gmail.db")).unwrap();
     for n in 0..=100 {
         let id = format!("trim-{n:03}");
         let date = if n == 100 {
@@ -233,7 +233,7 @@ fn cache_trim_preserves_starred_arrival_outside_original_operation_targets() {
     core.stop();
     drop(core);
 
-    let db = rusqlite::Connection::open(dir.join("gmail.db")).unwrap();
+    let db = rusqlite::Connection::open(dir.path().join("gmail.db")).unwrap();
     let count = |sql: &str| {
         db.query_row(sql, [ACCOUNT], |row| row.get::<_, i64>(0))
             .unwrap()
@@ -367,9 +367,15 @@ fn legacy_migration_keeps_unknown_stars_and_query_scope_fails_closed() {
     let before = core.get_conversation(&conversation_ref()).unwrap();
     core.stop();
     drop(core);
-    let db = rusqlite::Connection::open(dir.join("gmail.db")).unwrap();
+    let db = rusqlite::Connection::open(dir.path().join("gmail.db")).unwrap();
     db.execute("ALTER TABLE gmail_message_facts DROP COLUMN is_starred", [])
         .unwrap();
+    // A real pre-star profile carries the ambiguous legacy marker, not the current one.
+    db.execute(
+        "UPDATE meta SET value = 'gmail-2' WHERE key = 'schema_version'",
+        [],
+    )
+    .unwrap();
     drop(db);
     provider.set_profile_error(Some(MailError::NetworkUnavailable));
     let restarted = open_core(&dir, &provider);

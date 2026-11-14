@@ -24,7 +24,7 @@
  */
 import { computed, nextTick, onBeforeUnmount, onBeforeUpdate, onMounted, reactive, ref, watch } from 'vue';
 import type { ConversationRef } from '../lib/ipc/client';
-import type { ConversationSummaryLike } from '../composables/useMailbox';
+import type { BrowseContext, ConversationSummaryLike } from '../composables/useMailbox';
 import { sameConversation } from '../composables/useMailbox';
 import { actionLabel } from '../lib/browsing-actions';
 import { compactDateLabel, dateGroupCaption, dateGroupFor, fullDateLabel, machineDateTime } from '../lib/browsing-dates';
@@ -33,13 +33,19 @@ import RowGlyph from './RowGlyph.vue';
 
 const props = defineProps<{
   rows: ConversationSummaryLike[];
-  context?: 'inbox' | 'saved' | 'done' | 'starred' | 'search';
+  context?: BrowseContext;
   /** Submitted query in search context; drives sender grouping for a single from: query (P5b). */
   searchQuery?: string;
   focusedRef: ConversationRef | null;
   actionsEnabled?: boolean;
   showReadState?: boolean;
   showReadControls?: boolean;
+  reminderEnabled?: boolean;
+  /**
+   * Browse-only list (Cached Trash): no row actions, no selection checkbox or
+   * selection mode and no Cmd/Shift-click selection. Rows still focus and open.
+   */
+  readOnly?: boolean;
   /** UX-05: selected references (account-scoped); selection ≠ focus. */
   selectedRefs?: ConversationRef[];
 }>();
@@ -49,6 +55,7 @@ const emit = defineEmits<{
   open: [ref: ConversationRef];
   archive: [ref: ConversationRef];
   unarchive: [ref: ConversationRef];
+  remind: [ref: ConversationRef];
   setRead: [ref: ConversationRef, read: boolean];
   /** X / checkbox / Cmd-click: toggle one row (the parent moves focus/anchor). */
   selectToggle: [ref: ConversationRef];
@@ -56,7 +63,7 @@ const emit = defineEmits<{
   selectRange: [ref: ConversationRef];
 }>();
 
-const selectedKeys = computed(() => new Set((props.selectedRefs ?? []).map((ref) => `${ref.accountId}:${ref.conversationId}`)));
+const selectedKeys = computed(() => new Set((props.readOnly ? [] : props.selectedRefs ?? []).map((ref) => `${ref.accountId}:${ref.conversationId}`)));
 /** Selection mode: any selected row reveals every row's gutter checkbox. */
 const selecting = computed(() => selectedKeys.value.size > 0);
 
@@ -66,6 +73,10 @@ function isSelected(row: ConversationSummaryLike): boolean {
 
 /** Pointer click on a row: Cmd/Ctrl toggles, Shift/Cmd+Shift ranges, plain opens. */
 function onRowClick(event: MouseEvent, row: ConversationSummaryLike): void {
+  if (props.readOnly) {
+    emit('open', row.ref);
+    return;
+  }
   if (event.shiftKey) {
     emit('selectRange', row.ref);
     return;
@@ -263,7 +274,8 @@ function readStateName(row: ConversationSummaryLike): string {
 }
 
 function hasRowActions(): boolean {
-  return Boolean(props.showReadControls || props.actionsEnabled);
+  if (props.readOnly) return false;
+  return Boolean(props.showReadControls || props.actionsEnabled || props.reminderEnabled);
 }
 
 /** DOM id of the row's action disclosure panel (for aria-controls). */
@@ -429,7 +441,7 @@ onMounted(() => {
  * those and leave a newly overflowing row in the expanded presentation.
  */
 watch(
-  () => `${props.actionsEnabled}|${props.showReadControls}|${props.showReadState}|${props.context}\n` + props.rows.map((row) => `${rowKey(row.ref)}|${row.pendingOperationId ?? ''}|${String(row.isRead)}|${String(row.hasAttachments)}|${row.stars ? `${row.stars.starredMessages}/${row.stars.knownMessages}/${row.stars.totalMessages}` : ''}`).join('\n'),
+  () => `${props.actionsEnabled}|${props.showReadControls}|${props.showReadState}|${props.readOnly}|${props.context}\n` + props.rows.map((row) => `${rowKey(row.ref)}|${row.pendingOperationId ?? ''}|${String(row.isRead)}|${String(row.hasAttachments)}|${row.stars ? `${row.stars.starredMessages}/${row.stars.knownMessages}/${row.stars.totalMessages}` : ''}`).join('\n'),
   () => observeRowLayouts(),
   { flush: 'post' },
 );
@@ -579,7 +591,7 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
 </script>
 
 <template>
-  <ul class="inbox-list inbox-scroll" :class="{ selecting }" role="list" :aria-label="context === 'search' ? 'Search results' : context === 'starred' ? 'Cached Starred conversations' : context === 'done' ? 'Cached Done conversations' : context === 'saved' ? 'Saved split conversations' : 'Inbox conversations'" ref="listEl">
+  <ul class="inbox-list inbox-scroll" :class="{ selecting }" role="list" :aria-label="context === 'search' ? 'Search results' : context === 'trash' ? 'Cached Trash conversations (read only)' : context === 'starred' ? 'Cached Starred conversations' : context === 'done' ? 'Cached Done conversations' : context === 'saved' ? 'Saved split conversations' : 'Inbox conversations'" ref="listEl">
     <template v-for="item in items" :key="item.kind === 'group' ? `group-${item.id}` : rowKey(item.row.ref)">
       <li
         v-if="item.kind === 'group'"
@@ -616,6 +628,7 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
              aria-selected on listitem (invalid for role=listitem); aria-current
              stays the focus cue and the selected class is not color-only. -->
         <input
+          v-if="!readOnly"
           type="checkbox"
           class="row-select"
           :data-test="`row-select-${item.row.ref.conversationId}`"
@@ -711,6 +724,16 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
                 :tabindex="tabIndexFor(item.row, item.index)"
                 @click.stop="emit('setRead', item.row.ref, !item.row.isRead)"
               ><RowGlyph :name="item.row.isRead ? 'mark-unread' : 'mark-read'" /><span class="row-action-label">Mark {{ item.row.isRead ? 'unread' : 'read' }}</span></button>
+              <button
+                v-if="props.reminderEnabled && context === 'inbox'"
+                type="button"
+                class="row-action"
+                :data-test="`row-remind-${item.row.ref.conversationId}`"
+                title="Remind me on this device"
+                aria-label="Remind me on this device"
+                :tabindex="tabIndexFor(item.row, item.index)"
+                @click.stop="emit('remind', item.row.ref)"
+              ><RowGlyph name="reminder" /><span class="row-action-label">Remind</span></button>
               <button
                 v-if="props.actionsEnabled && context !== 'starred'"
                 type="button"

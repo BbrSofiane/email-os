@@ -91,7 +91,9 @@ Implemented behavior:
   mail.
 - **Participant details and context.** Each message exposes a native
   `<details>` disclosure with the complete known From/To addresses and sent
-  timestamp; unknown Cc/Bcc and other headers are omitted, never fabricated.
+  timestamp; unknown Cc/Bcc and other headers are omitted, never fabricated. The
+  Cc row states `Not cached` (the cached message carries no Cc) instead of
+  implying that there is none.
   Participant names/addresses are keyboard-focusable context controls separate
   from the expansion toggle (no nested buttons). The active message's sender is
   the baseline reader contact; participant hover and keyboard focus each
@@ -102,9 +104,9 @@ Implemented behavior:
   contact. Direct focus on a new message's participant preserves its valid
   identity-matching override across the active-message handoff instead of
   accidentally clearing it. A visible "Reply targets the latest message from …" label sits near
-  Prepare reply so focusing an older message cannot imply a different reply
+  Reply so focusing an older message cannot imply a different reply
   target.
-  Update (2026-11-08): `R` runs Prepare reply from the open reader under the same
+  Update (2026-11-08): `R` runs Reply from the open reader under the same
   rule as the buttons (ready, not Cached Trash, not blocked), and the standing
   read-state sentences are now the title and hidden text of one status line in
   the meta row instead of visible paragraphs; exception notices are unchanged.
@@ -213,11 +215,11 @@ No production MailClient/DTO/core/provider/permission contract changed.
 
 ## Historical P1 checkpoint validation
 
-- `pnpm vitest run tests/reader.component.test.ts` — visit-scoped state,
+- `pnpm vitest run tests/reader/component.test.ts` — visit-scoped state,
   N/P/O/Shift+O semantics, ID-based pruning/removal resolution, same-reference
   replacements, account isolation with equal message IDs, empty/error fallback,
   and the loading-transition anchor round trips: **12 passed**.
-- `pnpm vitest run tests/app.component.test.ts` — 65 tests including the
+- `pnpm vitest run tests/app-shell/shell.test.ts` — 65 tests including the
   reader-message keyboard contracts (initial newest-message focus, N/P vs J/K,
   original-entry Back at nonzero scroll, removed-entry fallback, J/K round-trip
   state, action-on-current-not-origin, stale/late-receipt safety, Activity
@@ -230,7 +232,7 @@ No production MailClient/DTO/core/provider/permission contract changed.
 - Real-Chrome opt-in suites, executed with
   `EMAIL_OS_RENDERED_LAYOUT_CHROME` and `EMAIL_OS_DISCLOSURE_FOCUS_CHROME`
   pointing at `/home/exedev/.cache/rod/browser/chromium-1321438/chrome`:
-  - `tests/reader.rendered.test.ts` — **7 passed**: real keyboard/pointer
+  - `tests/reader/reader.rendered.test.ts` — **7 passed**: real keyboard/pointer
     open → N/P → O/Shift+O (incl. idempotence) → details Escape precedence →
     participant hover/focus context with baseline restore → explicit copy with
     no draft/navigation/mailbox writes; literal hostile text with zero
@@ -243,9 +245,9 @@ No production MailClient/DTO/core/provider/permission contract changed.
     with native Enter expanding once and the toolbar exclusion intact; real
     Shift+U in enabled synthetic Gmail from message-toggle focus; and a delayed
     J/K loading round trip restoring exact scrollTop and viewport geometry.
-  - `tests/inbox-list.rendered-layout.test.ts` — **2 passed** (existing layout
+  - `tests/browsing/inbox-list.rendered-layout.test.ts` — **2 passed** (existing layout
     gate, unaffected).
-  - `tests/disclosure-focus.rendered.test.ts` — **1 passed** (covered-surface
+  - `tests/layout/disclosure-focus.rendered.test.ts` — **1 passed** (covered-surface
     focus safety under Activity and narrow-Contact disclosures).
   - `pnpm test` with both Chrome gates set — **250 passed, 0 skipped (14
     files)**.
@@ -317,7 +319,7 @@ test hashes stayed unchanged during validation; no staging or publication occurr
 - Covered-surface focus suite: **1 passed**.
 - Existing row-layout suite in the VM's default `LANG=C.UTF-8` environment:
   **1 passed / 1 failed**, at the unchanged hardcoded date assertion
-  `tests/inbox-list.rendered-layout.test.ts:442` (`Sep 30, 2001` versus
+  `tests/browsing/inbox-list.rendered-layout.test.ts:442` (`Sep 30, 2001` versus
   `30 Sept 2001`). The exact pre-P2 dirty-source snapshot reproduces the same
   failure. With explicit `LANG=en_GB.UTF-8 LC_ALL=en_GB.UTF-8 LANGUAGE=en_GB`,
   **both row-layout tests pass**. This is a pre-existing locale-sensitive test

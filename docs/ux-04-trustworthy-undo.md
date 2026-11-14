@@ -43,7 +43,7 @@ Source facts (not new runtime certification):
 
 | Today | Consequence for Undo |
 |---|---|
-| `gmail/store.rs::accept_operation_tx` targets every `gmail_message_facts` row of the conversation and stores only the requested **single** value; `gmail_operation_snapshots` stores an aggregate `is_in_inbox`/`is_read`, not per-message facts. | Prior per-message values are never persisted. A thread with your own sent replies has messages that were never in INBOX; `setArchived(false)` would wrongly pull them into the inbox. Undo needs a preimage table. |
+| `gmail/store/operation_rows.rs::accept_operation_tx` targets every `gmail_message_facts` row of the conversation and stores only the requested **single** value; `gmail_operation_snapshots` stores an aggregate `is_in_inbox`/`is_read`, not per-message facts. | Prior per-message values are never persisted. A thread with your own sent replies has messages that were never in INBOX; `setArchived(false)` would wrongly pull them into the inbox. Undo needs a preimage table. |
 | `effective_conversation_state_with_coverage` already computes per-message effective facts (cached + pending overlay with confirmed barriers) but returns only aggregates. | Refactor to expose the per-message map; the preimage must be the *effective* value at acceptance so "archive (queued offline) → Not Done → Z" restores "archived", not the stale cached fact. |
 | Worker is serial; `claim_next_operation` flips `queued → applying` under the connection mutex. There is no cancel path; `OperationStatus` has no cancelled state and the fixture `operations.status` CHECK allows only four values. | Cancel-in-place for still-queued intent is cheap and atomic (`UPDATE … WHERE status='queued'`), but needs a new status and a fixture table rebuild. |
 | Providers expose `apply_archive(ids, value)` / `apply_read(ids, value)`: one value per call. | Mixed preimages are restored by staging **one compensating operation per distinct prior value** (≤ 2), each a normal operation with explicit targets. No provider or `OperationRecord` shape change. |
@@ -246,7 +246,7 @@ status; Z precedence (palette/editor/overlay/reader disclosure → no undo,
 BROWSE-10 style); Z in reader; focus return after undo; last/only-row archive
 then undo (BROWSE-08); `superseded` re-pointing; `expired` messaging;
 ActivityPanel renders `cancelled` and `undo_of` linkage; contract shape in
-`tauri-client.test.ts`; `check:contract`, `typecheck`, `build:web` green.
+`tests/ipc/tauri-client.test.ts`; `check:contract`, `typecheck`, `build:web` green.
 
 Mac fixture gate (extends the UX-03 checklist; pending until run): real `Z`
 after E on a known row; `Z` inside the palette input types a character and
@@ -334,7 +334,7 @@ read-only reviewers. Nothing here certifies native WKWebView behavior.
 
 | Configured command | Result |
 | --- | --- |
-| `mise run test:core` | 199 passed (106 unit; 2 cached_done; 7 draft_core; 8 gmail_auth_contract; 30 gmail_cache_sync; 15 gmail_operations; 16 integration; 15 new `tests/undo.rs`) |
+| `mise run test:core` | 199 passed (106 unit; 2 cached_done; 7 draft_core; 8 gmail_auth_contract; 30 gmail_cache_sync; 15 gmail_operations; 16 integration; 15 new `crates/mail-core/tests/undo.rs`) |
 | `mise run check:contract` | exit 0 |
 | `mise run lint:core` | exit 0 |
 | `mise run test:ui` | 335 passed / 20 opt-in browser tests skipped |
@@ -404,7 +404,7 @@ Integrated gate results after the fix pass (parent, logs `/tmp/ux04-fixpass/`):
 
 | Configured command | Result |
 | --- | --- |
-| `mise run test:core` | 201 passed (17 in `tests/undo.rs`); no gmail_operations flake observed |
+| `mise run test:core` | 201 passed (17 in `crates/mail-core/tests/undo.rs`); no gmail_operations flake observed |
 | `mise run check:contract` | exit 0 (no DTO change in the fix pass) |
 | `mise run lint:core` | exit 0 |
 | `mise run test:ui` | 359 passed / 20 opt-in browser tests skipped |

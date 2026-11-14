@@ -2,6 +2,8 @@
 import { computed, onScopeDispose, ref, type ComputedRef, type Ref } from 'vue';
 import type {
   AccountStatus,
+  CachedDoneSnapshot,
+  CachedTrashSnapshot,
   SavedSplit,
   Conversation,
   ConversationRef,
@@ -20,7 +22,12 @@ import type {
   UndoReceipt,
 } from '../lib/ipc/client';
 import { matchesSplit } from '../lib/saved-split';
-import { OPERATION_GROUP_MAX_MEMBERS, toMailError } from '../lib/ipc/client';
+import { toMailError } from '../lib/ipc/client';
+import { copyRef, sameConversation } from './mailbox-refs';
+import { SELECTION_MAX, useMailboxSelection } from './useMailboxSelection';
+
+// Definitions moved to focused modules; the exported names stay importable from here.
+export { SELECTION_MAX, sameConversation };
 
 /**
  * J/K moves keep showing the previous conversation (never actionable) for this
@@ -63,18 +70,12 @@ export interface LastAction {
   undone: UndoReceipt | null;
 }
 
-export function sameConversation(a: ConversationRef | null, b: ConversationRef | null): boolean {
-  return a !== null && b !== null && a.accountId === b.accountId && a.conversationId === b.conversationId;
-}
-
-export type BrowseContext = 'inbox' | 'saved' | 'done' | 'starred' | 'search';
-
 /**
- * UX-05 product/safety bound for selection and groups (docs/ux-05-safe-bulk-
- * processing.md §3.1). The UI rejects additions beyond this bound; the stores
- * re-validate and never truncate.
+ * `reminders` and `drafts` are list contexts whose rows are not conversations:
+ * the mailbox only tracks that one is the active context (history, Back, reader
+ * origin); `useReminders` and `useDrafts` own their rows.
  */
-export const SELECTION_MAX = OPERATION_GROUP_MAX_MEMBERS;
+export type BrowseContext = 'inbox' | 'saved' | 'done' | 'starred' | 'trash' | 'reminders' | 'drafts' | 'search';
 
 /**
  * Single-slot group notice (UX-05 §3.2/§4.3): the explicit pending identity of
@@ -304,15 +305,17 @@ export function useMailbox(client: MailClient): Mailbox {
   const lastAction = ref<LastAction | null>(null);
   const lastGroup = ref<GroupNotice | null>(null);
   const groupInFlight = ref(false);
-  const selectedRefs = ref<ConversationRef[]>([]);
-  const rangeAnchorRef = ref<ConversationRef | null>(null);
-  const selectionNotice = ref<string | null>(null);
   const recentGroups = ref<OperationGroupSummary[]>([]);
   const groupsError = ref<MailError | null>(null);
   const groupsHasMore = ref(false);
   const groupsLoadingMore = ref(false);
   const groupDetail = ref<OperationGroupStatus | null>(null);
   const groupDetailError = ref<MailError | null>(null);
+
+  const {
+    selectedRefs, rangeAnchorRef, selectionNotice, isSelected, toggleSelected, extendSelectionTo,
+    selectAllLoaded, clearSelection, intersectSelectionWithLoaded, selectionInLoadedOrder,
+  } = useMailboxSelection({ rows: () => conversations.value, targetAvailable: (target) => savedTargetAvailable(target) });
 
   let readerSource: 'list' | 'activity' = 'list';
   let listToken = 0;
@@ -377,10 +380,23 @@ export function useMailbox(client: MailClient): Mailbox {
     savedTotal.value = null;
   }
 
-  /** Independent cache filters compose by intersection; unknown facts never qualify. */
+  /** Independent cache filters compose by intersection; unknown facts never qualify.
+   *  Cached Trash is a read-only recovery view: it always lists everything, so the unread filter never applies there. */
   function matchesCachedFilters(row: ConversationSummaryLike): boolean {
-    return (!unreadOnly.value || row.isRead === false)
+    return (!unreadOnly.value || context.value === 'trash' || row.isRead === false)
       && (!starredOnly.value || (row.stars?.starredMessages ?? 0) > 0);
+  }
+
+  /** Cached Done, Starred and Trash share one paged, replayable list read. */
+  function isCachedList(source: BrowseContext): source is 'done' | 'starred' | 'trash' {
+    return source === 'done' || source === 'starred' || source === 'trash';
+  }
+
+  function readCachedPage(source: 'done' | 'starred' | 'trash', accountId: string, cursor: string | null): Promise<CachedDoneSnapshot | CachedTrashSnapshot> {
+    const request = { accountId, limit: 100, cursor };
+    return source === 'starred' ? client.listCachedStarred(request)
+      : source === 'trash' ? client.listCachedTrash(request)
+      : client.listCachedDone(request);
   }
 
   async function refreshList(token: number): Promise<void> {
@@ -424,6 +440,10 @@ export function useMailbox(client: MailClient): Mailbox {
       const matching = definition ? snap.conversations.filter((row) => matchesSplit(row, definition!)) : [];
       return { definition, definitionError, snap, matching };
     })();
+    // Only Inbox, Saved and the cached lists consume the projection. Drafts,
+    // Reminders and Search never await it, so a failed Inbox read must not
+    // surface as an unhandled rejection there. Awaiting callers still see it.
+    projectionRead.catch(() => {});
     const publishProjection = (projection: NonNullable<Awaited<typeof projectionRead>>): void => {
       savedSplit.value = projection.definition;
       splitError.value = projection.definitionError;
@@ -432,12 +452,21 @@ export function useMailbox(client: MailClient): Mailbox {
     };
     // Done owns its own list read. A delayed/failed Inbox or definition read must
     // not hold Done rows hostage; its badges still use a fenced projection pair.
-    const doneProjection = (source === 'done' || source === 'starred') ? projectionRead.then((projection) => {
+    const doneProjection = isCachedList(source) ? projectionRead.then((projection) => {
       if (current() && projection) publishProjection(projection);
     }, () => {
       if (current()) { inboxTotal.value = null; savedTotal.value = null; }
     }) : null;
     try {
+      if (source === 'reminders' || source === 'drafts') {
+        // These lists read their own transports; the mailbox list is empty.
+        if (!current()) return;
+        conversations.value = [];
+        focusedRef.value = null;
+        listError.value = null;
+        listState.value = 'ready';
+        return;
+      }
       if (source === 'search') {
         // Background invalidations refresh loaded identities from cached facts, not
         // a new provider traversal that would discard the user's loaded pages.
@@ -471,7 +500,7 @@ export function useMailbox(client: MailClient): Mailbox {
         return;
       }
       const projection = (source === 'inbox' || source === 'saved') ? await projectionRead : null;
-      const initial = (source === 'inbox' || source === 'saved') ? projection?.snap : await (source === 'starred' ? client.listCachedStarred : client.listCachedDone)({ accountId: account!, limit: 100, cursor: null });
+      const initial = (source === 'inbox' || source === 'saved') ? projection?.snap : await readCachedPage(source, account!, null);
       if (!current() || !initial) return;
       let snap = initial;
       if (projection) {
@@ -484,7 +513,7 @@ export function useMailbox(client: MailClient): Mailbox {
           snap = { ...snap, conversations: projection.matching };
         }
       }
-      if ((source === 'done' || source === 'starred') && 'nextCursor' in snap) {
+      if (isCachedList(source) && 'nextCursor' in snap) {
         // Recover the saved identity range even when new archives shift page edges.
         const pages = loadedDonePages.value;
         const boundary = loadedDoneBoundary.value;
@@ -494,7 +523,7 @@ export function useMailbox(client: MailClient): Mailbox {
           // Finite recovery budget beyond the user's explicitly loaded range.
           // Never misclassify an uninspected target as removed on budget exhaustion.
           if (replayed >= pages + 10) throw { kind: 'invalid_request', field: 'cachedDoneRestoreRange' } satisfies MailError;
-          const next = await (source === 'starred' ? client.listCachedStarred : client.listCachedDone)({ accountId: account!, limit: 100, cursor: snap.nextCursor });
+          const next = await readCachedPage(source, account!, snap.nextCursor);
           snap = { ...next, conversations: [...snap.conversations, ...next.conversations.filter((row) => !snap.conversations.some((old) => sameConversation(old.ref, row.ref)))] };
           replayed += 1;
         }
@@ -504,7 +533,7 @@ export function useMailbox(client: MailClient): Mailbox {
       if (detached || token !== listToken || source !== context.value) return;
       const previous = conversations.value;
       conversations.value = snap.conversations.filter(matchesCachedFilters);
-      if ((source === 'done' || source === 'starred') && 'nextCursor' in snap) {
+      if (isCachedList(source) && 'nextCursor' in snap) {
         nextCursor.value = snap.nextCursor;
         exactTotal.value = snap.exactTotal;
         lastSyncedAt.value = snap.lastSyncedAt;
@@ -632,13 +661,13 @@ export function useMailbox(client: MailClient): Mailbox {
     const source = context.value;
     const cursor = nextCursor.value;
     const account = accountStatus.value?.account?.accountId;
-    if (source === 'inbox' || source === 'saved' || !cursor || !account || loadingMore.value || listState.value !== 'ready') return;
+    if (source === 'inbox' || source === 'saved' || source === 'reminders' || source === 'drafts' || !cursor || !account || loadingMore.value || listState.value !== 'ready') return;
     const token = ++listToken;
     loadingMore.value = true;
     try {
       const snap = source === 'search'
         ? await client.searchMail({ accountId: account, query: searchQuery.value, cachedOnly: searchCachedOnly.value, cursor })
-        : await (source === 'starred' ? client.listCachedStarred : client.listCachedDone)({ accountId: account, limit: 100, cursor });
+        : await readCachedPage(source, account, cursor);
       if (detached || token !== listToken || context.value !== source) return;
       conversations.value = [...conversations.value, ...snap.conversations.filter((row: ConversationSummaryLike) => matchesCachedFilters(row) && !conversations.value.some((old) => sameConversation(old.ref, row.ref)))];
       focusedRef.value = resolveFocus(conversations.value, focusedRef.value, conversations.value);
@@ -990,146 +1019,8 @@ export function useMailbox(client: MailClient): Mailbox {
     focusConversation(conversations.value[targetIndex]!.ref);
   }
 
-  // ---------------------------------------------------------------------------
-  // UX-05 selection state: account-scoped refs, additive ranges, hard bound
-  // ---------------------------------------------------------------------------
-
-  function indexOfSelected(target: ConversationRef): number {
-    return selectedRefs.value.findIndex((entry) => sameConversation(entry, target));
-  }
-
-  function isSelected(target: ConversationRef): boolean {
-    return indexOfSelected(target) >= 0;
-  }
-
   function loadedContains(target: ConversationRef): boolean {
     return conversations.value.some((row) => sameConversation(row.ref, target));
-  }
-
-  function copyRef(target: ConversationRef): ConversationRef {
-    return { accountId: target.accountId, conversationId: target.conversationId };
-  }
-
-  function rejectSelectionBound(): void {
-    selectionNotice.value = `Selection is limited to ${SELECTION_MAX} conversations. Clear selection to choose different conversations; nothing was replaced.`;
-  }
-
-  /** X / checkbox / Cmd-click: toggle one row; the anchor moves there. */
-  function toggleSelected(target: ConversationRef): void {
-    if (!savedTargetAvailable(target)) return;
-    const existing = indexOfSelected(target);
-    if (existing >= 0) {
-      selectedRefs.value = selectedRefs.value.filter((entry) => !sameConversation(entry, target));
-      selectionNotice.value = null;
-    } else {
-      if (selectedRefs.value.length >= SELECTION_MAX) {
-        rejectSelectionBound();
-        return;
-      }
-      selectedRefs.value = [...selectedRefs.value, copyRef(target)];
-      selectionNotice.value = null;
-    }
-    rangeAnchorRef.value = copyRef(target);
-  }
-
-  /**
-   * Additive inclusive anchor→target range over the CURRENT loaded order.
-   * Reversing direction never subtracts already selected rows. The anchor is
-   * retained (never moved here) so repeated Shift+J/K keep growing one range;
-   * when no valid anchor exists the fallback (pre-move focus) is used, else the
-   * target alone. Additions beyond the bound are rejected without replacing the
-   * existing selection.
-   */
-  function extendSelectionTo(target: ConversationRef, fallbackAnchor: ConversationRef | null): void {
-    const rows = conversations.value;
-    const targetIndex = rows.findIndex((row) => sameConversation(row.ref, target));
-    if (targetIndex < 0) return;
-    const explicitAnchor = rangeAnchorRef.value && loadedContains(rangeAnchorRef.value)
-      ? rangeAnchorRef.value
-      : null;
-    const fallback = fallbackAnchor && !explicitAnchor && loadedContains(fallbackAnchor) ? fallbackAnchor : null;
-    const anchor = explicitAnchor ?? fallback;
-    if (!anchor) {
-      if (isSelected(target)) {
-        // Target-only range still establishes the initial anchor (§3.1).
-        rangeAnchorRef.value = copyRef(target);
-        return;
-      }
-      if (selectedRefs.value.length + 1 > SELECTION_MAX) {
-        rejectSelectionBound();
-        return;
-      }
-      selectedRefs.value = [...selectedRefs.value, copyRef(target)];
-      selectionNotice.value = null;
-      // First accepted range establishes the persistent anchor at the target;
-      // later ranges extend from here even after independent focus moves.
-      rangeAnchorRef.value = copyRef(target);
-      return;
-    }
-    const anchorIndex = rows.findIndex((row) => sameConversation(row.ref, anchor));
-    const start = Math.min(anchorIndex, targetIndex);
-    const end = Math.max(anchorIndex, targetIndex);
-    const addition = rows.slice(start, end + 1)
-      .map((row) => row.ref)
-      .filter((ref) => !isSelected(ref));
-    if (addition.length === 0) {
-      // The first accepted range still anchors even when nothing was added.
-      if (!explicitAnchor) rangeAnchorRef.value = copyRef(anchor);
-      return;
-    }
-    if (selectedRefs.value.length + addition.length > SELECTION_MAX) {
-      rejectSelectionBound();
-      return;
-    }
-    selectedRefs.value = [...selectedRefs.value, ...addition.map(copyRef)];
-    selectionNotice.value = null;
-    // A fallback anchor used for the first range becomes THE anchor; the
-    // explicit anchor is retained untouched (never moved by range extension).
-    if (!explicitAnchor) rangeAnchorRef.value = copyRef(anchor);
-  }
-
-  /** Select all loaded rows; beyond the bound this refuses with visible wording. */
-  function selectAllLoaded(): void {
-    const rows = conversations.value;
-    if (rows.length > SELECTION_MAX) {
-      selectionNotice.value = `${rows.length} rows are loaded — Select all loaded is limited to ${SELECTION_MAX}. Load fewer rows or narrow the list first.`;
-      return;
-    }
-    selectedRefs.value = rows.map((row) => copyRef(row.ref));
-    const last = rows[rows.length - 1];
-    rangeAnchorRef.value = last ? copyRef(last.ref) : null;
-    selectionNotice.value = null;
-  }
-
-  /** Clear set, anchor and bound wording; navigation state is untouched. */
-  function clearSelection(): void {
-    selectedRefs.value = [];
-    rangeAnchorRef.value = null;
-    selectionNotice.value = null;
-  }
-
-  /**
-    * A successful authoritative list refresh intersects selection with surviving
-    * loaded refs and clears an absent anchor. Failures never reach this (they
-    * are not an authoritative empty result).
-    */
-  function intersectSelectionWithLoaded(): void {
-    if (selectedRefs.value.length === 0 && !rangeAnchorRef.value) return;
-    selectedRefs.value = selectedRefs.value.filter((entry) => loadedContains(entry));
-    if (rangeAnchorRef.value && !loadedContains(rangeAnchorRef.value)) rangeAnchorRef.value = null;
-  }
-
-  /** Exact selected references frozen in current loaded order, for dispatch. */
-  function selectionInLoadedOrder(): ConversationRef[] {
-    const loaded = conversations.value
-      .map((row) => row.ref)
-      .filter((ref) => isSelected(ref))
-      .map(copyRef);
-    // Selected refs already removed from the loaded list (pending overlay) stay
-    // in the frozen member list; they must not vanish from the group result.
-    const loadedKeys = new Set(loaded.map((ref) => `${ref.accountId}:${ref.conversationId}`));
-    const remaining = selectedRefs.value.filter((ref) => !loadedKeys.has(`${ref.accountId}:${ref.conversationId}`));
-    return [...loaded, ...remaining.map(copyRef)];
   }
 
   async function openConversationByRef(target: ConversationRef, source: 'list' | 'activity' = 'list'): Promise<void> {

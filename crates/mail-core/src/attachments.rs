@@ -1,4 +1,5 @@
 //! Download-only attachments. No document parser, renderer or remote-resource loader.
+use crate::storage_log::storage_err;
 use crate::{dto::ConversationRef, CancelToken, MailError};
 use serde::{Deserialize, Serialize};
 use std::{fs::OpenOptions, io::Write, path::Path};
@@ -132,16 +133,13 @@ pub fn save_download(
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let mut file = options
-        .open(&path)
-        .map_err(|_| MailError::StorageUnavailable)?;
+    let mut file = options.open(&path).map_err(storage_err())?;
     let result = (|| {
         for chunk in bytes.chunks(64 * 1024) {
             check_cancel(cancel)?;
-            file.write_all(chunk)
-                .map_err(|_| MailError::StorageUnavailable)?;
+            file.write_all(chunk).map_err(storage_err())?;
         }
-        file.sync_all().map_err(|_| MailError::StorageUnavailable)?;
+        file.sync_all().map_err(storage_err())?;
         check_cancel(cancel)
     })();
     drop(file);
@@ -219,24 +217,16 @@ pub fn descriptors(
 }
 
 #[cfg(test)]
-pub(crate) struct TestDirectory(std::path::PathBuf);
+pub(crate) struct TestDirectory(tempfile::TempDir);
 #[cfg(test)]
 impl TestDirectory {
     pub(crate) fn path(&self) -> &Path {
-        &self.0
-    }
-}
-#[cfg(test)]
-impl Drop for TestDirectory {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        self.0.path()
     }
 }
 #[cfg(test)]
 pub(crate) fn test_directory() -> TestDirectory {
-    let path = std::env::temp_dir().join(format!("email-os-attachments-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir(&path).unwrap();
-    TestDirectory(path)
+    TestDirectory(tempfile::tempdir().unwrap())
 }
 
 #[cfg(test)]

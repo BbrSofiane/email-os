@@ -2,7 +2,7 @@
 use crate::dto::{MailboxOperationKind, OperationStatus};
 use crate::error::MailError;
 use crate::gmail::store::{GmailStore, OperationRecord};
-use crate::gmail::types::{GmailReadProvider, GmailThread};
+use crate::gmail::types::{GmailProvider, GmailThread};
 use crate::CancelToken;
 
 /// Runs at most one queued setter or one uncertain-outcome reconciliation.
@@ -10,7 +10,7 @@ use crate::CancelToken;
 /// during profile, reconciliation, or setter provider calls.
 pub(crate) fn run_one(
     store: &GmailStore,
-    provider: &dyn GmailReadProvider,
+    provider: &dyn GmailProvider,
     cancel: &CancelToken,
 ) -> Result<bool, MailError> {
     let Some(record) = store.claim_next_operation()? else {
@@ -104,7 +104,7 @@ pub(crate) fn run_one(
 
 fn reconcile(
     store: &GmailStore,
-    provider: &dyn GmailReadProvider,
+    provider: &dyn GmailProvider,
     cancel: &CancelToken,
     record: &OperationRecord,
 ) -> Result<bool, MailError> {
@@ -146,7 +146,7 @@ fn reconcile(
 
 fn require_mutation_access(
     store: &GmailStore,
-    provider: &dyn GmailReadProvider,
+    provider: &dyn GmailProvider,
     record: &OperationRecord,
 ) -> Result<(), MailError> {
     match provider.mutation_access() {
