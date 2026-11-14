@@ -1,0 +1,60 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7CSP9HADR7XEJBWR2737AGH",
+  "session_id": "f4fdbba9-6870-4713-9dd8-80d668af25b3",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-14T10:29:47.073901701Z",
+  "branch": "maintenance/p5a-mailbox-account",
+  "checkpoints_count": 1,
+  "save_step_count": 1,
+  "files_touched": [
+    "docs/current-architecture.md",
+    "src/composables/useMailbox.ts",
+    "src/composables/useMailboxAccount.ts",
+    "tests/app-shell/useMailboxAccount.unit.test.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "b1f6c14ef4a2",
+  "checkpoint_transcript_start": 525,
+  "transcript_lines_at_start": 525,
+  "compact_transcript_start": 61,
+  "token_usage": {
+    "input_tokens": 22,
+    "cache_creation_tokens": 218120,
+    "cache_read_tokens": 2102543,
+    "output_tokens": 13518,
+    "api_call_count": 12
+  },
+  "session_metrics": {
+    "turn_count": 1
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-14T10:29:46.947860247Z",
+    "agent_lines": 409,
+    "agent_removed": 196,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 409,
+    "total_lines_changed": 605,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 409,
+      "agent_lines_removed": 196
+    }
+  ]
+}
