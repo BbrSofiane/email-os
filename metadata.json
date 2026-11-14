@@ -1,0 +1,30 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7BRPBQHR3BZSMM3XM1WN9ET",
+  "strategy": "manual-commit",
+  "branch": "maintenance/p5a-mailbox-groups",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "docs/current-architecture.md",
+    "src/composables/mailbox-session.ts",
+    "src/composables/useMailbox.ts",
+    "src/composables/useMailboxGroups.ts",
+    "tests/undo/useMailboxGroups.unit.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 34,
+    "cache_creation_tokens": 37313,
+    "cache_read_tokens": 2506789,
+    "output_tokens": 23950,
+    "api_call_count": 17
+  }
+}
