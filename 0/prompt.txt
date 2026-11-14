@@ -1,0 +1,8 @@
+Coordinator, important: the owner merged their Android work to main as #63 (main is now 44b44a7). It moved the whole native shell out of `src-tauri/src/main.rs` into `src-tauri/src/lib.rs` (main.rs is now a 5-line `email_os::run()`), and it also changed `crates/mail-core/src/error.rs`, `lock.rs`, `generated.ts`, `client.ts`, `mise.toml`, the CI workflow and the docs. #64 now conflicts with main (in `main.rs`), and #65 is stacked on it.
+
+Before going further with PR (c):
+1. Rebase `stage4/a-policy` onto `origin/main`. Put your `capabilities: None` line (and anything else you had in `main.rs`) into its new home in `lib.rs`, and keep every Android change intact. Then rebase `stage4/b-frontend` onto it. Force-push both (with `--force-with-lease`) and confirm the remote heads.
+2. Read #63's description and its new mise tasks and CI job. Its desktop and Android startup paths share the shell now, so the default switch in PR (c) has to work on both. The Android build is fixture-only, so after stage 4 it will run on the synthetic core too. Do not break `cargo check` for the Android target. If you can run its non-emulator checks here (the mise tasks that do not need an SDK or emulator), do. If they need an SDK, say so, and I'll rely on its CI job, which runs on PRs to main.
+3. Rerun `check:all` on both rebased heads, then message me with the new heads. Continue PR (c) on top of the rebased (b).
+
+The ticket 16 shell split now waits for stage 4 to finish, so do not restructure `lib.rs` beyond what stage 4 needs.
