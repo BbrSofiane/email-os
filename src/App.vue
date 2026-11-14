@@ -36,11 +36,11 @@ import RemindersList from './components/RemindersList.vue';
 import { useReminders, REMINDER_TABS } from './composables/useReminders';
 import { formatReminderDateTime } from './lib/reminder-timezone';
 import ReminderSettings from './components/ReminderSettings.vue';
-import ActionNotice, { type GroupNoticeView } from './components/ActionNotice.vue';
+import ActionNotice from './components/ActionNotice.vue';
 import SelectionBar from './components/SelectionBar.vue';
 import HeaderGlyph from './components/HeaderGlyph.vue';
 import PaneGlyph from './components/PaneGlyph.vue';
-import { actionLabel, actionRegistry, findAction, findKeyBinding, type ActionHandlers, type ActionId, type KeyFocus, type KeyOnlyId, type KeyResolverId } from './lib/action-registry';
+import { actionLabel, actionRegistry, findKeyBinding, type ActionHandlers, type ActionId, type KeyFocus, type KeyOnlyId, type KeyResolverId } from './lib/action-registry';
 import { INBOX_EMPTY_RECOVERABLE, accountNotice, drawerShowsSameFailure, emptyLineOwnsStatus, headerNoteAnnounces, headerNoticeAction, inboxEmptyState, readOnlyHintShown, splitNoticeText, type AccountNoticeAction, type InboxEmptyAction } from './lib/account-status';
 import { groupRowsBySender, isSingleFromQuery, senderGroupKey, validateSearch } from './lib/search';
 import InboxList from './components/InboxList.vue';
@@ -63,8 +63,9 @@ import { BROWSER_PREVIEW_DISCLOSURE } from './lib/ipc/browser-fake';
 import type { ClientMode } from './lib/ipc';
 import type { ConversationRef, DraftSource, DraftSummary, MailClient, Reminder } from './lib/ipc/client';
 import { REPLY_REASONS, replyBlockedReason, sourceLoadErrorReason } from './lib/reply-context';
-import { sameConversation, useMailbox, type BrowseContext, type ConversationSummaryLike, type DoneBoundary, type SearchVisit, type LastActionId } from './composables/useMailbox';
+import { sameConversation, useMailbox, type BrowseContext, type ConversationSummaryLike, type DoneBoundary, type SearchVisit } from './composables/useMailbox';
 import { useDrafts } from './composables/useDrafts';
+import { useActionNotice } from './composables/useActionNotice';
 import { useGoChord } from './composables/useGoChord';
 
 const props = withDefaults(defineProps<{
@@ -238,131 +239,7 @@ async function clearSelectionFromBar(): Promise<void> {
 // Action notice (UX-04): single-slot undo notification
 // ---------------------------------------------------------------------------
 
-/** Advisory wall clock for the Undo hint; the backend owns eligibility. */
-const nowMs = ref(Date.now());
-let nowTimer: ReturnType<typeof setInterval> | null = null;
-
-/**
- * Single-slot notice state, single-or-group identity (UX-04/UX-05). Status text
- * derives from the matching Activity row / authoritative group status on every
- * refresh; undo windows come only from refreshed authoritative state. The
- * backend stays the authority: an `expired` rejection refreshes and then closes
- * the slot window below. After a successful undo the slot reports the outcome.
- */
-const actionNotice = computed(() => {
-  const groupSlot = mailbox.lastGroup.value;
-  if (groupSlot) {
-    const status = groupSlot.status;
-    const counts = { pending: 0, confirmed: 0, failed: 0, rejected: 0, unknown: 0, cancelled: 0 };
-    if (status) {
-      for (const member of status.members) {
-        if (member.status === 'rejected') counts.rejected += 1;
-        else if (member.status === 'confirmed') counts.confirmed += 1;
-        else if (member.status === 'failed') counts.failed += 1;
-        else if (member.status === 'outcome_unknown') counts.unknown += 1;
-        else if (member.status === 'cancelled') counts.cancelled += 1;
-        else counts.pending += 1; // queued | applying
-      }
-    }
-    let undoneView: GroupNoticeView['undone'] = null;
-    const undoMembers = status?.undoReceipt?.members ?? groupSlot.undone?.members;
-    if (undoMembers) {
-      const skipReasons: Record<string, number> = {};
-      let cancelled = 0;
-      let compensating = 0;
-      let skipped = 0;
-      for (const member of undoMembers) {
-        if (member.decision.kind === 'cancelled') cancelled += 1;
-        else if (member.decision.kind === 'compensating') compensating += 1;
-        else {
-          skipped += 1;
-          skipReasons[member.decision.reason] = (skipReasons[member.decision.reason] ?? 0) + 1;
-        }
-      }
-      // CURRENT compensation outcomes: prefer the backend's persisted undo
-      // record (also correct after restart / lost undo response); fall back to
-      // the refreshed activity rows for compensations it lists. Compensation
-      // status is tracked separately from the original execution statuses.
-      const outcomes = { confirmed: 0, failed: 0, unknown: 0, pending: 0 };
-      const record = groupSlot.status?.undoReceipt;
-      if (record) {
-        for (const member of record.members) {
-          for (const compensation of member.compensations) {
-            if (compensation.status === 'confirmed') outcomes.confirmed += 1;
-            else if (compensation.status === 'failed') outcomes.failed += 1;
-            else if (compensation.status === 'outcome_unknown') outcomes.unknown += 1;
-            else outcomes.pending += 1;
-          }
-        }
-      } else {
-        for (const member of groupSlot.undone?.members ?? []) {
-          for (const operationId of member.operationIds) {
-            const row = mailbox.activity.value.find((item) => item.id === operationId);
-            if (!row) outcomes.pending += 1;
-            else if (row.status === 'confirmed') outcomes.confirmed += 1;
-            else if (row.status === 'failed') outcomes.failed += 1;
-            else if (row.status === 'outcome_unknown') outcomes.unknown += 1;
-            else outcomes.pending += 1;
-          }
-        }
-      }
-      undoneView = { cancelled, compensating, skipped, skipReasons, compensationOutcomes: outcomes };
-    }
-    const group: GroupNoticeView = {
-      count: groupSlot.members.length,
-      counts,
-      acceptanceUnknown: groupSlot.state === 'acceptance-unknown',
-      statusKnown: status !== null,
-      statusError: groupSlot.statusError,
-      undoableUntil: status?.undo.undoableUntil ?? null,
-      hadWindow: groupSlot.hadWindow,
-      undone: undoneView,
-    };
-    const groupActionId: LastActionId = groupSlot.kind === 'star' ? (groupSlot.requestedStarred ? 'star' : 'unstar') : groupSlot.kind === 'read'
-      ? (groupSlot.requestedRead ? 'read' : 'unread')
-      : (groupSlot.requestedArchived ? 'archive' : 'unarchive');
-    return {
-      label: groupSlot.kind === 'star' ? (groupSlot.requestedStarred ? 'Star' : 'Unstar') : groupSlot.kind === 'read' ? (groupSlot.requestedRead ? 'Mark read' : 'Mark unread') : (groupSlot.requestedArchived ? 'Mark done' : 'Mark not done'),
-      actionId: groupActionId,
-      subject: null,
-      operation: null,
-      undoableUntil: null,
-      hadWindow: false,
-      undone: null,
-      group,
-    };
-  }
-  const slot = mailbox.lastAction.value;
-  if (!slot) return null;
-  const operation = mailbox.activity.value.find((item) => item.id === slot.receipt.operationId) ?? null;
-  const label = findAction(slot.actionId)?.label ?? slot.actionId;
-  return {
-    label,
-    actionId: slot.actionId,
-    subject: slot.subject,
-    operation,
-    // Post-undo the window is closed outright: a stale activity row can still
-    // carry undoableUntil, and the palette/key must never send a second undo.
-    undoableUntil: slot.undone ? null : operation ? operation.undoableUntil ?? null : slot.undoableUntil,
-    hadWindow: slot.hadWindow,
-    undone: slot.undone
-      ? {
-          outcome: slot.undone.outcome,
-          compensations: mailbox.activity.value.filter((item) => slot.undone?.operationIds.includes(item.id) ?? false),
-        }
-      : null,
-  };
-});
-
-/** Palette/key availability share this window check; expiry is advisory only.
- *  An in-flight undo owns the slot: a second dispatch (key repeat, double-tap,
- *  button+key) must never race it into a false `already_undone` failure. */
-const undoWindowOpen = computed(() => {
-  const notice = actionNotice.value;
-  if (!notice || notice.undone) return false;
-  const until = notice.group ? notice.group.undoableUntil : notice.undoableUntil;
-  return until !== null && Date.parse(until) > nowMs.value;
-});
+const { nowMs, actionNotice, undoWindowOpen } = useActionNotice({ mailbox });
 
 /** Undo succeeded: re-focus the restored row only when it is in the current context. */
 async function undoFromNotice(): Promise<void> {
@@ -1009,7 +886,6 @@ onMounted(() => {
   window.addEventListener('compositionstart', cancelGo);
   window.addEventListener('focusin', cancelGo);
   wideQuery?.addEventListener('change', onViewportChange);
-  nowTimer = setInterval(() => { nowMs.value = Date.now(); }, 250);
 });
 
 onBeforeUnmount(() => {
@@ -1020,8 +896,6 @@ onBeforeUnmount(() => {
   window.removeEventListener('focusin', cancelGo);
   cancelGo();
   clearReminderConfirmation();
-  if (nowTimer !== null) clearInterval(nowTimer);
-  nowTimer = null;
   wideQuery?.removeEventListener('change', onViewportChange);
 });
 
