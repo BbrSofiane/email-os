@@ -283,43 +283,38 @@ preview.
 Native mode remains a single account/window and exposes no switch command. See
 [UX-13A's contract and remaining gates](ux-13-independent-workspaces.md).
 
-**Native fixture mode (default):** `mise run dev:native`. This opens the synthetic
-fixture profile under `<app_data_dir>/fixture-profile`; local drafts are stored
-separately beneath `<app_data_dir>/fixture-profile/local-drafts`. The fixture
-provider's optional demo behavior is selected with
-`EMAIL_OS_FAKE_PROVIDER=paused|reject|success` (default: success). Profile locks
-reject a second writer to the same mail or draft profile.
+**Native fixture mode (default):** `mise run dev:native`. Fixture mode runs the Gmail core on
+the built-in synthetic provider ([ADR 0002](adr/0002-fixture-as-synthetic-provider.md)), so the
+operation ledger (acceptance, undo, groups, reminders) is the same code Gmail mode uses:
 
-**Synthetic-core validation path (not a user feature):** `EMAIL_OS_SYNTHETIC_CORE=1
-mise run dev:native` makes fixture mode run the Gmail core on the built-in synthetic
-provider ([ADR 0002](adr/0002-fixture-as-synthetic-provider.md), stages 1–3) instead of
-the legacy `MailCore`. It exists so the unified implementation can be validated
-end to end through the real Tauri commands before it becomes the default (stage 4);
-nothing about it is promised to users. The variable is read only in fixture mode
-(ignored under `EMAIL_OS_MODE=gmail`) and accepts only `1` or `0`; anything else fails
-startup instead of silently picking a backend. On this path:
+* the app reports mode `fixture`, account `fixture-account`, connected and idle, with no mutation
+  grant and an explicit `capabilities.triageSurfaces`, from its first status read (bootstrap finishes
+  before the window can ask); there is no OAuth, Keychain or HTTP client;
+* its files live under `<app_data_dir>/fixture-profile`: `synthetic-provider.db` (durable provider
+  facts, seeded once), `gmail.db` (the core's cache and operation ledger), `profile.lock`, and
+  `local-drafts/` (local drafts, separate from the mailbox);
+* all 18 conversations are present (the two initially archived ones are cached, not Inbox, not
+  Done). Inbox mail is seeded as a realistic read/unread mix; archive, read, star, undo, groups,
+  retry, saved split, search (cached only), reminders (hide locally, no provider write), the
+  `fixture-text` attachment and reply headers work through the same commands as Gmail mode; cached
+  Trash, provider destinations, connect, disconnect, permission upgrade and manual sync are rejected
+  with the legacy fixture's error variants;
+* `EMAIL_OS_FAKE_PROVIDER=paused|reject|success` (default: success) applies to synthetic writes only
+  and is fixed at launch. A write interrupted by quitting (for example while paused) is requeued and
+  applied at the next launch.
 
-* the app reports mode `fixture`, account `fixture-account`, connected and idle, with no
-  mutation grant, from its first status read (bootstrap finishes before the window can
-  ask); there is no OAuth, Keychain or HTTP client;
-* its files live beside the legacy ones in `<app_data_dir>/fixture-profile`:
-  `synthetic-provider.db` (durable provider facts, seeded once) and `gmail.db` (the core's
-  cache and operation ledger). `mail.db` is **never opened**, so a profile used by the
-  legacy core is not modified, and the two cores share `profile.lock` and
-  `local-drafts`, so they can never run at the same time;
-* all 18 conversations are present (the two initially archived ones are cached, not Inbox,
-  not Done); archive, read, star, undo, groups, retry, saved split, search (cached only),
-  reminders (hide locally, no provider write), the `fixture-text` attachment and reply
-  headers work through the same commands as Gmail mode; cached Trash, provider
-  destinations, connect, disconnect, permission upgrade and manual sync are rejected with
-  the legacy fixture's error variants;
-* `EMAIL_OS_FAKE_PROVIDER=paused|reject` still applies, to synthetic writes only, and is
-  fixed at launch. An operation interrupted by quitting (for example while paused) comes
-  back as an uncertain `outcome_unknown` operation to retry, not as a silent replay.
-
-Switching between the two paths on one profile is safe (state is not shared, nothing is
-migrated); the legacy path's facts and history do not appear on the synthetic path, and
-vice versa.
+**One-time retirement of a legacy fixture database.** Before this change fixture mode kept its history
+in `fixture-profile/mail.db`. On the first launch after upgrading, a profile that still has that file
+shows a startup screen (`FixtureTransitionGate`) before the app: the old demo mailbox history (Done and
+archive history, undo history, reminders, saved split) starts fresh once, local drafts are kept, and the
+old database is backed up first. The backend (`mail_core::fixture_transition`, commands
+`get_fixture_transition_status` and `accept_fixture_transition`) owns the state machine, persisted in
+`fixture-profile/fixture-transition.json`: a consistent `VACUUM INTO backups/mail-<utc>.db` snapshot,
+integrity and row-count verification, and only then removal of `mail.db` and its side files. Closing the
+window instead cancels with nothing changed (you are asked again); a crash before the verified backup
+leaves the old file untouched, a crash after it resumes the removal without asking; insufficient disk
+space and backup failures change nothing and can be retried; it never touches `gmail-profile`,
+credentials or `local-drafts`. A fresh profile, and Gmail mode, never see the screen.
 
 **Explicit native Gmail mode:** launch with `EMAIL_OS_MODE=gmail`; it uses the
 separate `<app_data_dir>/gmail-profile`, never the fixture database. Local drafts

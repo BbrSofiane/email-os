@@ -75,6 +75,7 @@ import type {
   UndoOperation,
   UndoOperationGroup,
   UndoReceipt,
+  FixtureTransitionStatus,
 } from './client';
 import { FIXTURE_MAILBOX, type SavedSplit } from './generated';
 import { normalizeSplit } from '../saved-split';
@@ -128,6 +129,14 @@ export interface FakeControls {
   closeListenerCount(): number;
   /** Emits one synthetic, non-durable close request without closing a browser window. */
   requestAppClose(): AppCloseRequest;
+  /**
+   * Stages the one-time legacy-fixture transition (default: `not_needed`).
+   * `acceptOutcome` is what `acceptFixtureTransition` resolves with (default
+   * `done`); a `failed` outcome leaves the gate showing, like the native core.
+   */
+  setFixtureTransition(status: FixtureTransitionStatus, acceptOutcome?: FixtureTransitionStatus): void;
+  /** Number of `acceptFixtureTransition` calls (idempotency assertions). */
+  fixtureTransitionAccepts(): number;
   pendingAppClose(): AppCloseRequest | null;
   completedCloseCount(): number;
   /** Current simulated account/sync state. */
@@ -467,6 +476,9 @@ export function createBrowserFakeMailClient(
   const fixtureId = identity.accountId;
   const fixtureMailbox = identity.emailAddress;
   let savedSplit: SavedSplit | null = null;
+  let fixtureTransition: FixtureTransitionStatus = { state: 'not_needed' };
+  let fixtureTransitionOutcome: FixtureTransitionStatus = { state: 'done' };
+  let fixtureTransitionAcceptCount = 0;
   const ME = addr('You', fixtureMailbox);
   const seedMailbox = (): FakeConversation[] =>
     seed ? seedFromMailbox(seed, fixtureId, fixtureMailbox) : seedConversations(fixtureId, fixtureMailbox);
@@ -1078,11 +1090,21 @@ export function createBrowserFakeMailClient(
       closeListenerCount(): number {
         return closeListeners.size;
       },
+      setFixtureTransition(status: FixtureTransitionStatus, acceptOutcome?: FixtureTransitionStatus): void {
+        fixtureTransition = snapshotCopy(status);
+        fixtureTransitionOutcome = acceptOutcome ? snapshotCopy(acceptOutcome) : { state: 'done' };
+      },
+      fixtureTransitionAccepts(): number {
+        return fixtureTransitionAcceptCount;
+      },
       requestAppClose(): AppCloseRequest {
         if (!pendingClose) {
           closeCounter += 1;
           pendingClose = { requestId: `close-${closeCounter}` };
-          for (const listener of closeListeners) listener(snapshotCopy(pendingClose));
+          // A listener may complete or cancel synchronously: return the request it saw.
+          const issued = snapshotCopy(pendingClose);
+          for (const listener of closeListeners) listener(snapshotCopy(issued));
+          return issued;
         }
         return snapshotCopy(pendingClose);
       },
@@ -1896,6 +1918,19 @@ export function createBrowserFakeMailClient(
     async cancelAppClose(requestId: string): Promise<void> {
       if (!pendingClose || pendingClose.requestId !== requestId) throw { kind: 'invalid_request', field: 'requestId' } satisfies MailError;
       pendingClose = null;
+    },
+
+    async getFixtureTransitionStatus(): Promise<FixtureTransitionStatus> {
+      return snapshotCopy(fixtureTransition);
+    },
+
+    async acceptFixtureTransition(): Promise<FixtureTransitionStatus> {
+      fixtureTransitionAcceptCount += 1;
+      // Like the native core: only a pending (or failed) transition does work.
+      if (fixtureTransition.state === 'needs_disclosure' || fixtureTransition.state === 'failed') {
+        fixtureTransition = snapshotCopy(fixtureTransitionOutcome);
+      }
+      return snapshotCopy(fixtureTransition);
     },
 
     async getAccountStatus(): Promise<AccountStatus> {

@@ -3,8 +3,9 @@
 //! `EMAIL_OS_MODE` selects the profile at launch (`fixture` by default, or
 //! `gmail`). The two modes use separate app-data directories; Gmail credentials
 //! stay in the OS Keychain and mailbox actions require verified user opt-in.
-//! In fixture mode, `EMAIL_OS_SYNTHETIC_CORE=1` opts into the synthetic core
-//! (ADR 0002 validation path); the legacy `MailCore` remains the default.
+//! Fixture mode runs the Gmail core on the built-in synthetic provider; a
+//! pre-existing legacy fixture database is retired once, with disclosure and a
+//! verified backup (ADR 0002).
 
 mod close_gate;
 mod diagnostics;
@@ -25,52 +26,46 @@ use mail_core::dto::{
     UndoOperation, UndoReceipt,
 };
 use mail_core::error::MailError;
+use mail_core::fixture_transition::{FixtureTransition, FixtureTransitionStatus};
 use mail_core::gmail::browsing::{DestinationCatalog, DestinationPage, DestinationRequest};
 use mail_core::gmail::provider::LiveGmailProvider;
 use mail_core::gmail::secrets::KeychainSecrets;
 use mail_core::gmail::sync::GmailCore;
-use mail_core::gmail::types::{AccountInfo, AccountStatus, MailMode, SyncInfo, SyncState};
+use mail_core::gmail::types::{AccountInfo, AccountStatus, MailMode};
 use mail_core::groups::{
     GetOperationGroupRequest, GroupUndoReceipt, ListOperationGroupsRequest, OperationGroupPage,
     OperationGroupReceipt, OperationGroupStatus, SetArchivedGroup, SetReadGroup,
     UndoOperationGroup,
 };
 use mail_core::reminders::{CancelReminder, PutReminder, Reminder};
-use mail_core::{FakeArchiveProvider, MailCore, ACCOUNT_ID};
+use mail_core::ACCOUNT_ID;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 
-const FIXTURE_ATTACHMENT: &[u8] = b"Synthetic attachment only.\n";
-
 #[derive(Clone)]
 enum Backend {
-    /// The legacy native fixture (default until ADR 0002 stage 4).
-    Fixture(MailCore),
     Gmail(GmailCore),
-    /// Opt-in validation path (`EMAIL_OS_SYNTHETIC_CORE=1`, fixture mode only):
-    /// the Gmail core on the built-in synthetic provider, presenting itself as
-    /// the fixture account under the synthetic session policy.
+    /// Fixture mode: the Gmail core on the built-in synthetic provider,
+    /// presenting itself as the fixture account under the synthetic session
+    /// policy (ADR 0002).
     Synthetic(GmailCore),
 }
 
 impl Backend {
     fn list_reminders(&self) -> Result<Vec<Reminder>, MailError> {
         match self {
-            Self::Fixture(core) => core.list_reminders(),
             Self::Gmail(core) | Self::Synthetic(core) => core.list_reminders(),
         }
     }
     fn put_reminder(&self, command: &PutReminder) -> Result<Reminder, MailError> {
         match self {
-            Self::Fixture(core) => core.put_reminder(command),
             Self::Gmail(core) | Self::Synthetic(core) => core.put_reminder(command),
         }
     }
     fn cancel_reminder(&self, command: &CancelReminder) -> Result<Reminder, MailError> {
         match self {
-            Self::Fixture(core) => core.cancel_reminder(command),
             Self::Gmail(core) | Self::Synthetic(core) => core.cancel_reminder(command),
         }
     }
@@ -83,7 +78,6 @@ impl Backend {
             Self::Gmail(core) | Self::Synthetic(core) => {
                 core.list_provider_destinations(account_id, cached)
             }
-            Self::Fixture(_) => Err(MailError::ReadOnly),
         }
     }
     fn browse_provider_destination(
@@ -92,13 +86,11 @@ impl Backend {
     ) -> Result<DestinationPage, MailError> {
         match self {
             Self::Gmail(core) | Self::Synthetic(core) => core.browse_provider_destination(request),
-            Self::Fixture(_) => Err(MailError::ReadOnly),
         }
     }
 
     fn list_conversations(&self) -> Result<InboxSnapshot, MailError> {
         match self {
-            Self::Fixture(core) => core.list_conversations(),
             Self::Gmail(core) | Self::Synthetic(core) => core.list_conversations(),
         }
     }
@@ -108,7 +100,6 @@ impl Backend {
         account: &str,
     ) -> Result<Option<mail_core::splits::SavedSplit>, MailError> {
         match self {
-            Self::Fixture(core) => core.get_saved_split(account),
             Self::Gmail(core) | Self::Synthetic(core) => core.get_saved_split(account),
         }
     }
@@ -118,7 +109,6 @@ impl Backend {
         split: &mail_core::splits::SavedSplit,
     ) -> Result<mail_core::splits::SavedSplit, MailError> {
         match self {
-            Self::Fixture(core) => core.save_saved_split(account, split),
             Self::Gmail(core) | Self::Synthetic(core) => core.save_saved_split(account, split),
         }
     }
@@ -128,7 +118,6 @@ impl Backend {
         request: &mail_core::search::SearchRequest,
     ) -> Result<mail_core::search::SearchPage, MailError> {
         match self {
-            Self::Fixture(core) => core.search_mail(request),
             Self::Gmail(core) | Self::Synthetic(core) => core.search_mail(request),
         }
     }
@@ -137,9 +126,6 @@ impl Backend {
         request: &CachedTrashRequest,
     ) -> Result<CachedTrashSnapshot, MailError> {
         match self {
-            Self::Fixture(_) => Err(MailError::InvalidRequest {
-                field: "mode".into(),
-            }),
             Self::Gmail(core) | Self::Synthetic(core) => core.list_cached_trash(request),
         }
     }
@@ -149,14 +135,12 @@ impl Backend {
         request: &CachedDoneRequest,
     ) -> Result<CachedDoneSnapshot, MailError> {
         match self {
-            Self::Fixture(core) => core.list_cached_done(request),
             Self::Gmail(core) | Self::Synthetic(core) => core.list_cached_done(request),
         }
     }
 
     fn get_conversation(&self, r#ref: &ConversationRef) -> Result<Conversation, MailError> {
         match self {
-            Self::Fixture(core) => core.get_conversation(r#ref),
             Self::Gmail(core) | Self::Synthetic(core) => core.get_conversation(r#ref),
         }
     }
@@ -167,21 +151,6 @@ impl Backend {
     ) -> Result<Vec<AttachmentDescriptor>, MailError> {
         match self {
             Self::Gmail(core) | Self::Synthetic(core) => core.list_attachments(target),
-            Self::Fixture(core) => {
-                let conversation = core.get_conversation(target)?;
-                Ok(conversation
-                    .messages
-                    .first()
-                    .map(|m| AttachmentDescriptor {
-                        message_id: m.id.clone(),
-                        attachment_id: "fixture-text".into(),
-                        filename: "example.txt".into(),
-                        mime_type: "text/plain".into(),
-                        size: FIXTURE_ATTACHMENT.len() as u32,
-                    })
-                    .into_iter()
-                    .collect())
-            }
         }
     }
 
@@ -195,22 +164,6 @@ impl Backend {
             Self::Gmail(core) | Self::Synthetic(core) => {
                 core.download_attachment(request, cancel, directory)
             }
-            Self::Fixture(_) => {
-                let descriptor = self
-                    .list_attachments(&request.conversation)?
-                    .into_iter()
-                    .find(|d| {
-                        d.message_id == request.message_id
-                            && d.attachment_id == request.attachment_id
-                    })
-                    .ok_or(MailError::NotFound)?;
-                mail_core::attachments::save_download(
-                    directory,
-                    &descriptor,
-                    FIXTURE_ATTACHMENT,
-                    cancel,
-                )
-            }
         }
     }
 
@@ -220,7 +173,6 @@ impl Backend {
         source_message_id: &str,
     ) -> Result<Conversation, MailError> {
         let conversation = match self {
-            Self::Fixture(core) => core.get_conversation(r#ref)?,
             Self::Gmail(core) | Self::Synthetic(core) => {
                 core.load_reply_context(r#ref, source_message_id)?
             }
@@ -238,76 +190,42 @@ impl Backend {
 
     fn account_status(&self) -> Result<AccountStatus, MailError> {
         match self {
-            Self::Fixture(_) => Ok(AccountStatus {
-                mode: MailMode::Fixture,
-                mutation_access: None,
-                capabilities: None,
-                connection: mail_core::gmail::types::ConnectionState::Connected,
-                account: Some(AccountInfo {
-                    account_id: ACCOUNT_ID.to_owned(),
-                    email_address: mail_core::FIXTURE_MAILBOX.to_owned(),
-                }),
-                sync: SyncInfo {
-                    state: SyncState::Idle,
-                    last_synced_at: None,
-                    error: None,
-                    cached_conversations: 18,
-                    initial_sync_complete: true,
-                    coverage_limit: 0,
-                },
-            }),
             Self::Gmail(core) | Self::Synthetic(core) => core.account_status(),
         }
     }
 
     fn connect_account(&self) -> Result<(), MailError> {
         match self {
-            Self::Fixture(_) => Err(MailError::InvalidRequest {
-                field: "mode".to_owned(),
-            }),
             Self::Gmail(core) | Self::Synthetic(core) => core.connect_account(),
         }
     }
 
     fn disconnect_account(&self) -> Result<(), MailError> {
         match self {
-            Self::Fixture(_) => Err(MailError::InvalidRequest {
-                field: "mode".to_owned(),
-            }),
             Self::Gmail(core) | Self::Synthetic(core) => core.disconnect_account(),
         }
     }
 
     fn request_sync(&self) -> Result<(), MailError> {
         match self {
-            Self::Fixture(_) => Err(MailError::InvalidRequest {
-                field: "mode".to_owned(),
-            }),
             Self::Gmail(core) | Self::Synthetic(core) => core.request_sync(),
         }
     }
 
     fn enable_mailbox_actions(&self) -> Result<(), MailError> {
         match self {
-            Self::Fixture(_) => Err(MailError::InvalidRequest {
-                field: "mode".to_owned(),
-            }),
             Self::Gmail(core) | Self::Synthetic(core) => core.enable_mutations(),
         }
     }
 
     fn cancel_mailbox_action_upgrade(&self) -> Result<(), MailError> {
         match self {
-            Self::Fixture(_) => Err(MailError::InvalidRequest {
-                field: "mode".to_owned(),
-            }),
             Self::Gmail(core) | Self::Synthetic(core) => core.cancel_mutation_upgrade(),
         }
     }
 
     fn set_archived(&self, command: &SetArchived) -> Result<OperationReceipt, MailError> {
         match self {
-            Self::Fixture(core) => core.set_archived(command),
             Self::Gmail(core) | Self::Synthetic(core) => core.set_archived(command),
         }
     }
@@ -317,7 +235,6 @@ impl Backend {
         command: &mail_core::stars::SetStarred,
     ) -> Result<OperationReceipt, MailError> {
         match self {
-            Self::Fixture(_) => Err(MailError::ReadOnly),
             Self::Gmail(core) | Self::Synthetic(core) => core.set_starred(command),
         }
     }
@@ -326,7 +243,6 @@ impl Backend {
         command: &mail_core::stars::SetStarredGroup,
     ) -> Result<OperationGroupReceipt, MailError> {
         match self {
-            Self::Fixture(_) => Err(MailError::ReadOnly),
             Self::Gmail(core) | Self::Synthetic(core) => core.set_starred_group(command),
         }
     }
@@ -335,25 +251,18 @@ impl Backend {
         request: &CachedDoneRequest,
     ) -> Result<CachedDoneSnapshot, MailError> {
         match self {
-            Self::Fixture(_) => Err(MailError::ReadOnly),
             Self::Gmail(core) | Self::Synthetic(core) => core.list_cached_starred(request),
         }
     }
 
     fn set_read(&self, command: &SetRead) -> Result<OperationReceipt, MailError> {
         match self {
-            Self::Fixture(_) => Err(MailError::InvalidRequest {
-                field: "mode".to_owned(),
-            }),
             Self::Gmail(core) | Self::Synthetic(core) => core.set_read(command),
         }
     }
 
     fn retry_operation(&self, command: &RetryOperation) -> Result<OperationReceipt, MailError> {
         match self {
-            Self::Fixture(_) => Err(MailError::InvalidRequest {
-                field: "mode".to_owned(),
-            }),
             Self::Gmail(core) | Self::Synthetic(core) => core.retry_operation(command),
         }
     }
@@ -362,7 +271,6 @@ impl Backend {
     /// the fixture store covers Done/Not Done undo (archive only).
     fn undo_operation(&self, command: &UndoOperation) -> Result<UndoReceipt, MailError> {
         match self {
-            Self::Fixture(core) => core.undo_operation(command),
             Self::Gmail(core) | Self::Synthetic(core) => core.undo_operation(command),
         }
     }
@@ -374,7 +282,6 @@ impl Backend {
         command: &SetArchivedGroup,
     ) -> Result<OperationGroupReceipt, MailError> {
         match self {
-            Self::Fixture(core) => core.set_archived_group(command),
             Self::Gmail(core) | Self::Synthetic(core) => core.set_archived_group(command),
         }
     }
@@ -382,9 +289,6 @@ impl Backend {
     /// Group read/unread is Gmail-only, like the single `set_read`.
     fn set_read_group(&self, command: &SetReadGroup) -> Result<OperationGroupReceipt, MailError> {
         match self {
-            Self::Fixture(_) => Err(MailError::InvalidRequest {
-                field: "mode".to_owned(),
-            }),
             Self::Gmail(core) | Self::Synthetic(core) => core.set_read_group(command),
         }
     }
@@ -394,7 +298,6 @@ impl Backend {
         request: &GetOperationGroupRequest,
     ) -> Result<Option<OperationGroupStatus>, MailError> {
         match self {
-            Self::Fixture(core) => core.get_operation_group(request),
             Self::Gmail(core) | Self::Synthetic(core) => core.get_operation_group(request),
         }
     }
@@ -404,7 +307,6 @@ impl Backend {
         request: &ListOperationGroupsRequest,
     ) -> Result<OperationGroupPage, MailError> {
         match self {
-            Self::Fixture(core) => core.list_operation_groups(request),
             Self::Gmail(core) | Self::Synthetic(core) => core.list_operation_groups(request),
         }
     }
@@ -416,14 +318,12 @@ impl Backend {
         command: &UndoOperationGroup,
     ) -> Result<GroupUndoReceipt, MailError> {
         match self {
-            Self::Fixture(core) => core.undo_operation_group(command),
             Self::Gmail(core) | Self::Synthetic(core) => core.undo_operation_group(command),
         }
     }
 
     fn subscribe(&self, on_change: impl Fn() + Send + Sync + 'static) -> Subscription {
         match self {
-            Self::Fixture(core) => Subscription::Fixture(core.subscribe(on_change)),
             Self::Gmail(core) | Self::Synthetic(core) => {
                 Subscription::Gmail(core.subscribe(on_change))
             }
@@ -432,7 +332,6 @@ impl Backend {
 
     fn stop(&self) {
         match self {
-            Self::Fixture(core) => core.stop_worker(),
             Self::Gmail(core) | Self::Synthetic(core) => core.stop(),
         }
     }
@@ -440,7 +339,6 @@ impl Backend {
 
 #[allow(dead_code)] // Retained solely for its Drop-based unsubscribe behavior.
 enum Subscription {
-    Fixture(mail_core::Unsubscribe),
     Gmail(mail_core::gmail::sync::GmailUnsubscribe),
 }
 
@@ -518,46 +416,21 @@ impl AppState {
     }
 }
 
-/// `EMAIL_OS_SYNTHETIC_CORE=1` opts fixture mode into the synthetic core
-/// (ADR 0002, a validation path rather than a user feature). It is ignored in
-/// every other mode. Only `1` and `0` (or empty) are accepted so a typo cannot
-/// silently pick a backend.
-fn synthetic_core_requested(
-    mode: &str,
-    value: Option<std::ffi::OsString>,
-) -> Result<bool, &'static str> {
-    if mode != "fixture" {
-        return Ok(false);
-    }
-    match value.as_deref().and_then(|v| v.to_str()) {
-        None if value.is_none() => Ok(false),
-        Some("") | Some("0") => Ok(false),
-        Some("1") => Ok(true),
-        _ => Err("EMAIL_OS_SYNTHETIC_CORE must be 1 or 0"),
-    }
-}
-
-/// Opens the fixture profile under `app_data_dir`: the legacy `MailCore` on
-/// `mail.db` by default, or (opt-in) the synthetic core on its own files in
-/// the same directory. The synthetic path never opens `mail.db`; both paths
-/// share `local-drafts` and the profile lock, so they can never run at once.
+/// Opens the fixture profile under `app_data_dir`: the synthetic core on its
+/// own files. A legacy `mail.db` in the same directory is never opened here;
+/// retiring it is the explicit, disclosed transition (`fixture_transition`).
+/// The profile lock and `local-drafts` live in the same directory, so a second
+/// writer is rejected.
 fn open_fixture_backend(
     app_data_dir: &std::path::Path,
-    synthetic_core: bool,
 ) -> Result<(Backend, std::path::PathBuf), Box<dyn std::error::Error>> {
     let profile_dir = app_data_dir.join("fixture-profile");
-    if synthetic_core {
-        let core = GmailCore::open_synthetic_profile(
-            &profile_dir,
-            mail_core::synthetic::WriteControls::from_env(),
-            Arc::new(mail_core::clock::SystemClock),
-        )?;
-        return Ok((Backend::Synthetic(core), profile_dir));
-    }
-    let core = MailCore::open(&profile_dir)?;
-    let provider: Arc<dyn mail_core::ArchiveProvider> = Arc::new(FakeArchiveProvider::from_env());
-    core.start_worker(provider)?;
-    Ok((Backend::Fixture(core), profile_dir))
+    let core = GmailCore::open_synthetic_profile(
+        &profile_dir,
+        mail_core::synthetic::WriteControls::from_env(),
+        Arc::new(mail_core::clock::SystemClock),
+    )?;
+    Ok((Backend::Synthetic(core), profile_dir))
 }
 
 fn active_account(backend: &Backend) -> Result<AccountInfo, MailError> {
@@ -665,9 +538,8 @@ async fn search_mail(
 
 #[tauri::command]
 async fn cancel_search_mail(state: State<'_, AppState>) -> Result<(), MailError> {
-    if let Backend::Gmail(core) | Backend::Synthetic(core) = &state.backend {
-        core.cancel_search_mail();
-    }
+    let (Backend::Gmail(core) | Backend::Synthetic(core)) = &state.backend;
+    core.cancel_search_mail();
     Ok(())
 }
 
@@ -751,9 +623,8 @@ async fn get_conversation(
     let backend = state.backend.clone();
     run_blocking(backend, move |backend| {
         if load_missing_search_result == Some(true) {
-            if let Backend::Gmail(core) | Backend::Synthetic(core) = &backend {
-                return core.load_search_conversation(&r#ref);
-            }
+            let (Backend::Gmail(core) | Backend::Synthetic(core)) = backend;
+            return core.load_search_conversation(&r#ref);
         }
         backend.get_conversation(&r#ref)
     })
@@ -1131,6 +1002,26 @@ async fn delete_draft(
 }
 
 #[tauri::command]
+async fn get_fixture_transition_status(
+    transition: State<'_, Arc<FixtureTransition>>,
+) -> Result<FixtureTransitionStatus, MailError> {
+    let transition = Arc::clone(&transition);
+    tauri::async_runtime::spawn_blocking(move || transition.status())
+        .await
+        .map_err(|_| storage_failure(cause::TASK_JOIN))?
+}
+
+#[tauri::command]
+async fn accept_fixture_transition(
+    transition: State<'_, Arc<FixtureTransition>>,
+) -> Result<FixtureTransitionStatus, MailError> {
+    let transition = Arc::clone(&transition);
+    tauri::async_runtime::spawn_blocking(move || transition.accept())
+        .await
+        .map_err(|_| storage_failure(cause::TASK_JOIN))?
+}
+
+#[tauri::command]
 fn get_app_close_request(state: State<'_, AppState>) -> Result<Option<AppCloseRequest>, MailError> {
     state
         .close_gate
@@ -1224,37 +1115,6 @@ mod attachment_transfer_tests {
         }
         assert_eq!(transfers.cancelled.len(), 64);
     }
-    #[test]
-    fn fixture_download_revalidates_exact_targets_and_never_opens_documents() {
-        let dir = tempfile::tempdir().unwrap();
-        let core = MailCore::open(dir.path().join("profile")).unwrap();
-        let backend = Backend::Fixture(core);
-        let target = backend.list_conversations().unwrap().conversations[0]
-            .conversation_ref
-            .clone();
-        let descriptor = backend.list_attachments(&target).unwrap().remove(0);
-        let request = SaveAttachment {
-            conversation: target,
-            message_id: descriptor.message_id,
-            attachment_id: descriptor.attachment_id,
-            request_id: "r1".into(),
-        };
-        let saved = backend
-            .download_attachment(&request, &CancelToken::default(), dir.path())
-            .unwrap();
-        assert_eq!(
-            std::fs::read(dir.path().join(saved.filename)).unwrap(),
-            b"Synthetic attachment only.\n"
-        );
-        let mut wrong = request.clone();
-        wrong.message_id = "another-message".into();
-        assert_eq!(
-            backend.download_attachment(&wrong, &CancelToken::default(), dir.path()),
-            Err(MailError::NotFound)
-        );
-        drop(backend);
-        let _ = std::fs::remove_dir_all(dir);
-    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1303,6 +1163,8 @@ pub fn run() {
             save_draft,
             delete_draft,
             get_app_close_request,
+            get_fixture_transition_status,
+            accept_fixture_transition,
             complete_app_close,
             cancel_app_close
         ])
@@ -1326,10 +1188,8 @@ pub fn run() {
                 None => "fixture".to_owned(),
             };
             let app_data_dir = app.path().app_data_dir()?;
-            let synthetic_core =
-                synthetic_core_requested(&mode, std::env::var_os("EMAIL_OS_SYNTHETIC_CORE"))?;
             let (backend, profile_dir) = match mode.as_str() {
-                "fixture" => open_fixture_backend(&app_data_dir, synthetic_core)?,
+                "fixture" => open_fixture_backend(&app_data_dir)?,
                 "gmail" => {
                     let profile_dir = app_data_dir.join("gmail-profile");
                     let provider = LiveGmailProvider::from_env(Arc::new(KeychainSecrets::new()))?;
@@ -1343,6 +1203,13 @@ pub fn run() {
                 _ => return Err("EMAIL_OS_MODE must be fixture or gmail".into()),
             };
             let drafts = DraftCore::open(profile_dir.join("local-drafts"))?;
+            // The one-time retirement of a legacy fixture database; a no-op in
+            // Gmail mode and on a fresh fixture profile.
+            app.manage(Arc::new(if mode == "fixture" {
+                FixtureTransition::new(&profile_dir)
+            } else {
+                FixtureTransition::inactive()
+            }));
 
             let handle = app.handle().clone();
             app.manage(AppState::new(backend, drafts, move || {
@@ -1385,12 +1252,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{
-        collections::BTreeSet,
-        fs,
-        sync::{mpsc, Arc},
-        time::Duration,
-    };
+    use std::{collections::BTreeSet, fs};
 
     use mail_core::testing::temp_profile as temp_dir;
 
@@ -1521,15 +1383,8 @@ mod tests {
     }
 
     #[test]
-    fn fixture_status_is_explicit_and_gmail_mutations_require_verified_access() {
-        let dir = temp_dir("status");
-        let fixture = MailCore::open(&dir).unwrap();
-        let backend = Backend::Fixture(fixture);
-        let status = backend.account_status().unwrap();
-        assert_eq!(status.mode, MailMode::Fixture);
-        assert_eq!(status.sync.coverage_limit, 0);
-        // The Gmail variant cannot dispatch to the fixture archive core; this
-        // construction-level guard is covered without real credentials/network.
+    fn gmail_mutations_require_verified_access() {
+        // Construction-level guard, covered without real credentials/network.
         let provider = mail_core::testing::operations_fake::FakeProvider::new(false);
         provider.set_configured(false);
         provider.set_credentials(false);
@@ -1587,264 +1442,6 @@ mod tests {
         gmail.stop();
         let _ = std::fs::remove_dir_all(dir);
     }
-
-    #[test]
-    fn fixture_reminder_bridge_preserves_exact_source_and_account_gate() {
-        let dir = temp_dir("reminders");
-        let core = MailCore::open(&dir).unwrap();
-        let backend = Backend::Fixture(core);
-        let target = ConversationRef {
-            account_id: ACCOUNT_ID.into(),
-            conversation_id: "conv-01".into(),
-        };
-        let detail = backend.get_conversation(&target).unwrap();
-        let mut command = PutReminder {
-            conversation: target,
-            source_message_id: detail.messages.last().unwrap().id.clone(),
-            due_at: None,
-            condition: mail_core::reminders::ReminderCondition::IfNoReply,
-            expected_revision: None,
-            request_id: "bridge-reminder".into(),
-        };
-        let receipt = backend.put_reminder(&command).unwrap();
-        assert_eq!(backend.put_reminder(&command).unwrap(), receipt);
-        assert_eq!(backend.list_reminders().unwrap(), vec![receipt]);
-        command.conversation.account_id = "foreign".into();
-        assert_eq!(backend.put_reminder(&command), Err(MailError::NotFound));
-        backend.stop();
-        drop(backend);
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn fixture_rejects_gmail_only_mailbox_commands() {
-        // UX-08 stays fail-closed on the legacy archive-only fixture backend.
-        let dir = temp_dir("fixture-gmail-actions");
-        let core = MailCore::open(&dir).unwrap();
-        let backend = Backend::Fixture(core);
-        let target = ConversationRef {
-            account_id: ACCOUNT_ID.into(),
-            conversation_id: "conv-01".into(),
-        };
-        assert_eq!(
-            backend.set_starred(&mail_core::stars::SetStarred {
-                conversation: target.clone(),
-                starred: true,
-                request_id: "star-disabled".into()
-            }),
-            Err(MailError::ReadOnly)
-        );
-        assert_eq!(
-            backend.set_starred_group(&mail_core::stars::SetStarredGroup {
-                account_id: ACCOUNT_ID.into(),
-                members: vec![target],
-                starred: true,
-                request_id: "group-star-disabled".into()
-            }),
-            Err(MailError::ReadOnly)
-        );
-        assert_eq!(
-            backend.list_cached_starred(&CachedDoneRequest {
-                account_id: ACCOUNT_ID.into(),
-                limit: 100,
-                cursor: None
-            }),
-            Err(MailError::ReadOnly)
-        );
-        let mode_error = MailError::InvalidRequest {
-            field: "mode".to_owned(),
-        };
-        assert_eq!(
-            backend.list_cached_trash(&CachedTrashRequest {
-                account_id: ACCOUNT_ID.into(),
-                limit: 50,
-                cursor: None,
-            }),
-            Err(mode_error.clone())
-        );
-        assert_eq!(backend.enable_mailbox_actions(), Err(mode_error.clone()));
-        assert_eq!(
-            backend.cancel_mailbox_action_upgrade(),
-            Err(mode_error.clone())
-        );
-        assert_eq!(
-            backend.set_read(&SetRead {
-                conversation: ConversationRef {
-                    account_id: ACCOUNT_ID.into(),
-                    conversation_id: "conv-01".into(),
-                },
-                read: true,
-                request_id: "fixture-read".into(),
-            }),
-            Err(mode_error.clone())
-        );
-        assert_eq!(
-            backend.retry_operation(&RetryOperation {
-                operation_id: "fixture-operation".into(),
-                request_id: "fixture-retry".into(),
-            }),
-            Err(mode_error)
-        );
-        // Undo is NOT Gmail-only: the fixture backend forwards it, so an
-        // unknown operation fails typed as not found rather than as a mode
-        // rejection.
-        assert_eq!(
-            backend.undo_operation(&mail_core::dto::UndoOperation {
-                operation_id: "fixture-operation".into(),
-                request_id: "fixture-undo".into(),
-            }),
-            Err(MailError::NotFound)
-        );
-        backend.stop();
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn saved_split_bridge_coexists_with_gmail_only_star_surface() {
-        let dir = temp_dir("split-stars");
-        let backend = Backend::Fixture(MailCore::open(&dir).unwrap());
-        let split = mail_core::splits::SavedSplit {
-            name: "Clients".into(),
-            criterion: mail_core::splits::SplitCriterion::Domain,
-            value: "example.test".into(),
-            enabled: true,
-            hide_when_empty: false,
-        };
-        assert_eq!(backend.get_saved_split(ACCOUNT_ID).unwrap(), None);
-        assert_eq!(backend.save_saved_split(ACCOUNT_ID, &split).unwrap(), split);
-        assert_eq!(backend.get_saved_split(ACCOUNT_ID).unwrap(), Some(split));
-        assert_eq!(backend.get_saved_split("foreign"), Err(MailError::NotFound));
-        assert_eq!(
-            backend.set_starred(&mail_core::stars::SetStarred {
-                conversation: ConversationRef {
-                    account_id: ACCOUNT_ID.into(),
-                    conversation_id: "conv-01".into()
-                },
-                starred: true,
-                request_id: "split-star-unsupported".into(),
-            }),
-            Err(MailError::ReadOnly)
-        );
-        backend.stop();
-        drop(backend);
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn draft_scope_uses_backend_account_and_session_epoch_invalidates_reply_reads() {
-        let dir = temp_dir("draft-scope");
-        let core = MailCore::open(&dir).unwrap();
-        let backend = Backend::Fixture(core.clone());
-        let account = active_account(&backend).unwrap();
-        assert_eq!(account.account_id, ACCOUNT_ID);
-        assert_eq!(account.email_address, mail_core::FIXTURE_MAILBOX);
-        assert_eq!(
-            require_draft_account(
-                &account,
-                &DraftRef {
-                    account_id: "untrusted-other-account".into(),
-                    draft_id: "draft-id".into(),
-                }
-            ),
-            Err(MailError::NotFound)
-        );
-        assert_eq!(
-            require_draft_account(
-                &account,
-                &DraftRef {
-                    account_id: account.account_id.clone(),
-                    draft_id: "draft-id".into(),
-                }
-            ),
-            Ok(())
-        );
-
-        let mut lifecycle = DraftLifecycle::default();
-        let before_disconnect = lifecycle.session_epoch;
-        assert!(lifecycle.is_current(before_disconnect));
-        lifecycle.advance();
-        assert!(!lifecycle.is_current(before_disconnect));
-        assert!(lifecycle.is_current(lifecycle.session_epoch));
-        core.stop_worker();
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn fixture_state_keeps_forwarding_after_command_acceptance() {
-        let dir = temp_dir("events");
-        let core = MailCore::open(&dir).unwrap();
-        let (tx, rx) = mpsc::channel();
-        let drafts = DraftCore::open(dir.path().join("local-drafts")).unwrap();
-        let state = AppState::new(Backend::Fixture(core), drafts, move || {
-            let _ = tx.send(());
-        });
-        let provider = Arc::new(FakeArchiveProvider::new());
-        provider.set_paused(true);
-        if let Backend::Fixture(core) = &state.backend {
-            core.start_worker(provider.clone()).unwrap();
-        }
-        let receipt = state
-            .backend
-            .set_archived(&SetArchived {
-                conversation: ConversationRef {
-                    account_id: ACCOUNT_ID.into(),
-                    conversation_id: "conv-01".into(),
-                },
-                archived: true,
-                request_id: "bridge-test".into(),
-            })
-            .unwrap();
-        rx.recv_timeout(Duration::from_secs(2))
-            .expect("acceptance event");
-        assert!(provider.wait_for_calls(1, Duration::from_secs(2)));
-        provider.resume();
-        rx.recv_timeout(Duration::from_secs(2))
-            .expect("completion event");
-        let snapshot = state.backend.list_conversations().unwrap();
-        assert!(snapshot.activity.iter().any(|op| {
-            op.id == receipt.operation_id && op.status == mail_core::dto::OperationStatus::Confirmed
-        }));
-        assert_eq!(
-            state.backend.list_provider_destinations(ACCOUNT_ID, false),
-            Err(MailError::ReadOnly)
-        );
-        assert_eq!(
-            state
-                .backend
-                .browse_provider_destination(&DestinationRequest {
-                    account_id: ACCOUNT_ID.into(),
-                    destination_id: "SENT".into(),
-                    cursor: None,
-                    cached: false,
-                }),
-            Err(MailError::ReadOnly)
-        );
-        let request = CachedDoneRequest {
-            account_id: ACCOUNT_ID.into(),
-            limit: 10,
-            cursor: None,
-        };
-        let done = state.backend.list_cached_done(&request).unwrap();
-        assert!(done
-            .conversations
-            .iter()
-            .any(|row| row.conversation_ref.conversation_id == "conv-01"));
-        assert_eq!(done.exact_total, None);
-        assert_eq!(
-            done.coverage,
-            mail_core::dto::CachedDoneCoverage::LocalCache
-        );
-        assert_eq!(
-            state.backend.list_cached_done(&CachedDoneRequest {
-                account_id: "foreign".into(),
-                ..request
-            }),
-            Err(MailError::NotFound)
-        );
-        state.backend.stop();
-        drop(state);
-        let _ = std::fs::remove_dir_all(dir);
-    }
 }
 
 /// Native bridge tests for the opt-in synthetic core (ADR 0002 stage 3): the
@@ -1881,73 +1478,6 @@ mod synthetic_bridge_tests {
         MailError::InvalidRequest {
             field: "mode".to_owned(),
         }
-    }
-
-    #[test]
-    fn opt_in_parsing_is_strict_and_ignored_outside_fixture_mode() {
-        let env = |v: &str| Some(std::ffi::OsString::from(v));
-        assert_eq!(synthetic_core_requested("fixture", None), Ok(false));
-        assert_eq!(synthetic_core_requested("fixture", env("")), Ok(false));
-        assert_eq!(synthetic_core_requested("fixture", env("0")), Ok(false));
-        assert_eq!(synthetic_core_requested("fixture", env("1")), Ok(true));
-        assert!(synthetic_core_requested("fixture", env("yes")).is_err());
-        assert!(synthetic_core_requested("fixture", env("true")).is_err());
-        // Ignored entirely in Gmail mode, even when malformed.
-        assert_eq!(synthetic_core_requested("gmail", env("1")), Ok(false));
-        assert_eq!(synthetic_core_requested("gmail", env("junk")), Ok(false));
-    }
-
-    #[test]
-    fn default_path_is_the_legacy_core_and_the_opt_in_never_opens_mail_db() {
-        let dir = temp_profile("synthetic-launch");
-        // Default: legacy MailCore on mail.db, no synthetic files.
-        let (backend, profile) = open_fixture_backend(dir.path(), false).unwrap();
-        assert!(matches!(backend, Backend::Fixture(_)));
-        assert!(profile.join("mail.db").exists());
-        assert!(!profile.join("synthetic-provider.db").exists());
-        assert!(!profile.join("gmail.db").exists());
-        backend.stop();
-        drop(backend);
-        let legacy_bytes = std::fs::read(profile.join("mail.db")).unwrap();
-
-        // Opt-in on the same profile: own files; mail.db is not touched.
-        let drafts = profile.join("local-drafts");
-        std::fs::create_dir_all(&drafts).unwrap();
-        std::fs::write(drafts.join("marker"), b"keep").unwrap();
-        let (backend, _) = open_fixture_backend(dir.path(), true).unwrap();
-        assert!(matches!(backend, Backend::Synthetic(_)));
-        assert!(profile.join("synthetic-provider.db").exists());
-        assert!(profile.join("gmail.db").exists());
-        assert_eq!(
-            std::fs::read(profile.join("mail.db")).unwrap(),
-            legacy_bytes
-        );
-        assert!(!profile.join("mail.db-wal").exists());
-        assert_eq!(std::fs::read(drafts.join("marker")).unwrap(), b"keep");
-        // The two cores share the profile lock: never both, in either order.
-        assert!(matches!(
-            open_fixture_backend(dir.path(), false),
-            Err(e) if e.to_string().contains("another writer")
-        ));
-        backend.stop();
-    }
-
-    #[test]
-    fn profile_lock_is_taken_before_the_synthetic_provider_creates_files() {
-        let dir = temp_profile("synthetic-lock-first");
-        let profile = dir.path().join("fixture-profile");
-        let legacy = MailCore::open(&profile).unwrap();
-        assert!(matches!(
-            GmailCore::open_synthetic_profile(
-                &profile,
-                WriteControls::default(),
-                Arc::new(mail_core::clock::SystemClock)
-            ),
-            Err(MailError::ProfileInUse)
-        ));
-        assert!(!profile.join("synthetic-provider.db").exists());
-        assert!(!profile.join("gmail.db").exists());
-        legacy.stop_worker();
     }
 
     #[test]
@@ -2122,6 +1652,13 @@ mod synthetic_bridge_tests {
             backend.load_reply_context(&conv("conv-02"), "an-older-message"),
             Err(MailError::ReplyUnavailable)
         );
+        // A session change invalidates reply reads (backend-independent).
+        let mut lifecycle = DraftLifecycle::default();
+        let before = lifecycle.session_epoch;
+        assert!(lifecycle.is_current(before));
+        lifecycle.advance();
+        assert!(!lifecycle.is_current(before));
+        assert!(lifecycle.is_current(lifecycle.session_epoch));
         backend.stop();
     }
 
@@ -2280,6 +1817,103 @@ mod synthetic_bridge_tests {
             1,
             "only the one download"
         );
+        backend.stop();
+    }
+
+    const LEGACY_MAIL_DB: &[u8] =
+        include_bytes!("../../crates/mail-core/tests/fixtures/legacy-fixture-profile/mail.db");
+
+    #[test]
+    fn the_default_is_the_synthetic_core_and_a_legacy_mail_db_is_never_opened() {
+        let dir = temp_profile("synthetic-default");
+        let profile = dir.path().join("fixture-profile");
+        std::fs::create_dir_all(&profile).unwrap();
+        std::fs::write(profile.join("mail.db"), LEGACY_MAIL_DB).unwrap();
+        let (backend, opened) = open_fixture_backend(dir.path()).unwrap();
+        assert!(matches!(backend, Backend::Synthetic(_)));
+        assert_eq!(opened, profile);
+        assert!(profile.join("synthetic-provider.db").exists());
+        assert!(profile.join("gmail.db").exists());
+        assert_eq!(
+            std::fs::read(profile.join("mail.db")).unwrap(),
+            LEGACY_MAIL_DB
+        );
+        assert!(!profile.join("mail.db-wal").exists() && !profile.join("mail.db-shm").exists());
+        // The fixture profile has a single writer.
+        assert!(matches!(
+            open_fixture_backend(dir.path()),
+            Err(error) if error.to_string().contains("another writer")
+        ));
+        backend.stop();
+    }
+
+    /// The real startup order: the synthetic core is open (new files), then the
+    /// disclosed transition retires the legacy database beside it. Drafts keep
+    /// their account and their conversation/message references.
+    #[test]
+    fn retiring_the_legacy_database_beside_a_live_core_keeps_drafts_and_the_core_working() {
+        let dir = temp_profile("synthetic-transition");
+        let profile = dir.path().join("fixture-profile");
+        std::fs::create_dir_all(&profile).unwrap();
+        std::fs::write(profile.join("mail.db"), LEGACY_MAIL_DB).unwrap();
+        let (backend, _) = open_fixture_backend(dir.path()).unwrap();
+
+        // A reply draft written under the legacy backend (same account, same IDs).
+        let drafts = DraftCore::open(profile.join("local-drafts")).unwrap();
+        let account = active_account(&backend).unwrap();
+        let detail = backend.get_conversation(&conv("conv-01")).unwrap();
+        let source = detail.messages.last().unwrap().id.clone();
+        let receipt = drafts
+            .create_draft(
+                &account,
+                &mail_core::drafts::types::CreateDraft {
+                    request_id: "legacy-draft".into(),
+                    source: DraftSource::Reply {
+                        conversation: conv("conv-01"),
+                        source_message_id: source.clone(),
+                    },
+                    initial_content: None,
+                },
+                Some(&detail),
+            )
+            .unwrap();
+        let draft_files: Vec<_> = std::fs::read_dir(profile.join("local-drafts"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+
+        let transition = FixtureTransition::new(&profile);
+        assert_eq!(
+            transition.status().unwrap().state,
+            mail_core::fixture_transition::FixtureTransitionState::NeedsDisclosure
+        );
+        let done = transition.accept().unwrap();
+        assert_eq!(
+            done.state,
+            mail_core::fixture_transition::FixtureTransitionState::Done
+        );
+        assert!(!profile.join("mail.db").exists());
+        assert_eq!(
+            std::fs::read_dir(profile.join("backups")).unwrap().count(),
+            1
+        );
+
+        // The core never noticed; drafts and their references are intact.
+        assert_eq!(
+            backend.account_status().unwrap().sync.cached_conversations,
+            18
+        );
+        let again: Vec<_> = std::fs::read_dir(profile.join("local-drafts"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(draft_files, again, "local-drafts untouched");
+        let draft = drafts.get_draft(&account, &receipt.draft_ref).unwrap();
+        assert_eq!(draft.revision, receipt.revision);
+        let reply = backend
+            .load_reply_context(&conv("conv-01"), &source)
+            .unwrap();
+        assert_eq!(reply.reply_context.unwrap().source_message_id, source);
         backend.stop();
     }
 }

@@ -141,8 +141,8 @@ export function countingClient(inner: MailClient): CountingClient {
  */
 export function accountMethods(
   inner: MailClient,
-): Pick<MailClient, 'listAttachments' | 'saveAttachment' | 'cancelAttachment' | 'openExternalLink' | 'getSavedSplit' | 'saveSavedSplit' | 'searchMail' | 'cancelSearchMail' | 'listProviderDestinations' | 'browseProviderDestination' | 'listCachedTrash' | 'listCachedDone' | 'getAccountStatus' | 'connectAccount' | 'disconnectAccount' | 'requestSync' | 'enableMailboxActions' | 'cancelMailboxActionUpgrade' | 'setRead' | 'retryOperation' | 'undoOperation' | 'listDrafts' | 'getDraft' | 'createDraft' | 'saveDraft' | 'deleteDraft' | 'subscribeDrafts' | 'subscribeAppClose' | 'completeAppClose' | 'cancelAppClose' | 'reminders'> {
-  return delegateMethods(inner, ['listAttachments', 'saveAttachment', 'cancelAttachment', 'openExternalLink', 'getSavedSplit', 'saveSavedSplit', 'searchMail', 'cancelSearchMail', 'listProviderDestinations', 'browseProviderDestination', 'listCachedTrash', 'listCachedDone', 'getAccountStatus', 'connectAccount', 'disconnectAccount', 'requestSync', 'enableMailboxActions', 'cancelMailboxActionUpgrade', 'setRead', 'retryOperation', 'undoOperation', 'listDrafts', 'getDraft', 'createDraft', 'saveDraft', 'deleteDraft', 'subscribeDrafts', 'subscribeAppClose', 'completeAppClose', 'cancelAppClose']);
+): Pick<MailClient, 'listAttachments' | 'saveAttachment' | 'cancelAttachment' | 'openExternalLink' | 'getSavedSplit' | 'saveSavedSplit' | 'searchMail' | 'cancelSearchMail' | 'listProviderDestinations' | 'browseProviderDestination' | 'listCachedTrash' | 'listCachedDone' | 'getAccountStatus' | 'getFixtureTransitionStatus' | 'acceptFixtureTransition' | 'connectAccount' | 'disconnectAccount' | 'requestSync' | 'enableMailboxActions' | 'cancelMailboxActionUpgrade' | 'setRead' | 'retryOperation' | 'undoOperation' | 'listDrafts' | 'getDraft' | 'createDraft' | 'saveDraft' | 'deleteDraft' | 'subscribeDrafts' | 'subscribeAppClose' | 'completeAppClose' | 'cancelAppClose' | 'reminders'> {
+  return delegateMethods(inner, ['listAttachments', 'saveAttachment', 'cancelAttachment', 'openExternalLink', 'getSavedSplit', 'saveSavedSplit', 'searchMail', 'cancelSearchMail', 'listProviderDestinations', 'browseProviderDestination', 'listCachedTrash', 'listCachedDone', 'getAccountStatus', 'getFixtureTransitionStatus', 'acceptFixtureTransition', 'connectAccount', 'disconnectAccount', 'requestSync', 'enableMailboxActions', 'cancelMailboxActionUpgrade', 'setRead', 'retryOperation', 'undoOperation', 'listDrafts', 'getDraft', 'createDraft', 'saveDraft', 'deleteDraft', 'subscribeDrafts', 'subscribeAppClose', 'completeAppClose', 'cancelAppClose']);
 }
 
 export function fixtureRef(conversationId: string): ConversationRef {
@@ -446,6 +446,8 @@ export function createSixConversationClient(): SixConversationClient {
       account: { accountId, emailAddress: 'six@example.test' },
       sync: { state: 'idle', lastSyncedAt: SIX_NOW, error: null, cachedConversations: 6, initialSyncComplete: true, coverageLimit: 0 },
     }),
+    getFixtureTransitionStatus: () => Promise.resolve({ state: 'not_needed' }),
+    acceptFixtureTransition: () => Promise.resolve({ state: 'not_needed' }),
     connectAccount: () => Promise.resolve(),
     disconnectAccount: () => Promise.resolve(),
     requestSync: () => Promise.resolve(),

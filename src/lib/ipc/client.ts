@@ -25,6 +25,7 @@ import type {
   CachedTrashSnapshot,
   AccountStatus,
   AppCloseRequest,
+  FixtureTransitionStatus,
   Conversation,
   ConversationRef,
   CreateDraft,
@@ -71,6 +72,9 @@ export type {
   CachedTrashSnapshot,
   AccountStatus,
   SessionCapabilities,
+  FixtureTransitionFailure,
+  FixtureTransitionState,
+  FixtureTransitionStatus,
   AppCloseRequest,
   GetOperationGroupRequest,
   GroupMemberReceipt,
@@ -142,6 +146,8 @@ export {
   CONNECT_ACCOUNT_COMMAND,
   DISCONNECT_ACCOUNT_COMMAND,
   GET_ACCOUNT_STATUS_COMMAND,
+  GET_FIXTURE_TRANSITION_STATUS_COMMAND,
+  ACCEPT_FIXTURE_TRANSITION_COMMAND,
   GET_CONVERSATION_COMMAND,
   LIST_CONVERSATIONS_COMMAND,
   LIST_CACHED_DONE_COMMAND,
@@ -249,6 +255,17 @@ export interface MailClient {
   subscribe(listener: () => void): Promise<() => void>;
   /** Authoritative fixture-vs-Gmail mode and connection/sync state. */
   getAccountStatus(): Promise<AccountStatus>;
+  /**
+   * One-time retirement of a legacy fixture database (ADR 0002 stage 4): where
+   * the startup gate stands. `not_needed` and `done` clear the gate.
+   */
+  getFixtureTransitionStatus(): Promise<FixtureTransitionStatus>;
+  /**
+   * The user accepted the disclosed reset: back up, verify, retire. Resolves
+   * with the resulting status; a failure is a `failed` status (nothing lost),
+   * not a rejection.
+   */
+  acceptFixtureTransition(): Promise<FixtureTransitionStatus>;
   /** Enqueues a connect (OAuth) attempt; resolves on acceptance, not on success. */
   connectAccount(): Promise<void>;
   /** Resolves only after credentials and local account/cache data are cleared. */

@@ -22,6 +22,9 @@ use mail_core::dto::{
     UndoOutcome, UndoReceipt, UndoUnavailableReason,
 };
 use mail_core::error::MailError;
+use mail_core::fixture_transition::{
+    FixtureTransitionFailure, FixtureTransitionState, FixtureTransitionStatus,
+};
 use mail_core::gmail::browsing::{
     DestinationCatalog, DestinationPage, DestinationRequest, ProviderDestination,
 };
@@ -121,6 +124,9 @@ fn declarations() -> Vec<String> {
         SyncInfo::decl(),
         MutationAccess::decl(),
         SessionCapabilities::decl(),
+        FixtureTransitionState::decl(),
+        FixtureTransitionFailure::decl(),
+        FixtureTransitionStatus::decl(),
         AccountStatus::decl(),
         ReplyContext::decl(),
         DraftRef::decl(),
@@ -197,6 +203,14 @@ const IPC_NAMES: &[(&str, &str)] = &[
     ("DRAFTS_CHANGED_EVENT", "drafts_changed"),
     ("APP_CLOSE_REQUESTED_EVENT", "app_close_requested"),
     ("GET_APP_CLOSE_REQUEST_COMMAND", "get_app_close_request"),
+    (
+        "GET_FIXTURE_TRANSITION_STATUS_COMMAND",
+        "get_fixture_transition_status",
+    ),
+    (
+        "ACCEPT_FIXTURE_TRANSITION_COMMAND",
+        "accept_fixture_transition",
+    ),
     ("COMPLETE_APP_CLOSE_COMMAND", "complete_app_close"),
     ("CANCEL_APP_CLOSE_COMMAND", "cancel_app_close"),
 ];

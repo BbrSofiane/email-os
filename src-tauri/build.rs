@@ -41,6 +41,8 @@ fn main() {
         "save_draft",
         "delete_draft",
         "get_app_close_request",
+        "get_fixture_transition_status",
+        "accept_fixture_transition",
         "complete_app_close",
         "cancel_app_close",
     ]);

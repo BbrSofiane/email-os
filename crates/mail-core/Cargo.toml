@@ -32,6 +32,9 @@ tempfile = { version = "3", optional = true }
 tempfile = "3"
 mail_core = { package = "mail-core", path = ".", features = ["test-support"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", default-features = false, features = ["apple-native"] }
 

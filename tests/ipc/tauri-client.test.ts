@@ -73,6 +73,20 @@ describe('Tauri draft and close protocol adapter', () => {
     await expect(client.listCachedStarred(request)).rejects.toEqual({kind:'storage_unavailable'});
   });
 
+  it('transports the one-time fixture transition with exact named commands and no arguments', async () => {
+    const client = createTauriMailClient();
+    const needs = { state: 'needs_disclosure', legacyMegabytes: 3 };
+    mocks.invoke.mockResolvedValue(needs);
+    expect(await client.getFixtureTransitionStatus()).toBe(needs);
+    expect(mocks.invoke).toHaveBeenLastCalledWith('get_fixture_transition_status', undefined);
+    const done = { state: 'done' };
+    mocks.invoke.mockResolvedValue(done);
+    expect(await client.acceptFixtureTransition()).toBe(done);
+    expect(mocks.invoke).toHaveBeenLastCalledWith('accept_fixture_transition', undefined);
+    mocks.invoke.mockRejectedValue(new Error('lost bridge'));
+    await expect(client.acceptFixtureTransition()).rejects.toEqual({ kind: 'storage_unavailable' });
+  });
+
   it('transports the account-scoped local split without invoking mailbox mutations', async () => {
     const client = createTauriMailClient();
     const split = { name: 'Clients', criterion: 'domain' as const, value: 'example.com', enabled: true, hideWhenEmpty: true };
