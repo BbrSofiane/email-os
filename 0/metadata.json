@@ -1,0 +1,37 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7E6PZXH45YAVWERXYHCRP17",
+  "session_id": "5d0bff72-6561-427d-8886-987008a34c7a",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-14T23:36:37.394639295Z",
+  "branch": "maintenance/p4c-thin-shell",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src-tauri/src/lib.rs"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "9c62c1783643",
+  "checkpoint_transcript_start": 235,
+  "transcript_lines_at_start": 235,
+  "compact_transcript_start": 31,
+  "token_usage": {
+    "input_tokens": 14,
+    "cache_creation_tokens": 11794,
+    "cache_read_tokens": 1095203,
+    "output_tokens": 6024,
+    "api_call_count": 7
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-14T23:36:37.346029565Z",
+    "agent_lines": 208,
+    "agent_removed": 531,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 208,
+    "total_lines_changed": 739,
+    "agent_percentage": 100,
+    "metric_version": 2
+  }
+}
