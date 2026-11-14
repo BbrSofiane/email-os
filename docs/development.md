@@ -639,6 +639,100 @@ They do not validate macOS WKWebView/IME, Keychain prompts, system browser
 launch, loopback OAuth interaction, or Google TLS behavior. Keep those Mac gates
 separate. No sandbox or app security setting needs to be disabled for capture.
 
+## Contract scenarios
+
+The frontend runs against two implementations of one IPC contract: the Rust
+core behind Tauri and `src/lib/ipc/browser-fake.ts`. Scenario files under
+`tests/fixtures/contract-scenarios/` pin the operation-ledger semantics
+(acceptance, idempotent replay, undo, groups, typed errors) for both. The Rust
+core is the source of truth; the fake must agree with it.
+
+| Runner | Runs the files against |
+|---|---|
+| `crates/mail-core/tests/contract_scenarios.rs` (`cargo test -p mail-core --test contract_scenarios`) | profile `gmail`: `GmailCore` with the shared scripted `mail_core::testing` fake provider and `FakeClock`; profile `fixture`: the archive-only fixture `MailCore` with `FakeArchiveProvider` and `FakeClock` |
+| `tests/browser-fake/contract-scenarios.test.ts` (`pnpm vitest run tests/browser-fake/contract-scenarios.test.ts`) | the browser fake in its `gmail` mode and its `fixture` mode, with an injected clock |
+
+A scenario names the profiles it applies to. Archive-only scenarios list both and
+are the parity evidence for replacing the fixture backend; setters the fixture
+does not implement (read, star, retry, read/star groups) list `gmail` only, and
+`fixture-rejects-unsupported-commands` pins what the fixture rejects.
+
+### File format
+
+`mailboxes.json` holds named starting mailboxes; each scenario file is one JSON object:
+
+```json
+{
+  "scenario": "undo-rejected-after-the-window",
+  "description": "...", "rules": "docs/ux-04 §3.2 rule 3",
+  "profiles": ["gmail", "fixture"],
+  "mailbox": "triage",
+  "steps": [
+    { "name": "archive conv-01",
+      "do": { "cmd": "setArchived", "args": { "conversation": "conv-01", "archived": true, "requestId": "req-1" } },
+      "expect": { "ok": { "operationId": "$A", "acceptedAt": "@+0" },
+                  "snapshot": { "inbox": ["conv-05", "conv-04", "conv-03", "conv-02"],
+                                "activity": [ { "id": "$A", "status": "confirmed", "undoableUntil": "@+10" } ] } } },
+    { "name": "clock reaches the deadline", "do": { "advance": 10 }, "expect": {} },
+    { "name": "undo is expired", "do": { "cmd": "undoOperation", "args": { "operationId": "$A", "requestId": "req-2" } },
+      "expect": { "error": { "kind": "undo_unavailable", "reason": "expired" } } }
+  ]
+}
+```
+
+* **mailbox**: a name from `mailboxes.json` or an inline object of conversations,
+  each with messages `{id, sentAt, inInbox, unread, starred?}` (`starred` omitted
+  means the fact was never observed). The fixture backend cannot be seeded, so a
+  mailbox used with profile `fixture` must be a faithful subset of
+  `crates/mail-core/src/seed.rs`; the fixture runner asserts that before the first step.
+* **steps** run in order. `do` is one of `{cmd, args}` (a `MailClient` method with
+  its wire arguments), `{advance: seconds}` (the backend's fake clock) or
+  `{provider: mode}`:
+  `hold_queued` (the worker does not claim work, so it stays `queued`; on the
+  fixture only before its first command), `hold_applying` (the worker claims an
+  operation and the provider call blocks, so it stays `applying` and later work
+  stays `queued`), `reject_next` (the next single provider call is definitely
+  rejected; follow it with exactly one command step whose snapshot shows the
+  failure), `release` (end holds). There is no real waiting anywhere.
+* **expect**: `ok` or `error` (exactly one, for `cmd` steps) is compared with the
+  command's JSON result or typed `MailError`; `snapshot` is compared with
+  `listConversations()` after the asynchronous worker has settled (the runners
+  observe until it matches, bounded, then report what they saw). A successful
+  mutating step must declare `snapshot` so the next step never races the worker.
+* **Matching** is by subset: every key written in `expect` must match; `null`
+  matches `null` or an absent key; arrays match item for item and length for
+  length; `{"$length": n, "$each": {...}}` checks an array's length and every
+  item. `snapshot.inbox` is shorthand for the ordered `conversations` list and
+  both runners first restrict the snapshot to the scenario's declared
+  conversations (the fixture seed holds other mail).
+* **Symbolic ids**: values that legitimately differ per implementation (operation
+  ids, group ids) are written `$name`. In `expect` the first appearance binds the
+  name, every later appearance must equal it, and two names may never bind the
+  same value; in `args` `$name` is replaced by the bound value. Timestamps are
+  written `@+N`, meaning N seconds after the scenario clock start
+  (`2026-02-01T00:00:00Z`), and are compared exactly in those terms. Everything
+  else is compared exactly.
+* **Argument shorthand**: a string `conversation` or group member is a ref in the
+  backend's own account, `{"account": "other", "id": "conv-01"}` names another
+  account, `"members": {"generate": {"prefix": "bulk-", "count": 101}}` expands to
+  `bulk-001`..`bulk-101`, and `accountId` defaults to the backend's account.
+  `kind` is deliberately not asserted for archive steps in shared scenarios: the
+  fixture reports legacy archive operations without a `kind`.
+
+### Adding a scenario
+
+1. Write `tests/fixtures/contract-scenarios/<name>.json`, naming the rule it
+   proves (a doc section or an existing Rust test) in `rules`. Take expectations
+   from the docs and the Rust tests, not from the fake.
+2. Run the Rust runner first. If both Rust backends listed in `profiles` pass, run
+   the Vitest runner. If a Rust backend disagrees with the docs, stop and report;
+   do not bend the scenario to the fake.
+3. If the fake fails: fix the fake when the fix is small and local; otherwise add a
+   named entry to `KNOWN_DIVERGENCES` in `tests/browser-fake/contract-scenarios.test.ts`
+   (or the Rust table in `contract_scenarios.rs`). A known divergence is still
+   executed and must FAIL; the run fails when it starts passing, so entries cannot rot silently.
+4. A new command or provider mode must be added to both runners in the same change.
+
 ## Fixture data
 
 Fixture mode uses only synthetic `fixture-account`, `conv-01`…`conv-18` rows,
