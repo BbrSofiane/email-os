@@ -15,7 +15,7 @@
  * pane; the contact pane shows only exact known fields.
  *
  * Keyboard contract: this comment is a short index. The action catalog in
- * `src/lib/browsing-actions.ts` and `onKeydown` below define the full contract.
+ * `src/lib/action-registry.ts` and `onKeydown` below define the full contract.
  * - j/k and Arrow keys navigate; Enter opens; Escape returns/closes.
  * - / opens search; e archives, Shift+E restores, s toggles stars,
  *   r prepares a local reply,

@@ -1,13 +1,7 @@
-import { actionAliases, actionGroupOf, actionGroups, keyHints, type ActionGroup, type KeyHint, type KeyHintScope } from './action-registry';
-
 /**
- * Presentation helpers for the command palette. The facts (group, aliases, the
- * keys that are not commands) are declared once in action-registry.ts; these
- * are the same shapes the palette has always read, derived from it.
+ * Pure helpers for the command palette's search and shortcut text. What the
+ * commands are (groups, aliases, keys, glyphs) is declared in action-registry.ts.
  */
-export type { ActionGroup, KeyHint };
-export { actionAliases, actionGroupOf, actionGroups, keyHints };
-export type KeyScope = KeyHintScope;
 
 /** Strips a trailing parenthetical from a shortcut hint, e.g. "G then E (note)" → "G then E". */
 export function compactShortcut(shortcut: string): string {

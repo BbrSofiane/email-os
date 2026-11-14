@@ -5,9 +5,9 @@ import { defineComponent, h } from 'vue';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 
 import ComposeCard from "../../src/components/ComposeCard.vue";
-import { browsingActions } from "../../src/lib/browsing-actions";
+import { actionAliases, actionGroupOf, actionRegistry } from "../../src/lib/action-registry";
 import { REPLY_REASONS, sourceLoadErrorReason } from "../../src/lib/reply-context";
-import { actionAliases, actionGroupOf, matchesQuery } from "../../src/lib/action-palette";
+import { matchesQuery } from "../../src/lib/action-palette";
 import { createBrowserFakeMailClient, deferred, type BrowserFake, mountApp as sharedMountApp, press } from "../helpers";
 import { advanceUiUntil, useUiTestClock } from "../support/timers";
 import type { DraftContent, DraftReceipt, MailClient } from "../../src/lib/ipc/client";
@@ -195,7 +195,7 @@ describe("ComposeCard inline new-message card", () => {
 
 describe("compose palette metadata", () => {
   it('registers compose in the conversation group with aliases and the C key', () => {
-    const compose = browsingActions.find((action) => action.id === 'compose');
+    const compose = actionRegistry.find((action) => action.id === 'compose');
     expect(compose).toBeDefined();
     expect(compose?.label).toBe('Compose new local draft');
     expect(compose?.shortcut).toBe('C');

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
-import type { AvailableAction, BrowsingActionId } from '../lib/browsing-actions';
-import { actionAliases, actionGroupOf, actionGroups, compactShortcut, keyHints, matchesQuery, type KeyScope } from '../lib/action-palette';
+import { actionAliases, actionGroupOf, actionGroups, keyHints, type ActionId, type AvailableAction, type KeyHintScope } from '../lib/action-registry';
+import { compactShortcut, matchesQuery } from '../lib/action-palette';
 import CommandGlyph from './CommandGlyph.vue';
 const props = withDefaults(defineProps<{
   kind: 'palette' | 'navigator';
@@ -15,9 +15,9 @@ const props = withDefaults(defineProps<{
   /** False when the list has no rows: J/K, X and Shift+J/K then have nothing to act on. */
   rowKeys?: boolean;
   /** The list context that owns the context-scoped key hints. */
-  keyScope?: KeyScope;
+  keyScope?: KeyHintScope;
 }>(), { accountFirst: false, accountTop: false, rowKeys: true });
-const emit = defineEmits<{ close: []; execute: [id: BrowsingActionId]; 'update:query': [query: string] }>();
+const emit = defineEmits<{ close: []; execute: [id: ActionId]; 'update:query': [query: string] }>();
 const prefix = props.idPrefix ? `${props.idPrefix}-` : '';
 const queryId = `${prefix}action-query`;
 const resultsId = `${prefix}action-results`;
@@ -34,7 +34,7 @@ const query = computed({
 const highlighted = ref(0);
 const input = ref<HTMLInputElement | null>(null);
 const groupRank = Object.keys(actionGroupOf);
-const groupLabel = (id: BrowsingActionId) => actionGroups.find((group) => group.id === actionGroupOf[id])!.label;
+const groupLabel = (id: ActionId) => actionGroups.find((group) => group.id === actionGroupOf[id])!.label;
 // Grouped in a fixed order; a stable sort keeps each group's own order. The navigator is one group, so it stays unlabelled.
 // While Connect or a failed sync can be fixed, the Account group sits right before Go to
 // (below the conversation, selection and view commands, so triage keys keep their order).
