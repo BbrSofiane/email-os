@@ -1,0 +1,33 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7DC0BHR5YGPEGPQEZH3V25B",
+  "strategy": "manual-commit",
+  "branch": "p5b-dev",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/lib/action-registry.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 108,
+    "cache_creation_tokens": 227490,
+    "cache_read_tokens": 7664076,
+    "output_tokens": 101069,
+    "api_call_count": 53,
+    "subagent_tokens": {
+      "input_tokens": 78,
+      "cache_creation_tokens": 183520,
+      "cache_read_tokens": 4455288,
+      "output_tokens": 55359,
+      "api_call_count": 39
+    }
+  }
+}
