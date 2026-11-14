@@ -20,11 +20,11 @@ use reqwest::blocking::Client;
 use reqwest::StatusCode;
 use serde_json::Value;
 
+use crate::cancel::CancelToken;
 use crate::error::MailError;
 use crate::gmail::auth::{self, Endpoints, GoogleConfig, UrlOpener};
 use crate::gmail::secrets::{Secrets, TokenBundle};
 use crate::gmail::types::{GmailHistoryError, GmailProfile, GmailThread, HistoryPage, InboxPage};
-use crate::provider::CancelToken;
 use crate::storage_log::{storage_err, storage_fault};
 
 /// Bound on pages requested per list/history call.

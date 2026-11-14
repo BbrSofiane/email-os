@@ -8,13 +8,13 @@
 //!
 //! Backends under test (a parameter, see [`Backend`]):
 //! * `gmail`   — `GmailCore` + the shared scripted `mail_core::testing` fake provider;
-//! * `fixture` — the archive-only fixture `MailCore` + `FakeArchiveProvider`;
 //! * `synthetic` — a synthetic session (ADR 0002): `GmailCore` + the built-in
-//!   `SyntheticGmailProvider` under the synthetic session policy. EVERY
-//!   scenario runs on it whatever profiles the file declares (the TypeScript
-//!   runner only knows `gmail` and `fixture`). Scenarios whose mailbox is not
-//!   a subset of the fixed 18 conversations get their extra threads from a
-//!   test overlay on top of the synthetic provider.
+//!   `SyntheticGmailProvider` under the synthetic session policy. This is also
+//!   what the files' `fixture` profile means in Rust (it is the browser fake's
+//!   fixture mode in TypeScript), so every scenario runs on it whatever profiles
+//!   the file declares. Scenarios whose mailbox is not a subset of the fixed 18
+//!   conversations get their extra threads from a test overlay on top of the
+//!   synthetic provider.
 //!
 //! Time is each backend's `FakeClock`; nothing waits on wall-clock time. The
 //! only polling is the shared bounded `until` used to observe an expected
@@ -24,7 +24,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use mail_core::clock::{utc, Clock, FakeClock};
+use mail_core::clock::{utc, FakeClock};
 use mail_core::dto::{RetryOperation, SetArchived, SetRead, UndoOperation};
 use mail_core::error::MailError;
 use mail_core::gmail::sync::GmailCore;
@@ -37,7 +37,6 @@ use mail_core::stars::{SetStarred, SetStarredGroup};
 use mail_core::testing::operations_fake::{ApplyPlan, FakeProvider};
 use mail_core::testing::synthetic::Overlay;
 use mail_core::testing::{open_core_with_clock, temp_profile, until};
-use mail_core::{FakeArchiveProvider, MailCore};
 use serde_json::{json, Value};
 
 const CLOCK_START: &str = "2026-02-01T00:00:00Z";
@@ -52,7 +51,7 @@ const KNOWN_DIVERGENCES: &[(&str, &str, &str)] = &[
     "gmail",
     "KD-1: after a definite provider failure the Gmail worker ends its pass in sync-error backoff \
      (gmail/operations.rs run_one returns Err, sync.rs PassOutcome::SyncError), so queued siblings \
-     stay `queued` until the next retry tick; the fixture worker keeps draining serially. \
+     stay `queued` until the next retry tick; the legacy fixture worker (retired) drained them serially. \
      docs/ux-05 §4.1 only says children run serially and failures do not roll back siblings.",
     ),
     (
@@ -61,14 +60,6 @@ const KNOWN_DIVERGENCES: &[(&str, &str, &str)] = &[
         "KD-1: same cause as the gmail profile; the synthetic session runs the Gmail worker, so siblings \
          queued behind the failure drain at the next retry tick (which re-arms queued writes there), \
          not immediately.",
-    ),
-    (
-        "fixture-rejects-unsupported-commands",
-        "synthetic",
-        "POLICY (ADR 0002 decision 2): the legacy fixture rejected read, star and retry; the unified \
-         fixture admits them, so this scenario's legacy expectations no longer hold. The synthetic \
-         rejections that DO remain are asserted in tests/synthetic_core_policy.rs. Retires with the \
-         `fixture` profile at stage 4.",
     ),
 ];
 
@@ -253,176 +244,6 @@ impl Backend for GmailBackend {
             self.provider.set_apply_plan(ApplyPlan::Success);
         }
     }
-}
-
-/// The fixture backend mirrors the native shell's `Backend::Fixture` dispatch
-/// (src-tauri/src/main.rs): archive, undo and archive groups are forwarded to
-/// `MailCore`; every other mailbox command is rejected exactly as the shell
-/// rejects it today. The worker starts lazily so a scenario can hold work
-/// queued by declaring `hold_queued` first.
-struct FixtureBackend {
-    core: MailCore,
-    provider: Arc<FakeArchiveProvider>,
-    clock: Arc<FakeClock>,
-    state: std::sync::Mutex<FixtureState>,
-    _dir: tempfile::TempDir,
-}
-
-#[derive(Default)]
-struct FixtureState {
-    worker_started: bool,
-    hold_queued: bool,
-}
-
-impl FixtureBackend {
-    fn open(mailbox: &Value) -> Self {
-        let dir = temp_profile("contract-fixture");
-        let clock = Arc::new(FakeClock::new(utc(CLOCK_START)));
-        let core = MailCore::open_with_clock(dir.path(), Arc::clone(&clock) as Arc<dyn Clock>)
-            .expect("open fixture core");
-        let backend = Self {
-            core,
-            provider: Arc::new(FakeArchiveProvider::new()),
-            clock,
-            state: Default::default(),
-            _dir: dir,
-        };
-        backend.check_mailbox_matches_seed(mailbox);
-        backend
-    }
-
-    /// The fixture's data is its fixed seed. A scenario may run here only if
-    /// its declared mailbox is a faithful subset of that seed.
-    fn check_mailbox_matches_seed(&self, mailbox: &Value) {
-        let snapshot = serde_json::to_value(self.core.list_conversations().unwrap()).unwrap();
-        let declared: Vec<&Value> = mailbox["conversations"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .collect();
-        let in_inbox_ids: Vec<String> = snapshot["conversations"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|c| c["ref"]["conversationId"].as_str().unwrap().to_string())
-            .collect();
-        let mut expected_inbox: Vec<(&str, &str)> = Vec::new();
-        for conv in &declared {
-            let id = conv["id"].as_str().unwrap();
-            let messages = conv["messages"].as_array().unwrap();
-            let any_inbox = messages.iter().any(|m| m["inInbox"] == json!(true));
-            assert_eq!(
-                in_inbox_ids.iter().any(|x| x == id),
-                any_inbox,
-                "mailbox conversation {id} disagrees with the fixture seed about Inbox membership"
-            );
-            if any_inbox {
-                let last = messages
-                    .iter()
-                    .map(|m| m["sentAt"].as_str().unwrap())
-                    .max()
-                    .unwrap();
-                expected_inbox.push((id, last));
-            }
-        }
-        expected_inbox.sort_by(|a, b| b.1.cmp(a.1));
-        let declared_ids: Vec<&str> = declared.iter().map(|c| c["id"].as_str().unwrap()).collect();
-        let actual_order: Vec<&String> = in_inbox_ids
-            .iter()
-            .filter(|id| declared_ids.contains(&id.as_str()))
-            .collect();
-        let expected_order: Vec<&str> = expected_inbox.iter().map(|e| e.0).collect();
-        assert_eq!(
-            actual_order.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
-            expected_order,
-            "mailbox Inbox order disagrees with the fixture seed"
-        );
-    }
-
-    fn ensure_worker(&self) {
-        let mut state = self.state.lock().unwrap();
-        if !state.worker_started && !state.hold_queued {
-            self.core
-                .start_worker(self.provider.clone())
-                .expect("start fixture worker");
-            state.worker_started = true;
-        }
-    }
-}
-
-impl Backend for FixtureBackend {
-    fn account_id(&self) -> String {
-        self.core.account_id().to_string()
-    }
-    fn execute(&self, command: &str, args: Value) -> Result<Value, MailError> {
-        self.ensure_worker();
-        let core = &self.core;
-        let invalid_mode = || {
-            Err(MailError::InvalidRequest {
-                field: "mode".to_string(),
-            })
-        };
-        match command {
-            "setArchived" => to_value(core.set_archived(&args_as::<SetArchived>(args))),
-            "undoOperation" => to_value(core.undo_operation(&args_as::<UndoOperation>(args))),
-            "setArchivedGroup" => {
-                to_value(core.set_archived_group(&args_as::<SetArchivedGroup>(args)))
-            }
-            "getOperationGroup" => {
-                to_value(core.get_operation_group(&args_as::<GetOperationGroupRequest>(args)))
-            }
-            "listOperationGroups" => {
-                to_value(core.list_operation_groups(&args_as::<ListOperationGroupsRequest>(args)))
-            }
-            "undoOperationGroup" => {
-                to_value(core.undo_operation_group(&args_as::<UndoOperationGroup>(args)))
-            }
-            // Shell: Backend::Fixture => Err(ReadOnly)
-            "setStarred" | "setStarredGroup" => Err(MailError::ReadOnly),
-            // Shell: Backend::Fixture => Err(InvalidRequest { field: "mode" })
-            "setRead" | "setReadGroup" | "retryOperation" => invalid_mode(),
-            other => panic!("unknown contract command {other}"),
-        }
-    }
-    fn snapshot(&self) -> Value {
-        serde_json::to_value(self.core.list_conversations().expect("list_conversations"))
-            .expect("serialize snapshot")
-    }
-    fn advance(&self, seconds: i64) {
-        self.clock.advance_seconds(seconds);
-    }
-    fn provider(&self, mode: &str) -> Result<(), String> {
-        match mode {
-            "hold_queued" => {
-                let mut state = self.state.lock().unwrap();
-                if state.worker_started {
-                    return Err("fixture can only hold queued work before its worker starts".into());
-                }
-                state.hold_queued = true;
-                Ok(())
-            }
-            "hold_applying" => {
-                self.ensure_worker();
-                self.provider.set_paused(true);
-                Ok(())
-            }
-            "reject_next" => {
-                self.ensure_worker();
-                self.provider.fail_next();
-                Ok(())
-            }
-            "release" => {
-                self.provider.set_paused(false);
-                let mut state = self.state.lock().unwrap();
-                state.hold_queued = false;
-                drop(state);
-                self.ensure_worker();
-                Ok(())
-            }
-            other => Err(format!("unknown provider mode {other}")),
-        }
-    }
-    fn after_step(&self, _was_command: bool) {}
 }
 
 /// A synthetic session: `GmailCore` + the built-in provider under the synthetic
@@ -961,7 +782,6 @@ fn open_backend(profile: &str, scenario: &Scenario) -> Box<dyn Backend> {
     let mailbox = mailbox_for(scenario);
     match profile {
         "gmail" => Box::new(GmailBackend::open(&mailbox)),
-        "fixture" => Box::new(FixtureBackend::open(&mailbox)),
         "synthetic" => Box::new(SyntheticBackend::open(&mailbox)),
         other => panic!("unknown profile {other}"),
     }
@@ -980,11 +800,13 @@ fn contract_scenarios_pass_on_every_rust_backend_they_declare() {
             .to_string();
         // Every scenario also runs on the synthetic profile, which the shared
         // files do not declare (the TypeScript runner would not know it).
+        // `fixture` is the browser fake's name for what Rust runs as `synthetic`.
         let mut profiles: Vec<&str> = scenario.json["profiles"]
             .as_array()
             .expect("profiles")
             .iter()
             .map(|p| p.as_str().unwrap())
+            .filter(|p| *p != "fixture")
             .collect();
         profiles.push("synthetic");
         for profile in profiles {

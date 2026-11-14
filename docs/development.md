@@ -16,9 +16,9 @@ preview remains synthetic and in-memory. See
 the slice contracts for individual acceptance scope. UX-08 adds narrow Gmail-mode
 Star/Unstar singles/groups, durable Undo/reconciliation, cache-only Starred and a
 single cached starred filter; see [its contract and validation ledger](ux-08-stars.md).
-The legacy native fixture remains archive-only for mailbox operations; unsupported
-star controls are absent there. Reminders use local device storage in both native
-profiles. No real provider writes are authorized by implementation tests.
+Fixture mode (the Gmail core on the built-in synthetic provider) has the same read/star
+controls and cached Starred view, shown by the backend's explicit capability. Reminders use
+local device storage in both native profiles. No real provider writes are authorized by implementation tests.
 UX-06 adds one durable local
 sender/domain split over Inbox, exact cached-count badges, and a single unread
 filter. See [the saved-split contract](ux-06-saved-split.md) for matching,
@@ -89,11 +89,10 @@ no global configuration is needed.
 
 ### Android fixture APK
 
-The Android target is a fixture-only Tauri app. It uses the same Rust `MailCore`
-and SQLite profile as native fixture mode. Android always selects fixture mode,
-even if `EMAIL_OS_MODE=gmail` is present. By default it opens the legacy fixture
-`MailCore`; the opt-in `EMAIL_OS_SYNTHETIC_CORE=1` selects the ADR 0002 synthetic
-core while keeping wire mode `fixture`. Gmail account controls, attachment
+The Android target is a fixture-only Tauri app. It uses the same synthetic fixture core
+and SQLite profile as native fixture mode (ADR 0002). Android always selects fixture mode,
+even if `EMAIL_OS_MODE=gmail` is present. A pre-existing legacy fixture database is retired
+once behind the startup screen (closing the app is the cancel path). Gmail account controls, attachment
 export, and external link dispatch are unavailable on Android. The shell returns
 the typed `unsupported_platform` error for attachment export and external links.
 
@@ -801,26 +800,20 @@ core is the source of truth; the fake must agree with it.
 
 | Runner | Runs the files against |
 |---|---|
-| `crates/mail-core/tests/contract_scenarios.rs` (`cargo test -p mail-core --test contract_scenarios`) | profile `gmail`: `GmailCore` with the shared scripted `mail_core::testing` fake provider and `FakeClock`; profile `fixture`: the archive-only fixture `MailCore` with `FakeArchiveProvider` and `FakeClock`; profile `synthetic` (Rust only, runs EVERY scenario): a synthetic session, i.e. `GmailCore` + the built-in `SyntheticGmailProvider` under the synthetic session policy (ADR 0002) |
+| `crates/mail-core/tests/contract_scenarios.rs` (`cargo test -p mail-core --test contract_scenarios`) | profile `gmail`: `GmailCore` with the shared scripted `mail_core::testing` fake provider and `FakeClock`; profile `synthetic` (the files' `fixture` profile, run on every scenario): a synthetic session, i.e. `GmailCore` + the built-in `SyntheticGmailProvider` under the synthetic session policy (ADR 0002) |
 | `tests/browser-fake/contract-scenarios.test.ts` (`pnpm vitest run tests/browser-fake/contract-scenarios.test.ts`) | the browser fake in its `gmail` mode and its `fixture` mode, with an injected clock |
 
-A scenario names the profiles it applies to. Archive-only scenarios list both and
-are the parity evidence for replacing the fixture backend; setters the fixture
-does not implement (read, star, retry, read/star groups) list `gmail` only, and
-`fixture-rejects-unsupported-commands` pins what the fixture rejects.
+A scenario names the profiles it applies to: `gmail` and `fixture`. In Rust, `fixture` is the
+synthetic session; in TypeScript it is the browser fake's fixture mode. Scenarios that need a
+mailbox the fixed 18 conversations cannot provide list `gmail` only.
 
-The `synthetic` profile is not declared in the files (the TypeScript runner knows only
-`gmail` and `fixture`); the Rust runner adds it to every scenario. It matches the `gmail`
-profile except where the session policy differs, and every difference is a named,
-justified `KNOWN_DIVERGENCES` entry: KD-1 (same worker behaviour as Gmail) and the
-legacy `fixture-rejects-unsupported-commands` expectations, which the unified fixture
-supersedes by admitting read, star and retry (ADR 0002 decision 2). Scenarios whose mailbox
-is not a subset of the fixed 18 conversations get their extra threads from a test
-overlay on the synthetic provider. When the legacy `fixture` profile is retired (stage 4),
-the browser fake's `fixture` mode must gain read, star, retry and the cached Starred list,
-drop its `read_only` answers for them (KD-2 closes), and keep `invalid_request{mode}` /
-`read_only` for Trash, destinations and the lifecycle commands exactly as the synthetic
-policy answers them.
+The Rust `synthetic` profile matches the `gmail` profile except where the session policy differs,
+and every difference is a named, justified `KNOWN_DIVERGENCES` entry (today only KD-1: the same
+worker behaviour as Gmail after a definite failure). Scenarios whose mailbox is not a subset of the
+fixed 18 conversations get their extra threads from a test overlay on the synthetic provider. The
+browser fake's `fixture` mode mirrors the unified fixture: read, star, retry and the cached Starred
+list are admitted, Trash, destinations and the lifecycle commands answer `invalid_request{mode}` /
+`read_only` exactly as the synthetic policy does.
 
 ### File format
 
@@ -847,9 +840,10 @@ policy answers them.
 
 * **mailbox**: a name from `mailboxes.json` or an inline object of conversations,
   each with messages `{id, sentAt, inInbox, unread, starred?}` (`starred` omitted
-  means the fact was never observed). The fixture backend cannot be seeded, so a
-  mailbox used with profile `fixture` must be a faithful subset of
-  `crates/mail-core/src/seed.rs`; the fixture runner asserts that before the first step.
+  means the fact was never observed). The synthetic provider's data is fixed, so a
+  mailbox used with the Rust `synthetic` profile is either a faithful subset of
+  `crates/mail-core/src/synthetic/data.rs` (the runner asserts INBOX and UNREAD facts before the
+  first step) or is served by a test overlay on top of it.
 * **steps** run in order. `do` is one of `{cmd, args}` (a `MailClient` method with
   its wire arguments), `{advance: seconds}` (the backend's fake clock) or
   `{provider: mode}`:
@@ -882,7 +876,7 @@ policy answers them.
   account, `"members": {"generate": {"prefix": "bulk-", "count": 101}}` expands to
   `bulk-001`..`bulk-101`, and `accountId` defaults to the backend's account.
   `kind` is deliberately not asserted for archive steps in shared scenarios: the
-  fixture reports legacy archive operations without a `kind`.
+  the legacy fixture reported archive operations without a `kind`.
 
 ### Adding a scenario
 

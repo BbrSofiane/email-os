@@ -65,27 +65,3 @@ pub enum MailError {
         reason: crate::dto::UndoUnavailableReason,
     },
 }
-
-/// Fake-provider outcome. `Cancelled` is not a failure: the operation stays
-/// durably in `applying` and is requeued on the next launch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProviderError {
-    /// Definite provider-side unavailability; the operation is marked `failed`.
-    Unavailable,
-    /// Definite provider rejection; the operation is marked `failed`.
-    Rejected,
-    /// Shutdown cancellation; the operation stays durable for recovery.
-    Cancelled,
-}
-
-impl ProviderError {
-    /// Wire-facing failure discriminant for a definite failure. `Cancelled`
-    /// never produces an `OperationFailure`; it is recovered instead.
-    pub fn failure_kind(self) -> Option<&'static str> {
-        match self {
-            ProviderError::Unavailable => Some("provider_unavailable"),
-            ProviderError::Rejected => Some("provider_rejected"),
-            ProviderError::Cancelled => None,
-        }
-    }
-}

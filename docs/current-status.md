@@ -8,22 +8,22 @@ research and architecture proposals are not feature inventories.
 
 | Feature | Native fixture (default) | Explicit Gmail profile | Browser preview |
 |---|---|---|---|
-| Mailbox and reader | Durable synthetic inbox, plain-text reader, archive/restore, operation recovery. | Separate profile; bounded Gmail cache and plain-text reader. Read-only until the user enables mailbox actions. | Synthetic fixtures and in-memory state only; no Gmail, SQLite durability, or native IPC. |
-| Mailbox writes | Fixture archive/restore. Fixture reminders retain a synthetic archive/restore operation path. | Explicit archive/unarchive, read/unread, and star/unstar setters only, after opt-in `gmail.modify` upgrade. No automatic read on open. | Fake-provider simulation only; does not prove provider writes or convergence. |
+| Mailbox and reader | Durable synthetic inbox (the Gmail core on the built-in synthetic provider, [ADR 0002](adr/0002-fixture-as-synthetic-provider.md)), plain-text reader, read/unread mix, operation recovery. | Separate profile; bounded Gmail cache and plain-text reader. Read-only until the user enables mailbox actions. | Synthetic fixtures and in-memory state only; no Gmail, SQLite durability, or native IPC. |
+| Mailbox writes | Archive/unarchive, read/unread and star/unstar (single and group), retry and undo, through the same operation ledger as Gmail; no permission grant. Interrupted writes are requeued at the next launch. | Explicit archive/unarchive, read/unread, and star/unstar setters only, after opt-in `gmail.modify` upgrade. No automatic read on open. | Fake-provider simulation only; does not prove provider writes or convergence. |
 | Composition | Plain-text new message and reply; durable local drafts in the selected native profile. No send path. | Same local-only drafts; they do not sync to Gmail. No send path. | Synthetic drafts in memory; saves are not durable. |
-| Search | Cached search over known fixture data. | Read-only cached search or progressive provider scan, with bounded/incomplete coverage disclosures. | Synthetic fake search only. |
+| Search | Cached search over the 18 fixture conversations. | Read-only cached search or progressive provider scan, with bounded/incomplete coverage disclosures. | Synthetic fake search only. |
 | Saved split | One local, account-scoped saved split. | One local split, removed on Gmail disconnect with cached account data. | Synthetic in-memory split. |
-| Stars | Not available in the fixture UI. | Starred cache browsing is read-only; explicit star/unstar setters require enabled Gmail modify capability. Cache coverage is incomplete. | Fake simulated-Gmail star state; not fixture-native or provider validation. |
-| Reminders | Device-local reminders; fixture scheduling uses its synthetic archive/restore path. | Device-local reminders; schedule/reschedule/cancel/return do not write Gmail or require modify permission. | Synthetic in-memory reminder state. |
+| Stars | Star/unstar setters and the cached Starred view, shown by the backend's `triageSurfaces` capability. | Starred cache browsing is read-only; explicit star/unstar setters require enabled Gmail modify capability. Cache coverage is incomplete. | Fake simulated-Gmail star state; not fixture-native or provider validation. |
+| Reminders | Device-local reminders; schedule/reschedule/cancel/return do not write the provider. | Device-local reminders; schedule/reschedule/cancel/return do not write Gmail or require modify permission. | Synthetic in-memory reminder state. |
 | Attachments and links | Synthetic fixture-text attachment listing/downloads. | Bounded cached descriptors and authenticated read-only Gmail fetch; explicit downloads create inert `.download` files. Links need explicit browser confirmation. No automatic opening or restricted document host. | Synthetic attachment surfaces only; no native download or Gmail fetch. |
 | Multiple workspaces | One native session; native tabs are not implemented or certified. | One active Gmail profile/session. This is not real multi-account activation. | Two isolated synthetic in-app workspaces are supported by the preview. |
 
 The Android fixture target builds a debug APK for ARM64 and x86_64 from the
-shared Rust shell. It uses SQLite and the native fixture backend; Gmail,
-attachment export, and external link dispatch are unavailable. APK build passed
-on 2026-11-14. An opt-in `EMAIL_OS_SYNTHETIC_CORE=1` selects the ADR 0002
-synthetic core while mode remains `fixture`; without it, Android uses the legacy
-fixture `MailCore`. Device smoke passed on an Android 15 x86_64 emulator. See
+shared Rust shell. It uses SQLite and the same synthetic fixture core as desktop
+(ADR 0002); Gmail, attachment export, and external link dispatch are
+unavailable. APK build passed on 2026-11-14 (before the unified fixture became
+the default: re-run the smoke). A pre-existing legacy fixture database is
+retired once behind a startup screen. Device smoke passed on an Android 15 x86_64 emulator. See
 the [Android smoke steps](development.md#android-fixture-apk).
 
 Mode selection is deliberate: native defaults to fixture; `EMAIL_OS_MODE=gmail`

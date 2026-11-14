@@ -19,7 +19,7 @@ have not been checked.
 ## Start here
 
 For the current implemented feature inventory and validation state, start with
-[Current status](docs/current-status.md). It distinguishes native fixture,
+[Current status](docs/current-status.md). It distinguishes the native fixture (the Gmail core on a built-in synthetic provider),
 explicit Gmail, and synthetic browser preview behavior. For setup and validation
 commands, see the [development guide](docs/development.md). The architecture
 overview is [current architecture](docs/current-architecture.md); the broader

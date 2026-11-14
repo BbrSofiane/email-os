@@ -1,5 +1,7 @@
-//! Desktop-local fixture reminders; never infer Gmail evidence from cached rows.
-use crate::{dto::ConversationRef, MailCore, MailError};
+//! Local reminder wire DTOs. Reminders are local to this app (ADR 0002
+//! decision 3): scheduling hides a conversation, the deadline shows it again,
+//! and no provider write is ever made. Never infer Gmail evidence from cached rows.
+use crate::dto::ConversationRef;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -52,25 +54,4 @@ pub struct CancelReminder {
     pub conversation: ConversationRef,
     pub expected_revision: u32,
     pub request_id: String,
-}
-
-impl MailCore {
-    pub fn list_reminders(&self) -> Result<Vec<Reminder>, MailError> {
-        self.ensure_worker_healthy()?;
-        self.inner.store.list_reminders()
-    }
-    pub fn put_reminder(&self, command: &PutReminder) -> Result<Reminder, MailError> {
-        self.ensure_worker_healthy()?;
-        let receipt = self.inner.store.put_reminder(command)?;
-        self.dispatch();
-        self.inner.signal.wake();
-        Ok(receipt)
-    }
-    pub fn cancel_reminder(&self, command: &CancelReminder) -> Result<Reminder, MailError> {
-        self.ensure_worker_healthy()?;
-        let receipt = self.inner.store.cancel_reminder(command)?;
-        self.dispatch();
-        self.inner.signal.wake();
-        Ok(receipt)
-    }
 }

@@ -1,6 +1,6 @@
 # ADR 0002: Fixture mode as a synthetic provider
 
-**Status:** Accepted (stages 1–3)
+**Status:** Implemented (stages 1–4). Stage 4 landed with the owner's decisions below: the default switched to the synthetic core, the legacy `MailCore` backend, its store and worker and the `EMAIL_OS_SYNTHETIC_CORE` opt-in were removed, and the one-time transition is the `fixture_transition` state machine behind the startup gate. The sections below are the original investigation and are kept as the record of why.
 
 ## Decisions
 
