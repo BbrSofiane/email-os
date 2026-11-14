@@ -1,0 +1,22 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7DE9P47W3RK52C9ZGPV9M38",
+  "session_id": "5f168d81-61f3-4c11-ac7c-9cf2d9a03706",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-14T16:29:55.583261594Z",
+  "branch": "maintenance/p5b-app-shell",
+  "checkpoints_count": 1,
+  "save_step_count": 1,
+  "files_touched": [],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "4208a8054588",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 216,
+    "cache_creation_tokens": 381108,
+    "cache_read_tokens": 25351261,
+    "output_tokens": 176868,
+    "api_call_count": 105
+  }
+}
