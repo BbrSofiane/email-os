@@ -3,7 +3,9 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Condvar, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(any(test, feature = "test-support"))]
+use std::time::Instant;
 
 use super::data::{fixture_reply_context, fixtures, SeedConversation};
 use super::facts::{FactStore, MessageFacts};
@@ -13,6 +15,7 @@ use crate::error::MailError;
 use crate::gmail::types::{
     GmailHistoryError, GmailProfile, GmailProvider, GmailThread, HistoryPage, InboxPage,
 };
+use crate::storage_log::{storage_err, storage_fault};
 use crate::{CancelToken, ACCOUNT_ID, FIXTURE_MAILBOX};
 
 /// File (inside the profile directory) that holds the durable synthetic
@@ -29,9 +32,34 @@ const ATTACHMENT_BYTES: &[u8] = b"Synthetic attachment only.\n";
 const PAUSE_POLL: Duration = Duration::from_millis(20);
 
 /// Fake write controls, the same semantics `FakeArchiveProvider` had:
-/// `paused` blocks every write (cancellation-aware), `fail_next` rejects the
-/// next completing write once. They apply only to synthetic writes; reads and
-/// bootstrap are never blocked, and nothing routes them to a live provider.
+/// `paused` blocks every write (cancellation-aware), `reject_next` rejects the
+/// next completing write once. They are fixed when the provider opens and
+/// apply only to synthetic writes; reads and bootstrap are never blocked, and
+/// nothing routes them to a live provider.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WriteControls {
+    pub paused: bool,
+    pub reject_next: bool,
+}
+
+impl WriteControls {
+    /// The launch-time fake control `EMAIL_OS_FAKE_PROVIDER=paused|reject|success`
+    /// (fixture only; unknown values mean `success`).
+    pub fn from_env() -> Self {
+        match std::env::var("EMAIL_OS_FAKE_PROVIDER").ok().as_deref() {
+            Some("paused") => Self {
+                paused: true,
+                reject_next: false,
+            },
+            Some("reject") => Self {
+                paused: false,
+                reject_next: true,
+            },
+            _ => Self::default(),
+        }
+    }
+}
+
 #[derive(Default)]
 struct Controls {
     state: Mutex<ControlState>,
@@ -42,7 +70,10 @@ struct Controls {
 struct ControlState {
     paused: bool,
     fail_next: bool,
+    // Observed only by the test-support barriers.
+    #[cfg_attr(not(any(test, feature = "test-support")), allow(dead_code))]
     calls: usize,
+    #[cfg_attr(not(any(test, feature = "test-support")), allow(dead_code))]
     inflight: usize,
 }
 
@@ -57,75 +88,72 @@ impl SyntheticGmailProvider {
     /// `profile_dir`. Never touches `mail.db`, the Gmail profile, credentials
     /// or `local-drafts`.
     pub fn open(profile_dir: impl AsRef<Path>) -> Result<Self, MailError> {
+        Self::open_with_controls(profile_dir, WriteControls::default())
+    }
+
+    /// Like [`Self::open`] with the launch-time fake controls from
+    /// `EMAIL_OS_FAKE_PROVIDER` (see [`WriteControls::from_env`]).
+    pub fn open_from_env(profile_dir: impl AsRef<Path>) -> Result<Self, MailError> {
+        Self::open_with_controls(profile_dir, WriteControls::from_env())
+    }
+
+    /// Like [`Self::open`] with explicit write controls, fixed for the life of
+    /// the provider.
+    pub fn open_with_controls(
+        profile_dir: impl AsRef<Path>,
+        controls: WriteControls,
+    ) -> Result<Self, MailError> {
         let facts = FactStore::open(&profile_dir.as_ref().join(SYNTHETIC_DB_FILE))?;
         Ok(Self {
             facts,
             conversations: fixtures(),
-            controls: Controls::default(),
+            controls: Controls {
+                state: Mutex::new(ControlState {
+                    paused: controls.paused,
+                    fail_next: controls.reject_next,
+                    ..ControlState::default()
+                }),
+                gate: Condvar::new(),
+            },
         })
     }
 
-    /// Like [`Self::open`] and applies the launch-time fake control
-    /// `EMAIL_OS_FAKE_PROVIDER=paused|reject|success` (fixture-only).
-    pub fn open_from_env(profile_dir: impl AsRef<Path>) -> Result<Self, MailError> {
-        let provider = Self::open(profile_dir)?;
-        match std::env::var("EMAIL_OS_FAKE_PROVIDER").ok().as_deref() {
-            Some("paused") => provider.set_paused(true),
-            Some("reject") => provider.fail_next(),
-            _ => {}
-        }
-        Ok(provider)
-    }
-
-    /// Pauses every subsequent write until [`Self::resume`] or cancellation.
+    /// Test instrumentation (not part of the production surface): change the
+    /// controls while the provider is live.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_paused(&self, paused: bool) {
-        self.controls
-            .state
-            .lock()
-            .expect("synthetic controls poisoned")
-            .paused = paused;
+        self.controls.state.lock().expect("controls").paused = paused;
         self.controls.gate.notify_all();
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn resume(&self) {
         self.set_paused(false);
     }
 
     /// The next completing write is definitely rejected, once.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn fail_next(&self) {
-        self.controls
-            .state
-            .lock()
-            .expect("synthetic controls poisoned")
-            .fail_next = true;
+        self.controls.state.lock().expect("controls").fail_next = true;
     }
 
     /// Writes that have arrived, including ones still paused.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn write_call_count(&self) -> usize {
-        self.controls
-            .state
-            .lock()
-            .expect("synthetic controls poisoned")
-            .calls
+        self.controls.state.lock().expect("controls").calls
     }
 
     /// Writes currently inside the provider (paused or completing).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn write_inflight_count(&self) -> usize {
-        self.controls
-            .state
-            .lock()
-            .expect("synthetic controls poisoned")
-            .inflight
+        self.controls.state.lock().expect("controls").inflight
     }
 
     /// Barrier: resolves once `n` writes have arrived. No sleeping.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn wait_for_write_calls(&self, n: usize, timeout: Duration) -> bool {
         let deadline = Instant::now() + timeout;
-        let mut state = self
-            .controls
-            .state
-            .lock()
-            .expect("synthetic controls poisoned");
+        let mut state = self.controls.state.lock().expect("controls");
         while state.calls < n {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
@@ -135,7 +163,7 @@ impl SyntheticGmailProvider {
                 .controls
                 .gate
                 .wait_timeout(state, remaining)
-                .expect("synthetic controls poisoned")
+                .expect("controls")
                 .0;
         }
         true
@@ -247,11 +275,7 @@ impl SyntheticGmailProvider {
         cancel: &CancelToken,
     ) -> Result<(), MailError> {
         {
-            let mut state = self
-                .controls
-                .state
-                .lock()
-                .expect("synthetic controls poisoned");
+            let mut state = self.controls.state.lock().map_err(storage_err())?;
             state.calls += 1;
             state.inflight += 1;
             self.controls.gate.notify_all();
@@ -269,12 +293,10 @@ impl SyntheticGmailProvider {
                 }
                 // Wake periodically to observe cancellation; nothing else is
                 // held while paused.
-                state = self
-                    .controls
-                    .gate
-                    .wait_timeout(state, PAUSE_POLL)
-                    .expect("synthetic controls poisoned")
-                    .0;
+                state = match self.controls.gate.wait_timeout(state, PAUSE_POLL) {
+                    Ok((guard, _)) => guard,
+                    Err(_) => return Err(storage_fault("synthetic_controls_poisoned")),
+                };
             };
             state.inflight -= 1;
             self.controls.gate.notify_all();

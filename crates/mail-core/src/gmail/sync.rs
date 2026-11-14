@@ -332,6 +332,33 @@ impl GmailCore {
         )
     }
 
+    /// Opens the synthetic session for a profile directory the caller does not
+    /// yet own: the profile lock is taken FIRST, so a profile in use by another
+    /// writer (for example the legacy fixture core) is rejected before the
+    /// synthetic provider creates or seeds any file. `controls` are the fake
+    /// pause/reject controls of the synthetic provider, fixed at open.
+    pub fn open_synthetic_profile(
+        profile_dir: impl AsRef<Path>,
+        controls: crate::synthetic::WriteControls,
+        clock: Arc<dyn Clock>,
+    ) -> Result<GmailCore, MailError> {
+        let profile_dir = profile_dir.as_ref();
+        let profile = Arc::new(ProfileGuard::acquire(profile_dir)?);
+        let provider = Arc::new(
+            crate::synthetic::SyntheticGmailProvider::open_with_controls(profile_dir, controls)?,
+        );
+        let conversations = provider.conversation_ids();
+        Self::open_with_guard(
+            profile_dir,
+            profile,
+            provider,
+            clock,
+            false,
+            SessionPolicy::Synthetic,
+            &conversations,
+        )
+    }
+
     /// Test seam: a synthetic session whose provider is a decorator over the
     /// synthetic one, optionally with queued mutations held durable.
     #[cfg(any(test, feature = "test-support"))]
@@ -379,10 +406,30 @@ impl GmailCore {
         policy: SessionPolicy,
         preload: &[String],
     ) -> Result<GmailCore, MailError> {
-        #[cfg(not(any(test, feature = "test-support")))]
-        let _ = operations_paused;
         let profile_dir = profile_dir.as_ref();
         let profile = Arc::new(ProfileGuard::acquire(profile_dir)?);
+        Self::open_with_guard(
+            profile_dir,
+            profile,
+            provider,
+            clock,
+            operations_paused,
+            policy,
+            preload,
+        )
+    }
+
+    fn open_with_guard(
+        profile_dir: &Path,
+        profile: Arc<ProfileGuard>,
+        provider: Arc<dyn GmailProvider>,
+        clock: Arc<dyn Clock>,
+        operations_paused: bool,
+        policy: SessionPolicy,
+        preload: &[String],
+    ) -> Result<GmailCore, MailError> {
+        #[cfg(not(any(test, feature = "test-support")))]
+        let _ = operations_paused;
         let store = Arc::new(GmailStore::open(profile_dir, clock)?);
 
         let hub = Arc::new(GmailHub {

@@ -388,6 +388,17 @@ impl GmailProvider for Overlay {
     fn mutation_access(&self) -> Result<bool, MailError> {
         self.inner.mutation_access()
     }
+    fn get_thread_for_account(
+        &self,
+        expected_account_id: &str,
+        thread_id: &str,
+        cancel: &CancelToken,
+    ) -> Result<Option<GmailThread>, MailError> {
+        if expected_account_id != ACCOUNT_ID {
+            return Err(MailError::AuthFailed);
+        }
+        self.get_thread(thread_id, cancel)
+    }
     fn apply_archive(
         &self,
         ids: &[String],
@@ -604,4 +615,11 @@ pub fn sync_when_idle(core: &GmailCore) {
         }
     }
     core.wait_for_test_idle(TIMEOUT).expect("idle after sync");
+}
+
+/// Moves the injected clock and lets the worker observe it: any wake makes
+/// the worker evaluate due reminders before it does anything else.
+pub fn advance_and_observe(s: &Synthetic<impl GmailProvider + 'static>, seconds: i64) {
+    s.clock.advance_seconds(seconds);
+    sync_when_idle(&s.core);
 }
