@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7DZTGDBD80526CYXNWVY8SS",
+  "strategy": "manual-commit",
+  "branch": "fix/undo-refresh-focus",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "tests/undo/component.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 8,
+    "cache_creation_tokens": 6654,
+    "cache_read_tokens": 2447452,
+    "output_tokens": 5475,
+    "api_call_count": 4
+  }
+}
