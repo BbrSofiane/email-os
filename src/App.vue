@@ -40,7 +40,7 @@ import ActionNotice, { type GroupNoticeView } from './components/ActionNotice.vu
 import SelectionBar from './components/SelectionBar.vue';
 import HeaderGlyph from './components/HeaderGlyph.vue';
 import PaneGlyph from './components/PaneGlyph.vue';
-import { browsingActions, actionLabel, type BrowsingActionId } from './lib/browsing-actions';
+import { actionLabel, actionRegistry, findAction, findKeyBinding, goTargets, type ActionHandlers, type ActionId, type KeyFocus, type KeyOnlyId, type KeyResolverId } from './lib/action-registry';
 import { INBOX_EMPTY_RECOVERABLE, accountNotice, drawerShowsSameFailure, emptyLineOwnsStatus, headerNoteAnnounces, headerNoticeAction, inboxEmptyState, readOnlyHintShown, splitNoticeText, type AccountNoticeAction, type InboxEmptyAction } from './lib/account-status';
 import { groupRowsBySender, isSingleFromQuery, senderGroupKey, validateSearch } from './lib/search';
 import InboxList from './components/InboxList.vue';
@@ -166,7 +166,7 @@ function bulkMembers(): ConversationRef[] | null {
   return members.length > 0 ? members : null;
 }
 
-function bulkActionAvailable(id: BrowsingActionId): boolean {
+function bulkActionAvailable(id: ActionId): boolean {
   if (!bulkMembers()) return false;
   if (id === 'archive') return mailbox.context.value !== 'done' && mailboxActionsEnabled.value;
   if (id === 'unarchive') return (mailbox.context.value === 'done' || mailbox.context.value === 'search') && mailboxActionsEnabled.value;
@@ -334,7 +334,7 @@ const actionNotice = computed(() => {
   const slot = mailbox.lastAction.value;
   if (!slot) return null;
   const operation = mailbox.activity.value.find((item) => item.id === slot.receipt.operationId) ?? null;
-  const label = browsingActions.find((action) => action.id === slot.actionId)?.label ?? slot.actionId;
+  const label = findAction(slot.actionId)?.label ?? slot.actionId;
   return {
     label,
     actionId: slot.actionId,
@@ -1396,17 +1396,9 @@ function armGo(): void {
     goGraceTimer = setTimeout(endGoGrace, GO_CHORD_GRACE_MS);
   }, GO_CHORD_WINDOW_MS);
 }
-/** The action each G chord's second key opens, in the order the hint names them. */
-const GO_TARGETS: ReadonlyArray<{ key: string; id: 'done' | 'trash' | 'drafts' | 'reminders' | 'account'; word: string }> = [
-  { key: 'e', id: 'done', word: 'Done' },
-  { key: 't', id: 'trash', word: 'Trash' },
-  { key: 'd', id: 'drafts', word: 'Drafts' },
-  { key: 'h', id: 'reminders', word: 'Reminders' },
-  { key: 'a', id: 'account', word: 'Account' },
-];
 /** Only what the palette and rail offer: Trash needs its rail item, Reminders its transport, Account Gmail mode. */
 function availableGoTargets() {
-  return GO_TARGETS.filter((target) => target.id === 'done' || actionAvailable(target.id));
+  return goTargets.filter((target) => target.id === 'done' || actionAvailable(target.id));
 }
 /** The chord's target for an unmodified key, or undefined (the key keeps its plain meaning). */
 function goTargetFor(event: KeyboardEvent) {
@@ -1443,7 +1435,7 @@ async function closeOverlay(restore = true): Promise<void> {
   else if (mailbox.listState.value === 'ready') await focusFocusedRow(true);
   else paletteButton.value?.focus({ preventScroll: true });
 }
-async function executeOverlay(id: BrowsingActionId): Promise<void> {
+async function executeOverlay(id: ActionId): Promise<void> {
   // Resolve availability again BEFORE removing the overlay; never retain a row target.
   if (!actionAvailable(id)) return;
   await closeOverlay(true);
@@ -1938,17 +1930,6 @@ watch(emptyLineOwnsAction, async (owns) => {
   emptyAction.value?.focus({ preventScroll: true });
 });
 
-/** Enter or Space on the focused empty line runs its one action, as the button does. */
-function activateEmptyAction(event: KeyboardEvent): boolean {
-  if (event.target !== emptyState.value || event.repeat || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
-  if (event.key !== 'Enter' && event.key !== ' ') return false;
-  const action = inboxEmpty.value?.action;
-  if (!action || !emptyActionShown.value) return false;
-  event.preventDefault();
-  void accountNoticeAction(action, 'empty');
-  return true;
-}
-
 async function prepareReply(source: DraftSource): Promise<void> {
   if (trashReader.value) return;
   // The reader stays open after a successful preparation: the drafts watcher
@@ -1968,60 +1949,24 @@ function actionTarget(explicit?: ConversationRef): ConversationRef | null {
     : mailbox.listState.value === 'ready' ? mailbox.focusedSummary.value?.ref ?? null : null;
   return target?.accountId === accountId.value ? target : null;
 }
-function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): boolean {
-  if (!workspaceActive.value || !accountReady.value) return false;
-  if (id === 'switch-account') return props.mode === 'browser-preview' && !!props.switchAccountLabel;
-  if (id === 'starred') return gmailMode.value && !!accountId.value;
-  if (id === 'create-split') return !!accountId.value && !mailbox.savedSplit.value && !editingSplit.value;
-  if (id === 'edit-split') return !!accountId.value && !!mailbox.savedSplit.value && !editingSplit.value;
-  if (id === 'toggle-unread-filter') return !!accountId.value && mailbox.context.value !== 'trash' && !editingSplit.value && !drawer.value && !contactDisclosure.value && !remindersList.value && !draftsList.value;
-  if (id === 'saved') return !!mailbox.savedSplit.value?.enabled && !mailbox.splitError.value;
-  if (['inbox', 'done', 'activity'].includes(id)) return !!accountId.value;
-  if (id === 'search') return !!accountId.value && !drawer.value && !contactDisclosure.value;
-  if (id === 'account') return gmailMode.value;
-  // Not configured has no client ID to connect with, so Connect would only fail: the next step is in Account.
-  if (id === 'connect') return gmailMode.value && accountActionsIdle.value
-    && ['disconnected', 'auth_required'].includes(accountStatus.value?.connection ?? '');
-  if (id === 'sync') return gmailMode.value && accountActionsIdle.value
-    && accountStatus.value?.connection === 'connected' && accountStatus.value.sync.state !== 'syncing';
-  if (id === 'destinations') return (gmailMode.value || props.mode === 'browser-preview') && !!accountId.value;
-  if (id === 'trash') return gmailMode.value && !!accountId.value;
-  if (id === 'drafts') return !!accountId.value;
-  if (id === 'reminders') return remindersSupported.value;
-  if (id === 'reminder-settings') return remindersSupported.value && !!accountId.value;
-  if (id === 'back') return readerOpen.value || history.value.length > 0;
-  if (id === 'select-all-loaded') return !trashList.value && !remindersList.value && !draftsList.value && !drafts.activeRef.value && !drawer.value && !contactDisclosure.value && !readerOpen.value && mailbox.listState.value === 'ready' && mailbox.conversations.value.length > 0;
-  if (id === 'clear-selection') return !drafts.activeRef.value && !drawer.value && !contactDisclosure.value && selectedCount.value > 0;
-  // Compose stays available while an editor is already open: it routes to the
-  // existing surface instead of stacking a second draft.
-  // Like search: compose is gated while a drawer or the narrow contact
-  // disclosure covers the central pane, so the inline card can never mount
-  // inert behind another surface.
-  if (id === 'compose') return !!accountId.value && !editingSplit.value && !drawer.value && !contactDisclosure.value;
-  // Cached Trash is browse-only: opening a row is the one action it offers.
-  // The Reminders and Drafts lists offer none from the keyboard: their rows
-  // are not conversations, so mailbox shortcuts do not apply to them (a
-  // reminder's own row actions are its only mutations).
+/** Mailbox commands on a conversation: not in Trash (except opening), Reminders or Drafts, and not behind a drawer, disclosure or open editor. */
+function conversationCommandsOpen(id: ActionId): boolean {
   if ((trashBrowsing.value && id !== 'open') || remindersList.value || draftsList.value) return false;
-  if (drafts.activeRef.value || drawer.value || contactDisclosure.value) return false;
-  // Reply is reader-only and uses ReaderView's own rule, the same one that
-  // disables its buttons (blocked, incomplete or retained conversations, Trash).
-  if (id === 'reply') return readerOpen.value && mailbox.detailState.value === 'ready' && readerView.value?.canPrepareReply() === true;
-  if (id === 'undo') {
-    // Same guards as the key: no in-flight undo (a second dispatch would race
-    // into a false already_undone), and no open reader message-details disclosure.
-    return undoWindowOpen.value && !mailbox.commandInFlight.value && !mailbox.groupInFlight.value && !readerView.value?.hasOpenDetails();
-  }
+  return !(drafts.activeRef.value || drawer.value || contactDisclosure.value);
+}
+type TriageId = 'archive' | 'unarchive' | 'read' | 'unread' | 'star' | 'unstar';
+/** Selected-scope actions are labelled with the count (§3.3). */
+const selectedScopeLabel = (declared: string): string => selectedCount.value > 0 ? `${declared} — ${selectedCount.value} selected` : declared;
+function triageAvailable(id: TriageId, explicit?: ConversationRef): boolean {
+  if (!conversationCommandsOpen(id)) return false;
   // One-target policy: with a nonempty selection, shared dispatch resolves the
   // selection (even in the reader); explicit row actions bypass this entirely.
-  if (!explicit && (id === 'archive' || id === 'unarchive' || id === 'read' || id === 'unread' || id === 'star' || id === 'unstar')) {
+  if (!explicit) {
     if (bulkActionAvailable(id)) return true;
     if (selectedCount.value > 0) return false;
   }
   const target = actionTarget(explicit);
   if (!target) return false;
-  if (id === 'open') return !readerOpen.value;
-  if (id === 'remind') return remindersSupported.value && selectedCount.value === 0 && !mailbox.bulkUnresolved.value && (readerOpen.value ? mailbox.conversation.value?.isInInbox === true : mailbox.context.value === 'inbox');
   if (id === 'read' || id === 'unread' || id === 'star' || id === 'unstar') return gmailActionsEnabled.value;
   if (mailbox.context.value === 'starred' && !readerOpen.value) return false;
   if (!mailboxActionsEnabled.value) return false;
@@ -2029,8 +1974,24 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   if (!readerOpen.value && mailbox.context.value === 'search') return true;
   return id === 'archive' ? inInbox === true : inInbox === false;
 }
+async function executeStar(id: 'star' | 'unstar', explicit?: ConversationRef): Promise<void> {
+  const members = !explicit ? bulkMembers() : null;
+  if (members) { await mailbox.setStarredGroup(members, id === 'star'); return; }
+  const target = actionTarget(explicit);
+  if (!target) return;
+  if (readerOpen.value && (mailbox.context.value === 'starred' || mailbox.starredOnly.value) && id === 'unstar') await archiveFromReader(false);
+  else { await mailbox.setStarred(target, id === 'star'); if (!readerOpen.value) await focusFocusedRow(); }
+}
+async function executeSetRead(id: 'read' | 'unread', explicit?: ConversationRef): Promise<void> {
+  if (!explicit && bulkMembers()) {
+    await bulkSetReadSelection(id === 'read');
+    return;
+  }
+  const target = actionTarget(explicit);
+  if (target) await mailbox.setRead(target, id === 'read');
+}
 /** Keep permission-blocked star commands discoverable without allowing writes. */
-function starPermissionReason(id: BrowsingActionId): string | undefined {
+function starPermissionReason(id: ActionId): string | undefined {
   if ((id !== 'star' && id !== 'unstar') || !accountReady.value || !gmailMode.value || gmailActionsEnabled.value) return;
   if (drafts.activeRef.value || drawer.value || contactDisclosure.value || trashBrowsing.value) return;
   if (!(selectedCount.value > 0 ? bulkMembers() : actionTarget())) return;
@@ -2038,31 +1999,21 @@ function starPermissionReason(id: BrowsingActionId): string | undefined {
     ? 'Waiting for Google permission. Review access in Account.'
     : 'Read-only. Open Account → Enable mailbox actions to use Star/Unstar.';
 }
-const availableActions = computed(() => browsingActions
-  .filter((action) => (actionAvailable(action.id) || starPermissionReason(action.id))
-    && (overlay.value !== 'navigator' || ['inbox', 'saved', 'done', 'destinations', 'trash', 'starred', 'account', 'activity', 'drafts', 'reminders', 'reminder-settings'].includes(action.id)))
-  .map((action) => ({
-    id: action.id,
-    shortcut: action.shortcut,
-    aliases: 'aliases' in action ? action.aliases : undefined,
-    disabledReason: starPermissionReason(action.id),
-    // Selected-scope actions are labelled with the count (§3.3).
-    label: selectedCount.value > 0 && ['archive', 'unarchive', 'read', 'unread', 'star', 'unstar'].includes(action.id)
-      ? `${action.label} — ${selectedCount.value} selected`
-      : action.id === 'toggle-unread-filter' ? (mailbox.unreadOnly.value ? 'Show all conversations' : 'Show unread only')
-      : action.id === 'switch-account' ? `Switch account — ${props.switchAccountLabel}`
-      : action.id === 'connect' && accountStatus.value?.connection === 'auth_required' ? 'Sign in again'
-      : action.id === 'saved' ? `Go to ${mailbox.savedSplit.value?.name ?? 'saved split'}` : action.label,
-  })));
-async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): Promise<void> {
-  if (!actionAvailable(id, explicit)) {
-    // A permission-blocked S opens the explanation, never an OAuth flow or write.
-    if (starPermissionReason(id)) await openDrawer('account');
-    return;
-  }
-  switch (id) {
-    case 'switch-account': emit('switchAccount'); return;
-    case 'compose': {
+
+/**
+ * Availability and execution for every declared action (the declarations live
+ * in action-registry.ts; `ActionHandlers` makes a missing entry a compile
+ * error). Targets are resolved at dispatch, not when the palette was opened.
+ */
+const actionHandlers: ActionHandlers = {
+  compose: {
+    // Compose stays available while an editor is already open: it routes to the
+    // existing surface instead of stacking a second draft.
+    // Like search: compose is gated while a drawer or the narrow contact
+    // disclosure covers the central pane, so the inline card can never mount
+    // inert behind another surface.
+    available: () => !!accountId.value && !editingSplit.value && !drawer.value && !contactDisclosure.value,
+    execute: async () => {
       // One active editor: an existing draft stays on its visible surface
       // (inline compose card or docked reply composer), never a duplicate. A
       // suspended editor from another account has no surface: the Drafts list
@@ -2072,30 +2023,56 @@ async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): 
         return;
       }
       await drafts.openNew({ kind: 'new_message' });
-      return;
-    }
-    case 'toggle-unread-filter': {
-      const token = ++navigationToken;
-      const account = accountId.value;
-      await mailbox.setUnreadOnly(!mailbox.unreadOnly.value);
-      if (token === navigationToken && account === accountId.value && accountReady.value
-        && !overlay.value && !drawer.value && !contactDisclosure.value && !readerOpen.value && !editingSplit.value) {
-        if (mailbox.listState.value === 'ready') await focusFocusedRow(true);
-        else paletteButton.value?.focus();
+    },
+  },
+  reply: {
+    // Reply is reader-only and uses ReaderView's own rule, the same one that
+    // disables its buttons (blocked, incomplete or retained conversations, Trash).
+    available: () => conversationCommandsOpen('reply') && readerOpen.value && mailbox.detailState.value === 'ready' && readerView.value?.canPrepareReply() === true,
+    execute: () => { readerView.value?.prepareReply(); },
+  },
+  open: {
+    available: (explicit) => conversationCommandsOpen('open') && !!actionTarget(explicit) && !readerOpen.value,
+    execute: async (explicit) => { if (explicit) await openRowFromList(explicit); else await openFocusedFromList(); },
+  },
+  back: {
+    available: () => readerOpen.value || history.value.length > 0,
+    execute: async () => {
+      // A reminder request in flight (or waiting for its exact retry) owns Back, like Escape.
+      if (remindersList.value && reminders.dismissBlocked.value) { remindersPane.value?.retainPickerFocus(); return; }
+      if (readerOpen.value) closeReader(); else await contextBack();
+    },
+  },
+  archive: {
+    available: (explicit) => triageAvailable('archive', explicit),
+    execute: async (explicit) => {
+      if (explicit) await archiveRowFromList(explicit);
+      // Selection scope wins over focused/reader singles; the group path never
+      // invokes the single-reader archive-and-advance flow.
+      else if (bulkMembers()) await bulkArchiveSelection();
+      else if (readerOpen.value) await archiveFromReader();
+      else await archiveFocusedRow();
+    },
+    label: selectedScopeLabel,
+  },
+  unarchive: {
+    available: (explicit) => triageAvailable('unarchive', explicit),
+    execute: async (explicit) => {
+      if (!explicit && bulkMembers()) {
+        await bulkRestoreSelection();
+        return;
       }
-      return;
-    }
-    case 'create-split': case 'edit-split':
-      if (readerOpen.value || drawer.value || contactDisclosure.value || mailbox.context.value !== 'inbox') {
-        if (!(await navigateContext('inbox'))) return;
-      }
-      // Let reader/list restoration finish before the editor claims focus.
-      await nextTick();
-      if (actionAvailable(id) && !overlay.value) editingSplit.value = true;
-      return;
-    case 'search': await revealSearch(); return;
-    case 'reply': readerView.value?.prepareReply(); return;
-    case 'remind': {
+      const target = actionTarget(explicit);
+      if (target) await mailbox.setArchived(target, false);
+    },
+    label: selectedScopeLabel,
+  },
+  remind: {
+    available: (explicit) => {
+      if (!conversationCommandsOpen('remind') || !actionTarget(explicit)) return false;
+      return remindersSupported.value && selectedCount.value === 0 && !mailbox.bulkUnresolved.value && (readerOpen.value ? mailbox.conversation.value?.isInInbox === true : mailbox.context.value === 'inbox');
+    },
+    execute: async (explicit) => {
       // Remind me: the picker opens in the Reminders list for this conversation.
       // Back returns to the context (and row or reader) it was asked from.
       if (!remindersSupported.value || selectedCount.value > 0 || mailbox.commandInFlight.value || mailbox.bulkUnresolved.value) return;
@@ -2104,70 +2081,159 @@ async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): 
       reminderReaderReturn = readerOpen.value ? { ...target } : null;
       reminders.setTarget(target);
       await navigateContext('reminders');
-      return;
-    }
-    case 'reminders': await navigateContext('reminders'); return;
-    case 'reminder-settings': await openDrawer('reminder-settings'); return;
-    case 'inbox': await navigateToInbox(); return;
-    case 'saved': await navigateContext('saved'); return;
-    case 'done': await navigateContext('done'); return;
-    case 'starred': await navigateContext('starred'); return;
-    case 'trash': await navigateContext('trash'); return;
-    case 'star': case 'unstar': {
-      const members = !explicit ? bulkMembers() : null;
-      if (members) { await mailbox.setStarredGroup(members, id === 'star'); return; }
-      const target = actionTarget(explicit);
-      if (!target) return;
-      if (readerOpen.value && (mailbox.context.value === 'starred' || mailbox.starredOnly.value) && id === 'unstar') await archiveFromReader(false);
-      else { await mailbox.setStarred(target, id === 'star'); if (!readerOpen.value) await focusFocusedRow(); }
-      return;
-    }
-    case 'drafts': await navigateContext('drafts'); return;
-    case 'destinations': case 'account': case 'activity': await openDrawer(id); return;
-    case 'connect': await runAccountAction('connect'); return;
-    case 'sync': await runAccountAction('sync'); return;
-    case 'back':
-      // A reminder request in flight (or waiting for its exact retry) owns Back, like Escape.
-      if (remindersList.value && reminders.dismissBlocked.value) { remindersPane.value?.retainPickerFocus(); return; }
-      if (readerOpen.value) closeReader(); else await contextBack();
-      return;
-    case 'open': if (explicit) await openRowFromList(explicit); else await openFocusedFromList(); return;
-    case 'archive':
-      if (explicit) await archiveRowFromList(explicit);
-      // Selection scope wins over focused/reader singles; the group path never
-      // invokes the single-reader archive-and-advance flow.
-      else if (bulkMembers()) await bulkArchiveSelection();
-      else if (readerOpen.value) await archiveFromReader();
-      else await archiveFocusedRow();
-      return;
-    case 'unarchive': {
-      if (!explicit && bulkMembers()) {
-        await bulkRestoreSelection();
-        return;
+    },
+  },
+  undo: {
+    // Same guards as the key: no in-flight undo (a second dispatch would race
+    // into a false already_undone), and no open reader message-details disclosure.
+    available: () => conversationCommandsOpen('undo') && undoWindowOpen.value && !mailbox.commandInFlight.value && !mailbox.groupInFlight.value && !readerView.value?.hasOpenDetails(),
+    execute: async () => { await undoFromNotice(); },
+  },
+  star: {
+    available: (explicit) => triageAvailable('star', explicit),
+    execute: (explicit) => executeStar('star', explicit),
+    label: selectedScopeLabel,
+  },
+  unstar: {
+    available: (explicit) => triageAvailable('unstar', explicit),
+    execute: (explicit) => executeStar('unstar', explicit),
+    label: selectedScopeLabel,
+  },
+  read: {
+    available: (explicit) => triageAvailable('read', explicit),
+    execute: (explicit) => executeSetRead('read', explicit),
+    label: selectedScopeLabel,
+  },
+  unread: {
+    available: (explicit) => triageAvailable('unread', explicit),
+    execute: (explicit) => executeSetRead('unread', explicit),
+    label: selectedScopeLabel,
+  },
+  'select-all-loaded': {
+    available: () => !trashList.value && !remindersList.value && !draftsList.value && !drafts.activeRef.value && !drawer.value && !contactDisclosure.value && !readerOpen.value && mailbox.listState.value === 'ready' && mailbox.conversations.value.length > 0,
+    execute: () => { mailbox.selectAllLoaded(); },
+  },
+  'clear-selection': {
+    available: () => !drafts.activeRef.value && !drawer.value && !contactDisclosure.value && selectedCount.value > 0,
+    execute: () => { clearSelectionAndReport(); },
+  },
+  search: {
+    available: () => !!accountId.value && !drawer.value && !contactDisclosure.value,
+    execute: async () => { await revealSearch(); },
+  },
+  'create-split': {
+    available: () => !!accountId.value && !mailbox.savedSplit.value && !editingSplit.value,
+    execute: () => openSplitEditor('create-split'),
+  },
+  'edit-split': {
+    available: () => !!accountId.value && !!mailbox.savedSplit.value && !editingSplit.value,
+    execute: () => openSplitEditor('edit-split'),
+  },
+  'toggle-unread-filter': {
+    available: () => !!accountId.value && mailbox.context.value !== 'trash' && !editingSplit.value && !drawer.value && !contactDisclosure.value && !remindersList.value && !draftsList.value,
+    execute: async () => {
+      const token = ++navigationToken;
+      const account = accountId.value;
+      await mailbox.setUnreadOnly(!mailbox.unreadOnly.value);
+      if (token === navigationToken && account === accountId.value && accountReady.value
+        && !overlay.value && !drawer.value && !contactDisclosure.value && !readerOpen.value && !editingSplit.value) {
+        if (mailbox.listState.value === 'ready') await focusFocusedRow(true);
+        else paletteButton.value?.focus();
       }
-      const target = actionTarget(explicit);
-      if (target) await mailbox.setArchived(target, false);
-      return;
-    }
-    case 'read': case 'unread': {
-      if (!explicit && bulkMembers()) {
-        await bulkSetReadSelection(id === 'read');
-        return;
-      }
-      const target = actionTarget(explicit);
-      if (target) await mailbox.setRead(target, id === 'read');
-      return;
-    }
-    case 'select-all-loaded':
-      mailbox.selectAllLoaded();
-      return;
-    case 'clear-selection':
-      clearSelectionAndReport();
-      return;
-    case 'undo':
-      await undoFromNotice();
-      return;
+    },
+    label: () => (mailbox.unreadOnly.value ? 'Show all conversations' : 'Show unread only'),
+  },
+  inbox: {
+    available: () => !!accountId.value,
+    execute: async () => { await navigateToInbox(); },
+  },
+  saved: {
+    available: () => !!mailbox.savedSplit.value?.enabled && !mailbox.splitError.value,
+    execute: async () => { await navigateContext('saved'); },
+    label: () => `Go to ${mailbox.savedSplit.value?.name ?? 'saved split'}`,
+  },
+  done: {
+    available: () => !!accountId.value,
+    execute: async () => { await navigateContext('done'); },
+  },
+  starred: {
+    available: () => gmailMode.value && !!accountId.value,
+    execute: async () => { await navigateContext('starred'); },
+  },
+  destinations: {
+    available: () => (gmailMode.value || props.mode === 'browser-preview') && !!accountId.value,
+    execute: async () => { await openDrawer('destinations'); },
+  },
+  trash: {
+    available: () => gmailMode.value && !!accountId.value,
+    execute: async () => { await navigateContext('trash'); },
+  },
+  reminders: {
+    available: () => remindersSupported.value,
+    execute: async () => { await navigateContext('reminders'); },
+  },
+  'reminder-settings': {
+    available: () => remindersSupported.value && !!accountId.value,
+    execute: async () => { await openDrawer('reminder-settings'); },
+  },
+  drafts: {
+    available: () => !!accountId.value,
+    execute: async () => { await navigateContext('drafts'); },
+  },
+  activity: {
+    available: () => !!accountId.value,
+    execute: async () => { await openDrawer('activity'); },
+  },
+  account: {
+    available: () => gmailMode.value,
+    execute: async () => { await openDrawer('account'); },
+  },
+  'switch-account': {
+    available: () => props.mode === 'browser-preview' && !!props.switchAccountLabel,
+    execute: () => { emit('switchAccount'); },
+    label: () => `Switch account — ${props.switchAccountLabel}`,
+  },
+  connect: {
+    // Not configured has no client ID to connect with, so Connect would only fail: the next step is in Account.
+    available: () => gmailMode.value && accountActionsIdle.value
+      && ['disconnected', 'auth_required'].includes(accountStatus.value?.connection ?? ''),
+    execute: async () => { await runAccountAction('connect'); },
+    label: (declared) => (accountStatus.value?.connection === 'auth_required' ? 'Sign in again' : declared),
+  },
+  sync: {
+    available: () => gmailMode.value && accountActionsIdle.value
+      && accountStatus.value?.connection === 'connected' && accountStatus.value.sync.state !== 'syncing',
+    execute: async () => { await runAccountAction('sync'); },
+  },
+};
+async function openSplitEditor(id: 'create-split' | 'edit-split'): Promise<void> {
+  if (readerOpen.value || drawer.value || contactDisclosure.value || mailbox.context.value !== 'inbox') {
+    if (!(await navigateContext('inbox'))) return;
   }
+  // Let reader/list restoration finish before the editor claims focus.
+  await nextTick();
+  if (actionAvailable(id) && !overlay.value) editingSplit.value = true;
+}
+function actionAvailable(id: ActionId, explicit?: ConversationRef): boolean {
+  if (!workspaceActive.value || !accountReady.value) return false;
+  return actionHandlers[id].available(explicit);
+}
+const availableActions = computed(() => actionRegistry
+  .filter((action) => (actionAvailable(action.id) || starPermissionReason(action.id))
+    && (overlay.value !== 'navigator' || action.navigator))
+  .map((action) => ({
+    id: action.id,
+    shortcut: action.shortcut,
+    disabledReason: starPermissionReason(action.id),
+    label: actionHandlers[action.id].label?.(action.label) ?? action.label,
+  })));
+async function executeAction(id: ActionId, explicit?: ConversationRef): Promise<void> {
+  if (!actionAvailable(id, explicit)) {
+    // A permission-blocked S opens the explanation, never an OAuth flow or write.
+    if (starPermissionReason(id)) await openDrawer('account');
+    return;
+  }
+  await actionHandlers[id].execute(explicit);
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -2200,15 +2266,19 @@ function actionShortcutBlocked(target: EventTarget | null): boolean {
   return buttonOwns(target) && !readerMessageToggleOwns(target);
 }
 
-function onKeydown(event: KeyboardEvent): void {
-  if (!workspaceActive.value) return;
+/**
+ * Surfaces that own the whole keyboard before any binding is consulted: the
+ * Reminders request in flight, the attachment chooser, the command overlay and
+ * the split editor. Returns true when the key was theirs.
+ */
+function modalSurfaceOwns(event: KeyboardEvent): boolean {
   if (remindersList.value && reminders.dismissBlocked.value) {
     if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229) {
       event.preventDefault(); remindersPane.value?.retainPickerFocus();
     } else if (event.key === 'Tab' && event.target === document.body) {
       event.preventDefault(); remindersPane.value?.retainPickerFocus();
     }
-    return;
+    return true;
   }
   if (attachmentConversation.value) {
     // A focused Save button can become disabled during transfer, leaving native
@@ -2216,9 +2286,9 @@ function onKeydown(event: KeyboardEvent): void {
     if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229) {
       event.preventDefault(); void closeAttachments();
     }
-    return;
+    return true;
   }
-  if (overlay.value) return;
+  if (overlay.value) return true;
   if (editingSplit.value && accountReady.value && !readerOpen.value && !drawer.value && !(!wideViewport.value && contactDisclosure.value)) {
     cancelGo();
     // Disabling the form during save can displace focus to BODY. The visible
@@ -2231,31 +2301,46 @@ function onKeydown(event: KeyboardEvent): void {
       event.preventDefault();
       if (!mailbox.splitBusy.value) void closeSplitEditor();
     }
-    return;
+    return true;
   }
+  return false;
+}
+
+/** The native app's Cmd+O and Cmd+K; a modified or composing keystroke also drops an armed chord. Browser preview leaves reserved shortcuts alone. */
+function nativeShortcutOwns(event: KeyboardEvent): boolean {
   if (props.mode !== 'browser-preview' && event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
     && event.key.toLowerCase() === 'o' && !event.isComposing && event.keyCode !== 229
     && !isEditableTarget(event.target) && readerOpen.value && !drawer.value) {
-    event.preventDefault(); openAttachments(); return;
+    event.preventDefault(); openAttachments(); return true;
   }
   if (event.isComposing || event.keyCode === 229 || event.altKey || event.ctrlKey || event.metaKey) cancelGo();
   // Cmd+K is the native app binding. Browser preview leaves reserved shortcuts alone.
   if (props.mode !== 'browser-preview' && event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'k' && !event.isComposing && event.keyCode !== 229) {
-    event.preventDefault(); openOverlay('palette'); return;
+    event.preventDefault(); openOverlay('palette'); return true;
   }
+  return false;
+}
+
+/** The armed G chord and the grace window after it lapses. */
+function chordOwns(event: KeyboardEvent): boolean {
   if (goTimer) {
     cancelGo();
     // Escape cancels the armed chord and is consumed: one Escape, one dismissal.
-    if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); return; }
+    if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); return true; }
     if (isGoSecondKey(event) && !isEditableTarget(event.target) && !drawer.value && !contactDisclosure.value && !readerOpen.value) {
-      event.preventDefault(); void executeAction(goTargetFor(event)!.id); return;
+      event.preventDefault(); void executeAction(goTargetFor(event)!.id); return true;
     }
   } else if (goGraceTimer) {
     // The window just lapsed: a late second key was almost certainly meant for
     // the chord, so it is swallowed instead of running the plain-key action.
     endGoGrace();
-    if (isGoSecondKey(event) && !isEditableTarget(event.target)) { event.preventDefault(); return; }
+    if (isGoSecondKey(event) && !isEditableTarget(event.target)) { event.preventDefault(); return true; }
   }
+  return false;
+}
+
+/** A visible composer owns Escape and every other key; composition, modifiers and editable fields are never ours. */
+function composerOrFieldOwns(event: KeyboardEvent): boolean {
   // A visible compose surface (inline reply composer or inline compose card)
   // owns Escape: it closes through the same protected flush as the editor's own
   // close control. This must run before the key suppression below so the editor
@@ -2266,68 +2351,19 @@ function onKeydown(event: KeyboardEvent): void {
     && !event.ctrlKey && !event.metaKey && !event.altKey) {
     event.preventDefault();
     void drafts.flushAndClose();
-    return;
+    return true;
   }
   // Only a visible composer owns all keys; a suspended editor behind another
   // disclosure must not silently keep keyboard ownership from the inbox.
-  if (drafts.activeRef.value && (composeCardOpen.value || replyComposerOpen.value)) return;
-  if (event.isComposing || event.keyCode === 229) return; // IME composition
-  if (event.ctrlKey || event.metaKey || event.altKey) return;
-  if (isEditableTarget(event.target)) return;
+  if (drafts.activeRef.value && (composeCardOpen.value || replyComposerOpen.value)) return true;
+  if (event.isComposing || event.keyCode === 229) return true; // IME composition
+  if (event.ctrlKey || event.metaKey || event.altKey) return true;
+  return isEditableTarget(event.target);
+}
 
-  const key = event.key;
-  if (key === '/' && actionAvailable('search')) { event.preventDefault(); void executeAction('search'); return; }
+/** Who owns this key event: the facts the registry needs to pick a binding. */
+function keyFocus(event: KeyboardEvent): KeyFocus {
   const readerIsOpen = readerOpen.value;
-
-  if (key === 'Escape') {
-    // The active disclosure gets Escape precedence; mailbox actions underneath
-    // are suppressed while it is open.
-    if (drawer.value) {
-      event.preventDefault();
-      void closeDrawer();
-      return;
-    }
-    // Protected close of the inline reply composer or compose card: flush
-    // through the draft lifecycle; the surface hides when drafts.isVisible
-    // goes false.
-    if (replyComposerOpen.value) { event.preventDefault(); void drafts.flushAndClose(); return; }
-    if (composeCardOpen.value) { event.preventDefault(); void closeComposeCard(); return; }
-    if (!wideViewport.value && contactDisclosure.value) {
-      event.preventDefault();
-      void closeContactDisclosure();
-      return;
-    }
-    if (readerIsOpen) {
-      // An open message-details disclosure is dismissed before the reader.
-      if (readerView.value?.hasOpenDetails()) {
-        event.preventDefault();
-        readerView.value.dismissMessageDetails();
-        return;
-      }
-      // Escape order (§3.2): disclosure/drawer → selected set → reader Back.
-      if (selectedCount.value > 0) {
-        event.preventDefault();
-        clearSelectionAndReport();
-        return;
-      }
-      event.preventDefault();
-      void executeAction('back');
-    } else if (selectedCount.value > 0) {
-      // Escape order (§3.2): the selected set clears before any context Back,
-      // including when no context history exists.
-      event.preventDefault();
-      clearSelectionAndReport();
-    } else if (history.value.length) {
-      event.preventDefault(); void executeAction('back');
-    }
-    return;
-  }
-  if (drawer.value || (!wideViewport.value && contactDisclosure.value)) return;
-  if (key === 'h' && !event.shiftKey && !event.repeat && !actionShortcutBlocked(event.target)) {
-    if (actionAvailable('remind')) { event.preventDefault(); void executeAction('remind'); }
-    return;
-  }
-
   // A Reminders or Drafts row's open button is a real button but the list's own
   // row, so the browsing keys (G chords, Left) work from it as they do from an
   // Inbox row.
@@ -2343,120 +2379,6 @@ function onKeydown(event: KeyboardEvent): void {
     && event.target instanceof HTMLElement
     && (event.target.matches('.inbox-row') || event.target === emptyState.value)
     && mailbox.listState.value === 'ready';
-  if (splitListOwns && key === 'Tab' && (mailbox.context.value === 'inbox' || mailbox.context.value === 'saved')) {
-    const splits: BrowseContext[] = savedTabVisible.value || mailbox.context.value === 'saved' ? ['inbox', 'saved'] : ['inbox'];
-    const index = splits.indexOf(mailbox.context.value);
-    const destination = splits[index + (event.shiftKey ? -1 : 1)];
-    if (destination) {
-      event.preventDefault();
-      void navigateContext(destination);
-    }
-    // At either boundary, leave Tab to native traversal (never wrap).
-    return;
-  }
-  // Reminders list: `[` / `]` step the tab from the rows or the pane (never from
-  // a button, field or picker), and H / Shift+H act on the focused row only.
-  // A row without the action ignores the key silently. Trash has no row key.
-  if (remindersList.value && browsingOwns && !event.repeat && (key === '[' || key === ']')) {
-    event.preventDefault();
-    reminders.stepDestination(key === ']' ? 1 : -1);
-    void nextTick().then(() => remindersPane.value?.focusRow());
-    return;
-  }
-  const contextRowKey = isContextRow && event.target instanceof HTMLElement ? event.target.dataset.drawerRow : undefined;
-  if (contextRowKey !== undefined && !event.repeat) {
-    if (remindersRowOwns && key.toLowerCase() === 'h') {
-      const handled = event.shiftKey ? remindersPane.value?.cancelRow(contextRowKey) : remindersPane.value?.rescheduleRow(contextRowKey);
-      if (handled) event.preventDefault();
-      return;
-    }
-    // Delete or Backspace only asks; the confirmation owns the discard.
-    if (draftsRowOwns && !event.shiftKey && (key === 'Delete' || key === 'Backspace')) {
-      if (draftsPane.value?.discardRow(contextRowKey)) event.preventDefault();
-      return;
-    }
-  }
-  if (browsingOwns && !event.shiftKey && key === 'ArrowLeft') {
-    event.preventDefault(); openOverlay('navigator'); return;
-  }
-  if (browsingOwns && !event.shiftKey && key === 'g') {
-    event.preventDefault(); armGo(); return;
-  }
-  if (key === 's' && !event.shiftKey && !event.repeat && (browsingOwns || readerIsOpen) && !actionShortcutBlocked(event.target)) {
-    const stars = readerIsOpen ? mailbox.conversation.value?.stars : mailbox.focusedSummary.value?.stars;
-    event.preventDefault();
-    void executeAction(selectedCount.value === 0 && stars?.knownMessages === stars?.totalMessages && (stars?.starredMessages ?? 0) > 0 ? 'unstar' : 'star');
-    return;
-  }
-  if (key === 'E' && event.shiftKey && !actionShortcutBlocked(event.target)) {
-    event.preventDefault(); void executeAction('unarchive'); return;
-  }
-  if (key === 'U' && event.shiftKey && !actionShortcutBlocked(event.target)) {
-    event.preventDefault();
-    void executeAction('unread');
-    return;
-  }
-  // Compose works from BOTH the list and the reader, like S: no modifiers, no
-  // editable target, no button owning the key (checked above).
-  if (key === 'c' && !event.shiftKey && !event.repeat && (browsingOwns || readerIsOpen) && (!actionShortcutBlocked(event.target) || draftsRowOwns)) {
-    event.preventDefault();
-    void executeAction('compose');
-    return;
-  }
-  // Reply works from the reader only: the source is the displayed latest message.
-  // actionAvailable owns every guard (ready, not blocked, not Trash, no drawer).
-  if (key === 'r' && !event.shiftKey && !event.repeat && readerIsOpen && !actionShortcutBlocked(event.target)) {
-    if (actionAvailable('reply')) { event.preventDefault(); void executeAction('reply'); }
-    return;
-  }
-  // Undo works from BOTH the list and the reader; the same guard set as E
-  // applies. Availability (window, in-flight undo, reader disclosure) lives in
-  // actionAvailable so the palette entry and the key cannot disagree.
-  if (key === 'z' && !event.shiftKey && !actionShortcutBlocked(event.target)) {
-    if (event.repeat) return; // key auto-repeat must not double-dispatch undo
-    event.preventDefault();
-    void executeAction('undo');
-    return;
-  }
-  if (readerIsOpen) {
-    const reader = readerView.value;
-    if (key === 'n' || key === 'N') {
-      event.preventDefault();
-      reader?.moveMessage(1);
-      return;
-    }
-    if (key === 'p' || key === 'P') {
-      event.preventDefault();
-      reader?.moveMessage(-1);
-      return;
-    }
-    if (key === 'o' || key === 'O') {
-      event.preventDefault();
-      if (event.shiftKey) reader?.expandAllMessages(); // idempotent expand-all
-      else reader?.toggleActiveMessage();
-      return;
-    }
-    // Reader J/K moves the reader cursor within the originating Inbox; it is a
-    // no-op for Activity-origin readers and never moves hidden list focus.
-    // ArrowUp/ArrowDown keep native behavior while reading (the reader article
-    // scrolls); the arrow aliases belong to the LIST navigation only.
-    if (key === 'j') {
-      event.preventDefault();
-      void moveReaderConversation(1);
-      return;
-    }
-    if (key === 'k') {
-      event.preventDefault();
-      void moveReaderConversation(-1);
-      return;
-    }
-    if (key === 'e' && mailboxActionsEnabled.value && !actionShortcutBlocked(event.target)) {
-      event.preventDefault();
-      void executeAction('archive');
-    }
-    return;
-  }
-
   // Selection keys: same surface ownership as the browsing keys (a contact
   // column/disclosure/drawer owning focus must never mutate the hidden list
   // selection, §3.3), with window-targeted synthetic events treated like
@@ -2475,49 +2397,169 @@ function onKeydown(event: KeyboardEvent): void {
       || event.target === document.body
       || (event.target instanceof Node && !!inboxList.value?.$el?.contains(event.target))
       || event.target === emptyState.value);
-  if (selectionKeysOwned && (key === 'x' || key === 'X')) {
-    if (event.repeat) return; // X ignores auto-repeat
+  return {
+    readerOpen: readerIsOpen,
+    covered: !!drawer.value || (!wideViewport.value && contactDisclosure.value),
+    browsingOwns,
+    selectionKeysOwned,
+    splitListOwns,
+    remindersBrowsing: remindersList.value && browsingOwns,
+    remindersRowOwns,
+    draftsRowOwns,
+    // Enter or Space on the focused empty line runs its one action, as the button does.
+    emptyLineAction: event.target === emptyState.value && !!inboxEmpty.value?.action && emptyActionShown.value,
+    buttonOwns: buttonOwns(event.target),
+    shortcutBlocked: actionShortcutBlocked(event.target),
+    mailboxActionsEnabled: mailboxActionsEnabled.value,
+  };
+}
+
+/** Escape ladder (§3.2): drawer → composer → disclosure → message details → selection → Back. */
+function escapeLadder(event: KeyboardEvent): void {
+  const readerIsOpen = readerOpen.value;
+  // The active disclosure gets Escape precedence; mailbox actions underneath
+  // are suppressed while it is open.
+  if (drawer.value) {
     event.preventDefault();
-    if (mailbox.focusedRef.value) mailbox.toggleSelected(mailbox.focusedRef.value);
+    void closeDrawer();
     return;
   }
-  if (selectionKeysOwned && event.shiftKey && (key === 'J' || key === 'K')) {
+  // Protected close of the inline reply composer or compose card: flush
+  // through the draft lifecycle; the surface hides when drafts.isVisible
+  // goes false.
+  if (replyComposerOpen.value) { event.preventDefault(); void drafts.flushAndClose(); return; }
+  if (composeCardOpen.value) { event.preventDefault(); void closeComposeCard(); return; }
+  if (!wideViewport.value && contactDisclosure.value) {
+    event.preventDefault();
+    void closeContactDisclosure();
+    return;
+  }
+  if (readerIsOpen) {
+    // An open message-details disclosure is dismissed before the reader.
+    if (readerView.value?.hasOpenDetails()) {
+      event.preventDefault();
+      readerView.value.dismissMessageDetails();
+      return;
+    }
+    // Escape order (§3.2): disclosure/drawer → selected set → reader Back.
+    if (selectedCount.value > 0) {
+      event.preventDefault();
+      clearSelectionAndReport();
+      return;
+    }
+    event.preventDefault();
+    void executeAction('back');
+  } else if (selectedCount.value > 0) {
+    // Escape order (§3.2): the selected set clears before any context Back,
+    // including when no context history exists.
+    event.preventDefault();
+    clearSelectionAndReport();
+  } else if (history.value.length) {
+    event.preventDefault(); void executeAction('back');
+  }
+}
+
+/** Keys that choose between two commands. */
+const keyResolvers: Record<KeyResolverId, (focus: KeyFocus) => ActionId> = {
+  'star-or-unstar': (focus) => {
+    const stars = focus.readerOpen ? mailbox.conversation.value?.stars : mailbox.focusedSummary.value?.stars;
+    return selectedCount.value === 0 && stars?.knownMessages === stars?.totalMessages && (stars?.starredMessages ?? 0) > 0 ? 'unstar' : 'star';
+  },
+};
+
+/** What each key that is not a command does; the registry declares which keys and where. */
+const keyHandlers: Record<KeyOnlyId, (event: KeyboardEvent, focus: KeyFocus) => void> = {
+  'escape-ladder': (event) => escapeLadder(event),
+  'chord-arm': (event) => { event.preventDefault(); armGo(); },
+  'navigator-open': (event) => { event.preventDefault(); openOverlay('navigator'); },
+  'split-tab': (event) => {
+    if (mailbox.context.value !== 'inbox' && mailbox.context.value !== 'saved') return;
+    const splits: BrowseContext[] = savedTabVisible.value || mailbox.context.value === 'saved' ? ['inbox', 'saved'] : ['inbox'];
+    const index = splits.indexOf(mailbox.context.value);
+    const destination = splits[index + (event.shiftKey ? -1 : 1)];
+    if (destination) {
+      event.preventDefault();
+      void navigateContext(destination);
+    }
+    // At either boundary, leave Tab to native traversal (never wrap).
+  },
+  // Reminders list: `[` / `]` step the tab from the rows or the pane (never from
+  // a button, field or picker), and H / Shift+H act on the focused row only.
+  // A row without the action ignores the key silently. Trash has no row key.
+  'reminder-tabs': (event) => {
+    event.preventDefault();
+    reminders.stepDestination(event.key === ']' ? 1 : -1);
+    void nextTick().then(() => remindersPane.value?.focusRow());
+  },
+  'reminder-row': (event) => {
+    const rowKey = (event.target as HTMLElement).dataset.drawerRow!;
+    const handled = event.shiftKey ? remindersPane.value?.cancelRow(rowKey) : remindersPane.value?.rescheduleRow(rowKey);
+    if (handled) event.preventDefault();
+  },
+  // Delete or Backspace only asks; the confirmation owns the discard.
+  'draft-discard': (event) => {
+    if (draftsPane.value?.discardRow((event.target as HTMLElement).dataset.drawerRow!)) event.preventDefault();
+  },
+  'reader-message': (event) => {
+    const reader = readerView.value;
+    event.preventDefault();
+    if (event.key === 'n' || event.key === 'N') reader?.moveMessage(1);
+    else if (event.key === 'p' || event.key === 'P') reader?.moveMessage(-1);
+    else if (event.shiftKey) reader?.expandAllMessages(); // idempotent expand-all
+    else reader?.toggleActiveMessage();
+  },
+  // Reader J/K moves the reader cursor within the originating Inbox; it is a
+  // no-op for Activity-origin readers and never moves hidden list focus.
+  // ArrowUp/ArrowDown keep native behavior while reading (the reader article
+  // scrolls); the arrow aliases belong to the LIST navigation only.
+  'reader-move': (event) => {
+    event.preventDefault();
+    void moveReaderConversation(event.key === 'j' ? 1 : -1);
+  },
+  'select-toggle': (event) => {
+    event.preventDefault();
+    if (mailbox.focusedRef.value) mailbox.toggleSelected(mailbox.focusedRef.value);
+  },
+  'select-extend': (event) => {
     // Shift+J/K: move one row, then add the inclusive anchor→destination range.
     // Boundary moves are a no-op (focus does not change).
     event.preventDefault();
     const preMove = mailbox.focusedRef.value ? { ...mailbox.focusedRef.value } : null;
-    moveFocus(key === 'J' ? 1 : -1);
+    moveFocus(event.key === 'J' ? 1 : -1);
     const destination = mailbox.focusedRef.value;
     if (destination && preMove && !sameConversation(destination, preMove)) mailbox.extendSelectionTo(destination, preMove);
-    return;
-  }
+  },
+  'empty-line': (event) => {
+    const action = inboxEmpty.value?.action;
+    if (!action) return;
+    event.preventDefault();
+    void accountNoticeAction(action, 'empty');
+  },
+  'list-move': (event) => {
+    event.preventDefault();
+    moveFocus(event.key === 'j' || event.key === 'ArrowDown' ? 1 : -1);
+  },
+};
 
-
-  if (activateEmptyAction(event)) return;
-  switch (key) {
-    case 'j':
-    case 'ArrowDown':
-      event.preventDefault();
-      moveFocus(1);
-      return;
-    case 'k':
-    case 'ArrowUp':
-      event.preventDefault();
-      moveFocus(-1);
-      return;
-    case 'Enter':
-      if (buttonOwns(event.target)) return;
-      event.preventDefault();
-      void executeAction('open');
-      return;
-    case 'e':
-      if (!mailboxActionsEnabled.value || buttonOwns(event.target)) return;
-      event.preventDefault();
-      void executeAction('archive');
-      return;
-    default:
-      return;
-  }
+/**
+ * The keyboard dispatcher. Modal surfaces and the chord answer first; then the
+ * focus context is worked out, the registry names the binding that owns the
+ * key, and the command is checked for availability and executed (or the
+ * key-only handler runs).
+ */
+function onKeydown(event: KeyboardEvent): void {
+  if (!workspaceActive.value) return;
+  if (modalSurfaceOwns(event) || nativeShortcutOwns(event) || chordOwns(event) || composerOrFieldOwns(event)) return;
+  const focus = keyFocus(event);
+  const resolved = findKeyBinding(event, focus);
+  if (!resolved) return;
+  const { binding } = resolved;
+  if (event.repeat && binding.repeat === 'swallow') return; // auto-repeat must not double-dispatch
+  if (resolved.kind === 'key') { keyHandlers[resolved.handler](event, focus); return; }
+  const id = binding.resolves ? keyResolvers[binding.resolves](focus) : resolved.action;
+  if (binding.prevent === 'when-available' && !actionAvailable(id)) return;
+  event.preventDefault();
+  void executeAction(id);
 }
 
 /**
