@@ -1,0 +1,15 @@
+{
+  "tool_use_id": "toolu_01Qx6ud8HMGyFYGrRnVCEDyg",
+  "agent_id": "a097107051a7b6d39",
+  "subagent_type": "general-purpose",
+  "task_description": "Closing critique B: detector run",
+  "token_usage": {
+    "input_tokens": 110,
+    "cache_creation_tokens": 85677,
+    "cache_read_tokens": 3934861,
+    "output_tokens": 26250,
+    "api_call_count": 55
+  },
+  "started_at": "2026-11-14T11:07:30.437305089Z",
+  "completed_at": "2026-11-14T11:13:04.760895272Z"
+}
