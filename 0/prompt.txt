@@ -1,0 +1,84 @@
+You are doing ticket 16 of the Email OS maintenance programme: make the native shell (`src-tauri`) thin. Email OS is a Tauri 2 desktop and Android mail client with a Rust core (`crates/mail-core`) and a Vue 3 frontend. I am the coordinating thread: I gate and merge your PRs, and you never merge. Message me when each PR is ready and whenever you have a question.
+
+## Context
+
+- Fixture mode now runs on the same `GmailCore` as Gmail mode, through a session policy (ticket 14 just finished; see `docs/adr/0002-fixture-as-synthetic-provider.md`, now Implemented). The legacy fixture backend is deleted.
+- The owner's Android work (#63) moved the whole shell into `src-tauri/src/lib.rs` (1,920 lines). `main.rs` is now just `email_os::run()`. There are also `close_gate.rs` and `diagnostics.rs`. Desktop and Android share `run()`.
+- `lib.rs` still holds:
+  - an `enum Backend { Gmail(GmailCore), Synthetic(GmailCore) }` with about 290 lines of forwarding `impl` in which every arm does the same thing;
+  - `AppState`, `DraftLifecycle` and `AttachmentTransfers`;
+  - helper logic such as `active_account`, `require_draft_account` and `validate_reply_conversation`;
+  - about 45 `#[tauri::command]` functions;
+  - the close and lifecycle commands;
+  - the two fixture-transition commands;
+  - `run()`, which handles setup, mode selection and the builder;
+  - three test modules.
+
+## Goal
+
+Make the shell a thin adapter. Commands translate IPC to core calls, the state is a small struct, and anything that is mail logic lives in `mail-core`.
+
+1. **Collapse `Backend`.** Hold one `GmailCore` in `AppState` and delete the forwarding `impl`. If something still has to know the session kind, ask the core (the session policy) instead of matching on a shell enum.
+2. **Move domain logic into `mail-core`** where it belongs. Candidates: reply-draft revalidation (`validate_reply_conversation`, `require_draft_account`, `active_account`), and anything else in the shell that decides mail behaviour rather than adapting IPC. Each move keeps its tests and gets core-level tests where it had only shell tests.
+3. **Split what remains** of `lib.rs` into modules along real seams. Suggested layout (you decide from reading it): `state.rs`; `commands/` grouped by surface (mailbox, drafts, attachments, account, lifecycle and close, transition); `setup.rs`, holding `run()`, mode selection and opening the core. `lib.rs` keeps only the module declarations, the `run` entry point and the `generate_handler!` list. Move each test module next to the code it tests.
+
+## Rules
+
+- **No behaviour change.**
+  - No IPC command name, argument or DTO change.
+  - No generated TypeScript change: run `mise run check:contract`.
+  - The native command manifest test (all four sources) must stay green without changes to its expectations.
+  - No frontend change at all.
+- **Existing tests:**
+  - Every existing native bridge test keeps passing, with only path or import edits; list each one.
+  - The `email-os` test count may only go up. It is 18 today.
+  - `mail-core` tests: only additions.
+- **Reviewable commits.**
+  - Every commit compiles and passes `mise run test:native`.
+  - A commit that moves code is a pure move (same lines, plus `mod`, `use` and `pub(crate)` wiring), so I can verify it mechanically. Collapsing `Backend` and moving logic into the core are their own commits, separate from file moves.
+- **Android must keep building.**
+  - After each PR, run `cargo check --locked -p email-os --lib --target aarch64-linux-android` and the same for `mail-core`, with the NDK compiler set. NDK 27.2.12479018 lives under `$HOME/Android/Sdk/ndk/`. Export `CC_aarch64_linux_android` and `AR_aarch64_linux_android` from its llvm toolchain, or use the variables in `mise run android:doctor`.
+  - Keep every `cfg(target_os = "android")` / `mobile` distinction exactly as it is.
+  - The CI job `android-apk` builds the APK on PRs to main.
+- **Privacy:** nothing logged may contain subjects, addresses, bodies, tokens, URLs with ids, or SQL with bound values. Keep the `diagnostics.rs` and `storage_log` rules.
+- **Two or three PRs:**
+  - (a) collapse `Backend`, plus move domain logic into `mail-core`;
+  - (b) split the shell into modules.
+  - Stack them: (a) targets `main`, and (b) targets (a)'s branch.
+  - CI runs only on PRs whose base is `main`, so run `mise run check:all` locally before marking each PR ready.
+
+## Two small additions (separate commits, in PR (a))
+
+- **Profile-lock test.** Add a test that `GmailCore::open_synthetic_profile` takes the profile lock before the synthetic provider creates any file. The only test that proved this used the deleted legacy core. Approach: hold the lock from another guard, call open, and assert it fails with `ProfileInUse` and that `synthetic-provider.db` was not created.
+- **Startup gate focus.** In `FixtureTransitionGate.vue`, move focus into the dialog when it appears, onto its heading or container rather than the button, so Tab reaches "Back up and start fresh" in one step and screen readers announce the dialog. Do not autofocus the button, because the action is destructive. Add a component test. This is the one frontend file you may touch.
+
+## Machine
+
+- 2 cores and 7 GB RAM, shared with my gate runs.
+- Always use `CARGO_TARGET_DIR=/home/exedev/email-os/target`. Run one cargo or mise command at a time, and no more than two subagents at once.
+- The shared target directory can serve stale results:
+  - If `check:contract` shows a diff naming something that is not in your tree, or clippy reports a missing item that exists, `touch` the crate's `lib.rs` and rerun.
+  - Before you mark a PR ready, touch `crates/mail-core/src/lib.rs`, `src-tauri/src/lib.rs` and `src-tauri/src/main.rs`, then run `mise run lint:core && mise run lint:native`. CI caught a clippy failure last time that the stale cache hid locally.
+- Do not modify the root checkout `/home/exedev/email-os`. Work only in your worktree.
+- After each push, confirm the remote head with `git ls-remote`. `gh` needs `-R BbrSofiane/email-os`.
+- Use subagents, on the same model as you, for self-contained pieces. Examples: an inventory of which shell functions are mail logic and which are IPC adaptation, or an independent old-versus-new review of the `Backend` collapse.
+- Commit work in progress at checkpoints, so that a usage-limit stop loses nothing.
+
+## Final report
+
+- Each PR with its head SHA and its test counts (mail-core, email-os, frontend).
+- The new module layout, with line counts.
+- What moved into `mail-core` and why.
+- Every existing test edited and why.
+- The Android check results.
+- What you could not verify.
+
+---
+
+<task-notification>
+<task-id>baxj9ao37</task-id>
+<tool-use-id>toolu_019Q7shVyr1EezoHBQmhZuaG</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-maintenance-p4c-thin-sh-b701ff54dd73b581/5d0bff72-6561-427d-8886-987008a34c7a/tasks/baxj9ao37.output</output-file>
+<status>completed</status>
+<summary>Background command "export CARGO_TARGET_DIR=/home/exedev/email-os/target &amp;&amp; uptime &amp;&amp; (time cargo test --locked -p email-os 2&gt;&amp;1 | tail -40) 2&gt;&amp;1 | tail -60" completed (exit code 0)</summary>
+</task-notification>
