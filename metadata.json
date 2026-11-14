@@ -1,0 +1,52 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7CTMRXS5X76N4WN5P2Z3668",
+  "strategy": "manual-commit",
+  "branch": "maintenance/p4-contract-scenarios",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "crates/mail-core/tests/contract_scenarios.rs",
+    "tests/fixtures/contract-scenarios/archive-idempotent-replay.json",
+    "tests/fixtures/contract-scenarios/archive-undo-restores-only-originally-inbox-messages.json",
+    "tests/fixtures/contract-scenarios/fixture-rejects-unsupported-commands.json",
+    "tests/fixtures/contract-scenarios/group-and-single-actions-supersede-each-other.json",
+    "tests/fixtures/contract-scenarios/group-archive-mixed-membership.json",
+    "tests/fixtures/contract-scenarios/group-idempotent-replay.json",
+    "tests/fixtures/contract-scenarios/group-member-failure-does-not-stop-siblings.json",
+    "tests/fixtures/contract-scenarios/group-size-cap.json",
+    "tests/fixtures/contract-scenarios/group-undo-cancels-queued-members.json",
+    "tests/fixtures/contract-scenarios/group-undo-partial-results.json",
+    "tests/fixtures/contract-scenarios/group-undo-rejected-after-the-window.json",
+    "tests/fixtures/contract-scenarios/group-undo-without-an-eligible-member.json",
+    "tests/fixtures/contract-scenarios/invalid-commands.json",
+    "tests/fixtures/contract-scenarios/mailboxes.json",
+    "tests/fixtures/contract-scenarios/read-and-star-groups.json",
+    "tests/fixtures/contract-scenarios/read-setter-and-undo.json",
+    "tests/fixtures/contract-scenarios/retry-of-a-failed-operation.json",
+    "tests/fixtures/contract-scenarios/star-setter-and-undo.json",
+    "tests/fixtures/contract-scenarios/star-with-unknown-prior-is-not-undoable.json",
+    "tests/fixtures/contract-scenarios/unarchive-restores-inbox.json",
+    "tests/fixtures/contract-scenarios/undo-cancels-a-queued-operation.json",
+    "tests/fixtures/contract-scenarios/undo-compensates-a-claimed-operation.json",
+    "tests/fixtures/contract-scenarios/undo-compensates-a-confirmed-operation.json",
+    "tests/fixtures/contract-scenarios/undo-rejected-after-the-window.json",
+    "tests/fixtures/contract-scenarios/undo-rejected-for-a-failed-operation.json",
+    "tests/fixtures/contract-scenarios/undo-rejected-when-superseded.json"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 34,
+    "cache_creation_tokens": 52749,
+    "cache_read_tokens": 4239474,
+    "output_tokens": 35511,
+    "api_call_count": 17
+  }
+}
