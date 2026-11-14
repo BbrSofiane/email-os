@@ -828,4 +828,63 @@ describe('useMailbox (Slice 02 account status and lifecycle)', () => {
     expect(result.lastAction.value?.undone).toBeNull();
     stop();
   });
+  // A change event that lands while Undo's own refresh is reading supersedes
+  // it (newer listToken). The awaited refresh must still resolve only once the
+  // newest refresh has published, so a caller that inspects `conversations`
+  // straight after `await undoLastAction()` sees the restored row.
+  describe('refresh superseded by a change event', () => {
+    async function undoWithEvents(afterReplyEvents: number): Promise<{ atResolve: boolean; later: boolean }> {
+      const inner = createBrowserFakeMailClient();
+      let listener: (() => void) | null = null;
+      let armed = false;
+      const client: MailClient = {
+        ...inner,
+        // Only the events this test fires reach the mailbox (the fake's own are muted).
+        subscribe: async (l) => { listener = l; return () => {}; },
+        // A real IPC read takes time: every list read yields one macrotask.
+        listConversations: async () => {
+          if (armed) {
+            armed = false;
+            // Core pass-start events arrive while this very refresh is reading.
+            for (let i = 0; i < afterReplyEvents; i += 1) queueMicrotask(() => listener?.());
+          }
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          return inner.listConversations();
+        },
+        undoOperation: async (command) => {
+          const receipt = await inner.undoOperation(command);
+          listener?.(); // both cores notify inside the undo call, just before the reply
+          armed = true;
+          return receipt;
+        },
+      } as MailClient;
+      const { result, stop } = scopeRun(() => useMailbox(client));
+      await result.ready;
+      result.focusConversation(fixtureRef('conv-01'));
+      await result.archiveFocused();
+      await inner.controls.flush();
+      await flushMacrotasks();
+      expect(result.conversations.value.some((c) => c.ref.conversationId === 'conv-01')).toBe(false);
+      await result.undoLastAction();
+      const has = () => result.conversations.value.some((c) => c.ref.conversationId === 'conv-01');
+      const atResolve = has();
+      await flushMacrotasks();
+      await inner.controls.flush();
+      const later = has();
+      stop();
+      return { atResolve, later };
+    }
+
+    it('baseline: with no event after the reply the restored row is present when Undo resolves', async () => {
+      expect(await undoWithEvents(0)).toEqual({ atResolve: true, later: true });
+    });
+
+    it('a second change event during the undo refresh does not let Undo resolve on the old list', async () => {
+      expect(await undoWithEvents(1)).toEqual({ atResolve: true, later: true });
+    });
+
+    it('several events while Undo refreshes still resolve on a published list', async () => {
+      expect(await undoWithEvents(3)).toEqual({ atResolve: true, later: true });
+    });
+  });
 });
