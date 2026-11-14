@@ -1,0 +1,55 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7DC1XKJ79SDESH6N06K1SA6",
+  "session_id": "7290746f-2115-4cce-a765-a94e6b68740b",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-14T15:50:44.378157314Z",
+  "branch": "maintenance/p4-synthetic-stage2",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "crates/mail-core/src/gmail/mod.rs",
+    "crates/mail-core/src/gmail/session.rs",
+    "crates/mail-core/src/gmail/sync.rs",
+    "crates/mail-core/src/synthetic/provider.rs",
+    "crates/mail-core/src/testing/synthetic.rs",
+    "crates/mail-core/tests/contract_scenarios.rs",
+    "crates/mail-core/tests/synthetic_core_groups.rs",
+    "crates/mail-core/tests/synthetic_core_lifecycle.rs",
+    "crates/mail-core/tests/synthetic_core_policy.rs",
+    "docs/development.md"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "08f09dad1351",
+  "checkpoint_transcript_start": 768,
+  "transcript_lines_at_start": 768,
+  "compact_transcript_start": 90,
+  "token_usage": {
+    "input_tokens": 80,
+    "cache_creation_tokens": 57976,
+    "cache_read_tokens": 13603296,
+    "output_tokens": 39995,
+    "api_call_count": 38
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-14T15:50:44.240886623Z",
+    "agent_lines": 1096,
+    "agent_removed": 72,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 1096,
+    "total_lines_changed": 1168,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}

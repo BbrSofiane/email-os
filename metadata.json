@@ -1,0 +1,35 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7DC1XKJ79SDESH6N06K1SA6",
+  "strategy": "manual-commit",
+  "branch": "maintenance/p4-synthetic-stage2",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "crates/mail-core/src/gmail/mod.rs",
+    "crates/mail-core/src/gmail/session.rs",
+    "crates/mail-core/src/gmail/sync.rs",
+    "crates/mail-core/src/synthetic/provider.rs",
+    "crates/mail-core/src/testing/synthetic.rs",
+    "crates/mail-core/tests/contract_scenarios.rs",
+    "crates/mail-core/tests/synthetic_core_groups.rs",
+    "crates/mail-core/tests/synthetic_core_lifecycle.rs",
+    "crates/mail-core/tests/synthetic_core_policy.rs",
+    "docs/development.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 80,
+    "cache_creation_tokens": 57976,
+    "cache_read_tokens": 13603296,
+    "output_tokens": 39995,
+    "api_call_count": 38
+  }
+}

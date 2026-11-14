@@ -1,0 +1,38 @@
+<task-notification>
+<task-id>bu5l780bn</task-id>
+<tool-use-id>toolu_01CjGUZRCFyTwEjk1RBD5E7M</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-maintenance-p4-syntheti-4a65a23bc29bdbf9/7290746f-2115-4cce-a765-a94e6b68740b/tasks/bu5l780bn.output</output-file>
+<status>completed</status>
+<summary>Monitor "stage 1 check:all rerun" stream ended</summary>
+<event>test result: ok. 215 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.14s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.82s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.01s
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.20s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.45s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.46s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.78s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.86s
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.95s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+Test Files  89 passed (89)
+Tests  1527 passed (1527)
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+exit=0</event>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>b138aott2</task-id>
+<tool-use-id>toolu_01KJQPQCGvN2L2PBC9jZTMES</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-maintenance-p4-syntheti-4a65a23bc29bdbf9/7290746f-2115-4cce-a765-a94e6b68740b/tasks/b138aott2.output</output-file>
+<status>completed</status>
+<summary>Background command "until grep -q "^exit=" /tmp/claude-1000/check-all-stage1.log; do sleep 5; done; grep -E "^exit=|FAILED|panicked|error(\[|:)|test result: F|Tests |Test Files|ERROR" /tmp/claude-1000/check-all-stage1.log | tail -25" completed (exit code 0)</summary>
+</task-notification>
