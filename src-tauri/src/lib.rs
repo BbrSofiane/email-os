@@ -783,26 +783,26 @@ async fn save_attachment(
     }
     #[cfg(not(target_os = "android"))]
     {
-    let directory = app
-        .path()
-        .download_dir()
-        .map_err(|_| storage_failure(cause::PATH_UNAVAILABLE))?;
-    let transfers = Arc::clone(&state.attachment_transfers);
-    let cancel = transfers
-        .lock()
-        .map_err(|_| storage_failure(cause::LOCK_POISONED))?
-        .begin(&request.request_id)?;
-    let id = request.request_id.clone();
-    let result = run_blocking(state.backend.clone(), move |backend| {
-        backend.download_attachment(&request, &cancel, &directory)
-    })
-    .await;
-    transfers
-        .lock()
-        .map_err(|_| storage_failure(cause::LOCK_POISONED))?
-        .active
-        .remove(&id);
-    result
+        let directory = app
+            .path()
+            .download_dir()
+            .map_err(|_| storage_failure(cause::PATH_UNAVAILABLE))?;
+        let transfers = Arc::clone(&state.attachment_transfers);
+        let cancel = transfers
+            .lock()
+            .map_err(|_| storage_failure(cause::LOCK_POISONED))?
+            .begin(&request.request_id)?;
+        let id = request.request_id.clone();
+        let result = run_blocking(state.backend.clone(), move |backend| {
+            backend.download_attachment(&request, &cancel, &directory)
+        })
+        .await;
+        transfers
+            .lock()
+            .map_err(|_| storage_failure(cause::LOCK_POISONED))?
+            .active
+            .remove(&id);
+        result
     }
 }
 
@@ -828,34 +828,34 @@ async fn open_external_link(url: String) -> Result<(), MailError> {
     }
     #[cfg(not(target_os = "android"))]
     {
-    let url = mail_core::attachments::validated_external_url(&url)?;
-    #[cfg(target_os = "macos")]
-    {
-        tauri::async_runtime::spawn_blocking(move || {
-            std::process::Command::new("/usr/bin/open")
-                .arg("--")
-                .arg(url)
-                // OS errors must not echo a mailbox URL into application logs.
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .map_err(|_| MailError::ProviderUnavailable)
-                .and_then(|status| {
-                    if status.success() {
-                        Ok(())
-                    } else {
-                        Err(MailError::ProviderUnavailable)
-                    }
-                })
-        })
-        .await
-        .map_err(|_| MailError::ProviderUnavailable)?
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = url;
-        Err(MailError::ProviderUnavailable)
-    }
+        let url = mail_core::attachments::validated_external_url(&url)?;
+        #[cfg(target_os = "macos")]
+        {
+            tauri::async_runtime::spawn_blocking(move || {
+                std::process::Command::new("/usr/bin/open")
+                    .arg("--")
+                    .arg(url)
+                    // OS errors must not echo a mailbox URL into application logs.
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .map_err(|_| MailError::ProviderUnavailable)
+                    .and_then(|status| {
+                        if status.success() {
+                            Ok(())
+                        } else {
+                            Err(MailError::ProviderUnavailable)
+                        }
+                    })
+            })
+            .await
+            .map_err(|_| MailError::ProviderUnavailable)?
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = url;
+            Err(MailError::ProviderUnavailable)
+        }
     }
 }
 
