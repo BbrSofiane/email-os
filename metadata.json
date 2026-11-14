@@ -1,0 +1,32 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7DB7ATB22T1DW5YEAMDFGEK",
+  "strategy": "manual-commit",
+  "branch": "maintenance/p4-synthetic-stage1",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "crates/mail-core/src/store.rs",
+    "crates/mail-core/src/synthetic/facts.rs",
+    "crates/mail-core/src/synthetic/provider.rs",
+    "crates/mail-core/src/testing/synthetic.rs",
+    "crates/mail-core/tests/synthetic_core_groups.rs",
+    "crates/mail-core/tests/synthetic_core_lifecycle.rs",
+    "crates/mail-core/tests/synthetic_core_projections.rs"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 18,
+    "cache_creation_tokens": 24825,
+    "cache_read_tokens": 2739670,
+    "output_tokens": 18651,
+    "api_call_count": 9
+  }
+}
