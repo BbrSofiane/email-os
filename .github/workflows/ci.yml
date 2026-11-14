@@ -7,6 +7,45 @@ on:
     branches: [main]
 
 jobs:
+  android-apk:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned mise and project tools
+        uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
+        with:
+          version: "2026.11.3"
+          cache: false
+
+      - name: Install Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Android SDK packages
+        uses: android-actions/setup-android@v3
+
+      - name: Install pinned Android platform, build tools, and NDK
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+
+      - name: Install Rust Android targets
+        run: rustup target add aarch64-linux-android x86_64-linux-android
+
+      - name: Install locked UI dependencies
+        run: mise run install:ui
+
+      - name: Build fixture APK
+        run: mise run android:build
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: email-os-android-fixture-debug
+          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+
   check:
     runs-on: ubuntu-24.04
     env:

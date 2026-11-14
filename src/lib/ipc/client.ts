@@ -283,6 +283,7 @@ export function isMailErrorShape(value: unknown): value is MailError {
     case 'network_unavailable':
     case 'rate_limited':
     case 'provider_unavailable':
+    case 'unsupported_platform':
     case 'invalid_provider_response':
     case 'busy':
     case 'permission_required':

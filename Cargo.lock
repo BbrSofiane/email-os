@@ -1988,6 +1988,7 @@ dependencies = [
  "charset",
  "chrono",
  "keyring",
+ "libc",
  "log",
  "mail-core",
  "mailparse",

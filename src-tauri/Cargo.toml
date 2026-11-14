@@ -5,6 +5,10 @@ description = "Tauri 2 adapter over the fixture and opt-in Gmail mailbox-action 
 edition = "2021"
 rust-version = "1.89"
 
+[lib]
+name = "email_os"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

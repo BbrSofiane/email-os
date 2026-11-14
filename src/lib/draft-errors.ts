@@ -60,6 +60,7 @@ const DISCARD_ERRORS: { [K in MailError['kind']]: DiscardEntry<K> } = {
   network_unavailable: RETRY,
   rate_limited: RETRY,
   provider_unavailable: RETRY,
+  unsupported_platform: RETRY,
   invalid_provider_response: RETRY,
   permission_required: RETRY,
   provider_rejected: RETRY,

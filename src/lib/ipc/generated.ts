@@ -113,7 +113,7 @@ export type MailError = { "kind": "not_found" } | { "kind": "invalid_request",
 /**
  * Name of the offending request field (camelCase DTO name).
  */
-field: string, } | { "kind": "request_id_conflict" } | { "kind": "storage_unavailable" } | { "kind": "profile_in_use" } | { "kind": "read_only" } | { "kind": "not_configured" } | { "kind": "auth_required" } | { "kind": "auth_cancelled" } | { "kind": "auth_failed" } | { "kind": "secrets_unavailable" } | { "kind": "network_unavailable" } | { "kind": "rate_limited" } | { "kind": "provider_unavailable" } | { "kind": "invalid_provider_response" } | { "kind": "busy" } | { "kind": "permission_required" } | { "kind": "provider_rejected" } | { "kind": "outcome_unknown" } | { "kind": "draft_conflict", currentRevision: number, } | { "kind": "reply_unavailable" } | { "kind": "undo_unavailable",
+field: string, } | { "kind": "request_id_conflict" } | { "kind": "storage_unavailable" } | { "kind": "profile_in_use" } | { "kind": "read_only" } | { "kind": "not_configured" } | { "kind": "auth_required" } | { "kind": "auth_cancelled" } | { "kind": "auth_failed" } | { "kind": "secrets_unavailable" } | { "kind": "network_unavailable" } | { "kind": "rate_limited" } | { "kind": "provider_unavailable" } | { "kind": "unsupported_platform" } | { "kind": "invalid_provider_response" } | { "kind": "busy" } | { "kind": "permission_required" } | { "kind": "provider_rejected" } | { "kind": "outcome_unknown" } | { "kind": "draft_conflict", currentRevision: number, } | { "kind": "reply_unavailable" } | { "kind": "undo_unavailable",
 /**
  * Typed eligibility failure (docs/ux-04-trustworthy-undo.md §3.2).
  */

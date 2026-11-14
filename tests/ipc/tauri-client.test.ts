@@ -24,6 +24,7 @@ import {
   UNDO_OPERATION_COMMAND,
   UNDO_OPERATION_GROUP_COMMAND,
   isMailErrorShape,
+  toMailError,
 } from '../../src/lib/ipc/client';
 
 const mocks = vi.hoisted(() => ({
@@ -146,7 +147,7 @@ describe('Tauri draft and close protocol adapter', () => {
 
   it('registers each UX-12 command only in the main-window scoped manifest', () => {
     const manifest = readFileSync('src-tauri/build.rs', 'utf8');
-    const shell = readFileSync('src-tauri/src/main.rs', 'utf8');
+    const shell = readFileSync('src-tauri/src/lib.rs', 'utf8');
     const capability = JSON.parse(readFileSync('src-tauri/capabilities/main-window.json', 'utf8'));
     expect(capability.windows).toEqual(['main']);
     for (const name of ['list_attachments', 'save_attachment', 'cancel_attachment', 'open_external_link']) {
@@ -366,6 +367,8 @@ describe('Tauri draft and close protocol adapter', () => {
     expect(isMailErrorShape({ kind: 'undo_unavailable', reason: 'someday' })).toBe(false);
     expect(isMailErrorShape({ kind: 'undo_unavailable' })).toBe(false);
     expect(isMailErrorShape({ kind: 'not_found' })).toBe(true);
+    expect(isMailErrorShape({ kind: 'unsupported_platform' })).toBe(true);
+    expect(toMailError({ kind: 'unsupported_platform' })).toEqual({ kind: 'unsupported_platform' });
     expect(isMailErrorShape({ kind: 'something_else' })).toBe(false);
   });
 

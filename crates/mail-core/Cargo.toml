@@ -35,6 +35,9 @@ mail_core = { package = "mail-core", path = ".", features = ["test-support"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", default-features = false, features = ["apple-native"] }
 
+[target.'cfg(target_os = "android")'.dependencies]
+libc = "0.2"
+
 [[bin]]
 name = "generate-types"
 path = "src/bin/generate-types.rs"

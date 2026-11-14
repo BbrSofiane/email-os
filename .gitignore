@@ -45,6 +45,13 @@ test-results/
 *.sqlite-wal
 .email-os/
 /src-tauri/gen/
+!/src-tauri/gen/
+/src-tauri/gen/*
+!/src-tauri/gen/android/
+src-tauri/gen/android/.gradle/
+src-tauri/gen/android/local.properties
+src-tauri/gen/android/**/build/
+src-tauri/gen/android/.idea/
 /mise.local.toml
 
 # impeccable live-mode local recovery state
