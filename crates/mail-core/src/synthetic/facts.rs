@@ -258,10 +258,11 @@ impl FactStore {
 fn seed(tx: &rusqlite::Transaction<'_>) -> Result<(), MailError> {
     for conversation in fixtures() {
         for message in conversation.messages {
-            // Mail you did not send arrives unread in the inbox; your own
-            // messages and archived conversations are read. Nothing starts
-            // starred.
-            let unread = conversation.in_inbox && message.from.1 != crate::FIXTURE_MAILBOX;
+            // Seeded Inbox mail arrives unread (so read controls have
+            // something to show) and the two initially archived
+            // conversations are read. Nothing starts starred. This matches
+            // the shared contract scenarios' `triage` mailbox declaration.
+            let unread = conversation.in_inbox;
             tx.execute(
                 "INSERT INTO synthetic_messages
                     (message_id, conversation_id, in_inbox, unread, starred)

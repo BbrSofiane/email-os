@@ -271,8 +271,8 @@ fn provider_models_archive_per_message_and_facts_survive_a_new_provider() {
         .unwrap()
         .contains(&"m-01-1".to_string()));
     let stars = reopened.star_facts.unwrap();
-    assert_eq!(stars["m-01-3"], true);
-    assert_eq!(stars["m-01-1"], false);
+    assert!(stars["m-01-3"]);
+    assert!(!stars["m-01-1"]);
 }
 
 #[test]
