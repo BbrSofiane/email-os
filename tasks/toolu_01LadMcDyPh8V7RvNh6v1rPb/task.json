@@ -1,0 +1,15 @@
+{
+  "tool_use_id": "toolu_01LadMcDyPh8V7RvNh6v1rPb",
+  "agent_id": "a37a89c2116548821",
+  "subagent_type": "general-purpose",
+  "task_description": "Review switch-over vs old code",
+  "token_usage": {
+    "input_tokens": 44,
+    "cache_creation_tokens": 138948,
+    "cache_read_tokens": 2033580,
+    "output_tokens": 33286,
+    "api_call_count": 22
+  },
+  "started_at": "2026-11-14T16:11:07.674365318Z",
+  "completed_at": "2026-11-14T16:16:17.539300957Z"
+}
