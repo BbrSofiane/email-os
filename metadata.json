@@ -1,0 +1,30 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7BS2A44ZSZEWAZXNGZ0HB3P",
+  "strategy": "manual-commit",
+  "branch": "maintenance/p5a-mailbox-detail-cache",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "docs/current-architecture.md",
+    "src/composables/useMailbox.ts",
+    "src/composables/useMailboxDetailCache.ts",
+    "tests/reader/navigation-smooth.test.ts",
+    "tests/reader/useMailboxDetailCache.unit.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 34,
+    "cache_creation_tokens": 31800,
+    "cache_read_tokens": 3147550,
+    "output_tokens": 19200,
+    "api_call_count": 17
+  }
+}
