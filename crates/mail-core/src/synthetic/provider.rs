@@ -151,16 +151,15 @@ impl SyntheticGmailProvider {
             account_id: ACCOUNT_ID.to_string(),
             conversation_id: seed.id.to_string(),
         };
-        let mut ordered: Vec<(&super::data::SeedMessage, MessageFacts)> = seed
-            .messages
-            .iter()
-            .map(|message| {
-                facts
-                    .get(message.id)
-                    .map(|f| (message, *f))
-                    .ok_or_else(|| crate::storage_log::storage_fault("synthetic_facts_incomplete"))
-            })
-            .collect::<Result<_, _>>()?;
+        let mut ordered: Vec<(&super::data::SeedMessage, MessageFacts)> =
+            seed.messages
+                .iter()
+                .map(|message| {
+                    facts.get(message.id).map(|f| (message, *f)).ok_or_else(|| {
+                        crate::storage_log::storage_fault("synthetic_facts_incomplete")
+                    })
+                })
+                .collect::<Result<_, _>>()?;
         ordered.sort_by(|a, b| (a.0.sent_at, a.0.id).cmp(&(b.0.sent_at, b.0.id)));
         let messages: Vec<Message> = ordered
             .iter()

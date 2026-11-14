@@ -152,9 +152,7 @@ impl FactStore {
     pub(super) fn inbox_conversation_ids(&self) -> Result<Vec<String>, MailError> {
         let conn = self.lock()?;
         let mut stmt = conn
-            .prepare(
-                "SELECT DISTINCT conversation_id FROM synthetic_messages WHERE in_inbox = 1",
-            )
+            .prepare("SELECT DISTINCT conversation_id FROM synthetic_messages WHERE in_inbox = 1")
             .map_err(storage_err())?;
         let ids = stmt
             .query_map([], |row| row.get::<_, String>(0))
@@ -185,7 +183,9 @@ impl FactStore {
             MailboxOperationKind::Read => ("unread", !value),
             MailboxOperationKind::Star => ("starred", value),
         };
-        let select = format!("SELECT conversation_id, {column} FROM synthetic_messages WHERE message_id = ?1");
+        let select = format!(
+            "SELECT conversation_id, {column} FROM synthetic_messages WHERE message_id = ?1"
+        );
         let mut changed: Vec<(String, String)> = Vec::new();
         for id in message_ids {
             let current: Option<(String, i64)> = tx

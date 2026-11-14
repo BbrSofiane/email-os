@@ -146,7 +146,9 @@ pub fn wait_until_synced(core: &GmailCore) {
         until(|| core.account_status().is_ok_and(|status| {
             status.connection == ConnectionState::Connected && status.sync.initial_sync_complete
         })),
-        "synthetic core did not finish its first sync"
+        "synthetic core did not finish its first sync: {:?}",
+        core.account_status()
+            .map(|s| (s.connection, s.sync.error, s.sync.initial_sync_complete))
     );
     core.wait_for_test_idle(TIMEOUT).expect("idle after sync");
 }
@@ -388,15 +390,23 @@ impl GmailProvider for Overlay {
         page_token: Option<&str>,
         cancel: &CancelToken,
     ) -> Result<InboxPage, MailError> {
-        let mut page = self.inner.list_inbox(page_token, cancel)?;
+        // Offset-style tokens over inner + extra ids, 100 per page like the
+        // discovery contract allows.
+        let offset: usize = page_token.map_or(Ok(0), |t| {
+            t.parse().map_err(|_| MailError::InvalidProviderResponse)
+        })?;
+        let mut all = self.inner.list_inbox(None, cancel)?.thread_ids;
         let state = self.state.lock().unwrap();
         for thread in &state.extra {
             if !thread.inbox_message_ids.is_empty() {
-                page.thread_ids
-                    .push(thread.conversation.conversation_ref.conversation_id.clone());
+                all.push(thread.conversation.conversation_ref.conversation_id.clone());
             }
         }
-        Ok(page)
+        let end = (offset + 100).min(all.len());
+        Ok(InboxPage {
+            thread_ids: all[offset.min(end)..end].to_vec(),
+            next_page_token: (end < all.len()).then(|| end.to_string()),
+        })
     }
     fn get_thread(
         &self,
@@ -487,10 +497,7 @@ pub fn archive_group(
     }
 }
 
-pub fn status_of(
-    core: &GmailCore,
-    operation_id: &str,
-) -> Option<crate::dto::OperationStatus> {
+pub fn status_of(core: &GmailCore, operation_id: &str) -> Option<crate::dto::OperationStatus> {
     core.list_conversations()
         .expect("snapshot")
         .activity

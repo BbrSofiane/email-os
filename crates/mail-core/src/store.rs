@@ -1112,7 +1112,8 @@ impl Store {
         if built.messages.is_empty() {
             return Err(MailError::NotFound);
         }
-        let reply_context = crate::synthetic::data::fixture_reply_context(&built.conversation_ref, &built.messages);
+        let reply_context =
+            crate::synthetic::data::fixture_reply_context(&built.conversation_ref, &built.messages);
         Ok(Conversation {
             stars: None,
             conversation_ref: built.conversation_ref,

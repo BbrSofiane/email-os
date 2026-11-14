@@ -7,9 +7,9 @@
 
 use mail_core::dto::{OperationFailure, OperationStatus};
 use mail_core::gmail::sync::GmailCore;
+use mail_core::gmail::types::GmailProvider;
 use mail_core::testing::synthetic::*;
 use mail_core::testing::{temp_profile, TIMEOUT};
-use mail_core::gmail::types::GmailProvider;
 use mail_core::MailError;
 
 /// Legacy: `seeds_18_conversations_exactly_once_and_survives_restart`.
@@ -31,7 +31,10 @@ fn seeds_18_conversations_exactly_once_and_survives_restart() {
             .expect("seeded conversation readable");
         assert!(!conversation.messages.is_empty());
     }
-    assert_eq!(s.core.account_status().unwrap().sync.cached_conversations, 18);
+    assert_eq!(
+        s.core.account_status().unwrap().sync.cached_conversations,
+        18
+    );
     let rows = |dir: &std::path::Path| -> i64 {
         rusqlite::Connection::open(dir.join("synthetic-provider.db"))
             .unwrap()
@@ -165,7 +168,11 @@ fn interrupted_applying_is_reconciled_against_durable_facts_when_the_write_never
         .get_thread("conv-01", &mail_core::CancelToken::default())
         .unwrap()
         .unwrap();
-    assert_eq!(thread.inbox_message_ids.len(), 3, "unlanded write changed nothing");
+    assert_eq!(
+        thread.inbox_message_ids.len(),
+        3,
+        "unlanded write changed nothing"
+    );
     // The explicit retry lands the write exactly once.
     let retry = s
         .core
@@ -243,8 +250,9 @@ fn failure_is_retained_and_overlay_reverts() {
         .core
         .set_archived(&set_archived("conv-06", true, "req-2"))
         .unwrap();
-    assert!(counter.until(|| status_of(&s.core, &second.operation_id)
-        == Some(OperationStatus::Failed)));
+    assert!(
+        counter.until(|| status_of(&s.core, &second.operation_id) == Some(OperationStatus::Failed))
+    );
     assert!(!in_inbox(&s.core, "conv-06"));
     assert_eq!(
         s.synthetic.write_call_count(),
@@ -282,8 +290,16 @@ fn archive_unarchive_ordering_survives_late_intent() {
         &[archive.operation_id.clone(), unarchive.operation_id.clone()],
         OperationStatus::Confirmed
     ));
-    assert!(in_inbox(&s.core, "conv-01"), "final state follows newest intent");
-    assert!(s.core.get_conversation(&conversation("conv-01")).unwrap().is_in_inbox);
+    assert!(
+        in_inbox(&s.core, "conv-01"),
+        "final state follows newest intent"
+    );
+    assert!(
+        s.core
+            .get_conversation(&conversation("conv-01"))
+            .unwrap()
+            .is_in_inbox
+    );
 }
 
 /// Legacy: `paused_provider_does_not_hold_the_db_lock`. Also covers the
@@ -308,7 +324,11 @@ fn paused_provider_does_not_hold_the_db_lock_and_claims_do_not_overlap() {
         status_of(&s.core, &second.operation_id),
         Some(OperationStatus::Queued)
     );
-    assert_eq!(s.synthetic.write_call_count(), 1, "serial worker: no overlap");
+    assert_eq!(
+        s.synthetic.write_call_count(),
+        1,
+        "serial worker: no overlap"
+    );
     assert_eq!(s.synthetic.write_inflight_count(), 1);
     s.core.stop();
     assert_eq!(
@@ -329,7 +349,11 @@ fn shutdown_completes_while_provider_paused_and_work_stays_durable() {
     assert!(s.synthetic.wait_for_write_calls(1, TIMEOUT));
     // Stop must complete despite the paused provider call.
     s.core.stop();
-    assert_eq!(s.synthetic.write_inflight_count(), 0, "paused write released");
+    assert_eq!(
+        s.synthetic.write_inflight_count(),
+        0,
+        "paused write released"
+    );
     let s = s.reopen();
     // The interrupted operation is durable: still present, never lost, and
     // never silently confirmed without the provider's fact.
@@ -503,17 +527,17 @@ fn worker_halt_remains_visible_through_commands_after_storage_recovers() {
     mail_core::testing::request_sync_when_idle(&s.core);
     assert!(
         counter.until(|| counter.get() > before
-            && s.core.account_status().is_ok_and(|st| st.sync.error
-                == Some(MailError::StorageUnavailable))),
+            && s.core
+                .account_status()
+                .is_ok_and(|st| st.sync.error == Some(MailError::StorageUnavailable))),
         "worker halt is announced"
     );
-    db.execute_batch(
-        "DROP TRIGGER inject_sync_failure; DROP TRIGGER inject_sync_failure_update;",
-    )
-    .unwrap();
+    db.execute_batch("DROP TRIGGER inject_sync_failure; DROP TRIGGER inject_sync_failure_update;")
+        .unwrap();
     // Storage is healthy again, but the halted worker still refuses commands.
     assert_eq!(
-        s.core.set_archived(&set_archived("conv-01", true, "after-halt")),
+        s.core
+            .set_archived(&set_archived("conv-01", true, "after-halt")),
         Err(MailError::StorageUnavailable)
     );
     assert!(s.core.list_conversations().unwrap().activity.is_empty());
@@ -523,5 +547,7 @@ fn worker_halt_remains_visible_through_commands_after_storage_recovers() {
     drop(core);
     let provider = new_provider(dir.path());
     let restarted = open_core_on(dir.path(), provider, &clock);
-    assert!(restarted.set_archived(&set_archived("conv-01", true, "after-restart")).is_ok());
+    assert!(restarted
+        .set_archived(&set_archived("conv-01", true, "after-restart"))
+        .is_ok());
 }
