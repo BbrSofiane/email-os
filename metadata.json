@@ -1,0 +1,53 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7E46E2ZBMJSR6RKZRG755D1",
+  "strategy": "manual-commit",
+  "branch": "stage4/d-cleanup",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "README.md",
+    "crates/mail-core/src/cancel.rs",
+    "crates/mail-core/src/error.rs",
+    "crates/mail-core/src/gmail/auth.rs",
+    "crates/mail-core/src/gmail/provider.rs",
+    "crates/mail-core/src/lib.rs",
+    "crates/mail-core/src/provider.rs",
+    "crates/mail-core/src/reminders.rs",
+    "crates/mail-core/src/seed.rs",
+    "crates/mail-core/src/store.rs",
+    "crates/mail-core/src/store/reminders.rs",
+    "crates/mail-core/src/store/reminders_races_tests.rs",
+    "crates/mail-core/src/store/reminders_tests.rs",
+    "crates/mail-core/src/worker.rs",
+    "crates/mail-core/tests/cached_done.rs",
+    "crates/mail-core/tests/contract_scenarios.rs",
+    "crates/mail-core/tests/gmail_auth_contract.rs",
+    "crates/mail-core/tests/integration.rs",
+    "crates/mail-core/tests/reminders.rs",
+    "crates/mail-core/tests/saved_split.rs",
+    "crates/mail-core/tests/synthetic_core_policy.rs",
+    "crates/mail-core/tests/undo.rs",
+    "docs/adr/0002-fixture-as-synthetic-provider.md",
+    "docs/current-architecture.md",
+    "docs/current-status.md",
+    "docs/development.md",
+    "tests/browser-fake/contract-scenarios.test.ts",
+    "tests/fixtures/contract-scenarios/fixture-rejects-unsupported-commands.json"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 44,
+    "cache_creation_tokens": 38485,
+    "cache_read_tokens": 19376429,
+    "output_tokens": 22192,
+    "api_call_count": 22
+  }
+}
