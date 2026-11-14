@@ -524,7 +524,7 @@ fn worker_halt_remains_visible_through_commands_after_storage_recovers() {
          BEGIN SELECT RAISE(ABORT, 'injected'); END;",
     )
     .unwrap();
-    mail_core::testing::request_sync_when_idle(&s.core);
+    sync_when_idle(&s.core);
     assert!(
         counter.until(|| counter.get() > before
             && s.core

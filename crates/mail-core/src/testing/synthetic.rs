@@ -67,13 +67,7 @@ impl Synthetic {
         let dir = temp_profile(tag);
         let clock = Arc::new(FakeClock::new(utc(CLOCK_START)));
         let provider = new_provider(dir.path());
-        let core = GmailCore::open_with_clock_and_operations_paused(
-            dir.path(),
-            provider.clone(),
-            Arc::clone(&clock) as Arc<dyn Clock>,
-        )
-        .expect("open synthetic core");
-        wait_until_synced(&core);
+        let core = open_core_wrapping(dir.path(), provider.clone(), &provider, &clock, true);
         Self {
             core,
             synthetic: provider.clone(),
@@ -114,7 +108,7 @@ impl<P: GmailProvider + 'static> Synthetic<P> {
         let clock = Arc::new(FakeClock::new(utc(CLOCK_START)));
         let synthetic = new_provider(dir.path());
         let provider = wrap(synthetic.clone());
-        let core = open_core_on(dir.path(), provider.clone(), &clock);
+        let core = open_core_wrapping(dir.path(), provider.clone(), &synthetic, &clock, false);
         Self {
             core,
             provider,
@@ -129,16 +123,34 @@ pub fn new_provider(dir: &std::path::Path) -> Arc<SyntheticGmailProvider> {
     Arc::new(SyntheticGmailProvider::open(dir).expect("open synthetic provider"))
 }
 
-/// Opens a core over `dir` and waits until the first sync finished.
-pub fn open_core_on<P: GmailProvider + 'static>(
+/// Opens a synthetic session over `dir`. Bootstrap finishes before
+/// `open_synthetic` returns, so no waiting is needed.
+pub fn open_core_on(
     dir: &std::path::Path,
-    provider: Arc<P>,
+    provider: Arc<SyntheticGmailProvider>,
     clock: &Arc<FakeClock>,
 ) -> GmailCore {
-    let core = GmailCore::open_with_clock(dir, provider, Arc::clone(clock) as Arc<dyn Clock>)
-        .expect("open synthetic core");
-    wait_until_synced(&core);
-    core
+    GmailCore::open_synthetic(dir, provider, Arc::clone(clock) as Arc<dyn Clock>)
+        .expect("open synthetic core")
+}
+
+/// Opens a synthetic session whose provider is `wrapped` (a decorator over
+/// `synthetic`), optionally holding queued mutations durable.
+pub fn open_core_wrapping(
+    dir: &std::path::Path,
+    wrapped: Arc<dyn GmailProvider>,
+    synthetic: &SyntheticGmailProvider,
+    clock: &Arc<FakeClock>,
+    operations_paused: bool,
+) -> GmailCore {
+    GmailCore::open_synthetic_wrapping(
+        dir,
+        wrapped,
+        Arc::clone(clock) as Arc<dyn Clock>,
+        &synthetic.conversation_ids(),
+        operations_paused,
+    )
+    .expect("open synthetic core")
 }
 
 pub fn wait_until_synced(core: &GmailCore) {
@@ -227,6 +239,7 @@ struct OverlayState {
     history_bump: u64,
     hang_after_next_write: bool,
     hung: bool,
+    reads: Vec<&'static str>,
 }
 
 impl Overlay {
@@ -235,6 +248,22 @@ impl Overlay {
             inner,
             state: Mutex::new(OverlayState::default()),
         })
+    }
+
+    /// How many times the core called the named provider read
+    /// (`profile`, `list_inbox`, `get_thread`, `history`, `search_threads`).
+    pub fn read_calls(&self, name: &str) -> usize {
+        self.state
+            .lock()
+            .unwrap()
+            .reads
+            .iter()
+            .filter(|n| **n == name)
+            .count()
+    }
+
+    fn note_read(&self, name: &'static str) {
+        self.state.lock().unwrap().reads.push(name);
     }
 
     pub fn writes(&self) -> Vec<WriteRecord> {
@@ -271,13 +300,14 @@ impl Overlay {
         self.state.lock().unwrap().hung
     }
 
-    fn extra_ids(&self) -> Vec<String> {
+    /// Message ids owned by the extra threads.
+    fn extra_message_ids(&self) -> Vec<String> {
         self.state
             .lock()
             .unwrap()
             .extra
             .iter()
-            .map(|t| t.conversation.conversation_ref.conversation_id.clone())
+            .flat_map(|t| t.conversation.messages.iter().map(|m| m.id.clone()))
             .collect()
     }
 
@@ -293,21 +323,36 @@ impl Overlay {
             .unwrap()
             .writes
             .push((kind, value, ids.to_vec()));
-        let extras = self.extra_ids();
+        let extras = self.extra_message_ids();
         let (own, rest): (Vec<String>, Vec<String>) =
             ids.iter().cloned().partition(|id| extras.contains(id));
         {
             let mut state = self.state.lock().unwrap();
             for thread in state.extra.iter_mut() {
-                for id in &own {
-                    if thread.conversation.messages.iter().any(|m| &m.id == id)
-                        && kind == MailboxOperationKind::Archive
-                    {
-                        thread.inbox_message_ids.retain(|m| m != id || !value);
-                        if !value && !thread.inbox_message_ids.contains(id) {
-                            thread.inbox_message_ids.push(id.clone());
+                for id in own
+                    .iter()
+                    .filter(|id| thread.conversation.messages.iter().any(|m| &m.id == *id))
+                {
+                    match kind {
+                        MailboxOperationKind::Archive => {
+                            thread.inbox_message_ids.retain(|m| m != id);
+                            if !value {
+                                thread.inbox_message_ids.push(id.clone());
+                            }
+                            thread.conversation.is_in_inbox = !thread.inbox_message_ids.is_empty();
                         }
-                        thread.conversation.is_in_inbox = !thread.inbox_message_ids.is_empty();
+                        MailboxOperationKind::Read => {
+                            let unread = thread.unread_message_ids.get_or_insert_with(Vec::new);
+                            unread.retain(|m| m != id);
+                            if !value {
+                                unread.push(id.clone());
+                            }
+                        }
+                        MailboxOperationKind::Star => {
+                            if let Some(stars) = thread.star_facts.as_mut() {
+                                stars.insert(id.clone(), value);
+                            }
+                        }
                     }
                 }
             }
@@ -380,6 +425,7 @@ impl GmailProvider for Overlay {
         self.inner.disconnect()
     }
     fn profile(&self, cancel: &CancelToken) -> Result<GmailProfile, MailError> {
+        self.note_read("profile");
         let mut profile = self.inner.profile(cancel)?;
         let bump = self.state.lock().unwrap().history_bump;
         profile.history_id = (profile.history_id.parse::<u64>().unwrap_or(0) + bump).to_string();
@@ -390,6 +436,7 @@ impl GmailProvider for Overlay {
         page_token: Option<&str>,
         cancel: &CancelToken,
     ) -> Result<InboxPage, MailError> {
+        self.note_read("list_inbox");
         // Offset-style tokens over inner + extra ids, 100 per page like the
         // discovery contract allows.
         let offset: usize = page_token.map_or(Ok(0), |t| {
@@ -408,11 +455,20 @@ impl GmailProvider for Overlay {
             next_page_token: (end < all.len()).then(|| end.to_string()),
         })
     }
+    fn search_threads(
+        &self,
+        page_token: Option<&str>,
+        cancel: &CancelToken,
+    ) -> Result<InboxPage, MailError> {
+        self.note_read("search_threads");
+        self.inner.search_threads(page_token, cancel)
+    }
     fn get_thread(
         &self,
         thread_id: &str,
         cancel: &CancelToken,
     ) -> Result<Option<GmailThread>, MailError> {
+        self.note_read("get_thread");
         let state = self.state.lock().unwrap();
         if let Some(extra) = state
             .extra
@@ -451,6 +507,7 @@ impl GmailProvider for Overlay {
         page_token: Option<&str>,
         cancel: &CancelToken,
     ) -> Result<HistoryPage, GmailHistoryError> {
+        self.note_read("history");
         // The overlay's own history ids are the inner id plus the number of
         // deliveries; translate back for the inner call.
         let (bump, changed) = {
@@ -531,4 +588,20 @@ pub fn wait_for_status(
 /// about durable rows and for injecting storage faults with SQL triggers.
 pub fn gmail_db(dir: &std::path::Path) -> rusqlite::Connection {
     rusqlite::Connection::open(dir.join("gmail.db")).expect("open gmail.db")
+}
+
+/// Runs one catch-up pass on a synthetic session once earlier accepted work
+/// drained (users cannot request sync there; tests can).
+pub fn sync_when_idle(core: &GmailCore) {
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        core.wait_for_test_idle(deadline.saturating_duration_since(Instant::now()))
+            .expect("worker did not become idle");
+        match core.request_test_sync() {
+            Ok(()) => break,
+            Err(MailError::Busy) if Instant::now() < deadline => {}
+            result => panic!("sync admission failed: {result:?}"),
+        }
+    }
+    core.wait_for_test_idle(TIMEOUT).expect("idle after sync");
 }

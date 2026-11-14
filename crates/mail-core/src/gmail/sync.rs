@@ -18,12 +18,12 @@ use crate::dto::{
     RetryOperation, SetArchived, SetRead, UndoOperation, UndoReceipt,
 };
 use crate::error::MailError;
+use crate::gmail::session::SessionPolicy;
 use crate::gmail::store::{
     Commit, DiscoveryProgress, GmailStore, HistoryProgress, ThreadFetch, DISCOVERY_CAP,
 };
 use crate::gmail::types::{
-    AccountStatus, ConnectionState, GmailProvider, GmailThread, MailMode, MutationAccess, SyncInfo,
-    SyncState,
+    AccountStatus, ConnectionState, GmailProvider, GmailThread, MutationAccess, SyncInfo, SyncState,
 };
 use crate::lock::ProfileGuard;
 use crate::storage_log::storage_err;
@@ -68,6 +68,8 @@ struct GmailInner {
     search_cancel: Mutex<Option<CancelToken>>,
     store: Arc<GmailStore>,
     provider: Arc<dyn GmailProvider>,
+    /// What differs between a Gmail and a synthetic session (see `session.rs`).
+    policy: SessionPolicy,
     /// Profile lock is owned for the full core lifetime and additionally
     /// shared with the worker thread: a running or detached worker can never
     /// outlive the lock (a second writer is rejected instead of two
@@ -298,7 +300,56 @@ impl GmailCore {
         provider: Arc<dyn GmailProvider>,
         clock: Arc<dyn Clock>,
     ) -> Result<GmailCore, MailError> {
-        Self::open_with_clock_config(profile_dir, provider, clock, false)
+        Self::open_with_clock_config(
+            profile_dir,
+            provider,
+            clock,
+            false,
+            SessionPolicy::Gmail,
+            &[],
+        )
+    }
+
+    /// Opens a **synthetic** session (ADR 0002): the fixture account served by
+    /// the built-in provider through this same ledger, cache and worker.
+    /// Bootstrap (account, discovery, history catch-up and loading every
+    /// synthetic conversation into the cache, including the initially
+    /// archived ones) finishes before this returns, so the session is ready
+    /// the moment it exists; a bootstrap failure is an open failure.
+    pub fn open_synthetic(
+        profile_dir: impl AsRef<Path>,
+        provider: Arc<crate::synthetic::SyntheticGmailProvider>,
+        clock: Arc<dyn Clock>,
+    ) -> Result<GmailCore, MailError> {
+        let conversations = provider.conversation_ids();
+        Self::open_with_clock_config(
+            profile_dir,
+            provider,
+            clock,
+            false,
+            SessionPolicy::Synthetic,
+            &conversations,
+        )
+    }
+
+    /// Test seam: a synthetic session whose provider is a decorator over the
+    /// synthetic one, optionally with queued mutations held durable.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn open_synthetic_wrapping(
+        profile_dir: impl AsRef<Path>,
+        provider: Arc<dyn GmailProvider>,
+        clock: Arc<dyn Clock>,
+        conversations: &[String],
+        operations_paused: bool,
+    ) -> Result<GmailCore, MailError> {
+        Self::open_with_clock_config(
+            profile_dir,
+            provider,
+            clock,
+            operations_paused,
+            SessionPolicy::Synthetic,
+            conversations,
+        )
     }
 
     /// Test seam that keeps queued mailbox mutations durable until explicitly
@@ -310,7 +361,14 @@ impl GmailCore {
         provider: Arc<dyn GmailProvider>,
         clock: Arc<dyn Clock>,
     ) -> Result<GmailCore, MailError> {
-        Self::open_with_clock_config(profile_dir, provider, clock, true)
+        Self::open_with_clock_config(
+            profile_dir,
+            provider,
+            clock,
+            true,
+            SessionPolicy::Gmail,
+            &[],
+        )
     }
 
     fn open_with_clock_config(
@@ -318,6 +376,8 @@ impl GmailCore {
         provider: Arc<dyn GmailProvider>,
         clock: Arc<dyn Clock>,
         operations_paused: bool,
+        policy: SessionPolicy,
+        preload: &[String],
     ) -> Result<GmailCore, MailError> {
         #[cfg(not(any(test, feature = "test-support")))]
         let _ = operations_paused;
@@ -325,8 +385,16 @@ impl GmailCore {
         let profile = Arc::new(ProfileGuard::acquire(profile_dir)?);
         let store = Arc::new(GmailStore::open(profile_dir, clock)?);
 
-        // Startup credential detection; sync starts independently of Vue.
-        let (connection, error, restore) = if !provider.is_configured() {
+        let hub = Arc::new(GmailHub {
+            listeners: Mutex::new(HashMap::new()),
+        });
+        // Startup readiness. Gmail: detect credentials and restore through the
+        // provider. Synthetic: there are no credentials, so readiness is
+        // local: bootstrap now, and report Connected from the first call.
+        let (connection, error, restore) = if policy.is_synthetic() {
+            bootstrap_synthetic(&store, provider.as_ref(), &hub, preload)?;
+            (ConnectionState::Connected, None, false)
+        } else if !provider.is_configured() {
             (ConnectionState::NotConfigured, None, false)
         } else {
             match provider.has_credentials() {
@@ -383,21 +451,20 @@ impl GmailCore {
             #[cfg(test)]
             after_mutation_count: Mutex::new(None),
         });
-        let hub = Arc::new(GmailHub {
-            listeners: Mutex::new(HashMap::new()),
-        });
         let handle = spawn_worker(
             Arc::clone(&store),
             Arc::clone(&provider),
             Arc::clone(&ctrl),
             Arc::clone(&hub),
             Arc::clone(&profile),
+            policy,
         )?;
         Ok(GmailCore {
             inner: Arc::new(GmailInner {
                 search_cancel: Mutex::new(None),
                 store,
                 provider,
+                policy,
                 profile,
                 ctrl,
                 hub,
@@ -561,6 +628,9 @@ impl GmailCore {
         {
             return Err(MailError::NotFound);
         }
+        if self.inner.policy.cached_only_search() {
+            return self.inner.store.search_mail(request);
+        }
         let status = self.account_status()?;
         if !request.cached_only
             && (status.connection == ConnectionState::AuthRequired
@@ -655,6 +725,7 @@ impl GmailCore {
         &self,
         request: &crate::dto::CachedTrashRequest,
     ) -> Result<crate::dto::CachedTrashSnapshot, MailError> {
+        self.inner.policy.admit_trash()?;
         self.inner.store.list_cached_trash(request)
     }
 
@@ -716,6 +787,7 @@ impl GmailCore {
         cached: bool,
     ) -> Result<super::browsing::DestinationCatalog, MailError> {
         use super::browsing::*;
+        self.inner.policy.admit_destinations()?;
         if cached {
             let saved = self.inner.store.destination_snapshot(account_id, "")?;
             return serde_json::from_str(&saved.ok_or(MailError::NotFound)?).map_err(storage_err());
@@ -755,6 +827,7 @@ impl GmailCore {
         request: &super::browsing::DestinationRequest,
     ) -> Result<super::browsing::DestinationPage, MailError> {
         use super::browsing::*;
+        self.inner.policy.admit_destinations()?;
         if !valid_id(&request.destination_id)
             || request
                 .cursor
@@ -1037,6 +1110,9 @@ impl GmailCore {
     /// Wire-facing mode/connection/sync status. Typed errors surface storage
     /// failures; connection and sync error hints come from worker outcomes.
     pub fn account_status(&self) -> Result<AccountStatus, MailError> {
+        if self.inner.policy.is_synthetic() {
+            return self.synthetic_account_status();
+        }
         let (connection, mut error, pass_in_flight, upgrading) = {
             let st = self.inner.ctrl.state.lock().map_err(storage_err())?;
             (
@@ -1061,7 +1137,7 @@ impl GmailCore {
             }
         };
         Ok(AccountStatus {
-            mode: MailMode::Gmail,
+            mode: self.inner.policy.mode(),
             mutation_access: Some(mutation_access),
             connection,
             account: self.inner.store.account()?,
@@ -1082,10 +1158,41 @@ impl GmailCore {
         })
     }
 
+    /// Status of a synthetic session: the fixture's presentation. Always
+    /// connected and idle, no mutation grant, no sync timestamp, nothing to
+    /// cover beyond what is cached. The only error surfaced is a halted
+    /// worker (storage failure), which the fixture could not show but must
+    /// not hide.
+    fn synthetic_account_status(&self) -> Result<AccountStatus, MailError> {
+        let (connection, halted) = {
+            let st = self.inner.ctrl.state.lock().map_err(storage_err())?;
+            (st.connection, st.halted.then(|| st.error.clone()).flatten())
+        };
+        Ok(AccountStatus {
+            mode: self.inner.policy.mode(),
+            connection,
+            account: self.inner.store.account()?,
+            sync: SyncInfo {
+                state: if halted.is_some() {
+                    SyncState::Error
+                } else {
+                    SyncState::Idle
+                },
+                last_synced_at: None,
+                error: halted,
+                cached_conversations: self.inner.store.cached_count()?,
+                initial_sync_complete: true,
+                coverage_limit: 0,
+            },
+            mutation_access: None,
+        })
+    }
+
     /// Queues the explicit Gmail permission upgrade. The grant itself runs on
     /// the serial worker and is reflected through `account_status`.
     pub fn enable_mutations(&self) -> Result<(), MailError> {
         let inner = &*self.inner;
+        inner.policy.admit_lifecycle()?;
         if !inner.provider.is_configured() {
             return Err(MailError::NotConfigured);
         }
@@ -1134,6 +1241,7 @@ impl GmailCore {
     /// revoke a completed grant or cancel sync, restore, or mutation work.
     pub fn cancel_mutation_upgrade(&self) -> Result<(), MailError> {
         let inner = &*self.inner;
+        inner.policy.admit_lifecycle()?;
         let mut st = inner.ctrl.state.lock().map_err(storage_err())?;
         if st.upgrade_requested {
             st.upgrade_requested = false;
@@ -1412,7 +1520,7 @@ impl GmailCore {
         if st.disconnecting {
             return Err(MailError::Busy);
         }
-        let mutation_access = match inner.provider.mutation_access() {
+        let mutation_access = match inner.policy.mutation_access(inner.provider.as_ref()) {
             Ok(access) => access,
             Err(error) => {
                 if latch_admission_storage_error(&mut st, &inner.ctrl, &error) {
@@ -1462,6 +1570,7 @@ impl GmailCore {
     /// client configuration is a typed, visible rejection.
     pub fn connect_account(&self) -> Result<(), MailError> {
         let inner = &*self.inner;
+        inner.policy.admit_lifecycle()?;
         if !inner.provider.is_configured() {
             return Err(MailError::NotConfigured);
         }
@@ -1492,6 +1601,9 @@ impl GmailCore {
     /// cleared unless credential deletion succeeded.
     pub fn disconnect_account(&self) -> Result<(), MailError> {
         let inner = &*self.inner;
+        // A synthetic session is rejected before anything is cancelled,
+        // cleared or advanced: nothing local may be erased.
+        inner.policy.admit_lifecycle()?;
         let _serial = inner.disconnect_lock.lock().map_err(storage_err())?;
         // Publish an admission barrier and cancellation together. The worker
         // cannot activate another pass until credentials and cache are cleared.
@@ -1559,6 +1671,18 @@ impl GmailCore {
     /// while a pass is in flight is rejected typed as `busy` so there is
     /// never a concurrent cursor writer.
     pub fn request_sync(&self) -> Result<(), MailError> {
+        self.inner.policy.admit_lifecycle()?;
+        self.admit_sync()
+    }
+
+    /// Test seam: one catch-up pass on a synthetic session, which rejects
+    /// manual sync for users. Lets tests make provider-side changes visible.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn request_test_sync(&self) -> Result<(), MailError> {
+        self.admit_sync()
+    }
+
+    fn admit_sync(&self) -> Result<(), MailError> {
         let mut st = self.inner.ctrl.state.lock().map_err(storage_err())?;
         if st.halted || st.stop {
             return Err(MailError::StorageUnavailable);
@@ -1731,6 +1855,61 @@ impl Drop for GmailInner {
     }
 }
 
+/// Synchronous synthetic bootstrap, run before the worker exists: account,
+/// discovery, history catch-up, then every synthetic conversation missing
+/// from the cache (the initially archived ones) is loaded as an explicit
+/// cache load, never as Inbox mail and never as Done evidence. Idempotent:
+/// a reopen finds everything cached and changes nothing.
+fn bootstrap_synthetic(
+    store: &GmailStore,
+    provider: &dyn GmailProvider,
+    hub: &GmailHub,
+    conversations: &[String],
+) -> Result<(), MailError> {
+    let cancel = CancelToken::default();
+    match run_pass(
+        store,
+        provider,
+        &cancel,
+        PassAction::Auth(AuthKind::Restore),
+        hub,
+    ) {
+        PassOutcome::Complete => {}
+        PassOutcome::Halt(error)
+        | PassOutcome::SyncError(error)
+        | PassOutcome::AuthError { error } => return Err(error),
+        PassOutcome::Idle | PassOutcome::Cancelled => {
+            return Err(crate::storage_log::storage_fault(
+                "synthetic_bootstrap_incomplete",
+            ))
+        }
+    }
+    let account = store
+        .account()?
+        .ok_or_else(|| crate::storage_log::storage_fault("synthetic_bootstrap_no_account"))?;
+    let generation = store.generation()?;
+    for id in conversations {
+        let target = ConversationRef {
+            account_id: account.account_id.clone(),
+            conversation_id: id.clone(),
+        };
+        match store.get_conversation(&target) {
+            Ok(_) => continue,
+            Err(MailError::NotFound) => {}
+            Err(error) => return Err(error),
+        }
+        let Some(thread) = provider.get_thread(id, &cancel)? else {
+            continue;
+        };
+        if thread.conversation.conversation_ref != target {
+            return Err(MailError::InvalidProviderResponse);
+        }
+        let revision = store.observation_revision()?;
+        store.save_search(&[thread], generation, revision, &account.account_id)?;
+    }
+    Ok(())
+}
+
 fn credentialless_connection(has_account: bool) -> ConnectionState {
     if has_account {
         ConnectionState::AuthRequired
@@ -1797,10 +1976,11 @@ fn spawn_worker(
     ctrl: Arc<Ctrl>,
     hub: Arc<GmailHub>,
     profile: Arc<ProfileGuard>,
+    policy: SessionPolicy,
 ) -> Result<JoinHandle<()>, MailError> {
     std::thread::Builder::new()
         .name("gmail-sync-worker".to_string())
-        .spawn(move || run(store, provider, ctrl, hub, profile))
+        .spawn(move || run(store, provider, ctrl, hub, profile, policy))
         .map_err(storage_err())
 }
 
@@ -1812,6 +1992,7 @@ fn run(
     // Held for the whole thread: a running or detached worker can never
     // outlive the profile lock.
     _profile: Arc<ProfileGuard>,
+    policy: SessionPolicy,
 ) {
     let mut sync_deadline = Instant::now();
     loop {
@@ -1939,7 +2120,10 @@ fn run(
             {
                 st.operations_requested = false;
                 PassAction::Mutations
-            } else if st.connection == ConnectionState::Connected && tick_due {
+            } else if st.connection == ConnectionState::Connected
+                && tick_due
+                && policy.periodic_sync()
+            {
                 PassAction::Sync
             } else {
                 if tick_due {
@@ -3458,3 +3642,84 @@ mod worker_halt_tests {
 #[cfg(test)]
 #[path = "reply_context_sync_tests.rs"]
 mod reply_context_sync_tests;
+
+#[cfg(test)]
+mod synthetic_session_tests {
+    use super::*;
+    use crate::testing::synthetic::{conversation, new_provider, Overlay, CLOCK_START};
+    use crate::testing::{temp_profile, until};
+
+    fn ticks(core: &GmailCore) -> usize {
+        core.inner.ctrl.state.lock().unwrap().test_wait_cycles
+    }
+
+    /// Forces the periodic deadline to be due and waits for the worker to
+    /// observe it (one more wait cycle), without sleeping.
+    fn fire_periodic_tick(core: &GmailCore) {
+        let before = ticks(core);
+        {
+            let mut st = core.inner.ctrl.state.lock().unwrap();
+            st.test_tick_due = true;
+        }
+        core.inner.ctrl.wake.notify_all();
+        assert!(until(|| ticks(core) > before), "worker observed the tick");
+        core.inner
+            .ctrl
+            .wait_until_idle(Duration::from_secs(5))
+            .unwrap();
+    }
+
+    #[test]
+    fn synthetic_session_never_runs_periodic_discovery_but_gmail_policy_does() {
+        let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(CLOCK_START)));
+        // Synthetic policy: a due periodic tick does nothing.
+        let dir = temp_profile("synthetic-no-periodic");
+        let synthetic = new_provider(dir.path());
+        let overlay = Overlay::wrap(synthetic.clone());
+        let core = GmailCore::open_synthetic_wrapping(
+            dir.path(),
+            overlay.clone(),
+            clock.clone(),
+            &synthetic.conversation_ids(),
+            false,
+        )
+        .unwrap();
+        core.inner
+            .ctrl
+            .wait_until_idle(Duration::from_secs(5))
+            .unwrap();
+        let history = overlay.read_calls("history");
+        let inbox = overlay.read_calls("list_inbox");
+        for _ in 0..3 {
+            fire_periodic_tick(&core);
+        }
+        assert_eq!(
+            overlay.read_calls("history"),
+            history,
+            "no periodic history"
+        );
+        assert_eq!(
+            overlay.read_calls("list_inbox"),
+            inbox,
+            "no periodic discovery"
+        );
+        drop(core);
+
+        // Gmail policy over the very same provider does poll on the tick.
+        let dir = temp_profile("gmail-periodic-control");
+        let synthetic = new_provider(dir.path());
+        let overlay = Overlay::wrap(synthetic);
+        let core = GmailCore::open_with_clock(dir.path(), overlay.clone(), clock).unwrap();
+        assert!(until(|| core
+            .account_status()
+            .is_ok_and(|s| s.sync.initial_sync_complete)));
+        core.inner
+            .ctrl
+            .wait_until_idle(Duration::from_secs(5))
+            .unwrap();
+        let history = overlay.read_calls("history");
+        fire_periodic_tick(&core);
+        assert!(until(|| overlay.read_calls("history") > history));
+        let _ = conversation("conv-01");
+    }
+}

@@ -141,6 +141,15 @@ impl SyntheticGmailProvider {
         true
     }
 
+    /// Every conversation id of the fixed mailbox, Inbox or not. A synthetic
+    /// session loads all of them into its cache at bootstrap.
+    pub fn conversation_ids(&self) -> Vec<String> {
+        self.conversations
+            .iter()
+            .map(|c| c.id.to_string())
+            .collect()
+    }
+
     fn conversation(&self, id: &str) -> Option<&SeedConversation> {
         self.conversations.iter().find(|c| c.id == id)
     }

@@ -192,7 +192,7 @@ fn new_reply_after_acceptance_is_untouched_by_group_undo() {
             "later reply",
         ),
     );
-    mail_core::testing::request_sync_when_idle(&s.core);
+    sync_when_idle(&s.core);
     assert!(mail_core::testing::until(|| s
         .core
         .get_conversation(&conversation("conv-01"))
