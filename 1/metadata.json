@@ -1,0 +1,205 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7E0DEZSE37KGC5498BFJ7H2",
+  "session_id": "51d622e1-6ef8-4cf7-94af-6048a9823193",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-14T21:46:33.345730492Z",
+  "branch": "feat/android-fixture-build",
+  "checkpoints_count": 8,
+  "save_step_count": 6,
+  "files_touched": [
+    ".github/workflows/ci.yml",
+    ".gitignore",
+    "Cargo.lock",
+    "crates/mail-core/Cargo.toml",
+    "crates/mail-core/src/error.rs",
+    "crates/mail-core/src/lock.rs",
+    "docs/current-architecture.md",
+    "docs/current-status.md",
+    "docs/development.md",
+    "mise.toml",
+    "src-tauri/Cargo.toml",
+    "src-tauri/src/main.rs",
+    "src/App.vue",
+    "src/components/ReaderView.vue",
+    "src/lib/draft-errors.ts",
+    "src/lib/ipc/client.ts",
+    "src/lib/ipc/generated.ts",
+    "tests/app-shell/shell.test.ts",
+    "tests/ipc/tauri-client.test.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-5-5",
+  "turn_id": "8a9280056a42",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 840,
+    "cache_creation_tokens": 3534751,
+    "cache_read_tokens": 109820360,
+    "output_tokens": 313767,
+    "api_call_count": 397
+  },
+  "session_metrics": {
+    "turn_count": 8
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-14T21:46:32.964931302Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 279,
+    "human_removed": 1615,
+    "total_committed": 10,
+    "total_lines_changed": 1894,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 8494,
+      "user_lines_removed": 1771,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".codex/hooks.json": 23,
+        ".github/workflows/ci.yml": 39,
+        ".gitignore": 6,
+        "crates/mail-core/src/error.rs": 2,
+        "docs/development.md": 40,
+        "mise.toml": 41,
+        "src-tauri/Cargo.toml": 4,
+        "src-tauri/gen/android/.editorconfig": 12,
+        "src-tauri/gen/android/.gitignore": 19,
+        "src-tauri/gen/android/app/.gitignore": 6,
+        "src-tauri/gen/android/app/build.gradle.kts": 70,
+        "src-tauri/gen/android/app/proguard-rules.pro": 21,
+        "src-tauri/gen/android/app/src/main/AndroidManifest.xml": 37,
+        "src-tauri/gen/android/app/src/main/java/dev/exedev/emailos/androidfixture/MainActivity.kt": 3,
+        "src-tauri/gen/android/app/src/main/res/drawable-v24/ic_launcher_foreground.xml": 30,
+        "src-tauri/gen/android/app/src/main/res/drawable/ic_launcher_background.xml": 170,
+        "src-tauri/gen/android/app/src/main/res/layout/activity_main.xml": 18,
+        "src-tauri/gen/android/app/src/main/res/values-night/themes.xml": 6,
+        "src-tauri/gen/android/app/src/main/res/values/colors.xml": 10,
+        "src-tauri/gen/android/app/src/main/res/values/strings.xml": 4,
+        "src-tauri/gen/android/app/src/main/res/values/themes.xml": 6,
+        "src-tauri/gen/android/app/src/main/res/xml/file_paths.xml": 5,
+        "src-tauri/gen/android/build.gradle.kts": 22,
+        "src-tauri/gen/android/buildSrc/build.gradle.kts": 23,
+        "src-tauri/gen/android/buildSrc/src/main/java/dev/exedev/email_os/fixture/kotlin/BuildTask.kt": 52,
+        "src-tauri/gen/android/buildSrc/src/main/java/dev/exedev/email_os/fixture/kotlin/RustPlugin.kt": 85,
+        "src-tauri/gen/android/gradle.properties": 24,
+        "src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties": 7,
+        "src-tauri/gen/android/gradlew": 185,
+        "src-tauri/gen/android/gradlew.bat": 89,
+        "src-tauri/gen/android/settings.gradle": 3,
+        "src-tauri/gen/schemas/acl-manifests.json": 1,
+        "src-tauri/gen/schemas/capabilities.json": 1,
+        "src-tauri/gen/schemas/desktop-schema.json": 2808,
+        "src-tauri/gen/schemas/linux-schema.json": 2808,
+        "src-tauri/src/lib.rs": 1797,
+        "src-tauri/src/main.rs": 1,
+        "src-tauri/tauri.android.conf.json": 4,
+        "src/App.vue": 3,
+        "src/components/ReaderView.vue": 3,
+        "src/lib/draft-errors.ts": 1,
+        "src/lib/ipc/client.ts": 1,
+        "src/lib/ipc/generated.ts": 1,
+        "tests/ipc/tauri-client.test.ts": 3
+      },
+      "user_removed_per_file": {
+        "src-tauri/src/main.rs": 1768,
+        "src/App.vue": 1,
+        "src/components/ReaderView.vue": 1,
+        "src/lib/ipc/generated.ts": 1
+      }
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 23,
+      "user_lines_removed": 0,
+      "agent_lines_added": 8471,
+      "agent_lines_removed": 1771,
+      "user_added_per_file": {
+        ".codex/hooks.json": 23
+      }
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 23,
+      "user_lines_removed": 0,
+      "agent_lines_added": 8471,
+      "agent_lines_removed": 1771,
+      "user_added_per_file": {
+        ".codex/hooks.json": 23
+      }
+    },
+    {
+      "checkpoint_number": 4,
+      "user_lines_added": 23,
+      "user_lines_removed": 0,
+      "agent_lines_added": 4107,
+      "agent_lines_removed": 1771,
+      "user_added_per_file": {
+        ".codex/hooks.json": 23
+      }
+    },
+    {
+      "checkpoint_number": 5,
+      "user_lines_added": 144,
+      "user_lines_removed": 59,
+      "agent_lines_added": 2860,
+      "agent_lines_removed": 1771,
+      "user_added_per_file": {
+        ".codex/hooks.json": 23,
+        "docs/current-architecture.md": 1,
+        "docs/current-status.md": 24,
+        "docs/development.md": 12,
+        "pi-scheduled-tasks": 33,
+        "src-tauri/gen/android/app/.gitignore": 2,
+        "src-tauri/src/lib.rs": 48,
+        "tests/ipc/tauri-client.test.ts": 1
+      },
+      "user_removed_per_file": {
+        "docs/current-architecture.md": 1,
+        "docs/development.md": 4,
+        "pi-scheduled-tasks": 3,
+        "src-tauri/gen/android/app/.gitignore": 2,
+        "src-tauri/src/lib.rs": 48,
+        "tests/ipc/tauri-client.test.ts": 1
+      }
+    },
+    {
+      "checkpoint_number": 6,
+      "user_lines_added": 244,
+      "user_lines_removed": 67,
+      "agent_lines_added": 2894,
+      "agent_lines_removed": 1773,
+      "user_added_per_file": {
+        ".codex/hooks.json": 23,
+        "Cargo.lock": 1,
+        "crates/mail-core/Cargo.toml": 3,
+        "crates/mail-core/src/lock.rs": 51,
+        "docs/current-status.md": 19,
+        "docs/development.md": 2,
+        "pi-scheduled-tasks": 33,
+        "src-tauri/gen/android/app/.gitignore": 2,
+        "src-tauri/gen/android/app/src/main/AndroidManifest.xml": 1,
+        "src-tauri/gen/android/app/src/main/java/dev/exedev/emailos/androidfixture/MainActivity.kt": 32,
+        "src-tauri/src/lib.rs": 48,
+        "src/App.vue": 1,
+        "tests/app-shell/shell.test.ts": 28
+      },
+      "user_removed_per_file": {
+        "crates/mail-core/src/lock.rs": 5,
+        "docs/current-status.md": 6,
+        "docs/development.md": 1,
+        "pi-scheduled-tasks": 3,
+        "src-tauri/gen/android/app/.gitignore": 2,
+        "src-tauri/gen/android/app/src/main/java/dev/exedev/emailos/androidfixture/MainActivity.kt": 1,
+        "src-tauri/src/lib.rs": 48,
+        "src/App.vue": 1
+      }
+    }
+  ]
+}

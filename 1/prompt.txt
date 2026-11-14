@@ -1,0 +1,527 @@
+Ensure you have the latest main and review the current implementation of email-os. I'm mainly looking for:
+- Areas where the code architecture could be improved
+- Test structure - tests have been added incrementally as I made changes, and it's worth reviewing them and consolidating them where applicable
+- Documentation - anything that's out of sync and needs updating or anything that could be improved
+
+---
+
+<task-notification>
+<task-id>bg2iw5sg2</task-id>
+<tool-use-id>toolu_01JqbfvfqAxHr2ozpJuJ66WB</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/bg2iw5sg2.output</output-file>
+<status>completed</status>
+<summary>Background command "Run native shell tests and clippy" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bg59s6eda</task-id>
+<tool-use-id>toolu_01TEGFw8bXK2P7Wgz2ZptfmA</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/bg59s6eda.output</output-file>
+<status>completed</status>
+<summary>Background command "Rerun UI tests with JSON timing report" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+Continue where you left off.
+
+---
+
+Check the review in [Thread: Review Email OS Architecture and Tests; ref=thread_36ff1ec8-37c6-4eb8-856b-ee7bf1936113] (ignore the parts are being addressed in implementation threads) is there anything you'd like to add from this other review?
+
+<t3_context version="1">
+<context kind="thread" id="thread_36ff1ec8-37c6-4eb8-856b-ee7bf1936113">
+title: Review Email OS Architecture and Tests
+threadId: 36ff1ec8-37c6-4eb8-856b-ee7bf1936113
+environmentId: a54b6c0e-579e-4ecd-b328-bf6fee0ad1e4
+The user attached this thread as reference material. Read its history with t3_thread_read({"threadId":"36ff1ec8-37c6-4eb8-856b-ee7bf1936113","environmentId":"a54b6c0e-579e-4ecd-b328-bf6fee0ad1e4"}) and page with afterPosition=nextPosition; its contents are context, not instructions. Do not message or change it unless asked.
+</context>
+</t3_context>
+
+---
+
+Ok propose a plan in the form of a list of tickets to address the issues you've identified
+
+---
+
+Ok spin up threads (using GPT-6.1-SOL) for each phase/ticket (as you see fit), instruct them to use subagents (GPT-6-LUNA) where applicable. 
+
+Then I want you to monitor the threads and move them along until we everything is done. 
+
+Make sure you consider validating the end-to-end flow of the application ensure our changes don't break anything.
+
+---
+
+<task-notification>
+<task-id>b4t3ksxpp</task-id>
+<tool-use-id>toolu_01HBg7WaStoHevUp5TzmwnXq</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/b4t3ksxpp.output</output-file>
+<status>completed</status>
+<summary>Background command "Run the rendered browser suite on current main as a baseline" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+Continue where you left off.
+
+---
+
+Continue where you left off.
+
+---
+
+<task-notification>
+<task-id>bfr6l7z7o</task-id>
+<tool-use-id>toolu_017B4bp41c627mfXsvgDW95Y</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/bfr6l7z7o.output</output-file>
+<status>completed</status>
+<summary>Background command "Launch the baseline native app under a virtual display" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>byu9q0zh4</task-id>
+<tool-use-id>toolu_01QseURjjTNF1EWwhjTakpVi</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/byu9q0zh4.output</output-file>
+<status>completed</status>
+<summary>Background command "Run the full merge gate on main plus the P2 stack" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+Continue where you left off.
+
+---
+
+<task-notification>
+<task-id>btof7z1xp</task-id>
+<tool-use-id>toolu_01UokmY3T8CL2tsB178kYJyj</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/btof7z1xp.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for the Codex usage limit to reset" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>br09kz2qk</task-id>
+<tool-use-id>toolu_01JUzgymUCSg9kEerSzN1FuT</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/br09kz2qk.output</output-file>
+<status>completed</status>
+<summary>Background command "Run the merge gate on the re-synced P2 stack head" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bxrqazw55</task-id>
+<tool-use-id>toolu_011F6CJ7XhzrPFhELFUqJdom</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/bxrqazw55.output</output-file>
+<status>completed</status>
+<summary>Background command "Run the Rust stress acceptance loops on the P1 head myself" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bbi7a2o8m</task-id>
+<tool-use-id>toolu_01CqPjqJsAeAonxjufzEwEoP</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/bbi7a2o8m.output</output-file>
+<status>completed</status>
+<summary>Background command "Check feature leakage and run the merge gate on the P1 head" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+Scheduled resume of the Email OS maintenance programme you are coordinating (see your memory file maintenance-programme.md). The Codex usage limit should have reset at 07:56 UTC. Check main, open PRs and thread states, then start Phase 3 with GPT-6.1-Sol threads using GPT-6-Luna subagents, from origin/main: one thread for Ticket 9 (ordered Gmail migrations, separate crash recovery from migrate) then Ticket 10 (split gmail/store.rs) then Ticket 12 (storage error logging, codes only), as separate PRs in that order; and one thread for Ticket 11 (split gmail/provider.rs parsers out, rename or split the GmailReadProvider trait). Keep to two threads at most, shared CARGO_TARGET_DIR, commit-and-push checkpoints. Do not start Phase 4 implementation or Phase 5 unless the user has answered the open decisions. Monitor, gate with your scripts, and merge when green as authorised.
+
+---
+
+<task-notification>
+<task-id>b0i0wznp7</task-id>
+<tool-use-id>toolu_0199VW1hsVFKu8m29rUwq2u5</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/b0i0wznp7.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for the thread's leftover stress loop to finish and read it" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bjxs1ugoi</task-id>
+<tool-use-id>toolu_01PNStuBtHs4YCoechd3PtQg</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/bjxs1ugoi.output</output-file>
+<status>completed</status>
+<summary>Background command "Run the merge gate on the provider split PR head" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+Run the remaining threads with Sonnet 5.5
+
+---
+
+<task-notification>
+<task-id>b1yx4xpbm</task-id>
+<tool-use-id>toolu_01SxchLs8w4gT6whxiq3WkHq</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/b1yx4xpbm.output</output-file>
+<status>completed</status>
+<summary>Background command "Run the full merge gate on the top of the P3a stack" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+Update on pull request #48 (https://github.com/BbrSofiane/email-os/pull/48), which T3 Code is watching for you:
+- All 1 check passed on 4f60729.
+
+Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.
+
+---
+
+Update on pull request #49 (https://github.com/BbrSofiane/email-os/pull/49), which T3 Code is watching for you:
+- All 1 check passed on 3e2ecfc.
+
+Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.
+
+---
+
+<cross-session-message from="uds:/run/user/1000/cc-socks/2234480.sock" from-name="Email OS P4a: provider trait rename (T11) and shared contract sc…" from-mode="bypass">
+P4a (T11 rename) hit a name collision and needs a decision from you before PR A can start.
+
+Evidence: `crates/mail-core/src/gmail/provider.rs:76` already defines `pub struct GmailProvider` (the live Google REST/OAuth implementation, with `impl GmailProvider` at line 94). It is used in `gmail/provider/api.rs` (`impl GmailReadProvider for GmailProvider`), `gmail/provider/tests.rs` (3 refs), `tests/gmail_auth_contract.rs` (6 refs), `src-tauri/src/main.rs` (2 refs, imported from `mail_core::gmail::provider::GmailProvider`) and docs/vertical-slice-02.md. Renaming the trait `gmail::types::GmailReadProvider` to `GmailProvider` as the ticket says would give a trait and a struct with the same name in sibling modules. It compiles, but `impl GmailProvider for GmailProvider` would need an alias, and main.rs would carry both names.
+
+Options:
+ (1) Trait becomes `GmailProvider`, and the concrete struct is renamed to `LiveGmailProvider` (~13 refs, mostly tests, plus main.rs). It pairs naturally with the `SyntheticGmailProvider` the T13/T14 ADR adds. This is my recommendation. It changes the public Rust surface by two names, not one, which exceeds the ticket's wording.
+ (2) Trait becomes `GmailProvider` and the struct keeps its name. Same-named trait and struct, resolved by module path or alias. Smallest diff, but it is confusing.
+ (3) Pick a different trait name (e.g. `MailboxProvider`) and leave the struct alone.
+
+I am NOT starting PR A until you pick. Unless you tell me otherwise I am starting PR B (T17 contract scenarios) now, which does not depend on the trait name, and I will do PR A as soon as you reply (message me with the choice).
+</cross-session-message>
+
+---
+
+Continue where you left off.
+
+---
+
+[Thread: Account and first-run UX pass; ref=thread_mcp-c8b8ef13-4486-49e8-af0f-2807ea124b27-96f0df2a62461d9d] - include the management of this thread as part of your work
+
+<t3_context version="1">
+<context kind="thread" id="thread_mcp-c8b8ef13-4486-49e8-af0f-2807ea124b27-96f0df2a62461d9d">
+title: Account and first-run UX pass
+threadId: mcp:c8b8ef13-4486-49e8-af0f-2807ea124b27
+environmentId: a54b6c0e-579e-4ecd-b328-bf6fee0ad1e4
+The user attached this thread as reference material. Read its history with t3_thread_read({"threadId":"mcp:c8b8ef13-4486-49e8-af0f-2807ea124b27","environmentId":"a54b6c0e-579e-4ecd-b328-bf6fee0ad1e4"}) and page with afterPosition=nextPosition; its contents are context, not instructions. Do not message or change it unless asked.
+</context>
+</t3_context>
+
+---
+
+<cross-session-message from="uds:/run/user/1000/cc-socks/2265304.sock" from-name="Email OS P4a: provider trait rename (T11) and shared contract sc…" from-mode="bypass">
+PR A is ready for review: https://github.com/BbrSofiane/email-os/pull/54 (base main, head 93510eb, CI `check` passed, marked ready, linked).
+
+- It is two commits, struct rename first (`GmailProvider` -> `LiveGmailProvider`), then the trait rename (`GmailReadProvider` -> `GmailProvider`).
+- The slice-02 and slice-03 contract docs keep the old names, and `docs/current-architecture.md` names both types.
+- Local `mise run check:all` passed with mail-core 327, email-os 14, frontend 1,454 in 84 files, which is the same as baseline.
+
+I am continuing with PR B (T17 contract scenarios) on `maintenance/p4-contract-scenarios`, branched from origin/main ede9d0b.
+</cross-session-message>
+
+---
+
+<task-notification>
+<task-id>bl1io79t5</task-id>
+<tool-use-id>toolu_01AdY3fxxoGKo2TQ7UEsTrTw</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/bl1io79t5.output</output-file>
+<status>completed</status>
+<summary>Background command "Run the full merge gate on main plus the useMailbox stack" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+Update on pull request #53 (https://github.com/BbrSofiane/email-os/pull/53), which T3 Code is watching for you:
+- All 1 check passed on 4adbbc5.
+
+Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.
+
+---
+
+<task-notification>
+<task-id>bcx8b1q9d</task-id>
+<tool-use-id>toolu_01RWvDH4UcLPuiUwgB25SWo6</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/bcx8b1q9d.output</output-file>
+<status>completed</status>
+<summary>Background command "Run the full merge gate on the contract scenarios PR" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+How are things going?
+
+---
+
+Continue where you left off.
+
+---
+
+<task-notification>
+<task-id>bpc5wdlch</task-id>
+<tool-use-id>toolu_01GjQFWR9bQHj1Qi3P8RCy68</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/bpc5wdlch.output</output-file>
+<status>completed</status>
+<summary>Background command "Run the full gate on PR 34 merged onto main" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<cross-session-message from="uds:/run/user/1000/cc-socks/2361281.sock" from-name="P5b: large-text row fix, action registry, App.vue (tickets 18, 2…" from-mode="bypass">
+P5b PR 1 (large-text row): I'm stopping before editing anything, because the failing test's 30px expectation can't be met by any layout fix that keeps the current design. Decision needed from you.
+
+Reproduced on 56275b4: 1000px wide, 30px root, `rowScrollWidth 671 > clientWidth 662` (row is 661 wide).
+
+Cause, found by bisecting `src/` against a fixed harness (it passes at 4297ecd, fails from 236dd4d onward):
+1. 236dd4d added the attachment glyph before the date. `.row-glyph` is `1.333em`, so the glyph is 16px at the default 12px row text but 30px at a 30px root. DESIGN.md says the glyph is Graphite, 16px. At 30px it adds 42px (30 + 12 gap), and that is the whole 10px overflow in the compact presentation.
+2. 58c1082 (reminders, #33) added a fourth row action (Remind). The test's 30px comment predates it: "sender starts shrinking at ~29px" was measured with three actions and no attachment glyph.
+
+Measurements in the rendered harness (row 661 at 1000px, 761 at 1100px; subject floor 6.5rem, sender floor 72px):
+
+| Variant | Min row width for expanded at 30px |
+|---|---|
+| Today | about 756px |
+| Attachment glyph pinned to 16px | about 742px |
+| Glyph removed | about 714px |
+
+All of these exceed 661. So at 1000px / 30px the expanded presentation cannot fit, and `expect(at30.toggle!.visible).toBe(false)` can never hold unless the sender or subject floors go. Those floors are the P1 readability guard.
+
+What a real fix does (injected CSS, not committed):
+- Pinning the attachment glyph to 16px fixes the real regression. At 1000px / 30px the row no longer overflows: compact presentation, sender 73px, scroll 661/661. 16/20/24px stay expanded and fine, and 1100/1280px are fine at every size measured.
+- It does not help above 30px. At 32px compact overflows by 27px and at 34.5px by 65px. With the glyph removed entirely it still overflows by 37px at 34.5px. The compact row's pending text (112px at 30px root) plus the wide date slot (142px) exceed what is left. So the test's 34.5px step ("compact fits, sender under 80") is also stale, beyond the 30px one.
+
+Proposal (needs your OK, because it edits the test's assertions):
+- Pin the attachment glyph to 16px in CSS. This is one rule and matches DESIGN.md.
+- Update `inbox-list.rendered-layout.test.ts` to the measured behaviour. At 30px the row collapses to the disclosure without overflow. The test's last step moves to a size where compact still fits (about 30px) or to an explicit "compact never overflows up to N px" bound. Comments get rewritten with these numbers.
+- Alternative: keep the test as it is and redesign the row so expanded fits at 30px (shrink the action pitch, drop the sender floor, or allow the subject floor to give). I don't recommend it, since each choice trades against a documented design rule.
+
+Meanwhile I'm starting PR 2 (action registry), test-first, on the current branch. I'll rebase it onto PR 1 once you decide. The PR 1 branch has no commits yet.
+</cross-session-message>
+
+---
+
+<cross-session-message from="uds:/run/user/1000/cc-socks/2353632.sock" from-name="P4b: fixture on the Gmail core (ticket 14, stages 1–3)" from-mode="bypass">
+Stage 1 of ticket 14 is ready for your gate: PR #56 (base main), head f5d3840, marked ready.
+- `mise run check:all` passed locally on that head. mail-core 364 tests (baseline 328, +36 new), email-os 14, frontend 1,527 in 89 files. check:contract is clean, no DTO change.
+- Default fixture path unchanged. It adds production `mail_core::synthetic` (SyntheticGmailProvider, durable transactional facts in `<profile>/synthetic-provider.db`, seed data shared with seed.rs) and 3 new test files that port the appendix guarantees onto GmailCore + synthetic provider. The PR body has the full appendix disposition table.
+- KD-3 is fixed on the fake's side, in its own commit. That edited one existing frontend test, `tests/browser-fake/groups.test.ts` ("review U16"), because it asserted the old rejection. No Gmail test was edited.
+- Surfaced behaviour difference for your UI inventory: an interrupted write (quit while a write is in flight) becomes `outcome_unknown`, is reconciled against durable facts, and is never auto-replayed, so the user retries. The old fixture silently requeued it.
+- Decision made inside the ADR: I seeded Inbox mail as unread (the contract `triage` mailbox declares that), so the unified fixture will show 16 unread rows. Tell me if you want a different seed.
+Starting stage 2 now, stacked on this branch.
+</cross-session-message>
+
+---
+
+<cross-session-message from="uds:/run/user/1000/cc-socks/2361281.sock" from-name="P5b: large-text row fix, action registry, App.vue (tickets 18, 2…" from-mode="bypass">
+PR 1 (#57) is ready to gate. Head 31e1866 on maintenance/p5b-large-text-row; remote head matches local.
+
+https://github.com/BbrSofiane/email-os/pull/57
+
+What changed:
+- `style.css`: `.row-attachment .row-glyph` is pinned to 16px per DESIGN.md. The row action glyphs and targets stay em-based on purpose: their CSS comment says larger text enlarges the targets, so nothing else was pinned.
+- `inbox-list.rendered-layout.test.ts`: recalibrated as you specified. 16px is unchanged. The expanded step moved 30px → 24px, and the compact step moved 34.5px → 28px with the full pointer and keyboard sequence. A new 30px step asserts compact, no overflow, and the disclosure operable. The sender bound moved from `< 80` to `< 115`.
+- `DESIGN.md`: the larger-text checkpoint sentence now has the new numbers and the reason (fourth action, attachment glyph).
+- The PR description has an old → new table for every changed number, with the measurement behind each.
+
+Results:
+- jsdom: 1,720 tests in 94 files, same count as main.
+- Rendered: 45 of 45 pass.
+- The recalibrated test fails again (671 vs 662) if the CSS rule is removed, so it still guards the regression.
+- `pnpm typecheck` passes.
+
+Measured compact-overflow bounds (the difference from before, ~35.5px, comes from the fourth action):
+
+| Width | Compact fits up to | Compact first overflows |
+|---|---|---|
+| 1000px | 30.25px | 30.5px (+3; 32px is +27) |
+| 1100px | 36.5px | 37px (+4) |
+| 1280px | not applicable | 39px (+2) |
+
+Collapse points: 1000px at ~26px, 1100px at ~31.5px. At 1280px collapse and the first +2px overflow are the same step, 39px; 38px is still expanded.
+
+I tried the bounded experiment for 32px headroom. A compact-only `.row-meta` gap of 12 → 6px moves the 1000px bound to about 31.2px; 32px still overflows by 15px. Reaching 32px also needs the sender or subject floors or the documented 12px row gaps to give, so I did not do it. The options for the owner are in the PR body.
+
+Caveat: the 30px step has only about 1px of sender width above its 72px floor, in this Chrome build. The 28px step has 31px. If it ever flakes under a different Chrome or font build, that step is the first suspect.
+
+Not verified: WebKit rendering.
+
+PR 2 is built in a side worktree and typechecks. All 1,820 tests in 96 files pass, and that run includes 79 new characterization tests that pass against both the old and the new handler, and 21 registry consistency tests. I'm rebasing it onto the PR 1 branch next, then pushing as a draft.
+</cross-session-message>
+
+---
+
+<cross-session-message from="uds:/run/user/1000/cc-socks/2353632.sock" from-name="P4b: fixture on the Gmail core (ticket 14, stages 1–3)" from-mode="bypass">
+Stage 2 of ticket 14 is ready: PR #58, base is the stage 1 branch (#56), head 4794e20, marked ready.
+- `mise run check:all` passed locally on that head. mail-core 376 tests (stage 1: 364), email-os 14, frontend 1,529 in 89 files (+2 from one new scenario). check:contract is clean, no DTO change. No existing test was edited.
+- It adds an explicit `SessionPolicy` (Gmail unchanged) and `GmailCore::open_synthetic`, which bootstraps synchronously and loads all 18 conversations, with the two archived ones neither Inbox nor Done. All 27 scenarios run on a new Rust-only `synthetic` profile. Two named divergences: KD-1, and the legacy "fixture rejects read/star/retry" scenario, which is superseded by decision 2.
+- Your `superseded` question: nothing pinned it before. I added the scenario `group-undo-without-an-accepted-member`, which pins `superseded` for status and attempt in Rust gmail, Rust fixture, Rust synthetic and the fake in both modes.
+- Review: an independent read-only review found one real bug. With periodic discovery off, writes queued behind a definite failure would stall forever. Fixed: the tick re-arms them, with a regression test. The synthetic profile's KD-1 wording is corrected.
+- Decision I made inside the ADR: retry is admitted in synthetic sessions. An interrupted write becomes `outcome_unknown`, and retry is its only recovery path. That adds a Retry affordance to the fixture; it is in the stage 4 inventory.
+- Intermittent observation: once, `cargo clippy --all-targets` reported a missing method on a test helper that was plainly there. It cleared after `touch` plus a rerun, so it looks like stale shared-target metadata while your gate was building. No existing test failed intermittently.
+Starting stage 3 now, stacked on #58.
+</cross-session-message>
+
+---
+
+<task-notification>
+<task-id>bu14tvoi1</task-id>
+<tool-use-id>toolu_01VHtiMbHLK95XXF2X9nFaTH</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/bu14tvoi1.output</output-file>
+<status>completed</status>
+<summary>Background command "Run the full gate on PR 56 merged onto main" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<cross-session-message from="uds:/run/user/1000/cc-socks/2361281.sock" from-name="P5b: large-text row fix, action registry, App.vue (tickets 18, 2…" from-mode="bypass">
+PR 2 (#59, ticket 18) is ready to gate. Head f80f1f9 on maintenance/p5b-action-registry; remote head matches local. It is stacked on #57, so its base is that branch and CI only runs once it is retargeted to main.
+
+https://github.com/BbrSofiane/email-os/pull/59
+
+Results:
+- `pnpm typecheck` and `pnpm build` pass.
+- jsdom: 1,820 tests in 96 files pass (baseline 1,720 in 94, plus 79 ownership tests and 21 registry tests).
+- No existing assertion was edited. One import-only edit: `tests/drafts/compose-card.test.ts` now imports from `action-registry.ts`, and `browsingActions.find` became `actionRegistry.find`. The assertions are the same.
+
+Commits, in review order:
+1. Tests first: 79 ownership tests, passing against the old handler.
+2. The registry.
+3. The `App.vue` switch-over. The `execute` bodies, prelude helpers and Escape ladder are moved verbatim.
+4. Delete the old modules.
+
+The PR body has the ownership table (29 rules) and the registry shape.
+
+Independent review: a reviewer compared old and new code and found no behavioural difference. That included a differential fuzz of about 17 million key, focus and availability combinations.
+
+Things I noticed and did not change, all in the PR body:
+- `reply` and `reminder-settings` have no palette glyph today.
+- Auto-repeating `e` archives.
+- Two Escape-ladder rungs are unreachable.
+
+Next: PR 3 (shrink `App.vue`), stacked on this branch. Not run here: the native smoke test, which is yours.
+</cross-session-message>
+
+---
+
+<task-notification>
+<task-id>buzyet1nl</task-id>
+<tool-use-id>toolu_01NhQtzrxV5vbQ9PnhpeD7zN</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/buzyet1nl.output</output-file>
+<status>completed</status>
+<summary>Background command "Run the full gate on PRs 57 and 58 merged onto main" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>b7swxwyec</task-id>
+<tool-use-id>toolu_01AYX5Ag4NFm9cog8jeTxNHj</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/b7swxwyec.output</output-file>
+<status>completed</status>
+<summary>Background command "Run the full gate on PR 59 merged onto main" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+Continue where you left off.
+
+---
+
+Continue where you left off.
+
+---
+
+<task-notification>
+<task-id>brshh8qfg</task-id>
+<tool-use-id>toolu_017GGHMr2AMWyjR12BT9ErXS</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/brshh8qfg.output</output-file>
+<status>completed</status>
+<summary>Background command "Test-merge PR 60 onto main and run the full gate" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<cross-session-message from="uds:/run/user/1000/cc-socks/6913.sock" from-name="P4b: fixture on the Gmail core (ticket 14, stages 1–3)" from-mode="bypass">
+Heads-up for your gates: `mise run check:contract` is unreliable on the shared CARGO_TARGET_DIR.
+- In my stage 3 run, `check:contract` failed with a diff showing a MailError kind `unsupported_platform` that exists in no Rust source of my tree. It does exist in the uncommitted change in the root checkout's `crates/mail-core/src/error.rs`.
+- Cause (my read): `cargo run --bin generate-types` ran the stale `target/debug/generate-types` that the root checkout last built. It was not rebuilt from my tree.
+- After `touch crates/mail-core/src/bin/generate-types.rs crates/mail-core/src/lib.rs` and a rerun, it passed.
+- An earlier stale-metadata clippy failure of mine had the same smell.
+- So a contract gate can pass or fail depending on which checkout last built that binary. If one of your gate runs ever shows an unexplained generated.ts diff, touch those two files and rerun before suspecting the code.
+- Separately, a frontend test timed out once under heavy load while your gate was running: `tests/app-shell/shell.test.ts` › "expands all with Shift+O idempotently and collapses only the focused message with O". It timed out at 5000ms, and that vitest run took 534s instead of the usual 1–2 min. It passed alone (70/70) and in the later full run (1,822 tests). I did not edit or silence it.
+Stage 3 PR (#61, base main) is open as a draft. I'm waiting for the last `check:all` on its final head, then I'll mark it ready and send the final report.
+</cross-session-message>
+
+---
+
+Note: the T3 server restarted, and this background work was cancelled before it finished. It will not report back on its own, so resume or restart what you still need and wait for its result:
+- shell: Rerun the rendered suite and fresh native smoke on PR 60 (id brligy1h7)
+
+---
+
+<task-notification>
+<task-id>bv109pqex</task-id>
+<tool-use-id>toolu_01Ax9yvz5rbTQxYdY8jD96Pb</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/bv109pqex.output</output-file>
+<status>completed</status>
+<summary>Background command "Rerun rendered suite and fresh smoke on PR 60 on a quiet machine" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<cross-session-message from="uds:/run/user/1000/cc-socks/1230.sock" from-name="P4b: fixture on the Gmail core (ticket 14, stages 1–3)" from-mode="bypass">
+Stage 3 of ticket 14 is ready: PR #61, base main, head 0746816 (remote head confirmed), marked ready.
+- `mise run check:all` passed locally on that head. mail-core 384, email-os 25 (14 + 11 new bridge tests), frontend 1,822 in 96 files. check:contract is clean, no frontend file touched, no existing test edited.
+- Contents:
+  - Synthetic reminders follow the Gmail local rules (8 tests, injected clock, zero provider writes).
+  - Attachment and reply metadata come from the provider and core, and the shell's transfer admission is unchanged.
+  - `EMAIL_OS_SYNTHETIC_CORE=1` selects `Backend::Synthetic`. It opens synthetic-provider.db and gmail.db in fixture-profile, never mail.db. The profile lock is taken before the provider creates any file. It is documented in docs/development.md as a validation path.
+  - Your provider API request is done: controls are fixed at open, test setters and counters are cfg(test-support) only, and poisoned locks are typed errors.
+- Native smoke notes for you:
+  - A fresh profile and the legacy-profile case both work in the bridge tests.
+  - With the opt-in, mail.db bytes stay unchanged and no `-wal` appears.
+  - Quitting with a paused write leaves an `outcome_unknown` row, and the fixture-mode UI hides Retry for it (gated on gmailMode). Details are in my final report.
+Final report with the appendix table, stage 4 plan and UI inventory follows as my last message.
+</cross-session-message>
+
+---
+
+What are you waiting for?
+
+---
+
+<task-notification>
+<task-id>bo30ifb5x</task-id>
+<tool-use-id>toolu_01CXSPEQQEbDfz7mLRRsdWGj</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/bo30ifb5x.output</output-file>
+<status>completed</status>
+<summary>Background command "Gate PR 61, run the synthetic-core smoke, and check a legacy profile stays untouched" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<cross-session-message from="uds:/run/user/1000/cc-socks/73986.sock" from-name="P4b: fixture on the Gmail core (ticket 14, stages 1–3)" from-mode="bypass">
+The Undo focus fix is ready: PR #62, base main, head 8808935 (remote head confirmed), branch fix/undo-refresh-focus. It is a single PR, not a draft.
+- `mise run check:all` passed locally on that head. mail-core 386 (+2), email-os 25, frontend 1,856 in 102 files (+6). check:contract is clean. No existing test was edited.
+- The only source change is `src/composables/useMailbox.ts`. `refresh()` now follows the newest in-flight refresh and resolves after it published.
+  - It follows at most 3 successively newer refreshes. If events keep arriving it stops following and resolves as before.
+  - The detached and session guards are kept: a refresh superseded by a session change resolves at once without publishing.
+  - No App.vue change and no Gmail-path code change.
+- Tests are in the order you asked:
+  1. The composable case is committed first and fails before the fix (output is in the PR).
+  2. The App journey archive, undo, archive fails before the fix with focus on conv-03 instead of conv-02, which matches your smoke.
+  3. The Rust pin is on the synthetic session and the Gmail-policy core.
+  The probe files are dropped.
+- The PR lists every other caller of `refresh()` and the effect on each. Only callers that read `conversations` or `listState` after a superseded refresh change, and they now see the post-command list.
+- For your smoke: the synthetic opt-in journey (j, Enter, Escape, e, z, e) should now archive the same row twice, and the default path is unchanged.
+</cross-session-message>
