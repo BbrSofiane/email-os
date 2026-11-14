@@ -31,14 +31,13 @@ use mail_core::gmail::browsing::{DestinationCatalog, DestinationPage, Destinatio
 use mail_core::gmail::provider::LiveGmailProvider;
 use mail_core::gmail::secrets::KeychainSecrets;
 use mail_core::gmail::sync::GmailCore;
-use mail_core::gmail::types::{AccountInfo, AccountStatus, MailMode};
+use mail_core::gmail::types::{AccountInfo, AccountStatus};
 use mail_core::groups::{
     GetOperationGroupRequest, GroupUndoReceipt, ListOperationGroupsRequest, OperationGroupPage,
     OperationGroupReceipt, OperationGroupStatus, SetArchivedGroup, SetReadGroup,
     UndoOperationGroup,
 };
 use mail_core::reminders::{CancelReminder, PutReminder, Reminder};
-use mail_core::ACCOUNT_ID;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -1252,6 +1251,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mail_core::gmail::types::MailMode;
     use std::{collections::BTreeSet, fs};
 
     use mail_core::testing::temp_profile as temp_dir;
@@ -1449,9 +1449,10 @@ mod tests {
 #[cfg(test)]
 mod synthetic_bridge_tests {
     use super::*;
-    use mail_core::gmail::types::ConnectionState;
+    use mail_core::gmail::types::{ConnectionState, MailMode};
     use mail_core::synthetic::WriteControls;
     use mail_core::testing::{temp_profile, until, TIMEOUT};
+    use mail_core::ACCOUNT_ID;
     use std::sync::mpsc;
     use std::time::Duration;
 
