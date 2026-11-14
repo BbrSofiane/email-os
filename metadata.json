@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7E5W3NW7EM84B131JE1CKB3",
+  "strategy": "manual-commit",
+  "branch": "fix-c",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "crates/mail-core/src/fixture_transition.rs"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 62,
+    "cache_creation_tokens": 58617,
+    "cache_read_tokens": 9324355,
+    "output_tokens": 16947,
+    "api_call_count": 27
+  }
+}
