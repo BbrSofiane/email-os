@@ -225,6 +225,37 @@ provider's optional demo behavior is selected with
 `EMAIL_OS_FAKE_PROVIDER=paused|reject|success` (default: success). Profile locks
 reject a second writer to the same mail or draft profile.
 
+**Synthetic-core validation path (not a user feature):** `EMAIL_OS_SYNTHETIC_CORE=1
+mise run dev:native` makes fixture mode run the Gmail core on the built-in synthetic
+provider ([ADR 0002](adr/0002-fixture-as-synthetic-provider.md), stages 1–3) instead of
+the legacy `MailCore`. It exists so the unified implementation can be validated
+end to end through the real Tauri commands before it becomes the default (stage 4);
+nothing about it is promised to users. The variable is read only in fixture mode
+(ignored under `EMAIL_OS_MODE=gmail`) and accepts only `1` or `0`; anything else fails
+startup instead of silently picking a backend. On this path:
+
+* the app reports mode `fixture`, account `fixture-account`, connected and idle, with no
+  mutation grant, from its first status read (bootstrap finishes before the window can
+  ask); there is no OAuth, Keychain or HTTP client;
+* its files live beside the legacy ones in `<app_data_dir>/fixture-profile`:
+  `synthetic-provider.db` (durable provider facts, seeded once) and `gmail.db` (the core's
+  cache and operation ledger). `mail.db` is **never opened**, so a profile used by the
+  legacy core is not modified, and the two cores share `profile.lock` and
+  `local-drafts`, so they can never run at the same time;
+* all 18 conversations are present (the two initially archived ones are cached, not Inbox,
+  not Done); archive, read, star, undo, groups, retry, saved split, search (cached only),
+  reminders (hide locally, no provider write), the `fixture-text` attachment and reply
+  headers work through the same commands as Gmail mode; cached Trash, provider
+  destinations, connect, disconnect, permission upgrade and manual sync are rejected with
+  the legacy fixture's error variants;
+* `EMAIL_OS_FAKE_PROVIDER=paused|reject` still applies, to synthetic writes only, and is
+  fixed at launch. An operation interrupted by quitting (for example while paused) comes
+  back as an uncertain `outcome_unknown` operation to retry, not as a silent replay.
+
+Switching between the two paths on one profile is safe (state is not shared, nothing is
+migrated); the legacy path's facts and history do not appear on the synthetic path, and
+vice versa.
+
 **Explicit native Gmail mode:** launch with `EMAIL_OS_MODE=gmail`; it uses the
 separate `<app_data_dir>/gmail-profile`, never the fixture database. Local drafts
 are in the separate `<app_data_dir>/gmail-profile/local-drafts` profile; disconnect

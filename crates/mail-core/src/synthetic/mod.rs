@@ -17,4 +17,6 @@ pub(crate) mod data;
 mod facts;
 mod provider;
 
-pub use provider::{SyntheticGmailProvider, SYNTHETIC_ATTACHMENT_BYTES, SYNTHETIC_DB_FILE};
+pub use provider::{
+    SyntheticGmailProvider, WriteControls, SYNTHETIC_ATTACHMENT_BYTES, SYNTHETIC_DB_FILE,
+};
