@@ -1,0 +1,53 @@
+<task-notification>
+<task-id>a37a89c2116548821</task-id>
+<tool-use-id>toolu_01LadMcDyPh8V7RvNh6v1rPb</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-maintenance-p5b-large-t-6622b4f87ffbef75/5f168d81-61f3-4c11-ac7c-9cf2d9a03706/tasks/a37a89c2116548821.output</output-file>
+<status>completed</status>
+<summary>Agent "Review switch-over vs old code" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>I found no behavioural difference between the old code (56275b4) and the new code (HEAD f80f1f9) on any of the six points you listed.
+
+**How I checked**
+- **Keyboard dispatch:** I wrote a differential fuzz harness outside the repo. It models the old `onKeydown` after the prelude, from the old source. It compares that against the real `findKeyBinding` plus the `onKeydown` dispatch rules (swallowed repeats, `when-available`, resolvers).
+  - It covered about 17 million cases: 45 keys, Shift and repeat, every consistent combination of the 12 `KeyFocus` facts, and the availability and handled flags. It produced 0 differences in effect or preventDefault.
+  - It models the old code from my reading of it, so a misreading would show up on both sides.
+- **Static tables:** I extracted the old tables from the old source files and compared them mechanically against the new registry.
+- **Existing test:** `pnpm vitest run tests/app-shell/keyboard-ownership.test.ts` passes (79 of 79). The repo is untouched, and my throwaway files are in the scratchpad `fz/` directory.
+
+**Found equivalent**
+1. **`actionAvailable`:**
+   - Every per-id early return keeps its position relative to the shared gates.
+   - The trash/reminders/drafts gate keeps its `id !== 'open'` exemption.
+   - The bulk policy applies only to the six triage ids and only when there is no `explicit` target.
+   - `remind` and `open` skip the bulk policy.
+   - `reply` and `undo` sit after the gate and before the target check.
+   - `starred` and `read/unread/star/unstar` use the same checks as before, and the `archive/unarchive` in-inbox logic is unchanged.
+2. **`executeAction`:** every `execute` makes the same calls, awaits, early returns and arguments, including `star`/`unstar`, `read`/`unread`, `remind`, `back`, `compose`, `toggle-unread-filter`, and `create-split`/`edit-split`. Only `readerView.value?.prepareReply()` stays unawaited, as it was. `openSplitEditor` still re-checks `actionAvailable(id)` and `!overlay.value`.
+3. **Palette data:**
+   - 32 old ids and 32 new ids; label and shortcut are identical for all.
+   - Group order (`Object.keys(actionGroupOf)`) is identical, and so is the group of every id.
+   - The merged aliases match as sets, including `restore to inbox` now being in the registry.
+   - The navigator subset is the same 11 ids.
+   - The label overrides are the same: "— N selected" for the six triage ids, unread-filter, switch-account, `Sign in again`, and the saved-split name.
+   - `disabledReason` and `starPermissionReason` are unchanged.
+   - The Keys hints keep their order.
+   - `goTargets` has the same order and keys (e, t, d, h, a).
+4. **`onKeydown`:**
+   - The prelude helpers are verbatim and in the same order. A normalised diff shows only `return` becoming `return true`. I also found no premature-evaluation hazard in computing `keyFocus` for every key, since it is pure reads.
+   - Key, Shift and repeat conditions match, including `E`/`U` needing Shift, `J`/`K` needing Shift, and reader `j`/`k` being lowercase only.
+   - Surface ownership, the `actionShortcutBlocked` versus `buttonOwns` split, and the Drafts-row exception for `c` all match.
+   - preventDefault policy matches: always for `c`, `s`, `z`, `E`, `U`, `Enter` and `e`; only when available for `h`, `r` and `/`. A repeated `z` is consumed without preventDefault.
+   - When a gate fails, the old and new code both consume the key or ignore it identically.
+   - `covered` skips everything except `/` and Escape.
+   - Binding priority and order match the old fall-through: Remind before the Reminders-row key, the empty-line Enter/Space before `open`, and the two `e` bindings are mutually exclusive.
+5. **CommandGlyph:** all 32 ids render the same glyph as before. `reply` and `reminder-settings` still render nothing, and `unstar` is still the filled star.
+6. **Matching old versus new:** nothing in `findKeyBinding` matches a key the old code ignored, and nothing the old code acted on is now missed. Key casing is also the same: `h`/`H`, `E`/`e` with Shift, `x`/`X`, and `n`/`N`, `p`/`P`, `o`/`O`.
+
+**One more check**
+- `actionHandlers` is a `const`, but `actionAvailable` is only reached lazily: through computeds and in handlers and callbacks, never in an immediate watcher before it is defined. So there is no TDZ regression from the old hoisted function.
+
+**Low-severity differences with no behavioural effect**
+- `/` with search unavailable is now "claimed but not prevented" instead of falling through. Nothing else binds `/`, so the outcome is the same.
+- `availableActions` iterates in registry order, not the old `browsingActions` order. The overlay's sort by group and per-id rank makes the displayed order the same.</result>
+<usage><subagent_tokens>141176</subagent_tokens><tool_uses>23</tool_uses><duration_ms>310091</duration_ms></usage>
+</task-notification>
