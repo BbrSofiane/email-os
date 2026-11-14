@@ -3,6 +3,8 @@ pub mod auth;
 pub mod browsing;
 pub mod operations;
 mod parse;
+#[cfg(test)]
+mod profile_lock_tests;
 pub mod provider;
 pub mod secrets;
 pub(crate) mod session;
