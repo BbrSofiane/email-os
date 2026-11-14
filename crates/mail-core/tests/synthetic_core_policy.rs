@@ -361,44 +361,52 @@ fn search_is_cached_only_and_never_calls_the_provider() {
     );
 }
 
-/// Parity with the legacy fixture store: the same queries return the same
-/// conversations in the same order (the legacy store lists only what is
-/// cached, as does the synthetic session).
+/// Cached search results for the fixed mailbox. These expectations were
+/// recorded when the legacy fixture store still existed and the two returned
+/// identical conversations in identical order for every query (stage 2's
+/// parity test); they now pin the behaviour on their own.
 #[test]
-fn cached_search_matches_the_legacy_fixture_store() {
-    let legacy_dir = temp_profile("policy-legacy-search");
-    let legacy = mail_core::MailCore::open(legacy_dir.path()).unwrap();
+fn cached_search_results_are_the_recorded_fixture_results() {
     let s = Synthetic::open("policy-synthetic-search");
-    for query in [
-        "ridpath",
-        "invoice",
-        "budget",
-        "from:ana@ridpath.example",
-        "ramen",
-        "script",
-        "xss",
-        "restart",
-        "nomatchatall",
-    ] {
-        let request = SearchRequest {
-            account_id: ACCOUNT_ID.into(),
-            query: query.into(),
-            cursor: None,
-            cached_only: true,
-        };
-        let ids = |page: mail_core::search::SearchPage| -> Vec<String> {
-            page.conversations
-                .iter()
-                .map(|c| c.conversation_ref.conversation_id.clone())
-                .collect()
-        };
-        assert_eq!(
-            ids(legacy.search_mail(&request).unwrap()),
-            ids(s.core.search_mail(&request).unwrap()),
-            "query {query:?}"
-        );
+    let expected: &[(&str, &[&str])] = &[
+        (
+            "ridpath",
+            &[
+                "conv-18", "conv-17", "conv-14", "conv-13", "conv-11", "conv-07", "conv-04",
+                "conv-01",
+            ],
+        ),
+        ("invoice", &["conv-03"]),
+        ("budget", &["conv-02"]),
+        (
+            "from:ana@ridpath.example",
+            &[
+                "conv-18", "conv-17", "conv-13", "conv-11", "conv-07", "conv-04", "conv-01",
+            ],
+        ),
+        ("ramen", &["conv-16"]),
+        ("script", &["conv-02"]),
+        ("xss", &["conv-02"]),
+        ("restart", &["conv-18", "conv-15"]),
+        ("nomatchatall", &[]),
+    ];
+    for (query, want) in expected {
+        let page = s
+            .core
+            .search_mail(&SearchRequest {
+                account_id: ACCOUNT_ID.into(),
+                query: (*query).into(),
+                cursor: None,
+                cached_only: true,
+            })
+            .unwrap();
+        let got: Vec<&str> = page
+            .conversations
+            .iter()
+            .map(|c| c.conversation_ref.conversation_id.as_str())
+            .collect();
+        assert_eq!(&got, want, "query {query:?}");
     }
-    legacy.stop_worker();
 }
 
 #[test]

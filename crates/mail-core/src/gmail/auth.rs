@@ -20,8 +20,8 @@ use sha2::{Digest, Sha256};
 use url::form_urlencoded;
 use url::Url;
 
+use crate::cancel::CancelToken;
 use crate::error::MailError;
-use crate::provider::CancelToken;
 
 /// Scope requested by the initial read-only connection.
 pub const GMAIL_READONLY_SCOPE: &str = "https://www.googleapis.com/auth/gmail.readonly";

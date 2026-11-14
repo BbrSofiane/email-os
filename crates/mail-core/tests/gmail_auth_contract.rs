@@ -14,7 +14,7 @@ use mail_core::gmail::provider::LiveGmailProvider;
 use mail_core::gmail::secrets::KeychainSecrets;
 use mail_core::gmail::secrets::{MemorySecrets, Secrets, TokenBundle};
 use mail_core::gmail::types::GmailProvider;
-use mail_core::provider::CancelToken;
+use mail_core::CancelToken;
 
 /// `GoogleConfig::from_env` reads the launch environment; mutating process
 /// env from parallel tests races, so all env-touching tests serialize here.
