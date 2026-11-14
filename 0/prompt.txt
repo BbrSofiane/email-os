@@ -1,0 +1,39 @@
+You are one implementation thread in a coordinated maintenance programme for Email OS, following a code review. A coordinating thread (not you) sequences tickets, reviews and merges PRs, and runs end-to-end validation. This is implementation, not another review.
+
+HOW TO WORK
+- The user chose Claude Sonnet 5.5 for these threads. Where work splits cleanly into non-overlapping files, use your native subagents (Agent tool) on the same model, with full scoped briefs and the checkout path; you review and integrate. No other models. Do tightly coupled work yourself.
+- Read the repository instructions, docs/current-architecture.md, docs/current-status.md and docs/development.md first.
+- You are in an isolated worktree from origin/main at 5aa7dea. Do not edit the root checkout /home/exedev/email-os or its local .codex/hooks.json change.
+- Commit and push at every checkpoint, and confirm each push landed (compare `git rev-parse HEAD` with `git ls-remote origin <branch>`; do not hide push output). Open each PR as a draft as soon as its first commit exists, and mark it ready when validated. The git remote is a proxy URL, so `gh` needs `-R BbrSofiane/email-os`.
+
+MACHINE LIMITS
+- 2 CPU cores, 7 GB RAM, little free disk, shared with the coordinator's Rust gates and at most one other thread. Run one heavy command at a time, including across subagents.
+- This ticket is frontend-only. Do not run cargo locally; CI on the PR covers the Rust suites. Use `mise run install:ui` once, then `mise run test:ui`, `mise run typecheck`, `mise run build:web` and the frontend lint task. If you ever need cargo, export CARGO_TARGET_DIR=/home/exedev/email-os/target first and never hardcode a target dir.
+- Rendered browser suite (run once, on the final head only): `EMAIL_OS_RENDERED_LAYOUT_CHROME=/tmp/chrome-rendered/chrome/linux-156.0.8078.80/chrome-linux64/chrome mise run test:rendered`. Baseline on main is 33 of 34: the large-text Inbox row overflow test fails because of a known product regression. Leave that test and that bug alone.
+
+TICKET 19: split `useMailbox`
+Facts on main: `src/composables/useMailbox.ts` is 2,072 lines; `useMailbox(client: MailClient): Mailbox` starts at about line 275 and the `Mailbox` interface at about line 137. The user's recent UI work already extracted `useReminders.ts` (391 lines), `useDrawerRows.ts` and `useDraftPreviews.ts`; follow the conventions those use. 22 source and test files import from `useMailbox`.
+
+Extract, in this order, each into its own composable (or plain module where no reactivity is needed) under `src/composables/`:
+1. selection (selected set, range/anchor behaviour, the `SELECTION_MAX` cap, pruning when rows leave);
+2. group operations and recovery (group archive/read acceptance, group notices, undo of groups, recovery of interrupted or partially failed groups);
+3. detail cache and prefetch (the bounded detail cache, TTL, prefetch, reader loading delay);
+4. account lifecycle (connect, disconnect, sync, enable-actions, cancel-upgrade, account state).
+One PR per extraction, four PRs, each stacked on the previous: PR 1 targets main, PR 2 targets PR 1's branch, and so on. The coordinator merges in order and retargets. Branch names: maintenance/p5a-mailbox-selection (this worktree's branch), then maintenance/p5a-mailbox-groups, maintenance/p5a-mailbox-detail-cache, maintenance/p5a-mailbox-account.
+
+Requirements
+- Behaviour-preserving. `useMailbox(client)` and the `Mailbox` interface keep their exact public shape, and every name currently exported from `src/composables/useMailbox.ts` stays importable from that path (re-export where a definition moves), so no consumer has to change.
+- HARD BOUNDARY: do not modify `src/App.vue`, `src/lib/browsing-actions.ts`, `src/lib/action-palette.ts`, `src/components/**`, `src/FixtureWorkspaces.vue` or `src/assets/style.css`. The user has an open UI PR (#34) in active work on those files, and any edit there creates conflicts for them. If an extraction cannot be done without touching one of them, stop and report.
+- Keep session invalidation explicit. Today one composable shares the fences that drop stale responses after an account change, disconnect, reconnect or generation change. Each extracted piece must receive that session/generation dependency explicitly through its arguments (no module-level mutable state, no hidden coupling through closures over the parent), and for each piece name the existing test that proves a stale response is dropped after invalidation, or add one if none exists.
+- No test is deleted or weakened without naming its replacement. Report frontend test counts before and after each PR (baseline on main: 1,454 tests in 84 files; confirm it yourself first). Add focused unit tests for an extracted composable where it is now testable in isolation and the existing component tests only cover it indirectly; do not duplicate coverage for its own sake. Use the shared helpers in `tests/helpers.ts` and `tests/support/`, fake timers, and the feature folders under `tests/`.
+- Each PR should be reviewable as mostly moves: keep function bodies unchanged where possible, and list every non-move edit in the PR description (signature changes, new parameters, re-exports).
+- Update docs/current-architecture.md in the PR that changes a boundary.
+- Synthetic fixtures only: no real accounts, credentials or Google network.
+- If the ticket is wrong about the code, or you find a real bug or a product decision outside scope, stop and report with evidence instead of deciding it yourself.
+
+DONE WHEN
+- `useMailbox.ts` is mostly wiring for these four areas; report its line count and each new module's line count.
+- On each PR head: `mise run test:ui`, typecheck, lint and `build:web` pass. On the final head, the rendered suite is 33 of 34 with only the known failure.
+
+FINAL REPORT (your last message)
+A table of PRs (number, URL, base, head SHA, CI state), test counts before and after, line counts, the list of non-move edits, the invalidation test named for each piece, anything you found that needs a decision, and anything you did not run.
