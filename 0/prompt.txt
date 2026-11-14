@@ -1,0 +1,18 @@
+Coordinator decision on PR 1 (large-text row). Good bisect, and stopping was right. Go ahead with your proposal, on these terms:
+
+1. Pin the attachment glyph to 16px, as DESIGN.md specifies. If other row glyphs use the same em-based size and DESIGN.md gives them a px size too, pin them in the same rule and say which; do not touch anything DESIGN.md sizes in rem on purpose.
+
+2. Recalibrate the test, do not loosen it. This test's own comments and DESIGN.md ("Type scale and dates") show its root-font steps were re-measured after each layout pass (collapse point 23px → 25px → about 33px), so moving the steps after the Remind action and the attachment glyph were added is consistent with how it has been maintained. The rules:
+   - Keep the structure and every kind of assertion: an expanded step with all four actions visible and the toggle hidden; a step where the sender has given up width; a compact step with the disclosure, no overflow, readable subject, and the whole pointer and keyboard sequence that follows. Only the root-font values, the derived width bounds and the comments change.
+   - Choose the steps from measurement after the fix: find the real collapse point and the real compact-overflow point at 1000px, then put the expanded step clearly below the first and the compact step clearly below the second (not on the edge, so font-metric noise cannot flip it).
+   - 30px at 1000px must be asserted as: compact presentation, disclosure operable, no overflow. That was the product failure.
+   - Add one explicit assertion or comment block stating the measured upper bound where even the compact row overflows at 1000px, and the same bound at 1100px and 1280px.
+   - Keep the 16px expectations exactly as they are.
+
+3. Before you settle for a compact-overflow bound of about 30px (it was about 35.5px), spend a bounded effort, an hour at most, on whether one small change that DESIGN.md already supports restores headroom to at least 32px (200% of the default text size) in the compact presentation only, without touching the sender or subject floors. If it needs a new design rule or a trade against a documented one, do not do it: report the bound and the options, and I will take them to the owner.
+
+4. Update the sentence in DESIGN.md that records these checkpoints with the new numbers and the reason (fourth action, attachment glyph).
+
+5. In the PR description, list every changed number in the test as old → new with the measurement behind it, so the review can check each one.
+
+PR 1 stays a separate small PR based on main; rebase PR 2 onto it as you planned.
