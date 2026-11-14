@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>b5k71qgwk</task-id>
+<tool-use-id>toolu_01PQWF7EAHkfVDGd21AVdsxZ</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/b5k71qgwk.output</output-file>
+<status>completed</status>
+<summary>Background command "Gate PR 62 and run the synthetic-core smoke twice" completed (exit code 0)</summary>
+</task-notification>
