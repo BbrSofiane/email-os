@@ -38,7 +38,7 @@ const KNOWN_DIVERGENCES: Array<{ scenario: string; profile: Profile; why: string
   {
     scenario: 'fixture-rejects-unsupported-commands',
     profile: 'fixture',
-    why: 'KD-2: the native shell answers setRead/setReadGroup in fixture mode with invalid_request{field:mode}; the fake (and the client.ts contract comment) say read_only, and tests/browser-fake/groups.test.ts asserts read_only. Needs a decision on which is intended.',
+    why: 'KD-2 (superseded): this scenario pins what the LEGACY archive-only fixture rejected (read, star, retry). The unified fixture, which the fake now mirrors, admits them (ADR 0002 decision 2), so the scenario no longer applies; it is deleted with the legacy `fixture` profile in stage 4 (d).',
   },
 ];
 

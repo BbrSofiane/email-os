@@ -241,7 +241,7 @@ describe("renders the fixture browsing shell (Slice 01)", () => {
     const failed = w.get('[data-test="activity-failed"]');
     expect(failed.get('.activity-status').text()).toBe('Failed');
     expect(failed.get('.activity-status').attributes('title')).toContain('Failed (provider_rejected)');
-    expect(failed.get('[data-test="activity-error"]').text()).toBe('The provider rejected the requested state.');
+    expect(failed.get('[data-test="activity-error"]').text()).toBe('The mailbox rejected the requested change.');
     expect(conversationRows(w)).toHaveLength(18);
   });
 

@@ -224,8 +224,8 @@ function describedBy(item: ReminderItem): string {
             v-if="CANCELLABLE.includes(item.reminder.phase)"
             type="button"
             class="drawer-quiet"
-            :aria-label="item.reminder.phase === 'failed' ? 'Cancel and show original inbox messages' : 'Cancel reminder and show in Inbox'"
-            :title="`${item.reminder.phase === 'failed' ? 'Cancel and show original inbox messages' : 'Cancel reminder and show in Inbox'} — Shift+H`"
+            :aria-label="item.reminder.phase === 'failed' ? 'Cancel and show in Inbox' : 'Cancel reminder and show in Inbox'"
+            :title="`${item.reminder.phase === 'failed' ? 'Cancel and show in Inbox' : 'Cancel reminder and show in Inbox'} — Shift+H`"
             aria-keyshortcuts="Shift+H"
             :disabled="busy || retrying"
             @click="model.cancel(item.reminder)"
@@ -236,7 +236,7 @@ function describedBy(item: ReminderItem): string {
           <span :id="descId(item, 'phase')" class="activity-status context-phase" :class="`tone-${REMINDER_PHASES[item.reminder.phase].tone}`" :data-test="`reminder-phase-${item.reminder.phase}`">{{ REMINDER_PHASES[item.reminder.phase].word }}</span>
         </template>
         <template #note="{ item }">
-          <p v-if="item.reminder.phase === 'failed'" :id="descId(item, 'note')" class="context-row-note tone-fault">A mailbox change failed or newer triage superseded it; which one is not recorded. Cancel does not override newer triage.</p>
+          <p v-if="item.reminder.phase === 'failed'" :id="descId(item, 'note')" class="context-row-note tone-fault">This reminder could not complete. Cancel it to show the conversation in the Inbox again; newer triage is never undone.</p>
         </template>
       </ContextRowList>
     </div>

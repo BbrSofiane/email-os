@@ -166,11 +166,12 @@ describe('browses synthetic cached star facts in memory (UX-08)', () => {
     expect((await fake.getConversation(fixtureRef('conv-01'))).stars?.starredMessages).toBe(0);
   });
 
-  it('fixture profile has no unsupported star controls or destination', async () => {
+  it('fixture profile shows the star surfaces by capability and still has no Gmail-only controls', async () => {
     const fake = createBrowserFakeMailClient();
     wrapper = mountApp(fake, 'browser-preview', {}); await flushFakeClientAndVueUpdates(fake);
-    expect(wrapper.find('[data-test="star-action"]').exists()).toBe(false);
-    expect(wrapper.find('[data-test="rail-starred"]').exists()).toBe(false);
-    await expect(fake.setStarred({conversation:nativeFixtureRef('conv-01'),starred:true,requestId:'no'})).rejects.toMatchObject({kind:'read_only'});
+    // ADR 0002 decision 2: the unified fixture has read/star and the cached Starred view.
+    expect(wrapper.find('[data-test="rail-starred"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="rail-trash"]').exists()).toBe(false);
+    await expect(fake.setStarred({conversation:nativeFixtureRef('conv-01'),starred:true,requestId:'yes'})).resolves.toMatchObject({operationId:expect.any(String)});
   });
 });

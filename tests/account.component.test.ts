@@ -25,7 +25,7 @@ describe('keeps Gmail account states and transitions explicit (Slice 02)', () =>
     useGmailMode(fake, patch);
   }
 
-  it('does not expose Gmail Retry for a failed fixture archive', async () => {
+  it('exposes Retry for a failed fixture archive: Retry follows the capability, not the mode name', async () => {
     fake.controls.behavior.failNext = 1;
     const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
     await flushFakeClientWithMacrotasks(fake, 2);
@@ -35,7 +35,7 @@ describe('keeps Gmail account states and transitions explicit (Slice 02)', () =>
     await openUtilityDrawer(w, 'activity');
     const failed = w.find('[data-test="activity-failed"]');
     expect(failed.exists()).toBe(true);
-    expect(failed.find('[data-test^="activity-retry-"]').exists()).toBe(false);
+    expect(failed.find('[data-test^="activity-retry-"]').exists()).toBe(true);
   });
 
   it('moves focus to the empty inbox after archiving its last row with the row button', async () => {

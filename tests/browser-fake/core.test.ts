@@ -175,11 +175,12 @@ describe('models core MailClient responses in browser memory', () => {
     const ops = fake.controls.activity();
     expect(ops[0]?.status).toBe('failed');
     expect(ops[0]?.failure).toEqual({ kind: 'provider_rejected' });
-    await expect(fake.retryOperation({ operationId: ops[0]!.id, requestId: 'fixture-retry' }))
-      .rejects.toEqual({ kind: 'invalid_request', field: 'mode' });
     const snap = await fake.listConversations();
     // overlay reverted: the conversation is back in the inbox
     expect(inboxIds(snap)).toContain('conv-01');
+    // The unified fixture admits Retry (ADR 0002 decision 2).
+    await expect(fake.retryOperation({ operationId: ops[0]!.id, requestId: 'fixture-retry' }))
+      .resolves.toMatchObject({ operationId: expect.any(String) });
     expect(snap.conversations.find((c) => c.ref.conversationId === 'conv-01')?.pendingOperationId).toBeNull();
   });
 

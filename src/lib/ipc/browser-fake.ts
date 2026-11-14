@@ -604,7 +604,12 @@ export function createBrowserFakeMailClient(
         initialSyncComplete: account.initialSyncComplete,
         coverageLimit: account.coverageLimit,
       },
-      mutationAccess: account.mode === 'gmail' ? account.mutationAccess : 'read_only',
+      // Fixture mode mirrors the unified native session: no Google grant to show
+      // and an explicit capability for read, star, Starred and Retry. Gmail
+      // keeps its observed grant and states no capability (like the Rust core).
+      ...(account.mode === 'gmail'
+        ? { mutationAccess: account.mutationAccess }
+        : { capabilities: { triageSurfaces: true } }),
     };
   }
 
@@ -929,8 +934,7 @@ export function createBrowserFakeMailClient(
     return { kind: 'not_found' };
   }
 
-  function requireMutationAccess(kind: MailboxOperationKind): void {
-    if ((kind === 'read' || kind === 'star') && account.mode !== 'gmail') throw { kind: 'read_only' } satisfies MailError;
+  function requireMutationAccess(_kind: MailboxOperationKind): void {
     if (account.mode === 'gmail' && account.mutationAccess !== 'enabled') throw { kind: 'read_only' } satisfies MailError;
   }
 
@@ -1239,12 +1243,11 @@ export function createBrowserFakeMailClient(
       },
       async put(command: PutReminder): Promise<Reminder> {
         const checkAccount = () => {
-          const activeId = account.mode === 'gmail' ? accountStatus().account?.accountId : fixtureId;
+          const activeId = accountStatus().account?.accountId;
           if (activeId !== command.conversation.accountId || cacheCleared) throw failNotShown();
         };
-        if (account.mode !== 'gmail') checkAccount();
         if (!command.requestId || new TextEncoder().encode(command.requestId).length > 128) throw { kind: 'invalid_request', field: 'requestId' } satisfies MailError;
-        if (account.mode === 'gmail') checkAccount();
+        checkAccount();
         const fingerprint = JSON.stringify(['put', command]);
         const receiptKey = `${command.conversation.accountId}:${command.requestId}`;
         const prior = reminderReceipts.get(receiptKey);
@@ -1265,12 +1268,10 @@ export function createBrowserFakeMailClient(
         if (!conv || conv.ref.accountId !== command.conversation.accountId) throw failNotShown();
         if (command.expectedRevision === null) {
           if (conv.messages.at(-1)?.id !== command.sourceMessageId) throw { kind: 'invalid_request', field: 'sourceMessageId' } satisfies MailError;
-          const pending = conv.ops.some(op => op.status === 'queued' || op.status === 'applying' || (account.mode === 'gmail' && op.status === 'outcome_unknown'));
+          // Local rules in every mode (ADR 0002 decision 3): same checks as the Rust core.
+          const pending = conv.ops.some(op => op.status === 'queued' || op.status === 'applying' || op.status === 'outcome_unknown');
           const inInbox = effectiveInInbox(conv).some(Boolean);
-          if (account.mode === 'gmail' && (!inInbox || pending)) throw { kind: 'invalid_request', field: 'conversation' } satisfies MailError;
-          if (pending) throw { kind: 'invalid_request', field: 'pendingOperation' } satisfies MailError;
-          if (account.mode !== 'gmail' && conv.messages.length > 1000) throw { kind: 'invalid_request', field: 'targets' } satisfies MailError;
-          if (!inInbox) throw { kind: 'invalid_request', field: 'inbox' } satisfies MailError;
+          if (!inInbox || pending) throw { kind: 'invalid_request', field: 'conversation' } satisfies MailError;
         }
         const reminder: Reminder = { conversation: { ...command.conversation }, subject: conv.subject,
           revision: (current?.revision ?? 0) + 1, sourceMessageId: command.sourceMessageId,
@@ -1283,12 +1284,11 @@ export function createBrowserFakeMailClient(
       },
       async cancel(command: CancelReminder): Promise<Reminder> {
         const checkAccount = () => {
-          const activeId = account.mode === 'gmail' ? accountStatus().account?.accountId : fixtureId;
+          const activeId = accountStatus().account?.accountId;
           if (activeId !== command.conversation.accountId || cacheCleared) throw failNotShown();
         };
-        if (account.mode !== 'gmail') checkAccount();
         if (!command.requestId || new TextEncoder().encode(command.requestId).length > 128) throw { kind: 'invalid_request', field: 'requestId' } satisfies MailError;
-        if (account.mode === 'gmail') checkAccount();
+        checkAccount();
         const fingerprint = JSON.stringify(['cancel', command]);
         const receiptKey = `${command.conversation.accountId}:${command.requestId}`;
         const prior = reminderReceipts.get(receiptKey);
@@ -1523,7 +1523,6 @@ export function createBrowserFakeMailClient(
     async listCachedStarred(request: CachedDoneRequest): Promise<CachedDoneSnapshot> {
       const active = accountStatus().account;
       if (!active || active.accountId !== request.accountId) throw failNotShown();
-      if (account.mode !== 'gmail') throw { kind: 'read_only' } satisfies MailError;
       if (!Number.isInteger(request.limit) || request.limit < 1 || request.limit > 100) {
         throw { kind: 'invalid_request', field: 'limit' } satisfies MailError;
       }
@@ -1580,7 +1579,6 @@ export function createBrowserFakeMailClient(
     },
 
     async retryOperation(command: RetryOperation): Promise<OperationReceipt> {
-      if (account.mode !== 'gmail') throw { kind: 'invalid_request', field: 'mode' } satisfies MailError;
       const original = conversations.flatMap((conv) => conv.ops.map((op) => ({ conv, op }))).find(({ op }) => op.id === command.operationId);
       if (!original) throw failNotShown();
       requireMutationAccess(original.op.kind);
