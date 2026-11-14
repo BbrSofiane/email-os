@@ -26,7 +26,7 @@ import { computed, nextTick, onBeforeUnmount, onBeforeUpdate, onMounted, reactiv
 import type { ConversationRef } from '../lib/ipc/client';
 import type { BrowseContext, ConversationSummaryLike } from '../composables/useMailbox';
 import { sameConversation } from '../composables/useMailbox';
-import { actionLabel } from '../lib/browsing-actions';
+import { actionLabel } from '../lib/action-registry';
 import { compactDateLabel, dateGroupCaption, dateGroupFor, fullDateLabel, machineDateTime } from '../lib/browsing-dates';
 import { groupRowsBySender, isSingleFromQuery, senderGroupKey, senderGroupLabel } from '../lib/search';
 import RowGlyph from './RowGlyph.vue';
