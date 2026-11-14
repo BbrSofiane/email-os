@@ -1580,6 +1580,17 @@ button:focus-visible {
 }
 
 /*
+ * DESIGN.md row spec: the attachment glyph is a 16px indicator, not a target,
+ * so it stays 16px at any root font (the shared .row-glyph is em-based so the
+ * action targets grow with larger text; this indicator must not take that
+ * width from the sender and subject).
+ */
+.row-attachment .row-glyph {
+  width: 16px;
+  height: 16px;
+}
+
+/*
  * Unknown attachment state: same Graphite icon-muted color as the solid
  * glyph, but quieter (the glyph itself is a thin outline stroke, mirroring
  * the hollow unread ring), so "unknown" stays visible yet distinct from a

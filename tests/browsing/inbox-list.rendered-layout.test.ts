@@ -9,11 +9,11 @@
  * these assertions only mean something against real rendered CSS.
  *
  * The second P1 guard covers larger user text: at 1000px with the long old
- * date label, a 30px root font still fits inline (the sender column gives up
- * width first); at a 34.5px root font the sender is near its floor and the full
- * inline metadata overflows the row, so the adaptive compact presentation
- * collapses the actions behind a named, keyboard- and pointer-operable
- * disclosure instead of trading subject collapse for horizontal overflow.
+ * date label, a 24px root font still fits inline (the sender column gives up
+ * width first); from about 26px the full inline metadata no longer fits, so
+ * the adaptive compact presentation collapses the actions behind a named,
+ * keyboard- and pointer-operable disclosure (still without overflow at 28px
+ * and 30px) instead of trading subject collapse for horizontal overflow.
  *
  * Opt-in only: set EMAIL_OS_RENDERED_LAYOUT_CHROME to a Chrome/Chromium binary
  * path to run, e.g.
@@ -341,41 +341,88 @@ describe.skipIf(chromePath === '')('InboxList rendered layout (real Chrome, opt-
       ]);
       expect(at16.toggle!.visible).toBe(false);
 
-      // 1000px / 30px root font, same scenario: the sender column gives up
+      // 1000px / 24px root font, same scenario: the sender column gives up
       // width first, so the expanded presentation still fits without any
-      // collapse, overflow, or unreadable subject. (Since the rail/contact
-      // layout pass the rail is a fixed 40px and the contact pane a fixed
-      // 272px, so larger text no longer widens the rail: the sender starts
-      // shrinking at a ~29px root font instead of below 20px.)
+      // collapse, overflow, or unreadable subject, and all four actions stay
+      // visible. (Measured in the rendered harness at 1000px: the sender starts
+      // shrinking at about 22px and reaches its 72px floor at about 25.5px;
+      // the expanded row fits up to 25.5px and collapses from about 26px.
+      // Since the Remind action and the 16px attachment glyph joined the row
+      // the expanded step moved 30px → 24px; it was 20px before the rail/contact
+      // layout pass. 24px is 1.5px below the collapse point with 25px of sender
+      // width still to give.)
+      await setRootFont(24);
+      await tick();
+      const at24 = await measure();
+      assertCompactRowLayout(at24, { minVisibleChars: 10, expectPending: true });
+      expect(at24.date).toBe('30 Sep 2001');
+      expect(at24.buttons.filter((b) => b.visible).map((b) => b.test)).toEqual([
+        'row-mark-read-conv-01',
+        'row-mark-unread-conv-01',
+        'row-remind-conv-01',
+        'row-archive-conv-01',
+      ]);
+      expect(at24.toggle!.visible).toBe(false);
+      expect(at24.sender.width).toBeLessThan(at16.sender.width);
+
+      // 1000px / 28px root font: the sender is giving up width and the
+      // expanded presentation no longer fits, so the adaptive compact
+      // presentation engages — subject stays readable, nothing clips or
+      // overflows, and every action moves behind the named disclosure control.
+      // (Collapse point at 1000px: 25.5px → 26px. Before the Remind action and
+      // the attachment glyph it was about 33px; the old 34.5px compact step
+      // overflows the row by 65px today, see the bound below.) 28px is 2.25px
+      // below the compact-overflow point, with 31px of sender width to spare.
+      //
+      // Measured upper bound where even the compact row overflows (real Chrome
+      // 156, synthetic fixture, old-date row with unknown read state and a
+      // pending membership; overflow = row scrollWidth − clientWidth):
+      //   1000px: compact fits up to 30.25px; 30.5px overflows by 3px, 31px by
+      //           11px, 32px (200% of the default) by 27px, 34.5px by 65px.
+      //   1100px: collapses at about 31.5px; compact fits up to 36.5px; 37px
+      //           overflows by 4px, 38px by 20px.
+      //   1280px: never collapses below 38.5px; from 39px compact overflows by
+      //           2px, 46px by 5px.
+      // The sender and subject floors are the P1 readability guard and are not
+      // traded for more headroom.
+      await setRootFont(28);
+      await tick();
+      const at28 = await measure();
+      assertCompactRowLayout(at28, { minVisibleChars: 10, expectPending: true, expectCompact: true });
+      expect(at28.date).toBe('30 Sep 2001');
+      // The sender gave up width before the actions collapsed (it may regain
+      // a little of the width the collapse frees).
+      expect(at28.sender.width).toBeLessThan(at16.sender.width);
+      expect(at28.sender.width).toBeLessThan(115);
+
+      // 1000px / 30px root font, the failure this guard exists for: compact
+      // presentation, disclosure operable by pointer and keyboard, no overflow.
+      // (Compact fits up to 30.25px here, so this step keeps about 1px of
+      // sender width above its 72px floor: it is the last step that fits.)
       await setRootFont(30);
       await tick();
       const at30 = await measure();
-      assertCompactRowLayout(at30, { minVisibleChars: 10, expectPending: true });
+      assertCompactRowLayout(at30, { minVisibleChars: 10, expectPending: true, expectCompact: true });
       expect(at30.date).toBe('30 Sep 2001');
-      expect(at30.toggle!.visible).toBe(false);
       expect(at30.sender.width).toBeLessThan(at16.sender.width);
+      await realClick(at30.toggle!);
+      const open30 = await measure();
+      expect(open30.toggle!.ariaExpanded).toBe('true');
+      expect(open30.actionsPanel!.visibility).toBe('visible');
+      await realKey('Escape');
+      const closed30 = await cdp!.js<string | null>("document.querySelector('[data-test=\"row-actions-toggle-conv-01\"]').getAttribute('aria-expanded')");
+      expect(closed30).toBe('false');
 
-      // 1000px / 34.5px root font: the sender is near its floor and the expanded
-      // presentation overflows the row, so the adaptive compact presentation
-      // engages — subject stays readable, nothing clips or overflows, and
-      // every action moves behind the named disclosure control. (The collapse
-      // point moved 23px → 25px in the typeset pass and 25px → ~33px in the
-      // rail/contact layout pass, as the fixed-px rail leaves the list wider.
-      // Above ~35.5px even the compact row overflows, as it did from ~28px
-      // before this pass.)
-      await setRootFont(34.5);
+      // The pointer and keyboard sequence below runs at 28px, clearly inside
+      // the range where the compact row fits.
+      await setRootFont(28);
       await tick();
-      const at345 = await measure();
-      assertCompactRowLayout(at345, { minVisibleChars: 10, expectPending: true, expectCompact: true });
-      expect(at345.date).toBe('30 Sep 2001');
-      // The sender gave up width before the actions collapsed (it may regain
-      // a little of the width the collapse frees).
-      expect(at345.sender.width).toBeLessThan(at30.sender.width);
-      expect(at345.sender.width).toBeLessThan(80);
+      const at28Again = await measure();
+      expect(at28Again.toggle!.visible).toBe(true);
 
       // Pointer access: a real CDP mouse click on the disclosure toggle opens
       // the row action panel.
-      await realClick(at345.toggle!);
+      await realClick(at28Again.toggle!);
       const openByPointer = await measure();
       expect(openByPointer.toggle!.ariaExpanded).toBe('true');
       expect(openByPointer.actionsPanel!.visibility).toBe('visible');
