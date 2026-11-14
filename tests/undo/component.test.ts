@@ -126,6 +126,64 @@ describe('reports action outcomes and trustworthy Undo results (UX-04)', () => {
     expect(fake.controls.activity().some((op) => op.status === 'cancelled' || op.undoOf !== undefined)).toBe(true);
   });
 
+  // Native journey on the Gmail core family (synthetic fixture session and Gmail):
+  // the core notifies inside the undo call AND again when the compensation's pass
+  // starts, so a second change event lands while Undo's own refresh is reading.
+  // Undo must still return focus to the restored row, so the next `e` archives IT
+  // and not the row that happened to be next.
+  it('returns focus to the restored row even when a second change event lands during the undo refresh', async () => {
+    const fake = createBrowserFakeMailClient();
+    let listener: (() => void) | null = null;
+    let armed = false;
+    const client: MailClient = {
+      ...fake,
+      subscribe: async (l) => {
+        listener = l;
+        return fake.subscribe(l);
+      },
+      // Real IPC reads take time.
+      listConversations: async () => {
+        if (armed) {
+          armed = false;
+          queueMicrotask(() => listener?.()); // the worker's pass-start event
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return fake.listConversations();
+      },
+      undoOperation: async (command) => {
+        const receipt = await fake.undoOperation(command);
+        listener?.(); // the accept-time event, just before the reply
+        armed = true;
+        return receipt;
+      },
+    };
+    const w = wrapper = sharedMountApp(client, 'browser-preview', { attachTo: document.body });
+    const settle = async (): Promise<void> => {
+      await flushPromises();
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      await fake.controls.flush();
+      await flushPromises();
+    };
+    await settle();
+    const second = 'conv-02'; // the second Inbox row
+    const next = 'conv-03';
+    await archiveViaKey(w, second);
+    await settle();
+    expect(w.find(`[data-test="conversation-row-${second}"]`).exists()).toBe(false);
+    press('z', { bubbles: true, cancelable: true });
+    await settle();
+    expect(w.find(`[data-test="conversation-row-${second}"]`).exists()).toBe(true);
+    expect(w.get('[data-test="action-notice-status"]').text()).toBe('Restored');
+    expect(w.get('[aria-current="true"]').attributes('data-test')).toBe(`conversation-row-${second}`);
+    expect(document.activeElement?.getAttribute('data-test')).toBe(`conversation-row-${second}`);
+    // The second archive targets the restored row, not its neighbour.
+    press('e', { bubbles: true, cancelable: true });
+    await settle();
+    const archives = fake.controls.activity().filter((op) => op.kind === 'archive' && op.undoOf === undefined);
+    expect(archives.map((op) => op.conversation.conversationId)).toEqual([second, second]);
+    expect(w.find(`[data-test="conversation-row-${next}"]`).exists()).toBe(true);
+  });
+
   it('keeps Undo reachable in the empty-Inbox state and restores the last row (BROWSE-08)', async () => {
     const fake = createBrowserFakeMailClient();
     const w = wrapper = sharedMountApp(fake, 'browser-preview', { attachTo: document.body });
