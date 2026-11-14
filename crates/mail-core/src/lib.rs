@@ -22,6 +22,7 @@ pub mod splits;
 pub mod stars;
 mod storage_log;
 mod store;
+pub mod synthetic;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 mod worker;

@@ -19,7 +19,6 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
 use crate::clock::Clock;
-use crate::drafts::types::ReplyContext;
 use crate::dto::{
     Address, Conversation, ConversationRef, ConversationSummary, InboxSnapshot,
     MailboxOperationKind, Message, OperationFailure, OperationReceipt, OperationStatus,
@@ -1113,7 +1112,7 @@ impl Store {
         if built.messages.is_empty() {
             return Err(MailError::NotFound);
         }
-        let reply_context = fixture_reply_context(&built.conversation_ref, &built.messages);
+        let reply_context = crate::synthetic::data::fixture_reply_context(&built.conversation_ref, &built.messages);
         Ok(Conversation {
             stars: None,
             conversation_ref: built.conversation_ref,
@@ -2543,43 +2542,6 @@ fn build_conversation_view(
         messages: messages.into_iter().map(|(message, _)| message).collect(),
         effective_inbox,
     })
-}
-
-fn fixture_reply_context(
-    conversation: &ConversationRef,
-    messages: &[Message],
-) -> Option<ReplyContext> {
-    let latest = messages.last()?;
-    let message_id = fixture_rfc_message_id(&conversation.conversation_id, &latest.id);
-    let references = messages[..messages.len().saturating_sub(1)]
-        .iter()
-        .map(|message| fixture_rfc_message_id(&conversation.conversation_id, &message.id))
-        .collect();
-    Some(ReplyContext {
-        source_message_id: latest.id.clone(),
-        from_mailbox: latest.from.mailbox.clone(),
-        reply_to_mailboxes: None,
-        message_id,
-        references,
-    })
-}
-
-/// Produces deterministic RFC Message-IDs for the synthetic fixture's explicit
-/// From, absent Reply-To, Message-ID, and References header facts.
-fn fixture_rfc_message_id(conversation_id: &str, message_id: &str) -> String {
-    let local = conversation_id
-        .chars()
-        .chain(std::iter::once('.'))
-        .chain(message_id.chars())
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '.' {
-                ch
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>();
-    format!("<{local}@fixture.emailos>")
 }
 
 fn participants_of(messages: &[Message]) -> Vec<Address> {
