@@ -648,3 +648,20 @@ addresses, bodies, OAuth codes, or credentials. Gmail history catch-up does not
 import arbitrary newly observed archived-thread bodies; the disclosed cache is
 limited to up to 100 discovered conversations and may omit inbox threads outside
 the bounded view.
+
+## Gmail schema migration regression fixtures
+
+`crates/mail-core/tests/fixtures/gmail-current-schema.txt` captures the full,
+whitespace-normalized `sqlite_master` produced by the unmodified store at
+`83e9c3b`, including autoindexes. `gmail/current-schema.sql` is the canonical
+fresh schema. Historical SQL fixtures record pre-numbered layouts and use
+synthetic rows only. Migration tests cover legacy intent preservation, nullable
+unknown facts, transaction rollback/re-entry, version rejection and startup
+recovery. Legacy ALTER paths can retain a different column order or equivalent
+CREATE whitespace; table rebuilds solely for cosmetic order are avoided.
+
+The triage-fact and inbox-membership backfill regression tests retain their
+assertions. Their setup now resets the marker to a legacy version when it
+removes columns/tables. A numbered current profile is no longer implicitly
+repaired after manual schema changes. Fixture-store migrations are independent
+and unchanged.
