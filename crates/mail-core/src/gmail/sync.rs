@@ -22,8 +22,8 @@ use crate::gmail::store::{
     Commit, DiscoveryProgress, GmailStore, HistoryProgress, ThreadFetch, DISCOVERY_CAP,
 };
 use crate::gmail::types::{
-    AccountStatus, ConnectionState, GmailReadProvider, GmailThread, MailMode, MutationAccess,
-    SyncInfo, SyncState,
+    AccountStatus, ConnectionState, GmailProvider, GmailThread, MailMode, MutationAccess, SyncInfo,
+    SyncState,
 };
 use crate::lock::ProfileGuard;
 use crate::storage_log::storage_err;
@@ -67,7 +67,7 @@ pub struct GmailCore {
 struct GmailInner {
     search_cancel: Mutex<Option<CancelToken>>,
     store: Arc<GmailStore>,
-    provider: Arc<dyn GmailReadProvider>,
+    provider: Arc<dyn GmailProvider>,
     /// Profile lock is owned for the full core lifetime and additionally
     /// shared with the worker thread: a running or detached worker can never
     /// outlive the lock (a second writer is rejected instead of two
@@ -286,7 +286,7 @@ impl GmailCore {
     /// wires the auth component's Gmail provider, tests inject fakes.
     pub fn open(
         profile_dir: impl AsRef<Path>,
-        provider: Arc<dyn GmailReadProvider>,
+        provider: Arc<dyn GmailProvider>,
     ) -> Result<GmailCore, MailError> {
         Self::open_with_clock(profile_dir, provider, Arc::new(SystemClock))
     }
@@ -295,7 +295,7 @@ impl GmailCore {
     /// [`crate::clock::FakeClock`] for deterministic undo-window behavior.
     pub fn open_with_clock(
         profile_dir: impl AsRef<Path>,
-        provider: Arc<dyn GmailReadProvider>,
+        provider: Arc<dyn GmailProvider>,
         clock: Arc<dyn Clock>,
     ) -> Result<GmailCore, MailError> {
         Self::open_with_clock_config(profile_dir, provider, clock, false)
@@ -307,7 +307,7 @@ impl GmailCore {
     #[cfg(any(test, feature = "test-support"))]
     pub fn open_with_clock_and_operations_paused(
         profile_dir: impl AsRef<Path>,
-        provider: Arc<dyn GmailReadProvider>,
+        provider: Arc<dyn GmailProvider>,
         clock: Arc<dyn Clock>,
     ) -> Result<GmailCore, MailError> {
         Self::open_with_clock_config(profile_dir, provider, clock, true)
@@ -315,7 +315,7 @@ impl GmailCore {
 
     fn open_with_clock_config(
         profile_dir: impl AsRef<Path>,
-        provider: Arc<dyn GmailReadProvider>,
+        provider: Arc<dyn GmailProvider>,
         clock: Arc<dyn Clock>,
         operations_paused: bool,
     ) -> Result<GmailCore, MailError> {
@@ -1793,7 +1793,7 @@ fn worker_wait(_state: &CtrlState, wait: Duration) -> Duration {
 
 fn spawn_worker(
     store: Arc<GmailStore>,
-    provider: Arc<dyn GmailReadProvider>,
+    provider: Arc<dyn GmailProvider>,
     ctrl: Arc<Ctrl>,
     hub: Arc<GmailHub>,
     profile: Arc<ProfileGuard>,
@@ -1806,7 +1806,7 @@ fn spawn_worker(
 
 fn run(
     store: Arc<GmailStore>,
-    provider: Arc<dyn GmailReadProvider>,
+    provider: Arc<dyn GmailProvider>,
     ctrl: Arc<Ctrl>,
     hub: Arc<GmailHub>,
     // Held for the whole thread: a running or detached worker can never
@@ -2079,7 +2079,7 @@ fn run(
 /// stays pending and remains visible through its due marker.
 fn process_due_reminders(
     store: &GmailStore,
-    provider: &dyn GmailReadProvider,
+    provider: &dyn GmailProvider,
     ctrl: &Arc<Ctrl>,
     hub: &GmailHub,
 ) -> Result<(), MailError> {
@@ -2212,7 +2212,7 @@ fn clear_reminder_read(ctrl: &Ctrl) {
 
 fn run_pass(
     store: &GmailStore,
-    provider: &dyn GmailReadProvider,
+    provider: &dyn GmailProvider,
     cancel: &CancelToken,
     action: PassAction,
     hub: &GmailHub,
@@ -2317,7 +2317,7 @@ fn run_pass(
 
 fn run_discovery(
     store: &GmailStore,
-    provider: &dyn GmailReadProvider,
+    provider: &dyn GmailProvider,
     cancel: &CancelToken,
     generation: u64,
     hub: &GmailHub,
@@ -2434,7 +2434,7 @@ fn run_discovery(
 
 fn run_history(
     store: &GmailStore,
-    provider: &dyn GmailReadProvider,
+    provider: &dyn GmailProvider,
     cancel: &CancelToken,
     generation: u64,
     hub: &GmailHub,
@@ -2512,7 +2512,7 @@ fn run_history(
 /// Fetches changed threads with per-page dedup; `None` responses become
 /// removals. Pathological provider data (mismatched ids) fails typed.
 fn fetch_changed_threads(
-    provider: &dyn GmailReadProvider,
+    provider: &dyn GmailProvider,
     changed_thread_ids: &[String],
     cancel: &CancelToken,
 ) -> Result<Vec<ThreadFetch>, MailError> {

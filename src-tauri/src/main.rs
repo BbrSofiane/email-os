@@ -26,7 +26,7 @@ use mail_core::dto::{
 };
 use mail_core::error::MailError;
 use mail_core::gmail::browsing::{DestinationCatalog, DestinationPage, DestinationRequest};
-use mail_core::gmail::provider::GmailProvider;
+use mail_core::gmail::provider::LiveGmailProvider;
 use mail_core::gmail::secrets::KeychainSecrets;
 use mail_core::gmail::sync::GmailCore;
 use mail_core::gmail::types::{AccountInfo, AccountStatus, MailMode, SyncInfo, SyncState};
@@ -1258,8 +1258,8 @@ fn main() {
                 }
                 "gmail" => {
                     let profile_dir = app_data_dir.join("gmail-profile");
-                    let provider = GmailProvider::from_env(Arc::new(KeychainSecrets::new()))?;
-                    let provider: Arc<dyn mail_core::gmail::types::GmailReadProvider> =
+                    let provider = LiveGmailProvider::from_env(Arc::new(KeychainSecrets::new()))?;
+                    let provider: Arc<dyn mail_core::gmail::types::GmailProvider> =
                         Arc::new(provider);
                     (
                         Backend::Gmail(GmailCore::open(&profile_dir, provider)?),

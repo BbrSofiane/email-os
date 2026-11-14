@@ -6,7 +6,7 @@
 //! disconnect racing an in-flight call, and profile-lock exclusivity.
 //!
 //! All coordination uses provider pause gates, call-log barriers, and
-//! bounded assertion loops; the fake `GmailReadProvider` is pure memory —
+//! bounded assertion loops; the fake `GmailProvider` is pure memory —
 //! no test opens sockets, performs network I/O, or touches real
 //! credentials. History ids are arbitrary opaque strings throughout.
 
