@@ -40,6 +40,8 @@ pub enum MailError {
     RateLimited,
     #[error("provider is unavailable")]
     ProviderUnavailable,
+    #[error("this feature is not available on this platform")]
+    UnsupportedPlatform,
     #[error("provider returned unsupported or invalid data")]
     InvalidProviderResponse,
     #[error("another account operation is in progress")]

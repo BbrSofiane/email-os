@@ -10,4 +10,8 @@ describe('errorText', () => {
     expect(errorText({ kind: 'unexpected' })).toBe('unknown error');
     expect(errorText({ kind: 'undo_unavailable', reason: 'unexpected' })).toBe('undo unavailable');
   });
+
+  it('describes platform-specific unsupported actions', () => {
+    expect(errorText({ kind: 'unsupported_platform' })).toBe('unavailable on this platform');
+  });
 });

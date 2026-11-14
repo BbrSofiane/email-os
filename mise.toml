@@ -81,6 +81,47 @@ run = "pnpm tauri dev"
 description = "Build the native shell bundle for fixture and Gmail profiles (needs native prerequisites)"
 run = "pnpm tauri build"
 
+[tasks."android:doctor"]
+description = "Check pinned Android build prerequisites"
+run = '''
+set -eu
+ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}"
+ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+NDK_HOME="${NDK_HOME:-$ANDROID_HOME/ndk/27.2.12479018}"
+export ANDROID_HOME ANDROID_SDK_ROOT NDK_HOME
+JAVA="${JAVA_HOME:+$JAVA_HOME/bin/}java"
+for tool in java javac rustup cargo pnpm; do
+  command -v "$tool" >/dev/null || { echo "Missing required tool: $tool" >&2; exit 1; }
+done
+test -d "$ANDROID_HOME/platforms/android-35" || { echo "Missing Android platform 35" >&2; exit 1; }
+test -d "$ANDROID_HOME/build-tools/35.0.0" || { echo "Missing Android build-tools 35.0.0" >&2; exit 1; }
+test -x "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" || { echo "Missing NDK 27.2.12479018 at $NDK_HOME" >&2; exit 1; }
+rustup target list --installed | grep -Fxq 'aarch64-linux-android' || { echo "Missing Rust target aarch64-linux-android (run rustup target add aarch64-linux-android x86_64-linux-android)" >&2; exit 1; }
+rustup target list --installed | grep -Fxq 'x86_64-linux-android' || { echo "Missing Rust target x86_64-linux-android (run rustup target add aarch64-linux-android x86_64-linux-android)" >&2; exit 1; }
+"$JAVA" -version 2>&1 | grep -q '17\.' || { echo "JDK 17 is required" >&2; exit 1; }
+echo "Android toolchain ready: API 35, build-tools 35.0.0, NDK 27.2.12479018, JDK 17, ARM64 + x86_64 targets"
+'''
+
+[tasks."android:build"]
+description = "Build a debug APK with bundled frontend for ARM64 and x86_64"
+depends = ["android:doctor"]
+run = '''
+export ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}"
+export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+export NDK_HOME="${NDK_HOME:-$ANDROID_HOME/ndk/27.2.12479018}"
+pnpm tauri android build --debug --apk --target aarch64 x86_64 --config src-tauri/tauri.android.conf.json --ci
+'''
+
+[tasks."android:dev"]
+description = "Run the Android fixture app on an attached device or emulator"
+depends = ["android:doctor"]
+run = '''
+export ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}"
+export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+export NDK_HOME="${NDK_HOME:-$ANDROID_HOME/ndk/27.2.12479018}"
+pnpm tauri android dev --config src-tauri/tauri.android.conf.json
+'''
+
 [tasks."check:native"]
 description = "Type-check the native shell and all targets (needs GTK/WebKit dev prerequisites; see docs/development.md)"
 run = "cargo check --locked -p email-os --all-targets"

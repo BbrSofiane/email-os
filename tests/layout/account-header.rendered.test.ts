@@ -52,7 +52,7 @@ describe.skipIf(chromePath === '')('Account header and contact column layout (re
   root.__vue_app__?.unmount();
   const fake = createBrowserFakeMailClient();
   fake.controls.setAccount({
-    mode: 'gmail', connection: 'connected', emailAddress: 'review@example.test', 
+    mode: 'gmail', connection: 'connected', emailAddress: 'review@example.test',
     coverageLimit: 100, initialSyncComplete: true,
     ${options.syncFailed ? "syncState: 'error', syncError: { kind: 'network_unavailable' }," : ''}
   });

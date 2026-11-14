@@ -70,6 +70,8 @@ const props = defineProps<{
   client?: MailClient;
   /** Browser preview: saves are modelled in memory and say so. */
   preview?: boolean;
+  /** Android fixture build has no attachment export or external link dispatch. */
+  android?: boolean;
   /** A reply composer is docked under the thread: keep the message being answered (the latest) in view. */
   replyDocked?: boolean;
 }>();
@@ -929,7 +931,7 @@ defineExpose({
           :disabled="!actionable || props.commandInFlight || props.navigationUnavailable"
           @click="emit('setRead', !props.conversation?.isRead)"
         ><HeaderGlyph :name="props.conversation?.isRead ? 'unread' : 'read'" /><span class="visually-hidden">Mark {{ props.conversation?.isRead ? 'unread' : 'read' }}</span></button>
-        <button v-if="actionsShown" type="button" class="header-glyph" :class="{ 'header-glyph-held': held }" data-test="files-links" title="Files and links — ⌘O" :disabled="!actionable" @click="emit('attachments', $event.currentTarget as HTMLElement)"><HeaderGlyph name="files" /><span class="visually-hidden">Files and links (⌘O)</span></button>
+        <button v-if="actionsShown && !props.android" type="button" class="header-glyph" :class="{ 'header-glyph-held': held }" data-test="files-links" title="Files and links — ⌘O" :disabled="!actionable" @click="emit('attachments', $event.currentTarget as HTMLElement)"><HeaderGlyph name="files" /><span class="visually-hidden">Files and links (⌘O)</span></button>
         <button
           v-if="actionsShown && !props.browsingOnly"
           type="button"

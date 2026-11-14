@@ -1,7 +1,7 @@
 {
   "scenario": "fixture-rejects-unsupported-commands",
   "description": "The archive-only fixture backend rejects every command it does not implement with the typed error the native shell returns today: read, retry and the read group are invalid_request on mode; star and the star group are read_only. Nothing is accepted.",
-  "rules": "src-tauri/src/main.rs Backend::Fixture dispatch; docs/current-architecture.md (Stars: fixture rejects star setters); docs/ux-05 \u00a74.2 (set_read_group Gmail-only)",
+  "rules": "src-tauri/src/lib.rs Backend::Fixture dispatch; docs/current-architecture.md (Stars: fixture rejects star setters); docs/ux-05 \u00a74.2 (set_read_group Gmail-only)",
   "profiles": [
     "fixture"
   ],

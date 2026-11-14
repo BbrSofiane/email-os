@@ -31,6 +31,8 @@ export function errorText(error: { kind: string; field?: string; reason?: string
       return 'rate limited';
     case 'provider_unavailable':
       return 'provider unavailable';
+    case 'unsupported_platform':
+      return 'unavailable on this platform';
     case 'invalid_provider_response':
       return 'unexpected provider response';
     case 'busy':

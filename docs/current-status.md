@@ -18,6 +18,14 @@ research and architecture proposals are not feature inventories.
 | Attachments and links | Synthetic fixture-text attachment listing/downloads. | Bounded cached descriptors and authenticated read-only Gmail fetch; explicit downloads create inert `.download` files. Links need explicit browser confirmation. No automatic opening or restricted document host. | Synthetic attachment surfaces only; no native download or Gmail fetch. |
 | Multiple workspaces | One native session; native tabs are not implemented or certified. | One active Gmail profile/session. This is not real multi-account activation. | Two isolated synthetic in-app workspaces are supported by the preview. |
 
+The Android fixture target builds a debug APK for ARM64 and x86_64 from the
+shared Rust shell. It uses SQLite and the native fixture backend; Gmail,
+attachment export, and external link dispatch are unavailable. APK build passed
+on 2026-11-14. An opt-in `EMAIL_OS_SYNTHETIC_CORE=1` selects the ADR 0002
+synthetic core while mode remains `fixture`; without it, Android uses the legacy
+fixture `MailCore`. Device smoke passed on an Android 15 x86_64 emulator. See
+the [Android smoke steps](development.md#android-fixture-apk).
+
 Mode selection is deliberate: native defaults to fixture; `EMAIL_OS_MODE=gmail`
 selects a separate Gmail profile. Browser preview remains synthetic. See the
 [development guide](development.md) for launch and validation commands.
@@ -47,6 +55,43 @@ Gmail consent/deny/cancel flows, live provider convergence, Keychain behavior,
 WKWebView behavior, or native attachment/download handling. Check the contracts
 for feature-specific pending gates before treating a feature as operationally
 validated.
+
+### Android fixture target (2026-11-14)
+
+`mise run android:doctor` passed with API 35, build-tools 35.0.0, NDK
+27.2.12479018, JDK 17, and ARM64/x86_64 Rust targets. The command
+`CARGO_BUILD_JOBS=2 mise run android:build` passed and produced
+`src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`.
+Static APK validation confirmed package ID `dev.exedev.emailos.androidfixture`,
+minimum API 24, target API 35, a valid v2 APK signature, and both `arm64-v8a`
+and `x86_64` `libemail_os.so` libraries. SHA-256:
+`161befa9ca00e1a8dfb8bf97ff3685415ad4d55821ea0a4fcfa6d15fc5762708`.
+
+Device smoke passed on an Android 15 x86_64 emulator. The 16-row fixture inbox
+rendered, a conversation opened, Mark done worked, and the archived conversation
+remained absent after process restart. Gmail controls and Files and links were
+absent. A locally saved draft reopened with its exact subject and body, and the
+editor remained intact after backgrounding Email OS, opening Android Settings,
+and resuming Email OS. Screenshots are [reader before archive](<validation/android-smoke/reader-before-insets.png>),
+[draft saved before restart](<validation/android-smoke/draft-saved-before-restart.png>),
+and [draft recovered after restart](<validation/android-smoke/draft-recovered-after-restart.png>).
+
+The first Android launch failed at profile-lock acquisition because
+`File::try_lock` returned a storage error on Android 15. Android now uses
+nonblocking `flock`; desktop still uses `File::try_lock`. The device check also
+found status-bar overlap and a visible Files and links control. The current APK
+includes safe-area insets, `adjustResize`, and the Android-only control gate; the
+focused Android-vs-browser UI test passed. The keyboard stayed hidden during
+draft entry, so actual IME layout was not verified. See the
+[development smoke steps](development.md#android-fixture-apk).
+
+On 2026-11-14, `CARGO_BUILD_JOBS=2 mise run check:all` passed before the
+Android lock correction: core tests, generated IPC contract, formatting and
+core clippy, all 1,454 frontend tests, frontend typecheck, native clippy, 14
+native bridge tests, and production web build. After the lock correction,
+`CARGO_BUILD_JOBS=2 mise run test:core` passed with 216 unit tests and all core
+integration suites, and `CARGO_BUILD_JOBS=2 mise run lint:core` passed. The
+focused Android control visibility test and the final APK build also passed.
 
 ## Feature contracts
 

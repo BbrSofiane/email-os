@@ -98,6 +98,34 @@ describe("renders the fixture browsing shell (Slice 01)", () => {
     expect(subject()).toContain('Fixture thread 1');
   });
 
+  it('hides Files and links in native Android while keeping browser preview behavior unchanged', async () => {
+    const userAgentDescriptor = Object.getOwnPropertyDescriptor(navigator, 'userAgent');
+    const tauriDescriptor = Object.getOwnPropertyDescriptor(window, '__TAURI_INTERNALS__');
+    Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'Android test webview' });
+    try {
+      Object.defineProperty(window, '__TAURI_INTERNALS__', { configurable: true, value: {} });
+      const native = mountSharedApp(counted.client, 'native', { attachTo: document.body });
+      await flushFakeClientAndVueUpdates(fake);
+      await native.find('[data-test="conversation-row-conv-01"]').trigger('click');
+      await flushFakeClientAndVueUpdates(fake);
+      expect(native.find('[data-test="files-links"]').exists()).toBe(false);
+      native.unmount();
+
+      delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+      const preview = mountSharedApp(fake, 'browser-preview', { attachTo: document.body });
+      await flushFakeClientAndVueUpdates(fake);
+      await preview.find('[data-test="conversation-row-conv-01"]').trigger('click');
+      await flushFakeClientAndVueUpdates(fake);
+      expect(preview.find('[data-test="files-links"]').exists()).toBe(true);
+      preview.unmount();
+    } finally {
+      if (userAgentDescriptor) Object.defineProperty(navigator, 'userAgent', userAgentDescriptor);
+      else delete (navigator as { userAgent?: string }).userAgent;
+      if (tauriDescriptor) Object.defineProperty(window, '__TAURI_INTERNALS__', tauriDescriptor);
+      else delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    }
+  });
+
   it('navigates with j/k and arrow keys, moving DOM focus with conversation focus', async () => {
     const w = mountApp();
     await flushFakeClientAndVueUpdates(fake);

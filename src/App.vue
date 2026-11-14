@@ -61,7 +61,7 @@ import ProviderDestinations from './components/ProviderDestinations.vue';
 import ContactPane from './components/ContactPane.vue';
 import FullDate from './components/FullDate.vue';
 import { BROWSER_PREVIEW_DISCLOSURE } from './lib/ipc/browser-fake';
-import type { ClientMode } from './lib/ipc';
+import { isTauriRuntime, type ClientMode } from './lib/ipc';
 import type { ConversationRef, DraftSource, DraftSummary, MailClient, Reminder } from './lib/ipc/client';
 import { REPLY_REASONS, replyBlockedReason, sourceLoadErrorReason } from './lib/reply-context';
 import { sameConversation, useMailbox, type BrowseContext, type ConversationSummaryLike, type DoneBoundary, type SearchVisit } from './composables/useMailbox';
@@ -81,6 +81,7 @@ const props = withDefaults(defineProps<{
 }>(), { active: true });
 const emit = defineEmits<{ switchAccount: []; workspaceTitle: [title: string] }>();
 const workspaceActive = computed(() => props.active !== false);
+const androidFixture = isTauriRuntime() && /Android/i.test(navigator.userAgent);
 
 /** Contact context breakpoint (supervisor-approved strict value). */
 const CONTACT_BREAKPOINT_PX = 1000;
@@ -2523,6 +2524,7 @@ const searchSyntaxEditHint = computed(() =>
               :read-only="trashReader || (gmailMode && !mailboxActionsEnabled)"
               :browsing-only="trashReader"
               :show-read-controls="gmailActionsEnabled && !trashReader"
+              :android="androidFixture"
               :selection-count="selectedCount"
               :selection-context="mailbox.context.value"
               :back-host="readerBackHost"

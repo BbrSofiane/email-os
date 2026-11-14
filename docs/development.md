@@ -87,6 +87,71 @@ Verify with `mise exec -- cargo fmt --version` and `mise exec -- cargo clippy --
 Rust dependencies resolve via the committed `Cargo.lock` on first `cargo`/`mise` use;
 no global configuration is needed.
 
+### Android fixture APK
+
+The Android target is a fixture-only Tauri app. It uses the same Rust `MailCore`
+and SQLite profile as native fixture mode. Android always selects fixture mode,
+even if `EMAIL_OS_MODE=gmail` is present. By default it opens the legacy fixture
+`MailCore`; the opt-in `EMAIL_OS_SYNTHETIC_CORE=1` selects the ADR 0002 synthetic
+core while keeping wire mode `fixture`. Gmail account controls, attachment
+export, and external link dispatch are unavailable on Android. The shell returns
+the typed `unsupported_platform` error for attachment export and external links.
+
+The current repeatable build lane targets Linux x86_64. Install JDK 17, Android
+command-line tools, platform API 35, build-tools 35.0.0, and NDK 27.2.12479018.
+The project Android template pins the same NDK version. The SDK root defaults to
+`$HOME/Android/Sdk`; set `ANDROID_HOME`,
+`ANDROID_SDK_ROOT`, `NDK_HOME`, and `JAVA_HOME` when your paths differ. Install
+the SDK packages and Rust targets with:
+
+```sh
+"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+  "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+rustup target add aarch64-linux-android x86_64-linux-android
+```
+
+Use `mise run android:doctor` to check the local prerequisites. Then build one
+debug APK containing ARM64 and x86_64 native libraries:
+
+```sh
+mise run android:build
+```
+
+The Tauri CLI builds the frontend through the configured `beforeBuildCommand`.
+The APK is written under
+`src-tauri/gen/android/app/build/outputs/apk/universal/debug/`. For an attached
+device or emulator, `mise run android:dev` runs the development app. The
+generated Gradle project and wrapper are committed; local SDK paths, Gradle
+caches, and build output are ignored. To regenerate the project after changing
+the Tauri Android template, install the pinned SDK/NDK first and run
+`pnpm tauri android init --ci --skip-targets-install`; then review the generated
+diff and restore the pinned application ID, SDK, and NDK settings if the CLI
+template changes them.
+
+For the device smoke check, build the APK and install it on an attached Android
+device or emulator. Use device interaction tools to launch the app and verify:
+
+1. The fixture inbox renders and a conversation opens.
+2. Mark done works and returns to the inbox.
+3. Gmail controls and Files and links are absent.
+4. Compose a draft, wait for “Saved locally · not sent”, then close the app
+   process.
+5. Relaunch the app. Confirm the archived conversation remains absent and the
+   draft reopens with its exact subject and body.
+6. Background Email OS, open another app, resume Email OS, and confirm the
+   draft editor remains intact.
+
+Record the device/API version, APK path, persistence results, and screenshots.
+These steps passed on 2026-11-14 on an Android 15 x86_64 emulator, using APK
+SHA-256 `161befa9ca00e1a8dfb8bf97ff3685415ad4d55821ea0a4fcfa6d15fc5762708`.
+The keyboard stayed hidden during draft entry, so IME layout remains unverified.
+
+If an older APK fails during startup with a profile-lock storage error, build
+and install the current version. Android uses nonblocking `flock` for profile
+exclusion; desktop continues to use the standard library file lock. Keep app
+data when updating so the restart-persistence check remains meaningful. The
+smoke does not validate Gmail, notifications, or a mobile-specific redesign.
+
 ### Local-only `mise.local.toml`
 
 `mise.local.toml` is **gitignored and machine-local** (`/mise.local.toml` in `.gitignore`):
