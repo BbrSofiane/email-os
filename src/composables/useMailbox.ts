@@ -22,6 +22,7 @@ import { toMailError } from '../lib/ipc/client';
 import { sameConversation } from './mailbox-refs';
 import type { CommandFence, MailboxSession } from './mailbox-session';
 import { SELECTION_MAX, useMailboxSelection } from './useMailboxSelection';
+import { useMailboxAccount, type AccountAction, type AccountState } from './useMailboxAccount';
 import { useMailboxGroups, type GroupNotice } from './useMailboxGroups';
 import {
   DETAIL_CACHE_MAX, DETAIL_CACHE_TTL_MS, READER_LOADING_DELAY_MS, useMailboxDetailCache,
@@ -29,12 +30,10 @@ import {
 
 // Definitions moved to focused modules; the exported names stay importable from here.
 export { DETAIL_CACHE_MAX, DETAIL_CACHE_TTL_MS, READER_LOADING_DELAY_MS, SELECTION_MAX, sameConversation };
-export type { GroupNotice };
+export type { AccountAction, AccountState, GroupNotice };
 
 export type ListState = 'loading' | 'ready' | 'error';
 export type DetailState = 'idle' | 'loading' | 'ready' | 'error';
-export type AccountState = 'loading' | 'ready' | 'error';
-export type AccountAction = 'connect' | 'disconnect' | 'sync' | 'enable-actions' | 'cancel-upgrade';
 export type ConversationSummaryLike = InboxSnapshot['conversations'][number];
 export type OperationSummaryLike = InboxSnapshot['activity'][number];
 /** The setter action an undoable last action was performed with. */
@@ -251,10 +250,6 @@ export function useMailbox(client: MailClient): Mailbox {
   const lastCommandError = ref<MailError | null>(null);
   const inFlightCommandRef = ref<ConversationRef | null>(null);
   const commandInFlight = ref(false);
-  const accountStatus = ref<AccountStatus | null>(null);
-  const accountState = ref<AccountState>('loading');
-  const accountError = ref<MailError | null>(null);
-  const accountBusy = ref<AccountAction | null>(null);
   const lastAction = ref<LastAction | null>(null);
 
   const {
@@ -270,7 +265,6 @@ export function useMailbox(client: MailClient): Mailbox {
   let detailToken = 0;
   let commandToken = 0;
   let mailboxSessionToken = 0;
-  let statusToken = 0;
   let detached = false;
   let unsubscribe: (() => void) | null = null;
   let subscriptionAttempt: Promise<void> | null = null;
@@ -282,6 +276,17 @@ export function useMailbox(client: MailClient): Mailbox {
     get detached() { return detached; },
   };
   const commands: CommandFence = { next: () => ++commandToken, current: () => commandToken };
+  const {
+    accountStatus, accountState, accountError, accountBusy, mode, isGmail, refreshAccountStatus,
+    connectAccount, disconnectAccount, requestSync, enableMailboxActions, cancelMailboxActionUpgrade,
+  } = useMailboxAccount({
+    client, session,
+    supersedeNavigation: () => invalidateSearchIntent(),
+    onAccountChanged: () => resetForAccountChange(),
+    onDisconnected: () => resetAfterDisconnect(),
+    refresh: () => refresh(),
+    lastCommandError,
+  });
   const {
     heldConversation, currentDetailEpoch, adoptablePrefetch, invalidateDetailCache, cachePut, cacheGet,
     clearHold, beginHold, prefetchConversation,
@@ -674,57 +679,81 @@ export function useMailbox(client: MailClient): Mailbox {
     return next[0]!.ref;
   }
 
-  /** Status failures never reject: the UI gate renders them and stays fail-closed. */
-  async function refreshStatus(token: number): Promise<void> {
-    try {
-      const status = await client.getAccountStatus();
-      if (detached || token !== statusToken) return;
-      const oldAccount = accountStatus.value?.account?.accountId;
-      if (oldAccount && oldAccount !== status.account?.accountId) {
-        ++navigationIntentToken;
-        ++listToken;
-        ++activityToken;
-        activityError.value = null;
-        ++mailboxSessionToken;
-        ++commandToken;
-        inFlightCommandRef.value = null;
-        commandInFlight.value = false;
-        lastAction.value = null;
-        lastGroup.value = null;
-        groupInFlight.value = false;
-        clearGroupSurfaces();
-        clearSelection();
-        exactTotal.value = null;
-        lastSyncedAt.value = null;
-        closeReader();
-        conversations.value = [];
-        activity.value = [];
-        focusedRef.value = null;
-        context.value = 'inbox';
-        starredOnly.value = false;
-        savedSplit.value = null;
-        splitError.value = null;
-        splitBusy.value = false;
-        inboxTotal.value = null;
-        savedTotal.value = null;
-        unreadOnly.value = false;
-        searchQuery.value = '';
-        searchCoverage.value = '';
-        void client.cancelSearchMail().catch(() => {});
-        loadedDonePages.value = 1;
-        loadedDoneBoundary.value = null;
-        nextCursor.value = null;
-        listState.value = 'loading';
-        queueMicrotask(() => { if (!detached) void refresh(); });
-      }
-      accountStatus.value = status;
-      accountError.value = null;
-      accountState.value = 'ready';
-    } catch (raw) {
-      if (detached || token !== statusToken) return;
-      accountError.value = toMailError(raw);
-      accountState.value = 'error';
-    }
+  /** The account identity changed: nothing from the previous account may survive. */
+  function resetForAccountChange(): void {
+    ++navigationIntentToken;
+    ++listToken;
+    ++activityToken;
+    activityError.value = null;
+    ++mailboxSessionToken;
+    ++commandToken;
+    inFlightCommandRef.value = null;
+    commandInFlight.value = false;
+    lastAction.value = null;
+    lastGroup.value = null;
+    groupInFlight.value = false;
+    clearGroupSurfaces();
+    clearSelection();
+    exactTotal.value = null;
+    lastSyncedAt.value = null;
+    closeReader();
+    conversations.value = [];
+    activity.value = [];
+    focusedRef.value = null;
+    context.value = 'inbox';
+    starredOnly.value = false;
+    savedSplit.value = null;
+    splitError.value = null;
+    splitBusy.value = false;
+    inboxTotal.value = null;
+    savedTotal.value = null;
+    unreadOnly.value = false;
+    searchQuery.value = '';
+    searchCoverage.value = '';
+    void client.cancelSearchMail().catch(() => {});
+    loadedDonePages.value = 1;
+    loadedDoneBoundary.value = null;
+    nextCursor.value = null;
+    listState.value = 'loading';
+    queueMicrotask(() => { if (!detached) void refresh(); });
+  }
+
+  /** A successful disconnect: drop every cached surface and fence in-flight reads. */
+  function resetAfterDisconnect(): void {
+    context.value = 'inbox';
+    starredOnly.value = false;
+    savedSplit.value = null;
+    splitError.value = null;
+    splitBusy.value = false;
+    inboxTotal.value = null;
+    savedTotal.value = null;
+    unreadOnly.value = false;
+    nextCursor.value = null;
+    loadedDonePages.value = 1;
+    loadedDoneBoundary.value = null;
+    loadingMore.value = false;
+    exactTotal.value = null;
+    lastSyncedAt.value = null;
+    // Drop every cached surface immediately and invalidate in-flight reads so stale
+    // responses cannot repopulate the UI after a disconnect.
+    closeReader();
+    listToken += 1;
+    activityToken += 1;
+    activityError.value = null;
+    detailToken += 1;
+    commandToken += 1;
+    mailboxSessionToken += 1;
+    inFlightCommandRef.value = null;
+    commandInFlight.value = false;
+    lastAction.value = null;
+    lastGroup.value = null;
+    groupInFlight.value = false;
+    clearGroupSurfaces();
+    clearSelection();
+    conversations.value = [];
+    activity.value = [];
+    // Focus is account-scoped: a new account starts with no conversation focus.
+    focusedRef.value = null;
   }
 
   async function refresh(): Promise<void> {
@@ -745,10 +774,10 @@ export function useMailbox(client: MailClient): Mailbox {
       // Bootstrap the account once; subsequent status/list reads remain
       // independent, preserving Activity and mutation refresh ownership.
       const bootstrap = !accountStatus.value;
-      if (bootstrap) await refreshStatus(++statusToken);
+      if (bootstrap) await refreshAccountStatus();
       if (detached) return;
       await Promise.all([
-        bootstrap ? Promise.resolve() : refreshStatus(++statusToken),
+        bootstrap ? Promise.resolve() : refreshAccountStatus(),
         refreshList(token),
         openRef.value ? loadDetail(openRef.value, true) : Promise.resolve(),
       ]);
@@ -861,102 +890,6 @@ export function useMailbox(client: MailClient): Mailbox {
     conversation.value = null;
     detailState.value = 'idle';
     detailError.value = null;
-  }
-
-  async function connectAccount(): Promise<void> {
-    if (accountBusy.value) return;
-    ++navigationIntentToken;
-    accountBusy.value = 'connect';
-    // Mirror core: connecting flips the connection optimistically; a failure is
-    // corrected by the status refetch below.
-    if (accountStatus.value) {
-      accountStatus.value = { ...accountStatus.value, connection: 'authenticating' };
-    }
-    try {
-      await client.connectAccount();
-      if (!detached) await refresh();
-    } catch (raw) {
-      if (!detached) {
-        lastCommandError.value = toMailError(raw);
-        await refreshStatus(++statusToken);
-      }
-    } finally {
-      if (!detached) accountBusy.value = null;
-    }
-  }
-
-  async function disconnectAccount(): Promise<void> {
-    if (accountBusy.value) return;
-    ++navigationIntentToken;
-    accountBusy.value = 'disconnect';
-    try {
-      // Resolves only after core deleted credentials and cleared local data.
-      await client.disconnectAccount();
-    } catch (raw) {
-      if (!detached) lastCommandError.value = toMailError(raw);
-      return;
-    } finally {
-      if (!detached) accountBusy.value = null;
-    }
-    if (detached) return;
-    context.value = 'inbox';
-    starredOnly.value = false;
-    savedSplit.value = null;
-    splitError.value = null;
-    splitBusy.value = false;
-    inboxTotal.value = null;
-    savedTotal.value = null;
-    unreadOnly.value = false;
-    nextCursor.value = null;
-    loadedDonePages.value = 1;
-    loadedDoneBoundary.value = null;
-    loadingMore.value = false;
-    exactTotal.value = null;
-    lastSyncedAt.value = null;
-    // Drop every cached surface immediately and invalidate in-flight reads so stale
-    // responses cannot repopulate the UI after a disconnect.
-    closeReader();
-    listToken += 1;
-    activityToken += 1;
-    activityError.value = null;
-    detailToken += 1;
-    commandToken += 1;
-    mailboxSessionToken += 1;
-    inFlightCommandRef.value = null;
-    commandInFlight.value = false;
-    lastAction.value = null;
-    lastGroup.value = null;
-    groupInFlight.value = false;
-    clearGroupSurfaces();
-    clearSelection();
-    conversations.value = [];
-    activity.value = [];
-    // Focus is account-scoped: a new account starts with no conversation focus.
-    focusedRef.value = null;
-    if (accountStatus.value) {
-      const sync = accountStatus.value.sync;
-      accountStatus.value = {
-        ...accountStatus.value,
-        connection: 'disconnected',
-        account: null,
-        sync: { ...sync, state: 'idle', error: null, lastSyncedAt: null, cachedConversations: 0, initialSyncComplete: false },
-      };
-    }
-    await refresh();
-  }
-
-  async function requestSync(): Promise<void> {
-    if (accountBusy.value) return;
-    accountBusy.value = 'sync';
-    try {
-      // Acceptance, not completion; progress arrives via status changes/events.
-      await client.requestSync();
-      if (!detached) await refresh();
-    } catch (raw) {
-      if (!detached) lastCommandError.value = toMailError(raw);
-    } finally {
-      if (!detached) accountBusy.value = null;
-    }
   }
 
   // Only saved-view targets need this membership fence. Recovery/Undo owns
@@ -1198,42 +1131,6 @@ export function useMailbox(client: MailClient): Mailbox {
     );
   }
 
-  async function enableMailboxActions(): Promise<void> {
-    if (accountBusy.value || accountState.value !== 'ready' || accountStatus.value?.mode !== 'gmail' || accountStatus.value.mutationAccess === 'enabled') return;
-    accountBusy.value = 'enable-actions';
-    lastCommandError.value = null;
-    try {
-      // This command only accepts/enqueues an explicit OAuth upgrade. Enabled state
-      // comes exclusively from a later authoritative account-status read.
-      await client.enableMailboxActions();
-      if (!detached) await refreshStatus(++statusToken);
-    } catch (raw) {
-      if (!detached) {
-        lastCommandError.value = toMailError(raw);
-        await refreshStatus(++statusToken);
-      }
-    } finally {
-      if (!detached) accountBusy.value = null;
-    }
-  }
-
-  async function cancelMailboxActionUpgrade(): Promise<void> {
-    if (accountBusy.value || accountState.value !== 'ready' || accountStatus.value?.mutationAccess !== 'upgrading') return;
-    accountBusy.value = 'cancel-upgrade';
-    lastCommandError.value = null;
-    try {
-      await client.cancelMailboxActionUpgrade();
-      if (!detached) await refreshStatus(++statusToken);
-    } catch (raw) {
-      if (!detached) {
-        lastCommandError.value = toMailError(raw);
-        await refreshStatus(++statusToken);
-      }
-    } finally {
-      if (!detached) accountBusy.value = null;
-    }
-  }
-
   async function archiveFocused(): Promise<void> {
     // A non-ready or stale list must never supply an action target.
     if (listState.value !== 'ready') return;
@@ -1267,8 +1164,6 @@ export function useMailbox(client: MailClient): Mailbox {
     if (!focused) return null;
     return conversations.value.find((row) => sameConversation(row.ref, focused)) ?? null;
   });
-  const mode = computed<MailMode | null>(() => accountStatus.value?.mode ?? null);
-  const isGmail = computed(() => mode.value === 'gmail');
   return {
     savedSplit, splitError, splitBusy, inboxTotal, savedTotal, unreadOnly, saveSplit, setUnreadOnly,
     searchQuery, searchCoverage, searchCachedOnly, search, restoreSearch, invalidateSearchIntent, captureNavigationIntent,
