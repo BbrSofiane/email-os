@@ -358,7 +358,7 @@ describe('prefetch request budget (useMailbox)', () => {
     };
     const scope = effectScope();
     const mailbox = scope.run(() => useMailbox(detailClient))!;
-    return { mailbox, inFlight, scope, archiveCalls, peak: () => peak };
+    return { mailbox, inFlight, scope, archiveCalls, client: detailClient, peak: () => peak };
   }
 
   it('runs at most one prefetch at a time and keeps only the latest wanted target', async () => {
@@ -396,6 +396,45 @@ describe('prefetch request budget (useMailbox)', () => {
     h.inFlight[2]!.gate.resolve(await detailOf('read-01'));
     await reopen;
     void h.mailbox.openNeighbor(readerRef('read-02'));
+    expect(h.mailbox.detailState.value).toBe('loading');
+    h.scope.stop();
+  });
+
+  it.each(['account change', 'disconnect'] as const)('drops an in-flight prefetch result and cached neighbors after an %s', async (kind) => {
+    const h = mailboxHarness();
+    await h.mailbox.ready;
+    const open = h.mailbox.openConversationByRef(readerRef('read-01'));
+    h.inFlight[0]!.gate.resolve(await detailOf('read-01'));
+    await open;
+    // read-02 lands in the cache; read-03 is still in flight when the session ends.
+    h.mailbox.prefetchConversation(readerRef('read-02'));
+    h.inFlight[1]!.gate.resolve(await detailOf('read-02'));
+    await flushPromises();
+    h.mailbox.prefetchConversation(readerRef('read-03'));
+    expect(calls).toEqual(['read-01', 'read-02', 'read-03']);
+    if (kind === 'account change') {
+      const status = await h.client.getAccountStatus();
+      vi.spyOn(h.client, 'getAccountStatus').mockResolvedValue({
+        ...status, account: { ...status.account!, accountId: 'another-account' },
+      });
+      const refreshing = h.mailbox.refresh();
+      await flushPromises();
+      h.inFlight[3]!.gate.resolve(await detailOf('read-01')); // the refresh's background reload of the open reader
+      await refreshing;
+    } else {
+      await h.mailbox.disconnectAccount();
+    }
+    await flushPromises();
+    expect(h.mailbox.detailState.value).toBe('idle');
+    h.inFlight[2]!.gate.resolve(await detailOf('read-03'));
+    await flushPromises();
+    // Neither the cached nor the late neighbor may be served instantly afterwards.
+    const reopen = h.mailbox.openConversationByRef(readerRef('read-01'));
+    h.inFlight.at(-1)!.gate.resolve(await detailOf('read-01'));
+    await reopen;
+    void h.mailbox.openNeighbor(readerRef('read-02'));
+    expect(h.mailbox.detailState.value).toBe('loading');
+    void h.mailbox.openNeighbor(readerRef('read-03'));
     expect(h.mailbox.detailState.value).toBe('loading');
     h.scope.stop();
   });
