@@ -1,0 +1,77 @@
+You are implementing ticket 14 of the Email OS maintenance programme: run fixture mode on the Gmail core with a built-in synthetic provider, so the operation ledger (acceptance, undo, groups, reminders) exists once in Rust instead of twice. You do stages 1 to 3 of ADR 0002 in this thread. Stage 4 (switching the default and deleting the old backend) is NOT yours: you stop after stage 3 and report.
+
+I am the coordinating thread. I gate and merge your PRs; you never merge. You can message me at any time with a question, and you should message me when each stage's PR is ready so I can gate it while you continue.
+
+## Read first
+
+- `docs/adr/0002-fixture-as-synthetic-provider.md` — the whole thing. Its behaviour inventory table and its appendix (the test disposition, test by test) are your specification.
+- `docs/architecture.md`, `docs/development.md`, `docs/current-status.md`, `AGENTS.md` / `CLAUDE.md` if present.
+- `crates/mail-core/src/gmail/` — `sync.rs` (GmailCore, `open_with_clock`, the worker), `types.rs` (trait `GmailProvider`; the live implementation is `LiveGmailProvider` in `provider.rs`), `store.rs` and `store/` (18 modules), `store_schema.rs` (ordered migrations, currently `gmail-migrations-9`).
+- The fixture side you are replacing later: `crates/mail-core/src/lib.rs` (`MailCore`), `store.rs`, `worker.rs`, `seed.rs`, `provider.rs`, `store/reminders.rs`; and `src-tauri/src/main.rs` (`Backend` enum).
+- `crates/mail-core/src/testing.rs` and `testing/` (the `test-support` feature: temp profiles, bounded waits, scripted provider).
+- The contract scenarios merged today: `tests/fixtures/contract-scenarios/`, `crates/mail-core/tests/contract_scenarios.rs` (profiles `gmail` and `fixture`, `KNOWN_DIVERGENCES`), `tests/browser-fake/contract-scenarios.test.ts`, `tests/support/contract-scenarios.ts`, and the doc that describes the format.
+- The prototype branch `origin/maintenance/p4-synthetic-provider-prototype` is evidence only. Do not merge or copy it wholesale; the ADR lists what it got wrong (non-atomic JSON facts, per-conversation archive, readiness shims).
+
+## Decisions already made
+
+The ADR is merged with Status "Proposed". The project owner asked for the remaining tickets to run, and I am proceeding on these decisions. In your first PR, record them in the ADR under a short "Decisions" section and change the status to "Accepted (stages 1–3)". Word it accurately: these were taken on the coordinator's recommendation, and the owner can still redirect before stage 4.
+
+1. Go with staged unification, as the ADR recommends.
+2. Synthetic fixture mode admits archive, read and star (single and group), and the cached Starred list works. This departs from the ADR's "archive-only" wording, which was about preserving today's errors; the decision is that the unified fixture gains read and star. Cached Trash and provider destinations stay rejected with today's error variants. Connect, disconnect, permission upgrade and manual sync stay rejected with `InvalidRequest { field: "mode" }`, and nothing in synthetic mode may erase local state the way a Gmail disconnect does.
+3. Synthetic reminders follow the Gmail core's local rules (hide locally, no provider write). The fixture's archive/restore reminder phases are retired when stage 4 lands, not before.
+4. The on-disk transition (stage 4) will be a one-time reset with disclosure and a retained backup, local drafts untouched. You do not implement it; you plan it.
+
+Everything else in the ADR's table stands: wire mode stays `fixture`, the account stays `fixture-account`, no OAuth, no Keychain, no HTTP client, cached-only search, all 18 conversations present including the two initially archived ones (`conv-06`, `conv-15`), the fake pause/reject environment controls apply only to synthetic writes and never reach the live provider.
+
+## Hard rules
+
+- **Default behaviour does not change in stages 1 to 3.** With no opt-in set, fixture mode still runs `MailCore` on `fixture-profile/mail.db`, byte for byte as today. Existing fixture tests stay and stay green. Nothing is deleted from the old backend in this thread.
+- **Gmail behaviour does not change at all.** The session policy must be a no-op for Gmail. Existing Gmail tests are not edited to make them pass (adding tests is fine; a mechanical signature change is fine if you list every one). Prefer no change to the Gmail database schema. If you truly need one, it is an ordered migration step 10 with a legacy fixture and updated `current-schema.sql`, following `store_schema.rs` and `migration_tests.rs`, and you tell me before you build on it.
+- The synthetic provider is production code. It must not enable or import the `test-support` feature. The dependency direction is testing → production. Move the 18-conversation data into a production synthetic module in a way that the old `seed.rs` path keeps working unchanged (share the data, do not fork it).
+- Synthetic provider facts must be durable and crash-safe (transactional, not a JSON file rewritten in place), must model archive per message as Gmail does, and must be seeded once: reopening must never overwrite facts that changed. Its storage lives under the fixture profile, in a new file. It never touches `mail.db`, the `gmail-profile`, credentials, or `local-drafts`.
+- No DTO shape, generated TypeScript, IPC command name or event name changes. Run `mise run check:contract`.
+- Privacy: nothing that logs may include subjects, addresses, bodies, tokens, URLs with ids, or SQL with bound values. Storage errors go through `storage_log.rs` as they do today.
+- Synthetic data only. No real accounts, credentials or Google network, in code or tests. Tests use injected clocks and event barriers, not wall-clock sleeps.
+- Do not touch these frontend files; another PR (#34) that changes them merges within the hour: `src/App.vue`, `src/components/`, `src/assets/style.css`, `src/lib/account-status.ts`, `src/lib/action-palette.ts`, `src/lib/browsing-actions.ts`, `src/FixtureWorkspaces.vue`, `tests/account*`, `tests/layout/`. The only frontend files you should need are `src/lib/ipc/browser-fake.ts` and the contract scenario tests. If you believe you need another, ask me first.
+- Do not change the Gmail worker's behaviour after a definite failure (known divergence KD-1 in `contract_scenarios.rs`). That is waiting on the owner.
+
+## The three stages, one PR each
+
+Stack the branches (`maintenance/p4-synthetic-stage1`, `-stage2`, `-stage3`). The stage 1 PR targets `main`; the others target the branch below. CI only runs on PRs whose base is `main`, so each stage must pass `mise run check:all` locally before you mark its PR ready. Open each PR as a draft and mark it ready when green. Message me when each one is ready.
+
+**Stage 1 — port the guarantees, add the provider.**
+- Record the decisions in the ADR (above).
+- Production synthetic data module and `SyntheticGmailProvider` implementing `GmailProvider`, constructed directly, with durable facts.
+- Port the fixture guarantees to tests that run against `GmailCore` + the synthetic provider, following the ADR appendix test by test. Keep a table in the PR description: each appendix entry → the new test, or "obsolete under decision N", or "deferred to stage 2/3 because …". Nothing silently dropped.
+- Fix known divergence KD-3 on the fake's side: undo on a group whose members are all ineligible is accepted by both Rust stores with members marked skipped, and rejected by the browser fake with `not_applicable`. Align the fake to Rust, remove the `KNOWN_DIVERGENCES` entry (the runner tells you if an entry no longer fails), and keep that in its own commit.
+
+**Stage 2 — explicit session policy and seeding.**
+- An explicit internal session policy in `GmailCore` (not a scattering of `if fixture` checks): identity and status (`fixture` mode, `fixture-account`, connected/idle presentation per the ADR table, no mutation "grant" masquerading as a Google permission), admission (decision 2), lifecycle rejections, cached-only search, local readiness in place of the `has_credentials()` restore signal, and non-destructive lifecycle. Gmail's policy is the existing behaviour, unchanged.
+- Seed-once bootstrap that finishes before the session reports ready, including the two initially archived conversations, without pretending they are Inbox mail. Initially archived rows are not Done evidence.
+- No needless periodic synthetic discovery, or make a stable empty history cheap. Fake pause/reject must not stall reads or bootstrap.
+- Add a `synthetic` profile to the Rust contract scenario runner and run every scenario on it. It should match the `gmail` profile except where the policy says otherwise; any difference is either a named, justified entry or a bug you fix. KD-2 (fixture `setRead` errors) concerns the old `fixture` profile and stays listed until stage 4; note in the PR what the fake will need at stage 4.
+
+**Stage 3 — reminders, attachments, reply metadata, opt-in launch.**
+- Reminders on the synthetic session under the Gmail local rules, with acceptance, race and restart tests (injected clock). Fresh reads come from the durable synthetic provider.
+- The synthetic `fixture-text` attachment (same descriptor, filename, exact bytes, limits, exact-target revalidation, cancellation) and deterministic reply metadata (including the hostile literal bodies, sender identity and references) served through the provider/core seams rather than fabricated in the shell. The shell's transfer security stays common. The old shell path keeps working for the default backend.
+- An opt-in launch path: an environment variable (suggest `EMAIL_OS_SYNTHETIC_CORE=1`, fixture mode only, ignored in Gmail mode) that makes the shell run fixture mode on `GmailCore` + the synthetic provider with its own database file under the fixture profile. `local-drafts` is shared and untouched, `mail.db` is never opened for writing on this path. Document it in `docs/development.md` as a validation path, not a user feature. I will run my native smoke test on it, so the 18 conversations, archive, undo, reader, search, drafts and reminders must work end to end through the real Tauri commands. Add native bridge tests in `src-tauri` for it.
+
+## Then stop and report
+
+Do not start stage 4. Your final report must include:
+- The three PRs with head SHAs, and for each: test counts for `mail-core`, `email-os` and the frontend (baseline on main today: 328, 14, and 1,527 in 89 files), and confirmation `check:all` passed.
+- The appendix disposition table, complete.
+- Every existing test you edited, with the reason.
+- A stage 4 plan: the switch, the disclosure and backup-reset design (cancel, crash/restart, insufficient disk, backup failure), exactly what gets deleted, and what the browser fake and docs need.
+- A UI impact inventory for stage 4: every user-visible difference between today's fixture mode and the synthetic one (status values, loading states, read/star controls appearing, reminder phases, error text, anything else you found), each with where in the frontend it surfaces.
+- What you could not verify.
+
+## Working on this machine
+
+- 2 cores, 7 GB RAM, about 6 GB of free disk, shared with one other agent thread and my gate runs. Run one cargo build or test at a time, never two in parallel, and no more than two subagents at once. Use `CARGO_TARGET_DIR=/home/exedev/email-os/target` (the shared target directory) for every cargo and mise invocation; do not create another target directory. If free disk drops under 2 GB, stop and message me.
+- Do not modify the working tree of the root checkout `/home/exedev/email-os` (it has an uncommitted change that belongs to the owner). Work only in your worktree.
+- Run `pnpm install` in your worktree before frontend checks. Tasks are in `mise.toml`: `test:core`, `test:native`, `test:ui`, `check:contract`, `lint:core`, `lint:native`, `typecheck`, `build:web`, `check:all`.
+- Use subagents for self-contained pieces (for example, porting one appendix section of tests, or an independent review of the session policy diff before you mark stage 2 ready). Subagents run on the same model as you. Give them the hard rules above.
+- After each push, confirm the remote head matches your local head (`git ls-remote`). `gh` commands need `-R BbrSofiane/email-os`.
+- If an existing test fails intermittently, do not retry it into silence: tell me which and what you saw.
+- If a hard rule and the ADR conflict, or a stage turns out to need something this brief forbids, stop and ask me rather than choosing.
