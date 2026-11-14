@@ -1,0 +1,33 @@
+{
+  "triage": {
+    "comment": "Subset of the native fixture seed (crates/mail-core/src/seed.rs conv-01..conv-06; message ids and times copied). The fixture runner checks this still holds before every scenario. conv-06 starts archived.",
+    "conversations": [
+      { "id": "conv-01", "messages": [
+        { "id": "m-01-1", "sentAt": "2026-01-12T08:05:00Z", "inInbox": true, "unread": true },
+        { "id": "m-01-2", "sentAt": "2026-01-12T08:11:00Z", "inInbox": true, "unread": true },
+        { "id": "m-01-3", "sentAt": "2026-01-12T08:19:00Z", "inInbox": true, "unread": true } ] },
+      { "id": "conv-02", "messages": [
+        { "id": "m-02-1", "sentAt": "2026-01-12T09:40:00Z", "inInbox": true, "unread": true },
+        { "id": "m-02-2", "sentAt": "2026-01-12T09:52:00Z", "inInbox": true, "unread": true } ] },
+      { "id": "conv-03", "messages": [
+        { "id": "m-03-1", "sentAt": "2026-01-12T10:02:00Z", "inInbox": true, "unread": true } ] },
+      { "id": "conv-04", "messages": [
+        { "id": "m-04-1", "sentAt": "2026-01-12T11:15:00Z", "inInbox": true, "unread": true },
+        { "id": "m-04-2", "sentAt": "2026-01-12T11:21:00Z", "inInbox": true, "unread": true } ] },
+      { "id": "conv-05", "messages": [
+        { "id": "m-05-1", "sentAt": "2026-01-12T13:00:00Z", "inInbox": true, "unread": true } ] },
+      { "id": "conv-06", "messages": [
+        { "id": "m-06-1", "sentAt": "2026-01-12T07:30:00Z", "inInbox": false, "unread": false } ] }
+    ]
+  },
+  "mixed": {
+    "comment": "Gmail-style thread with a message that was never in INBOX (a sent reply) and unread facts that differ per message. Not available on the fixture backend.",
+    "conversations": [
+      { "id": "thr-mixed", "messages": [
+        { "id": "tm-1", "sentAt": "2026-01-12T08:00:00Z", "inInbox": true, "unread": true },
+        { "id": "tm-2", "sentAt": "2026-01-12T08:30:00Z", "inInbox": false, "unread": false } ] },
+      { "id": "thr-other", "messages": [
+        { "id": "to-1", "sentAt": "2026-01-12T09:00:00Z", "inInbox": true, "unread": true } ] }
+    ]
+  }
+}
