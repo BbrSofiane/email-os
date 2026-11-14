@@ -1,0 +1,186 @@
+You are doing the last frontend part of the Email OS maintenance programme (Vue 3 + TypeScript + Tauri desktop mail client). Three pieces of work, three PRs, in this order:
+
+1. A small product fix: the Inbox row overflows at large text (one rendered test has been failing on main for days).
+2. Ticket 18: one action registry, with `onKeydown` reduced to a dispatcher.
+3. Ticket 20: shrink `src/App.vue` (3,277 lines today).
+
+I am the coordinating thread. I gate and merge your PRs; you never merge. Message me when each PR is ready so I can gate it while you continue, and message me with any question rather than guessing.
+
+## Read first
+
+`PRODUCT.md`, `DESIGN.md`, `docs/development.md`, `docs/current-architecture.md`, `docs/ux-03-command-discovery.md`, `AGENTS.md` / `CLAUDE.md` if present. Then `src/App.vue`, `src/lib/browsing-actions.ts` (41 lines), `src/lib/action-palette.ts` (96), `src/components/ActionOverlay.vue`, `src/components/CommandGlyph.vue`, `src/lib/account-status.ts`, `src/composables/` (note how `useMailbox.ts` was split last week into `useMailboxSelection`, `useMailboxGroups`, `useMailboxDetailCache`, `useMailboxAccount` with `mailbox-refs.ts` and `mailbox-session.ts`: follow that style), and `tests/helpers.ts` plus `tests/support/` (shared mount helpers and the fake UI clock).
+
+## PR 1 — large-text Inbox row overflow (branch `maintenance/p5b-large-text-row`, base `main`)
+
+`tests/browsing/inbox-list.rendered-layout.test.ts` › "collapses overflowing row actions behind an operable disclosure at a larger root font" fails on main: at 1000px wide with a 30px root font it reports `expected 671 to be less than or equal to 662`, a 9px overflow of the row. This is a real layout regression, not a test problem; the test's comment explains the intended behaviour (the sender column gives up width first, and the expanded presentation still fits).
+
+- Reproduce it first. Rendered tests need real Chrome: `EMAIL_OS_RENDERED_LAYOUT_CHROME=/tmp/chrome-rendered/chrome/linux-156.0.8078.80/chrome-linux64/chrome mise run test:rendered`.
+- Find which change introduced it (`git log` on `src/components/InboxList.vue` and `src/assets/style.css`; it appeared around the rail/contact layout pass and the row action glyphs) and fix the layout, following DESIGN.md's spacing scale and the row pattern. Do not edit the failing assertion or its thresholds. If you conclude the test's expectation is wrong for the current design, stop and message me with the evidence.
+- All 45 rendered tests must pass afterwards, and the jsdom suite must stay green. Check the row at 16px, 20px, 24px and 30px root font and at 1000px, 1100px and 1280px wide, in the rendered harness, and say what you measured.
+- Keep this PR small and separate. Mark it ready and message me, then go on.
+
+## PR 2 — ticket 18: one action registry (branch `maintenance/p5b-action-registry`, stacked on PR 1's branch)
+
+Today the facts about a command are spread over several places that must be kept in step by hand: `browsingActions` (id, label, shortcut text) in `browsing-actions.ts`; `actionGroupOf`, `actionAliases` and `keyHints` in `action-palette.ts`; the glyph choice in `CommandGlyph.vue`; `actionAvailable()` (about 70 lines), the label overrides in `availableActions`, and `executeAction()` (about 150 lines) in `App.vue`; the `GO_TARGETS` chord table; and `onKeydown()` (about 430 lines) which re-encodes which key means which action in which focus context.
+
+Goal: one registry module where each action is declared once (id, label, shortcut display, group, aliases, glyph, and where sensible the key binding and G-chord second key), with availability and execution supplied as functions from the app, and `onKeydown` reduced to: work out the focus context, look up the binding, check availability, dispatch. Adding an action should mean adding one entry plus its handler.
+
+- **No behaviour change.** Same keys, same labels, same order in the palette, same hints, same announcements, same focus handling, same disabled reasons. The existing tests are the specification: they pass without edits to assertions. Import-path edits are fine; list any other test edit with its reason.
+- Keys that are not commands (J/K movement, X select, Shift+J/K, the reminder and draft list keys in `keyHints`) may stay as non-command bindings in the same registry, but they must be declared once too.
+- `onKeydown` has context-specific ownership rules (reader open, drawer rows, reminders and drafts panes, the empty line's action, split navigation, form fields, the chord grace window that swallows a late `e`/`h`). Preserve every one. Before you restructure it, write down the ownership rules you find as a table in the PR description, and add tests for any rule that has no test today. Add those tests in a first commit, against the old code, so they are shown to pass before and after.
+- Add a registry consistency test: every action id has exactly one entry, a group, a glyph, and (if it has a shortcut display) a binding that actually triggers it; no two bindings collide within one context.
+- Type it so a missing field is a compile error rather than a runtime surprise.
+- Do the work in reviewable commits: tests first, then the registry with the old modules re-exporting from it, then the `App.vue` switch-over, then deleting what is dead. Where a commit only moves code, keep it a pure move (no edits in the same commit) so I can verify it mechanically.
+
+## PR 3 — ticket 20: shrink `App.vue` (branch `maintenance/p5b-app-shell`, stacked on PR 2's branch)
+
+`App.vue` is 3,277 lines: about 2,630 of script and 640 of template. Split it along its real seams into composables and child components, so that `App.vue` is the composition root: it wires the pieces and owns the top-level layout. Candidates you should evaluate (you decide, from reading it): the G-chord state machine; overlay/palette state and origin-focus restore; drawer state and focus; contact column, disclosure and collapse; the account notice, empty-line and header-note logic added last week; reply composer and compose card docking; viewport and media-query handling; focus restoration after list changes; the header strip, the rail and the utility drawer as components.
+
+- **No behaviour change**, same rule as PR 2: existing tests pass with only import or mount-helper edits, each listed.
+- One extraction per commit, each a pure move plus the minimum wiring, with the full jsdom suite green at every commit. I will check moved code against the original line by line, so do not reformat or "tidy" what you move in the same commit. Improvements go in separate commits, or better, in a list at the end for later.
+- Follow the pattern of the `useMailbox` split: explicit dependencies passed in, no hidden module state, no circular imports, session and epoch guards kept where they are unless the move requires otherwise (say so).
+- Each new composable gets focused unit tests where it has logic worth testing on its own (the chord state machine certainly does).
+- Aim for `App.vue` under 1,800 lines. Do not force it: if the next extraction would mean a risky rewrite rather than a move, stop there and tell me what is left and why.
+- Template child components must keep every `data-test` attribute, ARIA attribute, `inert` contract and DOM order as they are; the rendered tests and the native smoke test depend on them.
+- Update `docs/current-architecture.md` (and `DESIGN.md` only if a documented claim changes) to describe the new structure.
+
+## Rules for all three
+
+- Out of scope: Rust (`crates/`, `src-tauri/`), `src/lib/ipc/browser-fake.ts`, and the contract scenario files (`tests/fixtures/contract-scenarios/`, `tests/browser-fake/contract-scenarios.test.ts`, `tests/support/contract-scenarios.ts`). Another thread is working in those now. No change to the IPC contract or generated types.
+- Do not pick up the UI follow-ups listed in PR #34's description (palette "Sync now" versus "Retry", hints advertised while disconnected, hit-area sizes and so on). If your work makes one trivially fixable, note it in your report; do not fix it.
+- Synthetic fixtures only: no real accounts, credentials or network in code or tests. Nothing that logs may include subjects, addresses or bodies.
+- Tests use the shared fake UI clock (`tests/support/timers.ts`), not real timeouts.
+- Baseline on main today (56275b4): frontend 1,720 tests in 94 files; rendered 44 of 45 (the one you fix in PR 1). Report counts for each PR.
+
+## Working on this machine
+
+- 2 cores, 7 GB RAM, about 4 GB of free disk, shared with another agent thread that is compiling Rust and with my gate runs. **Do not run cargo, `mise run check:all`, `test:core`, `test:native`, `lint:core` or `lint:native`**: you change no Rust, and I run the full gate (including the native smoke test) on each PR myself. Run `pnpm install`, then `mise run test:ui`, `mise run typecheck`, `mise run build:web` and the rendered suite. Run one heavy command at a time and no more than two subagents at once.
+- Do not modify the working tree of the root checkout `/home/exedev/email-os`. Work only in your worktree.
+- CI (`check`) runs only on PRs whose base is `main`, so only PR 1 gets CI until I merge downwards. Open each PR as a draft, mark it ready when your local checks pass, and message me.
+- After each push, confirm the remote head matches your local head with `git ls-remote`. `gh` needs `-R BbrSofiane/email-os`.
+- Use subagents (same model as you) for self-contained pieces: for example the ownership-rule inventory of `onKeydown`, an independent review of a switch-over commit against the old code, or one extraction's unit tests. Give them the rules above.
+- If a test fails intermittently, tell me which and what you saw; do not retry it into silence.
+
+## Final report
+
+For each PR: head SHA, test counts, rendered result, every existing test you edited and why. For PR 2: the ownership table and the registry shape. For PR 3: the list of extractions with line counts before and after, what is left in `App.vue` and why, and improvements you noticed but deliberately did not make. And what you could not verify (WebKit rendering, screen readers, anything else).
+
+---
+
+<task-notification>
+<task-id>afca66eaf67406b58</task-id>
+<tool-use-id>toolu_01Nrre6s3F4aYbP2sLcfoZVx</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-maintenance-p5b-large-t-6622b4f87ffbef75/5f168d81-61f3-4c11-ac7c-9cf2d9a03706/tasks/afca66eaf67406b58.output</output-file>
+<status>completed</status>
+<summary>Agent "Keyboard ownership gap tests" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>`tests/app-shell/keyboard-ownership.test.ts` is added and has 79 tests. The file passes against unmodified `src/`, and `pnpm typecheck` passes. The only change in the worktree is that one new untracked file. I did not run the whole suite.
+
+## 1. Corrections to the table
+
+The table is essentially right. These are the corrections and additions:
+
+- **Row 13, dead rungs:** the "reply composer (flush)" and "compose card (close)" rungs of the ladder are unreachable. Row 10 intercepts any unmodified Escape while either surface is open, and a modified Escape returns earlier at row 11 (line 2275). Only the drawer, narrow contact disclosure and reader rungs can ever run. The same applies to Escape through the compose-card path.
+- **Row 13, prevention:** the ladder is "always consumed" but not always prevented. With no reader, no selection and no history, Escape returns without `preventDefault`. Escape with Shift still runs the ladder. Escape from a button runs it too, because only editable targets are exempt (row 11).
+- **Row 8:** the 1500 ms window is `GO_CHORD_WINDOW_MS`, and `isGoSecondKey` also rejects Shift, Meta, Ctrl, Alt and `isComposing`.
+- **Row 15:** `h` that is not button-blocked, not Shift and not a repeat is always consumed, even when Remind is unavailable. Only the `preventDefault` depends on `actionAvailable('remind')`. A blocked, Shift or repeat `h` does not simply fall to row 19. Only the Reminders-row `h` and Shift+H reach it, and row 19 skips repeats.
+- **Row 5:** the table's "native mode" means `mode !== 'browser-preview'`.
+- **Row 12:** `/` sits before the drawer guard. It is only blocked while a drawer or narrow disclosure is open because `actionAvailable('search')` returns false in that case.
+- **Row 17:** `splitListOwns` also requires `target === document.activeElement` and a target that is an `.inbox-row` or the empty state. Tab on body is ignored.
+- **Row 18:** `[` and `]` have no Shift check. Shift+`[` produces `{`, so it never matches.
+- **Row 19:** the Reminders-row `h` and the Drafts-row Delete/Backspace return even when the row did not handle them. Only the `preventDefault` is conditional.
+- **Row 27:** `x` and `X` are accepted with or without the Shift flag. A window-dispatched event is list-owned only because it is not a `Node`. `g`, `ArrowLeft`, `s` and `c` need `browsingOwns`, which requires a `Node`, so they do not work from `window`. `j`, `k`, `e` and `Enter` do.
+- **Row 29:** `j`, `k` and the arrows have no button check, so they work from toolbar buttons. Only `Enter` and `e` check `buttonOwns`.
+
+## 2. Coverage matrix
+
+"Pre" means a test that already existed. "New" means a test in the new file, written only where no existing test pins the behaviour. Where a row names a specific test and has no new one, I judged it covered from the test names and the key presses in the file. I did not read every test body.
+
+| Rule / key | Existing coverage | New test |
+|---|---|---|
+| 0 hidden workspace | `workspaces.component` "hidden keys do nothing" | – |
+| 1 Escape and Tab on body while a request is in flight | Escape on body: `reminders/navigation` "keeps BODY Escape…" | Tab on body, other keys consumed, IME Escape: NONE before |
+| 2 attachment chooser | Escape through the dialog only: `attachments/component` | Escape on body, other keys consumed, IME: NONE before |
+| 3 overlay | `shell` 1714 "…overlay guards", `undo/component` 148 | – |
+| 4 split editor | Escape from a field: `saved-split/create-command` | Escape on body, modifier and IME Escape, other keys consumed, Tab native, busy Enter and busy Escape: NONE before |
+| 5 native Cmd+O | `attachments/component` "native Cmd+O…" | not from the list, Shift, editable field, button-focused |
+| 6 modifier/IME cancels chord | `g-chord` "IME and modifier keys…", `discovery.component` 105 | – |
+| 7 native Cmd+K | `stars.component` 112, `saved-split/create-command` | Cmd+Shift+K, browser-preview leaves it alone, from a button |
+| 8 armed chord | `g-chord`, `discovery.component` 105, `list-context-keys` | – |
+| 9 grace window | `g-chord` (late e, late a, other key ends grace) | late `h`, one-shot, editable late key, late Shift+E |
+| 10 compose-surface Escape | `compose-card` 306, `reply-composer` 160; other keys: `compose-card` 426, `reply-composer` 272, `undo/component` 197 | Ctrl, Alt, Meta and IME Escape, Shift+Escape, Escape typed in the body, Escape from a card button |
+| 11 IME / modifiers / editable | `shell` 248, 1714; `stars.component` 70; many others | – |
+| 12 `/` | `search/search` 38, 118; `search/form` 203 | from a button, with Ctrl, with a drawer open |
+| 13 ladder: drawer, details, reader Back | `shell` 1688 | drawer over reader |
+| 13 ladder: narrow disclosure | `shell` 725 | – |
+| 13 ladder: selection (no reader) | `selection` 169 | explicit test |
+| 13 ladder: selection in reader | NONE | new |
+| 13 ladder: context history Back | `reminders/context`, `discovery.component` | – |
+| 13 ladder: nothing to do (not prevented) | NONE | new |
+| 13 ladder: Shift+Escape, from a button, in an editable field | NONE | new |
+| 14 drawer owns keys | `undo/component` 508 (z only) | j, e, s, c, h, x, g, Shift+E and ArrowLeft with the drawer open |
+| 14 narrow disclosure owns keys | `undo/component` 544 (z only) | j, e, s, x, h and ArrowLeft with the narrow disclosure open |
+| 15 `h` | `reminders/component` 184 ("guards bulk, text input, IME, absent transport") | from a button, Shift, repeat, from a message toggle, no transport |
+| 16 browsing surface | `list-context-keys`, `account/empty-line-focus` | – |
+| 17 split Tab | `saved-split/saved-split` 149 (forward, boundary, Shift+Tab) | no split, button, body, Ctrl, reader, both ends |
+| 18 `[` `]` | `list-context-keys` 191 and 269 | from body, from a tab button, outside Reminders |
+| 19 Reminders row `h` / Shift+`h`, Drafts row Delete / Backspace | `list-context-keys` 300–410 and 461–540 | not added; cross-pane cases (h on a Drafts row, Delete on a Reminders row) remain untested |
+| 20 ArrowLeft / `g` | `discovery.component` 73, `account/empty-line-focus` 83 | Shift variants, button, reader, `window` target, list row |
+| 21 `s` | `stars.component` 22, 40, 70 | star vs unstar, selection forces Star, reader, Shift/repeat/button, message toggle, fixture mode |
+| 22 Shift+E | `shell` 1488 and 1504 (lowercase `e` only) | Done row, reader message toggle, button, Inbox |
+| 22 Shift+U | `account.component` 226, `shell` 1524 | focused row, button |
+| 23 `c` | `drafts/context` 127 (Drafts row), `compose-card` 267 and 368 (modifiers, IME, editable) | repeat, button, list row, reader toggle |
+| 24 `r` | `drafts/reply-shortcut` (Shift, Ctrl, Meta, Alt, repeat, IME; field, button, list; quoted toggle; Trash) | – |
+| 25 `z` | `undo/component` 112, 213, 391 (repeat while in flight), 508 | repeat when idle, Shift+Z, button, nothing to undo |
+| 26 `n` `p` `o` Shift+O `j` `k` `e` | `shell` 1320–1353, 1488–1523, 1624 | Shift+N and Shift+P, n, p, o and j/k from a toolbar button, `e` read-only, other keys consumed |
+| 27 `x`, Shift+J/K | `selection` 51 (x, repeat) and 315 (Shift+J); `selection` 413 (wide contact column) | `window` target, Shift+X, button, Shift+K, first-row boundary |
+| 28 empty-line Enter/Space | `account/empty-line-focus` 179–211 (Enter, Space, modifier, repeat) | – |
+| 29 Enter, e, j/k | `shell` 101, 136, 156, 248 (e and Enter from a button) | j and arrows from a button, `e` read-only, no-meaning keys, repeat `e` |
+
+## 3. Tests added
+
+All 79 names start with "rule N". They are grouped as follows.
+
+- **Rule 1:** Escape and Tab on body; other keys consumed.
+- **Rule 2:** Escape on body; IME and other keys consumed.
+- **Rule 4:** Escape on body; modifier and IME Escape; other keys consumed with Tab native; busy Escape and Enter.
+- **Rule 5 and 7:** native Cmd+O from the list, with Shift, from an editable field, and from a toolbar button; Cmd+K and Cmd+Shift+K, and browser preview.
+- **Rule 9:** late `h` swallowed once; editable late key; late Shift+E.
+- **Rule 10:** Escape in the card body; Ctrl, Alt, Meta and IME Escape; Shift+Escape; Escape from a card button.
+- **Rule 12:** `/` from a button; `/` with Ctrl and with a drawer open.
+- **Rule 13:**
+  - no-op Escape is not prevented
+  - selection in the reader clears before Back
+  - selection with no reader
+  - from a toolbar button
+  - Shift+Escape
+  - editable field
+  - drawer over reader
+- **Rule 14:** Account drawer and narrow disclosure (j, e, s, c, h, x, g, Shift+E, ArrowLeft).
+- **Rule 15:** `h` from a button, Shift, repeat; from a row; from a message toggle; with no transport.
+- **Rule 17:** forward/back/no-wrap; no split; button, body, Ctrl and reader.
+- **Rule 18:** `]` and `[` from body; from a tab button; outside Reminders.
+- **Rule 20:** Shift variants; button and reader; `window` target; row.
+- **Rule 21:** star, unstar, selection, reader, Shift/repeat/button, message toggle, fixture mode.
+- **Rule 22:** Shift+E on a Done row, from the reader with a message toggle focused, and in the Inbox; button blocks Shift+E and Shift+U; Shift+U.
+- **Rule 23:** repeat and button; list row; reader toggle.
+- **Rule 25:** repeat, Shift+Z and button, plain z, nothing to undo.
+- **Rule 26:** Shift+N and Shift+P; n, p, o and j/k from a toolbar button; `e` read-only; other keys consumed; o and Shift+O.
+- **Rule 27:** `window` x; Shift+X; button; Shift+K; first-row boundary; plain j and k.
+- **Rule 29:** j and arrows from a button, Enter and e do nothing there; `e` read-only; keys with no meaning; repeat `e`.
+
+Not possible to test: rule 4's "chord cancelled". Opening the editor goes through the palette, which already cancels the chord.
+
+## 4. Behaviour that looks odd or buggy (all pinned as they are today)
+
+1. **Dead ladder rungs:** the reply-composer and compose-card rungs of row 13 are unreachable, as above.
+2. **`s`, Shift+E and Shift+U are always prevented:** `preventDefault` runs even when nothing happens. `s` in fixture mode, which has no star support, is prevented and calls nothing. Shift+E in the Inbox is prevented and calls nothing.
+3. **Auto-repeat `e` archives:** the list `e` and the reader `e` have no repeat guard. A repeat `e` event archives the focused row. `s`, `c`, `r`, `h` and `x` do guard repeat, and `z` guards repeat but not Shift.
+4. **`z` is always prevented:** a plain `z` is prevented even with nothing to undo.
+5. **Escape on body in rule 2 is prevented, but the key does nothing there for modified Escape.**
+6. **Row 1 is prevented only for Escape and Tab on body:** Tab from any other element, such as the disabled picker, passes through.
+7. **Different ownership by target type:** `window`-dispatched `x`, `j`, `k` and `e` work, but `g`, `ArrowLeft`, `s` and `c` do not, because they need a `Node` target. This only matters for tests and synthetic events, but it is an inconsistency in the handler.
+8. **Reader `j` and `k` ignore buttons:** they, and `n`, `p` and `o`, work from a focused toolbar button, while `e`, `s` and `c` do not. The reader navigation keys are not button-blocked.
+9. **Shift+`h` on a Reminders row:** the row path uses `key.toLowerCase() === 'h'`, while the plain-`h` path requires `key === 'h'`. So `H` with Shift reaches the row handler as intended. This is consistent, but it relies on the two code paths using different matching.</result>
+<usage><subagent_tokens>192641</subagent_tokens><tool_uses>47</tool_uses><duration_ms>587308</duration_ms></usage>
+</task-notification>

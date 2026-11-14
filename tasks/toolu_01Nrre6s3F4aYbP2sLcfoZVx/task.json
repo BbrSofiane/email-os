@@ -1,0 +1,18 @@
+{
+  "tool_use_id": "toolu_01Nrre6s3F4aYbP2sLcfoZVx",
+  "agent_id": "afca66eaf67406b58",
+  "subagent_type": "general-purpose",
+  "task_description": "Keyboard ownership gap tests",
+  "files": [
+    "tests/app-shell/keyboard-ownership.test.ts"
+  ],
+  "token_usage": {
+    "input_tokens": 88,
+    "cache_creation_tokens": 187856,
+    "cache_read_tokens": 5385640,
+    "output_tokens": 61510,
+    "api_call_count": 44
+  },
+  "started_at": "2026-11-14T15:41:35.304935936Z",
+  "completed_at": "2026-11-14T15:51:21.974967254Z"
+}

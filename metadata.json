@@ -1,0 +1,33 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7DC48NGJ32MBDAEXWPM4HY4",
+  "strategy": "manual-commit",
+  "branch": "maintenance/p5b-action-registry",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "tests/app-shell/keyboard-ownership.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 8,
+    "cache_creation_tokens": 24797,
+    "cache_read_tokens": 1040292,
+    "output_tokens": 17550,
+    "api_call_count": 4,
+    "subagent_tokens": {
+      "input_tokens": 10,
+      "cache_creation_tokens": 4336,
+      "cache_read_tokens": 930352,
+      "output_tokens": 6151,
+      "api_call_count": 5
+    }
+  }
+}
