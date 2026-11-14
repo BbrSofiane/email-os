@@ -886,5 +886,88 @@ describe('useMailbox (Slice 02 account status and lifecycle)', () => {
     it('several events while Undo refreshes still resolve on a published list', async () => {
       expect(await undoWithEvents(3)).toEqual({ atResolve: true, later: true });
     });
+
+    it('events that keep arriving cannot hold a superseded refresh forever (bounded follow)', async () => {
+      const inner = createBrowserFakeMailClient();
+      let listener: (() => void) | null = null;
+      let hold = false;
+      const held: Array<ReturnType<typeof deferred<InboxSnapshot>>> = [];
+      const client: MailClient = {
+        ...inner,
+        subscribe: async (l) => { listener = l; return () => {}; },
+        listConversations: () => {
+          if (!hold) return inner.listConversations();
+          const gate = deferred<InboxSnapshot>();
+          held.push(gate);
+          return gate.promise;
+        },
+      } as MailClient;
+      const { result, stop } = scopeRun(() => useMailbox(client));
+      await result.ready;
+      const snapshot = await inner.listConversations();
+      hold = true;
+      let done = false;
+      void result.refresh().then(() => { done = true; });
+      await flushMacrotasks(1);
+      // Every round: a NEW change event starts a newer refresh whose read is held.
+      const round = async (resolveFrom: number): Promise<number> => {
+        const before = held.length;
+        listener?.();
+        await flushMacrotasks(1);
+        expect(held.length).toBeGreaterThan(before); // the newer refresh is reading
+        for (const gate of held.slice(resolveFrom, before)) gate.resolve(snapshot);
+        await flushMacrotasks(1);
+        return before;
+      };
+      let resolved = 0;
+      resolved = await round(resolved); // follows #1
+      expect(done).toBe(false);
+      resolved = await round(resolved); // follows #2
+      expect(done).toBe(false);
+      resolved = await round(resolved); // follows #3
+      expect(done).toBe(false);
+      await round(resolved); // a 4th newer refresh is now the newest: the bound is reached
+      expect(done).toBe(true);
+      hold = false;
+      for (const gate of held) gate.resolve(snapshot);
+      await flushMacrotasks();
+      stop();
+    });
+
+    it('a refresh superseded by a session change resolves without waiting for the new session', async () => {
+      const inner = createBrowserFakeMailClient();
+      inner.controls.setAccount({ mode: 'gmail', connection: 'connected', emailAddress: 'operator@example.test' });
+      const held: Array<ReturnType<typeof deferred<InboxSnapshot>>> = [];
+      let hold = false;
+      const client: MailClient = {
+        ...inner,
+        listConversations: () => {
+          if (!hold) return inner.listConversations();
+          const gate = deferred<InboxSnapshot>();
+          held.push(gate);
+          return gate.promise;
+        },
+      } as MailClient;
+      const { result, stop } = scopeRun(() => useMailbox(client));
+      await result.ready;
+      hold = true;
+      let oldDone = false;
+      void result.refresh().then(() => { oldDone = true; }); // old session, list read held
+      await flushMacrotasks(1);
+      expect(held).toHaveLength(1);
+      const disconnecting = result.disconnectAccount(); // bumps the session, starts its own held refresh
+      await flushMacrotasks(1);
+      expect(held.length).toBeGreaterThanOrEqual(2);
+      const snapshot = await inner.listConversations();
+      held[0]!.resolve(snapshot);
+      await flushMacrotasks(1);
+      // The old refresh resolved at once: it does not follow the new session's refresh.
+      expect(oldDone).toBe(true);
+      expect(result.conversations.value).toEqual([]); // and published nothing from the old session
+      for (const gate of held.slice(1)) gate.resolve(snapshot);
+      hold = false;
+      await disconnecting;
+      stop();
+    });
   });
 });
