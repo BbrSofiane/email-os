@@ -1,0 +1,22 @@
+<task-notification>
+<task-id>bup6z74ca</task-id>
+<tool-use-id>toolu_01SqFPbm2tUfEzCneBFBfuFT</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-maintenance-p4-syntheti-4a65a23bc29bdbf9/7290746f-2115-4cce-a765-a94e6b68740b/tasks/bup6z74ca.output</output-file>
+<status>completed</status>
+<summary>Monitor "stage 1 check:all finishing" stream ended</summary>
+<event>test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.65s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.13s
+test cached_done_excludes_cancelled_and_undone_archives_but_keeps_failed_compensation ... ok
+test retrying_a_failed_compensation_keeps_the_undo_linkage_and_is_not_undoable ... ok
+test uncertain_failed_and_compensating_operations_are_not_undoable ... ok
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.87s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+error: used `assert_eq!` with a literal bool
+error: used `assert_eq!` with a literal bool
+error: could not compile `mail-core` (test "synthetic_core_projections") due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...
+[lint:core] ERROR task failed
+[check] ERROR task failed
+[check:all] ERROR task failed
+exit=101</event>
+</task-notification>
