@@ -1,0 +1,121 @@
+{
+  "scenario": "group-undo-without-an-accepted-member",
+  "description": "A group whose every member was rejected at acceptance has a receipt and no child operations, so it never holds the top-level action slot: its status reports undo unavailable as `superseded` (not `not_applicable`), a direct attempt is rejected the same way, and the earlier single stays the undoable action.",
+  "rules": "docs/ux-05 \u00a77.2 (an all-rejected request consumes no Undo slot); Rust: group_undo_availability / check_group_undoable order already_undone, expired, superseded, then not_applicable",
+  "profiles": [
+    "gmail",
+    "fixture"
+  ],
+  "mailbox": "triage",
+  "steps": [
+    {
+      "name": "archive conv-01",
+      "do": {
+        "cmd": "setArchived",
+        "args": {
+          "conversation": "conv-01",
+          "archived": true,
+          "requestId": "req-1"
+        }
+      },
+      "expect": {
+        "ok": {
+          "operationId": "$A"
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02"
+          ],
+          "activity": [
+            {
+              "id": "$A",
+              "status": "confirmed",
+              "undoableUntil": "@+10"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "group of only a missing member",
+      "do": {
+        "cmd": "setArchivedGroup",
+        "args": {
+          "members": [
+            "ghost-1"
+          ],
+          "archived": true,
+          "requestId": "grp-1"
+        }
+      },
+      "expect": {
+        "ok": {
+          "groupId": "$G",
+          "members": [
+            {
+              "ordinal": 0,
+              "conversation": {
+                "conversationId": "ghost-1"
+              },
+              "operationId": null,
+              "rejection": "conversation_missing"
+            }
+          ]
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02"
+          ],
+          "activity": [
+            {
+              "id": "$A",
+              "status": "confirmed",
+              "undoableUntil": "@+10"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "group status offers no undo and says why",
+      "do": {
+        "cmd": "getOperationGroup",
+        "args": {
+          "requestId": "grp-1"
+        }
+      },
+      "expect": {
+        "ok": {
+          "undo": {
+            "available": false,
+            "reason": "superseded",
+            "undoableUntil": null
+          },
+          "undoReceipt": null
+        }
+      }
+    },
+    {
+      "name": "a direct attempt is rejected as superseded",
+      "do": {
+        "cmd": "undoOperationGroup",
+        "args": {
+          "groupId": "$G",
+          "requestId": "undo-1"
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "undo_unavailable",
+          "reason": "superseded"
+        }
+      }
+    }
+  ]
+}

@@ -330,6 +330,13 @@ fn search_is_cached_only_and_never_calls_the_provider() {
         ));
     }
     assert_eq!(s.provider.read_calls("search_threads"), 0);
+    // A cache miss is a miss: no provider read to load a conversation.
+    let reads = s.provider.read_calls("get_thread");
+    assert_eq!(
+        s.core.load_search_conversation(&conversation("conv-99")),
+        Err(MailError::NotFound)
+    );
+    assert_eq!(s.provider.read_calls("get_thread"), reads);
     // Archived seeds are searchable because they are cached.
     let archived = s
         .core

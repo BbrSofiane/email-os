@@ -58,7 +58,9 @@ const KNOWN_DIVERGENCES: &[(&str, &str, &str)] = &[
     (
         "group-member-failure-does-not-stop-siblings",
         "synthetic",
-        "KD-1: same cause as the gmail profile; the synthetic session runs the Gmail worker.",
+        "KD-1: same cause as the gmail profile; the synthetic session runs the Gmail worker, so siblings \
+         queued behind the failure drain at the next retry tick (which re-arms queued writes there), \
+         not immediately.",
     ),
     (
         "fixture-rejects-unsupported-commands",

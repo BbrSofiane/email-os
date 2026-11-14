@@ -749,6 +749,11 @@ impl GmailCore {
     ) -> Result<Conversation, MailError> {
         match self.inner.store.get_conversation(r#ref) {
             Err(MailError::NotFound) => {
+                // A synthetic session is cached-only: everything it has is
+                // already cached, so a miss is a miss.
+                if self.inner.policy.cached_only_search() {
+                    return Err(MailError::NotFound);
+                }
                 let generation = self.inner.store.generation()?;
                 if self.inner.store.account()?.as_ref().map(|a| &a.account_id)
                     != Some(&r#ref.account_id)
@@ -1898,8 +1903,10 @@ fn bootstrap_synthetic(
             Err(MailError::NotFound) => {}
             Err(error) => return Err(error),
         }
+        // A synthetic conversation the provider cannot produce means the
+        // synthetic profile is broken: fail closed instead of opening short.
         let Some(thread) = provider.get_thread(id, &cancel)? else {
-            continue;
+            return Err(MailError::InvalidProviderResponse);
         };
         if thread.conversation.conversation_ref != target {
             return Err(MailError::InvalidProviderResponse);
@@ -2128,6 +2135,14 @@ fn run(
             } else {
                 if tick_due {
                     sync_deadline = Instant::now() + worker_wait(&st, backoff_delay(st.backoff));
+                    if !policy.periodic_sync() && st.connection == ConnectionState::Connected {
+                        // No discovery to poll for, but the tick is still the
+                        // retry beat: a Gmail session re-arms queued writes
+                        // when its periodic Sync completes, so a synthetic
+                        // session re-arms them here. Without this, siblings
+                        // queued behind a definite failure would never run.
+                        st.operations_requested = true;
+                    }
                 }
                 // Nothing runnable (not configured / disconnected / auth
                 // required): go back to waiting without running a pass.
@@ -3646,7 +3661,7 @@ mod reply_context_sync_tests;
 #[cfg(test)]
 mod synthetic_session_tests {
     use super::*;
-    use crate::testing::synthetic::{conversation, new_provider, Overlay, CLOCK_START};
+    use crate::testing::synthetic::{new_provider, Overlay, CLOCK_START};
     use crate::testing::{temp_profile, until};
 
     fn ticks(core: &GmailCore) -> usize {
@@ -3667,6 +3682,50 @@ mod synthetic_session_tests {
             .ctrl
             .wait_until_idle(Duration::from_secs(5))
             .unwrap();
+    }
+
+    /// Review finding: with discovery off, the tick must still re-arm queued
+    /// writes, or siblings queued behind a definite failure stall forever.
+    #[test]
+    fn synthetic_tick_rearms_queued_writes_after_a_definite_failure() {
+        use crate::dto::OperationStatus;
+        let dir = temp_profile("synthetic-tick-rearm");
+        let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(CLOCK_START)));
+        let synthetic = new_provider(dir.path());
+        let core = GmailCore::open_synthetic(dir.path(), synthetic.clone(), clock).unwrap();
+        core.inner
+            .ctrl
+            .wait_until_idle(Duration::from_secs(5))
+            .unwrap();
+        synthetic.fail_next();
+        let receipt = core
+            .set_archived_group(&crate::testing::synthetic::archive_group(
+                "grp-1",
+                &["conv-01", "conv-02"],
+                true,
+            ))
+            .unwrap();
+        let ids: Vec<String> = receipt
+            .members
+            .iter()
+            .map(|m| m.operation_id.clone().unwrap())
+            .collect();
+        let status = |id: &str| crate::testing::synthetic::status_of(&core, id);
+        assert!(until(|| status(&ids[0]) == Some(OperationStatus::Failed)));
+        core.inner
+            .ctrl
+            .wait_until_idle(Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(
+            status(&ids[1]),
+            Some(OperationStatus::Queued),
+            "the failed pass ended in backoff; the sibling waits for the retry beat"
+        );
+        fire_periodic_tick(&core);
+        assert!(
+            until(|| status(&ids[1]) == Some(OperationStatus::Confirmed)),
+            "the tick re-armed the queued sibling"
+        );
     }
 
     #[test]
@@ -3720,6 +3779,5 @@ mod synthetic_session_tests {
         let history = overlay.read_calls("history");
         fire_periodic_tick(&core);
         assert!(until(|| overlay.read_calls("history") > history));
-        let _ = conversation("conv-01");
     }
 }

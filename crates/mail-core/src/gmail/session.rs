@@ -45,7 +45,9 @@ impl SessionPolicy {
     }
 
     /// Write admission: Gmail asks the provider's verified grant; a synthetic
-    /// session always admits (its provider has nothing to withhold).
+    /// session always admits (its provider has nothing to withhold). The
+    /// worker's own pre-dispatch check asks the provider directly, so a
+    /// synthetic provider must answer `Ok(true)`; the built-in one does.
     pub(crate) fn mutation_access(self, provider: &dyn GmailProvider) -> Result<bool, MailError> {
         match self {
             Self::Gmail => provider.mutation_access(),
