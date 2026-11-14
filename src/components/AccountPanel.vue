@@ -45,7 +45,7 @@ const emit = defineEmits<{
 const CONNECTION_LABELS: Record<ConnectionState, string> = {
   not_configured: 'Not configured',
   disconnected: 'Not connected',
-  authenticating: 'Signing in…',
+  authenticating: 'Finish sign-in in your browser',
   connected: 'Connected',
   auth_required: 'Sign-in expired',
 };
@@ -80,7 +80,6 @@ const syncLabel = computed(() => {
 });
 const cachedLabel = computed(() => {
   const count = sync.value.cachedConversations;
-  if (firstSyncRunning.value) return `${count} cached`;
   return `${count} ${count === 1 ? 'conversation' : 'conversations'} cached`;
 });
 /**

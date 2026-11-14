@@ -840,6 +840,18 @@ describe('account, connection and first-run (empty inbox, header status, command
       expect(w.get('[data-test="account-panel"]').text()).not.toMatch(/Connect Gmail/);
     });
 
+    it('Provider mail while a sign-in is in progress says to finish it, not to connect one', async () => {
+      gmail({ connection: 'authenticating', emailAddress: null, cachedConversations: 0, initialSyncComplete: false });
+      const w = mountApp();
+      await flushFakeClientWithMacrotasks(fake, 3);
+      await w.get('[data-test="rail-destinations"]').trigger('click');
+      await flushPromises();
+      const required = w.get('[data-test="destinations-account-required"]');
+      expect(required.text()).toBe('Provider mail needs a connected Gmail account. Finish sign-in in your browser.');
+      expect(required.text()).not.toContain('Connect one');
+      expect(w.find('[data-test="destinations-account-action"]').exists()).toBe(false);
+    });
+
     it('offers no Connect on any surface; the one link is Account, and Provider mail says the same', async () => {
       gmail(notConfigured);
       const w = mountApp();

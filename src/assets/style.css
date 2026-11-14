@@ -535,11 +535,33 @@ button:focus-visible {
   display: contents;
 }
 
-.account-status-note .note-lead,
-.account-status-note .note-detail {
+.account-status-note .note-lead {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: pre;
+}
+
+/* The cause is whole or gone, never a fragment ("Sync failed · n… · Retry" is unreadable). The detail is a one-line
+   wrapping flex row, clipped to one line: its text is a single unbreakable item behind a zero-width one, so when the
+   track is too narrow the text wraps to a second row below the clip and disappears with its separator dot. The cause
+   stays in the note's title and hidden announcement, and in the drawer and the empty line. */
+.account-status-note .note-detail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  min-width: 0;
+  height: 1lh;
+  overflow: hidden;
+}
+
+.account-status-note .note-detail::before {
+  content: '\200B';
+  flex: none;
+}
+
+.account-status-note .note-detail-text {
+  flex: none;
   white-space: pre;
 }
 
@@ -2829,6 +2851,8 @@ button:focus-visible {
 .account-note {
   margin: 0;
   color: var(--text-secondary);
+  /* No lone word on the last line ("deletes." in the Enable mailbox actions disclosure). */
+  text-wrap: pretty;
 }
 
 .account-actions {

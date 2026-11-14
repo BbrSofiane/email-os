@@ -431,12 +431,18 @@ const emptyLineShown = computed(() => mailbox.listState.value === 'ready' && mai
 // One action, one place: while the empty inbox line carries it, the header note has no link.
 const emptyLineCarriesAction = computed(() => emptyLineShown.value && !!inboxEmpty.value?.action);
 const headerAction = computed(() => headerNoticeAction(statusNotice.value, emptyLineCarriesAction.value));
+const emptyAction = ref<HTMLButtonElement | null>(null);
 // One sentence, one place: while the empty line carries the status sentence, the header note drops its visible
 // words (the Preview tag stays) and keeps only its one announcement, so the sentence and the ticking cached
 // count are never shown twice.
 // While the Account drawer shows the same sync failure as its alert (with its own Retry), the note drops its
 // words and link too, and stays silent: the failure and its fix are seen and announced once. The Preview tag stays.
 const drawerHasFailure = computed(() => drawerShowsSameFailure(accountStatus.value, drawer.value === 'account'));
+// One live action: while the Account drawer shows the same failure with its own Retry, the empty line behind it
+// keeps its sentence but not a second, inert-looking Retry. It returns when the drawer closes.
+const emptyActionShown = computed(() => !!inboxEmpty.value?.action
+  && (inboxEmpty.value.action === 'account' || accountActionsIdle.value)
+  && !drawerHasFailure.value);
 const noteWordsHidden = computed(() => emptyLineOwnsStatus(inboxEmpty.value, emptyLineShown.value) || drawerHasFailure.value);
 const noteAnnounces = computed(() => headerNoteAnnounces(accountStatus.value, drawer.value === 'account'));
 // The lead ("Sync failed") stays whole; the detail (cause, cached count) is what ellipsizes first.
@@ -1915,6 +1921,34 @@ async function accountNoticeAction(action: AccountNoticeAction | InboxEmptyActio
   else paletteButton.value?.focus({ preventScroll: true });
 }
 
+/**
+ * The empty line's action is a Tab stop far into the page, so it takes focus once, when the line becomes the
+ * owner of an actionable status and nothing at all is focused (<body>) and no other surface is open. Focus the
+ * user already holds (an input, a row, a drawer, the palette) is never taken, and a state change on the same line
+ * does not repeat it: one watch on ownership, not on every render.
+ */
+const emptyLineOwnsAction = computed(() => emptyLineShown.value && !!inboxEmpty.value?.action);
+watch(emptyLineOwnsAction, async (owns) => {
+  if (!owns) return;
+  await nextTick();
+  const active = document.activeElement;
+  if (active && active !== document.body) return;
+  if (!workspaceActive.value || overlay.value || drawer.value || readerOpen.value || searchVisible.value
+    || composeCardOpen.value || replyComposerOpen.value || contactDisclosure.value) return;
+  emptyAction.value?.focus({ preventScroll: true });
+});
+
+/** Enter or Space on the focused empty line runs its one action, as the button does. */
+function activateEmptyAction(event: KeyboardEvent): boolean {
+  if (event.target !== emptyState.value || event.repeat || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
+  if (event.key !== 'Enter' && event.key !== ' ') return false;
+  const action = inboxEmpty.value?.action;
+  if (!action || !emptyActionShown.value) return false;
+  event.preventDefault();
+  void accountNoticeAction(action, 'empty');
+  return true;
+}
+
 async function prepareReply(source: DraftSource): Promise<void> {
   if (trashReader.value) return;
   // The reader stays open after a successful preparation: the drafts watcher
@@ -2456,6 +2490,8 @@ function onKeydown(event: KeyboardEvent): void {
     return;
   }
 
+
+  if (activateEmptyAction(event)) return;
   switch (key) {
     case 'j':
     case 'ArrowDown':
@@ -2650,7 +2686,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
                visible words, the full sentence as the title and visually hidden text. The hidden
                text never carries the ticking cached count, so it is announced once. -->
           <p v-if="statusNotice" class="header-note account-status-note" :class="[`tone-${statusNotice.tone}`, { 'visually-hidden': noteWordsHidden }]" :role="noteAnnounces ? 'status' : undefined" data-test="account-status-note" :data-kind="statusNotice.kind" :title="statusNotice.title">
-            <span class="note-text" aria-hidden="true"><span class="note-lead">{{ noteParts.lead }}</span><span v-if="noteParts.detail" class="note-detail">{{ noteParts.detail }}</span></span><span class="visually-hidden" :aria-hidden="noteAnnounces ? undefined : 'true'">{{ statusNotice.title }}</span>
+            <span class="note-text" aria-hidden="true"><span class="note-lead">{{ noteParts.lead }}</span><span v-if="noteParts.detail" class="note-detail"><span class="note-detail-text">{{ noteParts.detail }}</span></span></span><span class="visually-hidden" :aria-hidden="noteAnnounces ? undefined : 'true'">{{ statusNotice.title }}</span>
             <template v-if="!noteWordsHidden && headerAction && (headerAction.action === 'account' || accountActionsIdle)"><span class="note-sep" aria-hidden="true">·</span><button type="button" class="header-link" data-test="account-status-action" @click="accountNoticeAction(headerAction.action, 'header')">{{ headerAction.label }}</button></template>
           </p>
           <p v-if="readOnlyHint" class="header-note access-hint" data-test="mailbox-access-hint">
@@ -2948,7 +2984,8 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             >
               {{ emptyListText }}
               <button
-                v-if="inboxEmpty?.action && (inboxEmpty.action === 'account' || accountActionsIdle)"
+                v-if="emptyActionShown && inboxEmpty?.action"
+                ref="emptyAction"
                 type="button"
                 class="inline-action"
                 data-test="inbox-empty-action"
@@ -3138,7 +3175,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
                surface was open): the capability needs an account identity, so
                render an explicit account-required state instead of an empty drawer. -->
           <p v-else-if="drawer === 'destinations'" role="note" data-test="destinations-account-required">
-            Provider mail needs a connected Gmail account.<template v-if="providerAccountAction"> <button v-if="providerAccountAction.action === 'account' || accountActionsIdle" type="button" class="inline-action" data-test="destinations-account-action" @click="accountNoticeAction(providerAccountAction.action, 'drawer')">{{ providerAccountAction.label }}</button></template><template v-else> Connect one from Account first.</template>
+            Provider mail needs a connected Gmail account.<template v-if="providerAccountAction"> <button v-if="providerAccountAction.action === 'account' || accountActionsIdle" type="button" class="inline-action" data-test="destinations-account-action" @click="accountNoticeAction(providerAccountAction.action, 'drawer')">{{ providerAccountAction.label }}</button></template><template v-else-if="accountStatus?.connection === 'authenticating'"> Finish sign-in in your browser.</template><template v-else> Connect one from Account first.</template>
           </p>
           <section v-if="drawer === 'reminder-settings' && remindersSupported" class="utility-panel" data-test="reminder-settings-dialog">
             <ReminderSettings @close="closeDrawer" @saved="reminderPreferencesSaved" />

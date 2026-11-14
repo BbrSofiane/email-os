@@ -557,15 +557,22 @@ Sync failed with its cause in words, for example Sync failed · no network; ther
 is no Offline wording); its action link is shown only when the empty line is not
 carrying the action. While the Account drawer shows a sync failure as an alert,
 the header note drops its words and link and stays silent, so the failure and its
-Retry are seen and announced once (the Preview tag stays). Any status note replaces
+Retry are seen and announced once (the Preview tag stays); the empty line behind
+the drawer keeps its sentence but drops its own Retry until the drawer closes. Any status note replaces
 the read-only hint, which at 1100px and below collapses to its Review access link.
 At 1100px and below the Preview tag yields first (short `Preview`, then only its
 accessible text while a note or the hint needs room); `Sync failed` and the action
-link never clip, and only the cause words ellipsize. jsdom cannot measure layout:
+link never clip, and the cause words are whole or hidden together with their
+dot (never cut to a fragment); the cause stays in the note's title, the drawer and
+the empty line. jsdom cannot measure layout:
 the CSS is pinned by `tests/layout/account-header-css.test.ts`, and the widths at
 1030px and the contact-column collapse by the opt-in rendered suite
 `tests/layout/account-header.rendered.test.ts` (real Chrome, in-memory fake).
-The note is absent while connected and idle. One name per action everywhere:
+When the empty line becomes the owner of an actionable status and nothing is
+focused (and no drawer, palette, reader, compose, search or contact surface is
+open), focus moves once to its action; Enter or Space on the focused line runs the
+same action. Focus the user already holds is never taken. The note is absent while
+connected and idle. One name per action everywhere:
 **Connect Gmail**, **Sign in again**, **Cancel sign-in**, **Retry**, **Sync now**.
 The Account drawer shows the permission mode and the Sync section only where they
 are real (not while disconnected, not configured or signing in); a signed-out

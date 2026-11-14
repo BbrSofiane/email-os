@@ -358,7 +358,7 @@ describe('keeps Gmail account states and transitions explicit (Slice 02)', () =>
     const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
     await flushFakeClientWithMacrotasks(fake, 2);
     await openUtilityDrawer(w, 'account');
-    expect(w.find('[data-test="account-connection"]').text()).toContain('Signing in');
+    expect(w.find('[data-test="account-connection"]').text()).toBe('Finish sign-in in your browser');
     expect(w.find('[data-test="account-connect"]').exists()).toBe(false);
     expect(w.find('[data-test="account-disconnect"]').text()).toContain('Cancel sign-in');
     // Nothing to lose: cancelling a sign-in stays one click, with no confirm step.

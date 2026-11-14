@@ -154,6 +154,54 @@ describe.skipIf(chromePath === '')('Account header and contact column layout (re
     });
   });
 
+  /**
+   * Whether the cause detail ("· no network") reads whole, is hidden, or shows as a fragment ("· n…"). The detail is
+   * one line tall and clipped: its text atom either sits on that line inside the box, or has wrapped below it.
+   */
+  const detailState = (): Promise<'whole' | 'hidden' | 'fragment'> => cdp.js(`(() => {
+    const box = document.querySelector('[data-test="account-status-note"] .note-detail');
+    const atom = box?.querySelector('.note-detail-text');
+    if (!box || !atom) throw new Error('missing the note detail');
+    const b = box.getBoundingClientRect();
+    const a = atom.getBoundingClientRect();
+    if (a.top >= b.bottom - 0.5) return 'hidden';
+    return a.left >= b.left - 0.5 && a.right <= b.right + 0.5 && a.bottom <= b.bottom + 1 ? 'whole' : 'fragment';
+  })()`);
+
+  describe('the cause detail is whole or hidden, never a fragment', () => {
+    it('1030px, two tabs, Unread only, failed sync: the detail and its dot are hidden, Sync failed and Retry stay whole', async () => {
+      await resize(1030);
+      await mount({ split: true, syncFailed: true, unreadOnly: true });
+      await waitFor(`document.querySelector('[data-test="account-status-note"]:not(.visually-hidden)') !== null`);
+      expect(await detailState()).toBe('hidden');
+      const lead = await fit('[data-test="account-status-note"] .note-lead');
+      expect(lead.boxWidth).toBeGreaterThanOrEqual(lead.textWidth - 0.5);
+      const retry = await fit('[data-test="account-status-note"] .header-link');
+      expect(retry.boxWidth).toBeGreaterThanOrEqual(retry.textWidth - 0.5);
+      expect(retry.right).toBeLessThanOrEqual(retry.headerRight + 0.5);
+    });
+
+    it('1440px, failed sync: the cause reads whole', async () => {
+      await resize(1440);
+      await mount({ syncFailed: true });
+      await waitFor(`document.querySelector('[data-test="account-status-note"]:not(.visually-hidden)') !== null`);
+      expect(await detailState()).toBe('whole');
+      // Same line as the lead: the wrapping row does not push the cause up or down.
+      const tops = await cdp.js<{ lead: number; detail: number }>(`(() => ({
+        lead: document.querySelector('[data-test="account-status-note"] .note-lead').getBoundingClientRect().top,
+        detail: document.querySelector('[data-test="account-status-note"] .note-detail-text').getBoundingClientRect().top,
+      }))()`);
+      expect(Math.abs(tops.lead - tops.detail)).toBeLessThanOrEqual(1);
+    });
+
+    it.each([1030, 1100, 1180, 1280, 1440])('%ipx, two tabs, Unread only, failed sync: never a fragment', async (width) => {
+      await resize(width);
+      await mount({ split: true, syncFailed: true, unreadOnly: true });
+      await waitFor(`document.querySelector('[data-test="account-status-note"]:not(.visually-hidden)') !== null`);
+      expect(await detailState()).not.toBe('fragment');
+    });
+  });
+
   describe('contact column', () => {
     it('is a grid track while the list has rows', async () => {
       await resize(1200);

@@ -51,6 +51,10 @@ describe('header width rule (CSS source)', () => {
     expect(block('.contact-unknown')).toMatch(/text-wrap:\s*balance/);
   });
 
+  it('wraps the Account drawer notes so the last line is never a lone word (the Enable mailbox actions disclosure)', () => {
+    expect(block('.account-note')).toMatch(/text-wrap:\s*pretty/);
+  });
+
   it('lets notes give up width before the glyphs, the preview tag first and the status note last', () => {
     expect(block('.header-glyph')).toMatch(/flex:\s*0 0 auto/);
     expect(block('.header-note')).toMatch(/flex:\s*0 1 auto/);
@@ -86,7 +90,7 @@ describe('1030px header: the one note that matters yields last (CSS source; jsdo
     expect(block('.access-hint .header-link')).toMatch(/flex:\s*none/);
   });
 
-  it('keeps the lead words and the action link of the status note whole; only the detail ellipsizes', () => {
+  it('keeps the lead words and the action link of the status note whole; only the detail gives way', () => {
     const note = block('.header-note.account-status-note');
     expect(note).toMatch(/display:\s*grid/);
     expect(note).toMatch(/grid-template-columns:\s*minmax\(0, max-content\) minmax\(0, max-content\) max-content max-content/);
@@ -96,9 +100,30 @@ describe('1030px header: the one note that matters yields last (CSS source; jsdo
     const detail = block('.account-status-note .note-detail');
     expect(detail).toMatch(/min-width:\s*0/);
     expect(detail).toMatch(/overflow:\s*hidden/);
-    expect(detail).toMatch(/text-overflow:\s*ellipsis/);
-    expect(detail).toMatch(/white-space:\s*pre/);
     expect(block('.account-status-note .header-link')).toMatch(/flex:\s*none|white-space:\s*nowrap/);
+  });
+
+  it('shows the cause detail whole or not at all: it is never ellipsized to a fragment such as "n…"', () => {
+    const detail = block('.account-status-note .note-detail');
+    // One line tall and clipped, so a detail that does not fit wraps to a second row and is hidden with its separator dot.
+    expect(detail).toMatch(/display:\s*flex/);
+    expect(detail).toMatch(/flex-wrap:\s*wrap/);
+    expect(detail).toMatch(/height:\s*1lh/);
+    expect(detail).toMatch(/overflow:\s*hidden/);
+    expect(detail).not.toMatch(/text-overflow/);
+    // The text is one unbreakable item behind a zero-width one (a lone item would overflow instead of wrapping).
+    expect(block('.account-status-note .note-detail::before')).toMatch(/content:\s*['"]\\200B['"]/);
+    const atom = block('.account-status-note .note-detail-text');
+    expect(atom).toMatch(/flex:\s*none/);
+    expect(atom).toMatch(/white-space:\s*pre/);
+    expect(atom).not.toMatch(/text-overflow/);
+  });
+
+  it('keeps the lead of a neutral note one clipped line with an ellipsis (a failure or an expired sign-in never clips it)', () => {
+    const lead = block('.account-status-note .note-lead');
+    expect(lead).toMatch(/overflow:\s*hidden/);
+    expect(lead).toMatch(/text-overflow:\s*ellipsis/);
+    expect(lead).toMatch(/white-space:\s*pre/);
   });
 
   it('never clips the lead of a failure or an expired sign-in (the notes that matter)', () => {

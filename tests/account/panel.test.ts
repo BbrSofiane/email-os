@@ -57,7 +57,7 @@ describe('AccountPanel structure', () => {
   it.each([
     ['disconnected', null, 'Not connected'],
     ['auth_required', 'operator@example.test', 'Sign-in expired'],
-    ['authenticating', null, 'Signing in…'],
+    ['authenticating', null, 'Finish sign-in in your browser'],
     ['not_configured', null, 'Not configured'],
   ] as const)('labels the %s connection', (connection, email, label) => {
     const w = mountPanel(status({ connection, account: email ? { accountId: 'a', emailAddress: email } : null }));
@@ -173,12 +173,16 @@ describe('AccountPanel sync section', () => {
     expect(test(w, 'account-cached').text()).not.toContain('(s)');
     expect(mountPanel(status({ sync: { cachedConversations: 0 } })).get('[data-test="account-cached"]').text()).toBe('0 conversations cached');
     expect(mountPanel(status({ sync: { cachedConversations: 18 } })).get('[data-test="account-cached"]').text()).toBe('18 conversations cached');
+    // One form, also during the first sync: the drawer's standalone fact never shortens to "N cached".
+    const first = (cachedConversations: number) => mountPanel(status({ sync: { state: 'syncing', cachedConversations, initialSyncComplete: false } }));
+    expect(test(first(0), 'account-cached').text()).toBe('0 conversations cached');
+    expect(test(first(1), 'account-cached').text()).toBe('1 conversation cached');
   });
 
   it('puts the first-sync count on the line and the bounded-coverage fact on one short Ash second line', () => {
     const w = mountPanel(status({ sync: { state: 'syncing', cachedConversations: 7, initialSyncComplete: false } }));
     expect(test(w, 'account-sync-state').text()).toBe('Syncing first mail…');
-    expect(test(w, 'account-cached').text()).toBe('7 cached');
+    expect(test(w, 'account-cached').text()).toBe('7 conversations cached');
     expect(test(w, 'account-coverage').text()).toBe('Up to 100 conversations are cached; older mail may be missing.');
     expect(test(w, 'account-coverage').classes()).toContain('account-note');
     // After the sync the same short fact stays; with no cap there is no second line.
