@@ -23,20 +23,13 @@ import { sameConversation } from './mailbox-refs';
 import type { CommandFence, MailboxSession } from './mailbox-session';
 import { SELECTION_MAX, useMailboxSelection } from './useMailboxSelection';
 import { useMailboxGroups, type GroupNotice } from './useMailboxGroups';
+import {
+  DETAIL_CACHE_MAX, DETAIL_CACHE_TTL_MS, READER_LOADING_DELAY_MS, useMailboxDetailCache,
+} from './useMailboxDetailCache';
 
 // Definitions moved to focused modules; the exported names stay importable from here.
-export { SELECTION_MAX, sameConversation };
+export { DETAIL_CACHE_MAX, DETAIL_CACHE_TTL_MS, READER_LOADING_DELAY_MS, SELECTION_MAX, sameConversation };
 export type { GroupNotice };
-
-/**
- * J/K moves keep showing the previous conversation (never actionable) for this
- * long before the loading presentation replaces it, so a fast response never
- * produces an intermediate empty frame.
- */
-export const READER_LOADING_DELAY_MS = 120;
-/** Neighbor-detail cache bounds (read-only prefetch; see `prefetchConversation`). */
-export const DETAIL_CACHE_MAX = 3;
-export const DETAIL_CACHE_TTL_MS = 30_000;
 
 export type ListState = 'loading' | 'ready' | 'error';
 export type DetailState = 'idle' | 'loading' | 'ready' | 'error';
@@ -254,7 +247,6 @@ export function useMailbox(client: MailClient): Mailbox {
   const openRef = ref<ConversationRef | null>(null);
   const conversation = ref<Conversation | null>(null);
   const detailState = ref<DetailState>('idle');
-  const heldConversation = ref<Conversation | null>(null);
   const detailError = ref<MailError | null>(null);
   const lastCommandError = ref<MailError | null>(null);
   const inFlightCommandRef = ref<ConversationRef | null>(null);
@@ -276,14 +268,6 @@ export function useMailbox(client: MailClient): Mailbox {
   let navigationIntentToken = 0;
   let activityToken = 0;
   let detailToken = 0;
-  // Neighbor-detail cache and single-slot prefetch. `detailEpoch` is bumped by
-  // every invalidation so older in-flight reads can never publish.
-  interface CachedDetail { conversation: Conversation; fetchedAt: number }
-  const detailCache = new Map<string, CachedDetail>();
-  let detailEpoch = 0;
-  let prefetchInFlight: { key: string; epoch: number; promise: Promise<Conversation> } | null = null;
-  let prefetchWanted: ConversationRef | null = null;
-  let holdTimer: ReturnType<typeof setTimeout> | null = null;
   let commandToken = 0;
   let mailboxSessionToken = 0;
   let statusToken = 0;
@@ -298,6 +282,14 @@ export function useMailbox(client: MailClient): Mailbox {
     get detached() { return detached; },
   };
   const commands: CommandFence = { next: () => ++commandToken, current: () => commandToken };
+  const {
+    heldConversation, currentDetailEpoch, adoptablePrefetch, invalidateDetailCache, cachePut, cacheGet,
+    clearHold, beginHold, prefetchConversation,
+  } = useMailboxDetailCache({
+    client, session,
+    searchContext: () => context.value === 'search',
+    detailState, openRef, readerSource: () => readerSource,
+  });
   const {
     lastGroup, groupInFlight, bulkUnresolved, recentGroups, groupsError, groupsHasMore, groupsLoadingMore,
     groupDetail, groupDetailError, setArchivedGroup, setReadGroup, setStarredGroup, recoverGroupAcceptance,
@@ -771,82 +763,6 @@ export function useMailbox(client: MailClient): Mailbox {
     }
   }
 
-  function detailKey(target: ConversationRef): string {
-    return `${target.accountId}:${target.conversationId}`;
-  }
-
-  /** Drops every cached detail and fences in-flight prefetch results. */
-  function invalidateDetailCache(): void {
-    detailEpoch += 1;
-    detailCache.clear();
-    prefetchWanted = null;
-  }
-
-  function cachePut(conv: Conversation, epoch: number): void {
-    if (epoch !== detailEpoch) return;
-    const key = detailKey(conv.ref);
-    detailCache.delete(key);
-    detailCache.set(key, { conversation: conv, fetchedAt: Date.now() });
-    while (detailCache.size > DETAIL_CACHE_MAX) detailCache.delete(detailCache.keys().next().value as string);
-  }
-
-  function cacheGet(target: ConversationRef): Conversation | null {
-    const entry = detailCache.get(detailKey(target));
-    if (!entry) return null;
-    if (Date.now() - entry.fetchedAt > DETAIL_CACHE_TTL_MS) {
-      detailCache.delete(detailKey(target));
-      return null;
-    }
-    return entry.conversation;
-  }
-
-  function clearHold(): void {
-    if (holdTimer !== null) clearTimeout(holdTimer);
-    holdTimer = null;
-    heldConversation.value = null;
-  }
-
-  /** Keep `shown` on screen for the loading delay; an active hold keeps its original deadline. */
-  function beginHold(shown: Conversation | null): void {
-    if (!shown) { clearHold(); return; }
-    heldConversation.value = shown;
-    if (holdTimer !== null) return;
-    holdTimer = setTimeout(() => {
-      holdTimer = null;
-      heldConversation.value = null;
-    }, READER_LOADING_DELAY_MS);
-  }
-
-  /** Starts the single wanted prefetch when none is in flight. Never writes, never surfaces errors. */
-  function pumpPrefetch(): void {
-    if (detached || prefetchInFlight || !prefetchWanted) return;
-    const target = prefetchWanted;
-    prefetchWanted = null;
-    if (detailState.value !== 'ready' || readerSource !== 'list' || sameConversation(openRef.value, target)
-      || cacheGet(target) || target.accountId !== openRef.value?.accountId) return;
-    const epoch = detailEpoch;
-    const key = detailKey(target);
-    const promise = client.getConversation(target, context.value === 'search');
-    const flight = { key, epoch, promise };
-    prefetchInFlight = flight;
-    const settle = (): void => {
-      if (prefetchInFlight === flight) prefetchInFlight = null;
-      pumpPrefetch();
-    };
-    promise.then((conv) => {
-      if (!detached && epoch === detailEpoch) cachePut(conv, epoch);
-      settle();
-    }, () => { settle(); /* failure is silent: no cache entry */ });
-  }
-
-  function prefetchConversation(target: ConversationRef): void {
-    if (detached || detailState.value !== 'ready' || readerSource !== 'list') return;
-    if (sameConversation(openRef.value, target) || cacheGet(target)) return;
-    if (prefetchInFlight?.key === detailKey(target) && prefetchInFlight.epoch === detailEpoch) return;
-    prefetchWanted = { accountId: target.accountId, conversationId: target.conversationId };
-    pumpPrefetch();
-  }
-
   async function loadDetail(
     target: ConversationRef,
     background = false,
@@ -876,13 +792,11 @@ export function useMailbox(client: MailClient): Mailbox {
           void loadDetail(target, true);
           return;
         }
-        if (prefetchInFlight?.key === detailKey(target) && prefetchInFlight.epoch === detailEpoch) {
-          adopted = prefetchInFlight.promise;
-        }
+        adopted = adoptablePrefetch(target);
       }
       beginHold(shown);
     }
-    const epoch = detailEpoch;
+    const epoch = currentDetailEpoch();
     try {
       const conv = await (adopted ?? client.getConversation(target, context.value === 'search'));
       if (detached || token !== detailToken || !sameConversation(openRef.value, target)) return;
