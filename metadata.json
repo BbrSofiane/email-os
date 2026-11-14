@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7E1509QG9DSXP6QRP7AHZEP",
+  "strategy": "manual-commit",
+  "branch": "stage4/a-policy",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/lib/ipc/client.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 14,
+    "cache_creation_tokens": 11592,
+    "cache_read_tokens": 4713064,
+    "output_tokens": 4468,
+    "api_call_count": 7
+  }
+}
