@@ -9,9 +9,9 @@
 
 mod close_gate;
 mod diagnostics;
-use mail_core::attachments::{AttachmentDescriptor, AttachmentSaved, SaveAttachment};
-use mail_core::CancelToken;
-use std::collections::{HashMap, VecDeque};
+use mail_core::attachments::{
+    AttachmentDescriptor, AttachmentSaved, AttachmentTransfers, SaveAttachment,
+};
 
 use close_gate::CloseGate;
 use diagnostics::{cause, init_logging, storage_failure};
@@ -44,41 +44,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 
 /// Managed app state retains its change-listener guard for the full app life.
-#[derive(Default)]
-struct AttachmentTransfers {
-    active: HashMap<String, CancelToken>,
-    cancelled: VecDeque<String>,
-}
-impl AttachmentTransfers {
-    fn begin(&mut self, id: &str) -> Result<CancelToken, MailError> {
-        if !mail_core::attachments::valid_id(id) {
-            return Err(mail_core::attachments::invalid("requestId"));
-        }
-        if !self.active.is_empty() {
-            return Err(MailError::Busy);
-        }
-        if self.cancelled.iter().any(|v| v == id) {
-            return Err(MailError::AuthCancelled);
-        }
-        let token = CancelToken::default();
-        self.active.insert(id.into(), token.clone());
-        Ok(token)
-    }
-    fn cancel(&mut self, id: &str) {
-        if let Some(token) = self.active.get(id) {
-            token.cancel();
-        }
-        self.cancelled.push_back(id.into());
-        while self.cancelled.len() > 64 {
-            self.cancelled.pop_front();
-        }
-    }
-}
-
 struct AppState {
     core: GmailCore,
     drafts: DraftService,
-    attachment_transfers: Arc<Mutex<AttachmentTransfers>>,
+    attachment_transfers: AttachmentTransfers,
     close_gate: Arc<Mutex<CloseGate>>,
     _subscription: GmailUnsubscribe,
 }
@@ -93,7 +62,7 @@ impl AppState {
         Self {
             drafts: DraftService::new(core.clone(), drafts),
             core,
-            attachment_transfers: Arc::new(Mutex::new(AttachmentTransfers::default())),
+            attachment_transfers: AttachmentTransfers::default(),
             close_gate: Arc::new(Mutex::new(CloseGate::default())),
             _subscription: subscription,
         }
@@ -299,36 +268,21 @@ async fn save_attachment(
             .path()
             .download_dir()
             .map_err(|_| storage_failure(cause::PATH_UNAVAILABLE))?;
-        let transfers = Arc::clone(&state.attachment_transfers);
-        let cancel = transfers
-            .lock()
-            .map_err(|_| storage_failure(cause::LOCK_POISONED))?
-            .begin(&request.request_id)?;
+        let transfers = state.attachment_transfers.clone();
+        let cancel = transfers.begin(&request.request_id)?;
         let id = request.request_id.clone();
         let result = run_blocking(state.core.clone(), move |core| {
             core.download_attachment(&request, &cancel, &directory)
         })
         .await;
-        transfers
-            .lock()
-            .map_err(|_| storage_failure(cause::LOCK_POISONED))?
-            .active
-            .remove(&id);
+        transfers.finish(&id)?;
         result
     }
 }
 
 #[tauri::command]
 fn cancel_attachment(state: State<'_, AppState>, request_id: String) -> Result<(), MailError> {
-    if !mail_core::attachments::valid_id(&request_id) {
-        return Err(mail_core::attachments::invalid("requestId"));
-    }
-    state
-        .attachment_transfers
-        .lock()
-        .map_err(|_| storage_failure(cause::LOCK_POISONED))?
-        .cancel(&request_id);
-    Ok(())
+    state.attachment_transfers.cancel(&request_id)
 }
 
 #[tauri::command]
@@ -630,21 +584,28 @@ mod attachment_transfer_tests {
     use super::*;
     #[test]
     fn cancellation_before_or_during_admission_and_single_transfer_bound() {
-        let mut transfers = AttachmentTransfers::default();
-        transfers.cancel("early");
+        let transfers = AttachmentTransfers::default();
+        transfers.cancel("early").unwrap();
         assert!(matches!(
             transfers.begin("early"),
             Err(MailError::AuthCancelled)
         ));
         let token = transfers.begin("active").unwrap();
         assert!(matches!(transfers.begin("other"), Err(MailError::Busy)));
-        transfers.cancel("active");
+        transfers.cancel("active").unwrap();
         assert!(token.is_cancelled());
-        transfers.active.remove("active");
+        transfers.finish("active").unwrap();
         for i in 0..100 {
-            transfers.cancel(&format!("r{i}"));
+            transfers.cancel(&format!("r{i}")).unwrap();
         }
-        assert_eq!(transfers.cancelled.len(), 64);
+        // Only the 64 most recent cancellations are remembered (the exact
+        // bound is asserted in mail-core): r36 is still refused, r35 is not.
+        assert!(matches!(
+            transfers.begin("r36"),
+            Err(MailError::AuthCancelled)
+        ));
+        transfers.finish("r36").unwrap();
+        assert!(transfers.begin("r35").is_ok());
     }
 }
 
@@ -979,6 +940,7 @@ mod synthetic_bridge_tests {
     use mail_core::gmail::types::{ConnectionState, MailMode};
     use mail_core::synthetic::WriteControls;
     use mail_core::testing::{temp_profile, until, TIMEOUT};
+    use mail_core::CancelToken;
     use mail_core::ACCOUNT_ID;
     use std::sync::mpsc;
     use std::time::Duration;

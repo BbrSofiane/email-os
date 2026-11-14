@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::{fs::OpenOptions, io::Write, path::Path};
 use ts_rs::TS;
 
+mod transfers;
+pub use transfers::AttachmentTransfers;
+
 pub const MAX_ATTACHMENT_BYTES: usize = 5 * 1024 * 1024;
 pub const MAX_ATTACHMENTS: usize = 32;
 /// Opaque Gmail handles can exceed message/request IDs (e.g. 404 bytes).
