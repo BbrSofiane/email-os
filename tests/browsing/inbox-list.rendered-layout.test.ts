@@ -381,7 +381,7 @@ describe.skipIf(chromePath === '')('InboxList rendered layout (real Chrome, opt-
       //           11px, 32px (200% of the default) by 27px, 34.5px by 65px.
       //   1100px: collapses at about 31.5px; compact fits up to 36.5px; 37px
       //           overflows by 4px, 38px by 20px.
-      //   1280px: never collapses below 38.5px; from 39px compact overflows by
+      //   1280px: collapses at 39px (38px is still expanded); compact overflows by
       //           2px, 46px by 5px.
       // The sender and subject floors are the P1 readability guard and are not
       // traded for more headroom.
