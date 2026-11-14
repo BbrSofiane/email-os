@@ -1,0 +1,41 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7E6Y6HPYV1KA546GB44KDHC",
+  "session_id": "5d0bff72-6561-427d-8886-987008a34c7a",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-14T23:40:33.885094902Z",
+  "branch": "maintenance/p4c-thin-shell",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "crates/mail-core/src/drafts/mod.rs",
+    "crates/mail-core/src/drafts/service.rs",
+    "crates/mail-core/src/gmail/sync.rs",
+    "crates/mail-core/tests/draft_service.rs",
+    "src-tauri/src/lib.rs"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "9c62c1783643",
+  "checkpoint_transcript_start": 290,
+  "transcript_lines_at_start": 290,
+  "compact_transcript_start": 38,
+  "token_usage": {
+    "input_tokens": 30,
+    "cache_creation_tokens": 31133,
+    "cache_read_tokens": 2695798,
+    "output_tokens": 20573,
+    "api_call_count": 15
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-14T23:40:33.778228214Z",
+    "agent_lines": 620,
+    "agent_removed": 193,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 620,
+    "total_lines_changed": 813,
+    "agent_percentage": 100,
+    "metric_version": 2
+  }
+}

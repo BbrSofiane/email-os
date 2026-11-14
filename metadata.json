@@ -1,0 +1,30 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7E6Y6HPYV1KA546GB44KDHC",
+  "strategy": "manual-commit",
+  "branch": "maintenance/p4c-thin-shell",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "crates/mail-core/src/drafts/mod.rs",
+    "crates/mail-core/src/drafts/service.rs",
+    "crates/mail-core/src/gmail/sync.rs",
+    "crates/mail-core/tests/draft_service.rs",
+    "src-tauri/src/lib.rs"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 30,
+    "cache_creation_tokens": 31133,
+    "cache_read_tokens": 2695798,
+    "output_tokens": 20573,
+    "api_call_count": 15
+  }
+}
