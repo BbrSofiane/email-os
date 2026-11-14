@@ -8,7 +8,13 @@
 //!
 //! Backends under test (a parameter, see [`Backend`]):
 //! * `gmail`   — `GmailCore` + the shared scripted `mail_core::testing` fake provider;
-//! * `fixture` — the archive-only fixture `MailCore` + `FakeArchiveProvider`.
+//! * `fixture` — the archive-only fixture `MailCore` + `FakeArchiveProvider`;
+//! * `synthetic` — a synthetic session (ADR 0002): `GmailCore` + the built-in
+//!   `SyntheticGmailProvider` under the synthetic session policy. EVERY
+//!   scenario runs on it whatever profiles the file declares (the TypeScript
+//!   runner only knows `gmail` and `fixture`). Scenarios whose mailbox is not
+//!   a subset of the fixed 18 conversations get their extra threads from a
+//!   test overlay on top of the synthetic provider.
 //!
 //! Time is each backend's `FakeClock`; nothing waits on wall-clock time. The
 //! only polling is the shared bounded `until` used to observe an expected
@@ -29,6 +35,7 @@ use mail_core::groups::{
 };
 use mail_core::stars::{SetStarred, SetStarredGroup};
 use mail_core::testing::operations_fake::{ApplyPlan, FakeProvider};
+use mail_core::testing::synthetic::Overlay;
 use mail_core::testing::{open_core_with_clock, temp_profile, until};
 use mail_core::{FakeArchiveProvider, MailCore};
 use serde_json::{json, Value};
@@ -39,14 +46,31 @@ const GMAIL_ACCOUNT: &str = "acct-contract";
 /// Named, VISIBLE divergences: `(scenario, profile, why)`. The runner still
 /// executes these and requires them to FAIL; when the divergence is fixed the
 /// run fails until the entry is removed, so nothing is silently skipped.
-const KNOWN_DIVERGENCES: &[(&str, &str, &str)] = &[(
+const KNOWN_DIVERGENCES: &[(&str, &str, &str)] = &[
+    (
     "group-member-failure-does-not-stop-siblings",
     "gmail",
     "KD-1: after a definite provider failure the Gmail worker ends its pass in sync-error backoff \
      (gmail/operations.rs run_one returns Err, sync.rs PassOutcome::SyncError), so queued siblings \
      stay `queued` until the next retry tick; the fixture worker keeps draining serially. \
      docs/ux-05 §4.1 only says children run serially and failures do not roll back siblings.",
-)];
+    ),
+    (
+        "group-member-failure-does-not-stop-siblings",
+        "synthetic",
+        "KD-1: same cause as the gmail profile; the synthetic session runs the Gmail worker, so siblings \
+         queued behind the failure drain at the next retry tick (which re-arms queued writes there), \
+         not immediately.",
+    ),
+    (
+        "fixture-rejects-unsupported-commands",
+        "synthetic",
+        "POLICY (ADR 0002 decision 2): the legacy fixture rejected read, star and retry; the unified \
+         fixture admits them, so this scenario's legacy expectations no longer hold. The synthetic \
+         rejections that DO remain are asserted in tests/synthetic_core_policy.rs. Retires with the \
+         `fixture` profile at stage 4.",
+    ),
+];
 
 // ------------------------------------------------------------------ backends
 
@@ -155,36 +179,37 @@ fn gmail_thread(conversation: &Value) -> GmailThread {
     thread
 }
 
+/// Every mailbox command on a `GmailCore`, shared by the `gmail` and
+/// `synthetic` profiles.
+fn execute_on_gmail_core(core: &GmailCore, command: &str, args: Value) -> Result<Value, MailError> {
+    match command {
+        "setArchived" => to_value(core.set_archived(&args_as::<SetArchived>(args))),
+        "setRead" => to_value(core.set_read(&args_as::<SetRead>(args))),
+        "setStarred" => to_value(core.set_starred(&args_as::<SetStarred>(args))),
+        "retryOperation" => to_value(core.retry_operation(&args_as::<RetryOperation>(args))),
+        "undoOperation" => to_value(core.undo_operation(&args_as::<UndoOperation>(args))),
+        "setArchivedGroup" => to_value(core.set_archived_group(&args_as::<SetArchivedGroup>(args))),
+        "setReadGroup" => to_value(core.set_read_group(&args_as::<SetReadGroup>(args))),
+        "setStarredGroup" => to_value(core.set_starred_group(&args_as::<SetStarredGroup>(args))),
+        "getOperationGroup" => {
+            to_value(core.get_operation_group(&args_as::<GetOperationGroupRequest>(args)))
+        }
+        "listOperationGroups" => {
+            to_value(core.list_operation_groups(&args_as::<ListOperationGroupsRequest>(args)))
+        }
+        "undoOperationGroup" => {
+            to_value(core.undo_operation_group(&args_as::<UndoOperationGroup>(args)))
+        }
+        other => panic!("unknown contract command {other}"),
+    }
+}
+
 impl Backend for GmailBackend {
     fn account_id(&self) -> String {
         GMAIL_ACCOUNT.to_string()
     }
     fn execute(&self, command: &str, args: Value) -> Result<Value, MailError> {
-        let core = &self.core;
-        match command {
-            "setArchived" => to_value(core.set_archived(&args_as::<SetArchived>(args))),
-            "setRead" => to_value(core.set_read(&args_as::<SetRead>(args))),
-            "setStarred" => to_value(core.set_starred(&args_as::<SetStarred>(args))),
-            "retryOperation" => to_value(core.retry_operation(&args_as::<RetryOperation>(args))),
-            "undoOperation" => to_value(core.undo_operation(&args_as::<UndoOperation>(args))),
-            "setArchivedGroup" => {
-                to_value(core.set_archived_group(&args_as::<SetArchivedGroup>(args)))
-            }
-            "setReadGroup" => to_value(core.set_read_group(&args_as::<SetReadGroup>(args))),
-            "setStarredGroup" => {
-                to_value(core.set_starred_group(&args_as::<SetStarredGroup>(args)))
-            }
-            "getOperationGroup" => {
-                to_value(core.get_operation_group(&args_as::<GetOperationGroupRequest>(args)))
-            }
-            "listOperationGroups" => {
-                to_value(core.list_operation_groups(&args_as::<ListOperationGroupsRequest>(args)))
-            }
-            "undoOperationGroup" => {
-                to_value(core.undo_operation_group(&args_as::<UndoOperationGroup>(args)))
-            }
-            other => panic!("unknown contract command {other}"),
-        }
+        execute_on_gmail_core(&self.core, command, args)
     }
     fn snapshot(&self) -> Value {
         serde_json::to_value(self.core.list_conversations().expect("list_conversations"))
@@ -392,6 +417,133 @@ impl Backend for FixtureBackend {
                 state.hold_queued = false;
                 drop(state);
                 self.ensure_worker();
+                Ok(())
+            }
+            other => Err(format!("unknown provider mode {other}")),
+        }
+    }
+    fn after_step(&self, _was_command: bool) {}
+}
+
+/// A synthetic session: `GmailCore` + the built-in provider under the synthetic
+/// policy. Mailboxes that are not a subset of the fixed 18 conversations get
+/// their extra threads from a test overlay (same account, same policy).
+struct SyntheticBackend {
+    core: GmailCore,
+    synthetic: Arc<mail_core::synthetic::SyntheticGmailProvider>,
+    clock: Arc<FakeClock>,
+    _dir: tempfile::TempDir,
+}
+
+impl SyntheticBackend {
+    fn open(mailbox: &Value) -> Self {
+        let dir = temp_profile("contract-synthetic");
+        let clock = Arc::new(FakeClock::new(utc(CLOCK_START)));
+        let synthetic = mail_core::testing::synthetic::new_provider(dir.path());
+        let declared = mailbox["conversations"].as_array().expect("conversations");
+        let known = synthetic.conversation_ids();
+        let in_seed = declared
+            .iter()
+            .all(|c| known.iter().any(|k| k == c["id"].as_str().unwrap()));
+        let wrapped: Arc<dyn mail_core::gmail::types::GmailProvider> = if in_seed {
+            Self::check_mailbox_matches_seed(&synthetic, declared);
+            synthetic.clone()
+        } else {
+            let overlay = Overlay::wrap(synthetic.clone());
+            overlay.add_extra_threads(
+                declared
+                    .iter()
+                    .map(|c| {
+                        let mut thread = gmail_thread(c);
+                        thread.conversation.conversation_ref.account_id =
+                            mail_core::ACCOUNT_ID.to_string();
+                        thread
+                    })
+                    .collect(),
+            );
+            overlay
+        };
+        let core = mail_core::testing::synthetic::open_core_wrapping(
+            dir.path(),
+            wrapped,
+            &synthetic,
+            &clock,
+            false,
+        );
+        Self {
+            core,
+            synthetic,
+            clock,
+            _dir: dir,
+        }
+    }
+
+    /// A scenario may run on the fixed mailbox only if its declared mailbox
+    /// is a faithful subset: Inbox membership and read facts must agree.
+    fn check_mailbox_matches_seed(
+        synthetic: &mail_core::synthetic::SyntheticGmailProvider,
+        declared: &[Value],
+    ) {
+        use mail_core::gmail::types::GmailProvider;
+        for conv in declared {
+            let id = conv["id"].as_str().unwrap();
+            let thread = synthetic
+                .get_thread(id, &mail_core::CancelToken::default())
+                .unwrap()
+                .unwrap();
+            for message in conv["messages"].as_array().unwrap() {
+                let mid = message["id"].as_str().unwrap();
+                assert_eq!(
+                    thread.inbox_message_ids.iter().any(|m| m == mid),
+                    message["inInbox"] == json!(true),
+                    "{mid}: scenario mailbox disagrees with the synthetic seed about INBOX"
+                );
+                assert_eq!(
+                    thread
+                        .unread_message_ids
+                        .as_ref()
+                        .unwrap()
+                        .iter()
+                        .any(|m| m == mid),
+                    message["unread"] == json!(true),
+                    "{mid}: scenario mailbox disagrees with the synthetic seed about UNREAD"
+                );
+            }
+        }
+    }
+}
+
+impl Backend for SyntheticBackend {
+    fn account_id(&self) -> String {
+        mail_core::ACCOUNT_ID.to_string()
+    }
+    fn execute(&self, command: &str, args: Value) -> Result<Value, MailError> {
+        execute_on_gmail_core(&self.core, command, args)
+    }
+    fn snapshot(&self) -> Value {
+        serde_json::to_value(self.core.list_conversations().expect("list_conversations"))
+            .expect("serialize snapshot")
+    }
+    fn advance(&self, seconds: i64) {
+        self.clock.advance_seconds(seconds);
+    }
+    fn provider(&self, mode: &str) -> Result<(), String> {
+        match mode {
+            "hold_queued" => self
+                .core
+                .pause_test_operations(mail_core::testing::TIMEOUT)
+                .map_err(|e| format!("pause: {e:?}")),
+            "hold_applying" => {
+                self.synthetic.set_paused(true);
+                Ok(())
+            }
+            "reject_next" => {
+                self.synthetic.fail_next();
+                Ok(())
+            }
+            "release" => {
+                self.synthetic.resume();
+                self.core.release_test_operations();
                 Ok(())
             }
             other => Err(format!("unknown provider mode {other}")),
@@ -810,6 +962,7 @@ fn open_backend(profile: &str, scenario: &Scenario) -> Box<dyn Backend> {
     match profile {
         "gmail" => Box::new(GmailBackend::open(&mailbox)),
         "fixture" => Box::new(FixtureBackend::open(&mailbox)),
+        "synthetic" => Box::new(SyntheticBackend::open(&mailbox)),
         other => panic!("unknown profile {other}"),
     }
 }
@@ -825,8 +978,16 @@ fn contract_scenarios_pass_on_every_rust_backend_they_declare() {
             .as_str()
             .expect("scenario name")
             .to_string();
-        for profile in scenario.json["profiles"].as_array().expect("profiles") {
-            let profile = profile.as_str().unwrap();
+        // Every scenario also runs on the synthetic profile, which the shared
+        // files do not declare (the TypeScript runner would not know it).
+        let mut profiles: Vec<&str> = scenario.json["profiles"]
+            .as_array()
+            .expect("profiles")
+            .iter()
+            .map(|p| p.as_str().unwrap())
+            .collect();
+        profiles.push("synthetic");
+        for profile in profiles {
             let backend = open_backend(profile, scenario);
             let outcome = run_scenario(scenario, backend.as_ref());
             drop(backend);

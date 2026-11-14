@@ -710,13 +710,26 @@ core is the source of truth; the fake must agree with it.
 
 | Runner | Runs the files against |
 |---|---|
-| `crates/mail-core/tests/contract_scenarios.rs` (`cargo test -p mail-core --test contract_scenarios`) | profile `gmail`: `GmailCore` with the shared scripted `mail_core::testing` fake provider and `FakeClock`; profile `fixture`: the archive-only fixture `MailCore` with `FakeArchiveProvider` and `FakeClock` |
+| `crates/mail-core/tests/contract_scenarios.rs` (`cargo test -p mail-core --test contract_scenarios`) | profile `gmail`: `GmailCore` with the shared scripted `mail_core::testing` fake provider and `FakeClock`; profile `fixture`: the archive-only fixture `MailCore` with `FakeArchiveProvider` and `FakeClock`; profile `synthetic` (Rust only, runs EVERY scenario): a synthetic session, i.e. `GmailCore` + the built-in `SyntheticGmailProvider` under the synthetic session policy (ADR 0002) |
 | `tests/browser-fake/contract-scenarios.test.ts` (`pnpm vitest run tests/browser-fake/contract-scenarios.test.ts`) | the browser fake in its `gmail` mode and its `fixture` mode, with an injected clock |
 
 A scenario names the profiles it applies to. Archive-only scenarios list both and
 are the parity evidence for replacing the fixture backend; setters the fixture
 does not implement (read, star, retry, read/star groups) list `gmail` only, and
 `fixture-rejects-unsupported-commands` pins what the fixture rejects.
+
+The `synthetic` profile is not declared in the files (the TypeScript runner knows only
+`gmail` and `fixture`); the Rust runner adds it to every scenario. It matches the `gmail`
+profile except where the session policy differs, and every difference is a named,
+justified `KNOWN_DIVERGENCES` entry: KD-1 (same worker behaviour as Gmail) and the
+legacy `fixture-rejects-unsupported-commands` expectations, which the unified fixture
+supersedes by admitting read, star and retry (ADR 0002 decision 2). Scenarios whose mailbox
+is not a subset of the fixed 18 conversations get their extra threads from a test
+overlay on the synthetic provider. When the legacy `fixture` profile is retired (stage 4),
+the browser fake's `fixture` mode must gain read, star, retry and the cached Starred list,
+drop its `read_only` answers for them (KD-2 closes), and keep `invalid_request{mode}` /
+`read_only` for Trash, destinations and the lifecycle commands exactly as the synthetic
+policy answers them.
 
 ### File format
 
