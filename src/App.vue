@@ -36,13 +36,14 @@ import RemindersList from './components/RemindersList.vue';
 import { useReminders, REMINDER_TABS } from './composables/useReminders';
 import { formatReminderDateTime } from './lib/reminder-timezone';
 import ReminderSettings from './components/ReminderSettings.vue';
-import ActionNotice, { type GroupNoticeView } from './components/ActionNotice.vue';
+import ActionNotice from './components/ActionNotice.vue';
 import SelectionBar from './components/SelectionBar.vue';
 import HeaderGlyph from './components/HeaderGlyph.vue';
 import PaneGlyph from './components/PaneGlyph.vue';
-import { actionLabel, actionRegistry, findAction, findKeyBinding, goTargets, type ActionHandlers, type ActionId, type KeyFocus, type KeyOnlyId, type KeyResolverId } from './lib/action-registry';
-import { INBOX_EMPTY_RECOVERABLE, accountNotice, drawerShowsSameFailure, emptyLineOwnsStatus, headerNoteAnnounces, headerNoticeAction, inboxEmptyState, readOnlyHintShown, splitNoticeText, type AccountNoticeAction, type InboxEmptyAction } from './lib/account-status';
-import { groupRowsBySender, isSingleFromQuery, senderGroupKey, validateSearch } from './lib/search';
+import { actionLabel, actionRegistry, findKeyBinding, type ActionHandlers, type ActionId, type KeyFocus, type KeyOnlyId, type KeyResolverId } from './lib/action-registry';
+import type { AccountNoticeAction, InboxEmptyAction } from './lib/account-status';
+import { groupRowsBySender, isSingleFromQuery, senderGroupKey } from './lib/search';
+import { errorText } from './lib/error-text';
 import InboxList from './components/InboxList.vue';
 import SplitEditor from './components/SplitEditor.vue';
 import { splitBadge } from './lib/saved-split';
@@ -63,8 +64,13 @@ import { BROWSER_PREVIEW_DISCLOSURE } from './lib/ipc/browser-fake';
 import type { ClientMode } from './lib/ipc';
 import type { ConversationRef, DraftSource, DraftSummary, MailClient, Reminder } from './lib/ipc/client';
 import { REPLY_REASONS, replyBlockedReason, sourceLoadErrorReason } from './lib/reply-context';
-import { sameConversation, useMailbox, type BrowseContext, type ConversationSummaryLike, type DoneBoundary, type SearchVisit, type LastActionId } from './composables/useMailbox';
+import { sameConversation, useMailbox, type BrowseContext, type ConversationSummaryLike, type DoneBoundary, type SearchVisit } from './composables/useMailbox';
 import { useDrafts } from './composables/useDrafts';
+import { useAccountNotes } from './composables/useAccountNotes';
+import { useActionNotice } from './composables/useActionNotice';
+import { useContactContext } from './composables/useContactContext';
+import { useGoChord } from './composables/useGoChord';
+import { useSearchSurface } from './composables/useSearchSurface';
 
 const props = withDefaults(defineProps<{
   client: MailClient;
@@ -80,8 +86,6 @@ const workspaceActive = computed(() => props.active !== false);
 const CONTACT_BREAKPOINT_PX = 1000;
 
 type UtilityDrawer = 'account' | 'activity' | 'destinations' | 'reminder-settings';
-type ContactContext = 'focused' | 'open';
-interface ContactInfo { displayName: string | null; mailbox: string }
 /** Visible-row anchor for the reader round trip. */
 interface ListAnchor { ref: ConversationRef; offsetTop: number; scrollTop: number }
 /**
@@ -237,131 +241,7 @@ async function clearSelectionFromBar(): Promise<void> {
 // Action notice (UX-04): single-slot undo notification
 // ---------------------------------------------------------------------------
 
-/** Advisory wall clock for the Undo hint; the backend owns eligibility. */
-const nowMs = ref(Date.now());
-let nowTimer: ReturnType<typeof setInterval> | null = null;
-
-/**
- * Single-slot notice state, single-or-group identity (UX-04/UX-05). Status text
- * derives from the matching Activity row / authoritative group status on every
- * refresh; undo windows come only from refreshed authoritative state. The
- * backend stays the authority: an `expired` rejection refreshes and then closes
- * the slot window below. After a successful undo the slot reports the outcome.
- */
-const actionNotice = computed(() => {
-  const groupSlot = mailbox.lastGroup.value;
-  if (groupSlot) {
-    const status = groupSlot.status;
-    const counts = { pending: 0, confirmed: 0, failed: 0, rejected: 0, unknown: 0, cancelled: 0 };
-    if (status) {
-      for (const member of status.members) {
-        if (member.status === 'rejected') counts.rejected += 1;
-        else if (member.status === 'confirmed') counts.confirmed += 1;
-        else if (member.status === 'failed') counts.failed += 1;
-        else if (member.status === 'outcome_unknown') counts.unknown += 1;
-        else if (member.status === 'cancelled') counts.cancelled += 1;
-        else counts.pending += 1; // queued | applying
-      }
-    }
-    let undoneView: GroupNoticeView['undone'] = null;
-    const undoMembers = status?.undoReceipt?.members ?? groupSlot.undone?.members;
-    if (undoMembers) {
-      const skipReasons: Record<string, number> = {};
-      let cancelled = 0;
-      let compensating = 0;
-      let skipped = 0;
-      for (const member of undoMembers) {
-        if (member.decision.kind === 'cancelled') cancelled += 1;
-        else if (member.decision.kind === 'compensating') compensating += 1;
-        else {
-          skipped += 1;
-          skipReasons[member.decision.reason] = (skipReasons[member.decision.reason] ?? 0) + 1;
-        }
-      }
-      // CURRENT compensation outcomes: prefer the backend's persisted undo
-      // record (also correct after restart / lost undo response); fall back to
-      // the refreshed activity rows for compensations it lists. Compensation
-      // status is tracked separately from the original execution statuses.
-      const outcomes = { confirmed: 0, failed: 0, unknown: 0, pending: 0 };
-      const record = groupSlot.status?.undoReceipt;
-      if (record) {
-        for (const member of record.members) {
-          for (const compensation of member.compensations) {
-            if (compensation.status === 'confirmed') outcomes.confirmed += 1;
-            else if (compensation.status === 'failed') outcomes.failed += 1;
-            else if (compensation.status === 'outcome_unknown') outcomes.unknown += 1;
-            else outcomes.pending += 1;
-          }
-        }
-      } else {
-        for (const member of groupSlot.undone?.members ?? []) {
-          for (const operationId of member.operationIds) {
-            const row = mailbox.activity.value.find((item) => item.id === operationId);
-            if (!row) outcomes.pending += 1;
-            else if (row.status === 'confirmed') outcomes.confirmed += 1;
-            else if (row.status === 'failed') outcomes.failed += 1;
-            else if (row.status === 'outcome_unknown') outcomes.unknown += 1;
-            else outcomes.pending += 1;
-          }
-        }
-      }
-      undoneView = { cancelled, compensating, skipped, skipReasons, compensationOutcomes: outcomes };
-    }
-    const group: GroupNoticeView = {
-      count: groupSlot.members.length,
-      counts,
-      acceptanceUnknown: groupSlot.state === 'acceptance-unknown',
-      statusKnown: status !== null,
-      statusError: groupSlot.statusError,
-      undoableUntil: status?.undo.undoableUntil ?? null,
-      hadWindow: groupSlot.hadWindow,
-      undone: undoneView,
-    };
-    const groupActionId: LastActionId = groupSlot.kind === 'star' ? (groupSlot.requestedStarred ? 'star' : 'unstar') : groupSlot.kind === 'read'
-      ? (groupSlot.requestedRead ? 'read' : 'unread')
-      : (groupSlot.requestedArchived ? 'archive' : 'unarchive');
-    return {
-      label: groupSlot.kind === 'star' ? (groupSlot.requestedStarred ? 'Star' : 'Unstar') : groupSlot.kind === 'read' ? (groupSlot.requestedRead ? 'Mark read' : 'Mark unread') : (groupSlot.requestedArchived ? 'Mark done' : 'Mark not done'),
-      actionId: groupActionId,
-      subject: null,
-      operation: null,
-      undoableUntil: null,
-      hadWindow: false,
-      undone: null,
-      group,
-    };
-  }
-  const slot = mailbox.lastAction.value;
-  if (!slot) return null;
-  const operation = mailbox.activity.value.find((item) => item.id === slot.receipt.operationId) ?? null;
-  const label = findAction(slot.actionId)?.label ?? slot.actionId;
-  return {
-    label,
-    actionId: slot.actionId,
-    subject: slot.subject,
-    operation,
-    // Post-undo the window is closed outright: a stale activity row can still
-    // carry undoableUntil, and the palette/key must never send a second undo.
-    undoableUntil: slot.undone ? null : operation ? operation.undoableUntil ?? null : slot.undoableUntil,
-    hadWindow: slot.hadWindow,
-    undone: slot.undone
-      ? {
-          outcome: slot.undone.outcome,
-          compensations: mailbox.activity.value.filter((item) => slot.undone?.operationIds.includes(item.id) ?? false),
-        }
-      : null,
-  };
-});
-
-/** Palette/key availability share this window check; expiry is advisory only.
- *  An in-flight undo owns the slot: a second dispatch (key repeat, double-tap,
- *  button+key) must never race it into a false `already_undone` failure. */
-const undoWindowOpen = computed(() => {
-  const notice = actionNotice.value;
-  if (!notice || notice.undone) return false;
-  const until = notice.group ? notice.group.undoableUntil : notice.undoableUntil;
-  return until !== null && Date.parse(until) > nowMs.value;
-});
+const { nowMs, actionNotice, undoWindowOpen } = useActionNotice({ mailbox });
 
 /** Undo succeeded: re-focus the restored row only when it is in the current context. */
 async function undoFromNotice(): Promise<void> {
@@ -417,60 +297,7 @@ const accountStatus = computed(() => mailbox.accountStatus.value);
 const accountId = computed(() => accountStatus.value?.account?.accountId ?? null);
 const drafts = useDrafts(props.client, accountId, props.mode);
 
-// Header status note: one fact about the connection or sync, null while connected and idle.
-const statusNotice = computed(() => accountNotice(accountStatus.value));
-// Any status note (connection or sync) replaces the older read-only hint: the Account drawer covers it
-// and the header has no room for both.
-const readOnlyHint = computed(() => readOnlyHintShown(accountStatus.value, statusNotice.value));
-// Only the plain Inbox says anything about the account; search, filters, saved and other contexts keep their own text.
-const inboxEmpty = computed(() => mailbox.context.value === 'inbox' && !mailbox.unreadOnly.value && !mailbox.starredOnly.value
-  ? inboxEmptyState(accountStatus.value) : null);
-// The empty inbox line is on screen: a ready, zero-row plain Inbox with no reader open.
-const emptyLineShown = computed(() => mailbox.listState.value === 'ready' && mailbox.conversations.value.length === 0
-  && !readerOpen.value && !!inboxEmpty.value);
-// One action, one place: while the empty inbox line carries it, the header note has no link.
-const emptyLineCarriesAction = computed(() => emptyLineShown.value && !!inboxEmpty.value?.action);
-const headerAction = computed(() => headerNoticeAction(statusNotice.value, emptyLineCarriesAction.value));
 const emptyAction = ref<HTMLButtonElement | null>(null);
-// One sentence, one place: while the empty line carries the status sentence, the header note drops its visible
-// words (the Preview tag stays) and keeps only its one announcement, so the sentence and the ticking cached
-// count are never shown twice.
-// While the Account drawer shows the same sync failure as its alert (with its own Retry), the note drops its
-// words and link too, and stays silent: the failure and its fix are seen and announced once. The Preview tag stays.
-const drawerHasFailure = computed(() => drawerShowsSameFailure(accountStatus.value, drawer.value === 'account'));
-// One live action: while the Account drawer shows the same failure with its own Retry, the empty line behind it
-// keeps its sentence but not a second, inert-looking Retry. It returns when the drawer closes.
-const emptyActionShown = computed(() => !!inboxEmpty.value?.action
-  && (inboxEmpty.value.action === 'account' || accountActionsIdle.value)
-  && !drawerHasFailure.value);
-const noteWordsHidden = computed(() => emptyLineOwnsStatus(inboxEmpty.value, emptyLineShown.value) || drawerHasFailure.value);
-const noteAnnounces = computed(() => headerNoteAnnounces(accountStatus.value, drawer.value === 'account'));
-// The lead ("Sync failed") stays whole; the detail (cause, cached count) is what ellipsizes first.
-const noteParts = computed(() => splitNoticeText(statusNotice.value?.text ?? ''));
-// The contact pane says nothing about a missing correspondent when no row can be focused.
-const contactListEmpty = computed(() => !readerOpen.value && mailbox.conversations.value.length === 0);
-// Provider mail with no account: Connect (or Account when nothing can be connected), never an action of its own.
-const providerAccountAction = computed(() => {
-  const empty = inboxEmptyState(accountStatus.value);
-  return empty && (empty.action === 'connect' || empty.action === 'account') ? { action: empty.action, label: empty.actionLabel } : null;
-});
-// Palette: Connect, or a Sync now that can fix a failure, ranks above Go to.
-const syncFailureFixable = computed(() => actionAvailable('sync') && accountStatus.value?.sync.state === 'error');
-const accountCommandsFirst = computed(() => actionAvailable('connect') || syncFailureFixable.value);
-// A visible sync failure has one fix, so Sync now leads the palette (triage commands follow).
-const accountCommandsTop = computed(() => syncFailureFixable.value);
-const paletteHasRows = computed(() => !(mailbox.listState.value === 'ready' && mailbox.conversations.value.length === 0));
-const emptyListText = computed(() => {
-  if (mailbox.context.value === 'search') return mailbox.nextCursor.value ? 'No matches on this candidate page. Continue scanning older mail below.' : 'No matching conversations in the searched content.';
-  if (mailbox.unreadOnly.value && mailbox.context.value !== 'trash') return 'No known unread conversations in this view. Use Commands → Show all conversations to turn off the unread filter; unknown read states are not included.';
-  if (mailbox.starredOnly.value) return 'No known starred conversations in this cached view; unknown facts and uncached mail are not included.';
-  if (mailbox.context.value === 'trash') return 'No known cached Trash conversations. This does not mean your Gmail Trash is empty.';
-  if (mailbox.context.value === 'saved') return 'No Inbox conversations match this saved split. Edit the sender or domain criteria, or return to Inbox.';
-  if (mailbox.context.value === 'inbox') return inboxEmpty.value?.text ?? INBOX_EMPTY_RECOVERABLE;
-  if (mailbox.nextCursor.value) return 'No conversations on this cache page; more cached candidates are available.';
-  if (mailbox.context.value === 'starred') return 'No known starred conversations in this local cache; unknown and uncached mail is not included.';
-  return 'No known archived conversations in this local cache.';
-});
 
 /**
  * Inline reply composer: a reply to the conversation the reader is currently
@@ -1008,7 +835,6 @@ onMounted(() => {
   window.addEventListener('compositionstart', cancelGo);
   window.addEventListener('focusin', cancelGo);
   wideQuery?.addEventListener('change', onViewportChange);
-  nowTimer = setInterval(() => { nowMs.value = Date.now(); }, 250);
 });
 
 onBeforeUnmount(() => {
@@ -1019,95 +845,11 @@ onBeforeUnmount(() => {
   window.removeEventListener('focusin', cancelGo);
   cancelGo();
   clearReminderConfirmation();
-  if (nowTimer !== null) clearInterval(nowTimer);
-  nowTimer = null;
   wideQuery?.removeEventListener('change', onViewportChange);
 });
 
-// ---------------------------------------------------------------------------
-// Contact context data: only exact known fields, only the matching surface
-// ---------------------------------------------------------------------------
+const { readerLoading, readerLoadingIdentity, contact, contactContext, contactCollapsed, composeRecipientLabel, cardTitle, onReaderActiveMessage, onReaderContactOverride } = useContactContext({ mailbox, drafts, readerOpen, accountReady });
 
-const listContact = computed<ContactInfo | null>(() => {
-  // A non-ready list never supplies stale contact targets.
-  if (mailbox.listState.value !== 'ready') return null;
-  const primary = mailbox.focusedSummary.value?.primaryCorrespondent;
-  return primary ? { displayName: primary.displayName, mailbox: primary.mailbox } : null;
-});
-
-const readerContact = computed<ContactInfo | null>(() => {
-  const conversation = mailbox.conversation.value;
-  if (!conversation || mailbox.detailState.value !== 'ready') return null;
-  if (!sameConversation(conversation.ref, mailbox.openRef.value)) return null;
-  // Baseline: the sender of the focused (active) message; without one, the
-  // latest displayed message. Hover/focus overrides are applied in `contact`.
-  const activeId = readerActiveMessageId.value;
-  const active = activeId ? conversation.messages.find((message) => message.id === activeId) ?? null : null;
-  const message = active ?? conversation.messages[conversation.messages.length - 1] ?? null;
-  return message ? { displayName: message.from.displayName, mailbox: message.from.mailbox } : null;
-});
-
-/** The list row of the open reference: the list's own, truthful identity data. */
-const openRow = computed(() => {
-  const opened = mailbox.openRef.value;
-  return opened ? mailbox.conversations.value.find((row) => sameConversation(row.ref, opened)) ?? null : null;
-});
-const readerLoading = computed(() => readerOpen.value && mailbox.detailState.value === 'loading');
-/** What the reader may say about a still-loading target, from the list row only. */
-const readerLoadingIdentity = computed(() => {
-  const row = readerLoading.value ? openRow.value : null;
-  if (!row) return null;
-  const primary = row.primaryCorrespondent;
-  return {
-    subject: row.subject,
-    sender: primary ? primary.displayName ?? primary.mailbox : null,
-    at: row.lastMessageAt ?? null,
-  };
-});
-
-const contact = computed<ContactInfo | null>(() => {
-  if (!readerOpen.value) return listContact.value;
-  // While the target loads, the list row's sender is the only truthful source.
-  if (readerLoading.value) {
-    const primary = mailbox.listState.value === 'ready' ? openRow.value?.primaryCorrespondent : undefined;
-    return primary ? { displayName: primary.displayName, mailbox: primary.mailbox } : null;
-  }
-  // A participant override applies only while the referenced message still
-  // exists on the open conversation: late blur/leave events, background
-  // removals, and account changes cannot leak a stale contact.
-  const override = contactOverride.value;
-  if (override
-    && sameConversation(override.ref, mailbox.openRef.value)
-    && mailbox.conversation.value?.messages.some((message) => message.id === override.messageId)
-  ) {
-    return { displayName: override.displayName, mailbox: override.mailbox };
-  }
-  return readerContact.value;
-});
-const contactContext = computed<ContactContext>(() => (readerOpen.value ? 'open' : 'focused'));
-
-// Reply-target resolution for an active reply draft editor, for the compose
-// card's heading (the contact pane shows no compose line: it would move its
-// pinned name and email lines). While
-// the reader is open on the source conversation, the latest message's sender
-// is the exact known target; otherwise the draft's current raw To text is the
-// only honest fallback. No target is guessed from participants or names.
-const composeTarget = computed<ContactInfo | null>(() => {
-  const source = drafts.activeSource.value;
-  if (!source || source.kind !== 'reply') return null;
-  const open = mailbox.conversation.value;
-  if (readerOpen.value && open && sameConversation(open.ref, source.conversation)) {
-    const latest = open.messages[open.messages.length - 1];
-    if (latest) return { displayName: latest.from.displayName, mailbox: latest.from.mailbox };
-  }
-  const to = drafts.content.value.to;
-  return to.trim() ? { displayName: null, mailbox: to } : null;
-});
-// A ready list with no rows, no open reader and no reply target has no conversation to have a contact: the
-// column takes no width (the list does) and the rail has no Contact button. While loading or failed, rows may
-// still arrive, so nothing collapses then. With rows and a selected conversation nothing changes.
-const contactCollapsed = computed(() => accountReady.value && mailbox.listState.value === 'ready'
-  && mailbox.conversations.value.length === 0 && !readerOpen.value && !composeTarget.value);
 // The column or the disclosure disappears with the last row: close the disclosure, and if focus was inside
 // the contact surface hand it to the empty line instead of dropping it to <body>.
 watch(contactCollapsed, (collapsed) => {
@@ -1125,195 +867,12 @@ watch(contactCollapsed, (collapsed) => {
   });
 }, { flush: 'pre' });
 
-const composeRecipientLabel = computed<string | null>(() => {
-  const target = composeTarget.value;
-  return target ? (target.displayName ?? target.mailbox) : null;
-});
-/** The inline card's name: "New Message", or the reply draft's own title when a reply is edited there. */
-const cardTitle = computed(() => drafts.activeSource.value?.kind !== 'reply' ? 'New Message'
-  : composeRecipientLabel.value ? `Reply draft to ${composeRecipientLabel.value}` : 'Reply draft');
-
 // ---------------------------------------------------------------------------
 // Reader origin, focus, and scroll restoration
 // ---------------------------------------------------------------------------
 
 // Context history is account-scoped and stores references/geometry, never indices.
 interface ContextEntry extends ReaderOrigin { starredOnly: boolean; search?: SearchVisit; context: BrowseContext; accountId: string; loadedDonePages: number; doneBoundary: DoneBoundary | null }
-const searchVisible = ref(false);
-const searchDraft = ref('');
-const searchInput = ref<HTMLInputElement | null>(null);
-const cachedSearch = ref(false);
-// Session-only by design: recently submitted queries live in memory for this
-// app instance and account only — never persisted to disk, localStorage or
-// the provider. Recorded on successful submitSearch only.
-const recentQueries = ref<string[]>([]);
-const RECENT_QUERY_LIMIT = 8;
-const CORRESPONDENT_LIMIT = 6;
-const suggestionsOpen = ref(false);
-const suggestionIndex = ref(-1);
-const searchAttemptedEmpty = ref(false);
-const suggestionsId = 'mail-query-suggestions';
-const suggestionId = (index: number) => `mail-query-suggestion-${index}`;
-interface SearchSuggestion { kind: 'query' | 'correspondent'; label: string; detail: string; value: string }
-// Cached correspondent name/address pairs derived from the currently loaded
-// conversations' senders/recipients, bounded so a long list stays cheap.
-const cachedCorrespondents = computed(() => {
-  const seen = new Map<string, { displayName: string | null; mailbox: string }>();
-  for (const row of mailbox.conversations.value.slice(0, 100)) {
-    const people = row.primaryCorrespondent ? [row.primaryCorrespondent, ...row.participants] : row.participants;
-    for (const person of people) if (person.mailbox) seen.set(person.mailbox.toLowerCase(), person);
-  }
-  return [...seen.values()];
-});
-const searchSuggestions = computed<SearchSuggestion[]>(() => {
-  const input = searchDraft.value.trim().toLowerCase();
-  const out: SearchSuggestion[] = [];
-  if (!input) {
-    // Empty input: recent submitted queries as selectable rows.
-    for (const query of recentQueries.value) out.push({ kind: 'query', label: query, detail: '', value: query });
-    return out;
-  }
-  for (const person of cachedCorrespondents.value) {
-    if (out.length >= CORRESPONDENT_LIMIT) break;
-    if ((person.displayName ?? '').toLowerCase().includes(input) || person.mailbox.toLowerCase().includes(input)) {
-      out.push({ kind: 'correspondent', label: person.displayName ?? person.mailbox, detail: person.displayName ? person.mailbox : '', value: 'from:"' + person.mailbox + '"' });
-    }
-  }
-  for (const query of recentQueries.value) {
-    if (query.toLowerCase().startsWith(input)) out.push({ kind: 'query', label: query, detail: '', value: query });
-  }
-  return out;
-});
-// Inline mirror of the Rust-owned grammar (src/lib/search.ts): while typing,
-// name the exact problem; an invalid query is never submitted to searchMail.
-const searchProblem = computed(() => validateSearch(searchDraft.value));
-const searchError = computed(() => {
-  const problem = searchProblem.value;
-  if (!problem) return null;
-  // An untouched empty input shows suggestions instead of an error; an empty
-  // submit attempt does show it.
-  if (!searchDraft.value.trim() && !searchAttemptedEmpty.value) return null;
-  return problem;
-});
-const activeSuggestionId = computed(() => {
-  const suggestion = suggestionsOpen.value ? searchSuggestions.value[suggestionIndex.value] : undefined;
-  return suggestion ? suggestionId(suggestionIndex.value) : undefined;
-});
-watch(searchDraft, () => {
-  searchAttemptedEmpty.value = false;
-  suggestionIndex.value = -1;
-  suggestionsOpen.value = true;
-});
-function recordRecentQuery(query: string): void {
-  const trimmed = query.trim();
-  if (!trimmed) return;
-  recentQueries.value = [trimmed, ...recentQueries.value.filter((q) => q !== trimmed)].slice(0, RECENT_QUERY_LIMIT);
-}
-async function revealSearch(): Promise<void> {
-  if (!accountReady.value || drawer.value || contactDisclosure.value || replyComposerOpen.value || composeCardOpen.value) return;
-  searchVisible.value = true;
-  searchDraft.value = mailbox.searchQuery.value;
-  suggestionsOpen.value = true;
-  suggestionIndex.value = -1;
-  await nextTick();
-  searchInput.value?.focus();
-}
-async function submitSearch(query = searchDraft.value): Promise<void> {
-  if (!accountId.value) return;
-  // An invalid query never reaches the provider; the inline error names why.
-  if (validateSearch(query) !== null) {
-    if (!query.trim()) searchAttemptedEmpty.value = true;
-    return;
-  }
-  // Entering search closes the reader (and with it the docked inline reply
-  // composer or compose card), so the active editor flushes through the
-  // protected path first; a failed close keeps the reader and composer visible.
-  if (!(await releaseEditorSurface())) return;
-  if (mailbox.context.value !== 'search') {
-    const saved = captureContext();
-    if (saved) history.value.push(saved);
-  }
-  drawer.value = null;
-  contactDisclosure.value = false;
-  searchVisible.value = true;
-  searchDraft.value = query;
-  const token = ++navigationToken;
-  await mailbox.search(query, cachedSearch.value);
-  if (token !== navigationToken) return;
-  recordRecentQuery(query);
-  cachedSearch.value = mailbox.searchCachedOnly.value;
-  suggestionsOpen.value = false;
-  // Auto-collapse (results-first chrome): a successful submit leaves the slim
-  // header + coverage + list and moves focus to the first result row. The form
-  // stays open when the submit errored (the banner points at it) or when the
-  // user already typed a different draft while the search was in flight.
-  // Reopen paths: /, the header Search glyph, the palette command and the
-  // results-header query button — all go through revealSearch().
-  const submitted = mailbox.context.value === 'search' && mailbox.searchQuery.value === query && mailbox.listState.value !== 'error';
-  if (submitted && searchDraft.value === query) searchVisible.value = false;
-  await focusFocusedRow();
-}
-function applySuggestion(suggestion: SearchSuggestion): void {
-  suggestionIndex.value = -1;
-  suggestionsOpen.value = false;
-  void submitSearch(suggestion.value);
-}
-// The listbox is capped (CSS max-height), so a highlight outside the visible
-// band must scroll its option into view — on arrow keys and pointer moves.
-// The optional call keeps jsdom (no scrollIntoView) and odd hosts safe; the
-// command palette uses the same pattern.
-function scrollSuggestionIntoView(index: number): void {
-  document.getElementById(suggestionId(index))?.scrollIntoView?.({ block: 'nearest' });
-}
-function highlightSuggestion(index: number): void {
-  suggestionIndex.value = index;
-  // Deferred: on a reopen (v-show just flipped back) the ul is still hidden in
-  // this tick, and scrollIntoView on a display:none subtree is a no-op.
-  void nextTick(() => scrollSuggestionIntoView(suggestionIndex.value));
-}
-function onSearchInputKeydown(event: KeyboardEvent): void {
-  if (event.isComposing || event.keyCode === 229) return;
-  if (event.key === 'Escape') {
-    event.preventDefault();
-    event.stopPropagation();
-    // Esc in two steps: first close the suggestion list, then hide the form
-    // WITHOUT leaving the search context (list + query header remain); a
-    // second Esc, once focus is on the list, exits via the normal Back path.
-    if (suggestionsOpen.value && searchSuggestions.value.length) { suggestionsOpen.value = false; return; }
-    searchVisible.value = false;
-    void focusFocusedRow();
-    return;
-  }
-  if (event.ctrlKey || event.metaKey || event.altKey) return;
-  // The global handler ignores editable targets, so single-letter shortcuts
-  // (BROWSE-10) stay inert while typing here; only the keys below are consumed.
-  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-    if (!searchSuggestions.value.length) return; // native caret movement
-    event.preventDefault();
-    event.stopPropagation();
-    // A closed listbox with available suggestions reopens on the arrow keys
-    // (e.g. after Esc closed it) and restarts the highlight; with no
-    // suggestions, the arrows keep the native caret movement.
-    const wasClosed = !suggestionsOpen.value;
-    suggestionsOpen.value = true;
-    const count = searchSuggestions.value.length;
-    suggestionIndex.value = wasClosed || suggestionIndex.value < 0
-      ? (event.key === 'ArrowDown' ? 0 : count - 1)
-      : (suggestionIndex.value + (event.key === 'ArrowDown' ? 1 : count - 1)) % count;
-    void nextTick(() => scrollSuggestionIntoView(suggestionIndex.value));
-    return;
-  }
-  if (event.key === 'Enter' && suggestionsOpen.value && searchSuggestions.value[suggestionIndex.value]) {
-    // Enter applies the highlighted suggestion (fill + submit); with no
-    // highlight it falls through to the native submit of the typed query.
-    event.preventDefault();
-    event.stopPropagation();
-    applySuggestion(searchSuggestions.value[suggestionIndex.value]!);
-  }
-}
-async function senderSearch(address: string): Promise<void> {
-  await submitSearch('from:"' + address + '"');
-}
 const recentFetched = ref<{ ref: ConversationRef; subject: string }[]>([]);
 // The open (or focused) conversation is where the user already is: exclude it
 // by ref identity, then cap, so the pane still lists up to four other threads.
@@ -1338,6 +897,10 @@ async function openRecent(target: ConversationRef): Promise<void> {
 }
 const history = ref<ContextEntry[]>([]);
 let navigationToken = 0;
+const { searchVisible, searchDraft, searchInput, cachedSearch, recentQueries, suggestionsOpen, suggestionIndex, suggestionsId, suggestionId, searchSuggestions, searchError, activeSuggestionId, revealSearch, submitSearch, applySuggestion, highlightSuggestion, onSearchInputKeydown, senderSearch } = useSearchSurface({
+  mailbox, accountId, accountReady, drawer, contactDisclosure, replyComposerOpen, composeCardOpen, history,
+  captureContext, releaseEditorSurface, nextNavigationToken: () => ++navigationToken, currentNavigationToken: () => navigationToken, focusFocusedRow,
+});
 const attachmentConversation = ref<import('./lib/ipc/client').Conversation | null>(null);
 let attachmentOrigin: HTMLElement | null = null;
 let attachmentScroll = 0;
@@ -1371,49 +934,7 @@ const overlayQuery = computed({
 const paletteButton = ref<HTMLElement | null>(null);
 let overlayOrigin: HTMLElement | null = null;
 let overlayRowOrigin: ConversationRef | null = null;
-// G-chord (g then e/t/d/h, and a in Gmail mode). The chord window is long enough for a hesitant second
-// key; when it lapses the hint disappears and a short grace window swallows a
-// late e/h, so a slow "g e" can never fall through to the plain-key meaning of
-// e (Archive). Any other key, focus change or explicit cancel ends the grace.
-const GO_CHORD_WINDOW_MS = 1500;
-const GO_CHORD_GRACE_MS = 600;
-let goTimer: ReturnType<typeof setTimeout> | null = null;
-let goGraceTimer: ReturnType<typeof setTimeout> | null = null;
-const goPending = ref(false);
-function endGoGrace(): void { if (goGraceTimer) clearTimeout(goGraceTimer); goGraceTimer = null; }
-function cancelGo(): void {
-  if (goTimer) clearTimeout(goTimer);
-  goTimer = null;
-  goPending.value = false;
-  endGoGrace();
-}
-function armGo(): void {
-  cancelGo();
-  goPending.value = true;
-  goTimer = setTimeout(() => {
-    goTimer = null;
-    goPending.value = false;
-    goGraceTimer = setTimeout(endGoGrace, GO_CHORD_GRACE_MS);
-  }, GO_CHORD_WINDOW_MS);
-}
-/** Only what the palette and rail offer: Trash needs its rail item, Reminders its transport, Account Gmail mode. */
-function availableGoTargets() {
-  return goTargets.filter((target) => target.id === 'done' || actionAvailable(target.id));
-}
-/** The chord's target for an unmodified key, or undefined (the key keeps its plain meaning). */
-function goTargetFor(event: KeyboardEvent) {
-  if (event.shiftKey || event.metaKey || event.ctrlKey || event.altKey || event.isComposing) return undefined;
-  return availableGoTargets().find((target) => target.key === event.key);
-}
-/** Keys whose chorded meaning (Done / Trash / Drafts / Reminders / Account) differs from the plain key. */
-function isGoSecondKey(event: KeyboardEvent): boolean {
-  return goTargetFor(event) !== undefined;
-}
-const goHintLabel = computed(() => {
-  const phrases = availableGoTargets().map((target) => `${target.key.toUpperCase()} for ${target.word}`);
-  const list = phrases.length > 1 ? `${phrases.slice(0, -1).join(', ')} or ${phrases.at(-1)}` : phrases[0];
-  return `g pressed. Press ${list}, Escape to cancel.`;
-});
+const { goPending, goHintLabel, endGoGrace, cancelGo, armGo, goTargetFor, isGoSecondKey, isArmed: chordArmed, inGraceWindow: chordInGrace } = useGoChord({ actionAvailable });
 function openOverlay(kind: 'palette' | 'navigator'): void {
   cancelGo();
   if (!accountReady.value) return;
@@ -1537,11 +1058,6 @@ const readerView = ref<InstanceType<typeof ReaderView> | null>(null);
 const readerBackHost = ref<HTMLElement | null>(null);
 const readerActionsHost = ref<HTMLElement | null>(null);
 /** Message identity that currently owns reader focus (for the contact baseline). */
-const readerActiveMessageId = ref<string | null>(null);
-/** Temporary participant hover/focus context from the reader. */
-const contactOverride = ref<
-  { ref: ConversationRef; messageId: string; displayName: string | null; mailbox: string } | null
->(null);
 
 function captureListOrigin(surface: ReaderOrigin['surface']): void {
   // Only the mounted list supplies an anchor; J/K and Activity opens inside the
@@ -1753,29 +1269,6 @@ watch(
 const canMoveReaderPrev = computed(() => readerNavigates.value ? mailbox.listState.value === 'ready' && resolveReaderNeighbor(-1) !== null : undefined);
 const canMoveReaderNext = computed(() => readerNavigates.value ? mailbox.listState.value === 'ready' && resolveReaderNeighbor(1) !== null : undefined);
 
-function onReaderActiveMessage(messageId: string | null): void {
-  readerActiveMessageId.value = messageId;
-  // A new focused message restarts participant context from the baseline,
-  // EXCEPT when focus landed directly on a participant of that message: the
-  // reader emits the participant override BEFORE the active-message event in
-  // that case, so an override matching the newly focused message and the
-  // currently open conversation survives. Every other override (older message,
-  // other conversation/account, cleared focus) is discarded.
-  const override = contactOverride.value;
-  if (messageId === null
-    || !override
-    || override.messageId !== messageId
-    || !sameConversation(override.ref, mailbox.openRef.value)) {
-    contactOverride.value = null;
-  }
-}
-
-function onReaderContactOverride(
-  override: { ref: ConversationRef; messageId: string; displayName: string | null; mailbox: string } | null,
-): void {
-  contactOverride.value = override;
-}
-
 // ---------------------------------------------------------------------------
 // Actions
 // ---------------------------------------------------------------------------
@@ -1885,6 +1378,7 @@ async function connectAccount(): Promise<void> {
 
 /** Connect, sync and sign-in cancel buttons share the Account buttons' rule: never while one runs. */
 const accountActionsIdle = computed(() => mailbox.accountBusy.value === null && !drafts.transitioning.value);
+const { statusNotice, readOnlyHint, inboxEmpty, emptyLineShown, headerAction, emptyActionShown, noteWordsHidden, noteAnnounces, noteParts, contactListEmpty, providerAccountAction, accountCommandsFirst, accountCommandsTop, paletteHasRows, emptyListText } = useAccountNotes({ mailbox, accountStatus, readerOpen, drawer, accountActionsIdle, actionAvailable });
 
 /** The same App-level paths the Account drawer uses (drafts flush before any account transition). */
 function runAccountAction(action: AccountNoticeAction): Promise<void> {
@@ -2323,14 +1817,14 @@ function nativeShortcutOwns(event: KeyboardEvent): boolean {
 
 /** The armed G chord and the grace window after it lapses. */
 function chordOwns(event: KeyboardEvent): boolean {
-  if (goTimer) {
+  if (chordArmed()) {
     cancelGo();
     // Escape cancels the armed chord and is consumed: one Escape, one dismissal.
     if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); return true; }
     if (isGoSecondKey(event) && !isEditableTarget(event.target) && !drawer.value && !contactDisclosure.value && !readerOpen.value) {
       event.preventDefault(); void executeAction(goTargetFor(event)!.id); return true;
     }
-  } else if (goGraceTimer) {
+  } else if (chordInGrace()) {
     // The window just lapsed: a late second key was almost certainly meant for
     // the chord, so it is swallowed instead of running the plain-key action.
     endGoGrace();
@@ -2613,63 +2107,7 @@ const searchSyntaxEditHint = computed(() =>
     ? '. Edit the query above — the same query fails again.'
     : '. Press / or choose the query in the results header to edit it — the same query fails again.');
 
-function errorText(error: { kind: string; field?: string; reason?: string }): string {
-  switch (error.kind) {
-    case 'not_found':
-      return 'not found';
-    case 'invalid_request':
-      // No trailing period here: the banner templates append one themselves.
-      if (error.field === 'searchQuery') return 'unsupported search syntax. Use text, straight-quoted phrases, from:, to:, subject:, AND, OR and -exclusions';
-      if (error.field === 'cachedDoneRestoreRange') return 'cached Done changed beyond the restoration limit; retry or return to Inbox';
-      return `invalid request (field: ${error.field ?? '?'})`;
-    case 'request_id_conflict':
-      return 'request ID conflict';
-    case 'storage_unavailable':
-      return 'storage unavailable';
-    case 'profile_in_use':
-      return 'profile in use';
-    case 'read_only':
-      return 'read-only account';
-    case 'not_configured':
-      return 'not configured';
-    case 'auth_required':
-      return 'sign-in required';
-    case 'auth_cancelled':
-      return 'sign-in cancelled';
-    case 'auth_failed':
-      return 'sign-in failed';
-    case 'secrets_unavailable':
-      return 'credential storage unavailable';
-    case 'network_unavailable':
-      return 'network unavailable';
-    case 'rate_limited':
-      return 'rate limited';
-    case 'provider_unavailable':
-      return 'provider unavailable';
-    case 'invalid_provider_response':
-      return 'unexpected provider response';
-    case 'busy':
-      return 'busy';
-    case 'permission_required':
-      return 'Google permission required';
-    case 'provider_rejected':
-      return 'provider rejected action';
-    case 'outcome_unknown':
-      return 'provider outcome unknown';
-    case 'undo_unavailable':
-      switch (error.reason) {
-        case 'expired': return 'undo window expired';
-        case 'superseded': return 'superseded by a newer action';
-        case 'already_undone': return 'already undone';
-        case 'not_applicable': return 'not undoable';
-        case 'uncertain': return 'outcome unknown; use Activity';
-        case 'unknown_prior': return 'prior state unknown';
-        default: return 'undo unavailable';
-      }
-    default:
-      return 'unknown error';
-  }
-}
+
 </script>
 
 <template>
