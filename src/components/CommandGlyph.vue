@@ -11,7 +11,7 @@ import PaneGlyph from './PaneGlyph.vue';
 import RowGlyph from './RowGlyph.vue';
 
 defineProps<{ id: BrowsingActionId }>();
-const own = ['open', 'undo', 'select-all-loaded', 'clear-selection', 'create-split', 'edit-split', 'saved', 'toggle-unread-filter', 'switch-account'];
+const own = ['open', 'undo', 'select-all-loaded', 'clear-selection', 'create-split', 'edit-split', 'saved', 'toggle-unread-filter', 'switch-account', 'sync'];
 </script>
 
 <template>
@@ -35,7 +35,7 @@ const own = ['open', 'undo', 'select-all-loaded', 'clear-selection', 'create-spl
     <!-- Compose: the local-draft pencil. -->
     <PaneGlyph v-else-if="id === 'compose'" name="drafts" />
     <PaneGlyph v-else-if="id === 'activity'" name="activity" />
-    <PaneGlyph v-else-if="id === 'account'" name="account" />
+    <PaneGlyph v-else-if="id === 'account' || id === 'connect'" name="account" />
     <svg
       v-else-if="own.includes(id)"
       class="command-glyph"
@@ -76,6 +76,13 @@ const own = ['open', 'undo', 'select-all-loaded', 'clear-selection', 'create-spl
       </template>
       <!-- Unread-only filter: a funnel. -->
       <path v-else-if="id === 'toggle-unread-filter'" d="M2.75 3.75h10.5L9.5 8.4v3.85l-3-1.5V8.4z" />
+      <!-- Sync now: two chasing arrows. -->
+      <template v-else-if="id === 'sync'">
+        <path d="M13 6.25A5 5 0 004.1 4.6L3 6" />
+        <path d="M3 2.75V6h3.25" />
+        <path d="M3 9.75A5 5 0 0011.9 11.4L13 10" />
+        <path d="M13 13.25V10H9.75" />
+      </template>
       <!-- Switch account: two opposing arrows. -->
       <template v-else>
         <path d="M2.75 5.25h9.5M9.5 2.5l2.75 2.75L9.5 8" />

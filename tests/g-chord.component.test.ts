@@ -1,4 +1,4 @@
-import { mountApp, press } from './helpers';
+import { createBrowserFakeMailClient, flushMacrotasks, mountApp, press, useGmailMode } from './helpers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, type VueWrapper } from '@vue/test-utils';
 
@@ -97,5 +97,77 @@ describe('g-chord safety', () => {
     const { fixture } = await setup();
     press('g', { bubbles: true, cancelable: true }); press('Process', { bubbles: true, cancelable: true,  isComposing: true  }); press('e', { bubbles: true, cancelable: true }); await flushPromises();
     expect(archived(fixture)).toEqual(['read-02']);
+  });
+});
+
+// `g a` -> Go to Account, in the same chord machinery, Gmail mode only.
+async function setupGmail(patch: Parameters<typeof useGmailMode>[1] = {}, gmailMode = true) {
+  vi.useRealTimers();
+  const fake = createBrowserFakeMailClient(() => '2025-01-01T00:00:00.000Z');
+  if (gmailMode) useGmailMode(fake, patch);
+  wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
+  await flushPromises();
+  await flushMacrotasks(2);
+  await flushPromises();
+  wrapper.find('[data-test="conversation-row-conv-02"]').exists()
+    && (wrapper.get('[data-test="conversation-row-conv-02"]').element as HTMLElement).focus();
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  return { fake, w: wrapper };
+}
+const hasAccountDrawer = (w: VueWrapper) => w.find('[data-test="account-panel"]').exists();
+
+describe('g a (Go to Account, Gmail only)', () => {
+  it('opens the Account drawer, even with a slow second key, and does not touch the mailbox', async () => {
+    const { fake, w } = await setupGmail({ mutationAccess: 'enabled' });
+    press('g', { bubbles: true, cancelable: true }); vi.advanceTimersByTime(WINDOW_MS - 100); const second = press('a', { bubbles: true, cancelable: true }); await flushPromises();
+    expect(second.defaultPrevented).toBe(true);
+    expect(hasAccountDrawer(w)).toBe(true);
+    expect(fake.controls.activity()).toHaveLength(0);
+  });
+
+  it('announces A for Account in the hint, and only in Gmail mode', async () => {
+    const { w } = await setupGmail();
+    press('g', { bubbles: true, cancelable: true }); await flushPromises();
+    expect(w.get('[data-test="chord-hint"] .visually-hidden').text()).toBe('g pressed. Press E for Done, T for Trash, D for Drafts, H for Reminders or A for Account, Escape to cancel.');
+    w.unmount(); wrapper = null;
+    const { w: fixtureWrapper } = await setupGmail({}, false);
+    press('g', { bubbles: true, cancelable: true }); await flushPromises();
+    expect(fixtureWrapper.get('[data-test="chord-hint"] .visually-hidden').text()).toBe('g pressed. Press E for Done, D for Drafts or H for Reminders, Escape to cancel.');
+  });
+
+  it('does nothing in fixture mode: a is an ordinary key there', async () => {
+    const { fake, w } = await setupGmail({}, false);
+    press('g', { bubbles: true, cancelable: true }); const second = press('a', { bubbles: true, cancelable: true }); await flushPromises();
+    expect(second.defaultPrevented).toBe(false);
+    expect(w.find('[data-test="account-panel"]').exists()).toBe(false);
+    expect(fake.controls.activity()).toHaveLength(0);
+  });
+
+  it('a late a just after the window lapses is swallowed, then the grace ends', async () => {
+    const { w } = await setupGmail();
+    press('g', { bubbles: true, cancelable: true }); vi.advanceTimersByTime(WINDOW_MS + 100);
+    const late = press('a', { bubbles: true, cancelable: true }); await flushPromises();
+    expect(late.defaultPrevented).toBe(true);
+    expect(hasAccountDrawer(w)).toBe(false);
+  });
+
+  it('g e still opens Done in Gmail mode; Escape and a modified a cancel the chord', async () => {
+    const { w } = await setupGmail();
+    press('g', { bubbles: true, cancelable: true }); press('e', { bubbles: true, cancelable: true }); await flushPromises();
+    expect(w.get('[data-test="inbox-title"]').text()).toBe('Cached Done');
+    w.unmount(); wrapper = null;
+
+    const second = await setupGmail();
+    press('g', { bubbles: true, cancelable: true }); press('Escape', { bubbles: true, cancelable: true }); press('a', { bubbles: true, cancelable: true }); await flushPromises();
+    expect(hasAccountDrawer(second.w)).toBe(false);
+    press('g', { bubbles: true, cancelable: true }); press('a', { bubbles: true, cancelable: true, metaKey: true }); await flushPromises();
+    expect(hasAccountDrawer(second.w)).toBe(false);
+  });
+
+  it('works with no account at all (disconnected)', async () => {
+    const { w } = await setupGmail({ connection: 'disconnected', emailAddress: null, cachedConversations: 0, initialSyncComplete: false });
+    document.body.focus();
+    press('g', { bubbles: true, cancelable: true }); press('a', { bubbles: true, cancelable: true }); await flushPromises();
+    expect(hasAccountDrawer(w)).toBe(true);
   });
 });

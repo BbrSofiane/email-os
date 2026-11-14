@@ -290,4 +290,23 @@ describe('isolates synthetic workspaces with colliding identities (UX-13A)', () 
     expect((single.get('[data-test="action-query"]').element as HTMLInputElement).value).toBe('');
     single.unmount();
   });
+  it('shows a short boundary banner, keeps the full sentence as the nav description, and names the real switch route', async () => {
+    const { w } = await setup();
+    const banner = w.get('#workspace-boundary');
+    const visible = banner.findAll('[aria-hidden="true"]').map((node) => node.text());
+    expect(visible).toEqual(['Synthetic workspaces · memory only', 'Search stays in the active account.']);
+    // The full existing sentence survives as visually hidden text for assistive technology.
+    expect(banner.get('.visually-hidden').text()).toBe('Synthetic in-app workspaces · memory only · not native tabs · search stays inside the active account; no cross-account search');
+    expect(w.get('nav[aria-label="Fixture accounts"]').attributes('aria-describedby')).toBe('workspace-boundary');
+
+    // The inactive account's button says where else the switch lives; there is no shortcut, so none is invented.
+    const other = w.get(`[data-test="switch-${bId}"]`);
+    expect(other.attributes('title')).toBe('Switch account — also in Commands');
+    expect(other.attributes('title')).not.toMatch(/[⌘⌃⌥]|Cmd|Ctrl|Alt|Shift/);
+    expect(w.get(`[data-test="switch-${aId}"]`).attributes('aria-current')).toBe('true');
+    expect(w.get(`[data-test="switch-${aId}"]`).attributes('title')).toBeUndefined();
+    await switchTo(w, bId);
+    expect(w.get(`[data-test="switch-${bId}"]`).attributes('aria-current')).toBe('true');
+    expect(w.get(`[data-test="switch-${aId}"]`).attributes('title')).toBe('Switch account — also in Commands');
+  });
 });

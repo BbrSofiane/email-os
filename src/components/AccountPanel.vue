@@ -9,10 +9,21 @@
  * and visible; the cached list/reader remain usable while sync is offline or
  * sign-in is required.
  *
+ * Layout: four labelled sections (connection, sync, permissions, session)
+ * separated by spacing only; the drawer supplies the "Account" heading. A fact
+ * appears only where it is real: no permission mode before there is an account,
+ * no Sync section when there is nothing to sync, and a failed sync is said once
+ * (the error line with Retry), not as a state word plus a sentence.
+ * Disconnect is destructive, so it asks in place and the warning is not in the
+ * DOM until it is asked for. Cancelling a sign-in has nothing to lose and stays
+ * one click.
+ *
  * Safety: plain text interpolation only — no HTML, no remote assets, no URLs.
  */
-import type { AccountStatus, ConnectionState, MailError, MutationAccess } from '../lib/ipc/client';
+import { computed, nextTick, ref, watch } from 'vue';
+import type { AccountStatus, ConnectionState, MailError } from '../lib/ipc/client';
 import type { AccountAction } from '../composables/useMailbox';
+import { NOT_CONFIGURED_HINT, describeMailError, describeSyncFailure } from '../lib/account-status';
 import FullDate from './FullDate.vue';
 
 const props = defineProps<{
@@ -33,193 +44,255 @@ const emit = defineEmits<{
 
 const CONNECTION_LABELS: Record<ConnectionState, string> = {
   not_configured: 'Not configured',
-  disconnected: 'Disconnected',
-  authenticating: 'Signing in…',
+  disconnected: 'Not connected',
+  authenticating: 'Finish sign-in in your browser',
   connected: 'Connected',
-  auth_required: 'Sign-in required',
+  auth_required: 'Sign-in expired',
 };
 
-const SYNC_LABELS: Record<AccountStatus['sync']['state'], string> = {
-  idle: 'Idle',
-  syncing: 'Syncing…',
-  error: 'Sync error',
-};
+const MODE_TITLE = 'Cached reading remains available during permission changes.';
+const DISCONNECT_WARNING = "Removes pending actions and the mail cache from this device. Local drafts stay and return if you reconnect the same account. Confirmed Gmail changes are not undone and Google's grant is not revoked.";
 
-function connectionLabel(connection: ConnectionState): string {
-  return CONNECTION_LABELS[connection];
-}
+const access = computed(() => props.status.mutationAccess ?? 'read_only');
+const sync = computed(() => props.status.sync);
+const connection = computed(() => props.status.connection);
 
-function accessLabel(access: MutationAccess | undefined): string {
-  switch (access ?? 'read_only') {
-    case 'read_only': return 'read-only';
-    case 'upgrading': return 'Permission upgrade in progress';
-    case 'enabled': return 'Mailbox actions enabled';
+const modeLabel = computed(() => {
+  switch (access.value) {
+    case 'read_only': return 'Gmail · read-only';
+    case 'upgrading': return 'Gmail · permission request pending';
+    case 'enabled': return 'Gmail · mailbox actions enabled';
   }
-}
+});
 
-function describeError(error: MailError): string {
-  switch (error.kind) {
-    case 'not_configured':
-      return 'Gmail is not configured on this device.';
-    case 'auth_required':
-      return 'Sign-in is required to continue syncing.';
-    case 'auth_cancelled':
-      return 'Sign-in was cancelled.';
-    case 'auth_failed':
-      return 'Sign-in failed.';
-    case 'secrets_unavailable':
-      return 'Secure credential storage is unavailable.';
-    case 'network_unavailable':
-      return 'The network is unavailable.';
-    case 'rate_limited':
-      return 'The provider is rate limiting; retrying with backoff.';
-    case 'provider_unavailable':
-      return 'The mail provider is temporarily unavailable.';
-    case 'invalid_provider_response':
-      return 'The provider returned an unexpected response.';
-    case 'busy':
-      return 'A sync is already in progress.';
-    case 'permission_required':
-      return 'Google did not grant mailbox-action permission; the account remains read-only.';
-    case 'provider_rejected':
-      return 'The provider rejected the mailbox action.';
-    case 'outcome_unknown':
-      return 'The provider outcome is unknown; review Activity before retrying.';
-    case 'read_only':
-      return 'Gmail is read-only; this action is unavailable.';
-    case 'storage_unavailable':
-      return 'Local storage is unavailable.';
-    case 'not_found':
-      return 'Not found.';
-    case 'invalid_request':
-      return 'Invalid request.';
-    case 'request_id_conflict':
-      return 'Conflicting request.';
-    case 'profile_in_use':
-      return 'The profile is in use by another window.';
-    default:
-      return 'unknown error';
-  }
-}
+/** A grant or a cache exists only once an account has been (or is being) connected. */
+const hasAccountFacts = computed(() => connection.value === 'connected' || connection.value === 'auth_required');
+const modeShown = hasAccountFacts;
+const syncShown = hasAccountFacts;
 
-function coverageText(): string {
-  const sync = props.status.sync;
-  if (!sync.initialSyncComplete) {
-    return sync.coverageLimit > 0
-      ? `Initial sync in progress: ${sync.cachedConversations} conversations cached; coverage is bounded to ${sync.coverageLimit} discovered conversations and may be incomplete.`
-      : `Initial sync in progress: ${sync.cachedConversations} conversations cached so far.`;
-  }
-  if (sync.coverageLimit > 0) {
-    return `The cached inbox view contains up to ${sync.coverageLimit} discovered conversations; additional inbox threads may be omitted.`;
-  }
-  return '';
-}
+const firstSyncRunning = computed(() => sync.value.state === 'syncing' && !sync.value.initialSyncComplete);
+/** The inline error line with Retry says the failure; the state word is then dropped, not repeated. */
+const errorLine = computed(() => sync.value.state === 'error' && sync.value.error ? describeSyncFailure(sync.value.error) : '');
+const syncLabel = computed(() => {
+  if (sync.value.state === 'error') return 'Failed';
+  if (sync.value.state === 'syncing') return firstSyncRunning.value ? 'Syncing first mail…' : 'Syncing…';
+  return 'Idle';
+});
+const cachedLabel = computed(() => {
+  const count = sync.value.cachedConversations;
+  return `${count} ${count === 1 ? 'conversation' : 'conversations'} cached`;
+});
+/**
+ * The bounded-coverage fact, once, as a short second line. It describes a cache,
+ * so it is absent with nothing cached and when the account is not connected
+ * (a disconnect clears the cache; it would only describe an empty one).
+ */
+const coverageText = computed(() => sync.value.coverageLimit > 0
+  && sync.value.cachedConversations > 0
+  && (connection.value === 'connected' || connection.value === 'auth_required')
+  ? `Up to ${sync.value.coverageLimit} conversations are cached; older mail may be missing.`
+  : '');
+/** The inline Retry beside the error covers Sync now; without a typed error there is no Retry. */
+const retryShown = computed(() => errorLine.value !== '');
 
-const showConnect = (): boolean =>
-  props.status.connection === 'not_configured' ||
-  props.status.connection === 'disconnected' ||
-  props.status.connection === 'auth_required';
+/** Not configured has no Google client ID to connect with: Connect would only fail, so the next step is the note instead. */
+const showConnect = computed(() => connection.value === 'disconnected' || connection.value === 'auth_required');
+/**
+ * While sign-in has expired the cache and the last sync date are real, but "Idle" (a sync state) and
+ * "Never synced" (a claim about a past this device cannot confirm without a sign-in) are not: they drop out,
+ * and the cached count stays.
+ */
+const signedOut = computed(() => connection.value === 'auth_required');
+const stateWordShown = computed(() => !retryShown.value && !(signedOut.value && sync.value.state === 'idle'));
+const lastSyncedShown = computed(() => !!sync.value.lastSyncedAt || !signedOut.value);
+const canEnable = computed(() => access.value === 'read_only' && connection.value === 'connected');
+const showPermissions = computed(() => canEnable.value || access.value === 'upgrading' || access.value === 'enabled');
+const showSession = computed(() => props.status.account !== null || connection.value === 'auth_required' || connection.value === 'authenticating');
+
+// Two-step disconnect. Focus moves to the safe choice on open and back on cancel.
+const confirming = ref(false);
+const askButton = ref<HTMLButtonElement | null>(null);
+const keepButton = ref<HTMLButtonElement | null>(null);
+
+async function askDisconnect(): Promise<void> {
+  confirming.value = true;
+  await nextTick();
+  keepButton.value?.focus();
+}
+async function keepAccount(): Promise<void> {
+  confirming.value = false;
+  await nextTick();
+  askButton.value?.focus();
+}
+function confirmKeydown(event: KeyboardEvent): void {
+  // Esc answers "keep" and is consumed here so it never also closes the drawer.
+  if (event.key !== 'Escape' || event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey) return;
+  event.preventDefault();
+  event.stopPropagation();
+  void keepAccount();
+}
+watch(() => props.status.account, (account) => { if (!account) confirming.value = false; });
+watch(connection, (next) => { if (next === 'authenticating') confirming.value = false; });
+// A failed disconnect leaves the question open (with its error above); success removes the account and this section.
 </script>
 
 <template>
   <section class="account-panel" aria-label="Account" data-test="account-panel">
-    <div class="account-row">
-      <span class="account-mode" data-test="account-mode">Gmail — {{ accessLabel(props.status.mutationAccess) }}</span>
-      <span class="account-connection" data-test="account-connection">{{ connectionLabel(props.status.connection) }}</span>
-    </div>
-    <p v-if="props.status.account" class="account-email" data-test="account-email">
-      {{ props.status.account.emailAddress }}
-    </p>
-    <p class="account-disposable" data-test="disposable-account-note">
-      Disposable test account. Cached reading remains available during permission changes.
-    </p>
-    <p v-if="props.actionError" class="account-action-error" data-test="account-action-error" role="alert">
-      Mailbox-action request: {{ describeError(props.actionError) }}
-    </p>
-    <template v-if="(props.status.mutationAccess ?? 'read_only') === 'read_only' && props.status.connection === 'connected'">
-      <p class="account-upgrade-disclosure" data-test="action-upgrade-disclosure" role="note">
-        Enable mailbox actions requests Google's broad Gmail modify permission, which can also allow sending and deleting mail.
-        Email OS currently implements only Mark done / Mark not done, explicit Mark read / Mark unread and Star / Unstar; it does not send or delete mail.
+    <div class="account-section">
+      <h3 class="account-label">Connection</h3>
+      <p class="account-line account-connection-line">
+        <template v-if="props.status.account"><span data-test="account-email">{{ props.status.account.emailAddress }}</span> · </template><span data-test="account-connection">{{ CONNECTION_LABELS[connection] }}</span>
       </p>
-      <button
-        type="button"
-        data-test="enable-mailbox-actions"
-        :disabled="props.busy !== null"
-        @click="emit('enableActions')"
-      >
-        {{ props.busy === 'enable-actions' ? 'Requesting permission…' : 'Enable mailbox actions' }}
-      </button>
-    </template>
-    <p v-else-if="props.status.mutationAccess === 'upgrading'" data-test="action-upgrading" role="status">
-      Google permission upgrade in progress. Mail remains readable; actions stay disabled until access is verified.
-    </p>
-    <p v-else-if="props.status.mutationAccess === 'enabled'" data-test="actions-enabled" role="status">
-      Mailbox actions are enabled for this account.
-    </p>
-    <button
-      v-if="props.status.mutationAccess === 'upgrading'"
-      type="button"
-      data-test="cancel-action-upgrade"
-      :disabled="props.busy !== null"
-      @click="emit('cancelUpgrade')"
-    >
-      {{ props.busy === 'cancel-upgrade' ? 'Canceling permission request…' : 'Cancel permission upgrade' }}
-    </button>
-    <p class="account-disconnect-warning" data-test="disconnect-warning" role="note">
-      Disconnect removes local pending actions and mail cache, but local drafts remain on this device and are accessible after reconnecting the same account. It does not undo confirmed Gmail changes or revoke Google's grant.
-    </p>
-    <p v-if="props.status.connection === 'not_configured'" class="account-notice" data-test="account-not-configured" role="note">
-      Gmail is not configured on this device: no Google client credentials were found, so connecting is unavailable.
-    </p>
-    <p v-if="props.status.connection === 'auth_required'" class="account-notice" data-test="account-auth-required" role="note">
-      Sign-in has expired. Cached conversations stay readable; reconnect to sync new mail.
-    </p>
-    <div class="account-row">
-      <span class="account-sync" data-test="account-sync-state">{{ SYNC_LABELS[props.status.sync.state] }}</span>
-      <span class="account-last-synced" data-test="account-last-synced"><template v-if="props.status.sync.lastSyncedAt">Last synced <FullDate :at="props.status.sync.lastSyncedAt" /></template><template v-else>Never synced</template></span>
+      <p v-if="modeShown" class="account-line account-mode" data-test="account-mode" :title="MODE_TITLE">{{ modeLabel }}</p>
+      <p v-if="props.actionError" class="account-action-error" data-test="account-action-error" role="alert">
+        Mailbox-action request: {{ describeMailError(props.actionError) }}
+      </p>
+      <p v-if="connection === 'not_configured'" class="account-notice" data-test="account-not-configured" role="note">
+        Gmail is not configured on this device. {{ NOT_CONFIGURED_HINT }}
+      </p>
+      <p v-if="connection === 'auth_required'" class="account-notice" data-test="account-auth-required" role="note">
+        Cached mail stays readable. Sign in again to sync.
+      </p>
+      <div v-if="showConnect" class="account-actions">
+        <button
+          type="button"
+          data-test="account-connect"
+          :disabled="props.busy !== null || props.transitioning"
+          @click="emit('connect')"
+        >
+          {{ connection === 'auth_required' ? 'Sign in again' : 'Connect Gmail' }}
+        </button>
+      </div>
     </div>
-    <p
-      v-if="props.status.sync.state === 'error' && props.status.sync.error"
-      class="account-sync-error"
-      data-test="account-sync-error"
-      role="alert"
-    >
-      Last sync failed: {{ describeError(props.status.sync.error) }}
-    </p>
-    <p v-if="coverageText()" class="account-coverage" data-test="account-coverage">
-      {{ coverageText() }}
-    </p>
-    <p class="account-cached" data-test="account-cached">
-      {{ props.status.sync.cachedConversations }} conversation(s) cached locally.
-    </p>
-    <div class="account-actions">
-      <button
-        v-if="showConnect()"
-        type="button"
-        data-test="account-connect"
-        :disabled="props.busy !== null || props.transitioning"
-        @click="emit('connect')"
+
+    <div v-if="syncShown" class="account-section">
+      <h3 class="account-label">Sync</h3>
+      <p class="account-line account-sync-line">
+        <template v-if="stateWordShown">
+          <span data-test="account-sync-state">{{ syncLabel }}</span>
+          <span class="account-sep" aria-hidden="true">·</span>
+        </template>
+        <template v-if="lastSyncedShown">
+          <span data-test="account-last-synced"><template v-if="sync.lastSyncedAt">Last synced <FullDate :at="sync.lastSyncedAt" /></template><template v-else>Never synced</template></span>
+          <span class="account-sep" aria-hidden="true">·</span>
+        </template>
+        <span data-test="account-cached">{{ cachedLabel }}</span>
+      </p>
+      <p v-if="coverageText" class="account-note" data-test="account-coverage">{{ coverageText }}</p>
+      <p v-if="connection === 'connected' && sync.state === 'idle' && !sync.initialSyncComplete" class="account-note" data-test="account-initial-sync">
+        Initial sync has not finished.
+      </p>
+      <p
+        v-if="retryShown"
+        class="account-sync-error"
+        data-test="account-sync-error"
+        role="alert"
       >
-        {{ props.status.connection === 'auth_required' ? 'Sign in again' : 'Connect' }}
-      </button>
-      <button
-        v-if="props.status.account !== null || props.status.connection === 'auth_required' || props.status.connection === 'authenticating'"
-        type="button"
-        data-test="account-disconnect"
-        :disabled="props.busy !== null || props.transitioning"
-        @click="emit('disconnect')"
-      >
-        {{ props.status.connection === 'authenticating' ? 'Cancel sign-in' : 'Disconnect' }}
-      </button>
-      <button
-        v-if="props.status.connection === 'connected'"
-        type="button"
-        data-test="account-sync"
-        :disabled="props.busy !== null || props.status.sync.state === 'syncing'"
-        @click="emit('sync')"
-      >
-        Sync now
-      </button>
+        <span>{{ errorLine }}</span>
+        <button
+          type="button"
+          data-test="account-sync-retry"
+          :disabled="props.busy !== null"
+          @click="emit('sync')"
+        >Retry</button>
+      </p>
+      <div v-if="connection === 'connected' && !retryShown" class="account-actions">
+        <button
+          type="button"
+          data-test="account-sync"
+          :disabled="props.busy !== null || sync.state === 'syncing'"
+          @click="emit('sync')"
+        >
+          Sync now
+        </button>
+      </div>
+    </div>
+
+    <div v-if="showPermissions" class="account-section">
+      <h3 class="account-label">Permissions</h3>
+      <template v-if="canEnable">
+        <p class="account-note" data-test="action-upgrade-disclosure" role="note">
+          Enable mailbox actions asks Google for its broad Gmail modify permission, which can also allow sending and deleting mail. Email OS only marks done, marks read and stars; it never sends or deletes.
+        </p>
+        <div class="account-actions">
+          <button
+            type="button"
+            data-test="enable-mailbox-actions"
+            :disabled="props.busy !== null"
+            @click="emit('enableActions')"
+          >
+            {{ props.busy === 'enable-actions' ? 'Requesting permission…' : 'Enable mailbox actions' }}
+          </button>
+        </div>
+      </template>
+      <template v-else-if="access === 'upgrading'">
+        <p class="account-line" data-test="action-upgrading" role="status">
+          Finish sign-in in your browser. Cached mail stays readable.
+        </p>
+        <div class="account-actions">
+          <button
+            type="button"
+            class="account-primary"
+            data-test="cancel-action-upgrade"
+            :disabled="props.busy !== null"
+            @click="emit('cancelUpgrade')"
+          >
+            {{ props.busy === 'cancel-upgrade' ? 'Canceling permission request…' : 'Cancel permission request' }}
+          </button>
+        </div>
+      </template>
+      <p v-else-if="access === 'enabled'" class="account-line" data-test="actions-enabled" role="status">
+        Mailbox actions are enabled.
+      </p>
+    </div>
+
+    <div v-if="showSession" class="account-section">
+      <h3 class="account-label">Session</h3>
+      <div v-if="connection === 'authenticating'" class="account-actions">
+        <button
+          type="button"
+          data-test="account-disconnect"
+          :disabled="props.busy !== null || props.transitioning"
+          @click="emit('disconnect')"
+        >
+          Cancel sign-in
+        </button>
+      </div>
+      <div v-else-if="!confirming" class="account-actions">
+        <button
+          ref="askButton"
+          type="button"
+          class="drawer-ghost"
+          data-test="account-disconnect"
+          :disabled="props.busy !== null || props.transitioning"
+          @click="askDisconnect()"
+        >
+          Disconnect…
+        </button>
+      </div>
+      <div v-else class="account-confirm" @keydown="confirmKeydown">
+        <p class="account-note" data-test="disconnect-warning" role="note">{{ DISCONNECT_WARNING }}</p>
+        <div class="account-actions">
+          <button
+            type="button"
+            class="account-destructive"
+            data-test="account-disconnect-confirm"
+            :disabled="props.busy !== null || props.transitioning"
+            @click="emit('disconnect')"
+          >
+            Disconnect
+          </button>
+          <button
+            ref="keepButton"
+            type="button"
+            class="account-primary"
+            data-test="account-disconnect-cancel"
+            @click="keepAccount()"
+          >
+            Keep account
+          </button>
+        </div>
+      </div>
     </div>
   </section>
 </template>

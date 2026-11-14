@@ -113,7 +113,7 @@ describe('G chords for Trash and Drafts', () => {
     plain.w.unmount(); app = null;
     const gmail = await mountPlain('gmail');
     press('g', { bubbles: true, cancelable: true }, document.body); await flushPromises();
-    expect(hint(gmail.w)).toBe('g pressed. Press E for Done, T for Trash or D for Drafts, Escape to cancel.');
+    expect(hint(gmail.w)).toBe('g pressed. Press E for Done, T for Trash, D for Drafts or A for Account, Escape to cancel.');
     gmail.w.unmount(); app = null;
     const reminders = await mountPlain('reminders');
     press('g', { bubbles: true, cancelable: true }, document.body); await flushPromises();

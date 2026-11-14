@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, type VueWrapper } from '@vue/test-utils';
 import type { DraftSource, DraftSummary, MailClient } from '../../src/lib/ipc/client';
-import { createBrowserFakeMailClient, deferred, fixtureRef, useGmailMode, type BrowserFake, press } from '../helpers';
+import { createBrowserFakeMailClient, deferred, fixtureRef, useGmailMode, type BrowserFake, press, confirmDisconnect } from '../helpers';
 import { mountDraftsContextApp } from '../support/drafts';
 import { advanceUiUntil, useUiTestClock } from '../support/timers';
 
@@ -117,7 +117,7 @@ describe('entering and leaving the Drafts context', () => {
     const w = await mountDraftsContextApp(fake);
     expect(w.find('[data-test="rail-drafts"]').exists()).toBe(true);
     await w.get('[data-test="rail-account"]').trigger('click'); await flushPromises();
-    await w.get('[data-test="account-disconnect"]').trigger('click'); await flushPromises();
+    await confirmDisconnect(w); await flushPromises();
     await advanceUiUntil(() => w.find('[data-test="account-connect"]').exists());
     expect(w.find('[data-test="rail-drafts"]').exists()).toBe(false);
     await w.get('[data-test="palette-trigger"]').trigger('click'); await flushPromises();

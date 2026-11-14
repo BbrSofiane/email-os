@@ -41,6 +41,10 @@ a bounded destination browser for Sent, provider Drafts, All Mail, Spam, Trash
 and user labels. Search covers the loaded catalog; Show more expands it. It is
 not mailbox search. All Mail excludes Spam/Trash. Every page contains at most
 25 conversations, at most 16 MiB of serialized thread DTOs, and no exact total.
+Catalog and page rows are real buttons with one roving tab stop: ArrowDown/ArrowUp
+or J/K move between rows, Enter opens, and Escape steps back one level (reader,
+page list, catalog) before it closes the drawer. Errors use the same plain
+sentences as the Account drawer, never a raw error kind.
 The read-only drawer intentionally has no triage/reply controls. Its page remains
 mounted during a reader visit; closing the drawer returns to the prior inbox
 context. This is not yet the roadmap's integrated main-list destination context.
@@ -184,7 +188,7 @@ were missing; this is historical environment evidence, not a result from the
 baseline above. Do not install OS packages as part of a routine validation run.
 
 Rendered Chromium suites are opt-in and excluded from the default `mise run test:ui`.
-Each suite starts its own Vite server and synthetic in-memory fixture. Run all four:
+Each suite starts its own Vite server and synthetic in-memory fixture. Run all five:
 
 ```sh
 EMAIL_OS_RENDERED_LAYOUT_CHROME=/path/to/chromium \
@@ -338,9 +342,11 @@ upgrade button is chosen. Verify both grant and deny/cancel paths:
 - With actions enabled, explicitly archive a conversation, then explicitly
   mark it read and unread. Confirm Activity distinguishes queued, applying,
   confirmed, failed and outcome-unknown; verify ordinary opening does not alter
-  read state. Disconnect warning must explain that local pending operations are
-  removed but confirmed remote Gmail changes are not undone and Google's grant
-  is not revoked.
+  read state. Asking to **Disconnect…** must reveal the warning in place (it is
+  not in the DOM before) with **Disconnect** and **Keep account**; it must
+  explain that local pending operations and the mail cache are removed, local
+  drafts stay, confirmed remote Gmail changes are not undone and Google's grant
+  is not revoked. Cancelling a sign-in stays one click.
 - Queue an archive while offline, restart, restore network, and verify durable
   Activity/recovery. Interrupted setter dispatch must be reconciled with a GET
   over its exact original message IDs before confirmation; it must not
@@ -528,6 +534,61 @@ trusted DOM or third-party viewer. Native build/bridge tests do not satisfy
 WKWebView key handling, VoiceOver, Downloads permissions, OS browser dispatch,
 or the PDF security spike. Disposable provider validation remains separately
 operator-gated, not authorized by implementation work.
+
+## Account, connection and first run (Gmail mode)
+
+With no usable account the Inbox says why instead of claiming it is empty: **Not
+connected** with an inline **Connect Gmail**, **Sign-in expired** with **Sign in
+again**, **Finish sign-in in your browser** with **Cancel sign-in**, **Syncing first
+mail… N cached**, **Sync failed: …** with **Retry** (the network cause always reads
+**no network**), **Initial sync has not finished** with **Sync now**, or (not
+configured) a link to Account with the next step (add a Google client ID to the
+launch environment, then restart). Only a connected, fully synced, empty account
+shows the real empty text. In a zero-row state the sentence echoes its tone, the
+same as the header note: Coral Fault for a failed sync, Amber Notice for an
+expired sign-in, Ash otherwise (the words stay; the action link and hint keep their
+own colours). Under **Not connected** one line says what Connect does
+(it opens Google sign-in in the browser and starts read-only, so Email OS cannot
+change mail until you enable mailbox actions). **In a zero-row state the empty line
+owns the status sentence:** the header shows only the Preview tag, and its status
+note stays only as one hidden announcement. With rows the header status note
+repeats the connection or sync fact (Not connected, Sign-in expired, Syncing…,
+Sync failed with its cause in words, for example Sync failed · no network; there
+is no Offline wording); its action link is shown only when the empty line is not
+carrying the action. While the Account drawer shows a sync failure as an alert,
+the header note drops its words and link and stays silent, so the failure and its
+Retry are seen and announced once (the Preview tag stays); the empty line behind
+the drawer keeps its sentence but drops its own Retry until the drawer closes. Any status note replaces
+the read-only hint, which at 1100px and below collapses to its Review access link.
+At 1100px and below the Preview tag yields first (short `Preview`, then only its
+accessible text while a note or the hint needs room); `Sync failed` and the action
+link never clip, and the cause words are whole or hidden together with their
+dot (never cut to a fragment); the cause stays in the note's title, the drawer and
+the empty line. jsdom cannot measure layout:
+the CSS is pinned by `tests/layout/account-header-css.test.ts`, and the widths at
+1030px and the contact-column collapse by the opt-in rendered suite
+`tests/layout/account-header.rendered.test.ts` (real Chrome, in-memory fake).
+When the empty line becomes the owner of an actionable status and nothing is
+focused (and no drawer, palette, reader, compose, search or contact surface is
+open), focus moves once to its action; Enter or Space on the focused line runs the
+same action. Focus the user already holds is never taken. The note is absent while
+connected and idle. One name per action everywhere:
+**Connect Gmail**, **Sign in again**, **Cancel sign-in**, **Retry**, **Sync now**.
+The Account drawer shows the permission mode and the Sync section only where they
+are real (not while disconnected, not configured or signing in); a signed-out
+account keeps its mode and cached count but not the `Idle` or `Never synced` words.
+**Connect Gmail** is offered only while disconnected and **Sign in again** after
+expiry: a device that is not configured has no client ID to connect with, so there
+is no Connect button, palette command or Provider mail link, only the next step.
+**Connect Gmail** (or **Sign in again**) and **Sync now** are palette commands only while they can run
+(Connect ranks above Go to; during a sync failure the Account group leads the
+palette), and `G` then `A` (within 1 second, Gmail mode only) opens Account. The
+contact column is not rendered while a ready list has no rows (no reader, no reply
+target): the list takes its width and, below 1000px, the rail has no Contact button.
+It returns as soon as rows exist, and stays while the list is loading or failed.
+None of these gates mailbox actions: actions depend on `mutationAccess`, not on the
+connection. All of it is verified with the synthetic in-memory fake; real OAuth,
+sync and Keychain behavior stay operator-gated.
 
 ## Desktop-local reminder increment (UX-11)
 

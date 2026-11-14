@@ -26,10 +26,12 @@ export const browsingActions = [
   { id: 'starred', label: 'Go to cached Starred', shortcut: '' },
   { id: 'destinations', label: 'Go to Provider mail (read only)', shortcut: '' },
   { id: 'trash', label: 'Go to cached Trash (read only)', shortcut: 'G then T' },
-  { id: 'account', label: 'Go to Account', shortcut: '' },
+  { id: 'account', label: 'Go to Account', shortcut: 'G then A' },
   { id: 'activity', label: 'Go to Activity', shortcut: '' },
   { id: 'drafts', label: 'Go to local Drafts', shortcut: 'G then D' },
   { id: 'switch-account', label: 'Switch account', shortcut: '' },
+  { id: 'connect', label: 'Connect Gmail', shortcut: '' },
+  { id: 'sync', label: 'Sync now', shortcut: '' },
 ] as const;
 export type BrowsingActionId = typeof browsingActions[number]['id'];
 export interface AvailableAction { id: BrowsingActionId; label: string; shortcut: string; aliases?: readonly string[]; disabledReason?: string }

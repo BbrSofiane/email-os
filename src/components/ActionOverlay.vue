@@ -3,7 +3,20 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import type { AvailableAction, BrowsingActionId } from '../lib/browsing-actions';
 import { actionAliases, actionGroupOf, actionGroups, compactShortcut, keyHints, matchesQuery, type KeyScope } from '../lib/action-palette';
 import CommandGlyph from './CommandGlyph.vue';
-const props = defineProps<{ kind: 'palette' | 'navigator'; actions: AvailableAction[]; idPrefix?: string; query?: string; keyScope?: KeyScope }>();
+const props = withDefaults(defineProps<{
+  kind: 'palette' | 'navigator';
+  actions: AvailableAction[];
+  idPrefix?: string;
+  query?: string;
+  /** Account commands (Connect, Sync now) that can fix a visible problem rank above Go to. */
+  accountFirst?: boolean;
+  /** A failed sync's one fix: the Account group leads the whole palette (implies accountFirst). */
+  accountTop?: boolean;
+  /** False when the list has no rows: J/K, X and Shift+J/K then have nothing to act on. */
+  rowKeys?: boolean;
+  /** The list context that owns the context-scoped key hints. */
+  keyScope?: KeyScope;
+}>(), { accountFirst: false, accountTop: false, rowKeys: true });
 const emit = defineEmits<{ close: []; execute: [id: BrowsingActionId]; 'update:query': [query: string] }>();
 const prefix = props.idPrefix ? `${props.idPrefix}-` : '';
 const queryId = `${prefix}action-query`;
@@ -23,12 +36,22 @@ const input = ref<HTMLInputElement | null>(null);
 const groupRank = Object.keys(actionGroupOf);
 const groupLabel = (id: BrowsingActionId) => actionGroups.find((group) => group.id === actionGroupOf[id])!.label;
 // Grouped in a fixed order; a stable sort keeps each group's own order. The navigator is one group, so it stays unlabelled.
+// While Connect or a failed sync can be fixed, the Account group sits right before Go to
+// (below the conversation, selection and view commands, so triage keys keep their order).
+const groupOrder = computed(() => {
+  const ids = actionGroups.map((group) => group.id);
+  if (props.accountTop) return ['account' as const, ...ids.filter((id) => id !== 'account')];
+  if (!props.accountFirst) return ids;
+  return ids.filter((id) => id !== 'account').flatMap((id) => (id === 'goto' ? ['account' as const, id] : [id]));
+});
 const results = computed(() => props.actions
   .filter((action) => matchesQuery(query.value, action.label, [...(actionAliases[action.id] ?? []), ...(action.aliases ?? [])], [action.shortcut]))
-  .sort((a, b) => actionGroups.findIndex((g) => g.id === actionGroupOf[a.id]) - actionGroups.findIndex((g) => g.id === actionGroupOf[b.id]) || groupRank.indexOf(a.id) - groupRank.indexOf(b.id)));
+  .sort((a, b) => groupOrder.value.indexOf(actionGroupOf[a.id]) - groupOrder.value.indexOf(actionGroupOf[b.id]) || groupRank.indexOf(a.id) - groupRank.indexOf(b.id)));
 const showGroups = computed(() => props.kind === 'palette');
 // Keys with no command behind them: shown for teaching, never highlighted or executed.
-const hints = computed(() => props.kind === 'palette' ? keyHints.filter((hint) => (!hint.scope || hint.scope === props.keyScope) && matchesQuery(query.value, hint.label, hint.aliases, hint.keys)) : []);
+const hints = computed(() => props.kind === 'palette'
+  ? keyHints.filter((hint) => (props.rowKeys || !hint.needsRows) && (!hint.scope || hint.scope === props.keyScope) && matchesQuery(query.value, hint.label, hint.aliases, hint.keys))
+  : []);
 const emptyCopy = computed(() => {
   const noun = props.kind === 'palette' ? 'command' : 'destination';
   return query.value.trim() ? `No ${noun} matches “${query.value.trim()}”.` : `No ${noun}s available here.`;

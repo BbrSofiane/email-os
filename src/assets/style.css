@@ -198,12 +198,14 @@ button:focus-visible {
   color: var(--text-primary);
 }
 .workspace-header {
-  padding: 0.4rem 0.75rem;
+  padding: 6px 12px;
   border-bottom: 1px solid var(--divider);
   font-size: var(--type-body);
 }
-.workspace-header p { margin: 0 0 0.35rem; }
-.workspace-header nav { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.workspace-header p { margin: 0 0 6px; }
+/* One short line on screen; the full boundary is the nav's accessible description. */
+.workspace-header .workspace-boundary { display: flex; flex-wrap: wrap; gap: 0 12px; color: var(--text-secondary); }
+.workspace-header nav { display: flex; flex-wrap: wrap; gap: 6px; }
 .workspace-header button[aria-current] { background: var(--focus-fill); }
 .workspace-panel { flex: 1; min-height: 0; }
 .workspace-panel > .app { height: 100%; }
@@ -246,12 +248,36 @@ button:focus-visible {
  * (split editor, split error) wrap below the tab line.
  */
 .app-header {
+  /* The tab column never drops below this: the trail's notes give up width first (DESIGN.md gap 18).
+     The floor is what is really in the strip: "Inbox 18" (measured 62px), a saved tab (its label stops at
+     12ch, plus the count) and each filter chip ("Unread only" measured 73px), with the 18px gaps between.
+     At least 10rem, which covers "Inbox 18" and one chip. */
+  --tabs-gap: 18px;
+  --tab-inbox: 4.5rem;
+  --tab-saved: 9rem;
+  --header-chip: 4.75rem;
+  --floor-saved: 0px;
+  --floor-filter: 0px;
+  --header-tabs-floor: max(10rem, calc(var(--tab-inbox) + var(--floor-saved) + var(--floor-filter)));
   display: grid;
-  grid-template-columns: 50px minmax(0, 1fr) minmax(0, auto);
+  grid-template-columns: 50px minmax(min(var(--header-tabs-floor), 100%), 1fr) minmax(0, auto);
   grid-template-rows: minmax(calc(var(--split-header-height) - 6px), auto);
   align-items: center;
   padding: 6px 16px 0 0;
   background: var(--surface);
+}
+
+/* A second tab and each filter chip raise the floor (the tabs never lose their label to the notes). */
+.app-header:has(.split-nav > .split-tab + .split-tab) {
+  --floor-saved: calc(var(--tabs-gap) + var(--tab-saved));
+}
+
+.app-header:has(.header-filter) {
+  --floor-filter: calc(var(--tabs-gap) + var(--header-chip));
+}
+
+.app-header:has(.header-filter ~ .header-filter) {
+  --floor-filter: calc(2 * (var(--tabs-gap) + var(--header-chip)));
 }
 
 .app-header > .header-row {
@@ -316,7 +342,7 @@ button:focus-visible {
 .header-tabs {
   display: flex;
   align-items: baseline;
-  gap: 18px;
+  gap: var(--tabs-gap);
   min-width: 0;
   overflow: hidden;
   /* Room for the focus ring of the first tab inside the clipped line. */
@@ -348,13 +374,16 @@ button:focus-visible {
 
 .split-nav {
   display: flex;
+  flex: 0 0 auto;
   align-items: baseline;
-  gap: 18px;
+  gap: var(--tabs-gap);
   min-width: 0;
 }
 
 .split-tab {
   display: inline-flex;
+  /* Tabs never shrink: the floor above holds them, and only a saved-tab label stops at 12ch. */
+  flex: 0 0 auto;
   align-items: baseline;
   gap: 4px;
   min-width: 0;
@@ -379,6 +408,8 @@ button:focus-visible {
 
 .split-label {
   min-width: 0;
+  /* A long saved-split name stops here; its full text is the tab's title. */
+  max-width: 12ch;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -418,8 +449,139 @@ button:focus-visible {
   color: var(--text-secondary);
 }
 
+/* Shrink order when the trail is tight: Preview tag first, read-only hint next, the account status last.
+   The glyphs (flex: 0 0 auto) never shrink, and the tab column keeps its floor. */
 .preview-tag {
+  flex-shrink: 4;
+  /* Never fully hidden: "Preview ·…" stays readable, and the full disclosure is its title. */
+  min-width: 5.5rem;
   color: var(--warning);
+}
+
+.access-hint {
+  flex-shrink: 2;
+  display: flex;
+  align-items: baseline;
+  gap: 0.35em;
+}
+
+.access-hint .hint-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The link never clips; the words are what yields (below). */
+.access-hint .header-link {
+  flex: none;
+}
+
+/* Preview tag: the short word, then the detail. */
+.preview-detail {
+  white-space: pre;
+}
+
+/* At 1100px and below (DESIGN.md gap 18) the trail yields in this order: the Preview tag first (its detail
+   goes, then the whole tag drops to its accessible text while an account note or the read-only hint needs
+   the room), then the read-only words (they collapse to the Review access link, still in the accessibility
+   tree and the hover title), and last the account note's detail words. The link and the lead never clip. */
+@media (max-width: 1100px) {
+  .preview-tag {
+    min-width: 0;
+  }
+
+  .preview-detail {
+    display: none;
+  }
+
+  .app-header:has(.account-status-note:not(.visually-hidden), .access-hint) .preview-tag {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    clip-path: inset(50%);
+  }
+
+  .access-hint {
+    flex-shrink: 0;
+  }
+
+  .access-hint .hint-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    clip-path: inset(50%);
+  }
+}
+
+/* A grid, so the note's own floor (its min-content) is the lead plus the link: the detail track has a
+   minimum of 0 and is the only thing that gives way. The lead of a failure or an expired sign-in never does. */
+.header-note.account-status-note {
+  flex-shrink: 1;
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(0, max-content) max-content max-content;
+  align-items: baseline;
+  min-width: min-content;
+}
+
+.header-note.account-status-note.tone-danger,
+.header-note.account-status-note.tone-warning {
+  grid-template-columns: max-content minmax(0, max-content) max-content max-content;
+}
+
+/* The words are two grid items (lead, detail); the wrapper only carries aria-hidden. */
+.account-status-note .note-text {
+  display: contents;
+}
+
+.account-status-note .note-lead {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+/* The cause is whole or gone, never a fragment ("Sync failed · n… · Retry" is unreadable). The detail is a one-line
+   wrapping flex row, clipped to one line: its text is a single unbreakable item behind a zero-width one, so when the
+   track is too narrow the text wraps to a second row below the clip and disappears with its separator dot. The cause
+   stays in the note's title and hidden announcement, and in the drawer and the empty line. */
+.account-status-note .note-detail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  min-width: 0;
+  height: 1lh;
+  overflow: hidden;
+}
+
+.account-status-note .note-detail::before {
+  content: '\200B';
+  flex: none;
+}
+
+.account-status-note .note-detail-text {
+  flex: none;
+  white-space: pre;
+}
+
+.account-status-note .note-sep {
+  flex: none;
+  padding: 0 0.35em;
+}
+
+.account-status-note .header-link {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* Account status note (connection or sync). Words always carry the status; the tint only echoes them. */
+.header-note.tone-warning {
+  color: var(--warning);
+}
+
+.header-note.tone-danger {
+  color: var(--danger);
 }
 
 /* Armed g-chord: a quiet pending hint at the trail's leading edge. */
@@ -446,6 +608,34 @@ button:focus-visible {
 
 .header-link:hover {
   text-decoration: underline;
+}
+
+/* A link-style action inside an in-flow line (the empty inbox line). */
+.inline-action {
+  margin-left: 6px;
+  padding: 0 2px;
+  background: transparent;
+  border: 0;
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: var(--weight-strong);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.inline-action:hover {
+  background: transparent;
+}
+
+/* A ghost text button inside a utility drawer (drawers default to the bordered chip). */
+.drawer-ghost {
+  background: transparent;
+  border: 0;
+  padding: 4px 8px;
+}
+
+.drawer-ghost:not(:disabled):hover {
+  background: var(--surface-raised);
 }
 
 /*
@@ -489,6 +679,23 @@ button:focus-visible {
 
 .list-state:focus {
   outline: none;
+}
+
+/* The sentence echoes the header note tone (the words say the status; the tone only echoes them). The action
+   link and the hint keep their own colours. Same tokens as .header-note.tone-*. */
+.list-state.tone-danger {
+  color: var(--danger);
+}
+
+.list-state.tone-warning {
+  color: var(--warning);
+}
+
+/* The one quieter line under an empty-state sentence (what Connect does). */
+.list-state-hint {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-secondary);
 }
 
 .list-state:focus-visible {
@@ -581,6 +788,11 @@ button:focus-visible {
 @media (min-width: 1000px) {
   .app-main {
     grid-template-columns: auto minmax(0, 1fr) var(--contact-width);
+  }
+
+  /* No rows, no conversation, no contact: the column is not rendered and its track goes, so the list takes the width. */
+  .app-main.contact-collapsed {
+    grid-template-columns: auto minmax(0, 1fr);
   }
 }
 
@@ -813,6 +1025,8 @@ button:focus-visible {
   color: var(--text-secondary);
   font-size: var(--type-body);
   margin: 0;
+  /* No one-word straggler ("available." alone on a line). */
+  text-wrap: balance;
 }
 
 /* Mail section: a Title label with a Graphite glyph, then plain Ash text
@@ -2279,9 +2493,10 @@ button:focus-visible {
   color: var(--text-secondary);
 }
 
-/* Activity status words (the only coloured part of an Activity row). */
+/* A failed account request is a confirmed failure, the same Coral Fault as a failed sync. */
+.account-sync-error,
 .account-action-error {
-  color: var(--warning);
+  color: var(--danger);
 }
 
 /* Local-only plain-text draft editors (compose card, docked reply composer). */
@@ -2573,31 +2788,41 @@ button:focus-visible {
 }
 
 .account-panel {
-  border: 1px solid var(--rule);
-  border-radius: 6px;
-  padding: 0.6rem 0.8rem;
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  gap: 24px;
   font-size: var(--type-body);
 }
 
-.account-row {
+/* Sections are separated by space alone: no card, border or radius (DESIGN.md "Seams-Only"). */
+.account-section {
   display: flex;
-  gap: 0.8rem;
-  align-items: baseline;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
 }
 
-.account-mode {
+.account-label {
+  margin: 0;
   font-weight: var(--weight-strong);
 }
 
-.account-connection {
-  font-style: italic;
+.account-line {
+  margin: 0;
 }
 
-.account-email {
-  margin: 0;
+.account-mode {
+  color: var(--text-secondary);
+}
+
+.account-sync-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+
+.account-sep {
+  color: var(--text-secondary);
 }
 
 .account-notice {
@@ -2606,23 +2831,197 @@ button:focus-visible {
 }
 
 .account-sync-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
   margin: 0;
-  color: var(--danger);
   font-weight: var(--weight-strong);
 }
 
-.account-coverage,
-.account-cached,
-.account-disposable,
-.account-upgrade-disclosure,
-.account-disconnect-warning {
+.account-action-error {
+  margin: 0;
+}
+
+.account-sync-error button {
+  font-weight: var(--weight-regular);
+}
+
+/* Ash facts: coverage, the scope disclosure and the disconnect warning. */
+.account-note {
   margin: 0;
   color: var(--text-secondary);
+  /* No lone word on the last line ("deletes." in the Enable mailbox actions disclosure). */
+  text-wrap: pretty;
 }
 
 .account-actions {
   display: flex;
-  gap: 0.5rem;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.account-confirm {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.account-primary {
+  font-weight: var(--weight-strong);
+}
+
+/* The two answers to "Disconnect?": Keep account is the default (Title weight, Focus Stone fill, the focus lands
+   on it); Disconnect is the destructive one: Coral Fault text and border, the words unchanged. Coral here marks
+   the irreversible choice (the one deliberate use beyond failures), never a state. */
+.account-confirm .account-primary {
+  background: var(--focus-fill);
+}
+
+.account-confirm .account-destructive {
+  background: transparent;
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.account-confirm .account-destructive:not(:disabled):hover {
+  background: var(--surface-raised);
+  color: var(--danger);
+}
+
+/* Provider mail (catalog -> page -> reader): list-row look, no cards or borders. */
+.provider-destinations {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--type-body);
+}
+
+.provider-destinations > * {
+  max-width: 100%;
+}
+
+.destination-intro,
+.destination-meta,
+.destination-state {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.destination-error {
+  margin: 0;
+  color: var(--warning);
+}
+
+.destination-notice {
+  margin: 0;
+  color: var(--warning);
+}
+
+.destination-title {
+  margin: 0;
+}
+
+.destination-find {
+  display: block;
+  align-self: stretch;
+}
+
+/* A quiet Seam underline at rest so the field still reads as an input. */
+.destination-search {
+  width: 100%;
+  padding: 4px 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom-color: var(--divider);
+  border-radius: 4px;
+}
+
+.destination-search:hover:not(:disabled) {
+  border-color: var(--divider);
+}
+
+.destination-search:focus-visible {
+  border-color: var(--focus-accent);
+  outline: 1px solid var(--focus-accent);
+  outline-offset: -2px;
+}
+
+.destination-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.destination-catalog {
+  align-self: stretch;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.destination-list {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  max-height: 50vh;
+  overflow: auto;
+}
+
+.destination-list:focus {
+  outline: none;
+}
+
+/* Compact ghost rows, about 28px, left-aligned, no border. */
+.destination-item,
+.destination-row {
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  padding: 4px 8px;
+  text-align: left;
+  overflow-wrap: anywhere;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+}
+
+.destination-item:not(:disabled):hover,
+.destination-row:not(:disabled):hover {
+  background: var(--surface-raised);
+}
+
+.destination-item:focus-visible,
+.destination-row:focus-visible {
+  outline-offset: -2px;
+}
+
+.destination-reader {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  align-self: stretch;
+  min-width: 0;
+}
+
+.destination-message {
+  align-self: stretch;
+}
+
+.destination-message h4 {
+  margin: 12px 0 0;
+}
+
+.destination-reader pre {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+  line-height: var(--leading-reading);
 }
 
 .reader-notice,

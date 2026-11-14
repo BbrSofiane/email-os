@@ -5,13 +5,14 @@ import type { BrowsingActionId } from './browsing-actions';
  * the words people reach for besides its label, and the bound keys that have no
  * command behind them. Labels and shortcuts stay in browsing-actions.ts.
  */
-export type ActionGroup = 'conversation' | 'selection' | 'view' | 'goto';
+export type ActionGroup = 'conversation' | 'selection' | 'view' | 'goto' | 'account';
 
 export const actionGroups: ReadonlyArray<{ id: ActionGroup; label: string }> = [
   { id: 'conversation', label: 'Conversation' },
   { id: 'selection', label: 'Selection' },
   { id: 'view', label: 'View' },
   { id: 'goto', label: 'Go to' },
+  { id: 'account', label: 'Account' },
 ];
 
 export const actionGroupOf: Record<BrowsingActionId, ActionGroup> = {
@@ -23,6 +24,7 @@ export const actionGroupOf: Record<BrowsingActionId, ActionGroup> = {
   search: 'view', 'create-split': 'view', 'edit-split': 'view', 'toggle-unread-filter': 'view',
   inbox: 'goto', saved: 'goto', done: 'goto', starred: 'goto', destinations: 'goto', trash: 'goto', reminders: 'goto', 'reminder-settings': 'goto',
   drafts: 'goto', activity: 'goto', account: 'goto', 'switch-account': 'goto',
+  connect: 'account', sync: 'account',
 };
 
 /** Extra search words per action; the label and the bound key are always searchable. */
@@ -57,16 +59,18 @@ export const actionAliases: Record<BrowsingActionId, readonly string[]> = {
   activity: ['operations', 'history', 'log', 'queue', 'pending'],
   account: ['settings', 'google', 'gmail', 'permissions', 'access'],
   'switch-account': ['change account', 'workspace', 'mailbox'],
+  connect: ['sign in', 'login', 'log in', 'google', 'gmail', 'reconnect'],
+  sync: ['refresh', 'fetch', 'check mail', 'retry', 'update'],
 };
 
 /** Bound keys that move or select without being a command; shown, never executed. */
 export type KeyScope = 'reminders' | 'drafts';
-/** `scope` limits a hint to the list context where the key works; no scope means everywhere. */
-export interface KeyHint { id: string; label: string; keys: readonly string[]; aliases: readonly string[]; scope?: KeyScope }
+/** `scope` limits a hint to the list context where the key works; no scope means everywhere. `needsRows` hides it while the list has no rows. */
+export interface KeyHint { id: string; label: string; keys: readonly string[]; aliases: readonly string[]; scope?: KeyScope; needsRows?: boolean }
 export const keyHints: readonly KeyHint[] = [
-  { id: 'move', label: 'Next and previous conversation', keys: ['J', 'K'], aliases: ['down', 'up', 'arrow', 'move', 'navigate'] },
-  { id: 'select', label: 'Select conversation', keys: ['X'], aliases: ['check', 'toggle', 'mark'] },
-  { id: 'extend', label: 'Extend selection', keys: ['Shift+J', 'Shift+K'], aliases: ['range', 'multiple', 'select'] },
+  { id: 'move', label: 'Next and previous conversation', keys: ['J', 'K'], aliases: ['down', 'up', 'arrow', 'move', 'navigate'], needsRows: true },
+  { id: 'select', label: 'Select conversation', keys: ['X'], aliases: ['check', 'toggle', 'mark'], needsRows: true },
+  { id: 'extend', label: 'Extend selection', keys: ['Shift+J', 'Shift+K'], aliases: ['range', 'multiple', 'select'], needsRows: true },
   { id: 'destinations', label: 'Open destinations', keys: ['←'], aliases: ['navigator', 'left', 'go to'] },
   { id: 'reminder-tabs', label: 'Previous and next reminders tab', keys: ['[', ']'], aliases: ['pending', 'returned', 'history', 'tab', 'switch'], scope: 'reminders' },
   { id: 'reminder-reschedule', label: 'Reschedule focused reminder', keys: ['H'], aliases: ['remind', 'snooze', 'time'], scope: 'reminders' },
