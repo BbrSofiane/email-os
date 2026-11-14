@@ -183,7 +183,11 @@ fn available_bytes(dir: &Path) -> io::Result<u64> {
     if unsafe { libc::statvfs(path.as_ptr(), &mut stats) } != 0 {
         return Err(io::Error::last_os_error());
     }
-    Ok((stats.f_bavail as u64).saturating_mul(stats.f_frsize as u64))
+    // `fsblkcnt_t` and `c_ulong` are u64 on 64-bit Linux but u32 on macOS and
+    // 32-bit Android, so the casts are needed for portability.
+    #[allow(clippy::unnecessary_cast)]
+    let (blocks, block_size) = (stats.f_bavail as u64, stats.f_frsize as u64);
+    Ok(blocks.saturating_mul(block_size))
 }
 
 #[cfg(not(unix))]
