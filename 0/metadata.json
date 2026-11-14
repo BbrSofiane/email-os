@@ -1,0 +1,48 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7CSRXHSKYGV4138ADBKQ45C",
+  "session_id": "c1af0b42-11b0-4f57-8c38-eee59574218f",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-14T10:31:14.613371486Z",
+  "branch": "maintenance/p3b-provider-trait-rename",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "crates/mail-core/src/gmail/operations.rs",
+    "crates/mail-core/src/gmail/provider.rs",
+    "crates/mail-core/src/gmail/provider/api.rs",
+    "crates/mail-core/src/gmail/provider/tests.rs",
+    "crates/mail-core/src/gmail/sync.rs",
+    "crates/mail-core/src/gmail/types.rs",
+    "crates/mail-core/src/testing.rs",
+    "crates/mail-core/src/testing/operations_fake.rs",
+    "crates/mail-core/tests/gmail_auth_contract.rs",
+    "crates/mail-core/tests/gmail_cache_sync.rs",
+    "docs/current-architecture.md",
+    "src-tauri/src/main.rs"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "111b36be2964",
+  "checkpoint_transcript_start": 321,
+  "transcript_lines_at_start": 321,
+  "compact_transcript_start": 37,
+  "token_usage": {
+    "input_tokens": 6,
+    "cache_creation_tokens": 2869,
+    "cache_read_tokens": 540473,
+    "output_tokens": 1911,
+    "api_call_count": 3
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-14T10:31:14.55802577Z",
+    "agent_lines": 44,
+    "agent_removed": 36,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 44,
+    "total_lines_changed": 80,
+    "agent_percentage": 100,
+    "metric_version": 2
+  }
+}

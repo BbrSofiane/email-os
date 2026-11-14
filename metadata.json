@@ -1,0 +1,37 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7CSRXHSKYGV4138ADBKQ45C",
+  "strategy": "manual-commit",
+  "branch": "maintenance/p3b-provider-trait-rename",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "crates/mail-core/src/gmail/operations.rs",
+    "crates/mail-core/src/gmail/provider.rs",
+    "crates/mail-core/src/gmail/provider/api.rs",
+    "crates/mail-core/src/gmail/provider/tests.rs",
+    "crates/mail-core/src/gmail/sync.rs",
+    "crates/mail-core/src/gmail/types.rs",
+    "crates/mail-core/src/testing.rs",
+    "crates/mail-core/src/testing/operations_fake.rs",
+    "crates/mail-core/tests/gmail_auth_contract.rs",
+    "crates/mail-core/tests/gmail_cache_sync.rs",
+    "docs/current-architecture.md",
+    "src-tauri/src/main.rs"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 6,
+    "cache_creation_tokens": 2869,
+    "cache_read_tokens": 540473,
+    "output_tokens": 1911,
+    "api_call_count": 3
+  }
+}
