@@ -444,3 +444,46 @@ fn concurrent_cancel_and_reschedule_have_exactly_one_revision_winner() {
         );
     }
 }
+
+/// Legacy (triage half of `reschedule_cancel_fire_cas_failure_and_superseding_triage`).
+/// Under the local rules ordinary triage on a conversation a reminder hides is
+/// accepted as the newer intent: the archive is a real operation, the reminder
+/// still resolves at its deadline, and returning it never resurrects mail the
+/// user archived since.
+#[test]
+fn newer_triage_wins_and_the_returned_reminder_does_not_resurrect_the_conversation() {
+    let s = Synthetic::open("reminder-triage");
+    s.core
+        .put_reminder(&put(
+            "conv-01",
+            Some("2026-02-01T00:01:00Z"),
+            ReminderCondition::Regardless,
+            "schedule",
+        ))
+        .unwrap();
+    let triage = s
+        .core
+        .set_archived(&set_archived("conv-01", true, "new-triage"))
+        .expect("triage of a hidden conversation is accepted");
+    assert!(wait_for_status(
+        &s.core,
+        std::slice::from_ref(&triage.operation_id),
+        OperationStatus::Confirmed
+    ));
+    assert_eq!(
+        s.synthetic.write_call_count(),
+        1,
+        "only the user's archive is written"
+    );
+    advance_and_observe(&s, 61);
+    assert!(phase_reaches(&s, ReminderPhase::Returned));
+    assert!(
+        !in_inbox(&s.core, "conv-01"),
+        "the newer triage is not undone by the reminder"
+    );
+    assert_eq!(
+        s.synthetic.write_call_count(),
+        1,
+        "returning writes nothing"
+    );
+}
