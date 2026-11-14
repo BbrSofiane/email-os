@@ -219,6 +219,9 @@ export interface Mailbox {
   archiveFocused(): Promise<void>;
 }
 
+/** How many successively newer refreshes a superseded `refresh()` waits for. */
+const MAX_REFRESH_FOLLOWS = 3;
+
 export function useMailbox(client: MailClient): Mailbox {
   const context = ref<BrowseContext>('inbox');
   const starredOnly = ref(false);
@@ -259,6 +262,9 @@ export function useMailbox(client: MailClient): Mailbox {
 
   let readerSource: 'list' | 'activity' = 'list';
   let listToken = 0;
+  // Refresh bookkeeping for `refresh()`: a superseded call follows the newest one.
+  let refreshCounter = 0;
+  let newestRefresh: { seq: number; body: Promise<void> } | null = null;
   // Explicit query/navigation ownership must survive routine list refreshes.
   let navigationIntentToken = 0;
   let activityToken = 0;
@@ -756,9 +762,44 @@ export function useMailbox(client: MailClient): Mailbox {
     focusedRef.value = null;
   }
 
+  /**
+   * Authoritative list/status/detail refresh. Resolves when the list shown
+   * reflects a state at least as new as this call.
+   *
+   * Every refresh takes a new `listToken`, so a change event that arrives while
+   * one is reading starts a newer refresh and the older one discards its data
+   * (it must never publish over newer rows). On its own that left the OLDER
+   * call resolving first, while `conversations` still held the previous list,
+   * so a caller that inspected the list straight after `await refresh()` (Undo
+   * re-focusing the restored row) saw stale rows. A superseded refresh now
+   * follows the newest in-flight refresh and resolves after it published.
+   *
+   * Bound: it follows at most {@link MAX_REFRESH_FOLLOWS} successively newer
+   * refreshes. If events keep arriving faster than reads complete it stops
+   * following and resolves, exactly as before this change, so a busy event
+   * stream can delay a caller by at most that many reads, never indefinitely.
+   * Following is skipped entirely when the mailbox is detached or the session
+   * changed (account change/disconnect): those refreshes resolve at once and
+   * publish nothing, as their own token and session guards already ensure.
+   */
   async function refresh(): Promise<void> {
     if (detached) return;
     const token = ++listToken;
+    const refreshSeq = ++refreshCounter;
+    const session = mailboxSessionToken;
+    const body = runRefresh(token);
+    newestRefresh = { seq: refreshSeq, body };
+    await body;
+    let followed = refreshSeq;
+    for (let follows = 0; follows < MAX_REFRESH_FOLLOWS; follows += 1) {
+      const newer = newestRefresh;
+      if (detached || session !== mailboxSessionToken || !newer || newer.seq <= followed) return;
+      followed = newer.seq;
+      await newer.body;
+    }
+  }
+
+  async function runRefresh(token: number): Promise<void> {
     loadingMore.value = false;
     // Any list/status reload may reflect a mailbox change: no cached detail
     // may be shown as fresh afterwards.

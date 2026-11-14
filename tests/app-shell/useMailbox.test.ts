@@ -828,4 +828,146 @@ describe('useMailbox (Slice 02 account status and lifecycle)', () => {
     expect(result.lastAction.value?.undone).toBeNull();
     stop();
   });
+  // A change event that lands while Undo's own refresh is reading supersedes
+  // it (newer listToken). The awaited refresh must still resolve only once the
+  // newest refresh has published, so a caller that inspects `conversations`
+  // straight after `await undoLastAction()` sees the restored row.
+  describe('refresh superseded by a change event', () => {
+    async function undoWithEvents(afterReplyEvents: number): Promise<{ atResolve: boolean; later: boolean }> {
+      const inner = createBrowserFakeMailClient();
+      let listener: (() => void) | null = null;
+      let armed = false;
+      const client: MailClient = {
+        ...inner,
+        // Only the events this test fires reach the mailbox (the fake's own are muted).
+        subscribe: async (l) => { listener = l; return () => {}; },
+        // A real IPC read takes time: every list read yields one macrotask.
+        listConversations: async () => {
+          if (armed) {
+            armed = false;
+            // Core pass-start events arrive while this very refresh is reading.
+            for (let i = 0; i < afterReplyEvents; i += 1) queueMicrotask(() => listener?.());
+          }
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          return inner.listConversations();
+        },
+        undoOperation: async (command) => {
+          const receipt = await inner.undoOperation(command);
+          listener?.(); // both cores notify inside the undo call, just before the reply
+          armed = true;
+          return receipt;
+        },
+      } as MailClient;
+      const { result, stop } = scopeRun(() => useMailbox(client));
+      await result.ready;
+      result.focusConversation(fixtureRef('conv-01'));
+      await result.archiveFocused();
+      await inner.controls.flush();
+      await flushMacrotasks();
+      expect(result.conversations.value.some((c) => c.ref.conversationId === 'conv-01')).toBe(false);
+      await result.undoLastAction();
+      const has = () => result.conversations.value.some((c) => c.ref.conversationId === 'conv-01');
+      const atResolve = has();
+      await flushMacrotasks();
+      await inner.controls.flush();
+      const later = has();
+      stop();
+      return { atResolve, later };
+    }
+
+    it('baseline: with no event after the reply the restored row is present when Undo resolves', async () => {
+      expect(await undoWithEvents(0)).toEqual({ atResolve: true, later: true });
+    });
+
+    it('a second change event during the undo refresh does not let Undo resolve on the old list', async () => {
+      expect(await undoWithEvents(1)).toEqual({ atResolve: true, later: true });
+    });
+
+    it('several events while Undo refreshes still resolve on a published list', async () => {
+      expect(await undoWithEvents(3)).toEqual({ atResolve: true, later: true });
+    });
+
+    it('events that keep arriving cannot hold a superseded refresh forever (bounded follow)', async () => {
+      const inner = createBrowserFakeMailClient();
+      let listener: (() => void) | null = null;
+      let hold = false;
+      const held: Array<ReturnType<typeof deferred<InboxSnapshot>>> = [];
+      const client: MailClient = {
+        ...inner,
+        subscribe: async (l) => { listener = l; return () => {}; },
+        listConversations: () => {
+          if (!hold) return inner.listConversations();
+          const gate = deferred<InboxSnapshot>();
+          held.push(gate);
+          return gate.promise;
+        },
+      } as MailClient;
+      const { result, stop } = scopeRun(() => useMailbox(client));
+      await result.ready;
+      const snapshot = await inner.listConversations();
+      hold = true;
+      let done = false;
+      void result.refresh().then(() => { done = true; });
+      await flushMacrotasks(1);
+      // Every round: a NEW change event starts a newer refresh whose read is held.
+      const round = async (resolveFrom: number): Promise<number> => {
+        const before = held.length;
+        listener?.();
+        await flushMacrotasks(1);
+        expect(held.length).toBeGreaterThan(before); // the newer refresh is reading
+        for (const gate of held.slice(resolveFrom, before)) gate.resolve(snapshot);
+        await flushMacrotasks(1);
+        return before;
+      };
+      let resolved = 0;
+      resolved = await round(resolved); // follows #1
+      expect(done).toBe(false);
+      resolved = await round(resolved); // follows #2
+      expect(done).toBe(false);
+      resolved = await round(resolved); // follows #3
+      expect(done).toBe(false);
+      await round(resolved); // a 4th newer refresh is now the newest: the bound is reached
+      expect(done).toBe(true);
+      hold = false;
+      for (const gate of held) gate.resolve(snapshot);
+      await flushMacrotasks();
+      stop();
+    });
+
+    it('a refresh superseded by a session change resolves without waiting for the new session', async () => {
+      const inner = createBrowserFakeMailClient();
+      inner.controls.setAccount({ mode: 'gmail', connection: 'connected', emailAddress: 'operator@example.test' });
+      const held: Array<ReturnType<typeof deferred<InboxSnapshot>>> = [];
+      let hold = false;
+      const client: MailClient = {
+        ...inner,
+        listConversations: () => {
+          if (!hold) return inner.listConversations();
+          const gate = deferred<InboxSnapshot>();
+          held.push(gate);
+          return gate.promise;
+        },
+      } as MailClient;
+      const { result, stop } = scopeRun(() => useMailbox(client));
+      await result.ready;
+      hold = true;
+      let oldDone = false;
+      void result.refresh().then(() => { oldDone = true; }); // old session, list read held
+      await flushMacrotasks(1);
+      expect(held).toHaveLength(1);
+      const disconnecting = result.disconnectAccount(); // bumps the session, starts its own held refresh
+      await flushMacrotasks(1);
+      expect(held.length).toBeGreaterThanOrEqual(2);
+      const snapshot = await inner.listConversations();
+      held[0]!.resolve(snapshot);
+      await flushMacrotasks(1);
+      // The old refresh resolved at once: it does not follow the new session's refresh.
+      expect(oldDone).toBe(true);
+      expect(result.conversations.value).toEqual([]); // and published nothing from the old session
+      for (const gate of held.slice(1)) gate.resolve(snapshot);
+      hold = false;
+      await disconnecting;
+      stop();
+    });
+  });
 });
