@@ -89,10 +89,16 @@ function dismissError(): void { if (!switching.value) error.value = ''; }
 <template>
   <div class="fixture-workspaces">
     <header class="workspace-header">
-      <p id="workspace-boundary">Synthetic in-app workspaces · memory only · not native tabs · search stays inside the active account; no cross-account search</p>
+      <!-- Short on screen; the full boundary is the nav's accessible description (aria-describedby). -->
+      <p id="workspace-boundary" class="workspace-boundary">
+        <span aria-hidden="true">Synthetic workspaces · memory only</span>
+        <span aria-hidden="true" class="workspace-boundary-detail">Search stays in the active account.</span>
+        <span class="visually-hidden">Synthetic in-app workspaces · memory only · not native tabs · search stays inside the active account; no cross-account search</span>
+      </p>
       <nav aria-label="Fixture accounts" aria-describedby="workspace-boundary" :aria-busy="switching">
         <button v-for="session in sessions" :key="session.accountId" type="button"
           :data-test="`switch-${session.accountId}`" :aria-current="activeId === session.accountId ? 'true' : undefined"
+          :title="activeId === session.accountId ? undefined : 'Switch account — also in Commands'"
           :disabled="switching" @click="switchTo(session.accountId)">
           {{ session.emailAddress }}<span v-if="titles[session.accountId]"> · {{ titles[session.accountId]?.split(' — ').slice(0, -1).join(' — ') }}</span>
         </button>

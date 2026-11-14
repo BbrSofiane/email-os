@@ -1,6 +1,6 @@
 use super::*;
 use crate::gmail::parse::MAX_PART_BODY_BYTES;
-use crate::gmail::types::GmailReadProvider;
+use crate::gmail::types::GmailProvider;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use serde_json::{json, Value};
@@ -155,8 +155,8 @@ impl FakeApi {
 /// Provider with loopback endpoints and a no-op opener (no browser).
 /// Request pacing is disabled here; the pacing tests below opt back in
 /// with short intervals so no test performs a long real sleep.
-fn test_provider(api_base: &str, secrets: Arc<dyn Secrets>) -> GmailProvider {
-    let mut provider = GmailProvider::new(test_config(), secrets).unwrap();
+fn test_provider(api_base: &str, secrets: Arc<dyn Secrets>) -> LiveGmailProvider {
+    let mut provider = LiveGmailProvider::new(test_config(), secrets).unwrap();
     provider.min_request_interval = Duration::ZERO;
     provider.endpoints = Endpoints {
         authorize: format!("{api_base}/synthetic-authorize"),
@@ -2202,7 +2202,7 @@ fn pacing_waits_abort_promptly_on_cancellation() {
 
 /// Bounded wait for the spawned request to reserve its pace slot (a slot
 /// later than the seeded one); false if it never happens.
-fn until_provider_slot(provider: &GmailProvider, seeded: Instant) -> bool {
+fn until_provider_slot(provider: &LiveGmailProvider, seeded: Instant) -> bool {
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
         let reserved = *provider.last_request_slot.lock().unwrap() > Some(seeded);

@@ -1,4 +1,4 @@
-//! Gmail provider: the synchronous [`crate::gmail::types::GmailReadProvider`] backing the cache/sync
+//! Gmail provider: the synchronous [`crate::gmail::types::GmailProvider`] backing the cache/sync
 //! lane, with mailbox writes denied until an explicit verified scope upgrade.
 //!
 //! Fixed HTTPS Google endpoints (tests override with loopback URLs), no
@@ -73,7 +73,7 @@ enum CredentialPublicationKind {
     AccountChange,
 }
 
-pub struct GmailProvider {
+pub struct LiveGmailProvider {
     config: GoogleConfig,
     secrets: Arc<dyn Secrets>,
     http: Client,
@@ -91,7 +91,7 @@ pub struct GmailProvider {
     last_request_slot: Mutex<Option<Instant>>,
 }
 
-impl GmailProvider {
+impl LiveGmailProvider {
     /// Builds the provider. A blank client id is a visible `not_configured`.
     pub fn new(config: GoogleConfig, secrets: Arc<dyn Secrets>) -> Result<Self, MailError> {
         if config.client_id.trim().is_empty() {

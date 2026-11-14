@@ -3,11 +3,11 @@
  * the 100-conversation bound, authoritative-refresh intersection and
  * context/account clearing. Synthetic only.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { effectScope } from 'vue';
 import { useMailbox } from '../../src/composables/useMailbox';
 import { createBrowserFakeMailClient } from '../../src/lib/ipc/browser-fake';
-import { fixtureRef, flushMacrotasks } from '../helpers';
+import { fixtureRef, flushMacrotasks, useGmailMode } from '../helpers';
 import { SELECTION_MAX } from '../../src/composables/useMailbox';
 import type { ConversationRef } from '../../src/lib/ipc/client';
 
@@ -171,6 +171,36 @@ describe('useMailbox selection state', () => {
     const frozen = result.selectionInLoadedOrder();
     expect(frozen[0]!.conversationId).toBe('conv-01');
     expect(frozen[1]!.conversationId).toBe('conv-03');
+    stop();
+  });
+
+  it('drops selection and anchor when the account identity changes or the account disconnects', async () => {
+    const fake = createBrowserFakeMailClient();
+    useGmailMode(fake);
+    const { result, stop } = scopeRun(() => useMailbox(fake));
+    await result.ready;
+    const first = result.conversations.value[0]!.ref;
+    result.toggleSelected(first);
+    expect(result.selectedRefs.value).toHaveLength(1);
+    // A different account identity: the old account's selection must not survive.
+    const status = await fake.getAccountStatus();
+    const spy = vi.spyOn(fake, 'getAccountStatus').mockResolvedValue({
+      ...status, account: { ...status.account!, accountId: 'another-account' },
+    });
+    await result.refresh();
+    await flushMacrotasks(2);
+    expect(result.accountStatus.value?.account?.accountId).toBe('another-account');
+    expect(result.selectedRefs.value).toEqual([]);
+    expect(result.rangeAnchorRef.value).toBeNull();
+    spy.mockRestore();
+    // Disconnect clears whatever was selected afterwards as well.
+    await result.refresh();
+    await flushMacrotasks(2);
+    const current = result.conversations.value[0]?.ref;
+    if (current) result.toggleSelected(current);
+    await result.disconnectAccount();
+    expect(result.selectedRefs.value).toEqual([]);
+    expect(result.rangeAnchorRef.value).toBeNull();
     stop();
   });
 });

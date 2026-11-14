@@ -1,0 +1,164 @@
+{
+  "scenario": "invalid-commands",
+  "description": "Typed errors for invalid commands: unknown conversation is not_found, an empty request id is invalid_request on requestId, group structure errors (duplicates, empty, cross-account member, empty request id) are invalid_request on members/requestId. Nothing is accepted.",
+  "rules": "docs/ux-05 \u00a74.1 (validate structure, duplicates, bounds, request id before accepting anything); mail_core::groups::validate_group_members",
+  "profiles": [
+    "gmail",
+    "fixture"
+  ],
+  "mailbox": "triage",
+  "steps": [
+    {
+      "name": "unknown conversation",
+      "do": {
+        "cmd": "setArchived",
+        "args": {
+          "conversation": "ghost-1",
+          "archived": true,
+          "requestId": "req-1"
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "not_found"
+        }
+      }
+    },
+    {
+      "name": "empty request id",
+      "do": {
+        "cmd": "setArchived",
+        "args": {
+          "conversation": "conv-01",
+          "archived": true,
+          "requestId": ""
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid_request",
+          "field": "requestId"
+        }
+      }
+    },
+    {
+      "name": "duplicate members",
+      "do": {
+        "cmd": "setArchivedGroup",
+        "args": {
+          "members": [
+            "conv-01",
+            "conv-01"
+          ],
+          "archived": true,
+          "requestId": "grp-1"
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid_request",
+          "field": "members"
+        }
+      }
+    },
+    {
+      "name": "empty members",
+      "do": {
+        "cmd": "setArchivedGroup",
+        "args": {
+          "members": [],
+          "archived": true,
+          "requestId": "grp-1"
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid_request",
+          "field": "members"
+        }
+      }
+    },
+    {
+      "name": "member from another account",
+      "do": {
+        "cmd": "setArchivedGroup",
+        "args": {
+          "members": [
+            "conv-01",
+            {
+              "account": "other-account",
+              "id": "conv-02"
+            }
+          ],
+          "archived": true,
+          "requestId": "grp-1"
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid_request",
+          "field": "members"
+        }
+      }
+    },
+    {
+      "name": "group with an empty request id",
+      "do": {
+        "cmd": "setArchivedGroup",
+        "args": {
+          "members": [
+            "conv-01"
+          ],
+          "archived": true,
+          "requestId": ""
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid_request",
+          "field": "requestId"
+        }
+      }
+    },
+    {
+      "name": "lookup with an empty request id",
+      "do": {
+        "cmd": "getOperationGroup",
+        "args": {
+          "requestId": ""
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "invalid_request",
+          "field": "requestId"
+        }
+      }
+    },
+    {
+      "name": "nothing was accepted",
+      "do": {
+        "cmd": "listOperationGroups",
+        "args": {
+          "limit": 10
+        }
+      },
+      "expect": {
+        "ok": {
+          "groups": [],
+          "nextCursor": null
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02",
+            "conv-01"
+          ],
+          "activity": []
+        }
+      }
+    }
+  ]
+}

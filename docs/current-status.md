@@ -21,9 +21,10 @@ research and architecture proposals are not feature inventories.
 The Android fixture target builds a debug APK for ARM64 and x86_64 from the
 shared Rust shell. It uses SQLite and the native fixture backend; Gmail,
 attachment export, and external link dispatch are unavailable. APK build passed
-on 2026-11-14. Device UI validation remains pending because the device tool did
-not start (`device_open` reported: “This machine is unavailable: Agent tools did
-not start within 30000 ms.”). See the [Android smoke steps](development.md#android-fixture-apk).
+on 2026-11-14. An opt-in `EMAIL_OS_SYNTHETIC_CORE=1` selects the ADR 0002
+synthetic core while mode remains `fixture`; without it, Android uses the legacy
+fixture `MailCore`. Device smoke passed on an Android 15 x86_64 emulator. See
+the [Android smoke steps](development.md#android-fixture-apk).
 
 Mode selection is deliberate: native defaults to fixture; `EMAIL_OS_MODE=gmail`
 selects a separate Gmail profile. Browser preview remains synthetic. See the

@@ -15,7 +15,7 @@
  * pane; the contact pane shows only exact known fields.
  *
  * Keyboard contract: this comment is a short index. The action catalog in
- * `src/lib/browsing-actions.ts` and `onKeydown` below define the full contract.
+ * `src/lib/action-registry.ts` and `onKeydown` below define the full contract.
  * - j/k and Arrow keys navigate; Enter opens; Escape returns/closes.
  * - / opens search; e archives, Shift+E restores, s toggles stars,
  *   r prepares a local reply,
@@ -36,12 +36,14 @@ import RemindersList from './components/RemindersList.vue';
 import { useReminders, REMINDER_TABS } from './composables/useReminders';
 import { formatReminderDateTime } from './lib/reminder-timezone';
 import ReminderSettings from './components/ReminderSettings.vue';
-import ActionNotice, { type GroupNoticeView } from './components/ActionNotice.vue';
+import ActionNotice from './components/ActionNotice.vue';
 import SelectionBar from './components/SelectionBar.vue';
 import HeaderGlyph from './components/HeaderGlyph.vue';
 import PaneGlyph from './components/PaneGlyph.vue';
-import { browsingActions, actionLabel, type BrowsingActionId } from './lib/browsing-actions';
-import { groupRowsBySender, isSingleFromQuery, senderGroupKey, validateSearch } from './lib/search';
+import { actionLabel, actionRegistry, findKeyBinding, type ActionHandlers, type ActionId, type KeyFocus, type KeyOnlyId, type KeyResolverId } from './lib/action-registry';
+import type { AccountNoticeAction, InboxEmptyAction } from './lib/account-status';
+import { groupRowsBySender, isSingleFromQuery, senderGroupKey } from './lib/search';
+import { errorText } from './lib/error-text';
 import InboxList from './components/InboxList.vue';
 import SplitEditor from './components/SplitEditor.vue';
 import { splitBadge } from './lib/saved-split';
@@ -62,8 +64,13 @@ import { BROWSER_PREVIEW_DISCLOSURE } from './lib/ipc/browser-fake';
 import { isTauriRuntime, type ClientMode } from './lib/ipc';
 import type { ConversationRef, DraftSource, DraftSummary, MailClient, Reminder } from './lib/ipc/client';
 import { REPLY_REASONS, replyBlockedReason, sourceLoadErrorReason } from './lib/reply-context';
-import { sameConversation, useMailbox, type BrowseContext, type ConversationSummaryLike, type DoneBoundary, type SearchVisit, type LastActionId } from './composables/useMailbox';
+import { sameConversation, useMailbox, type BrowseContext, type ConversationSummaryLike, type DoneBoundary, type SearchVisit } from './composables/useMailbox';
 import { useDrafts } from './composables/useDrafts';
+import { useAccountNotes } from './composables/useAccountNotes';
+import { useActionNotice } from './composables/useActionNotice';
+import { useContactContext } from './composables/useContactContext';
+import { useGoChord } from './composables/useGoChord';
+import { useSearchSurface } from './composables/useSearchSurface';
 
 const props = withDefaults(defineProps<{
   client: MailClient;
@@ -80,8 +87,6 @@ const androidFixture = isTauriRuntime() && /Android/i.test(navigator.userAgent);
 const CONTACT_BREAKPOINT_PX = 1000;
 
 type UtilityDrawer = 'account' | 'activity' | 'destinations' | 'reminder-settings';
-type ContactContext = 'focused' | 'open';
-interface ContactInfo { displayName: string | null; mailbox: string }
 /** Visible-row anchor for the reader round trip. */
 interface ListAnchor { ref: ConversationRef; offsetTop: number; scrollTop: number }
 /**
@@ -166,7 +171,7 @@ function bulkMembers(): ConversationRef[] | null {
   return members.length > 0 ? members : null;
 }
 
-function bulkActionAvailable(id: BrowsingActionId): boolean {
+function bulkActionAvailable(id: ActionId): boolean {
   if (!bulkMembers()) return false;
   if (id === 'archive') return mailbox.context.value !== 'done' && mailboxActionsEnabled.value;
   if (id === 'unarchive') return (mailbox.context.value === 'done' || mailbox.context.value === 'search') && mailboxActionsEnabled.value;
@@ -237,131 +242,7 @@ async function clearSelectionFromBar(): Promise<void> {
 // Action notice (UX-04): single-slot undo notification
 // ---------------------------------------------------------------------------
 
-/** Advisory wall clock for the Undo hint; the backend owns eligibility. */
-const nowMs = ref(Date.now());
-let nowTimer: ReturnType<typeof setInterval> | null = null;
-
-/**
- * Single-slot notice state, single-or-group identity (UX-04/UX-05). Status text
- * derives from the matching Activity row / authoritative group status on every
- * refresh; undo windows come only from refreshed authoritative state. The
- * backend stays the authority: an `expired` rejection refreshes and then closes
- * the slot window below. After a successful undo the slot reports the outcome.
- */
-const actionNotice = computed(() => {
-  const groupSlot = mailbox.lastGroup.value;
-  if (groupSlot) {
-    const status = groupSlot.status;
-    const counts = { pending: 0, confirmed: 0, failed: 0, rejected: 0, unknown: 0, cancelled: 0 };
-    if (status) {
-      for (const member of status.members) {
-        if (member.status === 'rejected') counts.rejected += 1;
-        else if (member.status === 'confirmed') counts.confirmed += 1;
-        else if (member.status === 'failed') counts.failed += 1;
-        else if (member.status === 'outcome_unknown') counts.unknown += 1;
-        else if (member.status === 'cancelled') counts.cancelled += 1;
-        else counts.pending += 1; // queued | applying
-      }
-    }
-    let undoneView: GroupNoticeView['undone'] = null;
-    const undoMembers = status?.undoReceipt?.members ?? groupSlot.undone?.members;
-    if (undoMembers) {
-      const skipReasons: Record<string, number> = {};
-      let cancelled = 0;
-      let compensating = 0;
-      let skipped = 0;
-      for (const member of undoMembers) {
-        if (member.decision.kind === 'cancelled') cancelled += 1;
-        else if (member.decision.kind === 'compensating') compensating += 1;
-        else {
-          skipped += 1;
-          skipReasons[member.decision.reason] = (skipReasons[member.decision.reason] ?? 0) + 1;
-        }
-      }
-      // CURRENT compensation outcomes: prefer the backend's persisted undo
-      // record (also correct after restart / lost undo response); fall back to
-      // the refreshed activity rows for compensations it lists. Compensation
-      // status is tracked separately from the original execution statuses.
-      const outcomes = { confirmed: 0, failed: 0, unknown: 0, pending: 0 };
-      const record = groupSlot.status?.undoReceipt;
-      if (record) {
-        for (const member of record.members) {
-          for (const compensation of member.compensations) {
-            if (compensation.status === 'confirmed') outcomes.confirmed += 1;
-            else if (compensation.status === 'failed') outcomes.failed += 1;
-            else if (compensation.status === 'outcome_unknown') outcomes.unknown += 1;
-            else outcomes.pending += 1;
-          }
-        }
-      } else {
-        for (const member of groupSlot.undone?.members ?? []) {
-          for (const operationId of member.operationIds) {
-            const row = mailbox.activity.value.find((item) => item.id === operationId);
-            if (!row) outcomes.pending += 1;
-            else if (row.status === 'confirmed') outcomes.confirmed += 1;
-            else if (row.status === 'failed') outcomes.failed += 1;
-            else if (row.status === 'outcome_unknown') outcomes.unknown += 1;
-            else outcomes.pending += 1;
-          }
-        }
-      }
-      undoneView = { cancelled, compensating, skipped, skipReasons, compensationOutcomes: outcomes };
-    }
-    const group: GroupNoticeView = {
-      count: groupSlot.members.length,
-      counts,
-      acceptanceUnknown: groupSlot.state === 'acceptance-unknown',
-      statusKnown: status !== null,
-      statusError: groupSlot.statusError,
-      undoableUntil: status?.undo.undoableUntil ?? null,
-      hadWindow: groupSlot.hadWindow,
-      undone: undoneView,
-    };
-    const groupActionId: LastActionId = groupSlot.kind === 'star' ? (groupSlot.requestedStarred ? 'star' : 'unstar') : groupSlot.kind === 'read'
-      ? (groupSlot.requestedRead ? 'read' : 'unread')
-      : (groupSlot.requestedArchived ? 'archive' : 'unarchive');
-    return {
-      label: groupSlot.kind === 'star' ? (groupSlot.requestedStarred ? 'Star' : 'Unstar') : groupSlot.kind === 'read' ? (groupSlot.requestedRead ? 'Mark read' : 'Mark unread') : (groupSlot.requestedArchived ? 'Mark done' : 'Mark not done'),
-      actionId: groupActionId,
-      subject: null,
-      operation: null,
-      undoableUntil: null,
-      hadWindow: false,
-      undone: null,
-      group,
-    };
-  }
-  const slot = mailbox.lastAction.value;
-  if (!slot) return null;
-  const operation = mailbox.activity.value.find((item) => item.id === slot.receipt.operationId) ?? null;
-  const label = browsingActions.find((action) => action.id === slot.actionId)?.label ?? slot.actionId;
-  return {
-    label,
-    actionId: slot.actionId,
-    subject: slot.subject,
-    operation,
-    // Post-undo the window is closed outright: a stale activity row can still
-    // carry undoableUntil, and the palette/key must never send a second undo.
-    undoableUntil: slot.undone ? null : operation ? operation.undoableUntil ?? null : slot.undoableUntil,
-    hadWindow: slot.hadWindow,
-    undone: slot.undone
-      ? {
-          outcome: slot.undone.outcome,
-          compensations: mailbox.activity.value.filter((item) => slot.undone?.operationIds.includes(item.id) ?? false),
-        }
-      : null,
-  };
-});
-
-/** Palette/key availability share this window check; expiry is advisory only.
- *  An in-flight undo owns the slot: a second dispatch (key repeat, double-tap,
- *  button+key) must never race it into a false `already_undone` failure. */
-const undoWindowOpen = computed(() => {
-  const notice = actionNotice.value;
-  if (!notice || notice.undone) return false;
-  const until = notice.group ? notice.group.undoableUntil : notice.undoableUntil;
-  return until !== null && Date.parse(until) > nowMs.value;
-});
+const { nowMs, actionNotice, undoWindowOpen } = useActionNotice({ mailbox });
 
 /** Undo succeeded: re-focus the restored row only when it is in the current context. */
 async function undoFromNotice(): Promise<void> {
@@ -416,6 +297,8 @@ const accountReady = computed(() => mailbox.accountState.value === 'ready');
 const accountStatus = computed(() => mailbox.accountStatus.value);
 const accountId = computed(() => accountStatus.value?.account?.accountId ?? null);
 const drafts = useDrafts(props.client, accountId, props.mode);
+
+const emptyAction = ref<HTMLButtonElement | null>(null);
 
 /**
  * Inline reply composer: a reply to the conversation the reader is currently
@@ -924,7 +807,7 @@ function onViewportChange(event: MediaQueryListEvent): void {
 }
 
 async function toggleContactDisclosure(): Promise<void> {
-  if (wideViewport.value) return;
+  if (wideViewport.value || contactCollapsed.value) return;
   // Leaving an active drafts editor must go through its protected lifecycle
   // rather than unmounting the editor silently; on failure it stays visible.
   if ((replyComposerOpen.value || composeCardOpen.value) && !contactDisclosure.value) {
@@ -953,7 +836,6 @@ onMounted(() => {
   window.addEventListener('compositionstart', cancelGo);
   window.addEventListener('focusin', cancelGo);
   wideQuery?.addEventListener('change', onViewportChange);
-  nowTimer = setInterval(() => { nowMs.value = Date.now(); }, 250);
 });
 
 onBeforeUnmount(() => {
@@ -964,97 +846,27 @@ onBeforeUnmount(() => {
   window.removeEventListener('focusin', cancelGo);
   cancelGo();
   clearReminderConfirmation();
-  if (nowTimer !== null) clearInterval(nowTimer);
-  nowTimer = null;
   wideQuery?.removeEventListener('change', onViewportChange);
 });
 
-// ---------------------------------------------------------------------------
-// Contact context data: only exact known fields, only the matching surface
-// ---------------------------------------------------------------------------
+const { readerLoading, readerLoadingIdentity, contact, contactContext, contactCollapsed, composeRecipientLabel, cardTitle, onReaderActiveMessage, onReaderContactOverride } = useContactContext({ mailbox, drafts, readerOpen, accountReady });
 
-const listContact = computed<ContactInfo | null>(() => {
-  // A non-ready list never supplies stale contact targets.
-  if (mailbox.listState.value !== 'ready') return null;
-  const primary = mailbox.focusedSummary.value?.primaryCorrespondent;
-  return primary ? { displayName: primary.displayName, mailbox: primary.mailbox } : null;
-});
-
-const readerContact = computed<ContactInfo | null>(() => {
-  const conversation = mailbox.conversation.value;
-  if (!conversation || mailbox.detailState.value !== 'ready') return null;
-  if (!sameConversation(conversation.ref, mailbox.openRef.value)) return null;
-  // Baseline: the sender of the focused (active) message; without one, the
-  // latest displayed message. Hover/focus overrides are applied in `contact`.
-  const activeId = readerActiveMessageId.value;
-  const active = activeId ? conversation.messages.find((message) => message.id === activeId) ?? null : null;
-  const message = active ?? conversation.messages[conversation.messages.length - 1] ?? null;
-  return message ? { displayName: message.from.displayName, mailbox: message.from.mailbox } : null;
-});
-
-/** The list row of the open reference: the list's own, truthful identity data. */
-const openRow = computed(() => {
-  const opened = mailbox.openRef.value;
-  return opened ? mailbox.conversations.value.find((row) => sameConversation(row.ref, opened)) ?? null : null;
-});
-const readerLoading = computed(() => readerOpen.value && mailbox.detailState.value === 'loading');
-/** What the reader may say about a still-loading target, from the list row only. */
-const readerLoadingIdentity = computed(() => {
-  const row = readerLoading.value ? openRow.value : null;
-  if (!row) return null;
-  const primary = row.primaryCorrespondent;
-  return {
-    subject: row.subject,
-    sender: primary ? primary.displayName ?? primary.mailbox : null,
-    at: row.lastMessageAt ?? null,
-  };
-});
-
-const contact = computed<ContactInfo | null>(() => {
-  if (!readerOpen.value) return listContact.value;
-  // While the target loads, the list row's sender is the only truthful source.
-  if (readerLoading.value) {
-    const primary = mailbox.listState.value === 'ready' ? openRow.value?.primaryCorrespondent : undefined;
-    return primary ? { displayName: primary.displayName, mailbox: primary.mailbox } : null;
-  }
-  // A participant override applies only while the referenced message still
-  // exists on the open conversation: late blur/leave events, background
-  // removals, and account changes cannot leak a stale contact.
-  const override = contactOverride.value;
-  if (override
-    && sameConversation(override.ref, mailbox.openRef.value)
-    && mailbox.conversation.value?.messages.some((message) => message.id === override.messageId)
-  ) {
-    return { displayName: override.displayName, mailbox: override.mailbox };
-  }
-  return readerContact.value;
-});
-const contactContext = computed<ContactContext>(() => (readerOpen.value ? 'open' : 'focused'));
-
-// Reply-target resolution for an active reply draft editor, for the compose
-// card's heading (the contact pane shows no compose line: it would move its
-// pinned name and email lines). While
-// the reader is open on the source conversation, the latest message's sender
-// is the exact known target; otherwise the draft's current raw To text is the
-// only honest fallback. No target is guessed from participants or names.
-const composeTarget = computed<ContactInfo | null>(() => {
-  const source = drafts.activeSource.value;
-  if (!source || source.kind !== 'reply') return null;
-  const open = mailbox.conversation.value;
-  if (readerOpen.value && open && sameConversation(open.ref, source.conversation)) {
-    const latest = open.messages[open.messages.length - 1];
-    if (latest) return { displayName: latest.from.displayName, mailbox: latest.from.mailbox };
-  }
-  const to = drafts.content.value.to;
-  return to.trim() ? { displayName: null, mailbox: to } : null;
-});
-const composeRecipientLabel = computed<string | null>(() => {
-  const target = composeTarget.value;
-  return target ? (target.displayName ?? target.mailbox) : null;
-});
-/** The inline card's name: "New Message", or the reply draft's own title when a reply is edited there. */
-const cardTitle = computed(() => drafts.activeSource.value?.kind !== 'reply' ? 'New Message'
-  : composeRecipientLabel.value ? `Reply draft to ${composeRecipientLabel.value}` : 'Reply draft');
+// The column or the disclosure disappears with the last row: close the disclosure, and if focus was inside
+// the contact surface hand it to the empty line instead of dropping it to <body>.
+watch(contactCollapsed, (collapsed) => {
+  if (!collapsed) return;
+  const active = document.activeElement;
+  const hadFocus = active instanceof Node && (
+    (contactColumnEl.value?.contains(active) ?? false)
+    || (contactPanelEl.value?.contains(active) ?? false)
+    || active === contactDisclosureButton.value
+  );
+  contactDisclosure.value = false;
+  if (!hadFocus) return;
+  void nextTick().then(() => {
+    if (workspaceActive.value && !overlay.value && !drawer.value) emptyState.value?.focus({ preventScroll: true });
+  });
+}, { flush: 'pre' });
 
 // ---------------------------------------------------------------------------
 // Reader origin, focus, and scroll restoration
@@ -1062,181 +874,6 @@ const cardTitle = computed(() => drafts.activeSource.value?.kind !== 'reply' ? '
 
 // Context history is account-scoped and stores references/geometry, never indices.
 interface ContextEntry extends ReaderOrigin { starredOnly: boolean; search?: SearchVisit; context: BrowseContext; accountId: string; loadedDonePages: number; doneBoundary: DoneBoundary | null }
-const searchVisible = ref(false);
-const searchDraft = ref('');
-const searchInput = ref<HTMLInputElement | null>(null);
-const cachedSearch = ref(false);
-// Session-only by design: recently submitted queries live in memory for this
-// app instance and account only — never persisted to disk, localStorage or
-// the provider. Recorded on successful submitSearch only.
-const recentQueries = ref<string[]>([]);
-const RECENT_QUERY_LIMIT = 8;
-const CORRESPONDENT_LIMIT = 6;
-const suggestionsOpen = ref(false);
-const suggestionIndex = ref(-1);
-const searchAttemptedEmpty = ref(false);
-const suggestionsId = 'mail-query-suggestions';
-const suggestionId = (index: number) => `mail-query-suggestion-${index}`;
-interface SearchSuggestion { kind: 'query' | 'correspondent'; label: string; detail: string; value: string }
-// Cached correspondent name/address pairs derived from the currently loaded
-// conversations' senders/recipients, bounded so a long list stays cheap.
-const cachedCorrespondents = computed(() => {
-  const seen = new Map<string, { displayName: string | null; mailbox: string }>();
-  for (const row of mailbox.conversations.value.slice(0, 100)) {
-    const people = row.primaryCorrespondent ? [row.primaryCorrespondent, ...row.participants] : row.participants;
-    for (const person of people) if (person.mailbox) seen.set(person.mailbox.toLowerCase(), person);
-  }
-  return [...seen.values()];
-});
-const searchSuggestions = computed<SearchSuggestion[]>(() => {
-  const input = searchDraft.value.trim().toLowerCase();
-  const out: SearchSuggestion[] = [];
-  if (!input) {
-    // Empty input: recent submitted queries as selectable rows.
-    for (const query of recentQueries.value) out.push({ kind: 'query', label: query, detail: '', value: query });
-    return out;
-  }
-  for (const person of cachedCorrespondents.value) {
-    if (out.length >= CORRESPONDENT_LIMIT) break;
-    if ((person.displayName ?? '').toLowerCase().includes(input) || person.mailbox.toLowerCase().includes(input)) {
-      out.push({ kind: 'correspondent', label: person.displayName ?? person.mailbox, detail: person.displayName ? person.mailbox : '', value: 'from:"' + person.mailbox + '"' });
-    }
-  }
-  for (const query of recentQueries.value) {
-    if (query.toLowerCase().startsWith(input)) out.push({ kind: 'query', label: query, detail: '', value: query });
-  }
-  return out;
-});
-// Inline mirror of the Rust-owned grammar (src/lib/search.ts): while typing,
-// name the exact problem; an invalid query is never submitted to searchMail.
-const searchProblem = computed(() => validateSearch(searchDraft.value));
-const searchError = computed(() => {
-  const problem = searchProblem.value;
-  if (!problem) return null;
-  // An untouched empty input shows suggestions instead of an error; an empty
-  // submit attempt does show it.
-  if (!searchDraft.value.trim() && !searchAttemptedEmpty.value) return null;
-  return problem;
-});
-const activeSuggestionId = computed(() => {
-  const suggestion = suggestionsOpen.value ? searchSuggestions.value[suggestionIndex.value] : undefined;
-  return suggestion ? suggestionId(suggestionIndex.value) : undefined;
-});
-watch(searchDraft, () => {
-  searchAttemptedEmpty.value = false;
-  suggestionIndex.value = -1;
-  suggestionsOpen.value = true;
-});
-function recordRecentQuery(query: string): void {
-  const trimmed = query.trim();
-  if (!trimmed) return;
-  recentQueries.value = [trimmed, ...recentQueries.value.filter((q) => q !== trimmed)].slice(0, RECENT_QUERY_LIMIT);
-}
-async function revealSearch(): Promise<void> {
-  if (!accountReady.value || drawer.value || contactDisclosure.value || replyComposerOpen.value || composeCardOpen.value) return;
-  searchVisible.value = true;
-  searchDraft.value = mailbox.searchQuery.value;
-  suggestionsOpen.value = true;
-  suggestionIndex.value = -1;
-  await nextTick();
-  searchInput.value?.focus();
-}
-async function submitSearch(query = searchDraft.value): Promise<void> {
-  if (!accountId.value) return;
-  // An invalid query never reaches the provider; the inline error names why.
-  if (validateSearch(query) !== null) {
-    if (!query.trim()) searchAttemptedEmpty.value = true;
-    return;
-  }
-  // Entering search closes the reader (and with it the docked inline reply
-  // composer or compose card), so the active editor flushes through the
-  // protected path first; a failed close keeps the reader and composer visible.
-  if (!(await releaseEditorSurface())) return;
-  if (mailbox.context.value !== 'search') {
-    const saved = captureContext();
-    if (saved) history.value.push(saved);
-  }
-  drawer.value = null;
-  contactDisclosure.value = false;
-  searchVisible.value = true;
-  searchDraft.value = query;
-  const token = ++navigationToken;
-  await mailbox.search(query, cachedSearch.value);
-  if (token !== navigationToken) return;
-  recordRecentQuery(query);
-  cachedSearch.value = mailbox.searchCachedOnly.value;
-  suggestionsOpen.value = false;
-  // Auto-collapse (results-first chrome): a successful submit leaves the slim
-  // header + coverage + list and moves focus to the first result row. The form
-  // stays open when the submit errored (the banner points at it) or when the
-  // user already typed a different draft while the search was in flight.
-  // Reopen paths: /, the header Search glyph, the palette command and the
-  // results-header query button — all go through revealSearch().
-  const submitted = mailbox.context.value === 'search' && mailbox.searchQuery.value === query && mailbox.listState.value !== 'error';
-  if (submitted && searchDraft.value === query) searchVisible.value = false;
-  await focusFocusedRow();
-}
-function applySuggestion(suggestion: SearchSuggestion): void {
-  suggestionIndex.value = -1;
-  suggestionsOpen.value = false;
-  void submitSearch(suggestion.value);
-}
-// The listbox is capped (CSS max-height), so a highlight outside the visible
-// band must scroll its option into view — on arrow keys and pointer moves.
-// The optional call keeps jsdom (no scrollIntoView) and odd hosts safe; the
-// command palette uses the same pattern.
-function scrollSuggestionIntoView(index: number): void {
-  document.getElementById(suggestionId(index))?.scrollIntoView?.({ block: 'nearest' });
-}
-function highlightSuggestion(index: number): void {
-  suggestionIndex.value = index;
-  // Deferred: on a reopen (v-show just flipped back) the ul is still hidden in
-  // this tick, and scrollIntoView on a display:none subtree is a no-op.
-  void nextTick(() => scrollSuggestionIntoView(suggestionIndex.value));
-}
-function onSearchInputKeydown(event: KeyboardEvent): void {
-  if (event.isComposing || event.keyCode === 229) return;
-  if (event.key === 'Escape') {
-    event.preventDefault();
-    event.stopPropagation();
-    // Esc in two steps: first close the suggestion list, then hide the form
-    // WITHOUT leaving the search context (list + query header remain); a
-    // second Esc, once focus is on the list, exits via the normal Back path.
-    if (suggestionsOpen.value && searchSuggestions.value.length) { suggestionsOpen.value = false; return; }
-    searchVisible.value = false;
-    void focusFocusedRow();
-    return;
-  }
-  if (event.ctrlKey || event.metaKey || event.altKey) return;
-  // The global handler ignores editable targets, so single-letter shortcuts
-  // (BROWSE-10) stay inert while typing here; only the keys below are consumed.
-  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-    if (!searchSuggestions.value.length) return; // native caret movement
-    event.preventDefault();
-    event.stopPropagation();
-    // A closed listbox with available suggestions reopens on the arrow keys
-    // (e.g. after Esc closed it) and restarts the highlight; with no
-    // suggestions, the arrows keep the native caret movement.
-    const wasClosed = !suggestionsOpen.value;
-    suggestionsOpen.value = true;
-    const count = searchSuggestions.value.length;
-    suggestionIndex.value = wasClosed || suggestionIndex.value < 0
-      ? (event.key === 'ArrowDown' ? 0 : count - 1)
-      : (suggestionIndex.value + (event.key === 'ArrowDown' ? 1 : count - 1)) % count;
-    void nextTick(() => scrollSuggestionIntoView(suggestionIndex.value));
-    return;
-  }
-  if (event.key === 'Enter' && suggestionsOpen.value && searchSuggestions.value[suggestionIndex.value]) {
-    // Enter applies the highlighted suggestion (fill + submit); with no
-    // highlight it falls through to the native submit of the typed query.
-    event.preventDefault();
-    event.stopPropagation();
-    applySuggestion(searchSuggestions.value[suggestionIndex.value]!);
-  }
-}
-async function senderSearch(address: string): Promise<void> {
-  await submitSearch('from:"' + address + '"');
-}
 const recentFetched = ref<{ ref: ConversationRef; subject: string }[]>([]);
 // The open (or focused) conversation is where the user already is: exclude it
 // by ref identity, then cap, so the pane still lists up to four other threads.
@@ -1261,6 +898,10 @@ async function openRecent(target: ConversationRef): Promise<void> {
 }
 const history = ref<ContextEntry[]>([]);
 let navigationToken = 0;
+const { searchVisible, searchDraft, searchInput, cachedSearch, recentQueries, suggestionsOpen, suggestionIndex, suggestionsId, suggestionId, searchSuggestions, searchError, activeSuggestionId, revealSearch, submitSearch, applySuggestion, highlightSuggestion, onSearchInputKeydown, senderSearch } = useSearchSurface({
+  mailbox, accountId, accountReady, drawer, contactDisclosure, replyComposerOpen, composeCardOpen, history,
+  captureContext, releaseEditorSurface, nextNavigationToken: () => ++navigationToken, currentNavigationToken: () => navigationToken, focusFocusedRow,
+});
 const attachmentConversation = ref<import('./lib/ipc/client').Conversation | null>(null);
 let attachmentOrigin: HTMLElement | null = null;
 let attachmentScroll = 0;
@@ -1294,56 +935,7 @@ const overlayQuery = computed({
 const paletteButton = ref<HTMLElement | null>(null);
 let overlayOrigin: HTMLElement | null = null;
 let overlayRowOrigin: ConversationRef | null = null;
-// G-chord (g then e/t/d/h). The chord window is long enough for a hesitant second
-// key; when it lapses the hint disappears and a short grace window swallows a
-// late e/h, so a slow "g e" can never fall through to the plain-key meaning of
-// e (Archive). Any other key, focus change or explicit cancel ends the grace.
-const GO_CHORD_WINDOW_MS = 1500;
-const GO_CHORD_GRACE_MS = 600;
-let goTimer: ReturnType<typeof setTimeout> | null = null;
-let goGraceTimer: ReturnType<typeof setTimeout> | null = null;
-const goPending = ref(false);
-function endGoGrace(): void { if (goGraceTimer) clearTimeout(goGraceTimer); goGraceTimer = null; }
-function cancelGo(): void {
-  if (goTimer) clearTimeout(goTimer);
-  goTimer = null;
-  goPending.value = false;
-  endGoGrace();
-}
-function armGo(): void {
-  cancelGo();
-  goPending.value = true;
-  goTimer = setTimeout(() => {
-    goTimer = null;
-    goPending.value = false;
-    goGraceTimer = setTimeout(endGoGrace, GO_CHORD_GRACE_MS);
-  }, GO_CHORD_WINDOW_MS);
-}
-/** The action each G chord's second key opens, in the order the hint names them. */
-const GO_TARGETS: ReadonlyArray<{ key: string; id: 'done' | 'trash' | 'drafts' | 'reminders'; word: string }> = [
-  { key: 'e', id: 'done', word: 'Done' },
-  { key: 't', id: 'trash', word: 'Trash' },
-  { key: 'd', id: 'drafts', word: 'Drafts' },
-  { key: 'h', id: 'reminders', word: 'Reminders' },
-];
-/** Only what the palette and rail offer: Trash needs its rail item, Reminders its transport. */
-function availableGoTargets() {
-  return GO_TARGETS.filter((target) => target.id === 'done' || actionAvailable(target.id));
-}
-/** The chord's target for an unmodified key, or undefined (the key keeps its plain meaning). */
-function goTargetFor(event: KeyboardEvent) {
-  if (event.shiftKey || event.metaKey || event.ctrlKey || event.altKey || event.isComposing) return undefined;
-  return availableGoTargets().find((target) => target.key === event.key);
-}
-/** Keys whose chorded meaning (Done / Trash / Drafts / Reminders) differs from the plain key. */
-function isGoSecondKey(event: KeyboardEvent): boolean {
-  return goTargetFor(event) !== undefined;
-}
-const goHintLabel = computed(() => {
-  const phrases = availableGoTargets().map((target) => `${target.key.toUpperCase()} for ${target.word}`);
-  const list = phrases.length > 1 ? `${phrases.slice(0, -1).join(', ')} or ${phrases.at(-1)}` : phrases[0];
-  return `g pressed. Press ${list}, Escape to cancel.`;
-});
+const { goPending, goHintLabel, endGoGrace, cancelGo, armGo, goTargetFor, isGoSecondKey, isArmed: chordArmed, inGraceWindow: chordInGrace } = useGoChord({ actionAvailable });
 function openOverlay(kind: 'palette' | 'navigator'): void {
   cancelGo();
   if (!accountReady.value) return;
@@ -1365,7 +957,7 @@ async function closeOverlay(restore = true): Promise<void> {
   else if (mailbox.listState.value === 'ready') await focusFocusedRow(true);
   else paletteButton.value?.focus({ preventScroll: true });
 }
-async function executeOverlay(id: BrowsingActionId): Promise<void> {
+async function executeOverlay(id: ActionId): Promise<void> {
   // Resolve availability again BEFORE removing the overlay; never retain a row target.
   if (!actionAvailable(id)) return;
   await closeOverlay(true);
@@ -1467,11 +1059,6 @@ const readerView = ref<InstanceType<typeof ReaderView> | null>(null);
 const readerBackHost = ref<HTMLElement | null>(null);
 const readerActionsHost = ref<HTMLElement | null>(null);
 /** Message identity that currently owns reader focus (for the contact baseline). */
-const readerActiveMessageId = ref<string | null>(null);
-/** Temporary participant hover/focus context from the reader. */
-const contactOverride = ref<
-  { ref: ConversationRef; messageId: string; displayName: string | null; mailbox: string } | null
->(null);
 
 function captureListOrigin(surface: ReaderOrigin['surface']): void {
   // Only the mounted list supplies an anchor; J/K and Activity opens inside the
@@ -1683,29 +1270,6 @@ watch(
 const canMoveReaderPrev = computed(() => readerNavigates.value ? mailbox.listState.value === 'ready' && resolveReaderNeighbor(-1) !== null : undefined);
 const canMoveReaderNext = computed(() => readerNavigates.value ? mailbox.listState.value === 'ready' && resolveReaderNeighbor(1) !== null : undefined);
 
-function onReaderActiveMessage(messageId: string | null): void {
-  readerActiveMessageId.value = messageId;
-  // A new focused message restarts participant context from the baseline,
-  // EXCEPT when focus landed directly on a participant of that message: the
-  // reader emits the participant override BEFORE the active-message event in
-  // that case, so an override matching the newly focused message and the
-  // currently open conversation survives. Every other override (older message,
-  // other conversation/account, cleared focus) is discarded.
-  const override = contactOverride.value;
-  if (messageId === null
-    || !override
-    || override.messageId !== messageId
-    || !sameConversation(override.ref, mailbox.openRef.value)) {
-    contactOverride.value = null;
-  }
-}
-
-function onReaderContactOverride(
-  override: { ref: ConversationRef; messageId: string; displayName: string | null; mailbox: string } | null,
-): void {
-  contactOverride.value = override;
-}
-
 // ---------------------------------------------------------------------------
 // Actions
 // ---------------------------------------------------------------------------
@@ -1813,6 +1377,54 @@ async function connectAccount(): Promise<void> {
   }
 }
 
+/** Connect, sync and sign-in cancel buttons share the Account buttons' rule: never while one runs. */
+const accountActionsIdle = computed(() => mailbox.accountBusy.value === null && !drafts.transitioning.value);
+const { statusNotice, readOnlyHint, inboxEmpty, emptyLineShown, headerAction, emptyActionShown, noteWordsHidden, noteAnnounces, noteParts, contactListEmpty, providerAccountAction, accountCommandsFirst, accountCommandsTop, paletteHasRows, emptyListText } = useAccountNotes({ mailbox, accountStatus, readerOpen, drawer, accountActionsIdle, actionAvailable });
+
+/** The same App-level paths the Account drawer uses (drafts flush before any account transition). */
+function runAccountAction(action: AccountNoticeAction): Promise<void> {
+  if (action === 'connect') return connectAccount();
+  if (action === 'sync') return mailbox.requestSync();
+  return disconnectAccount();
+}
+
+/**
+ * Inline account actions (header note, empty inbox line). The button that was
+ * clicked is replaced as soon as the state changes, so focus is parked on a
+ * surviving surface first and restored afterwards if it ended up on <body>.
+ */
+async function accountNoticeAction(action: AccountNoticeAction | InboxEmptyAction, source: 'header' | 'empty' | 'drawer'): Promise<void> {
+  if (action === 'account') { await openDrawer('account'); return; }
+  if (!accountActionsIdle.value) return;
+  if (source === 'empty') emptyState.value?.focus({ preventScroll: true });
+  if (source === 'drawer') drawerEl.value?.focus({ preventScroll: true });
+  await runAccountAction(action);
+  await nextTick();
+  const active = document.activeElement;
+  if (!workspaceActive.value || (active && active !== document.body)) return;
+  if (overlay.value || drawer.value || readerOpen.value) return;
+  if (mailbox.listState.value === 'ready' && mailbox.conversations.value.length > 0) await focusFocusedRow(true);
+  else if (source === 'empty' && emptyState.value) emptyState.value.focus({ preventScroll: true });
+  else paletteButton.value?.focus({ preventScroll: true });
+}
+
+/**
+ * The empty line's action is a Tab stop far into the page, so it takes focus once, when the line becomes the
+ * owner of an actionable status and nothing at all is focused (<body>) and no other surface is open. Focus the
+ * user already holds (an input, a row, a drawer, the palette) is never taken, and a state change on the same line
+ * does not repeat it: one watch on ownership, not on every render.
+ */
+const emptyLineOwnsAction = computed(() => emptyLineShown.value && !!inboxEmpty.value?.action);
+watch(emptyLineOwnsAction, async (owns) => {
+  if (!owns) return;
+  await nextTick();
+  const active = document.activeElement;
+  if (active && active !== document.body) return;
+  if (!workspaceActive.value || overlay.value || drawer.value || readerOpen.value || searchVisible.value
+    || composeCardOpen.value || replyComposerOpen.value || contactDisclosure.value) return;
+  emptyAction.value?.focus({ preventScroll: true });
+});
+
 async function prepareReply(source: DraftSource): Promise<void> {
   if (trashReader.value) return;
   // The reader stays open after a successful preparation: the drafts watcher
@@ -1832,55 +1444,24 @@ function actionTarget(explicit?: ConversationRef): ConversationRef | null {
     : mailbox.listState.value === 'ready' ? mailbox.focusedSummary.value?.ref ?? null : null;
   return target?.accountId === accountId.value ? target : null;
 }
-function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): boolean {
-  if (!workspaceActive.value || !accountReady.value) return false;
-  if (id === 'switch-account') return props.mode === 'browser-preview' && !!props.switchAccountLabel;
-  if (id === 'starred') return gmailMode.value && !!accountId.value;
-  if (id === 'create-split') return !!accountId.value && !mailbox.savedSplit.value && !editingSplit.value;
-  if (id === 'edit-split') return !!accountId.value && !!mailbox.savedSplit.value && !editingSplit.value;
-  if (id === 'toggle-unread-filter') return !!accountId.value && mailbox.context.value !== 'trash' && !editingSplit.value && !drawer.value && !contactDisclosure.value && !remindersList.value && !draftsList.value;
-  if (id === 'saved') return !!mailbox.savedSplit.value?.enabled && !mailbox.splitError.value;
-  if (['inbox', 'done', 'activity'].includes(id)) return !!accountId.value;
-  if (id === 'search') return !!accountId.value && !drawer.value && !contactDisclosure.value;
-  if (id === 'account') return gmailMode.value;
-  if (id === 'destinations') return (gmailMode.value || props.mode === 'browser-preview') && !!accountId.value;
-  if (id === 'trash') return gmailMode.value && !!accountId.value;
-  if (id === 'drafts') return !!accountId.value;
-  if (id === 'reminders') return remindersSupported.value;
-  if (id === 'reminder-settings') return remindersSupported.value && !!accountId.value;
-  if (id === 'back') return readerOpen.value || history.value.length > 0;
-  if (id === 'select-all-loaded') return !trashList.value && !remindersList.value && !draftsList.value && !drafts.activeRef.value && !drawer.value && !contactDisclosure.value && !readerOpen.value && mailbox.listState.value === 'ready' && mailbox.conversations.value.length > 0;
-  if (id === 'clear-selection') return !drafts.activeRef.value && !drawer.value && !contactDisclosure.value && selectedCount.value > 0;
-  // Compose stays available while an editor is already open: it routes to the
-  // existing surface instead of stacking a second draft.
-  // Like search: compose is gated while a drawer or the narrow contact
-  // disclosure covers the central pane, so the inline card can never mount
-  // inert behind another surface.
-  if (id === 'compose') return !!accountId.value && !editingSplit.value && !drawer.value && !contactDisclosure.value;
-  // Cached Trash is browse-only: opening a row is the one action it offers.
-  // The Reminders and Drafts lists offer none from the keyboard: their rows
-  // are not conversations, so mailbox shortcuts do not apply to them (a
-  // reminder's own row actions are its only mutations).
+/** Mailbox commands on a conversation: not in Trash (except opening), Reminders or Drafts, and not behind a drawer, disclosure or open editor. */
+function conversationCommandsOpen(id: ActionId): boolean {
   if ((trashBrowsing.value && id !== 'open') || remindersList.value || draftsList.value) return false;
-  if (drafts.activeRef.value || drawer.value || contactDisclosure.value) return false;
-  // Reply is reader-only and uses ReaderView's own rule, the same one that
-  // disables its buttons (blocked, incomplete or retained conversations, Trash).
-  if (id === 'reply') return readerOpen.value && mailbox.detailState.value === 'ready' && readerView.value?.canPrepareReply() === true;
-  if (id === 'undo') {
-    // Same guards as the key: no in-flight undo (a second dispatch would race
-    // into a false already_undone), and no open reader message-details disclosure.
-    return undoWindowOpen.value && !mailbox.commandInFlight.value && !mailbox.groupInFlight.value && !readerView.value?.hasOpenDetails();
-  }
+  return !(drafts.activeRef.value || drawer.value || contactDisclosure.value);
+}
+type TriageId = 'archive' | 'unarchive' | 'read' | 'unread' | 'star' | 'unstar';
+/** Selected-scope actions are labelled with the count (§3.3). */
+const selectedScopeLabel = (declared: string): string => selectedCount.value > 0 ? `${declared} — ${selectedCount.value} selected` : declared;
+function triageAvailable(id: TriageId, explicit?: ConversationRef): boolean {
+  if (!conversationCommandsOpen(id)) return false;
   // One-target policy: with a nonempty selection, shared dispatch resolves the
   // selection (even in the reader); explicit row actions bypass this entirely.
-  if (!explicit && (id === 'archive' || id === 'unarchive' || id === 'read' || id === 'unread' || id === 'star' || id === 'unstar')) {
+  if (!explicit) {
     if (bulkActionAvailable(id)) return true;
     if (selectedCount.value > 0) return false;
   }
   const target = actionTarget(explicit);
   if (!target) return false;
-  if (id === 'open') return !readerOpen.value;
-  if (id === 'remind') return remindersSupported.value && selectedCount.value === 0 && !mailbox.bulkUnresolved.value && (readerOpen.value ? mailbox.conversation.value?.isInInbox === true : mailbox.context.value === 'inbox');
   if (id === 'read' || id === 'unread' || id === 'star' || id === 'unstar') return gmailActionsEnabled.value;
   if (mailbox.context.value === 'starred' && !readerOpen.value) return false;
   if (!mailboxActionsEnabled.value) return false;
@@ -1888,8 +1469,24 @@ function actionAvailable(id: BrowsingActionId, explicit?: ConversationRef): bool
   if (!readerOpen.value && mailbox.context.value === 'search') return true;
   return id === 'archive' ? inInbox === true : inInbox === false;
 }
+async function executeStar(id: 'star' | 'unstar', explicit?: ConversationRef): Promise<void> {
+  const members = !explicit ? bulkMembers() : null;
+  if (members) { await mailbox.setStarredGroup(members, id === 'star'); return; }
+  const target = actionTarget(explicit);
+  if (!target) return;
+  if (readerOpen.value && (mailbox.context.value === 'starred' || mailbox.starredOnly.value) && id === 'unstar') await archiveFromReader(false);
+  else { await mailbox.setStarred(target, id === 'star'); if (!readerOpen.value) await focusFocusedRow(); }
+}
+async function executeSetRead(id: 'read' | 'unread', explicit?: ConversationRef): Promise<void> {
+  if (!explicit && bulkMembers()) {
+    await bulkSetReadSelection(id === 'read');
+    return;
+  }
+  const target = actionTarget(explicit);
+  if (target) await mailbox.setRead(target, id === 'read');
+}
 /** Keep permission-blocked star commands discoverable without allowing writes. */
-function starPermissionReason(id: BrowsingActionId): string | undefined {
+function starPermissionReason(id: ActionId): string | undefined {
   if ((id !== 'star' && id !== 'unstar') || !accountReady.value || !gmailMode.value || gmailActionsEnabled.value) return;
   if (drafts.activeRef.value || drawer.value || contactDisclosure.value || trashBrowsing.value) return;
   if (!(selectedCount.value > 0 ? bulkMembers() : actionTarget())) return;
@@ -1897,30 +1494,21 @@ function starPermissionReason(id: BrowsingActionId): string | undefined {
     ? 'Waiting for Google permission. Review access in Account.'
     : 'Read-only. Open Account → Enable mailbox actions to use Star/Unstar.';
 }
-const availableActions = computed(() => browsingActions
-  .filter((action) => (actionAvailable(action.id) || starPermissionReason(action.id))
-    && (overlay.value !== 'navigator' || ['inbox', 'saved', 'done', 'destinations', 'trash', 'starred', 'account', 'activity', 'drafts', 'reminders', 'reminder-settings'].includes(action.id)))
-  .map((action) => ({
-    id: action.id,
-    shortcut: action.shortcut,
-    aliases: 'aliases' in action ? action.aliases : undefined,
-    disabledReason: starPermissionReason(action.id),
-    // Selected-scope actions are labelled with the count (§3.3).
-    label: selectedCount.value > 0 && ['archive', 'unarchive', 'read', 'unread', 'star', 'unstar'].includes(action.id)
-      ? `${action.label} — ${selectedCount.value} selected`
-      : action.id === 'toggle-unread-filter' ? (mailbox.unreadOnly.value ? 'Show all conversations' : 'Show unread only')
-      : action.id === 'switch-account' ? `Switch account — ${props.switchAccountLabel}`
-      : action.id === 'saved' ? `Go to ${mailbox.savedSplit.value?.name ?? 'saved split'}` : action.label,
-  })));
-async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): Promise<void> {
-  if (!actionAvailable(id, explicit)) {
-    // A permission-blocked S opens the explanation, never an OAuth flow or write.
-    if (starPermissionReason(id)) await openDrawer('account');
-    return;
-  }
-  switch (id) {
-    case 'switch-account': emit('switchAccount'); return;
-    case 'compose': {
+
+/**
+ * Availability and execution for every declared action (the declarations live
+ * in action-registry.ts; `ActionHandlers` makes a missing entry a compile
+ * error). Targets are resolved at dispatch, not when the palette was opened.
+ */
+const actionHandlers: ActionHandlers = {
+  compose: {
+    // Compose stays available while an editor is already open: it routes to the
+    // existing surface instead of stacking a second draft.
+    // Like search: compose is gated while a drawer or the narrow contact
+    // disclosure covers the central pane, so the inline card can never mount
+    // inert behind another surface.
+    available: () => !!accountId.value && !editingSplit.value && !drawer.value && !contactDisclosure.value,
+    execute: async () => {
       // One active editor: an existing draft stays on its visible surface
       // (inline compose card or docked reply composer), never a duplicate. A
       // suspended editor from another account has no surface: the Drafts list
@@ -1930,30 +1518,56 @@ async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): 
         return;
       }
       await drafts.openNew({ kind: 'new_message' });
-      return;
-    }
-    case 'toggle-unread-filter': {
-      const token = ++navigationToken;
-      const account = accountId.value;
-      await mailbox.setUnreadOnly(!mailbox.unreadOnly.value);
-      if (token === navigationToken && account === accountId.value && accountReady.value
-        && !overlay.value && !drawer.value && !contactDisclosure.value && !readerOpen.value && !editingSplit.value) {
-        if (mailbox.listState.value === 'ready') await focusFocusedRow(true);
-        else paletteButton.value?.focus();
+    },
+  },
+  reply: {
+    // Reply is reader-only and uses ReaderView's own rule, the same one that
+    // disables its buttons (blocked, incomplete or retained conversations, Trash).
+    available: () => conversationCommandsOpen('reply') && readerOpen.value && mailbox.detailState.value === 'ready' && readerView.value?.canPrepareReply() === true,
+    execute: () => { readerView.value?.prepareReply(); },
+  },
+  open: {
+    available: (explicit) => conversationCommandsOpen('open') && !!actionTarget(explicit) && !readerOpen.value,
+    execute: async (explicit) => { if (explicit) await openRowFromList(explicit); else await openFocusedFromList(); },
+  },
+  back: {
+    available: () => readerOpen.value || history.value.length > 0,
+    execute: async () => {
+      // A reminder request in flight (or waiting for its exact retry) owns Back, like Escape.
+      if (remindersList.value && reminders.dismissBlocked.value) { remindersPane.value?.retainPickerFocus(); return; }
+      if (readerOpen.value) closeReader(); else await contextBack();
+    },
+  },
+  archive: {
+    available: (explicit) => triageAvailable('archive', explicit),
+    execute: async (explicit) => {
+      if (explicit) await archiveRowFromList(explicit);
+      // Selection scope wins over focused/reader singles; the group path never
+      // invokes the single-reader archive-and-advance flow.
+      else if (bulkMembers()) await bulkArchiveSelection();
+      else if (readerOpen.value) await archiveFromReader();
+      else await archiveFocusedRow();
+    },
+    label: selectedScopeLabel,
+  },
+  unarchive: {
+    available: (explicit) => triageAvailable('unarchive', explicit),
+    execute: async (explicit) => {
+      if (!explicit && bulkMembers()) {
+        await bulkRestoreSelection();
+        return;
       }
-      return;
-    }
-    case 'create-split': case 'edit-split':
-      if (readerOpen.value || drawer.value || contactDisclosure.value || mailbox.context.value !== 'inbox') {
-        if (!(await navigateContext('inbox'))) return;
-      }
-      // Let reader/list restoration finish before the editor claims focus.
-      await nextTick();
-      if (actionAvailable(id) && !overlay.value) editingSplit.value = true;
-      return;
-    case 'search': await revealSearch(); return;
-    case 'reply': readerView.value?.prepareReply(); return;
-    case 'remind': {
+      const target = actionTarget(explicit);
+      if (target) await mailbox.setArchived(target, false);
+    },
+    label: selectedScopeLabel,
+  },
+  remind: {
+    available: (explicit) => {
+      if (!conversationCommandsOpen('remind') || !actionTarget(explicit)) return false;
+      return remindersSupported.value && selectedCount.value === 0 && !mailbox.bulkUnresolved.value && (readerOpen.value ? mailbox.conversation.value?.isInInbox === true : mailbox.context.value === 'inbox');
+    },
+    execute: async (explicit) => {
       // Remind me: the picker opens in the Reminders list for this conversation.
       // Back returns to the context (and row or reader) it was asked from.
       if (!remindersSupported.value || selectedCount.value > 0 || mailbox.commandInFlight.value || mailbox.bulkUnresolved.value) return;
@@ -1962,68 +1576,159 @@ async function executeAction(id: BrowsingActionId, explicit?: ConversationRef): 
       reminderReaderReturn = readerOpen.value ? { ...target } : null;
       reminders.setTarget(target);
       await navigateContext('reminders');
-      return;
-    }
-    case 'reminders': await navigateContext('reminders'); return;
-    case 'reminder-settings': await openDrawer('reminder-settings'); return;
-    case 'inbox': await navigateToInbox(); return;
-    case 'saved': await navigateContext('saved'); return;
-    case 'done': await navigateContext('done'); return;
-    case 'starred': await navigateContext('starred'); return;
-    case 'trash': await navigateContext('trash'); return;
-    case 'star': case 'unstar': {
-      const members = !explicit ? bulkMembers() : null;
-      if (members) { await mailbox.setStarredGroup(members, id === 'star'); return; }
-      const target = actionTarget(explicit);
-      if (!target) return;
-      if (readerOpen.value && (mailbox.context.value === 'starred' || mailbox.starredOnly.value) && id === 'unstar') await archiveFromReader(false);
-      else { await mailbox.setStarred(target, id === 'star'); if (!readerOpen.value) await focusFocusedRow(); }
-      return;
-    }
-    case 'drafts': await navigateContext('drafts'); return;
-    case 'destinations': case 'account': case 'activity': await openDrawer(id); return;
-    case 'back':
-      // A reminder request in flight (or waiting for its exact retry) owns Back, like Escape.
-      if (remindersList.value && reminders.dismissBlocked.value) { remindersPane.value?.retainPickerFocus(); return; }
-      if (readerOpen.value) closeReader(); else await contextBack();
-      return;
-    case 'open': if (explicit) await openRowFromList(explicit); else await openFocusedFromList(); return;
-    case 'archive':
-      if (explicit) await archiveRowFromList(explicit);
-      // Selection scope wins over focused/reader singles; the group path never
-      // invokes the single-reader archive-and-advance flow.
-      else if (bulkMembers()) await bulkArchiveSelection();
-      else if (readerOpen.value) await archiveFromReader();
-      else await archiveFocusedRow();
-      return;
-    case 'unarchive': {
-      if (!explicit && bulkMembers()) {
-        await bulkRestoreSelection();
-        return;
+    },
+  },
+  undo: {
+    // Same guards as the key: no in-flight undo (a second dispatch would race
+    // into a false already_undone), and no open reader message-details disclosure.
+    available: () => conversationCommandsOpen('undo') && undoWindowOpen.value && !mailbox.commandInFlight.value && !mailbox.groupInFlight.value && !readerView.value?.hasOpenDetails(),
+    execute: async () => { await undoFromNotice(); },
+  },
+  star: {
+    available: (explicit) => triageAvailable('star', explicit),
+    execute: (explicit) => executeStar('star', explicit),
+    label: selectedScopeLabel,
+  },
+  unstar: {
+    available: (explicit) => triageAvailable('unstar', explicit),
+    execute: (explicit) => executeStar('unstar', explicit),
+    label: selectedScopeLabel,
+  },
+  read: {
+    available: (explicit) => triageAvailable('read', explicit),
+    execute: (explicit) => executeSetRead('read', explicit),
+    label: selectedScopeLabel,
+  },
+  unread: {
+    available: (explicit) => triageAvailable('unread', explicit),
+    execute: (explicit) => executeSetRead('unread', explicit),
+    label: selectedScopeLabel,
+  },
+  'select-all-loaded': {
+    available: () => !trashList.value && !remindersList.value && !draftsList.value && !drafts.activeRef.value && !drawer.value && !contactDisclosure.value && !readerOpen.value && mailbox.listState.value === 'ready' && mailbox.conversations.value.length > 0,
+    execute: () => { mailbox.selectAllLoaded(); },
+  },
+  'clear-selection': {
+    available: () => !drafts.activeRef.value && !drawer.value && !contactDisclosure.value && selectedCount.value > 0,
+    execute: () => { clearSelectionAndReport(); },
+  },
+  search: {
+    available: () => !!accountId.value && !drawer.value && !contactDisclosure.value,
+    execute: async () => { await revealSearch(); },
+  },
+  'create-split': {
+    available: () => !!accountId.value && !mailbox.savedSplit.value && !editingSplit.value,
+    execute: () => openSplitEditor('create-split'),
+  },
+  'edit-split': {
+    available: () => !!accountId.value && !!mailbox.savedSplit.value && !editingSplit.value,
+    execute: () => openSplitEditor('edit-split'),
+  },
+  'toggle-unread-filter': {
+    available: () => !!accountId.value && mailbox.context.value !== 'trash' && !editingSplit.value && !drawer.value && !contactDisclosure.value && !remindersList.value && !draftsList.value,
+    execute: async () => {
+      const token = ++navigationToken;
+      const account = accountId.value;
+      await mailbox.setUnreadOnly(!mailbox.unreadOnly.value);
+      if (token === navigationToken && account === accountId.value && accountReady.value
+        && !overlay.value && !drawer.value && !contactDisclosure.value && !readerOpen.value && !editingSplit.value) {
+        if (mailbox.listState.value === 'ready') await focusFocusedRow(true);
+        else paletteButton.value?.focus();
       }
-      const target = actionTarget(explicit);
-      if (target) await mailbox.setArchived(target, false);
-      return;
-    }
-    case 'read': case 'unread': {
-      if (!explicit && bulkMembers()) {
-        await bulkSetReadSelection(id === 'read');
-        return;
-      }
-      const target = actionTarget(explicit);
-      if (target) await mailbox.setRead(target, id === 'read');
-      return;
-    }
-    case 'select-all-loaded':
-      mailbox.selectAllLoaded();
-      return;
-    case 'clear-selection':
-      clearSelectionAndReport();
-      return;
-    case 'undo':
-      await undoFromNotice();
-      return;
+    },
+    label: () => (mailbox.unreadOnly.value ? 'Show all conversations' : 'Show unread only'),
+  },
+  inbox: {
+    available: () => !!accountId.value,
+    execute: async () => { await navigateToInbox(); },
+  },
+  saved: {
+    available: () => !!mailbox.savedSplit.value?.enabled && !mailbox.splitError.value,
+    execute: async () => { await navigateContext('saved'); },
+    label: () => `Go to ${mailbox.savedSplit.value?.name ?? 'saved split'}`,
+  },
+  done: {
+    available: () => !!accountId.value,
+    execute: async () => { await navigateContext('done'); },
+  },
+  starred: {
+    available: () => gmailMode.value && !!accountId.value,
+    execute: async () => { await navigateContext('starred'); },
+  },
+  destinations: {
+    available: () => (gmailMode.value || props.mode === 'browser-preview') && !!accountId.value,
+    execute: async () => { await openDrawer('destinations'); },
+  },
+  trash: {
+    available: () => gmailMode.value && !!accountId.value,
+    execute: async () => { await navigateContext('trash'); },
+  },
+  reminders: {
+    available: () => remindersSupported.value,
+    execute: async () => { await navigateContext('reminders'); },
+  },
+  'reminder-settings': {
+    available: () => remindersSupported.value && !!accountId.value,
+    execute: async () => { await openDrawer('reminder-settings'); },
+  },
+  drafts: {
+    available: () => !!accountId.value,
+    execute: async () => { await navigateContext('drafts'); },
+  },
+  activity: {
+    available: () => !!accountId.value,
+    execute: async () => { await openDrawer('activity'); },
+  },
+  account: {
+    available: () => gmailMode.value,
+    execute: async () => { await openDrawer('account'); },
+  },
+  'switch-account': {
+    available: () => props.mode === 'browser-preview' && !!props.switchAccountLabel,
+    execute: () => { emit('switchAccount'); },
+    label: () => `Switch account — ${props.switchAccountLabel}`,
+  },
+  connect: {
+    // Not configured has no client ID to connect with, so Connect would only fail: the next step is in Account.
+    available: () => gmailMode.value && accountActionsIdle.value
+      && ['disconnected', 'auth_required'].includes(accountStatus.value?.connection ?? ''),
+    execute: async () => { await runAccountAction('connect'); },
+    label: (declared) => (accountStatus.value?.connection === 'auth_required' ? 'Sign in again' : declared),
+  },
+  sync: {
+    available: () => gmailMode.value && accountActionsIdle.value
+      && accountStatus.value?.connection === 'connected' && accountStatus.value.sync.state !== 'syncing',
+    execute: async () => { await runAccountAction('sync'); },
+  },
+};
+async function openSplitEditor(id: 'create-split' | 'edit-split'): Promise<void> {
+  if (readerOpen.value || drawer.value || contactDisclosure.value || mailbox.context.value !== 'inbox') {
+    if (!(await navigateContext('inbox'))) return;
   }
+  // Let reader/list restoration finish before the editor claims focus.
+  await nextTick();
+  if (actionAvailable(id) && !overlay.value) editingSplit.value = true;
+}
+function actionAvailable(id: ActionId, explicit?: ConversationRef): boolean {
+  if (!workspaceActive.value || !accountReady.value) return false;
+  return actionHandlers[id].available(explicit);
+}
+const availableActions = computed(() => actionRegistry
+  .filter((action) => (actionAvailable(action.id) || starPermissionReason(action.id))
+    && (overlay.value !== 'navigator' || action.navigator))
+  .map((action) => ({
+    id: action.id,
+    shortcut: action.shortcut,
+    disabledReason: starPermissionReason(action.id),
+    label: actionHandlers[action.id].label?.(action.label) ?? action.label,
+  })));
+async function executeAction(id: ActionId, explicit?: ConversationRef): Promise<void> {
+  if (!actionAvailable(id, explicit)) {
+    // A permission-blocked S opens the explanation, never an OAuth flow or write.
+    if (starPermissionReason(id)) await openDrawer('account');
+    return;
+  }
+  await actionHandlers[id].execute(explicit);
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -2056,15 +1761,19 @@ function actionShortcutBlocked(target: EventTarget | null): boolean {
   return buttonOwns(target) && !readerMessageToggleOwns(target);
 }
 
-function onKeydown(event: KeyboardEvent): void {
-  if (!workspaceActive.value) return;
+/**
+ * Surfaces that own the whole keyboard before any binding is consulted: the
+ * Reminders request in flight, the attachment chooser, the command overlay and
+ * the split editor. Returns true when the key was theirs.
+ */
+function modalSurfaceOwns(event: KeyboardEvent): boolean {
   if (remindersList.value && reminders.dismissBlocked.value) {
     if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229) {
       event.preventDefault(); remindersPane.value?.retainPickerFocus();
     } else if (event.key === 'Tab' && event.target === document.body) {
       event.preventDefault(); remindersPane.value?.retainPickerFocus();
     }
-    return;
+    return true;
   }
   if (attachmentConversation.value) {
     // A focused Save button can become disabled during transfer, leaving native
@@ -2072,9 +1781,9 @@ function onKeydown(event: KeyboardEvent): void {
     if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229) {
       event.preventDefault(); void closeAttachments();
     }
-    return;
+    return true;
   }
-  if (overlay.value) return;
+  if (overlay.value) return true;
   if (editingSplit.value && accountReady.value && !readerOpen.value && !drawer.value && !(!wideViewport.value && contactDisclosure.value)) {
     cancelGo();
     // Disabling the form during save can displace focus to BODY. The visible
@@ -2087,31 +1796,46 @@ function onKeydown(event: KeyboardEvent): void {
       event.preventDefault();
       if (!mailbox.splitBusy.value) void closeSplitEditor();
     }
-    return;
+    return true;
   }
+  return false;
+}
+
+/** The native app's Cmd+O and Cmd+K; a modified or composing keystroke also drops an armed chord. Browser preview leaves reserved shortcuts alone. */
+function nativeShortcutOwns(event: KeyboardEvent): boolean {
   if (props.mode !== 'browser-preview' && event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
     && event.key.toLowerCase() === 'o' && !event.isComposing && event.keyCode !== 229
     && !isEditableTarget(event.target) && readerOpen.value && !drawer.value) {
-    event.preventDefault(); openAttachments(); return;
+    event.preventDefault(); openAttachments(); return true;
   }
   if (event.isComposing || event.keyCode === 229 || event.altKey || event.ctrlKey || event.metaKey) cancelGo();
   // Cmd+K is the native app binding. Browser preview leaves reserved shortcuts alone.
   if (props.mode !== 'browser-preview' && event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'k' && !event.isComposing && event.keyCode !== 229) {
-    event.preventDefault(); openOverlay('palette'); return;
+    event.preventDefault(); openOverlay('palette'); return true;
   }
-  if (goTimer) {
+  return false;
+}
+
+/** The armed G chord and the grace window after it lapses. */
+function chordOwns(event: KeyboardEvent): boolean {
+  if (chordArmed()) {
     cancelGo();
     // Escape cancels the armed chord and is consumed: one Escape, one dismissal.
-    if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); return; }
+    if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); return true; }
     if (isGoSecondKey(event) && !isEditableTarget(event.target) && !drawer.value && !contactDisclosure.value && !readerOpen.value) {
-      event.preventDefault(); void executeAction(goTargetFor(event)!.id); return;
+      event.preventDefault(); void executeAction(goTargetFor(event)!.id); return true;
     }
-  } else if (goGraceTimer) {
+  } else if (chordInGrace()) {
     // The window just lapsed: a late second key was almost certainly meant for
     // the chord, so it is swallowed instead of running the plain-key action.
     endGoGrace();
-    if (isGoSecondKey(event) && !isEditableTarget(event.target)) { event.preventDefault(); return; }
+    if (isGoSecondKey(event) && !isEditableTarget(event.target)) { event.preventDefault(); return true; }
   }
+  return false;
+}
+
+/** A visible composer owns Escape and every other key; composition, modifiers and editable fields are never ours. */
+function composerOrFieldOwns(event: KeyboardEvent): boolean {
   // A visible compose surface (inline reply composer or inline compose card)
   // owns Escape: it closes through the same protected flush as the editor's own
   // close control. This must run before the key suppression below so the editor
@@ -2122,195 +1846,34 @@ function onKeydown(event: KeyboardEvent): void {
     && !event.ctrlKey && !event.metaKey && !event.altKey) {
     event.preventDefault();
     void drafts.flushAndClose();
-    return;
+    return true;
   }
   // Only a visible composer owns all keys; a suspended editor behind another
   // disclosure must not silently keep keyboard ownership from the inbox.
-  if (drafts.activeRef.value && (composeCardOpen.value || replyComposerOpen.value)) return;
-  if (event.isComposing || event.keyCode === 229) return; // IME composition
-  if (event.ctrlKey || event.metaKey || event.altKey) return;
-  if (isEditableTarget(event.target)) return;
+  if (drafts.activeRef.value && (composeCardOpen.value || replyComposerOpen.value)) return true;
+  if (event.isComposing || event.keyCode === 229) return true; // IME composition
+  if (event.ctrlKey || event.metaKey || event.altKey) return true;
+  return isEditableTarget(event.target);
+}
 
-  const key = event.key;
-  if (key === '/' && actionAvailable('search')) { event.preventDefault(); void executeAction('search'); return; }
+/** Who owns this key event: the facts the registry needs to pick a binding. */
+function keyFocus(event: KeyboardEvent): KeyFocus {
   const readerIsOpen = readerOpen.value;
-
-  if (key === 'Escape') {
-    // The active disclosure gets Escape precedence; mailbox actions underneath
-    // are suppressed while it is open.
-    if (drawer.value) {
-      event.preventDefault();
-      void closeDrawer();
-      return;
-    }
-    // Protected close of the inline reply composer or compose card: flush
-    // through the draft lifecycle; the surface hides when drafts.isVisible
-    // goes false.
-    if (replyComposerOpen.value) { event.preventDefault(); void drafts.flushAndClose(); return; }
-    if (composeCardOpen.value) { event.preventDefault(); void closeComposeCard(); return; }
-    if (!wideViewport.value && contactDisclosure.value) {
-      event.preventDefault();
-      void closeContactDisclosure();
-      return;
-    }
-    if (readerIsOpen) {
-      // An open message-details disclosure is dismissed before the reader.
-      if (readerView.value?.hasOpenDetails()) {
-        event.preventDefault();
-        readerView.value.dismissMessageDetails();
-        return;
-      }
-      // Escape order (§3.2): disclosure/drawer → selected set → reader Back.
-      if (selectedCount.value > 0) {
-        event.preventDefault();
-        clearSelectionAndReport();
-        return;
-      }
-      event.preventDefault();
-      void executeAction('back');
-    } else if (selectedCount.value > 0) {
-      // Escape order (§3.2): the selected set clears before any context Back,
-      // including when no context history exists.
-      event.preventDefault();
-      clearSelectionAndReport();
-    } else if (history.value.length) {
-      event.preventDefault(); void executeAction('back');
-    }
-    return;
-  }
-  if (drawer.value || (!wideViewport.value && contactDisclosure.value)) return;
-  if (key === 'h' && !event.shiftKey && !event.repeat && !actionShortcutBlocked(event.target)) {
-    if (actionAvailable('remind')) { event.preventDefault(); void executeAction('remind'); }
-    return;
-  }
-
   // A Reminders or Drafts row's open button is a real button but the list's own
   // row, so the browsing keys (G chords, Left) work from it as they do from an
   // Inbox row.
   const isContextRow = event.target instanceof HTMLElement && event.target.hasAttribute('data-drawer-row');
   const remindersRowOwns = remindersList.value && isContextRow && !!remindersPane.value?.el?.contains(event.target as Node);
   const draftsRowOwns = draftsList.value && isContextRow && !!draftsPane.value?.el?.contains(event.target as Node);
-  const browsingOwns = !readerIsOpen && (!buttonOwns(event.target) || remindersRowOwns || draftsRowOwns) && (event.target === document.body || (event.target instanceof Node && (!!inboxList.value?.$el?.contains(event.target) || !!remindersPane.value?.el?.contains(event.target) || !!draftsPane.value?.el?.contains(event.target))) || event.target === emptyState.value);
+  // The empty line's action takes focus on its own (see emptyLineOwnsAction), so it keeps the browsing keys.
+  const emptyActionOwns = !!emptyAction.value && event.target === emptyAction.value;
+  const browsingOwns = !readerIsOpen && (!buttonOwns(event.target) || remindersRowOwns || draftsRowOwns || emptyActionOwns) && (event.target === document.body || emptyActionOwns || (event.target instanceof Node && (!!inboxList.value?.$el?.contains(event.target) || !!remindersPane.value?.el?.contains(event.target) || !!draftsPane.value?.el?.contains(event.target))) || event.target === emptyState.value);
   // Split navigation is deliberately nonwrapping and owns only the list,
   // not form fields, toolbar buttons, the reader, or other destinations.
   const splitListOwns = browsingOwns && event.target === document.activeElement
     && event.target instanceof HTMLElement
     && (event.target.matches('.inbox-row') || event.target === emptyState.value)
     && mailbox.listState.value === 'ready';
-  if (splitListOwns && key === 'Tab' && (mailbox.context.value === 'inbox' || mailbox.context.value === 'saved')) {
-    const splits: BrowseContext[] = savedTabVisible.value || mailbox.context.value === 'saved' ? ['inbox', 'saved'] : ['inbox'];
-    const index = splits.indexOf(mailbox.context.value);
-    const destination = splits[index + (event.shiftKey ? -1 : 1)];
-    if (destination) {
-      event.preventDefault();
-      void navigateContext(destination);
-    }
-    // At either boundary, leave Tab to native traversal (never wrap).
-    return;
-  }
-  // Reminders list: `[` / `]` step the tab from the rows or the pane (never from
-  // a button, field or picker), and H / Shift+H act on the focused row only.
-  // A row without the action ignores the key silently. Trash has no row key.
-  if (remindersList.value && browsingOwns && !event.repeat && (key === '[' || key === ']')) {
-    event.preventDefault();
-    reminders.stepDestination(key === ']' ? 1 : -1);
-    void nextTick().then(() => remindersPane.value?.focusRow());
-    return;
-  }
-  const contextRowKey = isContextRow && event.target instanceof HTMLElement ? event.target.dataset.drawerRow : undefined;
-  if (contextRowKey !== undefined && !event.repeat) {
-    if (remindersRowOwns && key.toLowerCase() === 'h') {
-      const handled = event.shiftKey ? remindersPane.value?.cancelRow(contextRowKey) : remindersPane.value?.rescheduleRow(contextRowKey);
-      if (handled) event.preventDefault();
-      return;
-    }
-    // Delete or Backspace only asks; the confirmation owns the discard.
-    if (draftsRowOwns && !event.shiftKey && (key === 'Delete' || key === 'Backspace')) {
-      if (draftsPane.value?.discardRow(contextRowKey)) event.preventDefault();
-      return;
-    }
-  }
-  if (browsingOwns && !event.shiftKey && key === 'ArrowLeft') {
-    event.preventDefault(); openOverlay('navigator'); return;
-  }
-  if (browsingOwns && !event.shiftKey && key === 'g') {
-    event.preventDefault(); armGo(); return;
-  }
-  if (key === 's' && !event.shiftKey && !event.repeat && (browsingOwns || readerIsOpen) && !actionShortcutBlocked(event.target)) {
-    const stars = readerIsOpen ? mailbox.conversation.value?.stars : mailbox.focusedSummary.value?.stars;
-    event.preventDefault();
-    void executeAction(selectedCount.value === 0 && stars?.knownMessages === stars?.totalMessages && (stars?.starredMessages ?? 0) > 0 ? 'unstar' : 'star');
-    return;
-  }
-  if (key === 'E' && event.shiftKey && !actionShortcutBlocked(event.target)) {
-    event.preventDefault(); void executeAction('unarchive'); return;
-  }
-  if (key === 'U' && event.shiftKey && !actionShortcutBlocked(event.target)) {
-    event.preventDefault();
-    void executeAction('unread');
-    return;
-  }
-  // Compose works from BOTH the list and the reader, like S: no modifiers, no
-  // editable target, no button owning the key (checked above).
-  if (key === 'c' && !event.shiftKey && !event.repeat && (browsingOwns || readerIsOpen) && (!actionShortcutBlocked(event.target) || draftsRowOwns)) {
-    event.preventDefault();
-    void executeAction('compose');
-    return;
-  }
-  // Reply works from the reader only: the source is the displayed latest message.
-  // actionAvailable owns every guard (ready, not blocked, not Trash, no drawer).
-  if (key === 'r' && !event.shiftKey && !event.repeat && readerIsOpen && !actionShortcutBlocked(event.target)) {
-    if (actionAvailable('reply')) { event.preventDefault(); void executeAction('reply'); }
-    return;
-  }
-  // Undo works from BOTH the list and the reader; the same guard set as E
-  // applies. Availability (window, in-flight undo, reader disclosure) lives in
-  // actionAvailable so the palette entry and the key cannot disagree.
-  if (key === 'z' && !event.shiftKey && !actionShortcutBlocked(event.target)) {
-    if (event.repeat) return; // key auto-repeat must not double-dispatch undo
-    event.preventDefault();
-    void executeAction('undo');
-    return;
-  }
-  if (readerIsOpen) {
-    const reader = readerView.value;
-    if (key === 'n' || key === 'N') {
-      event.preventDefault();
-      reader?.moveMessage(1);
-      return;
-    }
-    if (key === 'p' || key === 'P') {
-      event.preventDefault();
-      reader?.moveMessage(-1);
-      return;
-    }
-    if (key === 'o' || key === 'O') {
-      event.preventDefault();
-      if (event.shiftKey) reader?.expandAllMessages(); // idempotent expand-all
-      else reader?.toggleActiveMessage();
-      return;
-    }
-    // Reader J/K moves the reader cursor within the originating Inbox; it is a
-    // no-op for Activity-origin readers and never moves hidden list focus.
-    // ArrowUp/ArrowDown keep native behavior while reading (the reader article
-    // scrolls); the arrow aliases belong to the LIST navigation only.
-    if (key === 'j') {
-      event.preventDefault();
-      void moveReaderConversation(1);
-      return;
-    }
-    if (key === 'k') {
-      event.preventDefault();
-      void moveReaderConversation(-1);
-      return;
-    }
-    if (key === 'e' && mailboxActionsEnabled.value && !actionShortcutBlocked(event.target)) {
-      event.preventDefault();
-      void executeAction('archive');
-    }
-    return;
-  }
-
   // Selection keys: same surface ownership as the browsing keys (a contact
   // column/disclosure/drawer owning focus must never mutate the hidden list
   // selection, §3.3), with window-targeted synthetic events treated like
@@ -2329,47 +1892,169 @@ function onKeydown(event: KeyboardEvent): void {
       || event.target === document.body
       || (event.target instanceof Node && !!inboxList.value?.$el?.contains(event.target))
       || event.target === emptyState.value);
-  if (selectionKeysOwned && (key === 'x' || key === 'X')) {
-    if (event.repeat) return; // X ignores auto-repeat
+  return {
+    readerOpen: readerIsOpen,
+    covered: !!drawer.value || (!wideViewport.value && contactDisclosure.value),
+    browsingOwns,
+    selectionKeysOwned,
+    splitListOwns,
+    remindersBrowsing: remindersList.value && browsingOwns,
+    remindersRowOwns,
+    draftsRowOwns,
+    // Enter or Space on the focused empty line runs its one action, as the button does.
+    emptyLineAction: event.target === emptyState.value && !!inboxEmpty.value?.action && emptyActionShown.value,
+    buttonOwns: buttonOwns(event.target),
+    shortcutBlocked: actionShortcutBlocked(event.target),
+    mailboxActionsEnabled: mailboxActionsEnabled.value,
+  };
+}
+
+/** Escape ladder (§3.2): drawer → composer → disclosure → message details → selection → Back. */
+function escapeLadder(event: KeyboardEvent): void {
+  const readerIsOpen = readerOpen.value;
+  // The active disclosure gets Escape precedence; mailbox actions underneath
+  // are suppressed while it is open.
+  if (drawer.value) {
     event.preventDefault();
-    if (mailbox.focusedRef.value) mailbox.toggleSelected(mailbox.focusedRef.value);
+    void closeDrawer();
     return;
   }
-  if (selectionKeysOwned && event.shiftKey && (key === 'J' || key === 'K')) {
+  // Protected close of the inline reply composer or compose card: flush
+  // through the draft lifecycle; the surface hides when drafts.isVisible
+  // goes false.
+  if (replyComposerOpen.value) { event.preventDefault(); void drafts.flushAndClose(); return; }
+  if (composeCardOpen.value) { event.preventDefault(); void closeComposeCard(); return; }
+  if (!wideViewport.value && contactDisclosure.value) {
+    event.preventDefault();
+    void closeContactDisclosure();
+    return;
+  }
+  if (readerIsOpen) {
+    // An open message-details disclosure is dismissed before the reader.
+    if (readerView.value?.hasOpenDetails()) {
+      event.preventDefault();
+      readerView.value.dismissMessageDetails();
+      return;
+    }
+    // Escape order (§3.2): disclosure/drawer → selected set → reader Back.
+    if (selectedCount.value > 0) {
+      event.preventDefault();
+      clearSelectionAndReport();
+      return;
+    }
+    event.preventDefault();
+    void executeAction('back');
+  } else if (selectedCount.value > 0) {
+    // Escape order (§3.2): the selected set clears before any context Back,
+    // including when no context history exists.
+    event.preventDefault();
+    clearSelectionAndReport();
+  } else if (history.value.length) {
+    event.preventDefault(); void executeAction('back');
+  }
+}
+
+/** Keys that choose between two commands. */
+const keyResolvers: Record<KeyResolverId, (focus: KeyFocus) => ActionId> = {
+  'star-or-unstar': (focus) => {
+    const stars = focus.readerOpen ? mailbox.conversation.value?.stars : mailbox.focusedSummary.value?.stars;
+    return selectedCount.value === 0 && stars?.knownMessages === stars?.totalMessages && (stars?.starredMessages ?? 0) > 0 ? 'unstar' : 'star';
+  },
+};
+
+/** What each key that is not a command does; the registry declares which keys and where. */
+const keyHandlers: Record<KeyOnlyId, (event: KeyboardEvent, focus: KeyFocus) => void> = {
+  'escape-ladder': (event) => escapeLadder(event),
+  'chord-arm': (event) => { event.preventDefault(); armGo(); },
+  'navigator-open': (event) => { event.preventDefault(); openOverlay('navigator'); },
+  'split-tab': (event) => {
+    if (mailbox.context.value !== 'inbox' && mailbox.context.value !== 'saved') return;
+    const splits: BrowseContext[] = savedTabVisible.value || mailbox.context.value === 'saved' ? ['inbox', 'saved'] : ['inbox'];
+    const index = splits.indexOf(mailbox.context.value);
+    const destination = splits[index + (event.shiftKey ? -1 : 1)];
+    if (destination) {
+      event.preventDefault();
+      void navigateContext(destination);
+    }
+    // At either boundary, leave Tab to native traversal (never wrap).
+  },
+  // Reminders list: `[` / `]` step the tab from the rows or the pane (never from
+  // a button, field or picker), and H / Shift+H act on the focused row only.
+  // A row without the action ignores the key silently. Trash has no row key.
+  'reminder-tabs': (event) => {
+    event.preventDefault();
+    reminders.stepDestination(event.key === ']' ? 1 : -1);
+    void nextTick().then(() => remindersPane.value?.focusRow());
+  },
+  'reminder-row': (event) => {
+    const rowKey = (event.target as HTMLElement).dataset.drawerRow!;
+    const handled = event.shiftKey ? remindersPane.value?.cancelRow(rowKey) : remindersPane.value?.rescheduleRow(rowKey);
+    if (handled) event.preventDefault();
+  },
+  // Delete or Backspace only asks; the confirmation owns the discard.
+  'draft-discard': (event) => {
+    if (draftsPane.value?.discardRow((event.target as HTMLElement).dataset.drawerRow!)) event.preventDefault();
+  },
+  'reader-message': (event) => {
+    const reader = readerView.value;
+    event.preventDefault();
+    if (event.key === 'n' || event.key === 'N') reader?.moveMessage(1);
+    else if (event.key === 'p' || event.key === 'P') reader?.moveMessage(-1);
+    else if (event.shiftKey) reader?.expandAllMessages(); // idempotent expand-all
+    else reader?.toggleActiveMessage();
+  },
+  // Reader J/K moves the reader cursor within the originating Inbox; it is a
+  // no-op for Activity-origin readers and never moves hidden list focus.
+  // ArrowUp/ArrowDown keep native behavior while reading (the reader article
+  // scrolls); the arrow aliases belong to the LIST navigation only.
+  'reader-move': (event) => {
+    event.preventDefault();
+    void moveReaderConversation(event.key === 'j' ? 1 : -1);
+  },
+  'select-toggle': (event) => {
+    event.preventDefault();
+    if (mailbox.focusedRef.value) mailbox.toggleSelected(mailbox.focusedRef.value);
+  },
+  'select-extend': (event) => {
     // Shift+J/K: move one row, then add the inclusive anchor→destination range.
     // Boundary moves are a no-op (focus does not change).
     event.preventDefault();
     const preMove = mailbox.focusedRef.value ? { ...mailbox.focusedRef.value } : null;
-    moveFocus(key === 'J' ? 1 : -1);
+    moveFocus(event.key === 'J' ? 1 : -1);
     const destination = mailbox.focusedRef.value;
     if (destination && preMove && !sameConversation(destination, preMove)) mailbox.extendSelectionTo(destination, preMove);
-    return;
-  }
+  },
+  'empty-line': (event) => {
+    const action = inboxEmpty.value?.action;
+    if (!action) return;
+    event.preventDefault();
+    void accountNoticeAction(action, 'empty');
+  },
+  'list-move': (event) => {
+    event.preventDefault();
+    moveFocus(event.key === 'j' || event.key === 'ArrowDown' ? 1 : -1);
+  },
+};
 
-  switch (key) {
-    case 'j':
-    case 'ArrowDown':
-      event.preventDefault();
-      moveFocus(1);
-      return;
-    case 'k':
-    case 'ArrowUp':
-      event.preventDefault();
-      moveFocus(-1);
-      return;
-    case 'Enter':
-      if (buttonOwns(event.target)) return;
-      event.preventDefault();
-      void executeAction('open');
-      return;
-    case 'e':
-      if (!mailboxActionsEnabled.value || buttonOwns(event.target)) return;
-      event.preventDefault();
-      void executeAction('archive');
-      return;
-    default:
-      return;
-  }
+/**
+ * The keyboard dispatcher. Modal surfaces and the chord answer first; then the
+ * focus context is worked out, the registry names the binding that owns the
+ * key, and the command is checked for availability and executed (or the
+ * key-only handler runs).
+ */
+function onKeydown(event: KeyboardEvent): void {
+  if (!workspaceActive.value) return;
+  if (modalSurfaceOwns(event) || nativeShortcutOwns(event) || chordOwns(event) || composerOrFieldOwns(event)) return;
+  const focus = keyFocus(event);
+  const resolved = findKeyBinding(event, focus);
+  if (!resolved) return;
+  const { binding } = resolved;
+  if (event.repeat && binding.repeat === 'swallow') return; // auto-repeat must not double-dispatch
+  if (resolved.kind === 'key') { keyHandlers[resolved.handler](event, focus); return; }
+  const id = binding.resolves ? keyResolvers[binding.resolves](focus) : resolved.action;
+  if (binding.prevent === 'when-available' && !actionAvailable(id)) return;
+  event.preventDefault();
+  void executeAction(id);
 }
 
 /**
@@ -2423,68 +2108,12 @@ const searchSyntaxEditHint = computed(() =>
     ? '. Edit the query above — the same query fails again.'
     : '. Press / or choose the query in the results header to edit it — the same query fails again.');
 
-function errorText(error: { kind: string; field?: string; reason?: string }): string {
-  switch (error.kind) {
-    case 'not_found':
-      return 'not found';
-    case 'invalid_request':
-      // No trailing period here: the banner templates append one themselves.
-      if (error.field === 'searchQuery') return 'unsupported search syntax. Use text, straight-quoted phrases, from:, to:, subject:, AND, OR and -exclusions';
-      if (error.field === 'cachedDoneRestoreRange') return 'cached Done changed beyond the restoration limit; retry or return to Inbox';
-      return `invalid request (field: ${error.field ?? '?'})`;
-    case 'request_id_conflict':
-      return 'request ID conflict';
-    case 'storage_unavailable':
-      return 'storage unavailable';
-    case 'profile_in_use':
-      return 'profile in use';
-    case 'read_only':
-      return 'read-only account';
-    case 'not_configured':
-      return 'not configured';
-    case 'auth_required':
-      return 'sign-in required';
-    case 'auth_cancelled':
-      return 'sign-in cancelled';
-    case 'auth_failed':
-      return 'sign-in failed';
-    case 'secrets_unavailable':
-      return 'credential storage unavailable';
-    case 'network_unavailable':
-      return 'network unavailable';
-    case 'rate_limited':
-      return 'rate limited';
-    case 'provider_unavailable':
-      return 'provider unavailable';
-    case 'invalid_provider_response':
-      return 'unexpected provider response';
-    case 'busy':
-      return 'busy';
-    case 'permission_required':
-      return 'Google permission required';
-    case 'provider_rejected':
-      return 'provider rejected action';
-    case 'outcome_unknown':
-      return 'provider outcome unknown';
-    case 'undo_unavailable':
-      switch (error.reason) {
-        case 'expired': return 'undo window expired';
-        case 'superseded': return 'superseded by a newer action';
-        case 'already_undone': return 'already undone';
-        case 'not_applicable': return 'not undoable';
-        case 'uncertain': return 'outcome unknown; use Activity';
-        case 'unknown_prior': return 'prior state unknown';
-        default: return 'undo unavailable';
-      }
-    default:
-      return 'unknown error';
-  }
-}
+
 </script>
 
 <template>
   <div ref="appRoot" class="app" :data-client-mode="props.mode">
-    <main class="app-main" :inert="!!overlay || !!attachmentConversation || undefined">
+    <main class="app-main" :class="{ 'contact-collapsed': contactCollapsed }" :inert="!!overlay || !!attachmentConversation || undefined">
       <!-- Split header (DESIGN.md "Split Tabs"): one borderless 78px strip in
            the list column. Destinations hamburger on the left, split tabs on
            the 50px content inset, quiet notes and glyphs on the right. It sits
@@ -2500,7 +2129,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
           <h1 class="app-title" :class="{ 'visually-hidden': activeTabShown }" data-test="inbox-title">{{ contextTitle }}<template v-if="switchAccountLabel"><span class="app-title-account"> — {{ accountStatus?.account?.emailAddress }}</span></template></h1>
           <nav v-if="inboxSplitsShown" class="split-nav" aria-label="Inbox splits" :title="splitCoverageShown ? SPLIT_COVERAGE : undefined">
             <button type="button" class="split-tab" data-test="split-inbox" :aria-current="mailbox.context.value === 'inbox' ? 'page' : undefined" :aria-describedby="splitCoverageShown ? `${domIdPrefix}split-coverage` : undefined" @click="navigateContext('inbox')"><span class="split-label">Inbox</span> <span v-if="splitBadge(mailbox.inboxTotal.value)" class="split-count">{{ splitBadge(mailbox.inboxTotal.value) }}</span></button>
-            <button v-if="savedTabVisible" type="button" class="split-tab" data-test="split-saved" :aria-current="mailbox.context.value === 'saved' ? 'page' : undefined" :aria-describedby="splitCoverageShown ? `${domIdPrefix}split-coverage` : undefined" @click="navigateContext('saved')"><span class="split-label">{{ mailbox.savedSplit.value?.name }}</span> <span v-if="splitBadge(mailbox.savedTotal.value)" class="split-count">{{ splitBadge(mailbox.savedTotal.value) }}</span></button>
+            <button v-if="savedTabVisible" type="button" class="split-tab" data-test="split-saved" :title="mailbox.savedSplit.value?.name" :aria-current="mailbox.context.value === 'saved' ? 'page' : undefined" :aria-describedby="splitCoverageShown ? `${domIdPrefix}split-coverage` : undefined" @click="navigateContext('saved')"><span class="split-label">{{ mailbox.savedSplit.value?.name }}</span> <span v-if="splitBadge(mailbox.savedTotal.value)" class="split-count">{{ splitBadge(mailbox.savedTotal.value) }}</span></button>
           </nav>
           <!-- Reminders: the list's sections take the split-tab slot (Pending,
                Returned, History, each with the count of its loaded rows once
@@ -2535,9 +2164,16 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
                announced; empty (display: none) when idle. It grows leftward in
                the trail, so the glyphs never move. -->
           <span class="chord-hint" role="status" data-test="chord-hint"><template v-if="goPending"><span aria-hidden="true">g…</span><span class="visually-hidden">{{ goHintLabel }}</span></template></span>
-          <p v-if="props.mode === 'browser-preview'" class="header-note preview-tag" data-test="preview-banner" role="note" :title="BROWSER_PREVIEW_DISCLOSURE"><span aria-hidden="true">Preview · in-memory</span><span class="visually-hidden">{{ BROWSER_PREVIEW_DISCLOSURE }}</span></p>
-          <p v-if="gmailMode && !mailboxActionsEnabled" class="header-note" data-test="mailbox-access-hint">
-            {{ accountStatus?.mutationAccess === 'upgrading' ? 'Mailbox permission pending' : 'Gmail is read-only' }}
+          <p v-if="props.mode === 'browser-preview'" class="header-note preview-tag" data-test="preview-banner" role="note" :title="BROWSER_PREVIEW_DISCLOSURE"><span aria-hidden="true"><span class="preview-word">Preview</span><span class="preview-detail"> · in-memory</span></span><span class="visually-hidden">{{ BROWSER_PREVIEW_DISCLOSURE }}</span></p>
+          <!-- One account fact (connection or sync), same pattern as the preview tag: terse
+               visible words, the full sentence as the title and visually hidden text. The hidden
+               text never carries the ticking cached count, so it is announced once. -->
+          <p v-if="statusNotice" class="header-note account-status-note" :class="[`tone-${statusNotice.tone}`, { 'visually-hidden': noteWordsHidden }]" :role="noteAnnounces ? 'status' : undefined" data-test="account-status-note" :data-kind="statusNotice.kind" :title="statusNotice.title">
+            <span class="note-text" aria-hidden="true"><span class="note-lead">{{ noteParts.lead }}</span><span v-if="noteParts.detail" class="note-detail"><span class="note-detail-text">{{ noteParts.detail }}</span></span></span><span class="visually-hidden" :aria-hidden="noteAnnounces ? undefined : 'true'">{{ statusNotice.title }}</span>
+            <template v-if="!noteWordsHidden && headerAction && (headerAction.action === 'account' || accountActionsIdle)"><span class="note-sep" aria-hidden="true">·</span><button type="button" class="header-link" data-test="account-status-action" @click="accountNoticeAction(headerAction.action, 'header')">{{ headerAction.label }}</button></template>
+          </p>
+          <p v-if="readOnlyHint" class="header-note access-hint" data-test="mailbox-access-hint">
+            <span class="hint-text">{{ accountStatus?.mutationAccess === 'upgrading' ? 'Mailbox permission pending' : 'Gmail is read-only' }}</span>
             <button type="button" class="header-link" @click="openDrawer('account')">Review access<span class="visually-hidden"> in Account</span></button>
           </p>
           <span ref="readerActionsHost" class="reader-actions-host"></span>
@@ -2589,7 +2225,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
         <p
           v-if="mailbox.accountState.value === 'loading' && mailbox.listState.value !== 'error'"
           data-test="account-loading"
-        >Determining account mode…</p>
+        >Loading account…</p>
         <div v-else class="recovery-banner" data-test="account-error">
           <p v-if="mailbox.accountState.value === 'error'" role="alert">
             Could not determine the account status:
@@ -2659,7 +2295,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
               @click="executeAction('drafts')"
             ><PaneGlyph name="drafts" /><span class="rail-label">Drafts</span></button>
             <button
-              v-if="!wideViewport"
+              v-if="!wideViewport && !contactCollapsed"
               type="button"
               class="rail-item"
               data-test="contact-disclosure"
@@ -2823,11 +2459,22 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             <p
               v-else-if="mailbox.conversations.value.length === 0"
               class="list-state"
+              :class="inboxEmpty ? `tone-${inboxEmpty.tone}` : undefined"
+              :data-tone="inboxEmpty?.tone"
               data-test="inbox-empty"
               ref="emptyState"
               tabindex="-1"
             >
-              {{ mailbox.context.value === 'search' ? (mailbox.nextCursor.value ? 'No matches on this candidate page. Continue scanning older mail below.' : 'No matching conversations in the searched content.') : mailbox.unreadOnly.value && mailbox.context.value !== 'trash' ? 'No known unread conversations in this view. Use Commands → Show all conversations to turn off the unread filter; unknown read states are not included.' : mailbox.starredOnly.value ? 'No known starred conversations in this cached view; unknown facts and uncached mail are not included.' : mailbox.context.value === 'trash' ? 'No known cached Trash conversations. This does not mean your Gmail Trash is empty.' : mailbox.context.value === 'saved' ? 'No Inbox conversations match this saved split. Edit the sender or domain criteria, or return to Inbox.' : mailbox.context.value === 'inbox' ? 'No conversations are currently in the inbox. Archived conversations stay recoverable from Activity.' : mailbox.nextCursor.value ? 'No conversations on this cache page; more cached candidates are available.' : mailbox.context.value === 'starred' ? 'No known starred conversations in this local cache; unknown and uncached mail is not included.' : 'No known archived conversations in this local cache.' }}
+              {{ emptyListText }}
+              <button
+                v-if="emptyActionShown && inboxEmpty?.action"
+                ref="emptyAction"
+                type="button"
+                class="inline-action"
+                data-test="inbox-empty-action"
+                @click="accountNoticeAction(inboxEmpty.action, 'empty')"
+              >{{ inboxEmpty.actionLabel }}</button>
+              <span v-if="inboxEmpty?.hint" class="list-state-hint" data-test="inbox-empty-hint">{{ inboxEmpty.hint }}</span>
             </p>
             <InboxList
               v-else
@@ -2984,14 +2631,14 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
         <!-- The fixed drawer overlays this column too; its copy controls must
              not stay focusable while covered (same inert contract as central). -->
         <aside
-          v-if="wideViewport"
+          v-if="wideViewport && !contactCollapsed"
           class="contact-column"
           data-test="contact-column"
           tabindex="-1"
           ref="contactColumnEl"
           :inert="centralCovered || undefined"
         >
-          <ContactPane :contact="contact" :loading="readerLoading" :context="contactContext" :recent="recentMail" @search-sender="senderSearch" @open-recent="openRecent" />
+          <ContactPane :accountless="!accountId" :empty-list="contactListEmpty" :contact="contact" :loading="readerLoading" :context="contactContext" :recent="recentMail" @search-sender="senderSearch" @open-recent="openRecent" />
         </aside>
 
         <div
@@ -3011,7 +2658,9 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
           <!-- No connected account (never configured, or disconnected while this
                surface was open): the capability needs an account identity, so
                render an explicit account-required state instead of an empty drawer. -->
-          <p v-else-if="drawer === 'destinations'" role="note" data-test="destinations-account-required">Provider mail needs a connected Gmail account. Connect one from Account first.</p>
+          <p v-else-if="drawer === 'destinations'" role="note" data-test="destinations-account-required">
+            Provider mail needs a connected Gmail account.<template v-if="providerAccountAction"> <button v-if="providerAccountAction.action === 'account' || accountActionsIdle" type="button" class="inline-action" data-test="destinations-account-action" @click="accountNoticeAction(providerAccountAction.action, 'drawer')">{{ providerAccountAction.label }}</button></template><template v-else-if="accountStatus?.connection === 'authenticating'"> Finish sign-in in your browser.</template><template v-else> Connect one from Account first.</template>
+          </p>
           <section v-if="drawer === 'reminder-settings' && remindersSupported" class="utility-panel" data-test="reminder-settings-dialog">
             <ReminderSettings @close="closeDrawer" @saved="reminderPreferencesSaved" />
           </section>
@@ -3065,7 +2714,7 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
             <h2>Contact</h2>
             <button type="button" data-test="contact-disclosure-close" @click="closeContactDisclosure()">Close</button>
           </header>
-          <ContactPane :contact="contact" :loading="readerLoading" :context="contactContext" :recent="recentMail" @search-sender="senderSearch" @open-recent="openRecent" />
+          <ContactPane :accountless="!accountId" :empty-list="contactListEmpty" :contact="contact" :loading="readerLoading" :context="contactContext" :recent="recentMail" @search-sender="senderSearch" @open-recent="openRecent" />
         </div>
       </template>
       <!-- Bottom dock of the list column (DESIGN.md "In-flow Notices"): the
@@ -3105,6 +2754,6 @@ function errorText(error: { kind: string; field?: string; reason?: string }): st
       </div>
     </main>
     <AttachmentChooser v-if="attachmentConversation" :client="props.client" :conversation="attachmentConversation" :preview="props.mode === 'browser-preview'" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" @close="closeAttachments" />
-    <ActionOverlay v-if="overlay" v-model:query="overlayQuery" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" :kind="overlay" :actions="availableActions" :key-scope="remindersList ? 'reminders' : draftsList ? 'drafts' : undefined" @close="closeOverlay()" @execute="executeOverlay" />
+    <ActionOverlay v-if="overlay" v-model:query="overlayQuery" :account-first="accountCommandsFirst" :account-top="accountCommandsTop" :row-keys="paletteHasRows" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" :kind="overlay" :actions="availableActions" :key-scope="remindersList ? 'reminders' : draftsList ? 'drafts' : undefined" @close="closeOverlay()" @execute="executeOverlay" />
   </div>
 </template>

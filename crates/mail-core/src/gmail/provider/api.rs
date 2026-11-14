@@ -1,8 +1,8 @@
 use super::*;
-use crate::gmail::types::GmailReadProvider;
+use crate::gmail::types::GmailProvider;
 use crate::storage_log::{storage_err, storage_fault};
 
-impl GmailReadProvider for GmailProvider {
+impl GmailProvider for LiveGmailProvider {
     fn fetch_attachment(
         &self,
         account_id: &str,

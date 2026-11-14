@@ -1,0 +1,114 @@
+{
+  "scenario": "archive-undo-restores-only-originally-inbox-messages",
+  "description": "A thread containing a message that was never in INBOX (a sent reply): undo of an archive restores only the originally-INBOX message and re-applies archived to the other, so two compensations are staged and the conversation returns to the Inbox.",
+  "rules": "docs/ux-04 \u00a73.1/\u00a73.3; tests/undo.rs undoing_an_archive_within_the_window_restores_only_originally_inbox_messages",
+  "profiles": [
+    "gmail"
+  ],
+  "mailbox": "mixed",
+  "steps": [
+    {
+      "name": "archive thr-mixed",
+      "do": {
+        "cmd": "setArchived",
+        "args": {
+          "conversation": "thr-mixed",
+          "archived": true,
+          "requestId": "req-archive"
+        }
+      },
+      "expect": {
+        "ok": {
+          "operationId": "$A"
+        },
+        "snapshot": {
+          "inbox": [
+            "thr-other"
+          ],
+          "activity": [
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "thr-mixed"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": "@+10",
+              "kind": "archive",
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "undo",
+      "do": {
+        "cmd": "undoOperation",
+        "args": {
+          "operationId": "$A",
+          "requestId": "req-undo"
+        }
+      },
+      "expect": {
+        "ok": {
+          "undoneOperationId": "$A",
+          "outcome": "compensating",
+          "operationIds": [
+            "$U1",
+            "$U2"
+          ]
+        },
+        "snapshot": {
+          "inbox": [
+            "thr-other",
+            "thr-mixed"
+          ],
+          "activity": [
+            {
+              "id": "$U2",
+              "conversation": {
+                "conversationId": "thr-mixed"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": "$A",
+              "groupId": null,
+              "undoableUntil": null,
+              "kind": "archive",
+              "requestedArchived": true
+            },
+            {
+              "id": "$U1",
+              "conversation": {
+                "conversationId": "thr-mixed"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": "$A",
+              "groupId": null,
+              "undoableUntil": null,
+              "kind": "archive",
+              "requestedArchived": false
+            },
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "thr-mixed"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": null,
+              "kind": "archive",
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

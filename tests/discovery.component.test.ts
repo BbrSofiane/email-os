@@ -368,7 +368,7 @@ describe("revalidates query and lifecycle targets (UX-03)", () => {
     await w.get('[data-test="rail-done"]').trigger('click'); await flushPromises();
     const calls = fixture.doneCalls();
     await w.get('[data-test="rail-account"]').trigger('click'); await flushPromises();
-    await w.get('[data-test="account-disconnect"]').trigger('click'); await flushPromises();
+    await w.get('[data-test="account-disconnect"]').trigger('click'); await w.get('[data-test="account-disconnect-confirm"]').trigger('click'); await flushPromises();
     await w.get('[data-test="drawer-close"]').trigger('click'); await flushPromises();
     expect(w.get('[data-test="inbox-title"]').text()).toBe('Inbox');
     expect(w.find('[data-test="done-more"]').exists()).toBe(false);

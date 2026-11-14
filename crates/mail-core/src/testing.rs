@@ -11,6 +11,7 @@ use crate::gmail::types::{GmailProfile, GmailThread};
 pub const TIMEOUT: Duration = Duration::from_secs(5);
 
 pub mod operations_fake;
+pub mod synthetic;
 
 pub fn temp_profile(tag: &str) -> tempfile::TempDir {
     tempfile::Builder::new()
@@ -101,7 +102,7 @@ pub fn thread(
 }
 
 /// Open the real Gmail core with a synthetic provider.
-pub fn open_core<P: crate::gmail::types::GmailReadProvider + 'static>(
+pub fn open_core<P: crate::gmail::types::GmailProvider + 'static>(
     dir: impl AsRef<std::path::Path>,
     provider: &std::sync::Arc<P>,
 ) -> crate::gmail::sync::GmailCore {
@@ -109,7 +110,7 @@ pub fn open_core<P: crate::gmail::types::GmailReadProvider + 'static>(
 }
 
 pub fn open_core_with_clock<
-    P: crate::gmail::types::GmailReadProvider + 'static,
+    P: crate::gmail::types::GmailProvider + 'static,
     C: crate::clock::Clock + 'static,
 >(
     dir: impl AsRef<std::path::Path>,
@@ -120,7 +121,7 @@ pub fn open_core_with_clock<
         .expect("open Gmail test core")
 }
 
-pub fn open_profile<P: crate::gmail::types::GmailReadProvider + 'static>(
+pub fn open_profile<P: crate::gmail::types::GmailProvider + 'static>(
     tag: &str,
     provider: &std::sync::Arc<P>,
 ) -> (crate::gmail::sync::GmailCore, tempfile::TempDir) {

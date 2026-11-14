@@ -1,0 +1,183 @@
+{
+  "scenario": "undo-rejected-when-superseded",
+  "description": "Only the newest accepted action is undoable: a newer archive supersedes the older one (undo -> superseded, nothing changes) while the newer one can still be undone.",
+  "rules": "docs/ux-04 \u00a73.2 rule 4; tests/undo.rs a_newer_operation_supersedes_the_undo_target",
+  "profiles": [
+    "gmail",
+    "fixture"
+  ],
+  "mailbox": "triage",
+  "steps": [
+    {
+      "name": "archive conv-01",
+      "do": {
+        "cmd": "setArchived",
+        "args": {
+          "conversation": "conv-01",
+          "archived": true,
+          "requestId": "req-a"
+        }
+      },
+      "expect": {
+        "ok": {
+          "operationId": "$A",
+          "acceptedAt": "@+0"
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02"
+          ],
+          "activity": [
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": "@+10",
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "archive conv-02",
+      "do": {
+        "cmd": "setArchived",
+        "args": {
+          "conversation": "conv-02",
+          "archived": true,
+          "requestId": "req-b"
+        }
+      },
+      "expect": {
+        "ok": {
+          "operationId": "$B",
+          "acceptedAt": "@+0"
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03"
+          ],
+          "activity": [
+            {
+              "id": "$B",
+              "conversation": {
+                "conversationId": "conv-02"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": "@+10",
+              "requestedArchived": true
+            },
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": null,
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "undo of the older action is superseded",
+      "do": {
+        "cmd": "undoOperation",
+        "args": {
+          "operationId": "$A",
+          "requestId": "req-undo-a"
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "undo_unavailable",
+          "reason": "superseded"
+        }
+      }
+    },
+    {
+      "name": "undo of the newest action works",
+      "do": {
+        "cmd": "undoOperation",
+        "args": {
+          "operationId": "$B",
+          "requestId": "req-undo-b"
+        }
+      },
+      "expect": {
+        "ok": {
+          "undoneOperationId": "$B",
+          "outcome": "compensating",
+          "operationIds": [
+            "$U"
+          ],
+          "acceptedAt": "@+0"
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02"
+          ],
+          "activity": [
+            {
+              "id": "$U",
+              "conversation": {
+                "conversationId": "conv-02"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": "$B",
+              "groupId": null,
+              "undoableUntil": null,
+              "requestedArchived": false
+            },
+            {
+              "id": "$B",
+              "conversation": {
+                "conversationId": "conv-02"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": null,
+              "requestedArchived": true
+            },
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": null,
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

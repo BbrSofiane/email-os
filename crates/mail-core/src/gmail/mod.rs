@@ -5,6 +5,7 @@ pub mod operations;
 mod parse;
 pub mod provider;
 pub mod secrets;
+pub(crate) mod session;
 pub mod store;
 pub mod sync;
 pub mod types;

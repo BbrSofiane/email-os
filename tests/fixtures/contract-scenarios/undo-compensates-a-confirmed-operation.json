@@ -1,0 +1,144 @@
+{
+  "scenario": "undo-compensates-a-confirmed-operation",
+  "description": "Undo of a confirmed archive 9 s after acceptance (last second of the window) queues one compensating operation linked by undoOf, restores the conversation, and the undone original loses its undo window; compensations are never undoable.",
+  "rules": "docs/ux-04 \u00a73.2 rule 3 (now < accepted+10 s), \u00a73.3 (confirmed -> compensation), rule 2 (compensations not undoable)",
+  "profiles": [
+    "gmail",
+    "fixture"
+  ],
+  "mailbox": "triage",
+  "steps": [
+    {
+      "name": "archive conv-01",
+      "do": {
+        "cmd": "setArchived",
+        "args": {
+          "conversation": "conv-01",
+          "archived": true,
+          "requestId": "req-archive"
+        }
+      },
+      "expect": {
+        "ok": {
+          "operationId": "$A",
+          "acceptedAt": "@+0"
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02"
+          ],
+          "activity": [
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": "@+10",
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "clock moves 9 s",
+      "do": {
+        "advance": 9
+      },
+      "expect": {}
+    },
+    {
+      "name": "undo compensates",
+      "do": {
+        "cmd": "undoOperation",
+        "args": {
+          "operationId": "$A",
+          "requestId": "req-undo"
+        }
+      },
+      "expect": {
+        "ok": {
+          "undoneOperationId": "$A",
+          "outcome": "compensating",
+          "operationIds": [
+            "$U"
+          ],
+          "acceptedAt": "@+9"
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03",
+            "conv-02",
+            "conv-01"
+          ],
+          "activity": [
+            {
+              "id": "$U",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": "$A",
+              "groupId": null,
+              "undoableUntil": null,
+              "requestedArchived": false
+            },
+            {
+              "id": "$A",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": null,
+              "undoableUntil": null,
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a compensating operation is not undoable",
+      "do": {
+        "cmd": "undoOperation",
+        "args": {
+          "operationId": "$U",
+          "requestId": "req-undo-u"
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "undo_unavailable",
+          "reason": "not_applicable"
+        }
+      }
+    },
+    {
+      "name": "an unknown operation id is not found",
+      "do": {
+        "cmd": "undoOperation",
+        "args": {
+          "operationId": "op-does-not-exist",
+          "requestId": "req-undo-x"
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "not_found"
+        }
+      }
+    }
+  ]
+}

@@ -885,7 +885,7 @@ impl FakeProvider {
     }
 }
 
-impl crate::gmail::types::GmailReadProvider for FakeProvider {
+impl crate::gmail::types::GmailProvider for FakeProvider {
     fn fetch_attachment(
         &self,
         _account: &str,

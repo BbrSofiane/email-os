@@ -1,0 +1,157 @@
+{
+  "scenario": "group-undo-rejected-after-the-window",
+  "description": "Group undo at accepted + 10 s is rejected as expired for the whole group; nothing changes and the group status reports undo unavailable.",
+  "rules": "docs/ux-05 \u00a75 (expiry rejects the whole group undo without changes)",
+  "profiles": [
+    "gmail",
+    "fixture"
+  ],
+  "mailbox": "triage",
+  "steps": [
+    {
+      "name": "group archive",
+      "do": {
+        "cmd": "setArchivedGroup",
+        "args": {
+          "members": [
+            "conv-01",
+            "conv-02"
+          ],
+          "archived": true,
+          "requestId": "grp-1"
+        }
+      },
+      "expect": {
+        "ok": {
+          "groupId": "$G",
+          "members": [
+            {
+              "ordinal": 0,
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "operationId": "$M0",
+              "rejection": null
+            },
+            {
+              "ordinal": 1,
+              "conversation": {
+                "conversationId": "conv-02"
+              },
+              "operationId": "$M1",
+              "rejection": null
+            }
+          ]
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03"
+          ],
+          "activity": [
+            {
+              "id": "$M1",
+              "conversation": {
+                "conversationId": "conv-02"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$G",
+              "undoableUntil": null,
+              "requestedArchived": true
+            },
+            {
+              "id": "$M0",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$G",
+              "undoableUntil": null,
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "clock reaches the deadline",
+      "do": {
+        "advance": 10
+      },
+      "expect": {}
+    },
+    {
+      "name": "group undo is expired",
+      "do": {
+        "cmd": "undoOperationGroup",
+        "args": {
+          "groupId": "$G",
+          "requestId": "undo-1"
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "undo_unavailable",
+          "reason": "expired"
+        },
+        "snapshot": {
+          "inbox": [
+            "conv-05",
+            "conv-04",
+            "conv-03"
+          ],
+          "activity": [
+            {
+              "id": "$M1",
+              "conversation": {
+                "conversationId": "conv-02"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$G",
+              "undoableUntil": null,
+              "requestedArchived": true
+            },
+            {
+              "id": "$M0",
+              "conversation": {
+                "conversationId": "conv-01"
+              },
+              "status": "confirmed",
+              "failure": null,
+              "undoOf": null,
+              "groupId": "$G",
+              "undoableUntil": null,
+              "requestedArchived": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "group status",
+      "do": {
+        "cmd": "getOperationGroup",
+        "args": {
+          "requestId": "grp-1"
+        }
+      },
+      "expect": {
+        "ok": {
+          "undo": {
+            "available": false,
+            "reason": "expired",
+            "undoableUntil": null
+          },
+          "undoReceipt": null
+        }
+      }
+    }
+  ]
+}

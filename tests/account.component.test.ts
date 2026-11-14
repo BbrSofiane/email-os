@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { flushPromises, type VueWrapper } from '@vue/test-utils';
 import { fullDateLabel } from '../src/lib/browsing-dates';
 import type { Conversation, InboxSnapshot, MailClient } from '../src/lib/ipc/client';
-import { closeUtilityDrawer, conversationRows, countingClient, createBrowserFakeMailClient, deferred, fixtureRef, openUtilityDrawer, useGmailMode, type BrowserFake, type CountingClient, mountApp as sharedMountApp, createKeyEvent } from './helpers';
+import { closeUtilityDrawer, confirmDisconnect, conversationRows, countingClient, createBrowserFakeMailClient, deferred, fixtureRef, openUtilityDrawer, useGmailMode, type BrowserFake, type CountingClient, mountApp as sharedMountApp, createKeyEvent } from './helpers';
 
 describe('keeps Gmail account states and transitions explicit (Slice 02)', () => {
   let fake: BrowserFake;
@@ -66,7 +66,9 @@ describe('keeps Gmail account states and transitions explicit (Slice 02)', () =>
     await openUtilityDrawer(w, 'account');
     expect(w.find('[data-test="account-panel"]').exists()).toBe(true);
     expect(w.find('[data-test="account-email"]').text()).toBe('operator@example.test');
-    expect(w.find('[data-test="disposable-account-note"]').text()).toContain('Disposable test account');
+    // The permanent "Disposable test account" paragraph is gone; the cached-reading fact lives in the mode line's title.
+    expect(w.find('[data-test="disposable-account-note"]').exists()).toBe(false);
+    expect(w.find('[data-test="account-mode"]').attributes('title')).toContain('Cached reading remains available');
     expect(w.find('[data-test="account-connection"]').text()).toContain('Connected');
     expect(w.find('[data-test="account-mode"]').text()).toContain('read-only');
     expect(conversationRows(w)).toHaveLength(18);
@@ -129,7 +131,7 @@ describe('keeps Gmail account states and transitions explicit (Slice 02)', () =>
     await openUtilityDrawer(w, 'account');
     await w.find('[data-test="enable-mailbox-actions"]').trigger('click');
     await flushPromises();
-    expect(w.find('[data-test="account-mode"]').text()).toContain('Permission upgrade');
+    expect(w.find('[data-test="account-mode"]').text()).toContain('permission request pending');
     expect(w.find('[data-test="action-upgrading"]').exists()).toBe(true);
     expect(w.find('[data-test="cancel-action-upgrade"]').exists()).toBe(true);
     expect(w.find('[data-test="row-archive-conv-01"]').exists()).toBe(false);
@@ -285,20 +287,18 @@ describe('keeps Gmail account states and transitions explicit (Slice 02)', () =>
     expect(fake.controls.activity().find((op) => op.id === original.operationId)?.status).toBe('confirmed');
   });
 
-  it('shows a visible not_configured state with no mailbox content and no fallback', async () => {
+  it('shows a visible not_configured state with no mailbox content, no fallback and nothing to connect with', async () => {
     gmail({ connection: 'not_configured', emailAddress: null, cachedConversations: 0, initialSyncComplete: false });
     const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
     await flushFakeClientWithMacrotasks(fake, 2);
     await openUtilityDrawer(w, 'account');
     expect(w.find('[data-test="account-not-configured"]').exists()).toBe(true);
+    expect(w.find('[data-test="account-not-configured"]').text()).toContain('Add a Google client ID to the launch environment, then restart.');
     expect(conversationRows(w)).toHaveLength(0);
-    const connect = w.find('[data-test="account-connect"]');
-    expect(connect.exists()).toBe(true);
-
-    await connect.trigger('click');
-    await flushFakeClientWithMacrotasks(fake, 2);
-    expect(w.find('[data-test="account-connection"]').text()).toContain('Connected');
-    expect(conversationRows(w)).toHaveLength(18);
+    // Connect would only fail: it is not offered. The connection stays what it is.
+    expect(w.find('[data-test="account-connect"]').exists()).toBe(false);
+    expect(w.find('[data-test="account-connection"]').text()).toContain('Not configured');
+    expect(conversationRows(w)).toHaveLength(0);
   });
 
   it('moves from disconnected to connected through the connect control', async () => {
@@ -306,7 +306,7 @@ describe('keeps Gmail account states and transitions explicit (Slice 02)', () =>
     const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
     await flushFakeClientWithMacrotasks(fake, 2);
     await openUtilityDrawer(w, 'account');
-    expect(w.find('[data-test="account-connection"]').text()).toContain('Disconnected');
+    expect(w.find('[data-test="account-connection"]').text()).toContain('Not connected');
     expect(conversationRows(w)).toHaveLength(0);
 
     await w.find('[data-test="account-connect"]').trigger('click');
@@ -325,12 +325,12 @@ describe('keeps Gmail account states and transitions explicit (Slice 02)', () =>
       await openUtilityDrawer(w, 'account');
       expect(w.find('[data-test="account-email"]').text()).toBe('retained@example.test');
       expect(w.find('[data-test="account-disconnect"]').exists()).toBe(true);
-      expect(w.find('[data-test="account-disconnect"]').text()).toBe('Disconnect');
+      expect(w.find('[data-test="account-disconnect"]').text()).toBe('Disconnect…');
 
-      await w.find('[data-test="account-disconnect"]').trigger('click');
+      await confirmDisconnect(w);
       await flushFakeClientWithMacrotasks(fake, 2);
       expect(w.find('[data-test="account-email"]').exists()).toBe(false);
-      expect(w.find('[data-test="account-connection"]').text()).toContain('Disconnected');
+      expect(w.find('[data-test="account-connection"]').text()).toContain('Not connected');
       expect(w.find('[data-test="account-disconnect"]').exists()).toBe(false);
     },
   );
@@ -340,7 +340,7 @@ describe('keeps Gmail account states and transitions explicit (Slice 02)', () =>
     const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
     await flushFakeClientWithMacrotasks(fake, 2);
     await openUtilityDrawer(w, 'account');
-    expect(w.find('[data-test="account-connection"]').text()).toContain('Sign-in required');
+    expect(w.find('[data-test="account-connection"]').text()).toContain('Sign-in expired');
     expect(w.find('[data-test="account-auth-required"]').exists()).toBe(true);
     expect(w.find('[data-test="account-connect"]').text()).toContain('Sign in again');
     if (w.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w);
@@ -358,12 +358,14 @@ describe('keeps Gmail account states and transitions explicit (Slice 02)', () =>
     const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
     await flushFakeClientWithMacrotasks(fake, 2);
     await openUtilityDrawer(w, 'account');
-    expect(w.find('[data-test="account-connection"]').text()).toContain('Signing in');
+    expect(w.find('[data-test="account-connection"]').text()).toBe('Finish sign-in in your browser');
     expect(w.find('[data-test="account-connect"]').exists()).toBe(false);
     expect(w.find('[data-test="account-disconnect"]').text()).toContain('Cancel sign-in');
+    // Nothing to lose: cancelling a sign-in stays one click, with no confirm step.
     await w.find('[data-test="account-disconnect"]').trigger('click');
     await flushFakeClientWithMacrotasks(fake, 2);
-    expect(w.find('[data-test="account-connection"]').text()).toContain('Disconnected');
+    expect(w.find('[data-test="account-disconnect-confirm"]').exists()).toBe(false);
+    expect(w.find('[data-test="account-connection"]').text()).toContain('Not connected');
   });
 
   it('runs an explicit sync and discloses failures while cached mail stays readable', async () => {
@@ -383,7 +385,7 @@ describe('keeps Gmail account states and transitions explicit (Slice 02)', () =>
     await w.find('[data-test="account-sync"]').trigger('click');
     await flushFakeClientWithMacrotasks(fake, 2);
     expect(w.find('[data-test="account-sync-error"]').exists()).toBe(true);
-    expect(w.find('[data-test="account-sync-error"]').text()).toContain('network is unavailable');
+    expect(w.find('[data-test="account-sync-error"]').text()).toContain('Sync failed: no network.');
     if (w.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w);
     // The cached reader is still fully usable after the sync error.
     if (w.find('[data-test="drawer-close"]').exists()) await closeUtilityDrawer(w);
@@ -397,10 +399,10 @@ describe('keeps Gmail account states and transitions explicit (Slice 02)', () =>
     const w = sharedMountApp(counted.client, 'browser-preview', { attachTo: document.body });
     await flushFakeClientWithMacrotasks(fake, 2);
     await openUtilityDrawer(w, 'account');
+    // The count moved to the sync line; the bounded-coverage fact is one short second line.
+    expect(w.find('[data-test="account-cached"]').text()).toBe('7 conversations cached');
     const coverage = w.find('[data-test="account-coverage"]').text();
-    expect(coverage).toContain('7');
-    expect(coverage).toContain('100');
-    expect(coverage).toContain('may be incomplete');
+    expect(coverage).toBe('Up to 100 conversations are cached; older mail may be missing.');
     expect(coverage).not.toContain('most recent');
     expect(w.find('[data-test="account-last-synced"]').text()).toContain('Never synced');
   });
@@ -469,7 +471,7 @@ describe('keeps Gmail account states and transitions explicit (Slice 02)', () =>
     await fake.controls.flush();
 
     await openUtilityDrawer(w, 'account');
-    await w.find('[data-test="account-disconnect"]').trigger('click');
+    await confirmDisconnect(w);
     await flushFakeClientWithMacrotasks(fake, 2);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect(conversationRows(w)).toHaveLength(0);
@@ -536,11 +538,11 @@ describe('keeps Gmail account states and transitions explicit (Slice 02)', () =>
     expect(w.find('[data-test="reader"]').exists()).toBe(true); // deferred detail still loading
 
     await openUtilityDrawer(w, 'account');
-    await w.find('[data-test="account-disconnect"]').trigger('click');
+    await confirmDisconnect(w);
     await flushFakeClientWithMacrotasks(fake, 2);
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect(conversationRows(w)).toHaveLength(0);
-    expect(w.find('[data-test="account-connection"]').text()).toContain('Disconnected');
+    expect(w.find('[data-test="account-connection"]').text()).toContain('Not connected');
     expect(w.find('[data-test="account-connect"]').exists()).toBe(true);
 
     // The stale responses arrive after the disconnect; nothing may repopulate.

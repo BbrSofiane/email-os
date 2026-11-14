@@ -2,7 +2,7 @@ import { advanceUiUntil, useUiTestClock } from '../support/timers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises } from '@vue/test-utils';
 import type { MailClient } from '../../src/lib/ipc/client';
-import { closeUtilityDrawer, createBrowserFakeMailClient, deferred, openDraftsList, openUtilityDrawer } from '../helpers';
+import { closeUtilityDrawer, confirmDisconnect, createBrowserFakeMailClient, deferred, openDraftsList, openUtilityDrawer } from '../helpers';
 import { mountDraftsApp, startNewDraft } from '../support/drafts';
 
 describe('draft account transitions', () => {
@@ -18,7 +18,7 @@ describe('draft account transitions', () => {
     };
     const w = await mountDraftsApp(fake, client);
     await openUtilityDrawer(w, 'account');
-    await w.find('[data-test="account-disconnect"]').trigger('click');
+    await confirmDisconnect(w);
     await flushPromises();
     await openDraftsList(w);
     expect(w.find('[data-test="new-draft"]').attributes('disabled')).toBeDefined();
@@ -65,7 +65,11 @@ describe('draft account transitions', () => {
     };
     const w = await mountDraftsApp(fake, client);
     await openUtilityDrawer(w, 'account');
-    expect(w.find('[data-test="disconnect-warning"]').text()).toContain('local drafts remain on this device');
+    // The warning is not in the DOM until Disconnect… is asked for.
+    expect(w.find('[data-test="disconnect-warning"]').exists()).toBe(false);
+    await w.find('[data-test="account-disconnect"]').trigger('click');
+    expect(w.find('[data-test="disconnect-warning"]').text()).toContain('Local drafts stay');
+    await w.find('[data-test="account-disconnect-cancel"]').trigger('click');
     await closeUtilityDrawer(w);
     await openDraftsList(w);
     await startNewDraft(w);
@@ -83,7 +87,7 @@ describe('draft account transitions', () => {
     await w.find('[data-test="retry-draft-save"]').trigger('click');
     await flushPromises();
     await openUtilityDrawer(w, 'account');
-    await w.find('[data-test="account-disconnect"]').trigger('click');
+    await confirmDisconnect(w);
     await flushPromises();
     expect(disconnects).toBe(1);
     await advanceUiUntil(() => w.find('[data-test="account-connect"]').exists());

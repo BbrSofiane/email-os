@@ -23,7 +23,7 @@
  * methods for App's single keyboard dispatcher — this component never adds its
  * own window listener.
  */
-import { actionLabel } from '../lib/browsing-actions';
+import { actionLabel } from '../lib/action-registry';
 import { compactDateLabel, fullDateLabel, machineDateTime } from '../lib/browsing-dates';
 import { messageSnippet } from '../lib/message-snippet';
 import { revealDelta } from '../lib/reveal-in-view';

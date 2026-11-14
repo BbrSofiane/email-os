@@ -426,16 +426,51 @@ function toOperationSummary(op: InternalOperation, accountId: string, undoableUn
 /** Immutable fixture identity; never used to select a native profile or credentials. */
 export interface FixtureIdentity { accountId: string; emailAddress: string }
 
+/**
+ * Optional replacement for the default 18-conversation seed, used by the shared
+ * contract scenarios (tests/fixtures/contract-scenarios). `starred` omitted
+ * means the star fact is unknown.
+ */
+export interface FakeMailboxSeed {
+  conversations: Array<{
+    id: string;
+    subject?: string;
+    messages: Array<{ id: string; sentAt: string; inInbox: boolean; unread: boolean; starred?: boolean | null }>;
+  }>;
+}
+
+function seedFromMailbox(seed: FakeMailboxSeed, accountId: string, mailbox: string): FakeConversation[] {
+  const ME = addr('You', mailbox);
+  return seed.conversations.map((conversation) => ({
+    ref: { accountId, conversationId: conversation.id },
+    subject: conversation.subject ?? `subject ${conversation.id}`,
+    messages: conversation.messages.map((message) => ({
+      id: message.id,
+      from: SAFE_SENDER,
+      to: [ME],
+      sentAt: message.sentAt,
+      bodyText: 'synthetic body',
+      seededInInbox: message.inInbox,
+      seededRead: !message.unread,
+      seededStarred: message.starred ?? null,
+    })),
+    ops: [],
+  }));
+}
+
 export function createBrowserFakeMailClient(
   now: () => string = () => new Date().toISOString(),
   identity: FixtureIdentity = { accountId: ACCOUNT_ID, emailAddress: FIXTURE_MAILBOX },
+  seed?: FakeMailboxSeed,
 ): BrowserFake {
   // Capture values rather than retaining a caller-mutable identity object.
   const fixtureId = identity.accountId;
   const fixtureMailbox = identity.emailAddress;
   let savedSplit: SavedSplit | null = null;
   const ME = addr('You', fixtureMailbox);
-  const conversations = seedConversations(fixtureId, fixtureMailbox);
+  const seedMailbox = (): FakeConversation[] =>
+    seed ? seedFromMailbox(seed, fixtureId, fixtureMailbox) : seedConversations(fixtureId, fixtureMailbox);
+  const conversations = seedMailbox();
   const listeners = new Set<() => void>();
   const draftListeners = new Set<() => void>();
   const closeListeners = new Set<(request: AppCloseRequest) => void>();
@@ -458,7 +493,10 @@ export function createBrowserFakeMailClient(
   const behavior: FakeBehavior = { failNext: 0, failureKind: 'provider_rejected', hold: false, holdQueued: false, holdUpgrade: false, holdUndo: false };
 
   let opCounter = 0;
+  /** Operations accepted but not yet finished by the serial worker chain. */
   let inFlight = 0;
+  /** Core's worker is serial: each operation is claimed only after the previous one finished. */
+  let workerTail: Promise<void> = Promise.resolve();
   let holdReleased = false;
   const holdWaiters: Array<() => void> = [];
   const undoWaiters: Array<() => void> = [];
@@ -635,16 +673,30 @@ export function createBrowserFakeMailClient(
       || groups.some((g) => g.acceptedChildren > 0 && g.seq > seq);
   }
 
-  /** One group's undo window: latest top-level action, 10 s from group
-   * acceptance, and at least one member still eligible (an all-ineligible
-   * group offers no enabled Undo, §5). */
-  function groupUndoBlocker(group: InternalGroup): MailError | null {
+  /** The rules a group Undo ATTEMPT must pass, in the order the Rust stores
+   * apply them (`check_group_undoable`): not already undone, inside the 10 s
+   * window from group acceptance, and still the latest top-level action. A
+   * group with no accepted child never holds the action slot, so it is
+   * `superseded`. Member eligibility is NOT checked here: an attempt on a
+   * group with no eligible member is accepted as the group's one attempt with
+   * every member skipped (typed reasons), exactly as Rust does. */
+  function groupAttemptBlocker(group: InternalGroup): MailError | null {
     if (group.undone) return { kind: 'undo_unavailable', reason: 'already_undone' } satisfies MailError;
-    if (group.acceptedChildren === 0) return { kind: 'undo_unavailable', reason: 'not_applicable' } satisfies MailError;
     if (Date.parse(now()) >= Date.parse(group.acceptedAt) + UNDO_WINDOW_MS) {
       return { kind: 'undo_unavailable', reason: 'expired' } satisfies MailError;
     }
-    if (supersededByNewerAction(group.seq)) return { kind: 'undo_unavailable', reason: 'superseded' } satisfies MailError;
+    if (group.acceptedChildren === 0 || supersededByNewerAction(group.seq)) {
+      return { kind: 'undo_unavailable', reason: 'superseded' } satisfies MailError;
+    }
+    return null;
+  }
+
+  /** Undo AVAILABILITY as advertised by the group status: the attempt rules
+   * plus at least one still-eligible member (an all-ineligible group offers
+   * no enabled Undo, §5, but a direct attempt is still accepted). */
+  function groupUndoBlocker(group: InternalGroup): MailError | null {
+    const attempt = groupAttemptBlocker(group);
+    if (attempt) return attempt;
     // Per-member eligibility mirrors Rust: some accepted child must be live
     // (queued/applying/confirmed), not already compensated, with known priors.
     const anyEligible = group.members.some((member) => {
@@ -749,6 +801,7 @@ export function createBrowserFakeMailClient(
     requested: { archived?: boolean; read?: boolean },
   ): OperationGroupReceipt {
     requireMutationAccess(kind);
+    requireRequestId(command.requestId);
     if (!command.accountId || command.accountId !== accountStatus().account?.accountId) {
       throw { kind: 'invalid_request', field: 'accountId' } satisfies MailError;
     }
@@ -773,7 +826,8 @@ export function createBrowserFakeMailClient(
     }
     const fingerprint = JSON.stringify([
       'operation-group', kind, command.accountId,
-      command.members.map((member) => [member.accountId, member.conversationId]),
+      // Canonical identity is the SORTED member set: manifest order is presentation only.
+      command.members.map((member) => [member.accountId, member.conversationId]).sort((a, b) => `${a[0]}:${a[1]}`.localeCompare(`${b[0]}:${b[1]}`)),
       requested.archived, requested.read,
     ]);
     const requestKey = `${command.accountId}:${command.requestId}`;
@@ -839,8 +893,10 @@ export function createBrowserFakeMailClient(
     const activity = empty
       ? []
       : conversations
-          .flatMap((c) => c.ops.map((op) => summarizeOperation(op, c.ref.accountId)))
-          .sort((a, b) => a.id.localeCompare(b.id));
+          .flatMap((c) => c.ops.map((op) => ({ op, summary: summarizeOperation(op, c.ref.accountId) })))
+          // Core lists the persisted operations newest acceptance first.
+          .sort((a, b) => b.op.seq - a.op.seq)
+          .map((entry) => entry.summary);
     const rows = empty
       ? []
       : conversations
@@ -876,6 +932,13 @@ export function createBrowserFakeMailClient(
   function requireMutationAccess(kind: MailboxOperationKind): void {
     if ((kind === 'read' || kind === 'star') && account.mode !== 'gmail') throw { kind: 'read_only' } satisfies MailError;
     if (account.mode === 'gmail' && account.mutationAccess !== 'enabled') throw { kind: 'read_only' } satisfies MailError;
+  }
+
+  /** Rust rule (store.rs, undo_support.rs): blank or over 200 bytes is `invalid_request: requestId`. */
+  function requireRequestId(requestId: string): void {
+    if (typeof requestId !== 'string' || requestId.trim() === '' || requestId.length > 200) {
+      throw { kind: 'invalid_request', field: 'requestId' } satisfies MailError;
+    }
   }
 
   function existingReceipt<T = OperationReceipt>(requestId: string, fingerprint: string): T | null {
@@ -923,12 +986,17 @@ export function createBrowserFakeMailClient(
     conv.ops.push(op);
     if (behavior.hold || behavior.holdQueued) holdReleased = false;
     notify();
-    void runOperation(op).then(() => notify());
+    // An idle worker claims at once (same microtask timing as before); a busy one
+    // claims this operation only after everything accepted earlier has finished.
+    const run = (): Promise<void> => runOperation(op)
+      .catch(() => undefined)
+      .then(() => { inFlight -= 1; notify(); });
+    workerTail = inFlight === 0 ? run() : workerTail.then(run);
+    inFlight += 1;
     return snapshotCopy(receipt);
   }
 
   async function runOperation(op: InternalOperation): Promise<void> {
-    inFlight += 1;
     try {
       // holdQueued models a worker that has not claimed the intent yet: the
       // operation stays `queued`, so undo can still cancel it in place.
@@ -966,7 +1034,7 @@ export function createBrowserFakeMailClient(
       op.status = 'confirmed';
       notify();
     } finally {
-      inFlight -= 1;
+      // The serial chain owns the in-flight accounting.
     }
   }
 
@@ -1030,7 +1098,7 @@ export function createBrowserFakeMailClient(
         if (identityChanged) {
           // Mode/account controls represent a fresh synthetic cache, not migration
           // of another account's operations or mail into the new identity.
-          conversations.splice(0, conversations.length, ...seedConversations(fixtureId, fixtureMailbox));
+          conversations.splice(0, conversations.length, ...seedMailbox());
           receiptsByRequest.clear();
           groups.splice(0, groups.length);
           groupReceiptsByRequest.clear();
@@ -1406,6 +1474,7 @@ export function createBrowserFakeMailClient(
 
     async setArchived(command: SetArchived): Promise<OperationReceipt> {
       requireMutationAccess('archive');
+      requireRequestId(command.requestId);
       const fingerprint = JSON.stringify(['archive', command.conversation.accountId, command.conversation.conversationId, command.archived]);
       const existing = existingReceipt(command.requestId, fingerprint);
       if (existing) return existing;
@@ -1501,6 +1570,7 @@ export function createBrowserFakeMailClient(
     },
     async setRead(command: SetRead): Promise<OperationReceipt> {
       requireMutationAccess('read');
+      requireRequestId(command.requestId);
       const fingerprint = JSON.stringify(['read', command.conversation.accountId, command.conversation.conversationId, command.read]);
       const existing = existingReceipt(command.requestId, fingerprint);
       if (existing) return existing;
@@ -1526,6 +1596,7 @@ export function createBrowserFakeMailClient(
     },
 
     async undoOperation(command: UndoOperation): Promise<UndoReceipt> {
+      requireRequestId(command.requestId);
       const fingerprint = JSON.stringify(['undo', command.operationId]);
       const existing = existingReceipt(command.requestId, fingerprint);
       if (existing) return existing as unknown as UndoReceipt;
@@ -1626,7 +1697,7 @@ export function createBrowserFakeMailClient(
       }
       const group = groups.find((entry) => entry.groupId === command.groupId);
       if (!group) throw failNotShown();
-      const blocker = groupUndoBlocker(group);
+      const blocker = groupAttemptBlocker(group);
       if (blocker) throw blocker;
       // Per-member decisions in persisted ordinal order; failures never roll back
       // eligible siblings (UX-05 §5).

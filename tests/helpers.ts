@@ -72,6 +72,12 @@ export function useGmailMode(fake: BrowserFake, patch: Partial<FakeAccountState>
   });
 }
 
+/** Disconnect is a two-step inline confirm: the ghost button reveals the warning, the confirm runs it. */
+export async function confirmDisconnect(w: VueWrapper): Promise<void> {
+  await w.get('[data-test="account-disconnect"]').trigger('click');
+  await w.get('[data-test="account-disconnect-confirm"]').trigger('click');
+}
+
 export function deferred<T>(): {
   promise: Promise<T>;
   resolve: (value: T) => void;

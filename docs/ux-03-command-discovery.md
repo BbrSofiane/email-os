@@ -64,6 +64,19 @@ independently retrievable regardless of the browsing filter.
 
 - `G`, then `E`: 1000 ms timeout, cancelled by unrelated keys, modifiers,
   composition, overlays, blur, or context transitions. No `G`, then `H`.
+  Later passes added `G`, then `H` (Reminders, fixture only) and `G`, then `A`
+  (Go to Account, Gmail mode only) to the same chord machinery, timeout and grace
+  window; in the other mode that second key is an ordinary key.
+- Palette order: groups are fixed (Conversation, Selection, View, Go to, Account);
+  while Connect can run, Account moves right above Go to so `Connect Gmail`
+  outranks `Go to Account`. A device that is not configured has no `Connect
+  Gmail` command (there is no client ID to connect with); `Go to Account` is its
+  way forward. While a sync has failed and Sync now can run, Account
+  leads the whole palette so `Sync now` is the highlighted first row. Account
+  commands carry the same names as every other surface: `Connect Gmail`, `Sign in
+  again`, `Sync now`. The Keys list drops the row keys (J/K, X, Shift+J/K) while
+  the list has no rows; its Left row stays with no account, because Left still
+  opens the navigator (which holds `Go to Account`).
 - Left reveals the destination navigator only when the list browsing surface
   owns navigation; never from editable controls or the reader.
 - Cmd+K is a Mac app binding, not permission to steal browser/system-reserved

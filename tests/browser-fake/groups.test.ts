@@ -223,15 +223,23 @@ describe('undoes group outcomes in browser memory (UX-05)', () => {
 // exposure, and retry lineage (synthetic parity with the Rust stores). ---
 
 describe('reports group undo limits and recovery state in browser memory (UX-05)', () => {
-  it('an all-failed group offers NO enabled undo and rejects an all-skipped attempt (review U16)', async () => {
+  it('an all-failed group offers NO enabled undo but accepts a direct attempt with every member skipped (review U16, aligned to Rust)', async () => {
     const fake = createBrowserFakeMailClient();
     fake.controls.behavior.failNext = 2; // both children fail definitively
     await fake.setArchivedGroup({ accountId: 'fixture-account', members: [ref(1), ref(2)], archived: true, requestId: 'req-fail' });
     await waitFor(() => fake.controls.activity().every((op) => op.status === 'failed'));
     const status = await fake.getOperationGroup({ accountId: 'fixture-account', requestId: 'req-fail' });
     expect(status!.undo).toMatchObject({ available: false, reason: 'not_applicable' });
-    await expect(fake.undoOperationGroup({ groupId: status!.group.groupId, requestId: 'undo-fail' }))
-      .rejects.toMatchObject({ kind: 'undo_unavailable', reason: 'not_applicable' });
+    // Both Rust stores accept the attempt as the group's one attempt and
+    // persist typed skips; they never restore anything.
+    const receipt = await fake.undoOperationGroup({ groupId: status!.group.groupId, requestId: 'undo-fail' });
+    expect(receipt.members.map((member) => member.decision)).toEqual([
+      { kind: 'skipped', reason: 'failed' },
+      { kind: 'skipped', reason: 'failed' },
+    ]);
+    expect(receipt.members.every((member) => member.operationIds.length === 0)).toBe(true);
+    await expect(fake.undoOperationGroup({ groupId: status!.group.groupId, requestId: 'undo-fail-2' }))
+      .rejects.toMatchObject({ kind: 'undo_unavailable', reason: 'already_undone' });
   });
 
   it('exposes the persisted undo record with current compensation outcomes (review U10)', async () => {

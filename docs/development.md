@@ -41,6 +41,10 @@ a bounded destination browser for Sent, provider Drafts, All Mail, Spam, Trash
 and user labels. Search covers the loaded catalog; Show more expands it. It is
 not mailbox search. All Mail excludes Spam/Trash. Every page contains at most
 25 conversations, at most 16 MiB of serialized thread DTOs, and no exact total.
+Catalog and page rows are real buttons with one roving tab stop: ArrowDown/ArrowUp
+or J/K move between rows, Enter opens, and Escape steps back one level (reader,
+page list, catalog) before it closes the drawer. Errors use the same plain
+sentences as the Account drawer, never a raw error kind.
 The read-only drawer intentionally has no triage/reply controls. Its page remains
 mounted during a reader visit; closing the drawer returns to the prior inbox
 context. This is not yet the roadmap's integrated main-list destination context.
@@ -87,7 +91,9 @@ no global configuration is needed.
 
 The Android target is a fixture-only Tauri app. It uses the same Rust `MailCore`
 and SQLite profile as native fixture mode. Android always selects fixture mode,
-even if `EMAIL_OS_MODE=gmail` is present. Gmail account controls, attachment
+even if `EMAIL_OS_MODE=gmail` is present. By default it opens the legacy fixture
+`MailCore`; the opt-in `EMAIL_OS_SYNTHETIC_CORE=1` selects the ADR 0002 synthetic
+core while keeping wire mode `fixture`. Gmail account controls, attachment
 export, and external link dispatch are unavailable on Android. The shell returns
 the typed `unsupported_platform` error for attachment export and external links.
 
@@ -247,7 +253,7 @@ were missing; this is historical environment evidence, not a result from the
 baseline above. Do not install OS packages as part of a routine validation run.
 
 Rendered Chromium suites are opt-in and excluded from the default `mise run test:ui`.
-Each suite starts its own Vite server and synthetic in-memory fixture. Run all four:
+Each suite starts its own Vite server and synthetic in-memory fixture. Run all five:
 
 ```sh
 EMAIL_OS_RENDERED_LAYOUT_CHROME=/path/to/chromium \
@@ -283,6 +289,37 @@ separately beneath `<app_data_dir>/fixture-profile/local-drafts`. The fixture
 provider's optional demo behavior is selected with
 `EMAIL_OS_FAKE_PROVIDER=paused|reject|success` (default: success). Profile locks
 reject a second writer to the same mail or draft profile.
+
+**Synthetic-core validation path (not a user feature):** `EMAIL_OS_SYNTHETIC_CORE=1
+mise run dev:native` makes fixture mode run the Gmail core on the built-in synthetic
+provider ([ADR 0002](adr/0002-fixture-as-synthetic-provider.md), stages 1–3) instead of
+the legacy `MailCore`. It exists so the unified implementation can be validated
+end to end through the real Tauri commands before it becomes the default (stage 4);
+nothing about it is promised to users. The variable is read only in fixture mode
+(ignored under `EMAIL_OS_MODE=gmail`) and accepts only `1` or `0`; anything else fails
+startup instead of silently picking a backend. On this path:
+
+* the app reports mode `fixture`, account `fixture-account`, connected and idle, with no
+  mutation grant, from its first status read (bootstrap finishes before the window can
+  ask); there is no OAuth, Keychain or HTTP client;
+* its files live beside the legacy ones in `<app_data_dir>/fixture-profile`:
+  `synthetic-provider.db` (durable provider facts, seeded once) and `gmail.db` (the core's
+  cache and operation ledger). `mail.db` is **never opened**, so a profile used by the
+  legacy core is not modified, and the two cores share `profile.lock` and
+  `local-drafts`, so they can never run at the same time;
+* all 18 conversations are present (the two initially archived ones are cached, not Inbox,
+  not Done); archive, read, star, undo, groups, retry, saved split, search (cached only),
+  reminders (hide locally, no provider write), the `fixture-text` attachment and reply
+  headers work through the same commands as Gmail mode; cached Trash, provider
+  destinations, connect, disconnect, permission upgrade and manual sync are rejected with
+  the legacy fixture's error variants;
+* `EMAIL_OS_FAKE_PROVIDER=paused|reject` still applies, to synthetic writes only, and is
+  fixed at launch. An operation interrupted by quitting (for example while paused) comes
+  back as an uncertain `outcome_unknown` operation to retry, not as a silent replay.
+
+Switching between the two paths on one profile is safe (state is not shared, nothing is
+migrated); the legacy path's facts and history do not appear on the synthetic path, and
+vice versa.
 
 **Explicit native Gmail mode:** launch with `EMAIL_OS_MODE=gmail`; it uses the
 separate `<app_data_dir>/gmail-profile`, never the fixture database. Local drafts
@@ -401,9 +438,11 @@ upgrade button is chosen. Verify both grant and deny/cancel paths:
 - With actions enabled, explicitly archive a conversation, then explicitly
   mark it read and unread. Confirm Activity distinguishes queued, applying,
   confirmed, failed and outcome-unknown; verify ordinary opening does not alter
-  read state. Disconnect warning must explain that local pending operations are
-  removed but confirmed remote Gmail changes are not undone and Google's grant
-  is not revoked.
+  read state. Asking to **Disconnect…** must reveal the warning in place (it is
+  not in the DOM before) with **Disconnect** and **Keep account**; it must
+  explain that local pending operations and the mail cache are removed, local
+  drafts stay, confirmed remote Gmail changes are not undone and Google's grant
+  is not revoked. Cancelling a sign-in stays one click.
 - Queue an archive while offline, restart, restore network, and verify durable
   Activity/recovery. Interrupted setter dispatch must be reconciled with a GET
   over its exact original message IDs before confirmation; it must not
@@ -592,6 +631,61 @@ WKWebView key handling, VoiceOver, Downloads permissions, OS browser dispatch,
 or the PDF security spike. Disposable provider validation remains separately
 operator-gated, not authorized by implementation work.
 
+## Account, connection and first run (Gmail mode)
+
+With no usable account the Inbox says why instead of claiming it is empty: **Not
+connected** with an inline **Connect Gmail**, **Sign-in expired** with **Sign in
+again**, **Finish sign-in in your browser** with **Cancel sign-in**, **Syncing first
+mail… N cached**, **Sync failed: …** with **Retry** (the network cause always reads
+**no network**), **Initial sync has not finished** with **Sync now**, or (not
+configured) a link to Account with the next step (add a Google client ID to the
+launch environment, then restart). Only a connected, fully synced, empty account
+shows the real empty text. In a zero-row state the sentence echoes its tone, the
+same as the header note: Coral Fault for a failed sync, Amber Notice for an
+expired sign-in, Ash otherwise (the words stay; the action link and hint keep their
+own colours). Under **Not connected** one line says what Connect does
+(it opens Google sign-in in the browser and starts read-only, so Email OS cannot
+change mail until you enable mailbox actions). **In a zero-row state the empty line
+owns the status sentence:** the header shows only the Preview tag, and its status
+note stays only as one hidden announcement. With rows the header status note
+repeats the connection or sync fact (Not connected, Sign-in expired, Syncing…,
+Sync failed with its cause in words, for example Sync failed · no network; there
+is no Offline wording); its action link is shown only when the empty line is not
+carrying the action. While the Account drawer shows a sync failure as an alert,
+the header note drops its words and link and stays silent, so the failure and its
+Retry are seen and announced once (the Preview tag stays); the empty line behind
+the drawer keeps its sentence but drops its own Retry until the drawer closes. Any status note replaces
+the read-only hint, which at 1100px and below collapses to its Review access link.
+At 1100px and below the Preview tag yields first (short `Preview`, then only its
+accessible text while a note or the hint needs room); `Sync failed` and the action
+link never clip, and the cause words are whole or hidden together with their
+dot (never cut to a fragment); the cause stays in the note's title, the drawer and
+the empty line. jsdom cannot measure layout:
+the CSS is pinned by `tests/layout/account-header-css.test.ts`, and the widths at
+1030px and the contact-column collapse by the opt-in rendered suite
+`tests/layout/account-header.rendered.test.ts` (real Chrome, in-memory fake).
+When the empty line becomes the owner of an actionable status and nothing is
+focused (and no drawer, palette, reader, compose, search or contact surface is
+open), focus moves once to its action; Enter or Space on the focused line runs the
+same action. Focus the user already holds is never taken. The note is absent while
+connected and idle. One name per action everywhere:
+**Connect Gmail**, **Sign in again**, **Cancel sign-in**, **Retry**, **Sync now**.
+The Account drawer shows the permission mode and the Sync section only where they
+are real (not while disconnected, not configured or signing in); a signed-out
+account keeps its mode and cached count but not the `Idle` or `Never synced` words.
+**Connect Gmail** is offered only while disconnected and **Sign in again** after
+expiry: a device that is not configured has no client ID to connect with, so there
+is no Connect button, palette command or Provider mail link, only the next step.
+**Connect Gmail** (or **Sign in again**) and **Sync now** are palette commands only while they can run
+(Connect ranks above Go to; during a sync failure the Account group leads the
+palette), and `G` then `A` (within 1 second, Gmail mode only) opens Account. The
+contact column is not rendered while a ready list has no rows (no reader, no reply
+target): the list takes its width and, below 1000px, the rail has no Contact button.
+It returns as soon as rows exist, and stays while the list is loading or failed.
+None of these gates mailbox actions: actions depend on `mutationAccess`, not on the
+connection. All of it is verified with the synthetic in-memory fake; real OAuth,
+sync and Keychain behavior stay operator-gated.
+
 ## Desktop-local reminder increment (UX-11)
 
 See [the local reminder contract](ux-11-local-reminders.md) and
@@ -701,6 +795,113 @@ Linux native screenshots exercise WebKitGTK and the Rust fixture backend.
 They do not validate macOS WKWebView/IME, Keychain prompts, system browser
 launch, loopback OAuth interaction, or Google TLS behavior. Keep those Mac gates
 separate. No sandbox or app security setting needs to be disabled for capture.
+
+## Contract scenarios
+
+The frontend runs against two implementations of one IPC contract: the Rust
+core behind Tauri and `src/lib/ipc/browser-fake.ts`. Scenario files under
+`tests/fixtures/contract-scenarios/` pin the operation-ledger semantics
+(acceptance, idempotent replay, undo, groups, typed errors) for both. The Rust
+core is the source of truth; the fake must agree with it.
+
+| Runner | Runs the files against |
+|---|---|
+| `crates/mail-core/tests/contract_scenarios.rs` (`cargo test -p mail-core --test contract_scenarios`) | profile `gmail`: `GmailCore` with the shared scripted `mail_core::testing` fake provider and `FakeClock`; profile `fixture`: the archive-only fixture `MailCore` with `FakeArchiveProvider` and `FakeClock`; profile `synthetic` (Rust only, runs EVERY scenario): a synthetic session, i.e. `GmailCore` + the built-in `SyntheticGmailProvider` under the synthetic session policy (ADR 0002) |
+| `tests/browser-fake/contract-scenarios.test.ts` (`pnpm vitest run tests/browser-fake/contract-scenarios.test.ts`) | the browser fake in its `gmail` mode and its `fixture` mode, with an injected clock |
+
+A scenario names the profiles it applies to. Archive-only scenarios list both and
+are the parity evidence for replacing the fixture backend; setters the fixture
+does not implement (read, star, retry, read/star groups) list `gmail` only, and
+`fixture-rejects-unsupported-commands` pins what the fixture rejects.
+
+The `synthetic` profile is not declared in the files (the TypeScript runner knows only
+`gmail` and `fixture`); the Rust runner adds it to every scenario. It matches the `gmail`
+profile except where the session policy differs, and every difference is a named,
+justified `KNOWN_DIVERGENCES` entry: KD-1 (same worker behaviour as Gmail) and the
+legacy `fixture-rejects-unsupported-commands` expectations, which the unified fixture
+supersedes by admitting read, star and retry (ADR 0002 decision 2). Scenarios whose mailbox
+is not a subset of the fixed 18 conversations get their extra threads from a test
+overlay on the synthetic provider. When the legacy `fixture` profile is retired (stage 4),
+the browser fake's `fixture` mode must gain read, star, retry and the cached Starred list,
+drop its `read_only` answers for them (KD-2 closes), and keep `invalid_request{mode}` /
+`read_only` for Trash, destinations and the lifecycle commands exactly as the synthetic
+policy answers them.
+
+### File format
+
+`mailboxes.json` holds named starting mailboxes; each scenario file is one JSON object:
+
+```json
+{
+  "scenario": "undo-rejected-after-the-window",
+  "description": "...", "rules": "docs/ux-04 §3.2 rule 3",
+  "profiles": ["gmail", "fixture"],
+  "mailbox": "triage",
+  "steps": [
+    { "name": "archive conv-01",
+      "do": { "cmd": "setArchived", "args": { "conversation": "conv-01", "archived": true, "requestId": "req-1" } },
+      "expect": { "ok": { "operationId": "$A", "acceptedAt": "@+0" },
+                  "snapshot": { "inbox": ["conv-05", "conv-04", "conv-03", "conv-02"],
+                                "activity": [ { "id": "$A", "status": "confirmed", "undoableUntil": "@+10" } ] } } },
+    { "name": "clock reaches the deadline", "do": { "advance": 10 }, "expect": {} },
+    { "name": "undo is expired", "do": { "cmd": "undoOperation", "args": { "operationId": "$A", "requestId": "req-2" } },
+      "expect": { "error": { "kind": "undo_unavailable", "reason": "expired" } } }
+  ]
+}
+```
+
+* **mailbox**: a name from `mailboxes.json` or an inline object of conversations,
+  each with messages `{id, sentAt, inInbox, unread, starred?}` (`starred` omitted
+  means the fact was never observed). The fixture backend cannot be seeded, so a
+  mailbox used with profile `fixture` must be a faithful subset of
+  `crates/mail-core/src/seed.rs`; the fixture runner asserts that before the first step.
+* **steps** run in order. `do` is one of `{cmd, args}` (a `MailClient` method with
+  its wire arguments), `{advance: seconds}` (the backend's fake clock) or
+  `{provider: mode}`:
+  `hold_queued` (the worker does not claim work, so it stays `queued`; on the
+  fixture only before its first command), `hold_applying` (the worker claims an
+  operation and the provider call blocks, so it stays `applying` and later work
+  stays `queued`), `reject_next` (the next single provider call is definitely
+  rejected; follow it with exactly one command step whose snapshot shows the
+  failure), `release` (end holds). There is no real waiting anywhere.
+* **expect**: `ok` or `error` (exactly one, for `cmd` steps) is compared with the
+  command's JSON result or typed `MailError`; `snapshot` is compared with
+  `listConversations()` after the asynchronous worker has settled (the runners
+  observe until it matches, bounded, then report what they saw). A successful
+  mutating step must declare `snapshot` so the next step never races the worker.
+* **Matching** is by subset: every key written in `expect` must match; `null`
+  matches `null` or an absent key; arrays match item for item and length for
+  length; `{"$length": n, "$each": {...}}` checks an array's length and every
+  item. `snapshot.inbox` is shorthand for the ordered `conversations` list and
+  both runners first restrict the snapshot to the scenario's declared
+  conversations (the fixture seed holds other mail).
+* **Symbolic ids**: values that legitimately differ per implementation (operation
+  ids, group ids) are written `$name`. In `expect` the first appearance binds the
+  name, every later appearance must equal it, and two names may never bind the
+  same value; in `args` `$name` is replaced by the bound value. Timestamps are
+  written `@+N`, meaning N seconds after the scenario clock start
+  (`2026-02-01T00:00:00Z`), and are compared exactly in those terms. Everything
+  else is compared exactly.
+* **Argument shorthand**: a string `conversation` or group member is a ref in the
+  backend's own account, `{"account": "other", "id": "conv-01"}` names another
+  account, `"members": {"generate": {"prefix": "bulk-", "count": 101}}` expands to
+  `bulk-001`..`bulk-101`, and `accountId` defaults to the backend's account.
+  `kind` is deliberately not asserted for archive steps in shared scenarios: the
+  fixture reports legacy archive operations without a `kind`.
+
+### Adding a scenario
+
+1. Write `tests/fixtures/contract-scenarios/<name>.json`, naming the rule it
+   proves (a doc section or an existing Rust test) in `rules`. Take expectations
+   from the docs and the Rust tests, not from the fake.
+2. Run the Rust runner first. If both Rust backends listed in `profiles` pass, run
+   the Vitest runner. If a Rust backend disagrees with the docs, stop and report;
+   do not bend the scenario to the fake.
+3. If the fake fails: fix the fake when the fix is small and local; otherwise add a
+   named entry to `KNOWN_DIVERGENCES` in `tests/browser-fake/contract-scenarios.test.ts`
+   (or the Rust table in `contract_scenarios.rs`). A known divergence is still
+   executed and must FAIL; the run fails when it starts passing, so entries cannot rot silently.
+4. A new command or provider mode must be added to both runners in the same change.
 
 ## Fixture data
 

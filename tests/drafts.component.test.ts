@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, type VueWrapper } from '@vue/test-utils';
 import type { DraftReceipt, DraftSummary, MailClient } from '../src/lib/ipc/client';
 import {
+  confirmDisconnect,
   createBrowserFakeMailClient,
   deferred,
   openDraftsList,
@@ -984,7 +985,7 @@ describe('local plain-text drafts UI', () => {
         await openUtilityDrawer(w, 'account');
         // The flush succeeded, so the switch completes and the user can now
         // reach the disconnect controls on the Account surface.
-        await w.find('[data-test="account-disconnect"]').trigger('click');
+        await confirmDisconnect(w);
         await advanceUiUntil(() => w.find('[data-test="account-connect"]').exists());
       }
       else if (action === 'editor switch') await advanceUiUntil(() => creates.length === 2 && w.find('[data-test="composer"]').exists());
