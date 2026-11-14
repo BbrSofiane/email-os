@@ -96,9 +96,9 @@ done
 test -d "$ANDROID_HOME/platforms/android-35" || { echo "Missing Android platform 35" >&2; exit 1; }
 test -d "$ANDROID_HOME/build-tools/35.0.0" || { echo "Missing Android build-tools 35.0.0" >&2; exit 1; }
 test -x "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" || { echo "Missing NDK 27.2.12479018 at $NDK_HOME" >&2; exit 1; }
-rustup target list --installed | rg -q '^aarch64-linux-android$' || { echo "Missing Rust target aarch64-linux-android (run rustup target add aarch64-linux-android x86_64-linux-android)" >&2; exit 1; }
-rustup target list --installed | rg -q '^x86_64-linux-android$' || { echo "Missing Rust target x86_64-linux-android (run rustup target add aarch64-linux-android x86_64-linux-android)" >&2; exit 1; }
-"$JAVA" -version 2>&1 | rg -q '17\.' || { echo "JDK 17 is required" >&2; exit 1; }
+rustup target list --installed | grep -Fxq 'aarch64-linux-android' || { echo "Missing Rust target aarch64-linux-android (run rustup target add aarch64-linux-android x86_64-linux-android)" >&2; exit 1; }
+rustup target list --installed | grep -Fxq 'x86_64-linux-android' || { echo "Missing Rust target x86_64-linux-android (run rustup target add aarch64-linux-android x86_64-linux-android)" >&2; exit 1; }
+"$JAVA" -version 2>&1 | grep -q '17\.' || { echo "JDK 17 is required" >&2; exit 1; }
 echo "Android toolchain ready: API 35, build-tools 35.0.0, NDK 27.2.12479018, JDK 17, ARM64 + x86_64 targets"
 '''
 
