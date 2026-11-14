@@ -291,8 +291,10 @@ async function openActivityGroup(requestId: string): Promise<void> {
 const readerOpen = computed(() => mailbox.openRef.value !== null);
 watch(readerOpen, (open) => { if (open) editingSplit.value = false; });
 const gmailMode = computed(() => mailbox.isGmail.value);
+// Read state, read/star controls, Starred and Retry follow the backend's explicit capability, not the mode name.
+const triageSurfaces = computed(() => mailbox.triageSurfaces.value);
 const mailboxActionsEnabled = computed(() => !gmailMode.value || mailbox.accountStatus.value?.mutationAccess === 'enabled');
-const gmailActionsEnabled = computed(() => gmailMode.value && mailboxActionsEnabled.value);
+const gmailActionsEnabled = computed(() => triageSurfaces.value && mailboxActionsEnabled.value);
 const accountReady = computed(() => mailbox.accountState.value === 'ready');
 const accountStatus = computed(() => mailbox.accountStatus.value);
 const accountId = computed(() => accountStatus.value?.account?.accountId ?? null);
@@ -370,7 +372,7 @@ const TRASH_COVERAGE_DETAIL = 'Known cached Trash only, not your complete Gmail 
 const SPLIT_COVERAGE = 'Local Inbox cache only — counts are exact for cached conversations, not mailbox-wide totals. Split membership uses the latest message’s sender.';
 const splitCoverageShown = computed(() => splitNavShown.value && gmailMode.value
   && (mailbox.context.value === 'inbox' || mailbox.context.value === 'saved'));
-const starredFilterShown = computed(() => gmailMode.value && !readerOpen.value && mailbox.context.value !== 'starred' && mailbox.context.value !== 'reminders' && mailbox.context.value !== 'drafts');
+const starredFilterShown = computed(() => triageSurfaces.value && !readerOpen.value && mailbox.context.value !== 'starred' && mailbox.context.value !== 'reminders' && mailbox.context.value !== 'drafts');
 /** Per-workspace DOM id prefix: two fixture workspaces mount two Apps at once. */
 const domIdPrefix = computed(() => props.switchAccountLabel ? accountId.value ?? '' : '');
 const drawerEl = ref<HTMLElement | null>(null);
@@ -1652,7 +1654,7 @@ const actionHandlers: ActionHandlers = {
     execute: async () => { await navigateContext('done'); },
   },
   starred: {
-    available: () => gmailMode.value && !!accountId.value,
+    available: () => triageSurfaces.value && !!accountId.value,
     execute: async () => { await navigateContext('starred'); },
   },
   destinations: {
@@ -2254,7 +2256,7 @@ const searchSyntaxEditHint = computed(() =>
             :title="actionLabel('inbox')" @click="executeAction('inbox')"
           ><PaneGlyph name="inbox" /><span class="rail-label">Inbox</span></button>
           <div v-if="accountId || gmailMode || props.mode === 'browser-preview'" class="rail-well" data-test="rail-well">
-            <button v-if="accountId && gmailMode" type="button" class="rail-item" data-test="rail-starred" :title="actionLabel('starred')" :aria-current="mailbox.context.value === 'starred' && !readerOpen ? 'page' : undefined" @click="executeAction('starred')"><HeaderGlyph name="star" /><span class="rail-label">Starred</span></button>
+            <button v-if="accountId && triageSurfaces" type="button" class="rail-item" data-test="rail-starred" :title="actionLabel('starred')" :aria-current="mailbox.context.value === 'starred' && !readerOpen ? 'page' : undefined" @click="executeAction('starred')"><HeaderGlyph name="star" /><span class="rail-label">Starred</span></button>
             <button v-if="accountId" type="button" class="rail-item" data-test="rail-done" :title="actionLabel('done')" :aria-current="mailbox.context.value === 'done' && !readerOpen ? 'page' : undefined" @click="executeAction('done')"><PaneGlyph name="done" /><span class="rail-label">Cached Done</span></button>
             <button v-if="gmailMode || props.mode === 'browser-preview'" type="button" class="rail-item" data-test="rail-destinations" :ref="setToggleRef('destinations')" title="Provider mail (read only)" :aria-expanded="drawer === 'destinations'" @click="toggleDrawer('destinations')"><PaneGlyph name="provider" /><span class="rail-label">Provider mail</span></button>
             <button v-if="gmailMode && accountId" type="button" class="rail-item" data-test="rail-trash" :title="actionLabel('trash')" :aria-current="mailbox.context.value === 'trash' && !readerOpen && drawer === null ? 'page' : undefined" @click="executeAction('trash')"><PaneGlyph name="trash" /><span class="rail-label">Cached Trash</span></button>
@@ -2484,7 +2486,7 @@ const searchSyntaxEditHint = computed(() =>
               :search-query="mailbox.context.value === 'search' ? mailbox.searchQuery.value : undefined"
               :focused-ref="mailbox.focusedRef.value"
               :actions-enabled="mailboxActionsEnabled"
-              :show-read-state="gmailMode"
+              :show-read-state="triageSurfaces"
               :show-read-controls="gmailActionsEnabled"
               :reminder-enabled="reminderActionEnabled"
               :read-only="mailbox.context.value === 'trash'"
@@ -2681,7 +2683,8 @@ const searchSyntaxEditHint = computed(() =>
             v-if="drawer === 'activity'"
             :activity="mailbox.activity.value"
             :actions-enabled="mailboxActionsEnabled && !mailbox.commandInFlight.value && !mailbox.bulkUnresolved.value"
-            :gmail-mode="gmailMode"
+            :gmail-mode="triageSurfaces"
+            :local-session="!gmailMode"
             :groups="mailbox.recentGroups.value"
             :groups-error="mailbox.groupsError.value"
             :groups-has-more="mailbox.groupsHasMore.value"

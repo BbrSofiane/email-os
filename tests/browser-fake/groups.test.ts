@@ -81,10 +81,10 @@ describe('accepts bounded groups in browser memory (UX-05)', () => {
     expect(replay).toEqual(receipt);
   });
 
-  it('rejects read groups in fixture mode and accepts them in synthetic Gmail mode', async () => {
+  it('accepts read groups in fixture mode (capability) and in synthetic Gmail mode', async () => {
     const fake = createBrowserFakeMailClient();
-    await expect(fake.setReadGroup({ accountId: 'fixture-account', members: [ref(1)], read: true, requestId: 'r' }))
-      .rejects.toMatchObject({ kind: 'read_only' });
+    await expect(fake.setReadGroup({ accountId: 'fixture-account', members: [ref(1)], read: true, requestId: 'r-fixture' }))
+      .resolves.toMatchObject({ kind: 'read' });
     useGmailMode(fake, { mutationAccess: 'enabled' });
     const gmailRef = (index: number): ConversationRef => ({ accountId: 'gmail-account', conversationId: `conv-${String(index).padStart(2, '0')}` });
     const receipt = await fake.setReadGroup({ accountId: 'gmail-account', members: [gmailRef(1), gmailRef(2)], read: true, requestId: 'r' });

@@ -41,8 +41,10 @@ const props = defineProps<{
   activity: OperationSummaryLike[];
   /** Whether authoritative status currently permits mailbox commands. */
   actionsEnabled?: boolean;
-  /** Retry is a durable Gmail operation and is unavailable in fixture mode. */
+  /** Read/star/Retry surfaces exist for this session (explicit backend capability). */
   gmailMode?: boolean;
+  /** A local (fixture) session: copy never mentions Google. Absent means a Google session. */
+  localSession?: boolean;
   /** UX-05: recent group summaries, independent of Inbox/Done rows. */
   groups?: OperationGroupSummary[];
   /** Failed recent-group history read (distinct from an empty result). */
@@ -99,13 +101,20 @@ function actionLabel(op: OperationSummaryLike): string {
 }
 
 function errorLabel(kind: string): string {
+  // A local (fixture) session has no Google, permission grant or rate limit to
+  // blame: say what is true for it.
+  const google = !props.localSession;
   switch (kind) {
-    case 'permission_required': return 'Google permission is not enabled.';
-    case 'provider_rejected': return 'The provider rejected the requested state.';
-    case 'provider_unavailable': return 'The provider was unavailable; this is not a confirmed result.';
-    case 'outcome_unknown': return 'The request may have reached Google, but its result could not be confirmed.';
+    case 'permission_required': return google ? 'Google permission is not enabled.' : 'Mailbox changes are not enabled.';
+    case 'provider_rejected': return google ? 'The provider rejected the requested state.' : 'The mailbox rejected the requested change.';
+    case 'provider_unavailable': return google
+      ? 'The provider was unavailable; this is not a confirmed result.'
+      : 'The mailbox was unavailable; this is not a confirmed result.';
+    case 'outcome_unknown': return google
+      ? 'The request may have reached Google, but its result could not be confirmed.'
+      : 'The change was interrupted and its result could not be confirmed.';
     case 'auth_required': return 'Sign-in is required before this action can run.';
-    case 'rate_limited': return 'Google rate limited this action; it can be retried.';
+    case 'rate_limited': return google ? 'Google rate limited this action; it can be retried.' : 'Too many requests; it can be retried.';
     case 'network_unavailable': return 'The network was unavailable.';
     case 'storage_unavailable': return 'Local storage failed; the action was not confirmed.';
     default: return `Action error: ${kind}.`;

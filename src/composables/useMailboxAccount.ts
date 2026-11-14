@@ -168,9 +168,20 @@ export function useMailboxAccount({
 
   const mode = computed<MailMode | null>(() => accountStatus.value?.mode ?? null);
   const isGmail = computed(() => mode.value === 'gmail');
+  /**
+   * Whether this session has read state, read/unread and star controls, the
+   * cached Starred view and Retry. The backend states it explicitly
+   * (`capabilities.triageSurfaces`); a status without the field (Gmail today)
+   * keeps the previous behaviour for that session, which was Gmail-only.
+   */
+  const triageSurfaces = computed(() => {
+    const status = accountStatus.value;
+    if (!status) return false;
+    return status.capabilities?.triageSurfaces ?? status.mode === 'gmail';
+  });
 
   return {
-    accountStatus, accountState, accountError, accountBusy, mode, isGmail,
+    accountStatus, accountState, accountError, accountBusy, mode, isGmail, triageSurfaces,
     refreshAccountStatus, connectAccount, disconnectAccount, requestSync,
     enableMailboxActions, cancelMailboxActionUpgrade,
   };

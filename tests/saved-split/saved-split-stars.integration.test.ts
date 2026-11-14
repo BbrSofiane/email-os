@@ -49,8 +49,8 @@ it('intersects independent cached filters, excludes unknowns, retains totals, an
   expect(wrapper.findAll('.inbox-row')).toHaveLength(1);
   fake.controls.setAccount({ mode: 'fixture' });
   await flushPromises();
-  expect(wrapper.find('[data-test="unread-filter-status"]').exists()).toBe(false);
-  expect(wrapper.find('[data-test="starred-filter"]').exists()).toBe(false);
+  // Fixture mode now has the triage surfaces too (ADR 0002 decision 2).
+  expect(wrapper.find('[data-test="starred-filter"]').exists()).toBe(true);
   useGmailMode(fake, { mutationAccess: 'enabled' }); await flushPromises();
   expect(wrapper.get('[data-test="starred-filter"]').attributes('aria-pressed')).toBe('false');
   expect(wrapper.find('[data-test="context-back"]').exists()).toBe(false);

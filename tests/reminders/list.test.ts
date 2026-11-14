@@ -73,8 +73,8 @@ describe('Reminders rows', () => {
     expect(c.get('[data-test="reminder-phase-failed"]').text()).toBe('Needs attention');
     expect(c.get('[data-test="reminder-phase-failed"]').classes()).toContain('tone-fault');
     // The failed explanation is an exception and stays inline.
-    expect(c.text()).toContain('Cancel does not override newer triage.');
-    expect(c.find('button[aria-label="Cancel and show original inbox messages"]').exists()).toBe(true);
+    expect(c.text()).toContain('newer triage is never undone');
+    expect(c.find('button[aria-label="Cancel and show in Inbox"]').exists()).toBe(true);
   });
 
   it('makes the subject the Open button and keeps Reschedule and Cancel reminder as quiet ghosts', async () => {
@@ -192,9 +192,9 @@ describe('Reminders Needs attention group', () => {
     const row = panel!.get('[data-test="reminder-row-a"]');
     const note = row.get('.context-row-note');
     expect(note.classes()).toContain('tone-fault');
-    expect(note.text()).toBe('A mailbox change failed or newer triage superseded it; which one is not recorded. Cancel does not override newer triage.');
+    expect(note.text()).toBe('This reminder could not complete. Cancel it to show the conversation in the Inbox again; newer triage is never undone.');
     expect(row.findAll('.context-row-actions button').map((button) => button.text())).toEqual(['Cancel reminder']);
-    expect(row.get('.context-row-actions button').attributes('aria-label')).toBe('Cancel and show original inbox messages');
+    expect(row.get('.context-row-actions button').attributes('aria-label')).toBe('Cancel and show in Inbox');
   });
 });
 
@@ -310,7 +310,7 @@ describe('Reminders row descriptions', () => {
     const words = described(c);
     expect(words[0]).toBe('Needs attention');
     expect(words[1]).toBe(fullDateLabel('2030-01-01T00:00:00Z'));
-    expect(words[2]).toContain('A mailbox change failed or newer triage superseded it');
+    expect(words[2]).toContain('This reminder could not complete');
     expect(words).toHaveLength(3);
     // The caption is a presentation item; the state is not left to it.
     expect(panel.get('[data-test="context-group"]').attributes('role')).toBe('presentation');

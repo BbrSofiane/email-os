@@ -140,6 +140,8 @@ export interface Mailbox {
   /** Mode from the last accepted status; `null` while unknown (UI must fail closed). */
   mode: ComputedRef<MailMode | null>;
   isGmail: ComputedRef<boolean>;
+  /** Explicit capability: read state, read/star controls, Starred view and Retry exist for this session. */
+  triageSurfaces: ComputedRef<boolean>;
   ready: Promise<void>;
   refresh(): Promise<void>;
   connectAccount(): Promise<void>;
@@ -283,7 +285,7 @@ export function useMailbox(client: MailClient): Mailbox {
   };
   const commands: CommandFence = { next: () => ++commandToken, current: () => commandToken };
   const {
-    accountStatus, accountState, accountError, accountBusy, mode, isGmail, refreshAccountStatus,
+    accountStatus, accountState, accountError, accountBusy, mode, isGmail, triageSurfaces, refreshAccountStatus,
     connectAccount, disconnectAccount, requestSync, enableMailboxActions, cancelMailboxActionUpgrade,
   } = useMailboxAccount({
     client, session,
@@ -1030,7 +1032,7 @@ export function useMailbox(client: MailClient): Mailbox {
 
   async function setStarred(target: ConversationRef, starred: boolean): Promise<OperationReceipt | null> {
     if (!savedTargetAvailable(target, true)) return null;
-    if (accountStatus.value?.mode !== 'gmail') {
+    if (!triageSurfaces.value) {
       lastCommandError.value = { kind: 'read_only' };
       return null;
     }
@@ -1042,7 +1044,7 @@ export function useMailbox(client: MailClient): Mailbox {
   }
   async function setRead(target: ConversationRef, read: boolean): Promise<OperationReceipt | null> {
     if (!savedTargetAvailable(target, true)) return null;
-    if (accountStatus.value?.mode !== 'gmail') {
+    if (!triageSurfaces.value) {
       lastCommandError.value = { kind: 'read_only' };
       return null;
     }
@@ -1221,7 +1223,7 @@ export function useMailbox(client: MailClient): Mailbox {
     groupDetail, groupDetailError, openGroupDetail, undoGroupById,
     enableMailboxActions, cancelMailboxActionUpgrade, archiveFocused,
     refreshGroups,
-    accountStatus, accountState, accountError, accountBusy, mode, isGmail,
+    accountStatus, accountState, accountError, accountBusy, mode, isGmail, triageSurfaces,
     connectAccount, disconnectAccount, requestSync,
   };
 }

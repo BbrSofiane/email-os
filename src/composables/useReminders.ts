@@ -37,6 +37,14 @@ export const REMINDER_TABS: ReadonlyArray<{ id: ReminderDestination; label: stri
 export const REMINDERS_NOTE_LINE = 'Saved on this device. Runs while Email OS is open; overdue reminders are checked at start.';
 export const REMINDERS_NOTE_DETAIL = 'Reminders are saved on this device and run while Email OS is open. Overdue reminders are checked when Email OS starts. '
   + 'Scheduling hides this conversation from the Email OS Inbox. New incoming mail stays visible. Return and Cancel show only the original inbox messages again; neither marks mail read.';
+/**
+ * Reminders are local: scheduling hides the conversation in this app and the
+ * deadline shows it again, with no mailbox write (ADR 0002 decision 3). Current
+ * backends therefore only produce pending, returned, suppressed and cancelled.
+ * `removing`, `returning`, `failed` and `cancelling` belong to the retired
+ * archive/restore model; they stay in the wire enum, so the words below remain
+ * truthful if one is ever received.
+ */
 export const REMINDER_PHASES: Record<ReminderPhase, { word: string; tone: 'warn' | 'fault' | 'calm' }> = {
   pending: { word: 'Waiting', tone: 'calm' },
   removing: { word: 'Hiding from Inbox', tone: 'warn' },

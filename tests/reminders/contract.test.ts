@@ -69,10 +69,11 @@ describe.each(['gmail', 'fixture'] as const)("%s reminder error contract", mode 
     await expect(client.reminders!.put({ ...command, expectedRevision: 1 })).rejects.toEqual({ kind: 'not_found' });
     await expect(client.reminders!.cancel({ ...command, expectedRevision: 1 })).rejects.toEqual({ kind: 'not_found' });
   });
-  it('keeps profile-specific account/request validation order and accepts boundary IDs', async () => {
+  it('validates the request ID before the account (same order in every mode) and accepts boundary IDs', async () => {
     const { client, command } = await fixture(mode);
     const foreign = { ...command.conversation, accountId: 'foreign' };
-    const expected = mode === 'gmail' ? { kind: 'invalid_request', field: 'requestId' } : { kind: 'not_found' };
+    // Local rules in every mode (ADR 0002 decision 3): request ID first, then the account.
+    const expected = { kind: 'invalid_request', field: 'requestId' };
     await expect(client.reminders!.put({ ...command, conversation: foreign, requestId: '' })).rejects.toEqual(expected);
     await expect(client.reminders!.cancel({ conversation: foreign, expectedRevision: 1, requestId: '' })).rejects.toEqual(expected);
     // Native checks emptiness, not whitespace; limits count UTF-8 bytes.
@@ -80,17 +81,17 @@ describe.each(['gmail', 'fixture'] as const)("%s reminder error contract", mode 
     expect(saved.revision).toBe(1);
     expect(await client.reminders!.cancel({ ...command, expectedRevision: 1, requestId: 'é'.repeat(64) })).toMatchObject({ phase: 'cancelled' });
   });
-  it('checks stale source before membership/pending intent and reports profile-specific conflict fields', async () => {
+  it('checks stale source before membership/pending intent and reports one conflict field in every mode', async () => {
     const { client, command } = await fixture(mode);
     if (mode === 'gmail') await client.enableMailboxActions();
     client.controls.behavior.hold = true;
     await client.setArchived({ conversation: command.conversation, archived: true, requestId: 'archive' });
     await expect(client.reminders!.put({ ...command, sourceMessageId: 'stale' })).rejects.toEqual({ kind: 'invalid_request', field: 'sourceMessageId' });
-    await expect(client.reminders!.put(command)).rejects.toEqual({ kind: 'invalid_request', field: mode === 'gmail' ? 'conversation' : 'pendingOperation' });
+    await expect(client.reminders!.put(command)).rejects.toEqual({ kind: 'invalid_request', field: 'conversation' });
     client.controls.release();
     client.controls.behavior.hold = false;
     await client.controls.flush();
-    await expect(client.reminders!.put(command)).rejects.toEqual({ kind: 'invalid_request', field: mode === 'gmail' ? 'conversation' : 'inbox' });
+    await expect(client.reminders!.put(command)).rejects.toEqual({ kind: 'invalid_request', field: 'conversation' });
   });
   it('keeps exact offset receipts after cancel and rejects changed payload/key reuse', async () => {
     const { client, command } = await fixture(mode);

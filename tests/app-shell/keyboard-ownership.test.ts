@@ -390,7 +390,7 @@ describe('rule 21: s (Star or Unstar)', () => {
     expect(single).toHaveBeenCalledTimes(1);
   });
 
-  it('rule 21: in fixture mode s is still prevented but reaches no client star call', async () => {
+  it('rule 21: in fixture mode s stars through the client (capability, not mode name)', async () => {
     const { fake, w } = await mountInbox();
     const single = vi.spyOn(fake, 'setStarred');
     const group = vi.spyOn(fake, 'setStarredGroup');
@@ -398,7 +398,7 @@ describe('rule 21: s (Star or Unstar)', () => {
     const event = key('s');
     await settle(fake);
     expect(event.defaultPrevented).toBe(true);
-    expect(single).not.toHaveBeenCalled();
+    expect(single).toHaveBeenCalledTimes(1);
     expect(group).not.toHaveBeenCalled();
   });
 });
