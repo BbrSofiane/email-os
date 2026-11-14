@@ -2,6 +2,7 @@
 //! markers described several physical layouts. Compatibility checks live in
 //! these historical migration bodies, never on an already-current open.
 use super::{has_column, meta_get, meta_set, MailError, SCHEMA_VERSION};
+use crate::storage_log::{storage_err, storage_fault};
 use rusqlite::Connection;
 
 const CURRENT: u32 = 9;
@@ -29,9 +30,9 @@ pub(super) fn migrate_with_hook(
         Some(value) => match value.strip_prefix("gmail-migrations-") {
             Some(number) => match number.parse::<u32>() {
                 Ok(n) if (1..CURRENT).contains(&n) && n.to_string() == number => n,
-                _ => return Err(MailError::StorageUnavailable),
+                _ => return Err(storage_fault("invalid_persisted_state")),
             },
-            None => return Err(MailError::StorageUnavailable),
+            None => return Err(storage_fault("invalid_persisted_state")),
         },
     };
     let empty: bool = conn
@@ -40,29 +41,25 @@ pub(super) fn migrate_with_hook(
             [],
             |row| row.get(0),
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     if empty {
         // Canonical fresh layout is the full schema captured before this change.
         // Old layouts can have a different ALTER column order; no table rebuild
         // is needed merely to make that cosmetic order match.
-        let tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let tx = conn.transaction().map_err(storage_err())?;
         tx.execute_batch(include_str!("current-schema.sql"))
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         meta_set(&tx, "schema_version", SCHEMA_VERSION)?;
         meta_set(&tx, "generation", "0")?;
         before_commit(CURRENT)?;
-        return tx.commit().map_err(|_| MailError::StorageUnavailable);
+        return tx.commit().map_err(storage_err());
     }
     for next in applied + 1..=CURRENT {
-        let tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let tx = conn.transaction().map_err(storage_err())?;
         apply(&tx, next)?;
         meta_set(&tx, "schema_version", &format!("gmail-migrations-{next}"))?;
         before_commit(next)?;
-        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        tx.commit().map_err(storage_err())?;
     }
     Ok(())
 }
@@ -73,7 +70,7 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool, MailError> {
         [name],
         |row| row.get(0),
     )
-    .map_err(|_| MailError::StorageUnavailable)
+    .map_err(storage_err())
 }
 
 fn add_legacy_column(
@@ -85,8 +82,7 @@ fn add_legacy_column(
     if has_column(conn, table, column)? {
         return Ok(false);
     }
-    conn.execute_batch(ddl)
-        .map_err(|_| MailError::StorageUnavailable)?;
+    conn.execute_batch(ddl).map_err(storage_err())?;
     Ok(true)
 }
 
@@ -95,7 +91,7 @@ fn apply(conn: &Connection, version: u32) -> Result<(), MailError> {
         // Establish the common pre-numbered table foundation. IF NOT EXISTS is
         // intentional: both legacy markers shipped with multiple table sets.
         1 => conn.execute_batch(include_str!("legacy-foundation.sql"))
-            .map_err(|_| MailError::StorageUnavailable)?,
+            .map_err(storage_err())?,
         2 => {
             for (column, ddl) in [
                 ("is_starred", "ALTER TABLE gmail_message_facts ADD COLUMN is_starred INTEGER"),
@@ -116,7 +112,7 @@ fn apply(conn: &Connection, version: u32) -> Result<(), MailError> {
             if add_legacy_column(conn, "gmail_operation_snapshots", "last_message_at",
                 "ALTER TABLE gmail_operation_snapshots ADD COLUMN last_message_at TEXT NOT NULL DEFAULT ''")? {
                 conn.execute("UPDATE gmail_operation_snapshots SET last_message_at = COALESCE(json_extract(snapshot_json, '$.messages[#-1].sentAt'), '')", [])
-                    .map_err(|_| MailError::StorageUnavailable)?;
+                    .map_err(storage_err())?;
             }
         }
         6 => {
@@ -127,7 +123,7 @@ fn apply(conn: &Connection, version: u32) -> Result<(), MailError> {
             add_legacy_column(conn, "gmail_operations", "action_id", "ALTER TABLE gmail_operations ADD COLUMN action_id TEXT")?;
             add_legacy_column(conn, "gmail_operations", "retry_of", "ALTER TABLE gmail_operations ADD COLUMN retry_of TEXT")?;
             conn.execute("UPDATE gmail_operations SET action_id = operation_id WHERE undo_of IS NULL AND action_id IS NULL", [])
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
         }
         8 => {
             conn.execute_batch("INSERT OR IGNORE INTO gmail_inbox_membership
@@ -139,14 +135,14 @@ fn apply(conn: &Connection, version: u32) -> Result<(), MailError> {
                 INSERT OR IGNORE INTO gmail_message_facts
                 (account_id, conversation_id, message_id, in_inbox, is_unread)
                 SELECT account_id, conversation_id, message_id, 1, NULL FROM gmail_inbox_membership;")
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
         }
         9 => {
             conn.execute_batch("CREATE TABLE IF NOT EXISTS gmail_search_cache (
                 account_id TEXT NOT NULL, conversation_id TEXT NOT NULL, seq INTEGER NOT NULL,
                 PRIMARY KEY(account_id, conversation_id));
                 INSERT OR IGNORE INTO meta (key, value) VALUES ('generation', '0');")
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
         }
         _ => unreachable!("only ordered known migration numbers are dispatched"),
     }

@@ -46,6 +46,21 @@ exactly one, so acceptance and reconciliation keep their atomic scope.
 
 Store tests live in `gmail/store_tests.rs` beside `migration_tests.rs`.
 
+Storage failures are diagnosable without leaking data. Every storage failure
+still reaches the wire as `MailError::StorageUnavailable`, unchanged, but the
+point that produced it first logs exactly one line through the `log` facade:
+the call site's `file:line`, a static cause tag (`sqlite`, `lock_poisoned`,
+`thread_join`, `path_unavailable`, `missing_persisted_row` and similar) and,
+for SQLite errors, the primary result code name and extended code. The line
+is built only from static strings and numbers; the Display text of the
+underlying error is never read, because SQLite messages can quote values and
+SQL. `mail-core` owns the helper in [storage_log.rs](../crates/mail-core/src/storage_log.rs);
+the shell has its own small helper and the stderr logger in
+[diagnostics.rs](../src-tauri/src/diagnostics.rs), which passes only the two
+storage log targets and drops everything else. Re-mapping an error that was
+already a `MailError` does not log a second time. Rejections because the sync
+worker is stopped or halted are not logged: the failure that halted it already was.
+
 Drafts are stored in a separate `<selected-profile>/local-drafts` SQLite database by [drafts/store.rs](../crates/mail-core/src/drafts/store.rs), with revision and account identity types in [drafts/types.rs](../crates/mail-core/src/drafts/types.rs). The store uses WAL and FULL synchronous mode. Saves and deletes are revision-checked and return receipts after commit; deletion records request tombstones so a late save cannot recreate a removed draft. The frontend draft composable and editor coordinate local edits, acknowledged saves, and error recovery in [useDrafts.ts](../src/composables/useDrafts.ts), [DraftEditorCore.vue](../src/components/DraftEditorCore.vue), and [ReplyComposer.vue](../src/components/ReplyComposer.vue). Drafts remain local to the profile and do not sync to Gmail.
 
 The native close path uses a request/acknowledgement gate in [close_gate.rs](../src-tauri/src/close_gate.rs). The shell asks the frontend to flush and close dirty draft state; the frontend acknowledges only after the latest save is committed, and cancels close when save fails. Frontend coordination lives in [App.vue](../src/App.vue) and the draft composable. The governing contract is [vertical slice 04](vertical-slice-04.md).

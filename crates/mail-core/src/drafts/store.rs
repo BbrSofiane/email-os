@@ -16,6 +16,7 @@ use crate::dto::{Conversation, ConversationRef};
 use crate::error::MailError;
 use crate::gmail::types::AccountInfo;
 use crate::lock::ProfileGuard;
+use crate::storage_log::{storage_err, storage_fault};
 
 #[derive(Clone)]
 pub struct DraftCore {
@@ -38,14 +39,13 @@ impl DraftCore {
     pub fn open(profile_dir: impl AsRef<Path>) -> Result<Self, MailError> {
         let profile_dir = profile_dir.as_ref();
         let profile = ProfileGuard::acquire(profile_dir)?;
-        let conn = Connection::open(profile_dir.join("drafts.db"))
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let conn = Connection::open(profile_dir.join("drafts.db")).map_err(storage_err())?;
         conn.pragma_update(None, "journal_mode", "WAL")
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         conn.pragma_update(None, "synchronous", "FULL")
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         conn.busy_timeout(std::time::Duration::from_secs(2))
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS drafts (
                 account_id TEXT NOT NULL,
@@ -67,7 +67,7 @@ impl DraftCore {
                 PRIMARY KEY (account_id, request_id)
             );",
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
         Ok(Self {
             inner: Arc::new(DraftCoreInner {
                 _profile: profile,
@@ -84,7 +84,7 @@ impl DraftCore {
                 "SELECT draft_id, revision, updated_at, content_json, source_json
              FROM drafts WHERE account_id = ?1 ORDER BY updated_at DESC, draft_id ASC",
             )
-            .map_err(storage)?;
+            .map_err(storage_err())?;
         let rows = statement
             .query_map([&account.account_id], |row| {
                 let id: String = row.get(0)?;
@@ -94,12 +94,12 @@ impl DraftCore {
                 let source: String = row.get(4)?;
                 Ok((id, revision, updated_at, content, source))
             })
-            .map_err(storage)?;
+            .map_err(storage_err())?;
         let mut result = Vec::new();
         for row in rows {
-            let (id, revision, updated_at, content, source) = row.map_err(storage)?;
-            let content: DraftContent = serde_json::from_str(&content).map_err(storage)?;
-            let source: DraftSource = serde_json::from_str(&source).map_err(storage)?;
+            let (id, revision, updated_at, content, source) = row.map_err(storage_err())?;
+            let content: DraftContent = serde_json::from_str(&content).map_err(storage_err())?;
+            let source: DraftSource = serde_json::from_str(&source).map_err(storage_err())?;
             result.push(DraftSummary {
                 draft_ref: DraftRef {
                     account_id: account.account_id.clone(),
@@ -161,7 +161,7 @@ impl DraftCore {
         let mut conn = self.lock_conn()?;
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(storage)?;
+            .map_err(storage_err())?;
         if let Some(receipt) = lookup_receipt_tx(
             &tx,
             &account.account_id,
@@ -169,7 +169,7 @@ impl DraftCore {
             "create",
             &fingerprint,
         )? {
-            tx.commit().map_err(storage)?;
+            tx.commit().map_err(storage_err())?;
             return Ok(receipt);
         }
         let (content, reply_link) = match &command.source {
@@ -196,18 +196,18 @@ impl DraftCore {
             account_id: account.account_id.clone(),
             draft_id: Uuid::new_v4().to_string(),
         };
-        let source_json = serde_json::to_string(&command.source).map_err(storage)?;
-        let content_json = serde_json::to_string(&content).map_err(storage)?;
+        let source_json = serde_json::to_string(&command.source).map_err(storage_err())?;
+        let content_json = serde_json::to_string(&content).map_err(storage_err())?;
         let reply_json = reply_link
             .as_ref()
             .map(serde_json::to_string)
             .transpose()
-            .map_err(storage)?;
+            .map_err(storage_err())?;
         tx.execute(
             "INSERT INTO drafts(account_id,draft_id,revision,created_at,updated_at,content_json,source_json,reply_link_json)
              VALUES (?1,?2,1,?3,?3,?4,?5,?6)",
             params![draft_ref.account_id, draft_ref.draft_id, now, content_json, source_json, reply_json],
-        ).map_err(storage)?;
+        ).map_err(storage_err())?;
         let receipt = DraftReceipt {
             draft_ref,
             revision: 1,
@@ -221,7 +221,7 @@ impl DraftCore {
             &fingerprint,
             &receipt,
         )?;
-        tx.commit().map_err(storage)?;
+        tx.commit().map_err(storage_err())?;
         Ok(receipt)
     }
 
@@ -238,7 +238,7 @@ impl DraftCore {
         let mut conn = self.lock_conn()?;
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(storage)?;
+            .map_err(storage_err())?;
         if let Some(receipt) = lookup_receipt_tx(
             &tx,
             &account.account_id,
@@ -246,7 +246,7 @@ impl DraftCore {
             "save",
             &fingerprint,
         )? {
-            tx.commit().map_err(storage)?;
+            tx.commit().map_err(storage_err())?;
             return Ok(receipt);
         }
         let current = current_revision(&tx, &command.draft_ref)?.ok_or(MailError::NotFound)?;
@@ -257,9 +257,9 @@ impl DraftCore {
         }
         let next = current
             .checked_add(1)
-            .ok_or(MailError::StorageUnavailable)?;
+            .ok_or_else(|| storage_fault("missing_persisted_row"))?;
         let now = now_iso();
-        let content_json = serde_json::to_string(&command.content).map_err(storage)?;
+        let content_json = serde_json::to_string(&command.content).map_err(storage_err())?;
         let changed = tx
             .execute(
                 "UPDATE drafts SET revision=?3, updated_at=?4, content_json=?5
@@ -273,9 +273,9 @@ impl DraftCore {
                     current
                 ],
             )
-            .map_err(storage)?;
+            .map_err(storage_err())?;
         if changed != 1 {
-            return Err(MailError::StorageUnavailable);
+            return Err(storage_fault("invalid_persisted_state"));
         }
         let receipt = DraftReceipt {
             draft_ref: command.draft_ref.clone(),
@@ -290,7 +290,7 @@ impl DraftCore {
             &fingerprint,
             &receipt,
         )?;
-        tx.commit().map_err(storage)?;
+        tx.commit().map_err(storage_err())?;
         Ok(receipt)
     }
 
@@ -306,7 +306,7 @@ impl DraftCore {
         let mut conn = self.lock_conn()?;
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(storage)?;
+            .map_err(storage_err())?;
         if let Some(receipt) = lookup_receipt_tx::<DraftDeleteReceipt>(
             &tx,
             &account.account_id,
@@ -314,7 +314,7 @@ impl DraftCore {
             "delete",
             &fingerprint,
         )? {
-            tx.commit().map_err(storage)?;
+            tx.commit().map_err(storage_err())?;
             return Ok(receipt);
         }
         let current = current_revision(&tx, &command.draft_ref)?.ok_or(MailError::NotFound)?;
@@ -333,9 +333,9 @@ impl DraftCore {
                     current
                 ],
             )
-            .map_err(storage)?;
+            .map_err(storage_err())?;
         if deleted != 1 {
-            return Err(MailError::StorageUnavailable);
+            return Err(storage_fault("invalid_persisted_state"));
         }
         let receipt = DraftDeleteReceipt {
             draft_ref: command.draft_ref.clone(),
@@ -349,15 +349,12 @@ impl DraftCore {
             &fingerprint,
             &receipt,
         )?;
-        tx.commit().map_err(storage)?;
+        tx.commit().map_err(storage_err())?;
         Ok(receipt)
     }
 
     fn lock_conn(&self) -> Result<MutexGuard<'_, Connection>, MailError> {
-        self.inner
-            .conn
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)
+        self.inner.conn.lock().map_err(storage_err())
     }
 }
 
@@ -428,14 +425,11 @@ fn invalid(field: &str) -> Result<(), MailError> {
         field: field.to_string(),
     })
 }
-fn storage(_: impl std::fmt::Debug) -> MailError {
-    MailError::StorageUnavailable
-}
 fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 fn fingerprint<T: serde::Serialize>(value: &T) -> Result<String, MailError> {
-    let bytes = serde_json::to_vec(value).map_err(storage)?;
+    let bytes = serde_json::to_vec(value).map_err(storage_err())?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 fn decode_revision(value: i64) -> rusqlite::Result<u32> {
@@ -459,7 +453,7 @@ fn read_draft(conn: &Connection, draft_ref: &DraftRef) -> Result<Option<Draft>, 
         },
     )
     .optional()
-    .map_err(storage)?
+    .map_err(storage_err())?
     .map(
         |(revision, created_at, updated_at, content, source, reply_link)| {
             Ok(Draft {
@@ -467,10 +461,10 @@ fn read_draft(conn: &Connection, draft_ref: &DraftRef) -> Result<Option<Draft>, 
                 revision,
                 created_at,
                 updated_at,
-                content: serde_json::from_str(&content).map_err(storage)?,
-                source: serde_json::from_str(&source).map_err(storage)?,
+                content: serde_json::from_str(&content).map_err(storage_err())?,
+                source: serde_json::from_str(&source).map_err(storage_err())?,
                 reply_link: reply_link
-                    .map(|value| serde_json::from_str(&value).map_err(storage))
+                    .map(|value| serde_json::from_str(&value).map_err(storage_err()))
                     .transpose()?,
             })
         },
@@ -484,7 +478,7 @@ fn current_revision(tx: &Transaction<'_>, draft_ref: &DraftRef) -> Result<Option
         |row| decode_revision(row.get(0)?),
     )
     .optional()
-    .map_err(storage)
+    .map_err(storage_err())
 }
 fn lookup_receipt<T: serde::de::DeserializeOwned>(
     conn: &Connection,
@@ -496,7 +490,7 @@ fn lookup_receipt<T: serde::de::DeserializeOwned>(
     let row: Option<(String, String, String)> = conn.query_row(
         "SELECT operation,fingerprint,receipt_json FROM request_receipts WHERE account_id=?1 AND request_id=?2",
         params![account_id, request_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-    ).optional().map_err(storage)?;
+    ).optional().map_err(storage_err())?;
     parse_receipt(row, operation, fingerprint)
 }
 fn lookup_receipt_tx<T: serde::de::DeserializeOwned>(
@@ -509,7 +503,7 @@ fn lookup_receipt_tx<T: serde::de::DeserializeOwned>(
     let row: Option<(String, String, String)> = tx.query_row(
         "SELECT operation,fingerprint,receipt_json FROM request_receipts WHERE account_id=?1 AND request_id=?2",
         params![account_id, request_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-    ).optional().map_err(storage)?;
+    ).optional().map_err(storage_err())?;
     parse_receipt(row, operation, fingerprint)
 }
 fn parse_receipt<T: serde::de::DeserializeOwned>(
@@ -522,7 +516,9 @@ fn parse_receipt<T: serde::de::DeserializeOwned>(
         Some((stored_operation, stored_fingerprint, receipt))
             if stored_operation == operation && stored_fingerprint == fingerprint =>
         {
-            serde_json::from_str(&receipt).map(Some).map_err(storage)
+            serde_json::from_str(&receipt)
+                .map(Some)
+                .map_err(storage_err())
         }
         Some(_) => Err(MailError::RequestIdConflict),
     }
@@ -535,9 +531,9 @@ fn insert_receipt<T: serde::Serialize>(
     fingerprint: &str,
     receipt: &T,
 ) -> Result<(), MailError> {
-    let json = serde_json::to_string(receipt).map_err(storage)?;
+    let json = serde_json::to_string(receipt).map_err(storage_err())?;
     tx.execute("INSERT INTO request_receipts(account_id,request_id,operation,fingerprint,receipt_json) VALUES (?1,?2,?3,?4,?5)",
-        params![account.account_id, request_id, operation, fingerprint, json]).map_err(storage)?;
+        params![account.account_id, request_id, operation, fingerprint, json]).map_err(storage_err())?;
     Ok(())
 }
 

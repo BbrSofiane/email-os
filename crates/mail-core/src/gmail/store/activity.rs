@@ -44,7 +44,7 @@ pub(super) fn effective_conversation_state_with_coverage(
             "SELECT message_id, in_inbox, is_unread, is_starred FROM gmail_message_facts
          WHERE account_id = ?1 AND conversation_id = ?2",
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     for row in stmt
         .query_map(params![account_id, conversation_id], |row| {
             Ok((
@@ -54,9 +54,9 @@ pub(super) fn effective_conversation_state_with_coverage(
                 row.get::<_, Option<i64>>(3)?,
             ))
         })
-        .map_err(|_| MailError::StorageUnavailable)?
+        .map_err(storage_err())?
     {
-        let (id, inbox, unread, starred) = row.map_err(|_| MailError::StorageUnavailable)?;
+        let (id, inbox, unread, starred) = row.map_err(storage_err())?;
         facts.insert(
             id,
             (
@@ -72,14 +72,14 @@ pub(super) fn effective_conversation_state_with_coverage(
             "SELECT operation_id, accepted_seq FROM gmail_operations
          WHERE account_id = ?1 AND conversation_id = ?2 ORDER BY accepted_seq",
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let ids = stmt
         .query_map(params![account_id, conversation_id], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
         })
-        .map_err(|_| MailError::StorageUnavailable)?
+        .map_err(storage_err())?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     for (id, seq) in ids {
         if let Some(op) = load_operation(conn, account_id, &id)? {
             operations.push((seq, op));
@@ -148,7 +148,7 @@ pub(super) fn load_activity(
                 (SELECT m.group_id FROM gmail_operation_group_members m
                  WHERE m.account_id = o.account_id AND m.operation_id = o.operation_id)
          FROM gmail_operations o WHERE o.account_id = ?1 ORDER BY o.accepted_seq DESC",
-    ).map_err(|_| MailError::StorageUnavailable)?;
+    ).map_err(storage_err())?;
     // Shared eligibility facts (§3.2 rules 4–5 plus UX-05 action ordering):
     // the newest top-level action id and the set of already-undone ids.
     let newest_action = latest_action_id(conn, account_id)?;
@@ -171,7 +171,7 @@ pub(super) fn load_activity(
                 row.get::<_, Option<String>>(11)?,
             ))
         })
-        .map_err(|_| MailError::StorageUnavailable)?
+        .map_err(storage_err())?
     {
         let (
             id,
@@ -186,7 +186,7 @@ pub(super) fn load_activity(
             action_id,
             retry_of,
             group_id,
-        ) = row.map_err(|_| MailError::StorageUnavailable)?;
+        ) = row.map_err(storage_err())?;
         let kind = parse_kind(&kind)?;
         let status = parse_status(&status)?;
         let failure = failure.map(|f| {
@@ -197,7 +197,7 @@ pub(super) fn load_activity(
             }
         });
         let last_error = last_error
-            .map(|json| serde_json::from_str(&json).map_err(|_| MailError::StorageUnavailable))
+            .map(|json| serde_json::from_str(&json).map_err(storage_err()))
             .transpose()?;
         let undoable_until = if undo_of.is_none()
             && action_id.as_deref() == Some(id.as_str())
@@ -252,16 +252,16 @@ pub(super) fn has_undo_rows(
         params![account_id, operation_id],
         |row| row.get(0),
     )
-    .map_err(|_| MailError::StorageUnavailable)
+    .map_err(storage_err())
 }
 
 pub(super) fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool, MailError> {
     let mut stmt = conn
         .prepare(&format!("PRAGMA table_info({table})"))
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let found = stmt
         .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|_| MailError::StorageUnavailable)?
+        .map_err(storage_err())?
         .any(|name| name.map(|n| n == column).unwrap_or(false));
     Ok(found)
 }
@@ -282,5 +282,5 @@ pub(super) fn latest_action_id(
         |row| row.get(0),
     )
     .optional()
-    .map_err(|_| MailError::StorageUnavailable)
+    .map_err(storage_err())
 }

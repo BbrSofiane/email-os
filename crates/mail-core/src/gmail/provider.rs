@@ -25,6 +25,7 @@ use crate::gmail::auth::{self, Endpoints, GoogleConfig, UrlOpener};
 use crate::gmail::secrets::{Secrets, TokenBundle};
 use crate::gmail::types::{GmailHistoryError, GmailProfile, GmailThread, HistoryPage, InboxPage};
 use crate::provider::CancelToken;
+use crate::storage_log::{storage_err, storage_fault};
 
 /// Bound on pages requested per list/history call.
 const MAX_PAGE_RESULTS: usize = 100;
@@ -147,10 +148,7 @@ impl GmailProvider {
             return Ok(());
         }
         let due = {
-            let mut slot = self
-                .last_request_slot
-                .lock()
-                .map_err(|_| MailError::StorageUnavailable)?;
+            let mut slot = self.last_request_slot.lock().map_err(storage_err())?;
             let now = Instant::now();
             let due = match *slot {
                 Some(previous) => (previous + self.min_request_interval).max(now),
@@ -174,10 +172,7 @@ impl GmailProvider {
     /// Takes a consistent in-process snapshot for credential publication.
     /// The lock is never held during provider I/O or interactive OAuth.
     fn credential_snapshot(&self) -> Result<(Option<TokenBundle>, u64, u64), MailError> {
-        let publication = self
-            .credential_publication
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let publication = self.credential_publication.lock().map_err(storage_err())?;
         let bundle = self.secrets.load()?;
         Ok((
             bundle,
@@ -195,10 +190,7 @@ impl GmailProvider {
         bundle: &TokenBundle,
         kind: CredentialPublicationKind,
     ) -> Result<bool, MailError> {
-        let mut publication = self
-            .credential_publication
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut publication = self.credential_publication.lock().map_err(storage_err())?;
         if publication.revision != expected_revision || self.secrets.load()? != *expected {
             return Ok(false);
         }
@@ -215,7 +207,7 @@ impl GmailProvider {
         let next_revision = publication
             .revision
             .checked_add(1)
-            .ok_or(MailError::StorageUnavailable)?;
+            .ok_or_else(|| storage_fault("missing_persisted_row"))?;
         self.secrets.store(bundle)?;
         publication.revision = next_revision;
         if matches!(kind, CredentialPublicationKind::AccountChange) {
@@ -247,10 +239,7 @@ impl GmailProvider {
             let account = bundle_account_id(&bundle).map(str::to_string);
             return Ok((bundle.access_token, account));
         }
-        let _refresh_guard = self
-            .refresh_lock
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let _refresh_guard = self.refresh_lock.lock().map_err(storage_err())?;
 
         loop {
             if cancel.is_cancelled() {

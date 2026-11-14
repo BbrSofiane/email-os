@@ -1,19 +1,22 @@
 use super::*;
 use crate::reminders::*;
+use crate::storage_log::storage_err;
 
+#[track_caller]
 fn storage<T>(result: rusqlite::Result<T>) -> Result<T, MailError> {
-    result.map_err(|_| MailError::StorageUnavailable)
+    result.map_err(storage_err())
 }
 fn invalid(field: &str) -> MailError {
     MailError::InvalidRequest {
         field: field.into(),
     }
 }
+#[track_caller]
 fn json<T: serde::Serialize>(value: &T) -> Result<String, MailError> {
-    serde_json::to_string(value).map_err(|_| MailError::StorageUnavailable)
+    serde_json::to_string(value).map_err(storage_err())
 }
 fn parse<T: serde::de::DeserializeOwned>(value: &str) -> Result<T, MailError> {
-    serde_json::from_str(value).map_err(|_| MailError::StorageUnavailable)
+    serde_json::from_str(value).map_err(storage_err())
 }
 pub(super) fn migrate(tx: &Connection) -> Result<(), MailError> {
     storage(tx.execute_batch(
@@ -124,7 +127,7 @@ impl Store {
         if let Some(due) = &c.due_at {
             let parsed = chrono::DateTime::parse_from_rfc3339(due).map_err(|_| invalid("dueAt"))?;
             let now = chrono::DateTime::parse_from_rfc3339(&self.clock.now_iso())
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
             if due.len() > 40
                 || parsed.timestamp() <= now.timestamp()
                 || parsed.timestamp_subsec_nanos() != 0
@@ -262,8 +265,7 @@ impl Store {
             rows.map(storage).collect::<Result<_, _>>()?
         };
         let now = self.clock.now_iso();
-        let now_instant = chrono::DateTime::parse_from_rfc3339(&now)
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let now_instant = chrono::DateTime::parse_from_rfc3339(&now).map_err(storage_err())?;
         let mut changed = false;
         for data in all {
             let mut r: Reminder = parse(&data)?;

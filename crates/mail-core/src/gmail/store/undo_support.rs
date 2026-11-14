@@ -23,7 +23,7 @@ pub(super) fn existing_receipt(
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .optional()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let Some((saved_payload, operation_id)) = existing else {
         return Ok(None);
     };
@@ -36,7 +36,7 @@ pub(super) fn existing_receipt(
             params![account_id, operation_id],
             |row| row.get(0),
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     Ok(Some(OperationReceipt {
         operation_id,
         accepted_at,
@@ -66,7 +66,7 @@ pub(super) fn existing_undo_receipt(
             },
         )
         .optional()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let Some((saved_payload, operation_id, accepted_at)) = existing else {
         return Ok(None);
     };
@@ -83,7 +83,7 @@ pub(super) fn existing_undo_receipt(
         undone_operation_id: operation_id,
         outcome,
         operation_ids,
-        accepted_at: accepted_at.ok_or(MailError::StorageUnavailable)?,
+        accepted_at: accepted_at.ok_or_else(|| storage_fault("missing_persisted_row"))?,
     }))
 }
 
@@ -97,12 +97,12 @@ pub(super) fn compensating_ids(
             "SELECT operation_id FROM gmail_operations
          WHERE account_id = ?1 AND undo_of = ?2 ORDER BY accepted_seq",
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let ids = stmt
         .query_map(params![account_id, undone_operation_id], |row| row.get(0))
-        .map_err(|_| MailError::StorageUnavailable)?
+        .map_err(storage_err())?
         .collect::<Result<Vec<String>, _>>()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     Ok(ids)
 }
 
@@ -143,7 +143,7 @@ pub(super) fn load_undo_target(
             },
         )
         .optional()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let Some((conversation_id, kind, status, undo_of, accepted_at, action_id)) = row else {
         return Ok(None);
     };
@@ -193,7 +193,7 @@ pub(super) fn check_undoable(
             params![account_id, target.operation_id],
             |row| row.get(0),
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     if undone {
         return Err(undo_unavailable(UndoUnavailableReason::AlreadyUndone));
     }
@@ -241,7 +241,7 @@ pub(super) fn has_unknown_prior_value(
             params![account_id, operation_id],
             |row| row.get(0),
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     Ok(unknown)
 }
 
@@ -262,14 +262,14 @@ pub(super) fn compensate_tx(
           AND p.message_id = t.message_id
          WHERE t.account_id = ?1 AND t.operation_id = ?2",
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let rows = stmt
         .query_map(params![account_id, target.operation_id], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?))
         })
-        .map_err(|_| MailError::StorageUnavailable)?
+        .map_err(storage_err())?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     drop(stmt);
     // Deterministic queue order: restore non-value group first, then value.
     let mut restore_group = Vec::new();

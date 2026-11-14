@@ -9,22 +9,19 @@ impl GmailStore {
         if conversation.retained_snapshot_at.is_some() {
             return Ok(Vec::new());
         }
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let conn = self.conn.lock().map_err(storage_err())?;
         if account_id_of(&conn)? != target.account_id {
             return Err(MailError::NotFound);
         }
         let json: Option<String> = conn.query_row("SELECT attachments_json FROM gmail_conversations WHERE account_id = ?1 AND conversation_id = ?2",
-            params![target.account_id, target.conversation_id], |row| row.get(0)).optional().map_err(|_| MailError::StorageUnavailable)?.flatten();
+            params![target.account_id, target.conversation_id], |row| row.get(0)).optional().map_err(storage_err())?.flatten();
         let descriptors: Vec<crate::attachments::AttachmentDescriptor> = json
             .map(|s| serde_json::from_str(&s))
             .transpose()
-            .map_err(|_| MailError::StorageUnavailable)?
+            .map_err(storage_err())?
             .unwrap_or_default();
         if descriptors.len() > crate::attachments::MAX_ATTACHMENTS {
-            return Err(MailError::StorageUnavailable);
+            return Err(storage_fault("invalid_persisted_state"));
         }
         // Tombstone-only history pages can remove a message without replacing
         // the conversation metadata column. Never retain fetch authority for it.
@@ -33,7 +30,7 @@ impl GmailStore {
             let present: bool = conn.query_row(
                 "SELECT EXISTS(SELECT 1 FROM gmail_message_facts WHERE account_id = ?1 AND conversation_id = ?2 AND message_id = ?3)",
                 params![target.account_id, target.conversation_id, descriptor.message_id], |row| row.get(0),
-            ).map_err(|_| MailError::StorageUnavailable)?;
+            ).map_err(storage_err())?;
             if present {
                 current.push(descriptor);
             }
@@ -84,12 +81,12 @@ impl GmailStore {
                        AND o.status IN ('queued', 'applying', 'outcome_unknown')
                        AND t.conversation_id = c.conversation_id))",
             )
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         let ids = stmt
             .query_map(params![&account_id], |row| row.get::<_, String>(0))
-            .map_err(|_| MailError::StorageUnavailable)?
+            .map_err(storage_err())?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         let mut summaries = Vec::with_capacity(ids.len());
         for conversation_id in ids {
             let Some(built) = build_conversation(&conn, &account_id, &conversation_id)? else {
@@ -160,10 +157,9 @@ impl GmailStore {
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .optional()
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
             let (json, saved_at) = recovered.ok_or(MailError::NotFound)?;
-            let mut snapshot: Conversation =
-                serde_json::from_str(&json).map_err(|_| MailError::StorageUnavailable)?;
+            let mut snapshot: Conversation = serde_json::from_str(&json).map_err(storage_err())?;
             snapshot.retained_snapshot_at = Some(saved_at);
             let (is_in_inbox, is_read, pending_operation_id) =
                 effective_conversation_state(&conn, &account_id, &r#ref.conversation_id)?;
@@ -204,9 +200,7 @@ impl GmailStore {
             return Ok(false);
         }
         let mut conn = self.lock_conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let tx = conn.transaction().map_err(storage_err())?;
         if meta_get(&tx, "account_id")?.as_deref() != Some(r#ref.account_id.as_str())
             || !generation_matches(&tx, expected_generation)?
         {
@@ -223,14 +217,13 @@ impl GmailStore {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         if !cache_state
             .is_some_and(|(complete, latest_id)| complete == 1 && latest_id == source_message_id)
         {
             return Ok(false);
         }
-        let reply_context_json =
-            serde_json::to_string(reply_context).map_err(|_| MailError::StorageUnavailable)?;
+        let reply_context_json = serde_json::to_string(reply_context).map_err(storage_err())?;
         let updated = tx
             .execute(
                 "UPDATE gmail_conversations SET reply_context_json = ?1
@@ -238,11 +231,11 @@ impl GmailStore {
                    AND context_complete = 1 AND reply_context_json IS NULL",
                 params![reply_context_json, r#ref.account_id, r#ref.conversation_id],
             )
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         if updated != 1 {
             return Ok(false);
         }
-        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        tx.commit().map_err(storage_err())?;
         Ok(true)
     }
 }

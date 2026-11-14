@@ -679,3 +679,15 @@ and three previously private methods widened to `pub(super)`; the
 `pub`/`pub(crate)` surface of `GmailStore` is unchanged. Add new store code to
 the module that owns its responsibility and keep each file under about 1,000
 lines.
+
+## Storage error logging
+
+Do not write `.map_err(|_| MailError::StorageUnavailable)`. Use
+`.map_err(storage_err())` (or `storage_fault("static_reason")` where there is no
+underlying error) from `crate::storage_log`, and `diagnostics::storage_failure`
+in the shell. A new error type needs a `StorageCause` impl that classifies it
+without reading its message. Never add a log call that interpolates a
+subject, address, body, token, URL with ids or SQL with bound values; the
+privacy test in `storage_log.rs` provokes SQLite errors whose own text quotes
+synthetic sensitive strings and asserts none reaches the log line. Logs go to
+stderr in the app; to see them when running the shell, run it from a terminal.

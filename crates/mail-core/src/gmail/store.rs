@@ -28,6 +28,7 @@ use crate::dto::{
 use crate::error::MailError;
 use crate::gmail::types::{AccountInfo, GmailProfile, GmailThread, HistoryPage};
 use crate::groups::{GroupMemberRejection, OperationGroupReceipt, OperationGroupStatus};
+use crate::storage_log::{storage_err, storage_fault};
 
 /// Cache cap: at most this many conversations are retained after a completed
 /// discovery/history pass. Disclosed to the wire through `SyncInfo.coverageLimit`.

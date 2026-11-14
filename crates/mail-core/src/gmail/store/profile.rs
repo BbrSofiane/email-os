@@ -2,15 +2,15 @@ use super::*;
 
 impl GmailStore {
     pub(crate) fn open(profile_dir: &Path, clock: Arc<dyn Clock>) -> Result<GmailStore, MailError> {
-        std::fs::create_dir_all(profile_dir).map_err(|_| MailError::StorageUnavailable)?;
+        std::fs::create_dir_all(profile_dir).map_err(storage_err())?;
         let db_path = profile_dir.join("gmail.db");
-        let conn = Connection::open(&db_path).map_err(|_| MailError::StorageUnavailable)?;
+        let conn = Connection::open(&db_path).map_err(storage_err())?;
         conn.pragma_update(None, "journal_mode", "WAL")
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         conn.pragma_update(None, "synchronous", "FULL")
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         conn.pragma_update(None, "foreign_keys", "ON")
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         let store = GmailStore {
             conn: Mutex::new(conn),
             clock,
@@ -29,23 +29,21 @@ impl GmailStore {
 
     fn recover_interrupted_operations_on_startup(&self) -> Result<(), MailError> {
         let mut conn = self.lock_conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let tx = conn.transaction().map_err(storage_err())?;
         tx.execute(
             "UPDATE gmail_operations SET status = 'outcome_unknown', last_error = NULL
              WHERE status = 'applying'",
             [],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
-        tx.commit().map_err(|_| MailError::StorageUnavailable)
+        .map_err(storage_err())?;
+        tx.commit().map_err(storage_err())
     }
 
     /// Fail-closed gate; under `cfg(test)` it can simulate persistence loss.
     pub(super) fn persistence_gate(&self) -> Result<(), MailError> {
         #[cfg(test)]
         if self.injected_persistence_failure.load(Ordering::SeqCst) {
-            return Err(MailError::StorageUnavailable);
+            return Err(storage_fault("injected_test_failure"));
         }
         Ok(())
     }
@@ -82,7 +80,7 @@ impl GmailStore {
     }
 
     pub(super) fn lock_conn(&self) -> Result<MutexGuard<'_, Connection>, MailError> {
-        self.conn.lock().map_err(|_| MailError::StorageUnavailable)
+        self.conn.lock().map_err(storage_err())
     }
 
     pub(crate) fn account(&self) -> Result<Option<AccountInfo>, MailError> {
@@ -153,12 +151,12 @@ impl GmailStore {
         let conn = self.lock_conn()?;
         let mut stmt = conn
             .prepare("SELECT conversation_id FROM gmail_discovery_seen")
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         let collected = stmt
             .query_map([], |row| row.get::<_, String>(0))
-            .map_err(|_| MailError::StorageUnavailable)?
+            .map_err(storage_err())?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         Ok(collected)
     }
 
@@ -173,7 +171,7 @@ impl GmailStore {
                         params![account_id],
                         |row| row.get(0),
                     )
-                    .map_err(|_| MailError::StorageUnavailable)?;
+                    .map_err(storage_err())?;
                 Ok(count as usize)
             }
             None => Ok(0),
@@ -212,7 +210,7 @@ impl GmailStore {
         }
         let replay: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM gmail_operation_requests WHERE account_id=?1 AND request_id=?2)",
-            params![account, request], |r| r.get(0)).map_err(|_| MailError::StorageUnavailable)?;
+            params![account, request], |r| r.get(0)).map_err(storage_err())?;
         if replay {
             return Ok(vec![]);
         }
@@ -236,9 +234,7 @@ impl GmailStore {
     ) -> Result<Commit, MailError> {
         self.persistence_gate()?;
         let mut conn = self.lock_conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let tx = conn.transaction().map_err(storage_err())?;
         if !generation_matches(&tx, expected_generation)? {
             return Ok(Commit::Discarded);
         }
@@ -248,7 +244,7 @@ impl GmailStore {
                     field: "accountId".to_string(),
                 });
             }
-            tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+            tx.commit().map_err(storage_err())?;
             return Ok(Commit::Applied);
         }
         meta_set(&tx, "account_id", &profile.account_id)?;
@@ -260,8 +256,8 @@ impl GmailStore {
         meta_del(&tx, "history_page_token")?;
         meta_del(&tx, "last_synced_at")?;
         tx.execute("DELETE FROM gmail_discovery_seen", [])
-            .map_err(|_| MailError::StorageUnavailable)?;
-        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
+        tx.commit().map_err(storage_err())?;
         Ok(Commit::Applied)
     }
 
@@ -270,12 +266,10 @@ impl GmailStore {
     pub(crate) fn advance_generation(&self) -> Result<(), MailError> {
         self.persistence_gate()?;
         let mut conn = self.lock_conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let tx = conn.transaction().map_err(storage_err())?;
         let next = generation_of(&tx)?.saturating_add(1);
         meta_set(&tx, "generation", &next.to_string())?;
-        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        tx.commit().map_err(storage_err())?;
         Ok(())
     }
 
@@ -284,11 +278,9 @@ impl GmailStore {
     pub(crate) fn recover_interrupted_operations(&self) -> Result<bool, MailError> {
         self.persistence_gate()?;
         let mut conn = self.lock_conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let tx = conn.transaction().map_err(storage_err())?;
         let Some(account_id) = meta_get(&tx, "account_id")? else {
-            tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+            tx.commit().map_err(storage_err())?;
             return Ok(false);
         };
         let changed = tx
@@ -298,8 +290,8 @@ impl GmailStore {
                  WHERE account_id = ?1 AND status = 'applying'",
                 params![account_id],
             )
-            .map_err(|_| MailError::StorageUnavailable)?;
-        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
+        tx.commit().map_err(storage_err())?;
         Ok(changed > 0)
     }
 
@@ -309,50 +301,48 @@ impl GmailStore {
     pub(crate) fn clear_account(&self) -> Result<(), MailError> {
         self.persistence_gate()?;
         let mut conn = self.lock_conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let tx = conn.transaction().map_err(storage_err())?;
         let next = generation_of(&tx)?.saturating_add(1);
         meta_set(&tx, "generation", &next.to_string())?;
         tx.execute("DELETE FROM meta WHERE key LIKE 'saved_split:%'", [])
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         tx.execute("DELETE FROM gmail_search_cache", [])
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         tx.execute("DELETE FROM gmail_destination_snapshots", [])
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         tx.execute("DELETE FROM gmail_conversations", [])
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         tx.execute("DELETE FROM gmail_messages", [])
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         tx.execute("DELETE FROM gmail_inbox_membership", [])
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         tx.execute("DELETE FROM gmail_message_facts", [])
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         tx.execute("DELETE FROM gmail_operations", [])
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         tx.execute("DELETE FROM gmail_operation_targets", [])
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         tx.execute("DELETE FROM gmail_operation_requests", [])
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         tx.execute("DELETE FROM gmail_operation_snapshots", [])
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         tx.execute("DELETE FROM gmail_operation_preimages", [])
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         // Durable group headers/manifests are account-scoped recovery records
         // whose child operations, requests and preimages are deleted above;
         // keeping them would leave detail loads typed-failing and let a
         // reused request id collide with the retained header's unique
         // constraint (docs/ux-05-safe-bulk-processing.md §4.2).
         tx.execute("DELETE FROM gmail_operation_group_members", [])
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         tx.execute("DELETE FROM gmail_operation_groups", [])
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         tx.execute("DELETE FROM gmail_reminders", [])
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         tx.execute("DELETE FROM gmail_reminder_requests", [])
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         tx.execute("DELETE FROM gmail_discovery_seen", [])
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         tx.execute(
             "DELETE FROM meta WHERE key IN
              ('account_id', 'email_address', 'history_id', 'discovery_state',
@@ -360,8 +350,8 @@ impl GmailStore {
               'last_synced_at')",
             [],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
-        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
+        tx.commit().map_err(storage_err())?;
         Ok(())
     }
 }

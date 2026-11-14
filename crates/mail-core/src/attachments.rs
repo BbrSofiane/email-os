@@ -1,4 +1,5 @@
 //! Download-only attachments. No document parser, renderer or remote-resource loader.
+use crate::storage_log::storage_err;
 use crate::{dto::ConversationRef, CancelToken, MailError};
 use serde::{Deserialize, Serialize};
 use std::{fs::OpenOptions, io::Write, path::Path};
@@ -132,16 +133,13 @@ pub fn save_download(
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let mut file = options
-        .open(&path)
-        .map_err(|_| MailError::StorageUnavailable)?;
+    let mut file = options.open(&path).map_err(storage_err())?;
     let result = (|| {
         for chunk in bytes.chunks(64 * 1024) {
             check_cancel(cancel)?;
-            file.write_all(chunk)
-                .map_err(|_| MailError::StorageUnavailable)?;
+            file.write_all(chunk).map_err(storage_err())?;
         }
-        file.sync_all().map_err(|_| MailError::StorageUnavailable)?;
+        file.sync_all().map_err(storage_err())?;
         check_cancel(cancel)
     })();
     drop(file);

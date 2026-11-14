@@ -12,15 +12,13 @@ impl GmailStore {
         crate::groups::validate_group_request_id(&command.request_id)?;
         self.persistence_gate()?;
         let mut conn = self.lock_conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let tx = conn.transaction().map_err(storage_err())?;
         let account_id = account_id_of(&tx)?;
         let payload = serde_json::json!({ "undoGroupId": command.group_id }).to_string();
         if let Some(receipt) =
             existing_group_undo_receipt(&tx, &account_id, &command.request_id, &payload)?
         {
-            tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+            tx.commit().map_err(storage_err())?;
             return Ok(receipt);
         }
         let header =
@@ -44,11 +42,10 @@ impl GmailStore {
                     member.ordinal,
                     group_decision_name(&decision),
                     decision_skip_reason(&decision).map(crate::groups::skip_reason_name),
-                    serde_json::to_string(&operation_ids)
-                        .map_err(|_| MailError::StorageUnavailable)?,
+                    serde_json::to_string(&operation_ids).map_err(storage_err())?,
                 ],
             )
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
             results.push(crate::groups::GroupMemberUndoResult {
                 ordinal: member.ordinal as u32,
                 conversation: ConversationRef {
@@ -64,7 +61,7 @@ impl GmailStore {
              WHERE account_id = ?1 AND group_id = ?2",
             params![account_id, command.group_id, accepted_at],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
         tx.execute(
             "INSERT INTO gmail_operation_requests
              (account_id, request_id, payload, operation_id, accepted_at)
@@ -77,8 +74,8 @@ impl GmailStore {
                 accepted_at
             ],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
-        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
+        tx.commit().map_err(storage_err())?;
         Ok(crate::groups::GroupUndoReceipt {
             group_id: command.group_id.clone(),
             request_id: command.request_id.clone(),

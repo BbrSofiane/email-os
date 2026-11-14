@@ -7,7 +7,7 @@ pub(super) fn meta_get(conn: &Connection, key: &str) -> Result<Option<String>, M
         |row| row.get(0),
     )
     .optional()
-    .map_err(|_| MailError::StorageUnavailable)
+    .map_err(storage_err())
 }
 
 pub(super) fn meta_set(conn: &Connection, key: &str, value: &str) -> Result<(), MailError> {
@@ -16,13 +16,13 @@ pub(super) fn meta_set(conn: &Connection, key: &str, value: &str) -> Result<(), 
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         params![key, value],
     )
-    .map_err(|_| MailError::StorageUnavailable)?;
+    .map_err(storage_err())?;
     Ok(())
 }
 
 pub(super) fn meta_del(conn: &Connection, key: &str) -> Result<(), MailError> {
     conn.execute("DELETE FROM meta WHERE key = ?1", params![key])
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     Ok(())
 }
 
@@ -41,7 +41,7 @@ pub(super) fn generation_matches(conn: &Connection, expected: u64) -> Result<boo
 /// Invariant: checkpointed writes require a connected account. Violation
 /// fails closed instead of writing unscoped rows.
 pub(super) fn account_id_of(conn: &Connection) -> Result<String, MailError> {
-    meta_get(conn, "account_id")?.ok_or(MailError::StorageUnavailable)
+    meta_get(conn, "account_id")?.ok_or_else(|| storage_fault("missing_persisted_row"))
 }
 
 /// Observed Trash/Spam is not Done, even when older archive evidence exists.
@@ -56,7 +56,7 @@ pub(super) fn has_excluded_membership(
         params![account, id],
         |row| row.get(0),
     )
-    .map_err(|_| MailError::StorageUnavailable)
+    .map_err(storage_err())
 }
 
 /// Replaces one thread's cached facts atomically. Effective INBOX membership
@@ -79,7 +79,7 @@ pub(super) fn upsert_thread(
             "DELETE FROM gmail_search_cache WHERE account_id=?1 AND conversation_id=?2",
             params![account_id, conversation_id],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     }
     if thread.inbox_message_ids.is_empty() {
         let exists: bool = conn
@@ -89,7 +89,7 @@ pub(super) fn upsert_thread(
                 params![account_id, conversation_id],
                 |row| row.get(0),
             )
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         if !exists {
             // History can mention arbitrarily old archived threads. Keep their
             // bodies out of the bounded cache, but refresh facts needed by a
@@ -101,7 +101,7 @@ pub(super) fn upsert_thread(
                     params![account_id, conversation_id],
                     |row| row.get(0),
                 )
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
             if retained_by_operation {
                 upsert_message_facts(conn, account_id, thread)?;
             }
@@ -132,41 +132,39 @@ pub(super) fn upsert_thread(
                 .as_ref()
                 .map(serde_json::to_string)
                 .transpose()
-                .map_err(|_| MailError::StorageUnavailable)?,
+                .map_err(storage_err())?,
             thread
                 .newest_sender
                 .as_ref()
                 .map(serde_json::to_string)
                 .transpose()
-                .map_err(|_| MailError::StorageUnavailable)?,
-            serde_json::to_string(&thread.attachments)
-                .map_err(|_| MailError::StorageUnavailable)?,
+                .map_err(storage_err())?,
+            serde_json::to_string(&thread.attachments).map_err(storage_err())?,
         ],
     )
-    .map_err(|_| MailError::StorageUnavailable)?;
+    .map_err(storage_err())?;
     conn.execute(
         "DELETE FROM gmail_messages WHERE account_id = ?1 AND conversation_id = ?2",
         params![account_id, conversation_id],
     )
-    .map_err(|_| MailError::StorageUnavailable)?;
+    .map_err(storage_err())?;
     conn.execute(
         "DELETE FROM gmail_inbox_membership WHERE account_id = ?1 AND conversation_id = ?2",
         params![account_id, conversation_id],
     )
-    .map_err(|_| MailError::StorageUnavailable)?;
+    .map_err(storage_err())?;
     for message_id in &thread.inbox_message_ids {
         conn.execute(
             "INSERT INTO gmail_inbox_membership (account_id, conversation_id, message_id)
              VALUES (?1, ?2, ?3)",
             params![account_id, conversation_id, message_id],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     }
     upsert_message_facts(conn, account_id, thread)?;
     for message in &thread.conversation.messages {
         let in_inbox = thread.inbox_message_ids.iter().any(|id| id == &message.id);
-        let to_json =
-            serde_json::to_string(&message.to).map_err(|_| MailError::StorageUnavailable)?;
+        let to_json = serde_json::to_string(&message.to).map_err(storage_err())?;
         conn.execute(
             "INSERT OR REPLACE INTO gmail_messages
                 (account_id, conversation_id, message_id, from_display, from_mailbox,
@@ -185,7 +183,7 @@ pub(super) fn upsert_thread(
                 message.has_attachment.map(|present| present as i64),
             ],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     }
     Ok(())
 }
@@ -203,7 +201,7 @@ pub(super) fn upsert_message_facts(
         "DELETE FROM gmail_message_facts WHERE account_id = ?1 AND conversation_id = ?2",
         params![account_id, conversation_id],
     )
-    .map_err(|_| MailError::StorageUnavailable)?;
+    .map_err(storage_err())?;
     let mut inventory = thread.message_ids.clone().unwrap_or_else(|| {
         let mut ids = thread.inbox_message_ids.clone();
         for message in &thread.conversation.messages {
@@ -228,10 +226,10 @@ pub(super) fn upsert_message_facts(
                 thread.trash_message_ids.as_ref().map(|ids| ids.contains(message_id) as i64),
                 thread.spam_message_ids.as_ref().map(|ids| ids.contains(message_id) as i64)],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
         conn.execute("UPDATE gmail_message_facts SET is_starred = ?4 WHERE account_id = ?1 AND conversation_id = ?2 AND message_id = ?3",
             params![account_id, conversation_id, message_id, thread.star_facts.as_ref().and_then(|facts| facts.get(message_id).copied()).map(i64::from)])
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
     }
     Ok(())
 }
@@ -274,16 +272,14 @@ pub(super) fn evict_over_cap(
          LIMIT -1 OFFSET ?2"
     );
     let evicted = {
-        let mut statement = conn
-            .prepare(&sql)
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut statement = conn.prepare(&sql).map_err(storage_err())?;
         let rows = statement
             .query_map(params![account_id, DISCOVERY_CAP as i64], |row| {
                 row.get::<_, String>(0)
             })
-            .map_err(|_| MailError::StorageUnavailable)?
+            .map_err(storage_err())?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         rows
     };
     for conversation_id in evicted {
@@ -291,7 +287,7 @@ pub(super) fn evict_over_cap(
             "DELETE FROM gmail_messages WHERE account_id = ?1 AND conversation_id = ?2",
             params![account_id, conversation_id],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
         conn.execute(
             "DELETE FROM gmail_message_facts
              WHERE account_id = ?1 AND conversation_id = ?2
@@ -310,17 +306,17 @@ pub(super) fn evict_over_cap(
                    AND s.conversation_id = gmail_message_facts.conversation_id)",
             params![account_id, conversation_id],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
         conn.execute(
             "DELETE FROM gmail_inbox_membership WHERE account_id = ?1 AND conversation_id = ?2",
             params![account_id, conversation_id],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
         conn.execute(
             "DELETE FROM gmail_conversations WHERE account_id = ?1 AND conversation_id = ?2",
             params![account_id, conversation_id],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     }
     Ok(())
 }
@@ -334,22 +330,22 @@ pub(super) fn delete_conversation(
         "DELETE FROM gmail_messages WHERE account_id = ?1 AND conversation_id = ?2",
         params![account_id, conversation_id],
     )
-    .map_err(|_| MailError::StorageUnavailable)?;
+    .map_err(storage_err())?;
     conn.execute(
         "DELETE FROM gmail_inbox_membership WHERE account_id = ?1 AND conversation_id = ?2",
         params![account_id, conversation_id],
     )
-    .map_err(|_| MailError::StorageUnavailable)?;
+    .map_err(storage_err())?;
     conn.execute(
         "DELETE FROM gmail_message_facts WHERE account_id = ?1 AND conversation_id = ?2",
         params![account_id, conversation_id],
     )
-    .map_err(|_| MailError::StorageUnavailable)?;
+    .map_err(storage_err())?;
     conn.execute(
         "DELETE FROM gmail_conversations WHERE account_id = ?1 AND conversation_id = ?2",
         params![account_id, conversation_id],
     )
-    .map_err(|_| MailError::StorageUnavailable)?;
+    .map_err(storage_err())?;
     Ok(())
 }
 
@@ -384,7 +380,7 @@ pub(super) fn build_conversation(
             },
         )
         .optional()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let Some((subject, context_flag, unsupported_reason, reply_context_json, newest_sender_json)) =
         row
     else {
@@ -398,7 +394,7 @@ pub(super) fn build_conversation(
              WHERE account_id = ?1 AND conversation_id = ?2
              ORDER BY sent_at ASC, message_id ASC",
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     let messages: Vec<(Message, bool)> = stmt
         .query_map(params![account_id, conversation_id], |row| {
             let from_display: Option<String> = row.get(1)?;
@@ -426,9 +422,9 @@ pub(super) fn build_conversation(
                 row.get::<_, i64>(6)? != 0,
             ))
         })
-        .map_err(|_| MailError::StorageUnavailable)?
+        .map_err(storage_err())?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
     Ok(Some(BuiltConversation {
         conversation_ref: ConversationRef {
             account_id: account_id.to_string(),
@@ -439,13 +435,13 @@ pub(super) fn build_conversation(
         newest_sender: newest_sender_json
             .map(|json| serde_json::from_str(&json))
             .transpose()
-            .map_err(|_| MailError::StorageUnavailable)?,
+            .map_err(storage_err())?,
         context_complete: Some(context_flag != 0),
         unsupported_reason,
         reply_context: reply_context_json
             .map(|json| serde_json::from_str::<ReplyContext>(&json))
             .transpose()
-            .map_err(|_| MailError::StorageUnavailable)?,
+            .map_err(storage_err())?,
     }))
 }
 

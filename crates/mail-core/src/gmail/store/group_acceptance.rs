@@ -24,9 +24,7 @@ impl GmailStore {
         .to_string();
         self.persistence_gate()?;
         let mut conn = self.lock_conn()?;
-        let mut tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut tx = conn.transaction().map_err(storage_err())?;
         let account_id = account_id_of(&tx)?;
         if account_id != account_id_command {
             return Err(MailError::NotFound);
@@ -34,7 +32,7 @@ impl GmailStore {
         // Same request/payload returns the original receipt — including the
         // original persisted member ordering (§4.1 step 1).
         if let Some(receipt) = existing_group_receipt(&tx, &account_id, request_id, &payload)? {
-            tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+            tx.commit().map_err(storage_err())?;
             return Ok(receipt);
         }
 
@@ -48,7 +46,7 @@ impl GmailStore {
                 params![account_id],
                 |row| row.get(0),
             )
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         let mut member_rows = Vec::with_capacity(members.len());
         for (ordinal, member) in members.iter().enumerate() {
             let child_request_id = format!("{group_id}-{ordinal}");
@@ -60,7 +58,7 @@ impl GmailStore {
             // Member savepoint (§4.1 step 3): a rejected member rolls back to
             // a clean slate and keeps its typed rejection; valid siblings are
             // unaffected; storage errors still abort the whole acceptance.
-            let mut savepoint = tx.savepoint().map_err(|_| MailError::StorageUnavailable)?;
+            let mut savepoint = tx.savepoint().map_err(storage_err())?;
             let outcome = accept_operation_tx(
                 &savepoint,
                 &account_id,
@@ -80,9 +78,7 @@ impl GmailStore {
             );
             match outcome {
                 Ok(receipt) => {
-                    savepoint
-                        .commit()
-                        .map_err(|_| MailError::StorageUnavailable)?;
+                    savepoint.commit().map_err(storage_err())?;
                     member_rows.push(GroupMemberInsert {
                         ordinal,
                         conversation_id: member.conversation_id.clone(),
@@ -92,9 +88,7 @@ impl GmailStore {
                 }
                 Err(MailError::NotFound) => {
                     // Gone or unactionable: no immutable targets exist.
-                    savepoint
-                        .rollback()
-                        .map_err(|_| MailError::StorageUnavailable)?;
+                    savepoint.rollback().map_err(storage_err())?;
                     member_rows.push(GroupMemberInsert {
                         ordinal,
                         conversation_id: member.conversation_id.clone(),
@@ -103,9 +97,7 @@ impl GmailStore {
                     });
                 }
                 Err(MailError::InvalidRequest { field }) if field == "targets" => {
-                    savepoint
-                        .rollback()
-                        .map_err(|_| MailError::StorageUnavailable)?;
+                    savepoint.rollback().map_err(storage_err())?;
                     member_rows.push(GroupMemberInsert {
                         ordinal,
                         conversation_id: member.conversation_id.clone(),
@@ -132,7 +124,7 @@ impl GmailStore {
                 group_seq,
             ],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
         for member in &member_rows {
             insert_group_member_row(&tx, &account_id, &group_id, member)?;
         }
@@ -146,9 +138,9 @@ impl GmailStore {
              VALUES (?1, ?2, ?3, ?4, ?5)",
             params![account_id, request_id, payload, group_id, accepted_at],
         )
-        .map_err(|_| MailError::StorageUnavailable)?;
+        .map_err(storage_err())?;
         evict_search(&tx, &account_id)?;
-        tx.commit().map_err(|_| MailError::StorageUnavailable)?;
+        tx.commit().map_err(storage_err())?;
         Ok(group_receipt(
             &group_id,
             request_id,

@@ -20,11 +20,13 @@ pub mod search;
 mod seed;
 pub mod splits;
 pub mod stars;
+mod storage_log;
 mod store;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 mod worker;
 
+use crate::storage_log::storage_err;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -251,21 +253,13 @@ impl MailCore {
     /// twice is rejected; it is not a valid request field, but the shell
     /// treats `invalid_request` with field `worker` as a programming bug.
     pub fn start_worker(&self, provider: Arc<dyn ArchiveProvider>) -> Result<(), MailError> {
-        let mut worker = self
-            .inner
-            .worker
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let mut worker = self.inner.worker.lock().map_err(storage_err())?;
         if worker.is_some() {
             return Err(MailError::InvalidRequest {
                 field: "worker".to_string(),
             });
         }
-        *self
-            .inner
-            .halt_sink
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)? = None;
+        *self.inner.halt_sink.lock().map_err(storage_err())? = None;
         let handle = worker::spawn(
             Arc::clone(&self.inner.store),
             provider,
@@ -334,11 +328,7 @@ impl MailCore {
     }
 
     fn ensure_worker_healthy(&self) -> Result<(), MailError> {
-        let halt = self
-            .inner
-            .halt_sink
-            .lock()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let halt = self.inner.halt_sink.lock().map_err(storage_err())?;
         match halt.as_ref() {
             Some(error) => Err(error.clone()),
             None => Ok(()),

@@ -37,7 +37,7 @@ impl GmailStore {
                 SELECT date, conversation_id FROM candidates
                 WHERE ?2 IS NULL OR date < ?2 OR (date = ?2 AND conversation_id > ?3)
                 ORDER BY date DESC, conversation_id ASC LIMIT ?4"
-            ).map_err(|_| MailError::StorageUnavailable)?;
+            ).map_err(storage_err())?;
             let rows = stmt
                 .query_map(
                     params![
@@ -48,9 +48,9 @@ impl GmailStore {
                     ],
                     |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
                 )
-                .map_err(|_| MailError::StorageUnavailable)?
+                .map_err(storage_err())?
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
             (rows, meta_get(&conn, "last_synced_at")?)
         };
         let mut summaries = Vec::new();
@@ -73,12 +73,12 @@ impl GmailStore {
                     |row| row.get(0),
                 )
                 .optional()
-                .map_err(|_| MailError::StorageUnavailable)?
+                .map_err(storage_err())?
                 .flatten();
             let primary_correspondent = newest_sender_json
                 .map(|json| serde_json::from_str(&json))
                 .transpose()
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
             let has_attachments = crate::search::has_attachments(&conversation);
             summaries.push(ConversationSummary {
                 stars: conversation.stars,
@@ -113,12 +113,12 @@ impl GmailStore {
         }
         let ids = {
             let conn = self.lock_conn()?;
-            let mut stmt = conn.prepare("SELECT conversation_id FROM (SELECT c.conversation_id, COALESCE(MAX(m.sent_at),'') AS date FROM gmail_conversations c LEFT JOIN gmail_messages m ON m.account_id=c.account_id AND m.conversation_id=c.conversation_id WHERE c.account_id=?1 GROUP BY c.conversation_id UNION ALL SELECT conversation_id, last_message_at AS date FROM gmail_operation_snapshots WHERE account_id=?1) GROUP BY conversation_id ORDER BY MAX(date) DESC, conversation_id LIMIT 1000").map_err(|_| MailError::StorageUnavailable)?;
+            let mut stmt = conn.prepare("SELECT conversation_id FROM (SELECT c.conversation_id, COALESCE(MAX(m.sent_at),'') AS date FROM gmail_conversations c LEFT JOIN gmail_messages m ON m.account_id=c.account_id AND m.conversation_id=c.conversation_id WHERE c.account_id=?1 GROUP BY c.conversation_id UNION ALL SELECT conversation_id, last_message_at AS date FROM gmail_operation_snapshots WHERE account_id=?1) GROUP BY conversation_id ORDER BY MAX(date) DESC, conversation_id LIMIT 1000").map_err(storage_err())?;
             let ids = stmt
                 .query_map([&request.account_id], |row| row.get::<_, String>(0))
-                .map_err(|_| MailError::StorageUnavailable)?
+                .map_err(storage_err())?
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
             ids
         };
         let rows = ids
@@ -142,9 +142,7 @@ impl GmailStore {
     ) -> Result<(), MailError> {
         self.persistence_gate()?;
         let mut conn = self.lock_conn()?;
-        let tx = conn
-            .transaction()
-            .map_err(|_| MailError::StorageUnavailable)?;
+        let tx = conn.transaction().map_err(storage_err())?;
         if !generation_matches(&tx, expected)?
             || meta_get(&tx, "account_id")?.as_deref() != Some(account)
         {
@@ -155,7 +153,7 @@ impl GmailStore {
         }
         admit_search_rows(&tx, threads, account)?;
         evict_search(&tx, account)?;
-        tx.commit().map_err(|_| MailError::StorageUnavailable)
+        tx.commit().map_err(storage_err())
     }
 
     pub(crate) fn list_cached_done(
@@ -187,7 +185,7 @@ impl GmailStore {
              SELECT date, conversation_id FROM candidates
              WHERE ?2 IS NULL OR date < ?2 OR (date = ?2 AND conversation_id > ?3)
              ORDER BY date DESC, conversation_id ASC LIMIT ?4"
-        ).map_err(|_| MailError::StorageUnavailable)?;
+        ).map_err(storage_err())?;
         let candidates = stmt
             .query_map(
                 params![
@@ -198,9 +196,9 @@ impl GmailStore {
                 ],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             )
-            .map_err(|_| MailError::StorageUnavailable)?
+            .map_err(storage_err())?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| MailError::StorageUnavailable)?;
+            .map_err(storage_err())?;
         let mut summaries = Vec::new();
         for (_, id) in candidates.iter().take(request.limit as usize) {
             let effective = effective_conversation_state_with_coverage(&conn, &account, id)?;
@@ -216,9 +214,8 @@ impl GmailStore {
             let built = if let Some(built) = build_conversation(&conn, &account, id)? {
                 built
             } else {
-                let json: String = conn.query_row("SELECT snapshot_json FROM gmail_operation_snapshots WHERE account_id = ?1 AND conversation_id = ?2", params![account, id], |row| row.get(0)).map_err(|_| MailError::StorageUnavailable)?;
-                let snapshot: Conversation =
-                    serde_json::from_str(&json).map_err(|_| MailError::StorageUnavailable)?;
+                let json: String = conn.query_row("SELECT snapshot_json FROM gmail_operation_snapshots WHERE account_id = ?1 AND conversation_id = ?2", params![account, id], |row| row.get(0)).map_err(storage_err())?;
+                let snapshot: Conversation = serde_json::from_str(&json).map_err(storage_err())?;
                 BuiltConversation {
                     conversation_ref: snapshot.conversation_ref,
                     subject: snapshot.subject,
@@ -284,7 +281,7 @@ impl GmailStore {
                  SELECT date, conversation_id FROM candidates
                  WHERE ?2 IS NULL OR date < ?2 OR (date = ?2 AND conversation_id > ?3)
                  ORDER BY date DESC, conversation_id ASC LIMIT ?4"
-            ).map_err(|_| MailError::StorageUnavailable)?;
+            ).map_err(storage_err())?;
             let candidates = stmt
                 .query_map(
                     params![
@@ -295,9 +292,9 @@ impl GmailStore {
                     ],
                     |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
                 )
-                .map_err(|_| MailError::StorageUnavailable)?
+                .map_err(storage_err())?
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|_| MailError::StorageUnavailable)?;
+                .map_err(storage_err())?;
             (candidates, meta_get(&conn, "last_synced_at")?)
         };
         let mut conversations = Vec::new();
