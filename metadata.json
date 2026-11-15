@@ -1,0 +1,29 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7FR90FK39AQ38HMB2SCV9XJ",
+  "strategy": "manual-commit",
+  "branch": "maintenance/followups-account-ui",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "docs/development.md",
+    "mise.toml",
+    "src/assets/style.css",
+    "tests/layout/inline-action-targets.rendered.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 132,
+    "cache_creation_tokens": 140556,
+    "cache_read_tokens": 10395656,
+    "output_tokens": 49504,
+    "api_call_count": 65
+  }
+}
