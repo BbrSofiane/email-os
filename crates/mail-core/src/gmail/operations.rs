@@ -82,24 +82,32 @@ pub(crate) fn run_one(
             }
         }
         Err(error @ MailError::StorageUnavailable) => return Err(error),
-        // The production setter uses these two errors only while refreshing a
+        // Account-wide or network-wide: the write is retried later and the pass
+        // stops, so the worker backs off. The production setter returns the
+        // network, provider and invalid-response errors only while refreshing a
         // token before batchModify; post-dispatch uncertainty is OutcomeUnknown.
+        // `AuthFailed` is the credential fence (the stored credentials name a
+        // different account than the one the write was admitted for).
         Err(
             error @ (MailError::NetworkUnavailable
             | MailError::ProviderUnavailable
             | MailError::InvalidProviderResponse
             | MailError::RateLimited
             | MailError::AuthRequired
+            | MailError::AuthFailed
             | MailError::PermissionRequired
             | MailError::SecretsUnavailable),
         ) => {
             store.requeue_operation(&record, &error)?;
             return Err(error);
         }
-        Err(error) => {
-            store.fail_operation(&record, error.clone())?;
-            return Err(error);
-        }
+        // A definite, operation-scoped rejection (the provider answered and
+        // refused this write; in production `ProviderRejected`, or
+        // `InvalidRequest` for malformed message ids). The operation fails and
+        // stays retryable from Activity. The provider and the account are
+        // healthy, so this is a completed pass: the worker goes on to the next
+        // queued write instead of backing off.
+        Err(error) => store.fail_operation(&record, error)?,
     }
     Ok(true)
 }

@@ -239,6 +239,7 @@ struct OverlayState {
     history_bump: u64,
     hang_after_next_write: bool,
     hung: bool,
+    fail_next_write: Option<MailError>,
     reads: Vec<&'static str>,
 }
 
@@ -295,6 +296,13 @@ impl Overlay {
         self.state.lock().unwrap().hang_after_next_write = true;
     }
 
+    /// The next write fails with `error` before reaching the provider (once);
+    /// later writes are untouched. Use a transient error to drive the worker
+    /// into backoff, which the synthetic provider's own `fail_next` cannot.
+    pub fn fail_next_write_with(&self, error: MailError) {
+        self.state.lock().unwrap().fail_next_write = Some(error);
+    }
+
     /// Whether a hanging write has landed and is now waiting for cancellation.
     pub fn is_hung(&self) -> bool {
         self.state.lock().unwrap().hung
@@ -323,6 +331,9 @@ impl Overlay {
             .unwrap()
             .writes
             .push((kind, value, ids.to_vec()));
+        if let Some(error) = self.state.lock().unwrap().fail_next_write.take() {
+            return Err(error);
+        }
         let extras = self.extra_message_ids();
         let (own, rest): (Vec<String>, Vec<String>) =
             ids.iter().cloned().partition(|id| extras.contains(id));

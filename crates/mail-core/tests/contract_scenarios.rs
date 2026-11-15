@@ -45,23 +45,7 @@ const GMAIL_ACCOUNT: &str = "acct-contract";
 /// Named, VISIBLE divergences: `(scenario, profile, why)`. The runner still
 /// executes these and requires them to FAIL; when the divergence is fixed the
 /// run fails until the entry is removed, so nothing is silently skipped.
-const KNOWN_DIVERGENCES: &[(&str, &str, &str)] = &[
-    (
-    "group-member-failure-does-not-stop-siblings",
-    "gmail",
-    "KD-1: after a definite provider failure the Gmail worker ends its pass in sync-error backoff \
-     (gmail/operations.rs run_one returns Err, sync.rs PassOutcome::SyncError), so queued siblings \
-     stay `queued` until the next retry tick; the legacy fixture worker (retired) drained them serially. \
-     docs/ux-05 §4.1 only says children run serially and failures do not roll back siblings.",
-    ),
-    (
-        "group-member-failure-does-not-stop-siblings",
-        "synthetic",
-        "KD-1: same cause as the gmail profile; the synthetic session runs the Gmail worker, so siblings \
-         queued behind the failure drain at the next retry tick (which re-arms queued writes there), \
-         not immediately.",
-    ),
-];
+const KNOWN_DIVERGENCES: &[(&str, &str, &str)] = &[];
 
 // ------------------------------------------------------------------ backends
 
@@ -221,7 +205,7 @@ impl Backend for GmailBackend {
             }
             "reject_next" => {
                 self.provider
-                    .set_apply_plan(ApplyPlan::Error(MailError::ProviderRejected));
+                    .set_apply_plan(ApplyPlan::ErrorThenSuccess(MailError::ProviderRejected));
                 self.armed_reject
                     .store(true, std::sync::atomic::Ordering::SeqCst);
                 Ok(())

@@ -3758,12 +3758,35 @@ mod synthetic_session_tests {
             .unwrap();
     }
 
-    /// Review finding: with discovery off, the tick must still re-arm queued
-    /// writes, or siblings queued behind a definite failure stall forever.
+    fn backoff(core: &GmailCore) -> u32 {
+        core.inner.ctrl.state.lock().unwrap().backoff
+    }
+
+    fn queued_pair(
+        core: &GmailCore,
+    ) -> (Vec<String>, impl Fn(&str) -> Option<crate::dto::OperationStatus> + '_) {
+        let receipt = core
+            .set_archived_group(&crate::testing::synthetic::archive_group(
+                "grp-1",
+                &["conv-01", "conv-02"],
+                true,
+            ))
+            .unwrap();
+        let ids = receipt
+            .members
+            .iter()
+            .map(|m| m.operation_id.clone().unwrap())
+            .collect();
+        (ids, |id| crate::testing::synthetic::status_of(core, id))
+    }
+
+    /// KD-1: a definitely rejected write fails on its own; the pass goes on to
+    /// the next queued write with no retry tick, and the worker is not in
+    /// backoff afterwards.
     #[test]
-    fn synthetic_tick_rearms_queued_writes_after_a_definite_failure() {
+    fn synthetic_definite_rejection_drains_siblings_without_a_tick() {
         use crate::dto::OperationStatus;
-        let dir = temp_profile("synthetic-tick-rearm");
+        let dir = temp_profile("synthetic-definite-drain");
         let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(CLOCK_START)));
         let synthetic = new_provider(dir.path());
         let core = GmailCore::open_synthetic(dir.path(), synthetic.clone(), clock).unwrap();
@@ -3772,34 +3795,64 @@ mod synthetic_session_tests {
             .wait_until_idle(Duration::from_secs(5))
             .unwrap();
         synthetic.fail_next();
-        let receipt = core
-            .set_archived_group(&crate::testing::synthetic::archive_group(
-                "grp-1",
-                &["conv-01", "conv-02"],
-                true,
-            ))
-            .unwrap();
-        let ids: Vec<String> = receipt
-            .members
-            .iter()
-            .map(|m| m.operation_id.clone().unwrap())
-            .collect();
-        let status = |id: &str| crate::testing::synthetic::status_of(&core, id);
-        assert!(until(|| status(&ids[0]) == Some(OperationStatus::Failed)));
+        let (ids, status) = queued_pair(&core);
+        assert!(
+            until(|| status(&ids[1]) == Some(OperationStatus::Confirmed)),
+            "the sibling must drain without a tick"
+        );
+        assert_eq!(status(&ids[0]), Some(OperationStatus::Failed));
         core.inner
             .ctrl
             .wait_until_idle(Duration::from_secs(5))
             .unwrap();
+        assert_eq!(backoff(&core), 0, "a definite rejection is not a backoff");
+        assert_eq!(core.inner.ctrl.state.lock().unwrap().error, None);
+    }
+
+    /// The review finding behind the old definite-failure test: with discovery
+    /// off, the periodic tick must still re-arm queued writes. That is now
+    /// needed after a TRANSIENT failure, which still ends the pass in backoff.
+    #[test]
+    fn synthetic_tick_rearms_queued_writes_after_a_transient_failure() {
+        use crate::dto::OperationStatus;
+        let dir = temp_profile("synthetic-tick-rearm");
+        let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(CLOCK_START)));
+        let synthetic = new_provider(dir.path());
+        let overlay = Overlay::wrap(synthetic.clone());
+        let core = GmailCore::open_synthetic_wrapping(
+            dir.path(),
+            overlay.clone(),
+            clock,
+            &synthetic.conversation_ids(),
+            false,
+        )
+        .unwrap();
+        core.inner
+            .ctrl
+            .wait_until_idle(Duration::from_secs(5))
+            .unwrap();
+        overlay.fail_next_write_with(MailError::NetworkUnavailable);
+        let (ids, status) = queued_pair(&core);
+        assert!(until(|| backoff(&core) == 1), "the pass ended in backoff");
+        core.inner
+            .ctrl
+            .wait_until_idle(Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(status(&ids[0]), Some(OperationStatus::Queued));
         assert_eq!(
             status(&ids[1]),
             Some(OperationStatus::Queued),
-            "the failed pass ended in backoff; the sibling waits for the retry beat"
+            "a transient failure stops the pass; the sibling waits for the retry beat"
         );
+        assert_eq!(overlay.writes().len(), 1);
         fire_periodic_tick(&core);
         assert!(
-            until(|| status(&ids[1]) == Some(OperationStatus::Confirmed)),
-            "the tick re-armed the queued sibling"
+            until(|| ids
+                .iter()
+                .all(|id| status(id) == Some(OperationStatus::Confirmed))),
+            "the tick re-armed both queued writes"
         );
+        assert_eq!(backoff(&core), 0);
     }
 
     #[test]

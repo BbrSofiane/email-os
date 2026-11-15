@@ -763,3 +763,145 @@ fn retry_clones_failed_targets_and_new_key_and_upgrade_cancel_isolated() {
     let _ = std::fs::remove_dir_all(dir);
     let _ = std::fs::remove_dir_all(upgrade_dir);
 }
+
+fn read(value: bool, request_id: &str) -> SetRead {
+    SetRead {
+        conversation: conversation_ref(),
+        read: value,
+        request_id: request_id.to_string(),
+    }
+}
+
+/// Queues an archive and a read behind a paused worker so both are durable
+/// before the first claim, then releases the worker. Returns their ids in
+/// claim order.
+fn queue_two_writes_then_release(core: &GmailCore) -> (String, String) {
+    core.pause_test_operations(mail_core::testing::TIMEOUT)
+        .expect("pause");
+    let first = core.set_archived(&archived(true, "first-write")).unwrap();
+    let second = core.set_read(&read(true, "second-write")).unwrap();
+    core.release_test_operations();
+    (first.operation_id, second.operation_id)
+}
+
+fn op_status(core: &GmailCore, id: &str) -> Option<OperationStatus> {
+    core.list_conversations()
+        .unwrap()
+        .activity
+        .iter()
+        .find(|op| op.id == id)
+        .map(|op| op.status)
+}
+
+#[test]
+fn definite_rejection_does_not_stop_the_queue_and_leaves_the_account_healthy() {
+    let dir = temp_profile("definite-rejection-drains");
+    let provider = FakeProvider::new(true);
+    let core = open_core(&dir, &provider);
+    wait_ready(&core);
+    provider.set_apply_plan(ApplyPlan::ErrorThenSuccess(MailError::ProviderRejected));
+    let (first, second) = queue_two_writes_then_release(&core);
+
+    // No sync request, no tick: the same pass sequence drains the sibling.
+    assert!(
+        until(|| op_status(&core, &second) == Some(OperationStatus::Confirmed)),
+        "the sibling stayed queued behind a definite rejection"
+    );
+    assert_eq!(op_status(&core, &first), Some(OperationStatus::Failed));
+    let failed = core
+        .list_conversations()
+        .unwrap()
+        .activity
+        .into_iter()
+        .find(|op| op.id == first)
+        .unwrap();
+    assert_eq!(failed.last_error, Some(MailError::ProviderRejected));
+    assert_eq!(provider.writes().len(), 2);
+    core.wait_for_test_idle(mail_core::testing::TIMEOUT).unwrap();
+    let status = core.account_status().unwrap();
+    assert_eq!(status.sync.state, mail_core::gmail::types::SyncState::Idle);
+    assert_eq!(status.sync.error, None);
+
+    // The rejected write stays retryable from Activity.
+    let retry = core
+        .retry_operation(&RetryOperation {
+            operation_id: first.clone(),
+            request_id: "retry-first".to_string(),
+        })
+        .unwrap();
+    assert!(until(|| op_status(&core, &retry.operation_id)
+        == Some(OperationStatus::Confirmed)));
+    core.stop();
+    drop(core);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn every_write_rejected_fails_one_by_one_without_pausing() {
+    let dir = temp_profile("all-rejected");
+    let provider = FakeProvider::new(true);
+    let core = open_core(&dir, &provider);
+    wait_ready(&core);
+    provider.set_apply_plan(ApplyPlan::Error(MailError::ProviderRejected));
+    let (first, second) = queue_two_writes_then_release(&core);
+    assert!(until(|| op_status(&core, &first) == Some(OperationStatus::Failed)
+        && op_status(&core, &second) == Some(OperationStatus::Failed)));
+    assert_eq!(provider.writes().len(), 2, "each write was attempted once");
+    core.wait_for_test_idle(mail_core::testing::TIMEOUT).unwrap();
+    assert_eq!(core.account_status().unwrap().sync.error, None);
+    core.stop();
+    drop(core);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn transient_failure_still_stops_the_pass_and_backs_off() {
+    for error in [
+        MailError::NetworkUnavailable,
+        MailError::ProviderUnavailable,
+        MailError::RateLimited,
+    ] {
+        let dir = temp_profile("transient-stops");
+        let provider = FakeProvider::new(true);
+        let core = open_core(&dir, &provider);
+        wait_ready(&core);
+        provider.set_apply_plan(ApplyPlan::ErrorThenSuccess(error.clone()));
+        let (first, second) = queue_two_writes_then_release(&core);
+        assert!(until(|| core.account_status().is_ok_and(|s| {
+            s.sync.state == mail_core::gmail::types::SyncState::Error
+                && s.sync.error == Some(error.clone())
+        })));
+        core.wait_for_test_idle(mail_core::testing::TIMEOUT).unwrap();
+        assert_eq!(op_status(&core, &first), Some(OperationStatus::Queued));
+        assert_eq!(op_status(&core, &second), Some(OperationStatus::Queued));
+        assert_eq!(provider.writes().len(), 1, "the pass stopped after one call");
+
+        // The retry beat (a sync completing) re-arms both writes.
+        mail_core::testing::request_sync_when_idle(&core);
+        assert!(until(|| op_status(&core, &first) == Some(OperationStatus::Confirmed)
+            && op_status(&core, &second) == Some(OperationStatus::Confirmed)));
+        core.stop();
+        drop(core);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[test]
+fn account_wide_credential_failure_requeues_instead_of_failing_the_write() {
+    let dir = temp_profile("auth-failed-requeues");
+    let provider = FakeProvider::new(true);
+    let core = open_core(&dir, &provider);
+    wait_ready(&core);
+    provider.set_apply_plan(ApplyPlan::ErrorThenSuccess(MailError::AuthFailed));
+    let (first, second) = queue_two_writes_then_release(&core);
+    assert!(until(|| core.account_status().is_ok_and(|s| {
+        s.sync.error == Some(MailError::AuthFailed)
+    })));
+    core.wait_for_test_idle(mail_core::testing::TIMEOUT).unwrap();
+    assert_eq!(op_status(&core, &first), Some(OperationStatus::Queued));
+    assert_eq!(op_status(&core, &second), Some(OperationStatus::Queued));
+    assert_eq!(provider.writes().len(), 1);
+    core.stop();
+    drop(core);
+    let _ = std::fs::remove_dir_all(dir);
+}
