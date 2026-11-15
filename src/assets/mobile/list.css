@@ -5,7 +5,9 @@
 .app[data-layout="compact"] .mobile-context-slot:not(:empty) {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   height: 44px;
+  background: var(--surface-raised);
   overflow-x: auto;
   overflow-y: visible;
   scrollbar-width: none;
@@ -18,15 +20,22 @@
 .app[data-layout="compact"] .mobile-context-slot .split-nav {
   display: flex;
   align-items: center;
+  height: auto;
   gap: 20px;
+  margin: 0;
   min-width: max-content;
   padding-inline: 16px;
 }
 
 .app[data-layout="compact"] .mobile-context-slot .split-tab {
+  display: inline-flex;
+  align-items: center;
   min-width: 48px;
   min-height: 48px;
+  height: auto;
+  margin: 0;
   padding: 0;
+  line-height: 1.25;
   font-size: 1rem;
   font-weight: 400;
   color: var(--text-secondary);

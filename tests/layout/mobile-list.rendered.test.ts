@@ -142,7 +142,9 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       visible: boolean;
       slot: { top: number; bottom: number; left: number; right: number; width: number; height: number };
       nav: { top: number; bottom: number };
-      tabs: Array<{ width: number; height: number; weight: string; current: boolean }>;
+      background: string;
+      slotCenter: number;
+      tabs: Array<{ width: number; height: number; top: number; bottom: number; weight: string; current: boolean }>;
     }>(`(() => {
       const app = document.querySelector(${JSON.stringify(workspaceApp)});
       const box = element => {
@@ -155,6 +157,8 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
         visible: getComputedStyle(slot).display !== 'none' && slot.getClientRects().length > 0,
         slot: box(slot),
         nav: box(nav),
+        background: getComputedStyle(slot).backgroundColor,
+        slotCenter: box(slot).top + box(slot).height / 2,
         tabs: [...slot.querySelectorAll('.split-tab')].map(tab => ({
           ...box(tab),
           weight: getComputedStyle(tab).fontWeight,
@@ -168,12 +172,28 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     expect(pill.slot.bottom + 12).toBeCloseTo(pill.nav.top, 0);
     expect(pill.tabs.length).toBeGreaterThan(0);
     expect(pill.tabs.every(tab => tab.width >= 48 && tab.height >= 48)).toBe(true);
+    expect(pill.background).not.toBe('rgba(0, 0, 0, 0)');
+    expect(pill.tabs.every(tab => Math.abs((tab.top + tab.bottom) / 2 - pill.slotCenter) <= 2)).toBe(true);
     expect(pill.tabs.find(tab => tab.current)?.weight).toBe('600');
     expect(pill.nav.bottom).toBeLessThanOrEqual(height);
 
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="rail-drafts"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
     expect(await harness!.cdp.js(`getComputedStyle(document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('.mobile-context-slot')).display`)).toBe('none');
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-menu"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
+    await harness!.cdp.js(`[...document.querySelectorAll(${JSON.stringify(workspaceApp)} + ' .mobile-drawer-row')].find(row => row.textContent.trim() === 'Reminders').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 200))');
+    const reminderTabs = await harness!.cdp.js<Array<{ top: number; bottom: number; pillCenter: number }>>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const pill = app.querySelector('.mobile-context-slot').getBoundingClientRect();
+      return [...app.querySelectorAll('[role="tablist"] .split-tab')].map(tab => {
+        const rect = tab.getBoundingClientRect();
+        return { top: rect.top, bottom: rect.bottom, pillCenter: pill.top + pill.height / 2 };
+      });
+    })()`);
+    expect(reminderTabs.length).toBe(3);
+    expect(reminderTabs.every(tab => Math.abs((tab.top + tab.bottom) / 2 - tab.pillCenter) <= 2)).toBe(true);
   });
 
   it('swipes to Mark done and Undo, opens Remind, and preserves vertical scrolling', async () => {
@@ -215,6 +235,8 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     { width: 412, height: 915 },
     { width: 360, height: 800 },
   ])('selects on long press and keeps the selection pill clear at $width × $height', async ({ width, height }) => {
+    await harness!.cdp.cmd('Page.navigate', { url: harness!.appUrl });
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
     await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
       width,
       height,
@@ -224,7 +246,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       mobile: true,
     });
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-mail"]').click()`);
-    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 300))');
     const start = await harness!.cdp.js<{ x: number; y: number }>(`(() => {
       const row = document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="conversation-row-conv-01"]');
       const rect = row.getBoundingClientRect();
