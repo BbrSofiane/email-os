@@ -293,11 +293,7 @@
 }
 
 .app[data-layout="compact"] .selection-bar {
-  position: absolute;
   z-index: 19;
-  right: 16px;
-  bottom: calc(var(--mobile-bottom-bar-height) + 20px + var(--mobile-safe-bottom));
-  left: 16px;
   display: flex;
   flex-wrap: wrap;
   gap: 4px 12px;
@@ -307,10 +303,6 @@
   border: 1px solid var(--divider);
   border-radius: 24px;
   background: var(--surface-raised);
-}
-
-.app[data-layout="compact"]:has(.mobile-context-slot:not(:empty)) .selection-bar {
-  bottom: calc(var(--mobile-bottom-bar-height) + var(--mobile-context-slot-height) + 32px + var(--mobile-safe-bottom));
 }
 
 .app[data-layout="compact"] .selection-scope {

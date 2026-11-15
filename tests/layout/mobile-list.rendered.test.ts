@@ -283,6 +283,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       }>;
       bar: { top: number; bottom: number; left: number; right: number };
       bottomRegion: { top: number; left: number; right: number };
+      context: { top: number; bottom: number; visible: boolean };
       buttons: Array<{ width: number; height: number }>;
     }>(`(() => {
       const app = document.querySelector(${JSON.stringify(workspaceApp)});
@@ -293,6 +294,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       const bar = app.querySelector('[data-test="selection-bar"]');
       const checkbox = app.querySelector('[data-test="row-select-conv-01"]');
       const bottom = app.querySelector('[data-test="mobile-bottom-region"]');
+      const context = app.querySelector('.mobile-context-slot');
       const selectedRows = [...app.querySelectorAll('.inbox-row')].slice(0, 3).map(row => {
         const rowBox = element => {
           const rect = row.querySelector(element).getBoundingClientRect();
@@ -317,6 +319,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
         selectedRows,
         bar: box(bar),
         bottomRegion: box(bottom),
+        context: { ...box(context), visible: context.getClientRects().length > 0 && getComputedStyle(context).display !== 'none' },
         buttons: [...bar.querySelectorAll('button')].map(box),
       };
     })()`);
@@ -333,7 +336,9 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     expect(measure.bar.top).toBeGreaterThanOrEqual(0);
     expect(measure.bar.left).toBeGreaterThanOrEqual(measure.bottomRegion.left - 1);
     expect(measure.bar.right).toBeLessThanOrEqual(measure.bottomRegion.right + 1);
-    expect(measure.bar.bottom).toBeLessThanOrEqual(measure.bottomRegion.top - 11);
+    expect(measure.context.visible).toBe(true);
+    expect(measure.context.top - measure.bar.bottom).toBeGreaterThanOrEqual(8);
+    expect(measure.context.top - measure.bar.bottom).toBeLessThanOrEqual(16);
     expect(measure.buttons.every(button => button.width >= 48 && button.height >= 48)).toBe(true);
 
     const second = await harness!.cdp.js<{ x: number; y: number }>(`(() => {
