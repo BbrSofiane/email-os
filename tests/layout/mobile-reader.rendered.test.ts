@@ -29,7 +29,7 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
       app.querySelector('[data-test="conversation-row-conv-01"]').click();
     })()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
-    const geometry = await harness!.cdp.js<{ width: number; viewport: number; pane: { top: number; bottom: number }; subject: { top: number; bottom: number }; messages: { top: number; bottom: number }; bodySize: string | null; lastBottom: number; bottomTop: number; scrollHeight: number; clientHeight: number }>(`(() => {
+    const geometry = await harness!.cdp.js<{ width: number; viewport: number; pane: { top: number; bottom: number }; subject: { top: number; bottom: number }; messages: { top: number; bottom: number }; bodySize: string | null; lastBottom: number; bottomTop: number; actionTop: number; replyBar: { top: number; bottom: number; height: number } | null; messageMore: { width: number; height: number } | null; scrollHeight: number; clientHeight: number }>(`(() => {
       const app = document.querySelector(${JSON.stringify(appSelector)});
       const pane = app.querySelector('.reader-pane').getBoundingClientRect();
       const subject = app.querySelector('.reader-subject').getBoundingClientRect();
@@ -59,11 +59,11 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
     expect(geometry.bodySize).toBe('16px');
     expect(geometry.lastBottom).toBeLessThanOrEqual(geometry.bottomTop);
     expect(geometry.replyBar).not.toBeNull();
-    expect(geometry.replyBar.height).toBeGreaterThanOrEqual(48);
-    expect(geometry.replyBar.bottom).toBeLessThanOrEqual(geometry.actionTop);
+    expect(geometry.replyBar!.height).toBeGreaterThanOrEqual(48);
+    expect(geometry.replyBar!.bottom).toBeLessThanOrEqual(geometry.actionTop);
     expect(geometry.messageMore).not.toBeNull();
-    expect(geometry.messageMore.width).toBe(48);
-    expect(geometry.messageMore.height).toBe(48);
+    expect(geometry.messageMore!.width).toBe(48);
+    expect(geometry.messageMore!.height).toBe(48);
     await harness!.cdp.js(`(() => document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="reader-more"]').click())()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
     const sheet = await harness!.cdp.js<{ panel: { top: number; bottom: number }; viewport: number; rows: Array<{ width: number; height: number }>; toolbar: Array<{ name: string | null; width: number; height: number }> }>(`(() => {

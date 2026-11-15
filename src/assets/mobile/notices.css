@@ -1,1 +1,62 @@
 /* Compact outcome notices. */
+.app[data-layout="compact"] .list-dock .action-notice,
+.app[data-layout="compact"] .command-error,
+.app[data-layout="compact"] .reminder-confirmation {
+  box-sizing: border-box;
+  width: calc(100% - 32px);
+  min-height: 0;
+  margin: 0 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--divider);
+  border-radius: 14px;
+  background: var(--surface-raised);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  font-size: var(--type-body);
+  overflow-wrap: anywhere;
+}
+.app[data-layout="compact"] .list-dock .action-notice {
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+.app[data-layout="compact"] .list-dock .action-notice-empty {
+  display: none;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+}
+.app[data-layout="compact"] .action-notice-text {
+  flex: 1 1 180px;
+  min-width: 0;
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
+}
+.app[data-layout="compact"] .action-notice-label,
+.app[data-layout="compact"] .action-notice-status,
+.app[data-layout="compact"] .action-notice-expired {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.app[data-layout="compact"] .action-notice-undo {
+  flex: none;
+  margin-left: 0;
+}
+.app[data-layout="compact"] .action-notice-undo button {
+  min-height: 48px;
+  padding: 0 8px;
+  color: var(--focus-accent);
+  font-weight: 600;
+}
+.app[data-layout="compact"] .action-notice-hint {
+  display: none;
+}
+.app[data-layout="compact"] .command-error,
+.app[data-layout="compact"] .reminder-confirmation {
+  display: block;
+  color: var(--danger);
+}
+.app[data-layout="compact"] .reminder-confirmation {
+  color: var(--text-secondary);
+}
