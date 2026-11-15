@@ -1,0 +1,36 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7FXHQYGVHR18WQR2T8HR56X",
+  "strategy": "manual-commit",
+  "branch": "mobile/p1-foundations",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "docs/development.md",
+    "mise.toml",
+    "src-tauri/gen/android/app/src/main/java/dev/exedev/emailos/androidfixture/MainActivity.kt",
+    "src-tauri/gen/android/app/src/main/res/values-night/themes.xml",
+    "src-tauri/gen/android/app/src/main/res/values/themes.xml",
+    "src/App.vue",
+    "src/lib/android-back.test.ts",
+    "src/lib/android-back.ts",
+    "tests/layout/mobile-shell.rendered.test.ts",
+    "tests/rendered/chromium.ts",
+    "tests/support/node-env.d.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 0,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 0,
+    "output_tokens": 0,
+    "api_call_count": 0
+  }
+}
