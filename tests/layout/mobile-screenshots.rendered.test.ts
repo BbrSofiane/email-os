@@ -111,8 +111,9 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await longPressFirstRow();
     await shot('selection');
 
+    await freshInbox();
     await click('.inbox-row');
-    await waitFor(`app.querySelector('[data-test="reader-archive-toggle"]')`, 'reader archive action');
+    await waitFor(`app.querySelector('[data-test="mobile-reader-actions"] [data-test="reader-archive-toggle"]')`, 'reader archive action');
     await click('[data-test="reader-archive-toggle"]');
     await waitFor(`app.querySelector('[data-test="action-notice-undo"]')`, 'inbox Undo action');
     await click('[data-test="reader-close"]');
@@ -144,7 +145,7 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await shot('reader-more-sheet');
     await freshInbox();
     await click('.inbox-row');
-    await waitFor(`app.querySelector('[data-test="reader-archive-toggle"]')`, 'reader Mark done action');
+    await waitFor(`app.querySelector('[data-test="mobile-reader-actions"] [data-test="reader-archive-toggle"]')`, 'reader Mark done action');
     await click('[data-test="reader-archive-toggle"]');
     await waitFor(`app.querySelector('[data-test="action-notice-undo"]')`, 'reader Undo action');
     await shot('reader-undo-toast');
@@ -170,6 +171,7 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await shot('compose');
     await viewport(PHONE_VIEWPORT.width, 500, true);
     await shot('compose-keyboard');
+    await viewport(PHONE_VIEWPORT.width, PHONE_VIEWPORT.height, true);
     await click('[data-test="compose-sheet-close"]');
 
     await freshInbox();

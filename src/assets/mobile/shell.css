@@ -138,7 +138,7 @@
   justify-content: center;
   border: 1px solid var(--divider);
   border-radius: 24px;
-  background: var(--surface);
+  background: var(--surface-raised);
   pointer-events: auto;
 }
 
@@ -156,7 +156,7 @@
   justify-content: space-around;
   border: 1px solid var(--divider);
   border-radius: 28px;
-  background: var(--surface);
+  background: var(--surface-raised);
   pointer-events: auto;
 }
 
@@ -170,6 +170,14 @@
   border-radius: 24px;
   background: transparent;
   color: inherit;
+}
+
+.app[data-layout="compact"] .mobile-account {
+  width: var(--mobile-touch-target);
+  height: var(--mobile-touch-target);
+  border: 1px solid var(--divider);
+  border-radius: 50%;
+  background: var(--surface-raised);
 }
 
 .app[data-layout="compact"] .mobile-actions-host {
@@ -258,7 +266,7 @@
   justify-content: space-around;
   border: 1px solid var(--divider);
   border-radius: 28px;
-  background: var(--surface);
+  background: var(--surface-raised);
   pointer-events: auto;
 }
 

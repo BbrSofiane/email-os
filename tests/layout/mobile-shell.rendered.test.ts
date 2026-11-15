@@ -25,6 +25,11 @@ interface InboxGeometry {
   railDisplay: string | null;
   preview: Rect;
   previewButtonOverlaps: boolean[];
+  pillStyles: [
+    { background: string; borderColor: string; borderWidth: string },
+    { background: string; borderColor: string; borderWidth: string },
+    { background: string; borderColor: string; borderWidth: string },
+  ];
 }
 
 interface ReaderGeometry {
@@ -37,6 +42,12 @@ interface ReaderGeometry {
   navigationGone: boolean;
   lastMessageBottom: number;
   bottomTop: number;
+  actionBackground: string;
+  actionBorderColor: string;
+  actionBorderWidth: string;
+  contextBackground: string;
+  contextBorderColor: string;
+  contextBorderWidth: string;
 }
 
 const chromePath = process.env.EMAIL_OS_RENDERED_LAYOUT_CHROME ?? '';
@@ -92,6 +103,11 @@ async function inboxGeometry(harness: RenderedHarness): Promise<InboxGeometry> {
       railDisplay: getComputedStyle(app.querySelector('.rail')).display,
       preview: rect(preview),
       previewButtonOverlaps: previewButtons.map(button => overlaps(rect(preview), rect(button))),
+      pillStyles: ['[data-test="mobile-context-slot"]', '.mobile-navigation', '[data-test="mobile-account"]'].map(selector => {
+        const element = app.querySelector(selector);
+        const style = getComputedStyle(element);
+        return { background: style.backgroundColor, borderColor: style.borderTopColor, borderWidth: style.borderTopWidth };
+      }),
     };
   })()`);
 }
@@ -132,6 +148,12 @@ describe.skipIf(!chromePath)('mobile frame geometry (real Chromium)', () => {
     expect(geometry.bottomRegion.top).toBeGreaterThanOrEqual(0);
     expect(geometry.bottomRegion.bottom).toBeLessThanOrEqual(height);
     expect(geometry.railDisplay).toBe('none');
+    for (const style of geometry.pillStyles) {
+      expect(style.background).not.toBe('rgba(0, 0, 0, 0)');
+      expect(style.background).toBe(geometry.pillStyles[0].background);
+      expect(style.borderColor).toBe(geometry.pillStyles[0].borderColor);
+      expect(style.borderWidth).toBe(geometry.pillStyles[0].borderWidth);
+    }
     expect(geometry.preview.width).toBeGreaterThan(0);
     expect(geometry.preview.height).toBeGreaterThan(0);
     expect(geometry.previewButtonOverlaps.every(overlap => !overlap)).toBe(true);
@@ -190,6 +212,12 @@ describe.skipIf(!chromePath)('mobile frame geometry (real Chromium)', () => {
         navigationGone: app.querySelector('[aria-label="Primary"]') === null,
         lastMessageBottom: lastMessage.getBoundingClientRect().bottom,
         bottomTop: app.querySelector('[data-test="mobile-bottom-region"]').getBoundingClientRect().top,
+        actionBackground: getComputedStyle(actions).backgroundColor,
+        actionBorderColor: getComputedStyle(actions).borderTopColor,
+        actionBorderWidth: getComputedStyle(actions).borderTopWidth,
+        contextBackground: getComputedStyle(app.querySelector('[data-test="mobile-context-slot"]')).backgroundColor,
+        contextBorderColor: getComputedStyle(app.querySelector('[data-test="mobile-context-slot"]')).borderTopColor,
+        contextBorderWidth: getComputedStyle(app.querySelector('[data-test="mobile-context-slot"]')).borderTopWidth,
       };
     })()`);
 
@@ -197,6 +225,10 @@ describe.skipIf(!chromePath)('mobile frame geometry (real Chromium)', () => {
     expect(reader.closeAtLeft).toBe(true);
     expect(reader.actionContainer).toBe(true);
     expect(reader.navigationGone).toBe(true);
+    expect(reader.actionBackground).not.toBe('rgba(0, 0, 0, 0)');
+    expect(reader.actionBackground).toBe(reader.contextBackground);
+    expect(reader.actionBorderColor).toBe(reader.contextBorderColor);
+    expect(reader.actionBorderWidth).toBe(reader.contextBorderWidth);
     expect(reader.overlap).toBe(false);
     expect(reader.lastMessageBottom).toBeLessThan(reader.bottomTop);
 

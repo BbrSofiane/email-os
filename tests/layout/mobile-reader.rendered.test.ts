@@ -30,7 +30,7 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
       app.querySelector('[data-test="conversation-row-conv-01"]').click();
     })()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
-    const geometry = await harness!.cdp.js<{ width: number; viewport: number; pane: { top: number; bottom: number }; subject: { top: number; bottom: number; left: number }; statusLeft: number | null; firstSenderLeft: number; messages: { top: number; bottom: number }; bodySize: string | null; lastBottom: number; bottomTop: number; actionTop: number; replyBar: { top: number; bottom: number; height: number } | null; messageMore: { width: number; height: number } | null; headerLines: Array<{ senderCenter: number; senderRight: number; dateCenter: number; dateLeft: number }>; scrollHeight: number; clientHeight: number }>(`(() => {
+    const geometry = await harness!.cdp.js<{ width: number; viewport: number; pane: { top: number; bottom: number }; subject: { top: number; bottom: number; left: number }; statusLeft: number | null; readStateLeft: number | null; firstSenderLeft: number; messages: { top: number; bottom: number }; bodySize: string | null; lastBottom: number; bottomTop: number; actionTop: number; replyBar: { top: number; bottom: number; height: number } | null; messageMore: { width: number; height: number } | null; headerLines: Array<{ senderCenter: number; senderRight: number; dateCenter: number; dateLeft: number }>; scrollHeight: number; clientHeight: number }>(`(() => {
       const app = document.querySelector(${JSON.stringify(appSelector)});
       const pane = app.querySelector('.reader-pane').getBoundingClientRect();
       const subject = app.querySelector('.reader-subject').getBoundingClientRect();
@@ -47,6 +47,7 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
         pane: { top: pane.top, bottom: pane.bottom },
         subject: { top: subject.top, bottom: subject.bottom, left: subject.left },
         statusLeft: statusText ? statusText.getBoundingClientRect().left : null,
+        readStateLeft: app.querySelector('[data-test="reader-read-state"]')?.getBoundingClientRect().left ?? null,
         firstSenderLeft: firstSender.left,
         messages: { top: messages.top, bottom: messages.bottom },
         bodySize: body ? getComputedStyle(body).fontSize : null,
@@ -68,6 +69,9 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
     expect(geometry.subject.top).toBeGreaterThanOrEqual(geometry.pane.top);
     if (geometry.statusLeft !== null) {
       expect(Math.abs(geometry.subject.left - geometry.statusLeft)).toBeLessThanOrEqual(1);
+    }
+    if (geometry.readStateLeft !== null) {
+      expect(Math.abs(geometry.subject.left - geometry.readStateLeft)).toBeLessThanOrEqual(1);
     }
     expect(Math.abs(geometry.subject.left - geometry.firstSenderLeft)).toBeLessThanOrEqual(1);
     expect(geometry.messages.bottom).toBeLessThanOrEqual(geometry.pane.bottom + geometry.scrollHeight);
@@ -159,11 +163,15 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
       app.querySelector('[data-test="reader-archive-toggle"]').click();
     })()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 500))');
-    const notice = await harness!.cdp.js<{ rect: { top: number; bottom: number; left: number; right: number }; statusWidth: number; statusClient: number; undoHeight: number; replyTop: number; actionTop: number }>(`(() => {
+    const notice = await harness!.cdp.js<{ rect: { top: number; bottom: number; left: number; right: number }; statusWidth: number; statusClient: number; undoHeight: number; replyTop: number; actionTop: number; visibleKeycaps: number }>(`(() => {
       const app = document.querySelector(${JSON.stringify(appSelector)});
       const rect = element => { const box = element.getBoundingClientRect(); return { top: box.top, bottom: box.bottom, left: box.left, right: box.right }; };
       const toast = app.querySelector('[data-test="action-notice"]');
       const status = toast.querySelector('[data-test="action-notice-status"]');
+      const visibleKeycaps = [...app.querySelectorAll('.list-dock kbd')].filter(keycap => {
+        const box = keycap.getBoundingClientRect();
+        return box.width > 0 && box.height > 0;
+      }).length;
       return {
         rect: rect(toast),
         statusWidth: status.scrollWidth,
@@ -171,6 +179,7 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
         undoHeight: toast.querySelector('[data-test="action-notice-undo"]')?.getBoundingClientRect().height ?? 0,
         replyTop: app.querySelector('[data-test="mobile-reply-bar"]')?.getBoundingClientRect().top ?? innerHeight,
         actionTop: app.querySelector('[data-test="mobile-reader-actions"]').getBoundingClientRect().top,
+        visibleKeycaps,
       };
     })()`);
     expect(notice.rect.top).toBeGreaterThanOrEqual(0);
@@ -178,6 +187,7 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
     expect(notice.rect.bottom).toBeLessThanOrEqual(notice.actionTop);
     expect(notice.statusWidth).toBeLessThanOrEqual(notice.statusClient);
     expect(notice.undoHeight).toBeGreaterThanOrEqual(48);
+    expect(notice.visibleKeycaps).toBe(0);
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="action-notice-undo"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 400))');
     const restored = await harness!.cdp.js(`document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="action-notice-status"]')?.textContent ?? ''`);
