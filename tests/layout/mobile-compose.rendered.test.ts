@@ -69,6 +69,12 @@ describe.skipIf(!chromePath)('compact compose geometry', () => {
     expect(short.header.top).toBeGreaterThanOrEqual(0);
     expect(short.footer.bottom).toBeLessThanOrEqual(500);
     expect(short.body.height).toBeGreaterThanOrEqual(120);
+    await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
+      width, height: 420, screenWidth: width, screenHeight: 420,
+      deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor, mobile: true,
+    });
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
+    await expectKeyboardLayout(harness!, 420);
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="compose-sheet-close"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 400))');
     await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
@@ -122,8 +128,70 @@ describe.skipIf(!chromePath)('compact compose geometry', () => {
     expect(overlay.textHit).toBe(false);
     expect(overlay.bodyHeight).toBeGreaterThanOrEqual(200);
     expect(overlay.titleLeft).toBeLessThan(overlay.closeLeft);
+    await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
+      width, height: 420, screenWidth: width, screenHeight: 420,
+      deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor, mobile: true,
+    });
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
+    await expectKeyboardLayout(harness!, 420);
   });
 });
+
+async function expectKeyboardLayout(harness: RenderedHarness, height: number): Promise<void> {
+  const layout = await harness.cdp.js<{
+    viewport: number;
+    app: { top: number; bottom: number };
+    heading: { top: number; bottom: number };
+    status: { top: number; bottom: number };
+    body: { top: number; bottom: number; height: number };
+    footer: { top: number; bottom: number };
+    footerButtons: Array<{ top: number; bottom: number; height: number }>;
+    footerHits: Array<{ insideSheet: boolean; dockHit: boolean }>;
+  }>(`(() => {
+    const app = document.querySelector(${JSON.stringify(appSelector)});
+    const sheet = app.querySelector('[data-test="compose-card"], [data-test="reply-composer"]');
+    const editor = sheet.querySelector('[data-test="composer"]');
+    const box = element => {
+      const rect = element.getBoundingClientRect();
+      return { top: rect.top, bottom: rect.bottom, height: rect.height };
+    };
+    const footer = sheet.querySelector('.composer-footer');
+    const buttons = [...footer.querySelectorAll('[data-test="close-composer"], [data-test="discard-draft"]')];
+    return {
+      viewport: innerHeight,
+      app: box(app),
+      heading: box(sheet.querySelector('.composer-heading h2')),
+      status: box(editor.querySelector('[data-test="draft-status"]')),
+      body: box(editor.querySelector('.field-body')),
+      footer: box(footer),
+      footerButtons: buttons.map(box),
+      footerHits: buttons.map(button => {
+        const rect = button.getBoundingClientRect();
+        const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        return { insideSheet: !!hit && sheet.contains(hit), dockHit: !!hit && !!hit.closest('.list-dock') };
+      }),
+    };
+  })()`);
+  expect(layout.viewport).toBe(height);
+  expect(layout.app.top).toBeGreaterThanOrEqual(0);
+  expect(layout.app.bottom).toBeLessThanOrEqual(height);
+  expect(layout.heading.top).toBeGreaterThanOrEqual(0);
+  expect(layout.status.top).toBeGreaterThanOrEqual(layout.heading.bottom);
+  expect(layout.body.top).toBeGreaterThanOrEqual(layout.status.bottom);
+  expect(layout.body.height).toBeGreaterThanOrEqual(80);
+  expect(layout.footer.top).toBeGreaterThanOrEqual(layout.body.bottom);
+  expect(layout.footer.bottom).toBeLessThanOrEqual(height);
+  expect(layout.footerButtons).toHaveLength(2);
+  for (const button of layout.footerButtons) {
+    expect(button.top).toBeGreaterThanOrEqual(0);
+    expect(button.bottom).toBeLessThanOrEqual(height);
+    expect(button.height).toBeGreaterThanOrEqual(48);
+  }
+  for (const hit of layout.footerHits) {
+    expect(hit.insideSheet).toBe(true);
+    expect(hit.dockHit).toBe(false);
+  }
+}
 
 async function geometry(harness: RenderedHarness): Promise<{
   appHeight: number;

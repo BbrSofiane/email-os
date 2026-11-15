@@ -25,11 +25,22 @@
   background: var(--surface);
 }
 .app[data-layout="compact"] .compose-card .composer-top {
+  display: flex;
   flex: none;
+  flex-direction: column;
   min-height: 56px;
   align-items: center;
   justify-content: flex-start;
+  gap: 0;
   border-bottom: 1px solid var(--rule);
+}
+.app[data-layout="compact"] .compose-card .composer-top-main {
+  width: 100%;
+  flex: none;
+}
+.app[data-layout="compact"] .compose-card .composer-status-group {
+  width: 100%;
+  min-height: 48px;
 }
 .app[data-layout="compact"] .compose-card .composer-heading h2 {
   margin: 0;
@@ -160,10 +171,22 @@
   min-height: 0;
 }
 .app[data-layout="compact"] .reply-composer.compact-compose-sheet .composer-top {
+  display: flex;
   flex: none;
+  flex-direction: column;
   min-height: 56px;
   align-items: center;
+  justify-content: flex-start;
+  gap: 0;
   border-bottom: 1px solid var(--rule);
+}
+.app[data-layout="compact"] .reply-composer.compact-compose-sheet .composer-top-main {
+  width: 100%;
+  flex: none;
+}
+.app[data-layout="compact"] .reply-composer.compact-compose-sheet .composer-status-group {
+  width: 100%;
+  min-height: 48px;
 }
 .app[data-layout="compact"] .reply-composer.compact-compose-sheet .composer-heading {
   display: flex;
