@@ -275,6 +275,12 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     const measure = await harness!.cdp.js<{
       selected: boolean;
       checkbox: { width: number; height: number; opacity: string };
+      selectedRows: Array<{
+        checkbox: { left: number; right: number; top: number; bottom: number; width: number };
+        visualWidth: number;
+        contentOverlaps: boolean[];
+        unreadVisible: boolean;
+      }>;
       bar: { top: number; bottom: number; left: number; right: number };
       bottomRegion: { top: number; left: number; right: number };
       buttons: Array<{ width: number; height: number }>;
@@ -287,9 +293,28 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       const bar = app.querySelector('[data-test="selection-bar"]');
       const checkbox = app.querySelector('[data-test="row-select-conv-01"]');
       const bottom = app.querySelector('[data-test="mobile-bottom-region"]');
+      const selectedRows = [...app.querySelectorAll('.inbox-row')].slice(0, 3).map(row => {
+        const rowBox = element => {
+          const rect = row.querySelector(element).getBoundingClientRect();
+          return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width };
+        };
+        const input = row.querySelector('.row-select');
+        const checkboxBox = rowBox('.row-select');
+        const overlaps = selector => {
+          const content = rowBox(selector);
+          return checkboxBox.left < content.right && checkboxBox.right > content.left && checkboxBox.top < content.bottom && checkboxBox.bottom > content.top;
+        };
+        return {
+          checkbox: checkboxBox,
+          visualWidth: Number.parseFloat(getComputedStyle(input, '::before').width),
+          contentOverlaps: ['.row-sender', '.row-subject', '.row-preview'].map(overlaps),
+          unreadVisible: row.querySelector('[data-test="row-unread"]')?.getClientRects().length > 0,
+        };
+      });
       return {
         selected: app.querySelector('[data-test="selection-count"]')?.textContent.includes('1 selected') ?? false,
         checkbox: { ...box(checkbox), opacity: getComputedStyle(checkbox).opacity },
+        selectedRows,
         bar: box(bar),
         bottomRegion: box(bottom),
         buttons: [...bar.querySelectorAll('button')].map(box),
@@ -299,6 +324,12 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     expect(measure.checkbox.width).toBeGreaterThanOrEqual(48);
     expect(measure.checkbox.height).toBeGreaterThanOrEqual(48);
     expect(measure.checkbox.opacity).toBe('1');
+    expect(measure.selectedRows).toHaveLength(3);
+    for (const row of measure.selectedRows) {
+      expect(row.contentOverlaps).toEqual([false, false, false]);
+      expect(row.visualWidth).toBeLessThanOrEqual(24);
+      expect(row.unreadVisible).toBe(false);
+    }
     expect(measure.bar.top).toBeGreaterThanOrEqual(0);
     expect(measure.bar.left).toBeGreaterThanOrEqual(measure.bottomRegion.left - 1);
     expect(measure.bar.right).toBeLessThanOrEqual(measure.bottomRegion.right + 1);
