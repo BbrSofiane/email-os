@@ -131,7 +131,10 @@ For the device smoke check, build the APK and install it on an attached Android
 device or emulator. Use device interaction tools to launch the app and verify:
 
 1. The fixture inbox renders and a conversation opens.
-2. Mark done works and returns to the inbox.
+2. Mark done works. The reader moves to a neighbouring conversation (it does not
+   return to the inbox); open the inbox to confirm the count dropped. Tap Undo within
+   a couple of seconds and confirm the row returns. Mark read/unread (reader button or
+   row menu) and Star/Unstar (command palette) also work.
 3. Gmail controls and Files and links are absent.
 4. Compose a draft, wait for “Saved locally · not sent”, then close the app
    process.
@@ -143,7 +146,21 @@ device or emulator. Use device interaction tools to launch the app and verify:
 Record the device/API version, APK path, persistence results, and screenshots.
 These steps passed on 2026-11-14 on an Android 15 x86_64 emulator, using APK
 SHA-256 `161befa9ca00e1a8dfb8bf97ff3685415ad4d55821ea0a4fcfa6d15fc5762708`.
-The keyboard stayed hidden during draft entry, so IME layout remains unverified.
+They were re-run on 2026-11-15 with the unified-fixture CI APK
+(`19ca1a225f4c9820b82d0a5d4aa0e4c8d10e8d8700582c8f6c40f1465db4197c`); results and
+open findings are in [current-status.md](current-status.md). The keyboard stayed
+hidden during draft entry, so IME layout remains unverified.
+
+Legacy reset check (when changing the transition): install an APK from before ADR
+0002, archive a conversation and save a draft, then run the new APK over the same
+profile. `adb install -r` is refused when the two APKs are signed with different
+debug keys (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`, as between the CI runs used on
+2026-11-15). In that case tar `fixture-profile/` out with `adb exec-out run-as
+dev.exedev.emailos.androidfixture tar -cf - fixture-profile`, uninstall, install the
+new APK without launching it, and extract the tarball back with `adb shell run-as ...
+tar -xf -`. Confirm the reset screen appears before any mailbox, closing the app
+there changes nothing, accepting it shows 16 Inbox rows with the draft intact, and
+`fixture-profile/backups/` holds one backup while `mail.db` is gone.
 
 If an older APK fails during startup with a profile-lock storage error, build
 and install the current version. Android uses nonblocking `flock` for profile
