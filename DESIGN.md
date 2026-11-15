@@ -532,3 +532,7 @@ Viewport breakpoint: 719px maximum. The palette and system sans remain unchanged
 | `--mobile-safe-*` | `env(safe-area-inset-*, 0px)` | Native device insets |
 
 Compact bars use the existing `--surface` (#292826), existing divider and focus colors, and existing glyphs. Android keeps padded WebView content and colors the native system bars to `--surface` with light icons.
+
+The compact reader subject is 1.375rem/600 with 8px above, 12px below, and 20px/16px horizontal insets. Reader metadata uses `--mobile-type-meta`. Messages use 48px minimum collapsed rows; expanded body text is 1rem/1.5, monospace 0.875rem. The action pill uses evenly spaced 48px targets with 24px glyphs. The reply context pill has a 48px button; the action sheet uses 52px rows, 24px glyphs, 16px top corners and 16px safe-area-aware bottom padding.
+
+Compact outcome notices are full-width pills with 16px side margins, 12px/16px padding, 14px corners and a soft `0 4px 16px rgba(0, 0, 0, 0.35)` shadow. Undo is at least 48px high. Compose and reply use an app-sized absolute sheet, a 56px header, 48px field rows and footer actions, and a flexible body textarea at 1rem/1.5. Safe-area padding stays inside the sheet; focused fields follow visual viewport changes.
