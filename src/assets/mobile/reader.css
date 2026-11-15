@@ -87,3 +87,31 @@
 .app[data-layout="compact"] .message-reply {
   display: none;
 }
+.app[data-layout="compact"] .mobile-context-slot:has(.mobile-reply-bar) {
+  display: flex;
+  width: 100%;
+  height: 44px;
+  align-items: center;
+  padding: 0 8px;
+  border: 1px solid var(--divider);
+  border-radius: 24px;
+  background: var(--surface);
+  pointer-events: auto;
+}
+.app[data-layout="compact"] .mobile-reply-bar {
+  display: flex;
+  width: 100%;
+  min-height: 48px;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  color: var(--text-secondary);
+  text-align: left;
+  font-size: 1rem;
+  background: transparent;
+}
+.app[data-layout="compact"] .mobile-reply-bar svg {
+  width: 24px;
+  height: 24px;
+  flex: none;
+}

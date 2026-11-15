@@ -63,6 +63,7 @@ const props = defineProps<{
   /** Header slots the quiet icon actions are teleported into; inline when null. */
   backHost?: HTMLElement | null;
   actionsHost?: HTMLElement | null;
+  contextHost?: HTMLElement | null;
   /** J/K availability; undefined hides the previous/next chevrons. */
   canMovePrev?: boolean;
   canMoveNext?: boolean;
@@ -960,6 +961,21 @@ defineExpose({
         <button v-if="props.canMoveNext !== undefined" type="button" class="header-glyph" data-test="reader-next" title="Next conversation — J" :disabled="!props.canMoveNext" @click="emit('move', 1)"><HeaderGlyph name="next" /><span class="visually-hidden">Next conversation (J)</span></button>
         <button v-if="props.compact" type="button" class="header-glyph" data-test="reader-more" aria-label="More" aria-haspopup="dialog" @click="emit('more')"><HeaderGlyph name="menu" /><span class="visually-hidden">More actions</span></button>
       </div>
+    </Teleport>
+    <Teleport :to="props.contextHost ?? undefined" :disabled="!props.contextHost">
+      <button
+        v-if="props.compact && props.contextHost && !props.replyDocked && !props.browsingOnly"
+        type="button"
+        class="mobile-reply-bar"
+        data-test="mobile-reply-bar"
+        :title="replyTitle"
+        :aria-describedby="actionable ? replySourceId : undefined"
+        :disabled="!canPrepareReply()"
+        @click="prepareReply"
+      >
+        <HeaderGlyph name="reply" />
+        <span>Reply</span>
+      </button>
     </Teleport>
 
     <div class="reader-scroll" ref="scrollerEl" data-test="reader-scroll" @wheel.passive="stopFollowing" @touchmove.passive="stopFollowing" @pointerdown="stopFollowing">

@@ -2477,6 +2477,7 @@ const searchSyntaxEditHint = computed(() =>
               :selection-context="mailbox.context.value"
               :back-host="layoutMode === 'compact' ? mobileTopBar?.backHost : readerBackHost"
               :actions-host="layoutMode === 'compact' ? mobileBottomBar?.actionsHost : readerActionsHost"
+              :context-host="layoutMode === 'compact' ? mobileBottomBar?.contextHost : null"
               :can-move-prev="canMoveReaderPrev"
               :can-move-next="canMoveReaderNext"
               :client="props.client"

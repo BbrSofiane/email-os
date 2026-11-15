@@ -68,4 +68,36 @@ describe('ReaderView compact toolbar', () => {
     wrapper = mountReaderView(conversationOf(), { compact: true, starShown: false });
     expect(wrapper.find('[data-test="reader-star"]').exists()).toBe(false);
   });
+
+  it('teleports the reply bar to the context host and uses the shared reply path', async () => {
+    const host = document.createElement('div');
+    document.body.append(host);
+    const conversation = conversationOf();
+    wrapper = mountReaderView(conversation, { compact: true, contextHost: host });
+    const reply = host.querySelector<HTMLButtonElement>('[data-test="mobile-reply-bar"]');
+    expect(reply).not.toBeNull();
+    expect(reply?.disabled).toBe(false);
+    expect(reply?.getAttribute('aria-describedby')).toBeTruthy();
+    reply?.click();
+    expect(wrapper.emitted('prepareReply')?.[0]).toEqual([{
+      kind: 'reply',
+      conversation: conversation.ref,
+      sourceMessageId: 'm1',
+    }]);
+    host.remove();
+  });
+
+  it('hides the reply bar without a host, while reply is docked, or in browsing-only mode', () => {
+    const host = document.createElement('div');
+    document.body.append(host);
+    wrapper = mountReaderView(conversationOf(), { compact: true });
+    expect(document.querySelector('[data-test="mobile-reply-bar"]')).toBeNull();
+    wrapper.unmount();
+    wrapper = mountReaderView(conversationOf(), { compact: true, contextHost: host, replyDocked: true });
+    expect(host.querySelector('[data-test="mobile-reply-bar"]')).toBeNull();
+    wrapper.unmount();
+    wrapper = mountReaderView(conversationOf(), { compact: true, contextHost: host, browsingOnly: true });
+    expect(host.querySelector('[data-test="mobile-reply-bar"]')).toBeNull();
+    host.remove();
+  });
 });
