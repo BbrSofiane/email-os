@@ -3764,7 +3764,10 @@ mod synthetic_session_tests {
 
     fn queued_pair(
         core: &GmailCore,
-    ) -> (Vec<String>, impl Fn(&str) -> Option<crate::dto::OperationStatus> + '_) {
+    ) -> (
+        Vec<String>,
+        impl Fn(&str) -> Option<crate::dto::OperationStatus> + '_,
+    ) {
         let receipt = core
             .set_archived_group(&crate::testing::synthetic::archive_group(
                 "grp-1",

@@ -817,7 +817,8 @@ fn definite_rejection_does_not_stop_the_queue_and_leaves_the_account_healthy() {
         .unwrap();
     assert_eq!(failed.last_error, Some(MailError::ProviderRejected));
     assert_eq!(provider.writes().len(), 2);
-    core.wait_for_test_idle(mail_core::testing::TIMEOUT).unwrap();
+    core.wait_for_test_idle(mail_core::testing::TIMEOUT)
+        .unwrap();
     let status = core.account_status().unwrap();
     assert_eq!(status.sync.state, mail_core::gmail::types::SyncState::Idle);
     assert_eq!(status.sync.error, None);
@@ -829,8 +830,9 @@ fn definite_rejection_does_not_stop_the_queue_and_leaves_the_account_healthy() {
             request_id: "retry-first".to_string(),
         })
         .unwrap();
-    assert!(until(|| op_status(&core, &retry.operation_id)
-        == Some(OperationStatus::Confirmed)));
+    assert!(until(
+        || op_status(&core, &retry.operation_id) == Some(OperationStatus::Confirmed)
+    ));
     core.stop();
     drop(core);
     let _ = std::fs::remove_dir_all(dir);
@@ -844,10 +846,12 @@ fn every_write_rejected_fails_one_by_one_without_pausing() {
     wait_ready(&core);
     provider.set_apply_plan(ApplyPlan::Error(MailError::ProviderRejected));
     let (first, second) = queue_two_writes_then_release(&core);
-    assert!(until(|| op_status(&core, &first) == Some(OperationStatus::Failed)
+    assert!(until(|| op_status(&core, &first)
+        == Some(OperationStatus::Failed)
         && op_status(&core, &second) == Some(OperationStatus::Failed)));
     assert_eq!(provider.writes().len(), 2, "each write was attempted once");
-    core.wait_for_test_idle(mail_core::testing::TIMEOUT).unwrap();
+    core.wait_for_test_idle(mail_core::testing::TIMEOUT)
+        .unwrap();
     assert_eq!(core.account_status().unwrap().sync.error, None);
     core.stop();
     drop(core);
@@ -871,15 +875,22 @@ fn transient_failure_still_stops_the_pass_and_backs_off() {
             s.sync.state == mail_core::gmail::types::SyncState::Error
                 && s.sync.error == Some(error.clone())
         })));
-        core.wait_for_test_idle(mail_core::testing::TIMEOUT).unwrap();
+        core.wait_for_test_idle(mail_core::testing::TIMEOUT)
+            .unwrap();
         assert_eq!(op_status(&core, &first), Some(OperationStatus::Queued));
         assert_eq!(op_status(&core, &second), Some(OperationStatus::Queued));
-        assert_eq!(provider.writes().len(), 1, "the pass stopped after one call");
+        assert_eq!(
+            provider.writes().len(),
+            1,
+            "the pass stopped after one call"
+        );
 
         // The retry beat (a sync completing) re-arms both writes.
         mail_core::testing::request_sync_when_idle(&core);
-        assert!(until(|| op_status(&core, &first) == Some(OperationStatus::Confirmed)
-            && op_status(&core, &second) == Some(OperationStatus::Confirmed)));
+        assert!(until(|| op_status(&core, &first)
+            == Some(OperationStatus::Confirmed)
+            && op_status(&core, &second)
+                == Some(OperationStatus::Confirmed)));
         core.stop();
         drop(core);
         let _ = std::fs::remove_dir_all(dir);
@@ -894,10 +905,11 @@ fn account_wide_credential_failure_requeues_instead_of_failing_the_write() {
     wait_ready(&core);
     provider.set_apply_plan(ApplyPlan::ErrorThenSuccess(MailError::AuthFailed));
     let (first, second) = queue_two_writes_then_release(&core);
-    assert!(until(|| core.account_status().is_ok_and(|s| {
-        s.sync.error == Some(MailError::AuthFailed)
-    })));
-    core.wait_for_test_idle(mail_core::testing::TIMEOUT).unwrap();
+    assert!(until(|| core
+        .account_status()
+        .is_ok_and(|s| { s.sync.error == Some(MailError::AuthFailed) })));
+    core.wait_for_test_idle(mail_core::testing::TIMEOUT)
+        .unwrap();
     assert_eq!(op_status(&core, &first), Some(OperationStatus::Queued));
     assert_eq!(op_status(&core, &second), Some(OperationStatus::Queued));
     assert_eq!(provider.writes().len(), 1);
