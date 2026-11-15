@@ -73,10 +73,7 @@ async function inboxGeometry(harness: RenderedHarness): Promise<InboxGeometry> {
     const preview = app.querySelector('[data-test="preview-banner"]');
     const previewButtons = [...app.querySelectorAll('button')].filter(button => button !== preview && !preview.contains(button));
     const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
-    // Row internals keep the regular column layout until the list phase
-    // restyles them; the scroller clips them, so they are not frame overflow.
     const overflowElements = [...app.querySelectorAll('*')]
-      .filter(element => !element.closest('.inbox-row'))
       .map(element => ({ selector: element.tagName.toLowerCase() + (element.className?.baseVal ?? element.className ? '.' + String(element.className?.baseVal ?? element.className).trim().replace(/\\s+/g, '.') : ''), right: element.getBoundingClientRect().right }))
       .filter(item => item.right > innerWidth + 1);
     return {

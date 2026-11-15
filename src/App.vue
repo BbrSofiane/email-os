@@ -2061,16 +2061,19 @@ const searchSyntaxEditHint = computed(() =>
                rendered tab is active (Cached Done, Starred, Search, reader). -->
           <span ref="readerBackHost" class="reader-back-host"></span>
           <h1 class="app-title" :class="{ 'visually-hidden': activeTabShown || layoutMode === 'compact' }" data-test="inbox-title">{{ contextTitle }}<template v-if="switchAccountLabel"><span class="app-title-account"> — {{ accountStatus?.account?.emailAddress }}</span></template></h1>
+          <Teleport :to="mobileBottomBar?.contextHost" :disabled="layoutMode !== 'compact' || !mobileBottomBar?.contextHost">
           <nav v-if="inboxSplitsShown" class="split-nav" aria-label="Inbox splits" :title="splitCoverageShown ? SPLIT_COVERAGE : undefined">
             <button type="button" class="split-tab" data-test="split-inbox" :aria-current="mailbox.context.value === 'inbox' ? 'page' : undefined" :aria-describedby="splitCoverageShown ? `${domIdPrefix}split-coverage` : undefined" @click="navigateContext('inbox')"><span class="split-label">Inbox</span> <span v-if="splitBadge(mailbox.inboxTotal.value)" class="split-count">{{ splitBadge(mailbox.inboxTotal.value) }}</span></button>
             <button v-if="savedTabVisible" type="button" class="split-tab" data-test="split-saved" :title="mailbox.savedSplit.value?.name" :aria-current="mailbox.context.value === 'saved' ? 'page' : undefined" :aria-describedby="splitCoverageShown ? `${domIdPrefix}split-coverage` : undefined" @click="navigateContext('saved')"><span class="split-label">{{ mailbox.savedSplit.value?.name }}</span> <span v-if="splitBadge(mailbox.savedTotal.value)" class="split-count">{{ splitBadge(mailbox.savedTotal.value) }}</span></button>
           </nav>
+          </Teleport>
           <!-- Reminders: the list's sections take the split-tab slot (Pending,
                Returned, History, each with the count of its loaded rows once
                a read has succeeded: before that a count would say 0 for
                "not read"),
                after the context heading, which stays visible so the tabs are
                named. -->
+          <Teleport :to="mobileBottomBar?.contextHost" :disabled="layoutMode !== 'compact' || !mobileBottomBar?.contextHost">
           <div v-if="splitNavShown && remindersContext" class="split-nav" role="tablist" aria-label="Reminder membership" @keydown="reminders.onTabKeydown">
             <button
               v-for="tab in REMINDER_TABS"
@@ -2086,6 +2089,7 @@ const searchSyntaxEditHint = computed(() =>
               @click="reminders.destination.value = tab.id"
             ><span class="split-label">{{ tab.label }}</span> <span v-if="reminders.loadedOnce.value" class="split-count">{{ reminders.counts.value[tab.id] }}</span> <span v-if="reminders.loadedOnce.value && tab.id === 'pending' && reminders.attentionTotal.value > 0" class="split-count">· {{ reminders.attentionTotal.value }} {{ reminders.attentionTotal.value === 1 ? 'needs' : 'need' }} attention</span></button>
           </div>
+          </Teleport>
           <!-- Coverage qualifies the counts, so it lives on them: the tabs'
                accessible description and the nav's hover title. -->
           <p v-if="splitCoverageShown" :id="`${domIdPrefix}split-coverage`" class="visually-hidden" role="note" data-test="split-coverage">{{ SPLIT_COVERAGE }}</p>
