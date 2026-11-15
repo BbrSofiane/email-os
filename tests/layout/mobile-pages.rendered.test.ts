@@ -38,4 +38,20 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
     expect(geometry.button.top).toBeGreaterThanOrEqual(geometry.intro.bottom);
     expect(geometry.button.height).toBeGreaterThanOrEqual(48);
   });
+
+  it('stacks the Reminders intro and gives its refresh control a touch target', async () => {
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-menu"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
+    await harness!.cdp.js(`[...document.querySelectorAll(${JSON.stringify(workspaceApp)} + ' .mobile-drawer-row')].find(row => row.textContent.trim() === 'Reminders').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 200))');
+    const geometry = await harness!.cdp.js<{ intro: DOMRectReadOnly; button: DOMRectReadOnly }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const intro = app.querySelector('[data-test="reminders-coverage"]').getBoundingClientRect();
+      const button = app.querySelector('[data-test="reminders-refresh"]').getBoundingClientRect();
+      return { intro: { top: intro.top, bottom: intro.bottom, width: intro.width }, button: { top: button.top, height: button.height } };
+    })()`);
+    expect(geometry.button.top).toBeGreaterThanOrEqual(geometry.intro.bottom);
+    expect(geometry.button.height).toBeGreaterThanOrEqual(48);
+    expect(geometry.intro.width).toBeGreaterThan(300);
+  });
 });
