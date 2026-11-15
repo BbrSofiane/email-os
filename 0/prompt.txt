@@ -1,0 +1,45 @@
+You are fixing a known divergence in the Email OS Gmail worker (called KD-1 in the repo). I coordinate the maintenance programme from thread `c07c9c54-0efc-4c81-81d7-dc1548e15e3c`; I run the full end-to-end gate and merge. You open the PR and do not merge.
+
+## The problem
+When Gmail definitely rejects one queued mailbox write, the worker ends its pass in sync-error backoff, so the other queued writes (for example the other members of a group archive) stay `queued` until the next retry tick: about a minute, and up to 10 minutes after repeated failures (`MAX_BACKOFF_INTERVAL` in `crates/mail-core/src/gmail/sync.rs`). The browser fake drains them immediately. The owner has decided: **the worker should keep draining past a write that was definitely rejected, and keep backing off when the account or the network is the problem.**
+
+## Where it is
+- `crates/mail-core/src/gmail/operations.rs`, `run_one`. It already separates the cases:
+  - transient or account-wide errors (`NetworkUnavailable`, `ProviderUnavailable`, `InvalidProviderResponse`, `RateLimited`, `AuthRequired`, `PermissionRequired`, `SecretsUnavailable`) requeue the operation and return `Err`. **Keep this: stop and back off.**
+  - the catch-all arm calls `store.fail_operation` and then also returns `Err`. This is the definite, operation-scoped rejection. **This is the one to change**, so the pass continues to the next queued write.
+  - `StorageUnavailable` halts. Keep.
+  - the account-mismatch branch (`profile.account_id != record.account_id`) is account-wide. Keep it stopping.
+- `crates/mail-core/src/gmail/sync.rs` around the `PassAction::Mutations` branch turns `run_one`'s result into `PassOutcome::{Complete, Idle, SyncError, Halt, Cancelled}`.
+- `crates/mail-core/tests/contract_scenarios.rs`: `KNOWN_DIVERGENCES` has two KD-1 entries (profiles `gmail` and `synthetic`) for scenario `group-member-failure-does-not-stop-siblings`. The runner requires listed scenarios to fail, so both entries must go once this works.
+- `sync.rs` test `synthetic_tick_rearms_queued_writes_after_a_definite_failure` asserts the old behaviour (sibling stays `Queued` until the tick).
+
+## What I need you to decide and show
+Read the code before choosing the shape of the change. I think the smallest correct change is for the definite-rejection arm to finish as a completed pass, but check these and say what you found:
+1. What does the user lose if that failure no longer becomes a `SyncError`? The failed operation must still show as failed with its error and stay retryable from Activity. If the account status line currently relies on the `SyncError` to tell the user anything they would otherwise miss, say so and keep that information reachable.
+2. Backoff state: a completed pass resets `st.backoff`. Is it right that a definite rejection, which proves the provider answered, clears backoff built up by earlier transient failures? Decide and justify in the PR.
+3. Uncertain-outcome reconciliation (`reconcile`, `finish_unlanded`) has its own failure paths. Do not change them unless the same stall exists there; if it does, report it instead of widening this PR.
+4. Which errors actually reach the catch-all arm today? List them in the PR so the owner can see nothing account-wide is hiding there. If one of them is really account-wide, move it to the stop-and-back-off arm.
+
+## Tests (write the failing ones first)
+- Definite rejection of the first of two queued writes: the second is `Confirmed` without any tick, for both the `gmail` and `synthetic` profiles.
+- Transient failure of the first: the second stays `Queued` and the pass ends in backoff (the behaviour that must not change).
+- The review finding behind `synthetic_tick_rearms_queued_writes_after_a_definite_failure` was "with discovery off, the periodic tick must still re-arm queued writes". That property still matters after a transient failure. Keep a test for it, driven by a transient failure, if the synthetic provider or the shared fake can inject one; if neither can, say so rather than dropping the coverage silently.
+- Remove both `KNOWN_DIVERGENCES` entries; the contract scenario must now pass on both Rust profiles.
+
+## Docs
+Update what describes KD-1 as current behaviour: `docs/development.md` (the "today only KD-1" sentence), `docs/current-architecture.md` if it names it, and any other mention you find by searching for `KD-1` and "definite failure".
+
+## Tell the owner the cost
+In the PR description, state plainly: if Gmail rejects every write, the queue now fails one by one without pausing; each failed write stays retryable from Activity.
+
+## Rules
+- Share the cargo target: `export CARGO_TARGET_DIR=/home/exedev/email-os/target`. Run one heavy command at a time. The shared target can serve stale results from other checkouts: `touch crates/mail-core/src/lib.rs src-tauri/src/lib.rs src-tauri/src/main.rs` before lint, and `touch crates/mail-core/src/bin/generate-types.rs crates/mail-core/src/lib.rs` before `mise run check:contract`.
+- Before the PR: `mise run check:all` green. Report test counts (main today: mail-core 366, native 18, frontend 1,888 in 104 files).
+- No wire-contract change is expected. If `check:contract` shows a diff after the touch above, stop and tell me.
+- Privacy rule: never log subjects, addresses, bodies, tokens, URLs with ids, or SQL with bound values.
+- Synthetic fixtures only. No real accounts, credentials or Google network.
+- Never touch the root checkout `/home/exedev/email-os` except `git fetch`. Work in your worktree.
+- PR to `main` on `BbrSofiane/email-os` (the remote is a proxy URL: pass `-R BbrSofiane/email-os` to `gh`). Commit at checkpoints so nothing is lost if you are cut off.
+
+## Report
+End with: the shape you chose and why, answers to the four questions above, tests added or changed, test counts, anything not verified, and the PR URL.
