@@ -32,6 +32,7 @@ import { bodyNeedsMonospace, splitMessageBody, type MessageBodyParts } from '../
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, useId, watch } from 'vue';
 import HeaderGlyph from './HeaderGlyph.vue';
 import MessageAttachments from './MessageAttachments.vue';
+import MobileActionSheet from './mobile/MobileActionSheet.vue';
 import { useAttachmentTransfer } from '../composables/useAttachmentTransfer';
 import type { Address, Conversation, ConversationRef, DraftSource, MailClient, MailError, Message } from '../lib/ipc/client';
 import type { AttachmentDescriptor } from '../lib/ipc/generated';
@@ -106,6 +107,9 @@ const emit = defineEmits<{
 const container = ref<HTMLElement | null>(null);
 const scrollerEl = ref<HTMLElement | null>(null);
 const messageEls = new Map<string, HTMLElement>();
+const messageMenu = ref<Message | null>(null);
+const copyUnavailable = ref(false);
+const copyAnnouncement = ref('');
 
 /** Selected-scope toolbar mode: nonzero selection dispatches to the whole
  * selection with explicit count labels (§3.3); null keeps single behavior. */
@@ -195,17 +199,28 @@ const readerStatus = computed(() => {
   return null;
 });
 
-function prepareReply(): void {
+function prepareReply(sourceOverride?: Message): void {
   // Reply always targets the explicitly displayed latest message; focusing an
   // older message never changes the reply contract.
   const conversation = props.conversation;
-  const source = latestMessage.value;
+  const source = sourceOverride ?? latestMessage.value;
   if (!conversation || !source || replyBlockedReason.value) return;
   emit('prepareReply', {
     kind: 'reply',
     conversation: { ...conversation.ref },
     sourceMessageId: source.id,
   });
+}
+
+async function copyMessageText(message: Message): Promise<void> {
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+    await navigator.clipboard.writeText(message.bodyText);
+    copyAnnouncement.value = 'Copied';
+    messageMenu.value = null;
+  } catch {
+    copyUnavailable.value = true;
+  }
 }
 
 function describeError(error: MailError): string {
@@ -949,7 +964,7 @@ defineExpose({
           :title="replyTitle"
           :aria-describedby="actionable ? replySourceId : undefined"
           :disabled="!actionable || !!replyBlockedReason"
-          @click="prepareReply"
+          @click="() => prepareReply()"
         ><HeaderGlyph name="reply" /><span class="visually-hidden">Reply</span></button>
         <span
           v-if="!props.browsingOnly && actionable && latestMessage"
@@ -971,7 +986,7 @@ defineExpose({
         :title="replyTitle"
         :aria-describedby="actionable ? replySourceId : undefined"
         :disabled="!canPrepareReply()"
-        @click="prepareReply"
+        @click="() => prepareReply()"
       >
         <HeaderGlyph name="reply" />
         <span>Reply</span>
@@ -1118,13 +1133,35 @@ defineExpose({
                 aria-label="Reply to latest message"
                 :title="replyTitle"
                 :disabled="!actionable || !!replyBlockedReason"
-                @click="prepareReply"
+                @click="() => prepareReply()"
               >
                 <svg class="message-reply-glyph" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
                   <path d="M6.5 3.5L2.75 7l3.75 3.5" />
                   <path d="M3 7h5.5a4.5 4.5 0 014.5 4.5V13" />
                 </svg>
               </button>
+              <button
+                v-if="props.compact && isExpanded(message)"
+                type="button"
+                class="message-more"
+                data-test="message-more"
+                aria-label="Message actions"
+                aria-haspopup="dialog"
+                @click="messageMenu = message; copyUnavailable = false"
+              >
+                <HeaderGlyph name="menu" />
+              </button>
+              <MobileActionSheet
+                v-if="messageMenu?.id === message.id"
+                :title="message.from.displayName ?? message.from.mailbox"
+                :items="[
+                  { id: 'reply', label: 'Reply', glyph: 'reply', disabled: !canPrepareReply(), disabledReason: replyBlockedReason ?? undefined },
+                  { id: 'collapse', label: 'Collapse', glyph: 'back' },
+                  { id: 'copy', label: 'Copy text', glyph: 'files', disabled: copyUnavailable, disabledReason: copyUnavailable ? 'Copy unavailable' : undefined, keepOpenOnChoose: true },
+                ]"
+                @close="messageMenu = null"
+                @choose="(id) => { if (id === 'reply') prepareReply(message); else if (id === 'collapse') { toggleMessage(message); messageMenu = null; } else void copyMessageText(message); }"
+              />
             </div>
             <details
               class="message-details"
@@ -1217,6 +1254,7 @@ defineExpose({
           </li>
         </ol>
       </template>
+      <span v-if="copyAnnouncement" class="visually-hidden" role="status" aria-live="polite">{{ copyAnnouncement }}</span>
     </div>
   </article>
 </template>

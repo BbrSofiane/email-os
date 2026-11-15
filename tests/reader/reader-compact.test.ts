@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mountReaderView } from '../support/reader.mount';
 import type { Conversation } from '../../src/lib/ipc/client';
 
@@ -99,5 +99,25 @@ describe('ReaderView compact toolbar', () => {
     wrapper = mountReaderView(conversationOf(), { compact: true, contextHost: host, browsingOnly: true });
     expect(host.querySelector('[data-test="mobile-reply-bar"]')).toBeNull();
     host.remove();
+  });
+
+  it('opens the expanded message menu and replies to that message', async () => {
+    wrapper = mountReaderView(conversationOf(), { compact: true });
+    await wrapper.get('[data-test="message-more"]').trigger('click');
+    expect(wrapper.get('[role="dialog"]').attributes('aria-label')).toBe('Reader');
+    await wrapper.get('[role="dialog"] button').trigger('click');
+    expect(wrapper.emitted('prepareReply')?.[0]?.[0]).toMatchObject({ sourceMessageId: 'm1' });
+  });
+
+  it('copies plain text and leaves an honest disabled failure reason when clipboard rejects', async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error('denied'));
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    wrapper = mountReaderView(conversationOf(), { compact: true });
+    await wrapper.get('[data-test="message-more"]').trigger('click');
+    await wrapper.get('[role="dialog"] button:last-of-type').trigger('click');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(writeText).toHaveBeenCalledWith('Body');
+    expect(wrapper.get('[role="dialog"] button:last-of-type').attributes('aria-label')).toContain('Copy unavailable');
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(true);
   });
 });

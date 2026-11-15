@@ -115,3 +115,16 @@
   height: 24px;
   flex: none;
 }
+.app[data-layout="compact"] .message-header .message-more {
+  display: grid;
+  flex: none;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  padding: 0;
+  background: transparent;
+}
+.app[data-layout="compact"] .message-header .message-more svg {
+  width: 24px;
+  height: 24px;
+}

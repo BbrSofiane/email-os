@@ -9,6 +9,7 @@ export interface MobileActionSheetItem {
   disabled?: boolean;
   disabledReason?: string;
   group?: string;
+  keepOpenOnChoose?: boolean;
 }
 
 const props = defineProps<{ title: string; items: MobileActionSheetItem[] }>();
@@ -66,7 +67,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
             :disabled="item.disabled"
             :title="item.disabledReason"
             :aria-label="item.disabledReason ? `${item.label}. ${item.disabledReason}` : item.label"
-            @click="emit('choose', item.id); close()"
+            @click="emit('choose', item.id); if (!item.keepOpenOnChoose) close()"
           >
             <HeaderGlyph :name="item.glyph" />
             <span>{{ item.label }}</span>
