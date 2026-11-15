@@ -13,6 +13,15 @@ describe('compact CSS contract', () => {
     }
   });
 
+  it('styles compact outcome notices as wrapped pills with a touch sized Undo', () => {
+    expect(mobileCss['notices.css']).toContain('.app[data-layout="compact"] .list-dock .action-notice');
+    expect(mobileCss['notices.css']).toContain('width: calc(100% - 32px)');
+    expect(mobileCss['notices.css']).toContain('min-height: 48px');
+    expect(mobileCss['notices.css']).toContain('.action-notice-hint');
+    expect(mobileCss['notices.css']).toContain('.command-error');
+    expect(mobileCss['notices.css']).toContain('.reminder-confirmation');
+  });
+
   it('defines every documented compact token at its documented value', () => {
     const declared = Object.values(mobileCss).join('\n');
     const tokens: Record<string, string> = {

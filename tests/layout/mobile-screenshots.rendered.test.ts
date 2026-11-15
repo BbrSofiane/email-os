@@ -111,6 +111,14 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await longPressFirstRow();
     await shot('selection');
 
+    await click('.inbox-row');
+    await waitFor(`app.querySelector('[data-test="reader-archive-toggle"]')`, 'reader archive action');
+    await click('[data-test="reader-archive-toggle"]');
+    await waitFor(`app.querySelector('[data-test="action-notice-undo"]')`, 'inbox Undo action');
+    await click('[data-test="reader-close"]');
+    await shot('inbox-undo-toast');
+    await freshInbox();
+
     await harness!.cdp.js(`(() => {
       const list = document.querySelector(${JSON.stringify(activeApp)}).querySelector('.inbox-scroll');
       list.scrollTop = list.scrollHeight;
@@ -130,6 +138,16 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
       scroller.scrollTop = scroller.scrollHeight;
     })()`);
     await shot('reader-scrolled-end');
+    await click('[data-test="message-more"]');
+    await shot('reader-message-sheet');
+    await click('[data-test="reader-more"]');
+    await shot('reader-more-sheet');
+    await freshInbox();
+    await click('.inbox-row');
+    await waitFor(`app.querySelector('[data-test="reader-archive-toggle"]')`, 'reader Mark done action');
+    await click('[data-test="reader-archive-toggle"]');
+    await waitFor(`app.querySelector('[data-test="action-notice-undo"]')`, 'reader Undo action');
+    await shot('reader-undo-toast');
   }, 120_000);
 
   it('captures the overlays and secondary surfaces', async () => {
@@ -150,6 +168,16 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await freshInbox();
     await click('[data-test="mobile-compose"]');
     await shot('compose');
+    await viewport(PHONE_VIEWPORT.width, 500, true);
+    await shot('compose-keyboard');
+    await click('[data-test="compose-sheet-close"]');
+
+    await freshInbox();
+    await click('.inbox-row');
+    await waitFor(`app.querySelector('[data-test="mobile-reply-bar"]')`, 'reader reply bar');
+    await click('[data-test="mobile-reply-bar"]');
+    await waitFor(`app.querySelector('[data-test="reply-composer"]')`, 'reply composer');
+    await shot('reply');
 
     await freshInbox();
     await click('[data-test="mobile-search"]');

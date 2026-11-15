@@ -32,6 +32,7 @@ import { bodyNeedsMonospace, splitMessageBody, type MessageBodyParts } from '../
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, useId, watch } from 'vue';
 import HeaderGlyph from './HeaderGlyph.vue';
 import MessageAttachments from './MessageAttachments.vue';
+import MobileActionSheet from './mobile/MobileActionSheet.vue';
 import { useAttachmentTransfer } from '../composables/useAttachmentTransfer';
 import type { Address, Conversation, ConversationRef, DraftSource, MailClient, MailError, Message } from '../lib/ipc/client';
 import type { AttachmentDescriptor } from '../lib/ipc/generated';
@@ -63,6 +64,8 @@ const props = defineProps<{
   /** Header slots the quiet icon actions are teleported into; inline when null. */
   backHost?: HTMLElement | null;
   actionsHost?: HTMLElement | null;
+  contextHost?: HTMLElement | null;
+  sheetHost?: HTMLElement | null;
   /** J/K availability; undefined hides the previous/next chevrons. */
   canMovePrev?: boolean;
   canMoveNext?: boolean;
@@ -74,6 +77,10 @@ const props = defineProps<{
   android?: boolean;
   /** A reply composer is docked under the thread: keep the message being answered (the latest) in view. */
   replyDocked?: boolean;
+  compact?: boolean;
+  starShown?: boolean;
+  starEnabled?: boolean;
+  starred?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -94,11 +101,17 @@ const emit = defineEmits<{
       | { ref: ConversationRef; messageId: string; displayName: string | null; mailbox: string }
       | null,
   ];
+  star: [];
+  more: [];
+  messageSheetOpen: [open: boolean];
 }>();
 
 const container = ref<HTMLElement | null>(null);
 const scrollerEl = ref<HTMLElement | null>(null);
 const messageEls = new Map<string, HTMLElement>();
+const messageMenu = ref<Message | null>(null);
+const copyUnavailable = ref(false);
+const copyAnnouncement = ref('');
 
 /** Selected-scope toolbar mode: nonzero selection dispatches to the whole
  * selection with explicit count labels (§3.3); null keeps single behavior. */
@@ -188,17 +201,35 @@ const readerStatus = computed(() => {
   return null;
 });
 
-function prepareReply(): void {
+function prepareReply(sourceOverride?: Message): void {
   // Reply always targets the explicitly displayed latest message; focusing an
   // older message never changes the reply contract.
   const conversation = props.conversation;
-  const source = latestMessage.value;
+  const source = sourceOverride ?? latestMessage.value;
   if (!conversation || !source || replyBlockedReason.value) return;
   emit('prepareReply', {
     kind: 'reply',
     conversation: { ...conversation.ref },
     sourceMessageId: source.id,
   });
+}
+
+async function copyMessageText(message: Message): Promise<void> {
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+    await navigator.clipboard.writeText(message.bodyText);
+    copyAnnouncement.value = 'Copied';
+    messageMenu.value = null;
+    emit('messageSheetOpen', false);
+  } catch {
+    copyUnavailable.value = true;
+  }
+}
+
+function closeMessageSheet(): void {
+  if (!messageMenu.value) return;
+  messageMenu.value = null;
+  emit('messageSheetOpen', false);
 }
 
 function describeError(error: MailError): string {
@@ -884,6 +915,7 @@ function focusActiveMessage(): void {
 
 defineExpose({
   canPrepareReply,
+  closeMessageSheet,
   prepareReply,
   focusActiveMessage,
   moveMessage,
@@ -910,6 +942,7 @@ defineExpose({
     </Teleport>
     <Teleport :to="props.actionsHost ?? undefined" :disabled="!props.actionsHost">
       <div class="reader-actions" data-test="reader-toolbar">
+        <button v-if="props.compact && props.starShown" type="button" class="header-glyph" data-test="reader-star" :aria-label="props.starred ? 'Unstar' : 'Star'" :title="props.starred ? 'Unstar' : 'Star'" :disabled="!props.starEnabled" @click="emit('star')"><HeaderGlyph name="star" :filled="props.starred" /><span class="visually-hidden">{{ props.starred ? 'Unstar' : 'Star' }}</span></button>
         <button v-if="actionsShown && props.reminderEnabled && !bulkScope && props.conversation?.isInInbox" type="button" class="header-glyph" data-test="reader-remind" title="Remind me on this device" :disabled="!actionable || props.commandInFlight" @click="emit('remind')"><HeaderGlyph name="remind" /><span class="visually-hidden">Remind me on this device</span></button>
         <button
           v-if="actionsShown && !props.readOnly && !bulkScope"
@@ -922,7 +955,7 @@ defineExpose({
           @click="props.conversation?.isInInbox === false ? emit('unarchive') : emit('archive')"
         ><HeaderGlyph name="done" /><span class="visually-hidden">{{ props.conversation?.isInInbox === false ? 'Mark not done' : 'Mark done (E)' }}</span></button>
         <button
-          v-if="actionsShown && props.showReadControls && !bulkScope && (!props.conversation || props.conversation.isRead !== undefined)"
+          v-if="!props.compact && actionsShown && props.showReadControls && !bulkScope && (!props.conversation || props.conversation.isRead !== undefined)"
           type="button"
           class="header-glyph"
           :class="{ 'header-glyph-held': held }"
@@ -931,9 +964,9 @@ defineExpose({
           :disabled="!actionable || props.commandInFlight || props.navigationUnavailable"
           @click="emit('setRead', !props.conversation?.isRead)"
         ><HeaderGlyph :name="props.conversation?.isRead ? 'unread' : 'read'" /><span class="visually-hidden">Mark {{ props.conversation?.isRead ? 'unread' : 'read' }}</span></button>
-        <button v-if="actionsShown && !props.android" type="button" class="header-glyph" :class="{ 'header-glyph-held': held }" data-test="files-links" title="Files and links — ⌘O" :disabled="!actionable" @click="emit('attachments', $event.currentTarget as HTMLElement)"><HeaderGlyph name="files" /><span class="visually-hidden">Files and links (⌘O)</span></button>
+        <button v-if="!props.compact && actionsShown && !props.android" type="button" class="header-glyph" :class="{ 'header-glyph-held': held }" data-test="files-links" title="Files and links — ⌘O" :disabled="!actionable" @click="emit('attachments', $event.currentTarget as HTMLElement)"><HeaderGlyph name="files" /><span class="visually-hidden">Files and links (⌘O)</span></button>
         <button
-          v-if="actionsShown && !props.browsingOnly"
+          v-if="!props.compact && actionsShown && !props.browsingOnly"
           type="button"
           class="header-glyph"
           :class="{ 'header-glyph-held': held }"
@@ -941,7 +974,7 @@ defineExpose({
           :title="replyTitle"
           :aria-describedby="actionable ? replySourceId : undefined"
           :disabled="!actionable || !!replyBlockedReason"
-          @click="prepareReply"
+          @click="() => prepareReply()"
         ><HeaderGlyph name="reply" /><span class="visually-hidden">Reply</span></button>
         <span
           v-if="!props.browsingOnly && actionable && latestMessage"
@@ -951,7 +984,23 @@ defineExpose({
         >{{ replyTargetLabel }}</span>
         <button v-if="props.canMovePrev !== undefined" type="button" class="header-glyph" data-test="reader-prev" title="Previous conversation — K" :disabled="!props.canMovePrev" @click="emit('move', -1)"><HeaderGlyph name="prev" /><span class="visually-hidden">Previous conversation (K)</span></button>
         <button v-if="props.canMoveNext !== undefined" type="button" class="header-glyph" data-test="reader-next" title="Next conversation — J" :disabled="!props.canMoveNext" @click="emit('move', 1)"><HeaderGlyph name="next" /><span class="visually-hidden">Next conversation (J)</span></button>
+        <button v-if="props.compact" type="button" class="header-glyph" data-test="reader-more" aria-label="More" aria-haspopup="dialog" @click="emit('more')"><HeaderGlyph name="more" /><span class="visually-hidden">More actions</span></button>
       </div>
+    </Teleport>
+    <Teleport :to="props.contextHost ?? undefined" :disabled="!props.contextHost">
+      <button
+        v-if="props.compact && props.contextHost && !props.replyDocked && !props.browsingOnly"
+        type="button"
+        class="mobile-reply-bar"
+        data-test="mobile-reply-bar"
+        :title="replyTitle"
+        :aria-describedby="actionable ? replySourceId : undefined"
+        :disabled="!canPrepareReply()"
+        @click="() => prepareReply()"
+      >
+        <HeaderGlyph name="reply" />
+        <span>Reply</span>
+      </button>
     </Teleport>
 
     <div class="reader-scroll" ref="scrollerEl" data-test="reader-scroll" @wheel.passive="stopFollowing" @touchmove.passive="stopFollowing" @pointerdown="stopFollowing">
@@ -1094,12 +1143,23 @@ defineExpose({
                 aria-label="Reply to latest message"
                 :title="replyTitle"
                 :disabled="!actionable || !!replyBlockedReason"
-                @click="prepareReply"
+                @click="() => prepareReply()"
               >
                 <svg class="message-reply-glyph" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
                   <path d="M6.5 3.5L2.75 7l3.75 3.5" />
                   <path d="M3 7h5.5a4.5 4.5 0 014.5 4.5V13" />
                 </svg>
+              </button>
+              <button
+                v-if="props.compact && isExpanded(message)"
+                type="button"
+                class="message-more"
+                data-test="message-more"
+                aria-label="Message actions"
+                aria-haspopup="dialog"
+                @click="messageMenu = message; copyUnavailable = false; emit('messageSheetOpen', true)"
+              >
+                <HeaderGlyph name="more" />
               </button>
             </div>
             <details
@@ -1193,6 +1253,20 @@ defineExpose({
           </li>
         </ol>
       </template>
+      <span v-if="copyAnnouncement" class="visually-hidden" role="status" aria-live="polite">{{ copyAnnouncement }}</span>
     </div>
+    <Teleport :to="props.sheetHost ?? undefined" :disabled="!props.sheetHost">
+      <MobileActionSheet
+        v-if="messageMenu"
+        :title="messageMenu.from.displayName ?? messageMenu.from.mailbox"
+        :items="[
+          { id: 'reply', label: 'Reply', glyph: 'reply', disabled: !canPrepareReply(), disabledReason: replyBlockedReason ?? undefined },
+          { id: 'collapse', label: 'Collapse', glyph: 'back' },
+          { id: 'copy', label: 'Copy text', glyph: 'files', disabled: copyUnavailable, disabledReason: copyUnavailable ? 'Copy unavailable' : undefined, keepOpenOnChoose: true },
+        ]"
+        @close="messageMenu = null; emit('messageSheetOpen', false)"
+        @choose="(id) => { const target = messageMenu; if (!target) return; if (id === 'reply') prepareReply(target); else if (id === 'collapse') toggleMessage(target); else void copyMessageText(target); }"
+      />
+    </Teleport>
   </article>
 </template>

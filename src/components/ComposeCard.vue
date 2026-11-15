@@ -16,6 +16,7 @@ import { computed, useId } from 'vue';
 import type { DraftContent, DraftRef, DraftSource, MailError } from '../lib/ipc/client';
 import { replyNoticeLine } from '../lib/reply-context';
 import DraftEditorCore from './DraftEditorCore.vue';
+import HeaderGlyph from './HeaderGlyph.vue';
 
 const props = defineProps<{
   /** Reply drafts only: the human-readable target shown as "Reply draft to {label}"; null hides it. */
@@ -42,6 +43,7 @@ const props = defineProps<{
   recoveryRequired: boolean;
   canCancelReplyPreparation: boolean;
   closeError: string | null;
+  compact?: boolean;
 }>();
 
 /** The card's accessible name: "New Message", or the reply draft's own title. */
@@ -116,6 +118,7 @@ function onSetField(field: keyof DraftContent, value: string): void {
     >
       <template #header>
         <header class="composer-heading">
+          <button v-if="props.compact" type="button" class="compose-sheet-close" data-test="compose-sheet-close" aria-label="Save and close" @click="emit('closeEditor')"><HeaderGlyph name="x" /></button>
           <h2 v-if="source?.kind === 'reply' && recipientLabel">Reply draft <span class="reply-to">to <span data-test="draft-recipient-label">{{ recipientLabel }}</span></span></h2>
           <h2 v-else-if="source?.kind === 'reply'">Reply draft</h2>
           <h2 v-else>New Message</h2>

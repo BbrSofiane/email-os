@@ -1,0 +1,142 @@
+/* Compact reader layout. */
+.app[data-layout="compact"] .reader-pane {
+  padding-top: 0;
+}
+.app[data-layout="compact"] .reader-scroll {
+  padding-inline: 20px 16px;
+  padding-block-end: 16px;
+}
+.app[data-layout="compact"] .reader-subject {
+  max-height: 4.5em;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-size: var(--mobile-type-subject);
+  font-weight: 600;
+  line-height: 1.5;
+  margin: 8px 0 12px;
+}
+.app[data-layout="compact"] .reader-meta-row,
+.app[data-layout="compact"] .reader-context-note,
+.app[data-layout="compact"] .reader-status {
+  min-width: 0;
+  margin-inline: 20px 16px;
+  font-size: var(--mobile-type-meta);
+  overflow-wrap: anywhere;
+}
+.app[data-layout="compact"] .reader-scroll .reader-meta-row {
+  margin-inline: 0;
+}
+.app[data-layout="compact"] .reader-meta-row button {
+  min-height: 48px;
+}
+.app[data-layout="compact"] .messages {
+  margin: 0 -16px 0 -20px;
+}
+.app[data-layout="compact"] .message {
+  min-width: 0;
+  margin-bottom: 0;
+  padding: 4px 16px 8px 20px;
+  overflow-wrap: anywhere;
+}
+.app[data-layout="compact"] .message-header {
+  min-width: 0;
+}
+.app[data-layout="compact"] .message-toggle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  gap: 0 8px;
+  min-height: 48px;
+  font-size: 1rem;
+}
+.app[data-layout="compact"] .message-toggle .message-from {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.app[data-layout="compact"] .message-toggle .message-time {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
+}
+.app[data-layout="compact"] .message-toggle[aria-expanded='false'] .message-snippet {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.app[data-layout="compact"] .message-toggle[aria-expanded='false'] .message-from {
+  grid-column: 1;
+}
+.app[data-layout="compact"] .message-toggle[aria-expanded='true'] .message-to {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: block;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.app[data-layout="compact"] .message-body {
+  max-width: none;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+.app[data-layout="compact"] .message-body.message-body-mono {
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+.app[data-layout="compact"] .message-attachments,
+.app[data-layout="compact"] .message-attachment {
+  flex-wrap: wrap;
+}
+.app[data-layout="compact"] .message-attachments button,
+.app[data-layout="compact"] .message-attachment button {
+  min-height: 48px;
+}
+.app[data-layout="compact"] .message-reply {
+  display: none;
+}
+.app[data-layout="compact"] .mobile-context-slot:has(.mobile-reply-bar) {
+  display: flex;
+  width: 100%;
+  height: 48px;
+  align-items: center;
+  padding: 0 8px;
+  margin-bottom: 12px;
+  border: 1px solid var(--divider);
+  border-radius: 24px;
+  background: var(--surface);
+  pointer-events: auto;
+}
+.app[data-layout="compact"] .mobile-reply-bar {
+  display: flex;
+  width: 100%;
+  min-height: 48px;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  color: var(--text-secondary);
+  text-align: left;
+  font-size: 1rem;
+  background: transparent;
+}
+.app[data-layout="compact"] .mobile-reply-bar svg {
+  width: 24px;
+  height: 24px;
+  flex: none;
+}
+.app[data-layout="compact"] .message-header .message-more {
+  display: grid;
+  flex: none;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  padding: 0;
+  background: transparent;
+}
+.app[data-layout="compact"] .message-header .message-more svg {
+  width: 24px;
+  height: 24px;
+}

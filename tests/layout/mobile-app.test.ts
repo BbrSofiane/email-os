@@ -115,4 +115,21 @@ describe('App compact and regular frame', () => {
     expect(wrapper.get('[data-test="reader-toolbar"]').element.closest('.app-header')).toBeTruthy();
     wrapper.unmount();
   });
+
+  it('opens compact compose as a local editor with status, footer, and protected Escape close', async () => {
+    stubLayout(true);
+    const fake = createBrowserFakeMailClient();
+    const wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+    await wrapper.get('[data-test="mobile-compose"]').trigger('click');
+    await flushFakeClientAndVueUpdates(fake);
+    expect(wrapper.find('[data-test="compose-card"]').exists()).toBe(true);
+    expect(wrapper.get('[data-test="draft-status"]').text()).toContain('not sent');
+    expect(wrapper.find('[data-test="close-composer"]').text()).toContain('Save and close');
+    expect(wrapper.find('[data-test="discard-draft"]').exists()).toBe(true);
+    await wrapper.get('.app').trigger('keydown', { key: 'Escape' });
+    await flushFakeClientAndVueUpdates(fake);
+    expect(wrapper.find('[data-test="compose-card"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
 });

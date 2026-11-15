@@ -536,3 +536,9 @@ Compact bars use the existing `--surface` (#292826), existing divider and focus 
 ### Compact list
 
 Conversation rows use a 12px block inset, 20px start inset and 16px end inset, with a 1px rule between rows and a 72px minimum height. Sender and subject are 1rem/body-size; preview is 0.875rem and clamps at two lines. Unread sender and subject use weight 600. Date stays on the sender line. Split and reminder tabs scroll in one row inside the 44px context pill, with 16px side padding and 20px between tabs; the navigation pill is 50px high with a 12px gap. The destination drawer is at most 320px wide or 80% of the app, with 48px rows, 24px glyphs and 16px label gap. Swipe right reveals Remind; swipe left reveals Mark done or Mark not done. A 500ms long-press selects a row.
+
+### Compact reader, notices and compose
+
+The compact reader subject is 1.375rem/600 with 8px above, 12px below, and 20px/16px horizontal insets. Reader metadata uses `--mobile-type-meta`. Messages use 48px minimum collapsed rows; expanded body text is 1rem/1.5, monospace 0.875rem. The action pill uses evenly spaced 48px targets with 24px glyphs. The reply context pill has a 48px button; the action sheet uses 52px rows, 24px glyphs, 16px top corners and 16px safe-area-aware bottom padding.
+
+Compact outcome notices are full-width pills with 16px side margins, 12px/16px padding, 14px corners and a soft `0 4px 16px rgba(0, 0, 0, 0.35)` shadow. Undo is at least 48px high. Compose and reply use an app-sized absolute sheet, a 56px header, 48px field rows and footer actions, and a flexible body textarea at 1rem/1.5. Safe-area padding stays inside the sheet; focused fields follow visual viewport changes.

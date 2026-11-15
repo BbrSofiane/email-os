@@ -20,6 +20,7 @@
 import { computed, nextTick, onMounted, ref, useId, watch } from 'vue';
 import type { DraftContent, DraftRef, DraftSource, MailError } from '../lib/ipc/client';
 import { describeDraftError } from '../lib/draft-errors';
+import { useVisualViewportFocus } from '../composables/useVisualViewportFocus';
 
 const props = defineProps<{
   activeRef: DraftRef | null;
@@ -82,6 +83,8 @@ const toInput = ref<HTMLInputElement | null>(null);
 const ccInput = ref<HTMLInputElement | null>(null);
 const bodyInput = ref<HTMLTextAreaElement | null>(null);
 const dialog = ref<HTMLElement | null>(null);
+const editorRoot = ref<HTMLElement | null>(null);
+useVisualViewportFocus(editorRoot);
 
 const uid = useId();
 const ids = { to: `${uid}-to`, cc: `${uid}-cc`, subject: `${uid}-subject`, body: `${uid}-body`, detail: `${uid}-detail`, extras: `${uid}-extras`, caveat: `${uid}-caveat` };
@@ -235,7 +238,7 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
 </script>
 
 <template>
-  <div class="composer-body" :class="`composer-body-${props.variant ?? 'new'}`">
+  <div ref="editorRoot" class="composer-body" :class="`composer-body-${props.variant ?? 'new'}`">
     <div class="composer-top">
       <div class="composer-top-main"><slot name="header" /></div>
       <!-- The local-only guarantee is one terse status line. The caveats are

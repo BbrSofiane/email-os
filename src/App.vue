@@ -35,6 +35,7 @@ import { installAndroidBackBridge } from './lib/android-back';
 import MobileTopBar from './components/mobile/MobileTopBar.vue';
 import MobileDrawer from './components/mobile/MobileDrawer.vue';
 import MobileBottomBar from './components/mobile/MobileBottomBar.vue';
+import MobileActionSheet from './components/mobile/MobileActionSheet.vue';
 import { createSubjectIndex } from './lib/subject-index';
 import ActionOverlay from './components/ActionOverlay.vue';
 import RemindersList from './components/RemindersList.vue';
@@ -848,6 +849,19 @@ const { searchVisible, searchDraft, searchInput, cachedSearch, recentQueries, su
 const appRoot = ref<HTMLElement | null>(null);
 const overlay = ref<'palette' | 'navigator' | null>(null);
 const mobileNavOpen = ref(false);
+const readerSheetOpen = ref(false);
+const messageSheetOpen = ref(false);
+const readerSheetItems = computed(() => {
+  const conversation = mailbox.conversation.value;
+  const readAction = conversation?.isRead ? 'unread' : 'read';
+  const replyReason = replyBlockedReason(conversation);
+  return [
+    { id: readAction, label: conversation?.isRead ? 'Mark unread' : 'Mark read', glyph: conversation?.isRead ? 'unread' as const : 'read' as const, disabled: !actionAvailable(readAction) },
+    { id: 'reply', label: 'Reply', glyph: 'reply' as const, disabled: !actionAvailable('reply'), disabledReason: replyReason ?? undefined, group: 'more' },
+    ...(!androidFixture ? [{ id: 'files', label: 'Files and links', glyph: 'files' as const, disabled: !actionAvailable('open') }] : []),
+    { id: 'commands', label: 'Commands', glyph: 'commands' as const, group: 'commands' },
+  ];
+});
 // This App belongs to one immutable fixture session. Keep its command query
 // across transient overlay mounts, without sharing the destination query or
 // changing standalone/native palette reset behavior.
@@ -1856,6 +1870,8 @@ function escapeLadder(event: KeyboardEvent): void {
     closeMobileDrawer();
     return;
   }
+  if (messageSheetOpen.value) { event.preventDefault(); readerView.value?.closeMessageSheet(); messageSheetOpen.value = false; return; }
+  if (readerSheetOpen.value) { event.preventDefault(); readerSheetOpen.value = false; return; }
   // The active disclosure gets Escape precedence; mailbox actions underneath
   // are suppressed while it is open.
   if (drawer.value) {
@@ -2067,7 +2083,7 @@ const searchSyntaxEditHint = computed(() =>
       :menu-expanded="mobileNavOpen"
       :inert="mobileNavOpen || undefined"
     />
-    <main class="app-main" :class="{ 'contact-collapsed': contactCollapsed }" :inert="!!overlay || !!attachmentConversation || mobileNavOpen || undefined">
+    <main class="app-main" :class="{ 'contact-collapsed': contactCollapsed }" :inert="!!overlay || !!attachmentConversation || mobileNavOpen || readerSheetOpen || messageSheetOpen || undefined">
       <!-- Split header (DESIGN.md "Split Tabs"): one borderless 78px strip in
            the list column. Destinations hamburger on the left, split tabs on
            the 50px content inset, quiet notes and glyphs on the right. It sits
@@ -2343,6 +2359,7 @@ const searchSyntaxEditHint = computed(() =>
                non-inert while composing. -->
           <ComposeCard
             v-if="composeCardOpen && !readerOpen"
+            :compact="layoutMode === 'compact'"
             :recipient-label="composeRecipientLabel"
             :notice="cardNotice"
             :active-ref="drafts.activeRef.value"
@@ -2488,11 +2505,17 @@ const searchSyntaxEditHint = computed(() =>
               :selection-context="mailbox.context.value"
               :back-host="layoutMode === 'compact' ? mobileTopBar?.backHost : readerBackHost"
               :actions-host="layoutMode === 'compact' ? mobileBottomBar?.actionsHost : readerActionsHost"
+              :context-host="layoutMode === 'compact' ? mobileBottomBar?.contextHost : null"
+              :sheet-host="appRoot"
               :can-move-prev="canMoveReaderPrev"
               :can-move-next="canMoveReaderNext"
               :client="props.client"
               :preview="props.mode === 'browser-preview'"
               :reply-docked="replyComposerOpen && readerOpen"
+              :compact="layoutMode === 'compact'"
+              :star-shown="actionAvailable('star') || actionAvailable('unstar')"
+              :star-enabled="actionAvailable(mailbox.conversation.value?.stars?.starredMessages ? 'unstar' : 'star')"
+              :starred="!!mailbox.conversation.value?.stars?.starredMessages"
               @close="executeAction('back')"
               @move="moveReaderConversation"
               @archive="executeAction('archive')"
@@ -2500,6 +2523,9 @@ const searchSyntaxEditHint = computed(() =>
               @unarchive="executeAction('unarchive')"
               @set-read="executeAction($event ? 'read' : 'unread')"
               @prepare-reply="prepareReply"
+              @star="executeAction(mailbox.conversation.value?.stars?.starredMessages ? 'unstar' : 'star')"
+              @more="readerSheetOpen = true"
+              @message-sheet-open="messageSheetOpen = $event"
               @attachments="openAttachments"
               @active-message="onReaderActiveMessage"
               @contact-override="onReaderContactOverride"
@@ -2509,6 +2535,7 @@ const searchSyntaxEditHint = computed(() =>
                  drafts state, like the inline compose card. -->
             <ReplyComposer
               v-if="replyComposerOpen && readerOpen"
+              :compact="layoutMode === 'compact'"
               :recipient-label="replyRecipientLabel"
               :recipient-mailbox="replyRecipientMailbox"
               :quoted-snippet="quotedSnippet"
@@ -2550,6 +2577,7 @@ const searchSyntaxEditHint = computed(() =>
                  like the reply composer above it. -->
             <ComposeCard
               v-if="composeCardOpen && readerOpen"
+              :compact="layoutMode === 'compact'"
               :recipient-label="composeRecipientLabel"
               :notice="cardNotice"
               :active-ref="drafts.activeRef.value"
@@ -2716,16 +2744,23 @@ const searchSyntaxEditHint = computed(() =>
         <p v-if="commandError" class="command-error" role="alert" data-test="command-error">Last command failed: {{ errorText(commandError) }}</p>
       </div>
     </main>
+    <MobileActionSheet
+      v-if="readerSheetOpen"
+      :title="mailbox.conversation.value?.subject ?? 'Actions'"
+      :items="readerSheetItems"
+      @close="readerSheetOpen = false"
+      @choose="(id) => { if (id === 'commands') openOverlay('palette'); else if (id === 'reply') { const conversation = mailbox.conversation.value; const sourceMessage = conversation?.messages.at(-1); if (conversation && sourceMessage) void prepareReply({ kind: 'reply', conversation: conversation.ref, sourceMessageId: sourceMessage.id }); } else if (id === 'files') openAttachments(readerView?.$el as HTMLElement); else executeAction(id as ActionId); }"
+    />
     <AttachmentChooser v-if="attachmentConversation" :client="props.client" :conversation="attachmentConversation" :preview="props.mode === 'browser-preview'" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" @close="closeAttachments" />
     <MobileBottomBar
       v-if="layoutMode === 'compact'"
       ref="mobileBottomBar"
+      :inert="messageSheetOpen || mobileNavOpen || undefined"
       :reader="readerOpen"
       :inbox-or-saved="mailbox.context.value === 'inbox' || mailbox.context.value === 'saved'"
       :execute-action="executeAction"
       :action-available="actionAvailable"
       :action-label="actionLabel"
-      :inert="mobileNavOpen || undefined"
     />
     <MobileDrawer
       v-if="layoutMode === 'compact'"

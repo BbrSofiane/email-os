@@ -5,7 +5,7 @@
  * carries the accessible name in visually hidden text.
  */
 defineProps<{
-  name: 'menu' | 'search' | 'commands' | 'settings' | 'star' | 'back' | 'remind' | 'reminders' | 'x' | 'compose' | 'done' | 'files' | 'reply' | 'read' | 'unread' | 'prev' | 'next';
+  name: 'menu' | 'more' | 'search' | 'commands' | 'settings' | 'star' | 'back' | 'remind' | 'reminders' | 'x' | 'compose' | 'done' | 'files' | 'reply' | 'read' | 'unread' | 'prev' | 'next';
   /** Star only: a filled star for the pressed (filter on) state. */
   filled?: boolean;
 }>();
@@ -28,6 +28,11 @@ defineProps<{
   >
     <!-- Destinations: the hamburger. -->
     <path v-if="name === 'menu'" d="M2.75 4.25h10.5M2.75 8h10.5M2.75 11.75h10.5" />
+    <template v-else-if="name === 'more'">
+      <circle cx="3.25" cy="8" r="1" fill="currentColor" stroke="none" />
+      <circle cx="8" cy="8" r="1" fill="currentColor" stroke="none" />
+      <circle cx="12.75" cy="8" r="1" fill="currentColor" stroke="none" />
+    </template>
     <!-- Find mail: a magnifier. -->
     <template v-else-if="name === 'search'">
       <circle cx="7" cy="7" r="4.25" />
