@@ -50,12 +50,51 @@ describe.skipIf(!chromePath)('compact compose geometry', () => {
     });
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="conversation-row-conv-01"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 300))');
+    await harness!.cdp.js(`(() => {
+      const app = document.querySelector(${JSON.stringify(appSelector)});
+      window.__replySheetPoints = ['reader-close', 'mobile-reply-bar', 'mobile-reader-actions'].map(test => {
+        const element = app.querySelector('[data-test="' + test + '"]');
+        const rect = element.getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      });
+    })()`);
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="mobile-reply-bar"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 400))');
     const reply = await geometry(harness!);
     expect(reply.footer.bottom).toBeLessThanOrEqual(height);
     expect(reply.body.height).toBeGreaterThanOrEqual(120);
     expect(reply.inputSize).toBe('16px');
+    const overlay = await harness!.cdp.js<{ boxMatches: boolean; appBox: { top: number; right: number; bottom: number; left: number }; sheetBox: { top: number; right: number; bottom: number; left: number }; bodyHeight: number; hitResults: boolean[]; textHit: boolean; titleLeft: number; closeLeft: number }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(appSelector)});
+      const sheet = app.querySelector('[data-test="reply-composer"]');
+      const box = element => element.getBoundingClientRect();
+      const appBox = box(app);
+      const sheetBox = box(sheet);
+      const points = window.__replySheetPoints.map(point => {
+        const hit = document.elementFromPoint(point.x, point.y);
+        return !!hit && sheet.contains(hit);
+      });
+      const messageRect = box(app.querySelector('.message-from'));
+      const messageHit = document.elementFromPoint(messageRect.left + messageRect.width / 2, messageRect.top + messageRect.height / 2);
+      return {
+        boxMatches: ['top', 'right', 'bottom', 'left'].every(edge => Math.abs(sheetBox[edge] - appBox[edge]) <= 1),
+        appBox: { top: appBox.top, right: appBox.right, bottom: appBox.bottom, left: appBox.left },
+        sheetBox: { top: sheetBox.top, right: sheetBox.right, bottom: sheetBox.bottom, left: sheetBox.left },
+        bodyHeight: box(sheet.querySelector('.field-textarea')).height,
+        hitResults: points,
+        textHit: !!messageHit && !!messageHit.closest('.message-from'),
+        titleLeft: box(sheet.querySelector('.composer-heading h2')).left,
+        closeLeft: box(sheet.querySelector('[data-test="reply-sheet-close"]')).left,
+      };
+    })()`);
+    expect(overlay.sheetBox.top).toBeCloseTo(overlay.appBox.top, 0);
+    expect(overlay.sheetBox.right).toBeCloseTo(overlay.appBox.right, 0);
+    expect(overlay.sheetBox.bottom).toBeCloseTo(overlay.appBox.bottom, 0);
+    expect(overlay.sheetBox.left).toBeCloseTo(overlay.appBox.left, 0);
+    expect(overlay.hitResults.every(Boolean)).toBe(true);
+    expect(overlay.textHit).toBe(false);
+    expect(overlay.bodyHeight).toBeGreaterThanOrEqual(200);
+    expect(overlay.titleLeft).toBeLessThan(overlay.closeLeft);
   });
 });
 

@@ -2533,6 +2533,7 @@ const searchSyntaxEditHint = computed(() =>
             <!-- Inline reply composer docked at the bottom of the reader pane:
                  the thread stays visible above it. Wired directly to the shared
                  drafts state, like the inline compose card. -->
+            <Teleport :to="appRoot ?? undefined" :disabled="layoutMode !== 'compact'">
             <ReplyComposer
               v-if="replyComposerOpen && readerOpen"
               :compact="layoutMode === 'compact'"
@@ -2572,6 +2573,7 @@ const searchSyntaxEditHint = computed(() =>
               @save-as-new="drafts.saveAsNew()"
               @cancel-reply-preparation="drafts.cancelReplyPreparation()"
             />
+            </Teleport>
             <!-- A new-message editor while the reader is open docks the same
                  inline compose card at the bottom of the reader pane, exactly
                  like the reply composer above it. -->

@@ -130,8 +130,8 @@ const headingTarget = computed<{ text: string } | null>(() => {
       >
         <template #header>
           <header class="composer-heading">
-            <button v-if="props.compact" type="button" class="compose-sheet-close" data-test="reply-sheet-close" aria-label="Save and close" @click="emit('closeEditor')"><HeaderGlyph name="x" /></button>
             <h2>Reply draft<span v-if="headingTarget" class="reply-to" :title="props.content.to.trim() === '' ? undefined : props.content.to"> to <span data-test="draft-recipient-label">{{ headingTarget.text }}</span></span></h2>
+            <button v-if="props.compact" type="button" class="compose-sheet-close" data-test="reply-sheet-close" aria-label="Save and close" @click="emit('closeEditor')"><HeaderGlyph name="x" /></button>
           </header>
         </template>
         <template #context>
