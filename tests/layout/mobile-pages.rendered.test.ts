@@ -151,4 +151,20 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
     expect(activity.overflow).toBe(false);
     expect(activity.buttons.every(height => height >= 48)).toBe(true);
   });
+
+  it('sizes Reminder settings controls and allows the explanatory text to wrap', async () => {
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-menu"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
+    await harness!.cdp.js(`[...document.querySelectorAll(${JSON.stringify(workspaceApp)} + ' .mobile-drawer-row')].find(row => row.textContent.trim() === 'Reminder settings').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 200))');
+    const geometry = await harness!.cdp.js<{ controls: number[]; width: number; contentWidth: number }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const page = app.querySelector('[data-test="utility-drawer"]');
+      const settings = page.querySelector('.reminder-settings');
+      return { controls: [...settings.querySelectorAll('select, button')].map(control => control.getBoundingClientRect().height), width: page.clientWidth, contentWidth: settings.scrollWidth };
+    })()`);
+    expect(geometry.controls.length).toBe(4);
+    expect(geometry.controls.every(height => height >= 48)).toBe(true);
+    expect(geometry.contentWidth).toBeLessThanOrEqual(geometry.width);
+  });
 });

@@ -287,3 +287,38 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .time-zone-note {
 .app[data-layout="compact"] .utility-drawer .activity-action {
   min-height: 48px;
 }
+
+.app[data-layout="compact"] .utility-drawer .destination-search,
+.app[data-layout="compact"] .utility-drawer .destination-find input,
+.app[data-layout="compact"] .utility-drawer .reminder-settings input,
+.app[data-layout="compact"] .utility-drawer .reminder-settings select {
+  min-height: 48px;
+  font-size: 16px;
+}
+
+.app[data-layout="compact"] .utility-drawer .destination-item,
+.app[data-layout="compact"] .utility-drawer .destination-row {
+  min-height: 48px;
+  padding-inline: 20px 16px;
+  overflow-wrap: anywhere;
+}
+
+.app[data-layout="compact"] .utility-drawer .destination-reader,
+.app[data-layout="compact"] .utility-drawer .destination-list,
+.app[data-layout="compact"] .utility-drawer .provider-destinations {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.app[data-layout="compact"] .utility-drawer .destination-actions,
+.app[data-layout="compact"] .utility-drawer .reminder-settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.app[data-layout="compact"] .utility-drawer .destination-actions button,
+.app[data-layout="compact"] .utility-drawer .destination-reader button,
+.app[data-layout="compact"] .utility-drawer .reminder-settings button {
+  min-height: 48px;
+}
