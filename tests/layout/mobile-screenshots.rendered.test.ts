@@ -153,6 +153,16 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await freshInbox();
     await click('[data-test="mobile-compose"]');
     await shot('compose');
+    await viewport(PHONE_VIEWPORT.width, 500, true);
+    await shot('compose-keyboard');
+    await click('[data-test="compose-sheet-close"]');
+
+    await freshInbox();
+    await click('.inbox-row');
+    await waitFor(`app.querySelector('[data-test="mobile-reply-bar"]')`, 'reader reply bar');
+    await click('[data-test="mobile-reply-bar"]');
+    await waitFor(`app.querySelector('[data-test="reply-composer"]')`, 'reply composer');
+    await shot('reply');
 
     await freshInbox();
     await click('[data-test="mobile-search"]');
