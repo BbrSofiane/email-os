@@ -2333,6 +2333,7 @@ const searchSyntaxEditHint = computed(() =>
                non-inert while composing. -->
           <ComposeCard
             v-if="composeCardOpen && !readerOpen"
+            :compact="layoutMode === 'compact'"
             :recipient-label="composeRecipientLabel"
             :notice="cardNotice"
             :active-ref="drafts.activeRef.value"
@@ -2546,6 +2547,7 @@ const searchSyntaxEditHint = computed(() =>
                  like the reply composer above it. -->
             <ComposeCard
               v-if="composeCardOpen && readerOpen"
+              :compact="layoutMode === 'compact'"
               :recipient-label="composeRecipientLabel"
               :notice="cardNotice"
               :active-ref="drafts.activeRef.value"
