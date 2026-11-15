@@ -41,4 +41,21 @@ describe('compact CSS contract', () => {
       expect(declared).toContain(`--mobile-safe-${side}: env(safe-area-inset-${side}, 0px)`);
     }
   });
+
+  it('defines the compact conversation row stack and list state targets', () => {
+    const list = mobileCss['list.css'];
+    expect(list).toContain('.app[data-layout="compact"] .inbox-row');
+    expect(list).toContain('grid-template-rows: auto auto auto');
+    expect(list).toContain('min-height: 72px');
+    expect(list).toContain('padding: 12px 16px 12px 20px');
+    expect(list).toContain('grid-template-columns: minmax(96px, 1fr) auto');
+    expect(list).toContain('white-space: nowrap');
+    expect(list).toContain('-webkit-line-clamp: 2');
+    expect(list).toContain('.app[data-layout="compact"] .row-read-state');
+    expect(list).toContain('.app[data-layout="compact"] .row-actions');
+    expect(list).toContain('.app[data-layout="compact"] .inbox-list.selecting .row-select');
+    expect(list).toContain('.app[data-layout="compact"] .inbox-row.focused:not(:focus-visible)');
+    expect(list).toContain('.app[data-layout="compact"] .row-group');
+    expect(list).toContain('.app[data-layout="compact"] .inbox-empty');
+  });
 });

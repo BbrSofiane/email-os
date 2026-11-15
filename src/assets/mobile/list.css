@@ -59,6 +59,7 @@
   padding: 12px 16px 12px 20px;
   border-bottom: 1px solid var(--rule);
   line-height: 1.25;
+  touch-action: pan-y;
 }
 
 .app[data-layout="compact"] .row-read-state {
@@ -117,6 +118,10 @@
   text-overflow: ellipsis;
 }
 
+.app[data-layout="compact"] .inbox-row.read-disclosed.is-read .row-subject {
+  font-weight: 400;
+}
+
 .app[data-layout="compact"] .row-preview {
   grid-column: 1 / -1;
   grid-row: 3;
@@ -146,7 +151,7 @@
   width: 48px;
   height: 48px;
   margin: -24px 0 0;
-  opacity: 0;
+  opacity: 1;
 }
 
 .app[data-layout="compact"] .inbox-row.focused:not(:focus-visible) {
@@ -169,12 +174,31 @@
 .app[data-layout="compact"] .inbox-empty,
 .app[data-layout="compact"] .inbox-load-more,
 .app[data-layout="compact"] .search-results-header,
-.app[data-layout="compact"] .cached-coverage {
+.app[data-layout="compact"] .cached-coverage,
+.app[data-layout="compact"] .inbox-search-results,
+.app[data-layout="compact"] .coverage-note {
   margin-inline: 20px 16px;
   font-size: var(--type-body);
+}
+
+.app[data-layout="compact"] .inbox-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+  text-align: center;
 }
 
 .app[data-layout="compact"] .inbox-load-more,
 .app[data-layout="compact"] .inbox-load-more button {
   min-height: 48px;
+}
+
+.app[data-layout="compact"] .inbox-row:focus-visible {
+  background: var(--focus-fill);
+  box-shadow: inset 4px 0 0 var(--focus-accent);
+}
+
+.app[data-layout="compact"] .inbox-row.selected:focus-visible {
+  box-shadow: inset 4px 0 0 var(--focus-accent), inset 6px 0 0 var(--text-secondary);
 }
