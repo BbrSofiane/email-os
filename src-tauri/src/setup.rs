@@ -108,14 +108,14 @@ pub(crate) fn run(builder: tauri::Builder<tauri::Wry>) {
 
 #[cfg(test)]
 mod tests {
+    use crate::setup::open_fixture_core;
+    use crate::test_support::{conv, LEGACY_MAIL_DB};
     use mail_core::drafts::load_validated_reply_context;
     use mail_core::drafts::types::DraftSource;
     use mail_core::drafts::DraftCore;
     use mail_core::fixture_transition::FixtureTransition;
     use mail_core::gmail::types::MailMode;
     use mail_core::testing::temp_profile;
-    use crate::setup::open_fixture_core;
-    use crate::test_support::{conv, LEGACY_MAIL_DB};
 
     #[test]
     fn the_default_is_the_synthetic_core_and_a_legacy_mail_db_is_never_opened() {

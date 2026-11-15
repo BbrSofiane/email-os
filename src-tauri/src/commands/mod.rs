@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod bridge_tests;
 mod mailbox;
 pub(crate) use mailbox::*;
 
