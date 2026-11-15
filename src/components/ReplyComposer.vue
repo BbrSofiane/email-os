@@ -17,6 +17,7 @@
 import { computed } from 'vue';
 import type { DraftContent, DraftRef, DraftSource, MailError } from '../lib/ipc/client';
 import DraftEditorCore from './DraftEditorCore.vue';
+import HeaderGlyph from './HeaderGlyph.vue';
 
 const props = defineProps<{
   /** Heading name while To is the default sender: displayName ?? mailbox of the latest message. */
@@ -46,6 +47,7 @@ const props = defineProps<{
   recoveryRequired: boolean;
   canCancelReplyPreparation: boolean;
   closeError: string | null;
+  compact?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -87,7 +89,7 @@ const headingTarget = computed<{ text: string } | null>(() => {
 </script>
 
 <template>
-  <section class="reply-composer" aria-label="Inline reply draft composer" data-test="reply-composer">
+  <section class="reply-composer" :class="{ 'compact-compose-sheet': props.compact }" aria-label="Inline reply draft composer" data-test="reply-composer">
     <section v-if="props.visible" class="composer" aria-label="Plain-text draft editor" data-test="composer">
       <DraftEditorCore
         autofocus="body"
@@ -128,6 +130,7 @@ const headingTarget = computed<{ text: string } | null>(() => {
       >
         <template #header>
           <header class="composer-heading">
+            <button v-if="props.compact" type="button" class="compose-sheet-close" data-test="reply-sheet-close" aria-label="Save and close" @click="emit('closeEditor')"><HeaderGlyph name="x" /></button>
             <h2>Reply draft<span v-if="headingTarget" class="reply-to" :title="props.content.to.trim() === '' ? undefined : props.content.to"> to <span data-test="draft-recipient-label">{{ headingTarget.text }}</span></span></h2>
           </header>
         </template>

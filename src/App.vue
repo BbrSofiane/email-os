@@ -2506,6 +2506,7 @@ const searchSyntaxEditHint = computed(() =>
                  drafts state, like the inline compose card. -->
             <ReplyComposer
               v-if="replyComposerOpen && readerOpen"
+              :compact="layoutMode === 'compact'"
               :recipient-label="replyRecipientLabel"
               :recipient-mailbox="replyRecipientMailbox"
               :quoted-snippet="quotedSnippet"
