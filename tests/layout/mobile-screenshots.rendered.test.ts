@@ -117,6 +117,8 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
       scroller.scrollTop = scroller.scrollHeight;
     })()`);
     await shot('reader-scrolled-end');
+    await click('[data-test="message-more"]');
+    await shot('reader-message-sheet');
     await click('[data-test="reader-more"]');
     await shot('reader-more-sheet');
   }, 120_000);

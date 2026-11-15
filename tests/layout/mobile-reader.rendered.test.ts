@@ -46,6 +46,9 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
         bodySize: body ? getComputedStyle(body).fontSize : null,
         lastBottom: last.bottom,
         bottomTop: app.querySelector('[data-test="mobile-bottom-region"]').getBoundingClientRect().top,
+        actionTop: app.querySelector('[data-test="mobile-reader-actions"]').getBoundingClientRect().top,
+        replyBar: app.querySelector('[data-test="mobile-reply-bar"]')?.getBoundingClientRect().toJSON() ?? null,
+        messageMore: app.querySelector('[data-test="message-more"]')?.getBoundingClientRect().toJSON() ?? null,
         scrollHeight: scroller.scrollHeight,
         clientHeight: scroller.clientHeight,
       };
@@ -55,6 +58,12 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
     expect(geometry.messages.bottom).toBeLessThanOrEqual(geometry.pane.bottom + geometry.scrollHeight);
     expect(geometry.bodySize).toBe('16px');
     expect(geometry.lastBottom).toBeLessThanOrEqual(geometry.bottomTop);
+    expect(geometry.replyBar).not.toBeNull();
+    expect(geometry.replyBar.height).toBeGreaterThanOrEqual(48);
+    expect(geometry.replyBar.bottom).toBeLessThanOrEqual(geometry.actionTop);
+    expect(geometry.messageMore).not.toBeNull();
+    expect(geometry.messageMore.width).toBe(48);
+    expect(geometry.messageMore.height).toBe(48);
     await harness!.cdp.js(`(() => document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="reader-more"]').click())()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
     const sheet = await harness!.cdp.js<{ panel: { top: number; bottom: number }; viewport: number; rows: Array<{ width: number; height: number }>; toolbar: Array<{ name: string | null; width: number; height: number }> }>(`(() => {
@@ -88,5 +97,14 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
     const closed = await harness!.cdp.js(`document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="action-sheet"]') === null`);
     expect(closed).toBe(true);
+    await harness!.cdp.js(`(() => document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="message-more"]').click())()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
+    const messageMenu = await harness!.cdp.js<{ title: string | null; rows: number }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(appSelector)});
+      const dialog = app.querySelector('[data-test="action-sheet"]');
+      return { title: dialog.querySelector('h2')?.textContent ?? null, rows: dialog.querySelectorAll('button').length };
+    })()`);
+    expect(messageMenu.title).toBe('Ada Fixture');
+    expect(messageMenu.rows).toBe(3);
   });
 });

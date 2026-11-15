@@ -90,7 +90,7 @@
 .app[data-layout="compact"] .mobile-context-slot:has(.mobile-reply-bar) {
   display: flex;
   width: 100%;
-  height: 44px;
+  height: 56px;
   align-items: center;
   padding: 0 8px;
   border: 1px solid var(--divider);
