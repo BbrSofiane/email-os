@@ -55,5 +55,38 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
     expect(geometry.messages.bottom).toBeLessThanOrEqual(geometry.pane.bottom + geometry.scrollHeight);
     expect(geometry.bodySize).toBe('16px');
     expect(geometry.lastBottom).toBeLessThanOrEqual(geometry.bottomTop);
+    await harness!.cdp.js(`(() => document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="reader-more"]').click())()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
+    const sheet = await harness!.cdp.js<{ panel: { top: number; bottom: number }; viewport: number; rows: Array<{ width: number; height: number }>; toolbar: Array<{ name: string | null; width: number; height: number }> }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(appSelector)});
+      const panel = app.querySelector('[data-test="action-sheet"]').getBoundingClientRect();
+      return {
+        panel: { top: panel.top, bottom: panel.bottom },
+        viewport: innerHeight,
+        rows: [...app.querySelectorAll('[data-test="action-sheet"] button')].map(row => {
+          const box = row.getBoundingClientRect();
+          return { width: box.width, height: box.height };
+        }),
+        toolbar: [...app.querySelectorAll('[data-test="reader-toolbar"] button')].map(button => {
+          const box = button.getBoundingClientRect();
+          return { name: button.getAttribute('data-test'), width: box.width, height: box.height };
+        }),
+      };
+    })()`);
+    expect(sheet.panel.top).toBeGreaterThanOrEqual(0);
+    expect(sheet.panel.bottom).toBeLessThanOrEqual(sheet.viewport);
+    expect(sheet.rows.length).toBeGreaterThan(0);
+    for (const row of sheet.rows) expect(row.height).toBeGreaterThanOrEqual(48);
+    expect(sheet.toolbar.map(button => button.name)).toEqual([
+      'reader-star', 'reader-remind', 'reader-archive-toggle', 'reader-prev', 'reader-next', 'reader-more',
+    ]);
+    for (const button of sheet.toolbar) {
+      expect(button.width).toBeGreaterThanOrEqual(48);
+      expect(button.height).toBeGreaterThanOrEqual(48);
+    }
+    await harness!.cdp.js(`(() => document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="action-sheet"] button:not(:disabled)').click())()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
+    const closed = await harness!.cdp.js(`document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="action-sheet"]') === null`);
+    expect(closed).toBe(true);
   });
 });
