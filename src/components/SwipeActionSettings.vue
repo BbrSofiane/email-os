@@ -24,7 +24,7 @@ function save(side: 'right' | 'left', value: SwipePreference): void {
 
 <template>
   <section class="swipe-settings" aria-labelledby="swipe-settings-title">
-    <h2 id="swipe-settings-title">Swipe actions</h2>
+    <h2 class="compact-settings-heading" id="swipe-settings-title">Swipe actions</h2>
     <fieldset v-for="side in ['right', 'left'] as const" :key="side">
       <legend>{{ `Swipe ${side}` }}</legend>
       <label v-for="option in options" :key="option.value">

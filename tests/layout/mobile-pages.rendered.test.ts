@@ -157,15 +157,26 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
     await harness!.cdp.js(`[...document.querySelectorAll(${JSON.stringify(workspaceApp)} + ' .mobile-drawer-row')].find(row => row.textContent.trim() === 'Settings').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 200))');
-    const geometry = await harness!.cdp.js<{ controls: number[]; width: number; contentWidth: number }>(`(() => {
+    const geometry = await harness!.cdp.js<{ controls: number[]; width: number; contentWidth: number; closeHasSvg: boolean; closeTextVisible: boolean; headingSizes: string[] }>(`(() => {
       const app = document.querySelector(${JSON.stringify(workspaceApp)});
       const page = app.querySelector('[data-test="utility-drawer"]');
       const settings = page.querySelector('.reminder-settings');
-      return { controls: [...settings.querySelectorAll('select, button')].map(control => control.getBoundingClientRect().height), width: page.clientWidth, contentWidth: settings.scrollWidth };
+      const close = page.querySelector('[data-test="drawer-close"]');
+      return {
+        controls: [...settings.querySelectorAll('select, button')].map(control => control.getBoundingClientRect().height),
+        width: page.clientWidth,
+        contentWidth: settings.scrollWidth,
+        closeHasSvg: !!close.querySelector('svg'),
+        closeTextVisible: [...close.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim().length > 0),
+        headingSizes: [...page.querySelectorAll('.compact-settings-heading')].map(heading => getComputedStyle(heading).fontSize),
+      };
     })()`);
     expect(geometry.controls.length).toBe(4);
     expect(geometry.controls.every(height => height >= 48)).toBe(true);
     expect(geometry.contentWidth).toBeLessThanOrEqual(geometry.width);
+    expect(geometry.closeHasSvg).toBe(true);
+    expect(geometry.closeTextVisible).toBe(false);
+    expect(geometry.headingSizes).toEqual(['16px', '16px']);
   });
 
   it('shows compact Commands as a touch sized, scrolling overlay', async () => {

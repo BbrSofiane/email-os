@@ -2649,7 +2649,8 @@ const searchSyntaxEditHint = computed(() =>
         >
           <header class="drawer-header">
             <h2>{{ drawer === 'reminder-settings' && layoutMode === 'compact' ? 'Settings' : drawerHeadings[drawer] }}</h2>
-            <button type="button" data-test="drawer-close" @click="closeDrawer()">Close</button>
+            <button v-if="layoutMode === 'compact'" type="button" class="drawer-close-icon" data-test="drawer-close" aria-label="Close" @click="closeDrawer()"><HeaderGlyph name="x" /><span class="visually-hidden">Close</span></button>
+            <button v-else type="button" data-test="drawer-close" @click="closeDrawer()">Close</button>
           </header>
           <p v-if="drawer === 'destinations' && accountId && providerSignInExpired" role="note" data-test="destinations-sign-in-expired">
             {{ providerSignInExpired.text }}<template v-if="accountActionsIdle"> <button type="button" class="inline-action" @click="accountNoticeAction('connect', 'drawer')">{{ providerSignInExpired.label }}</button></template>
@@ -2662,7 +2663,7 @@ const searchSyntaxEditHint = computed(() =>
             Provider mail needs a connected Gmail account.<template v-if="providerAccountAction"> <button v-if="providerAccountAction.action === 'account' || accountActionsIdle" type="button" class="inline-action" data-test="destinations-account-action" @click="accountNoticeAction(providerAccountAction.action, 'drawer')">{{ providerAccountAction.label }}</button></template><template v-else-if="accountStatus?.connection === 'authenticating'"> Finish sign-in in your browser.</template><template v-else> Connect one from Account first.</template>
           </p>
           <section v-if="drawer === 'reminder-settings' && remindersSupported" class="utility-panel" data-test="reminder-settings-dialog">
-            <h3 class="drawer-section-title">Reminders</h3>
+            <h3 class="drawer-section-title compact-settings-heading">Reminders</h3>
             <ReminderSettings @close="closeDrawer" @saved="reminderPreferencesSaved" />
             <SwipeActionSettings @saved="swipePreferences = $event" />
           </section>

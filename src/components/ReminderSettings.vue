@@ -32,7 +32,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
 
 <template>
   <section role="dialog" aria-modal="true" aria-labelledby="reminder-settings-title" class="reminder-settings">
-    <h2 id="reminder-settings-title">Reminder settings</h2>
+    <h2 id="reminder-settings-title" class="reminder-settings-accessible-title">Reminder settings</h2>
     <p>Choose the default time for date-based reminders in your device timezone: <strong>{{ timeZone ?? 'name unavailable' }}</strong>.</p>
     <p>Changing defaults does not move existing reminders. Choose a new time to reschedule one. Changing your device timezone changes the time shown, not when a reminder returns.</p>
     <form @submit.prevent="save">
