@@ -16,6 +16,34 @@ afterEach(() => {
 });
 
 describe('App compact and regular frame', () => {
+  it('teleports split tabs only in compact mode and keeps saved navigation active', async () => {
+    const fake = createBrowserFakeMailClient();
+    const first = (await fake.listConversations()).conversations[0]!;
+    await fake.saveSavedSplit(first.ref.accountId, {
+      name: 'Clients',
+      criterion: 'sender',
+      value: first.primaryCorrespondent!.mailbox,
+      enabled: true,
+      hideWhenEmpty: false,
+    });
+
+    stubLayout(true);
+    const compact = mountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+    expect(compact.get('[data-test="split-inbox"]').element.closest('.mobile-context-slot')).toBeTruthy();
+    await compact.get('[data-test="split-saved"]').trigger('click');
+    await flushFakeClientAndVueUpdates(fake);
+    expect(compact.get('[data-test="inbox-title"]').text()).toBe('Clients');
+    compact.unmount();
+
+    stubLayout(false);
+    const regular = mountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+    expect(regular.get('[data-test="split-inbox"]').element.closest('.app-header')).toBeTruthy();
+    expect(regular.get('[data-test="split-inbox"]').element.closest('.mobile-context-slot')).toBeFalsy();
+    regular.unmount();
+  });
+
   it('keeps the status strip and moves reader teleports into mobile hosts', async () => {
     stubLayout(true);
     const fake = createBrowserFakeMailClient();
