@@ -77,4 +77,12 @@ describe('compact CSS contract', () => {
     expect(pages).toContain('.drafts-pane .context-row-actions button');
     expect(pages).toContain('min-height: 48px');
   });
+
+  it('covers compact utility pages with the shared app surface', () => {
+    const pages = mobileCss['pages.css'];
+    expect(pages).toContain('.app[data-layout="compact"] .utility-drawer');
+    expect(pages).toContain('inset: 0');
+    expect(pages).toContain('.utility-drawer .drawer-header');
+    expect(pages).toContain('min-height: 56px');
+  });
 });

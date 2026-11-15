@@ -203,3 +203,43 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .time-zone-note {
 .app[data-layout="compact"] .search-results-header button {
   min-height: 48px;
 }
+
+.app[data-layout="compact"] .utility-drawer {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  width: auto;
+  padding: 0;
+  border: 0;
+  background: var(--surface);
+  box-shadow: none;
+  overflow: hidden;
+}
+
+.app[data-layout="compact"] .utility-drawer > :not(.drawer-header) {
+  max-height: calc(100% - 56px);
+  overflow-y: auto;
+  padding-inline: 20px 16px;
+  padding-block-end: var(--mobile-bottom-clearance);
+}
+
+.app[data-layout="compact"] .utility-drawer .drawer-header {
+  display: flex;
+  height: 56px;
+  min-height: 56px;
+  margin: 0;
+  padding-inline: 20px 16px;
+}
+
+.app[data-layout="compact"] .utility-drawer .drawer-header h2 {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.app[data-layout="compact"] .utility-drawer .drawer-header button {
+  width: 48px;
+  height: 48px;
+  min-height: 48px;
+  padding: 0;
+  border-radius: 50%;
+}

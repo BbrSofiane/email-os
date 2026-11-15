@@ -113,4 +113,29 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
     expect(suggestionGeometry.suggestions.length).toBeGreaterThan(0);
     expect(suggestionGeometry.suggestions.every(row => row.height >= 48)).toBe(true);
   });
+
+  it('makes Activity cover the app and close back to the list', async () => {
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-menu"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
+    await harness!.cdp.js(`[...document.querySelectorAll(${JSON.stringify(workspaceApp)} + ' .mobile-drawer-row')].find(row => row.textContent.trim() === 'Activity').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 200))');
+    const geometry = await harness!.cdp.js<{ top: DOMRectReadOnly; bottom: DOMRectReadOnly; headerHeight: number; close: DOMRectReadOnly; topCovered: boolean; bottomCovered: boolean }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const page = app.querySelector('[data-test="utility-drawer"]');
+      const rect = element => { const box = element.getBoundingClientRect(); return { top: box.top, bottom: box.bottom, height: box.height, left: box.left, right: box.right }; };
+      const pageRect = rect(page);
+      const header = rect(page.querySelector('.drawer-header'));
+      const close = rect(page.querySelector('[data-test="drawer-close"]'));
+      return { top: pageRect, bottom: pageRect, headerHeight: header.height, close, topCovered: page.contains(document.elementFromPoint(10, 10)), bottomCovered: page.contains(document.elementFromPoint(innerWidth / 2, innerHeight - 10)) };
+    })()`);
+    expect(geometry.top.top).toBe(0);
+    expect(geometry.bottom.bottom).toBeCloseTo(PHONE_VIEWPORT.height, 0);
+    expect(geometry.headerHeight).toBe(56);
+    expect(geometry.close.height).toBeGreaterThanOrEqual(48);
+    expect(geometry.topCovered).toBe(true);
+    expect(geometry.bottomCovered).toBe(true);
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="drawer-close"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
+    expect(await harness!.cdp.js(`!document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="utility-drawer"]')`)).toBe(true);
+  });
 });
