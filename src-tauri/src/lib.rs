@@ -8,10 +8,12 @@
 //! verified backup (ADR 0002).
 
 mod close_gate;
+mod commands;
 mod diagnostics;
 mod state;
 use mail_core::attachments::{AttachmentDescriptor, AttachmentSaved, SaveAttachment};
 
+use commands::run_blocking;
 use diagnostics::{cause, init_logging, storage_failure};
 use mail_core::drafts::types::{
     AppCloseRequest, CreateDraft, DeleteDraft, Draft, DraftDeleteReceipt, DraftReceipt, DraftRef,
@@ -57,18 +59,6 @@ fn open_fixture_core(
         Arc::new(mail_core::clock::SystemClock),
     )?;
     Ok((core, profile_dir))
-}
-
-/// Run all synchronous core/storage operations outside Tauri's async/UI threads.
-async fn run_blocking<S, T, F>(subject: S, f: F) -> Result<T, MailError>
-where
-    S: Send + 'static,
-    F: FnOnce(&S) -> Result<T, MailError> + Send + 'static,
-    T: Send + 'static,
-{
-    tauri::async_runtime::spawn_blocking(move || f(&subject))
-        .await
-        .map_err(|_| storage_failure(cause::TASK_JOIN))?
 }
 
 #[tauri::command]
