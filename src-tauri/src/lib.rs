@@ -10,35 +10,11 @@
 mod close_gate;
 mod commands;
 mod diagnostics;
+mod setup;
 mod state;
 
 use commands::*;
 use diagnostics::init_logging;
-use mail_core::drafts::DraftCore;
-use mail_core::fixture_transition::FixtureTransition;
-use mail_core::gmail::provider::LiveGmailProvider;
-use mail_core::gmail::secrets::KeychainSecrets;
-use mail_core::gmail::sync::GmailCore;
-use state::AppState;
-use std::sync::Arc;
-use tauri::{Emitter, Manager, RunEvent};
-
-/// Opens the fixture profile under `app_data_dir`: the synthetic core on its
-/// own files. A legacy `mail.db` in the same directory is never opened here;
-/// retiring it is the explicit, disclosed transition (`fixture_transition`).
-/// The profile lock and `local-drafts` live in the same directory, so a second
-/// writer is rejected.
-fn open_fixture_core(
-    app_data_dir: &std::path::Path,
-) -> Result<(GmailCore, std::path::PathBuf), Box<dyn std::error::Error>> {
-    let profile_dir = app_data_dir.join("fixture-profile");
-    let core = GmailCore::open_synthetic_profile(
-        &profile_dir,
-        mail_core::synthetic::WriteControls::from_env(),
-        Arc::new(mail_core::clock::SystemClock),
-    )?;
-    Ok((core, profile_dir))
-}
 
 #[cfg(test)]
 mod attachment_transfer_tests {
@@ -74,130 +50,54 @@ mod attachment_transfer_tests {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     init_logging();
-    let app = tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![
-            list_provider_destinations,
-            browse_provider_destination,
-            list_conversations,
-            list_reminders,
-            put_reminder,
-            cancel_reminder,
-            list_cached_done,
-            list_cached_starred,
-            set_starred,
-            set_starred_group,
-            get_saved_split,
-            save_saved_split,
-            search_mail,
-            cancel_search_mail,
-            list_cached_trash,
-            get_conversation,
-            list_attachments,
-            save_attachment,
-            cancel_attachment,
-            open_external_link,
-            set_archived,
-            enable_mailbox_actions,
-            cancel_mailbox_action_upgrade,
-            set_read,
-            retry_operation,
-            undo_operation,
-            set_archived_group,
-            set_read_group,
-            get_operation_group,
-            list_operation_groups,
-            undo_operation_group,
-            get_account_status,
-            connect_account,
-            disconnect_account,
-            request_sync,
-            list_drafts,
-            get_draft,
-            create_draft,
-            save_draft,
-            delete_draft,
-            get_app_close_request,
-            get_fixture_transition_status,
-            accept_fixture_transition,
-            complete_app_close,
-            cancel_app_close
-        ])
-        .on_window_event(|window, event| {
-            #[cfg(not(mobile))]
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                begin_native_close(window.app_handle());
-            }
-            #[cfg(mobile)]
-            let _ = (window, event);
-        })
-        .setup(|app| {
-            #[cfg(mobile)]
-            let mode = "fixture".to_owned();
-            #[cfg(not(mobile))]
-            let mode = match std::env::var_os("EMAIL_OS_MODE") {
-                Some(value) => value
-                    .into_string()
-                    .map_err(|_| "EMAIL_OS_MODE must be valid UTF-8")?,
-                None => "fixture".to_owned(),
-            };
-            let app_data_dir = app.path().app_data_dir()?;
-            let (core, profile_dir) = match mode.as_str() {
-                "fixture" => open_fixture_core(&app_data_dir)?,
-                "gmail" => {
-                    let profile_dir = app_data_dir.join("gmail-profile");
-                    let provider = LiveGmailProvider::from_env(Arc::new(KeychainSecrets::new()))?;
-                    let provider: Arc<dyn mail_core::gmail::types::GmailProvider> =
-                        Arc::new(provider);
-                    (GmailCore::open(&profile_dir, provider)?, profile_dir)
-                }
-                _ => return Err("EMAIL_OS_MODE must be fixture or gmail".into()),
-            };
-            let drafts = DraftCore::open(profile_dir.join("local-drafts"))?;
-            // The one-time retirement of a legacy fixture database; a no-op in
-            // Gmail mode and on a fresh fixture profile.
-            app.manage(Arc::new(if mode == "fixture" {
-                FixtureTransition::new(&profile_dir)
-            } else {
-                FixtureTransition::inactive()
-            }));
-
-            let handle = app.handle().clone();
-            app.manage(AppState::new(core, drafts, move || {
-                // Notifications are best-effort hints; the frontend refetches persisted state.
-                let _ = handle.emit("mailbox_changed", ());
-            }));
-            Ok(())
-        })
-        .build(tauri::generate_context!())
-        .expect("failed to build the email-os shell");
-
-    app.run(|app_handle, event| match event {
-        #[cfg(not(mobile))]
-        RunEvent::ExitRequested { api, .. } => {
-            let authorized = app_handle
-                .try_state::<AppState>()
-                .and_then(|state| {
-                    state
-                        .close_gate
-                        .lock()
-                        .ok()
-                        .map(|mut gate| gate.take_exit_authorization())
-                })
-                .unwrap_or(false);
-            if !authorized {
-                api.prevent_exit();
-                begin_native_close(app_handle);
-            }
-        }
-        #[cfg(not(mobile))]
-        RunEvent::Exit => {
-            if let Some(state) = app_handle.try_state::<AppState>() {
-                state.core.stop();
-            }
-        }
-        _ => {}
-    });
+    let builder = tauri::Builder::default().invoke_handler(tauri::generate_handler![
+        list_provider_destinations,
+        browse_provider_destination,
+        list_conversations,
+        list_reminders,
+        put_reminder,
+        cancel_reminder,
+        list_cached_done,
+        list_cached_starred,
+        set_starred,
+        set_starred_group,
+        get_saved_split,
+        save_saved_split,
+        search_mail,
+        cancel_search_mail,
+        list_cached_trash,
+        get_conversation,
+        list_attachments,
+        save_attachment,
+        cancel_attachment,
+        open_external_link,
+        set_archived,
+        enable_mailbox_actions,
+        cancel_mailbox_action_upgrade,
+        set_read,
+        retry_operation,
+        undo_operation,
+        set_archived_group,
+        set_read_group,
+        get_operation_group,
+        list_operation_groups,
+        undo_operation_group,
+        get_account_status,
+        connect_account,
+        disconnect_account,
+        request_sync,
+        list_drafts,
+        get_draft,
+        create_draft,
+        save_draft,
+        delete_draft,
+        get_app_close_request,
+        get_fixture_transition_status,
+        accept_fixture_transition,
+        complete_app_close,
+        cancel_app_close
+    ]);
+    setup::run(builder);
 }
 
 #[cfg(test)]
@@ -400,7 +300,8 @@ mod tests {
 /// same core methods the Tauri commands call, on a synthetic session.
 #[cfg(test)]
 mod synthetic_bridge_tests {
-    use super::*;
+    use crate::setup::open_fixture_core;
+    use crate::state::AppState;
     use mail_core::attachments::SaveAttachment;
     use mail_core::drafts::types::{DraftRef, DraftSource};
     use mail_core::drafts::DraftCore;
