@@ -1,0 +1,67 @@
+<task-notification>
+<task-id>a2a480a002db7e045</task-id>
+<tool-use-id>toolu_01QTQnUuYydXsezkxaebQ7fe</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-maintenance-p4c-thin-sh-b701ff54dd73b581/5d0bff72-6561-427d-8886-987008a34c7a/tasks/a2a480a002db7e045.output</output-file>
+<status>completed</status>
+<summary>Agent "Review Backend collapse diff" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>**Verdict: no real behaviour change in any of the three commits.** I found only logging differences, and those are benign.
+
+## 88ad45f (Backend enum deleted)
+
+I compared every command in `src-tauri/src/lib.rs` before and after.
+
+- Every forwarder is one-for-one: same GmailCore method, same arguments, same `run_blocking` wrapper. The `get_conversation` branch for `load_missing_search_result` still calls `load_search_conversation` and otherwise `get_conversation`. `cancel_search_mail` still calls `core.cancel_search_mail()`.
+- (b) `enable_mailbox_actions` now calls `GmailCore::enable_mutations` and `cancel_mailbox_action_upgrade` calls `GmailCore::cancel_mutation_upgrade`. The old `Backend` methods already called exactly those, so the IPC command names are unchanged.
+- (b) `Backend::load_reply_context` became the free function `load_validated_reply_context`. Its body is identical: load, then `validate_reply_conversation`, then the `is_none_or` source check, then `ReplyUnavailable`. Its only caller, `create_draft`, was updated.
+- (b) `Subscription::Gmail(GmailUnsubscribe)` is replaced by a bare `GmailUnsubscribe`. It is still held as the last field and dropped the same way.
+- No `cfg(android)` or `cfg(mobile)` lines, no DTOs and no error variants changed.
+
+## 8e1a760 (DraftService)
+
+I compared the old shell closures with `crates/mail-core/src/drafts/service.rs` statement by statement. They match.
+
+- **create_draft:**
+  - Lock, then `active_account`, then `lookup_create_receipt` with an early return.
+  - Then `NewMessage` creates directly. For `Reply`: account mismatch gives `ReplyUnavailable`, then `get_conversation`, then validate, then read the epoch and drop the guard.
+  - Unlocked `load_validated_reply_context`, then re-lock. `!is_current || active_account mismatch` gives `AuthRequired`, then `get_conversation`, validate, a `reply_context` equality check, and finally create.
+  - Same order and same errors throughout.
+- **Reads and writes:** `list_drafts`, `get_draft`, `save_draft` and `delete_draft` take the lock, then `active_account`, then `require_draft_account`, then the store call. This is unchanged.
+- **connect_account:** it advances the epoch only after `core.connect_account()?` succeeds (service.rs, `connect_account`).
+- **disconnect_account:** it advances the epoch before `core.disconnect_account()`.
+- **Events:** the `drafts_changed` emits stay in the shell, after `.await?`, at lib.rs:457, 471 and 485. These are save, create and delete only. The connect, disconnect and read paths don't emit, as before.
+- **(b) Log differences on lock poisoning:**
+  - Lock poisoning is now logged by `storage_err()` in mail-core (target `mail_core::storage`, site `drafts/service.rs`). Before, it was `storage_failure` with target `email_os::storage` and a `lib.rs` site.
+  - The wire error is still `StorageUnavailable` and the cause tag is still `lock_poisoned`. `diagnostics.rs:17,43` admits the new target.
+- **(b) Clone structure:** `DraftService::new(core.clone(), drafts)` holds a second clone of the same `Arc&lt;GmailInner&gt;`. `AppState` still holds everything for the app lifetime, so drop order relative to `_subscription` is unchanged.
+- `run_blocking` was generalised to `S: Send + 'static` with no runtime effect.
+
+## 8eaf2a2 (AttachmentTransfers)
+
+- **begin:** the check order is the same: `valid_id`, then `Busy` if anything is active, then `AuthCancelled` if the id was cancelled, then insert. The logic is copied verbatim into `TransferState::begin`. The `64` is now `CANCELLED_MEMORY = 64`.
+- **cancel command:** `AttachmentTransfers::cancel` validates the id (`invalid("requestId")`) before taking the lock, as before.
+- **save_attachment:**
+  - Download directory first (`PATH_UNAVAILABLE`), then `begin`, then the download via `run_blocking`, then `finish(&amp;id)?`, then the result.
+  - The slot is released whether the download succeeded or failed. If `finish` fails (poisoned lock) the command returns `StorageUnavailable` and drops the download result. The old code did the same with `.lock()...?`.
+  - A join failure or panic is the `TASK_JOIN` error inside `result`, and `finish` still runs.
+- **(b) Log differences:** poisoned-lock logging moves to `mail_core::storage` (`transfers.rs`). The error variant is unchanged.
+- **(b)** The `cfg(target_os = "android")` branch is untouched and still returns `UnsupportedPlatform`.
+- **(b)** `finish` on an unknown id is a no-op, the same as the old `HashMap::remove`.
+
+I found nothing under (c).</result>
+<usage><subagent_tokens>93677</subagent_tokens><tool_uses>11</tool_uses><duration_ms>44712</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bx4x73gd0</task-id>
+<tool-use-id>toolu_013uXyDEsbPnwy6VYpk1SwSy</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-maintenance-p4c-thin-sh-b701ff54dd73b581/5d0bff72-6561-427d-8886-987008a34c7a/tasks/bx4x73gd0.output</output-file>
+<status>completed</status>
+<summary>Background command "export CARGO_TARGET_DIR=/home/exedev/email-os/target &amp;&amp; (time mise run check:all &gt; /tmp/claude-1000/-home-exedev--t3-worktrees-email-os-maintenance-p4c-thin-sh-b701ff54dd73b581/5d0bff72-6561-427d-8886-987008a34c7a/scratchpad/check-all-a.log 2&gt;&amp;1; echo exit=$?) 2&gt;&amp;1 | tail -5" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+Continue where you left off.
