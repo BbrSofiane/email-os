@@ -16,37 +16,6 @@ mod state;
 use commands::*;
 use diagnostics::init_logging;
 
-#[cfg(test)]
-mod attachment_transfer_tests {
-    use mail_core::attachments::AttachmentTransfers;
-    use mail_core::error::MailError;
-    #[test]
-    fn cancellation_before_or_during_admission_and_single_transfer_bound() {
-        let transfers = AttachmentTransfers::default();
-        transfers.cancel("early").unwrap();
-        assert!(matches!(
-            transfers.begin("early"),
-            Err(MailError::AuthCancelled)
-        ));
-        let token = transfers.begin("active").unwrap();
-        assert!(matches!(transfers.begin("other"), Err(MailError::Busy)));
-        transfers.cancel("active").unwrap();
-        assert!(token.is_cancelled());
-        transfers.finish("active").unwrap();
-        for i in 0..100 {
-            transfers.cancel(&format!("r{i}")).unwrap();
-        }
-        // Only the 64 most recent cancellations are remembered (the exact
-        // bound is asserted in mail-core): r36 is still refused, r35 is not.
-        assert!(matches!(
-            transfers.begin("r36"),
-            Err(MailError::AuthCancelled)
-        ));
-        transfers.finish("r36").unwrap();
-        assert!(transfers.begin("r35").is_ok());
-    }
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     init_logging();
