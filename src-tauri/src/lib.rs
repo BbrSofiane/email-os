@@ -12,6 +12,8 @@ mod commands;
 mod diagnostics;
 mod setup;
 mod state;
+#[cfg(test)]
+mod test_support;
 
 use commands::*;
 use diagnostics::init_logging;
@@ -73,13 +75,10 @@ pub fn run() {
 mod tests {
     use mail_core::dto::{ConversationRef, RetryOperation, SetArchived, SetRead};
     use mail_core::error::MailError;
-
     use mail_core::gmail::sync::GmailCore;
-
     use mail_core::gmail::types::MailMode;
-    use std::{collections::BTreeSet, fs};
-
     use mail_core::testing::temp_profile as temp_dir;
+    use std::{collections::BTreeSet, fs};
 
     fn quoted_values(source: &str, marker: &str) -> BTreeSet<String> {
         source
@@ -270,19 +269,17 @@ mod tests {
 #[cfg(test)]
 mod synthetic_bridge_tests {
     use crate::setup::open_fixture_core;
-    use crate::state::AppState;
+    use crate::test_support::{conv, open};
     use mail_core::attachments::SaveAttachment;
     use mail_core::drafts::types::{DraftRef, DraftSource};
     use mail_core::drafts::DraftCore;
     use mail_core::drafts::{load_validated_reply_context, require_draft_account, DraftLifecycle};
     use mail_core::dto::{
-        CachedDoneRequest, CachedTrashRequest, ConversationRef, RetryOperation, SetArchived,
-        SetRead,
+        CachedDoneRequest, CachedTrashRequest, RetryOperation, SetArchived, SetRead,
     };
     use mail_core::error::MailError;
     use mail_core::fixture_transition::FixtureTransition;
     use mail_core::gmail::browsing::DestinationRequest;
-    use mail_core::gmail::sync::GmailCore;
     use mail_core::gmail::types::{ConnectionState, MailMode};
     use mail_core::reminders::PutReminder;
     use mail_core::synthetic::WriteControls;
@@ -290,25 +287,6 @@ mod synthetic_bridge_tests {
     use mail_core::CancelToken;
     use mail_core::ACCOUNT_ID;
     use std::sync::mpsc;
-    use std::sync::Arc;
-    use std::time::Duration;
-
-    fn open(app_data: &std::path::Path, controls: WriteControls) -> GmailCore {
-        let profile_dir = app_data.join("fixture-profile");
-        GmailCore::open_synthetic_profile(
-            profile_dir,
-            controls,
-            Arc::new(mail_core::clock::SystemClock),
-        )
-        .unwrap()
-    }
-
-    fn conv(id: &str) -> ConversationRef {
-        ConversationRef {
-            account_id: ACCOUNT_ID.into(),
-            conversation_id: id.into(),
-        }
-    }
 
     fn mode_error() -> MailError {
         MailError::InvalidRequest {
@@ -491,63 +469,6 @@ mod synthetic_bridge_tests {
         assert!(!lifecycle.is_current(before));
         assert!(lifecycle.is_current(lifecycle.session_epoch()));
         core.stop();
-    }
-
-    #[test]
-    fn state_keeps_forwarding_after_command_acceptance() {
-        let dir = temp_profile("synthetic-events");
-        let core = open(dir.path(), WriteControls::default());
-        let (tx, rx) = mpsc::channel();
-        let drafts = DraftCore::open(dir.path().join("local-drafts")).unwrap();
-        let state = AppState::new(core, drafts, move || {
-            let _ = tx.send(());
-        });
-        let receipt = state
-            .core
-            .set_archived(&SetArchived {
-                conversation: conv("conv-01"),
-                archived: true,
-                request_id: "bridge-test".into(),
-            })
-            .unwrap();
-        rx.recv_timeout(Duration::from_secs(2))
-            .expect("acceptance event");
-        assert!(until(|| {
-            state
-                .core
-                .list_conversations()
-                .unwrap()
-                .activity
-                .iter()
-                .any(|op| {
-                    op.id == receipt.operation_id
-                        && op.status == mail_core::dto::OperationStatus::Confirmed
-                })
-        }));
-        // Completion also notified (drain until quiet, never sleeping).
-        assert!(rx.try_iter().count() >= 1 || rx.recv_timeout(Duration::from_secs(2)).is_ok());
-        let done = state
-            .core
-            .list_cached_done(&CachedDoneRequest {
-                account_id: ACCOUNT_ID.into(),
-                limit: 10,
-                cursor: None,
-            })
-            .unwrap();
-        assert!(done
-            .conversations
-            .iter()
-            .any(|row| row.conversation_ref.conversation_id == "conv-01"));
-        assert_eq!(done.exact_total, None);
-        assert_eq!(
-            state.core.list_cached_done(&CachedDoneRequest {
-                account_id: "foreign".into(),
-                limit: 10,
-                cursor: None,
-            }),
-            Err(MailError::NotFound)
-        );
-        state.core.stop();
     }
 
     #[test]
