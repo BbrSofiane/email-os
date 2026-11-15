@@ -93,6 +93,7 @@ function choose(id: ActionId): void {
       aria-modal="true"
       aria-label="Destinations"
       data-test="mobile-drawer"
+      id="mobile-navigation-drawer"
       @keydown="focusCycle"
     >
       <p class="mobile-drawer-account">{{ email }}</p>

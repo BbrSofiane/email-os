@@ -44,6 +44,41 @@ describe('App compact and regular frame', () => {
     regular.unmount();
   });
 
+  it('opens the compact drawer, closes it before the next Escape rung, and navigates', async () => {
+    stubLayout(true);
+    const fake = createBrowserFakeMailClient();
+    const wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+
+    await wrapper.get('[data-test="mobile-menu"]').trigger('click');
+    expect(wrapper.find('[role="dialog"][aria-label="Destinations"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="action-overlay"]').exists()).toBe(false);
+    expect(wrapper.get('[data-test="mobile-menu"]').attributes('aria-expanded')).toBe('true');
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await flushFakeClientAndVueUpdates(fake);
+    expect(wrapper.find('[role="dialog"][aria-label="Destinations"]').exists()).toBe(false);
+    expect(wrapper.get('[data-test="mobile-menu"]').attributes('aria-expanded')).toBe('false');
+
+    await wrapper.get('[data-test="mobile-menu"]').trigger('click');
+    const draftsRow = wrapper.findAll('.mobile-drawer-row').find((row) => row.text() === 'Drafts');
+    expect(draftsRow).toBeDefined();
+    await draftsRow!.trigger('click');
+    await flushFakeClientAndVueUpdates(fake);
+    expect(wrapper.find('[data-test="drafts-pane"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('keeps the regular menu button on the navigator overlay', async () => {
+    stubLayout(false);
+    const fake = createBrowserFakeMailClient();
+    const wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+    await wrapper.get('[data-test="navigator-trigger"]').trigger('click');
+    expect(wrapper.find('[data-test="action-query"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="mobile-drawer"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
   it('keeps the status strip and moves reader teleports into mobile hosts', async () => {
     stubLayout(true);
     const fake = createBrowserFakeMailClient();

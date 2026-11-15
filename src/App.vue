@@ -33,6 +33,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useLayoutMode } from './composables/useLayoutMode';
 import { installAndroidBackBridge } from './lib/android-back';
 import MobileTopBar from './components/mobile/MobileTopBar.vue';
+import MobileDrawer from './components/mobile/MobileDrawer.vue';
 import MobileBottomBar from './components/mobile/MobileBottomBar.vue';
 import { createSubjectIndex } from './lib/subject-index';
 import ActionOverlay from './components/ActionOverlay.vue';
@@ -846,6 +847,7 @@ const { searchVisible, searchDraft, searchInput, cachedSearch, recentQueries, su
 // Scope DOM lookups to this App: two workspaces each have their own reader scroller.
 const appRoot = ref<HTMLElement | null>(null);
 const overlay = ref<'palette' | 'navigator' | null>(null);
+const mobileNavOpen = ref(false);
 // This App belongs to one immutable fixture session. Keep its command query
 // across transient overlay mounts, without sharing the destination query or
 // changing standalone/native palette reset behavior.
@@ -867,6 +869,17 @@ function openOverlay(kind: 'palette' | 'navigator'): void {
   overlayRowOrigin = overlayOrigin?.matches('.inbox-row') && mailbox.focusedRef.value
     ? { ...mailbox.focusedRef.value } : null;
   overlay.value = kind;
+}
+function openMobileDrawer(): void {
+  cancelGo();
+  if (accountReady.value) mobileNavOpen.value = true;
+}
+function closeMobileDrawer(): void {
+  mobileNavOpen.value = false;
+}
+function executeMobileDestination(id: ActionId): void {
+  mobileNavOpen.value = false;
+  void executeAction(id);
 }
 async function closeOverlay(restore = true): Promise<void> {
   overlay.value = null;
@@ -1838,6 +1851,11 @@ function keyFocus(event: KeyboardEvent): KeyFocus {
 /** Escape ladder (§3.2): drawer → composer → disclosure → message details → selection → Back. */
 function escapeLadder(event: KeyboardEvent): void {
   const readerIsOpen = readerOpen.value;
+  if (mobileNavOpen.value) {
+    event.preventDefault();
+    closeMobileDrawer();
+    return;
+  }
   // The active disclosure gets Escape precedence; mailbox actions underneath
   // are suppressed while it is open.
   if (drawer.value) {
@@ -2045,9 +2063,11 @@ const searchSyntaxEditHint = computed(() =>
       :reader="readerOpen"
       :title="contextTitle"
       :execute-action="executeAction"
-      :open-destinations="() => openOverlay('navigator')"
+      :open-destinations="openMobileDrawer"
+      :menu-expanded="mobileNavOpen"
+      :inert="mobileNavOpen || undefined"
     />
-    <main class="app-main" :class="{ 'contact-collapsed': contactCollapsed }" :inert="!!overlay || !!attachmentConversation || undefined">
+    <main class="app-main" :class="{ 'contact-collapsed': contactCollapsed }" :inert="!!overlay || !!attachmentConversation || mobileNavOpen || undefined">
       <!-- Split header (DESIGN.md "Split Tabs"): one borderless 78px strip in
            the list column. Destinations hamburger on the left, split tabs on
            the 50px content inset, quiet notes and glyphs on the right. It sits
@@ -2704,6 +2724,17 @@ const searchSyntaxEditHint = computed(() =>
       :execute-action="executeAction"
       :action-available="actionAvailable"
       :action-label="actionLabel"
+      :inert="mobileNavOpen || undefined"
+    />
+    <MobileDrawer
+      v-if="layoutMode === 'compact'"
+      :open="mobileNavOpen"
+      :email="accountStatus?.account?.emailAddress ?? ''"
+      :current="mailbox.context.value === 'saved' ? 'saved' : mailbox.context.value === 'inbox' ? 'inbox' : mailbox.context.value === 'drafts' ? 'drafts' : mailbox.context.value === 'done' ? 'done' : mailbox.context.value === 'starred' ? 'starred' : mailbox.context.value === 'trash' ? 'trash' : mailbox.context.value === 'reminders' ? 'reminders' : null"
+      :actions="availableActions"
+      @close="closeMobileDrawer"
+      @execute="executeMobileDestination"
+      @commands="() => { closeMobileDrawer(); openOverlay('palette'); }"
     />
     <ActionOverlay v-if="overlay" v-model:query="overlayQuery" :account-first="accountCommandsFirst" :account-top="accountCommandsTop" :row-keys="paletteHasRows" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" :kind="overlay" :actions="availableActions" :key-scope="remindersList ? 'reminders' : draftsList ? 'drafts' : undefined" @close="closeOverlay()" @execute="executeOverlay" />
   </div>
