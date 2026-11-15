@@ -34,6 +34,7 @@ import { useLayoutMode } from './composables/useLayoutMode';
 import { installAndroidBackBridge } from './lib/android-back';
 import MobileTopBar from './components/mobile/MobileTopBar.vue';
 import MobileBottomBar from './components/mobile/MobileBottomBar.vue';
+import MobileActionSheet from './components/mobile/MobileActionSheet.vue';
 import { createSubjectIndex } from './lib/subject-index';
 import ActionOverlay from './components/ActionOverlay.vue';
 import RemindersList from './components/RemindersList.vue';
@@ -846,6 +847,18 @@ const { searchVisible, searchDraft, searchInput, cachedSearch, recentQueries, su
 // Scope DOM lookups to this App: two workspaces each have their own reader scroller.
 const appRoot = ref<HTMLElement | null>(null);
 const overlay = ref<'palette' | 'navigator' | null>(null);
+const readerSheetOpen = ref(false);
+const readerSheetItems = computed(() => {
+  const conversation = mailbox.conversation.value;
+  const readAction = conversation?.isRead ? 'unread' : 'read';
+  const replyReason = replyBlockedReason(conversation);
+  return [
+    { id: readAction, label: conversation?.isRead ? 'Mark unread' : 'Mark read', glyph: conversation?.isRead ? 'unread' as const : 'read' as const, disabled: !actionAvailable(readAction) },
+    { id: 'reply', label: 'Reply', glyph: 'reply' as const, disabled: !actionAvailable('reply'), disabledReason: replyReason ?? undefined, group: 'more' },
+    ...(!androidFixture ? [{ id: 'files', label: 'Files and links', glyph: 'files' as const, disabled: !actionAvailable('open') }] : []),
+    { id: 'commands', label: 'Commands', glyph: 'commands' as const, group: 'commands' },
+  ];
+});
 // This App belongs to one immutable fixture session. Keep its command query
 // across transient overlay mounts, without sharing the destination query or
 // changing standalone/native palette reset behavior.
@@ -1838,6 +1851,7 @@ function keyFocus(event: KeyboardEvent): KeyFocus {
 /** Escape ladder (§3.2): drawer → composer → disclosure → message details → selection → Back. */
 function escapeLadder(event: KeyboardEvent): void {
   const readerIsOpen = readerOpen.value;
+  if (readerSheetOpen.value) { event.preventDefault(); readerSheetOpen.value = false; return; }
   // The active disclosure gets Escape precedence; mailbox actions underneath
   // are suppressed while it is open.
   if (drawer.value) {
@@ -2047,7 +2061,7 @@ const searchSyntaxEditHint = computed(() =>
       :execute-action="executeAction"
       :open-destinations="() => openOverlay('navigator')"
     />
-    <main class="app-main" :class="{ 'contact-collapsed': contactCollapsed }" :inert="!!overlay || !!attachmentConversation || undefined">
+      <main class="app-main" :class="{ 'contact-collapsed': contactCollapsed }" :inert="!!overlay || !!attachmentConversation || readerSheetOpen || undefined">
       <!-- Split header (DESIGN.md "Split Tabs"): one borderless 78px strip in
            the list column. Destinations hamburger on the left, split tabs on
            the 50px content inset, quiet notes and glyphs on the right. It sits
@@ -2480,6 +2494,7 @@ const searchSyntaxEditHint = computed(() =>
               @set-read="executeAction($event ? 'read' : 'unread')"
               @prepare-reply="prepareReply"
               @star="executeAction(mailbox.conversation.value?.stars?.starredMessages ? 'unstar' : 'star')"
+              @more="readerSheetOpen = true"
               @attachments="openAttachments"
               @active-message="onReaderActiveMessage"
               @contact-override="onReaderContactOverride"
@@ -2696,6 +2711,13 @@ const searchSyntaxEditHint = computed(() =>
         <p v-if="commandError" class="command-error" role="alert" data-test="command-error">Last command failed: {{ errorText(commandError) }}</p>
       </div>
     </main>
+    <MobileActionSheet
+      v-if="readerSheetOpen"
+      :title="mailbox.conversation.value?.subject ?? 'Actions'"
+      :items="readerSheetItems"
+      @close="readerSheetOpen = false"
+      @choose="(id) => { if (id === 'commands') openOverlay('palette'); else if (id === 'reply') { const conversation = mailbox.conversation.value; const sourceMessage = conversation?.messages.at(-1); if (conversation && sourceMessage) void prepareReply({ kind: 'reply', conversation: conversation.ref, sourceMessageId: sourceMessage.id }); } else if (id === 'files') openAttachments(readerView?.$el as HTMLElement); else executeAction(id as ActionId); }"
+    />
     <AttachmentChooser v-if="attachmentConversation" :client="props.client" :conversation="attachmentConversation" :preview="props.mode === 'browser-preview'" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" @close="closeAttachments" />
     <MobileBottomBar
       v-if="layoutMode === 'compact'"

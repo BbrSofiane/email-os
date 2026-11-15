@@ -32,7 +32,7 @@ describe('ReaderView compact toolbar', () => {
     });
     const buttons = wrapper.findAll('[data-test="reader-toolbar"] button');
     expect(buttons.map(button => button.attributes('data-test'))).toEqual([
-      'reader-remind', 'reader-archive-toggle', 'reader-prev', 'reader-next',
+      'reader-remind', 'reader-archive-toggle', 'reader-prev', 'reader-next', 'reader-more',
     ]);
     expect(wrapper.find('[data-test="reader-toggle-read"]').exists()).toBe(false);
     expect(wrapper.find('[data-test="files-links"]').exists()).toBe(false);
