@@ -1,0 +1,58 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7FZ4V27BDQ6A912ZXMS916J",
+  "session_id": "415cd333-37f5-4cfe-be88-ad6fe867d94b",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-15T16:02:52.078059577Z",
+  "branch": "mobile/p1-foundations",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "docs/development.md",
+    "mise.toml",
+    "src-tauri/gen/android/app/src/main/java/dev/exedev/emailos/androidfixture/MainActivity.kt",
+    "src/assets/mobile/shell.css",
+    "tests/layout/mobile-screenshots.rendered.test.ts",
+    "tests/layout/mobile-shell.rendered.test.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5-2",
+  "turn_id": "ec619d431638",
+  "checkpoint_transcript_start": 542,
+  "transcript_lines_at_start": 542,
+  "compact_transcript_start": 88,
+  "token_usage": {
+    "input_tokens": 42,
+    "cache_creation_tokens": 60858,
+    "cache_read_tokens": 6139905,
+    "output_tokens": 15029,
+    "api_call_count": 20
+  },
+  "session_metrics": {
+    "turn_count": 4
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-15T16:02:51.753387953Z",
+    "agent_lines": 897,
+    "agent_removed": 8,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 897,
+    "total_lines_changed": 905,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 58,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".codex/hooks.json": 23,
+        "pi-scheduled-tasks": 35
+      }
+    }
+  ]
+}
