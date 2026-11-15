@@ -106,5 +106,34 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
     })()`);
     expect(messageMenu.title).toBe('Ada Fixture');
     expect(messageMenu.rows).toBe(3);
+    await harness!.cdp.js(`(() => {
+      const app = document.querySelector(${JSON.stringify(appSelector)});
+      app.querySelector('[data-test="action-sheet-scrim"]').click();
+      app.querySelector('[data-test="reader-archive-toggle"]').click();
+    })()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 500))');
+    const notice = await harness!.cdp.js<{ rect: { top: number; bottom: number; left: number; right: number }; statusWidth: number; statusClient: number; undoHeight: number; replyTop: number; actionTop: number }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(appSelector)});
+      const rect = element => { const box = element.getBoundingClientRect(); return { top: box.top, bottom: box.bottom, left: box.left, right: box.right }; };
+      const toast = app.querySelector('[data-test="action-notice"]');
+      const status = toast.querySelector('[data-test="action-notice-status"]');
+      return {
+        rect: rect(toast),
+        statusWidth: status.scrollWidth,
+        statusClient: status.clientWidth,
+        undoHeight: toast.querySelector('[data-test="action-notice-undo"]')?.getBoundingClientRect().height ?? 0,
+        replyTop: app.querySelector('[data-test="mobile-reply-bar"]')?.getBoundingClientRect().top ?? innerHeight,
+        actionTop: app.querySelector('[data-test="mobile-reader-actions"]').getBoundingClientRect().top,
+      };
+    })()`);
+    expect(notice.rect.top).toBeGreaterThanOrEqual(0);
+    expect(notice.rect.bottom).toBeLessThanOrEqual(notice.replyTop);
+    expect(notice.rect.bottom).toBeLessThanOrEqual(notice.actionTop);
+    expect(notice.statusWidth).toBeLessThanOrEqual(notice.statusClient);
+    expect(notice.undoHeight).toBeGreaterThanOrEqual(48);
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="action-notice-undo"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 400))');
+    const restored = await harness!.cdp.js(`document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="action-notice-status"]')?.textContent ?? ''`);
+    expect(restored).toMatch(/Restored|Restoring|Cancelled/);
   });
 });

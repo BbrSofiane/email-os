@@ -98,6 +98,14 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await freshInbox();
     await shot('inbox');
 
+    await click('.inbox-row');
+    await waitFor(`app.querySelector('[data-test="reader-archive-toggle"]')`, 'reader archive action');
+    await click('[data-test="reader-archive-toggle"]');
+    await waitFor(`app.querySelector('[data-test="action-notice-status"]')`, 'action notice');
+    await click('[data-test="reader-close"]');
+    await shot('inbox-undo-toast');
+    await freshInbox();
+
     await harness!.cdp.js(`(() => {
       const list = document.querySelector(${JSON.stringify(activeApp)}).querySelector('.inbox-scroll');
       list.scrollTop = list.scrollHeight;
@@ -121,6 +129,10 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await shot('reader-message-sheet');
     await click('[data-test="reader-more"]');
     await shot('reader-more-sheet');
+    await click('[data-test="action-sheet-scrim"]');
+    await click('[data-test="reader-archive-toggle"]');
+    await waitFor(`app.querySelector('[data-test="action-notice-status"]')`, 'reader action notice');
+    await shot('reader-undo-toast');
   }, 120_000);
 
   it('captures the overlays and secondary surfaces', async () => {
