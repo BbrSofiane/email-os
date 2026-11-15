@@ -24,6 +24,14 @@ describe.skipIf(!chromePath)('compact compose geometry', () => {
       width, height, screenWidth: width, screenHeight: height,
       deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor, mobile: true,
     });
+    await harness!.cdp.js(`(() => {
+      const app = document.querySelector(${JSON.stringify(appSelector)});
+      window.__composeSheetPoints = ['mobile-menu', 'mobile-compose'].map(test => {
+        const element = app.querySelector('[data-test="' + test + '"]');
+        const rect = element.getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      });
+    })()`);
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="mobile-compose"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 400))');
     const initial = await geometry(harness!);
@@ -33,6 +41,25 @@ describe.skipIf(!chromePath)('compact compose geometry', () => {
     expect(initial.footer.bottom).toBeLessThanOrEqual(height);
     expect(initial.body.height).toBeGreaterThan(120);
     expect(initial.overflow).toBeLessThanOrEqual(width);
+    const newMessage = await harness!.cdp.js<{ boxMatches: boolean; hitResults: boolean[]; titleLeft: number; closeLeft: number }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(appSelector)});
+      const sheet = app.querySelector('[data-test="compose-card"]');
+      const rect = element => element.getBoundingClientRect();
+      const appBox = rect(app);
+      const sheetBox = rect(sheet);
+      return {
+        boxMatches: ['top', 'right', 'bottom', 'left'].every(edge => Math.abs(sheetBox[edge] - appBox[edge]) <= 1),
+        hitResults: window.__composeSheetPoints.map(point => {
+          const hit = document.elementFromPoint(point.x, point.y);
+          return !!hit && sheet.contains(hit);
+        }),
+        titleLeft: rect(sheet.querySelector('.composer-heading h2')).left,
+        closeLeft: rect(sheet.querySelector('[data-test="compose-sheet-close"]')).left,
+      };
+    })()`);
+    expect(newMessage.boxMatches).toBe(true);
+    expect(newMessage.hitResults.every(Boolean)).toBe(true);
+    expect(newMessage.titleLeft).toBeLessThan(newMessage.closeLeft);
     await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
       width, height: 500, screenWidth: width, screenHeight: 500,
       deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor, mobile: true,

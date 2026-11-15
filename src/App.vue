@@ -2357,8 +2357,8 @@ const searchSyntaxEditHint = computed(() =>
                (list OR reader OR compose card). It is in-flow — no backdrop, no
                dimming — so the rail, header and contact pane stay visible and
                non-inert while composing. -->
+          <Teleport v-if="composeCardOpen && !readerOpen" :to="appRoot ?? undefined" :disabled="layoutMode !== 'compact'">
           <ComposeCard
-            v-if="composeCardOpen && !readerOpen"
             :compact="layoutMode === 'compact'"
             :recipient-label="composeRecipientLabel"
             :notice="cardNotice"
@@ -2394,6 +2394,7 @@ const searchSyntaxEditHint = computed(() =>
             @save-as-new="drafts.saveAsNew()"
             @cancel-reply-preparation="drafts.cancelReplyPreparation()"
           />
+          </Teleport>
           <DraftsList
             v-else-if="draftsContext && !readerOpen"
             ref="draftsPane"
@@ -2577,8 +2578,8 @@ const searchSyntaxEditHint = computed(() =>
             <!-- A new-message editor while the reader is open docks the same
                  inline compose card at the bottom of the reader pane, exactly
                  like the reply composer above it. -->
+            <Teleport v-if="composeCardOpen && readerOpen" :to="appRoot ?? undefined" :disabled="layoutMode !== 'compact'">
             <ComposeCard
-              v-if="composeCardOpen && readerOpen"
               :compact="layoutMode === 'compact'"
               :recipient-label="composeRecipientLabel"
               :notice="cardNotice"
@@ -2614,6 +2615,7 @@ const searchSyntaxEditHint = computed(() =>
               @save-as-new="drafts.saveAsNew()"
               @cancel-reply-preparation="drafts.cancelReplyPreparation()"
             />
+            </Teleport>
           </section>
         </section>
 

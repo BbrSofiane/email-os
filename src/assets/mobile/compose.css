@@ -38,7 +38,9 @@
 }
 .app[data-layout="compact"] .compose-card .composer-heading {
   display: flex;
+  width: 100%;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
 }
 .app[data-layout="compact"] .compose-card .compose-sheet-close {
