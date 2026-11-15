@@ -20,3 +20,6 @@ pub(crate) fn conv(id: &str) -> ConversationRef {
         conversation_id: id.into(),
     }
 }
+
+pub(crate) const LEGACY_MAIL_DB: &[u8] =
+    include_bytes!("../../crates/mail-core/tests/fixtures/legacy-fixture-profile/mail.db");
