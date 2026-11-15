@@ -71,10 +71,10 @@ describe('useGoChord', () => {
     stop();
   });
 
-  it('offers Done always and every other target only while it is available', () => {
+  it('offers every target, Done included, only while it is available (Done needs an account)', () => {
     const open = new Set<ActionId>(['trash']);
     const { chord, stop } = setup((id) => open.has(id));
-    expect(chord.goTargetFor(key('e'))?.id).toBe('done');
+    expect(chord.goTargetFor(key('e'))).toBeUndefined();
     expect(chord.goTargetFor(key('t'))?.id).toBe('trash');
     expect(chord.goTargetFor(key('d'))).toBeUndefined();
     expect(chord.goTargetFor(key('h'))).toBeUndefined();
@@ -83,6 +83,8 @@ describe('useGoChord', () => {
     expect(chord.isGoSecondKey(key('d'))).toBe(false);
     open.add('drafts');
     expect(chord.goTargetFor(key('d'))?.id).toBe('drafts');
+    open.add('done');
+    expect(chord.goTargetFor(key('e'))?.id).toBe('done');
     stop();
   });
 
@@ -100,10 +102,10 @@ describe('useGoChord', () => {
     expect(all.chord.goHintLabel.value).toBe('g pressed. Press E for Done, T for Trash, D for Drafts, H for Reminders or A for Account, Escape to cancel.');
     all.stop();
     const some = setup((id) => id === 'trash');
-    expect(some.chord.goHintLabel.value).toBe('g pressed. Press E for Done or T for Trash, Escape to cancel.');
+    expect(some.chord.goHintLabel.value).toBe('g pressed. Press T for Trash, Escape to cancel.');
     some.stop();
-    const gmailless = setup(() => false);
-    expect(gmailless.chord.goHintLabel.value).toBe('g pressed. Press E for Done, Escape to cancel.');
-    gmailless.stop();
+    const none = setup(() => false);
+    expect(none.chord.goHintLabel.value).toBe('g pressed. Escape to cancel.');
+    none.stop();
   });
 });

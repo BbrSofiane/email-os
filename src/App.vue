@@ -1381,7 +1381,7 @@ async function connectAccount(): Promise<void> {
 
 /** Connect, sync and sign-in cancel buttons share the Account buttons' rule: never while one runs. */
 const accountActionsIdle = computed(() => mailbox.accountBusy.value === null && !drafts.transitioning.value);
-const { statusNotice, readOnlyHint, inboxEmpty, emptyLineShown, headerAction, emptyActionShown, noteWordsHidden, noteAnnounces, noteParts, contactListEmpty, providerAccountAction, accountCommandsFirst, accountCommandsTop, paletteHasRows, emptyListText } = useAccountNotes({ mailbox, accountStatus, readerOpen, drawer, accountActionsIdle, actionAvailable });
+const { statusNotice, readOnlyHint, inboxEmpty, emptyLineShown, headerAction, emptyActionShown, noteWordsHidden, noteAnnounces, noteParts, contactListEmpty, providerAccountAction, accountCommandsFirst, accountCommandsTop, plainInboxEmpty, providerSignInExpired, paletteHasRows, emptyListText } = useAccountNotes({ mailbox, accountStatus, readerOpen, drawer, accountActionsIdle, actionAvailable });
 
 /** The same App-level paths the Account drawer uses (drafts flush before any account transition). */
 function runAccountAction(action: AccountNoticeAction): Promise<void> {
@@ -1619,7 +1619,7 @@ const actionHandlers: ActionHandlers = {
     execute: async () => { await revealSearch(); },
   },
   'create-split': {
-    available: () => !!accountId.value && !mailbox.savedSplit.value && !editingSplit.value,
+    available: () => !!accountId.value && !mailbox.savedSplit.value && !editingSplit.value && !plainInboxEmpty.value,
     execute: () => openSplitEditor('create-split'),
   },
   'edit-split': {
@@ -1627,7 +1627,7 @@ const actionHandlers: ActionHandlers = {
     execute: () => openSplitEditor('edit-split'),
   },
   'toggle-unread-filter': {
-    available: () => !!accountId.value && mailbox.context.value !== 'trash' && !editingSplit.value && !drawer.value && !contactDisclosure.value && !remindersList.value && !draftsList.value,
+    available: () => !!accountId.value && mailbox.context.value !== 'trash' && !editingSplit.value && !drawer.value && !contactDisclosure.value && !remindersList.value && !draftsList.value && !plainInboxEmpty.value,
     execute: async () => {
       const token = ++navigationToken;
       const account = accountId.value;
@@ -2656,6 +2656,9 @@ const searchSyntaxEditHint = computed(() =>
             <h2>{{ drawerHeadings[drawer] }}</h2>
             <button type="button" data-test="drawer-close" @click="closeDrawer()">Close</button>
           </header>
+          <p v-if="drawer === 'destinations' && accountId && providerSignInExpired" role="note" data-test="destinations-sign-in-expired">
+            {{ providerSignInExpired.text }}<template v-if="accountActionsIdle"> <button type="button" class="inline-action" @click="accountNoticeAction('connect', 'drawer')">{{ providerSignInExpired.label }}</button></template>
+          </p>
           <ProviderDestinations v-if="drawer === 'destinations' && accountId" :key="accountId" :client="props.client" :account-id="accountId" />
           <!-- No connected account (never configured, or disconnected while this
                surface was open): the capability needs an account identity, so
