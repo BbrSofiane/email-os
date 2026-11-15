@@ -1,0 +1,29 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7FX8QYM2HNKHXTQDD8NGXDE",
+  "strategy": "manual-commit",
+  "branch": "mobile/p1-foundations",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "docs/current-status.md",
+    "docs/development.md",
+    "tests/layout/mobile-css-contract.test.ts",
+    "tests/support/css-contract.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 6,
+    "cache_creation_tokens": 11325,
+    "cache_read_tokens": 603291,
+    "output_tokens": 4772,
+    "api_call_count": 3
+  }
+}
