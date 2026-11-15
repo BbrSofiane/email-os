@@ -31,6 +31,8 @@
 }
 
 .app[data-layout="compact"] .mobile-title {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   font-size: var(--mobile-type-list);
   font-weight: 600;
@@ -62,6 +64,9 @@
   flex-wrap: wrap;
   min-width: 0;
   height: auto;
+  /* Split tabs, filter statuses and notes sit on one wrapping line. */
+  align-items: baseline;
+  gap: 4px 12px;
   padding: 0 16px;
 }
 
@@ -70,7 +75,7 @@
 }
 
 .app[data-layout="compact"] .app-header .header-menu,
-.app[data-layout="compact"] .app[data-layout="compact"] .app-header .reader-back-host,
+.app[data-layout="compact"] .app-header .reader-back-host,
 .app[data-layout="compact"] .app-header .reader-actions-host,
 .app[data-layout="compact"] .app-header .header-trail > .header-glyph {
   display: none;
@@ -192,6 +197,20 @@
 
 /* The sole media query handles the preview strip outside each .app frame. */
 @media (max-width: 719px) {
+  .fixture-workspaces,
+  .fixture-workspaces .workspace-panel {
+    flex: 1 1 0;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .fixture-workspaces .workspace-panel > .app {
+    width: 100vw;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+
   .fixture-workspaces .workspace-header {
     height: 24px;
     flex: none;
@@ -302,4 +321,38 @@
 .app[data-layout="compact"] .mobile-reader-actions .header-glyph-icon {
   width: 24px;
   height: 24px;
+}
+
+.app[data-layout="compact"] .app-main > .central {
+  width: 100%;
+  max-width: 100%;
+}
+
+.app[data-layout="compact"] .mobile-round-button {
+  width: 48px;
+  height: 48px;
+  background: radial-gradient(circle 20px, var(--surface-raised) 99%, transparent 100%);
+}
+
+.app[data-layout="compact"] .mobile-reader-actions {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.app[data-layout="compact"] .mobile-reader-actions .reader-actions {
+  min-width: 0;
+  box-sizing: border-box;
+  gap: 0;
+  overflow: hidden;
+}
+
+.app[data-layout="compact"] .mobile-reader-actions .reader-actions > .header-glyph {
+  min-width: 48px;
+  padding: 0;
+}
+
+/* Rows keep the regular column layout until the list phase restyles them:
+   clip them to the pane so the page never scrolls sideways. */
+.app[data-layout="compact"] .central .inbox-scroll {
+  overflow-x: hidden;
 }
