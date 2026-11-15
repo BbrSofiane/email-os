@@ -1,3 +1,6 @@
+mod mailbox;
+pub(crate) use mailbox::*;
+
 use crate::diagnostics::{cause, storage_failure};
 use mail_core::error::MailError;
 
