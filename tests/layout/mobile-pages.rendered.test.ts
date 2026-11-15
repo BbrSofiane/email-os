@@ -155,7 +155,7 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
   it('sizes Reminder settings controls and allows the explanatory text to wrap', async () => {
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-menu"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
-    await harness!.cdp.js(`[...document.querySelectorAll(${JSON.stringify(workspaceApp)} + ' .mobile-drawer-row')].find(row => row.textContent.trim() === 'Reminder settings').click()`);
+    await harness!.cdp.js(`[...document.querySelectorAll(${JSON.stringify(workspaceApp)} + ' .mobile-drawer-row')].find(row => row.textContent.trim() === 'Settings').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 200))');
     const geometry = await harness!.cdp.js<{ controls: number[]; width: number; contentWidth: number }>(`(() => {
       const app = document.querySelector(${JSON.stringify(workspaceApp)});
@@ -192,5 +192,17 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
     })()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 200))');
     expect(await harness!.cdp.js(`!!document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="drafts-pane"]')`)).toBe(true);
+  });
+
+  it('renders Settings radio rows as 48px controls and saves a swipe choice', async () => {
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-menu"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
+    await harness!.cdp.js(`[...document.querySelectorAll(${JSON.stringify(workspaceApp)} + ' .mobile-drawer-row')].find(row => row.textContent.trim() === 'Settings').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 200))');
+    const rows = await harness!.cdp.js<number[]>(`[...document.querySelectorAll(${JSON.stringify(workspaceApp)} + ' .swipe-settings label')].map(label => label.getBoundingClientRect().height)`);
+    expect(rows.length).toBe(6);
+    expect(rows.every(height => height >= 48)).toBe(true);
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('input[name="swipe-left"][value="none"]').click()`);
+    expect(await harness!.cdp.js(`localStorage.getItem('email-os.swipe-preferences.v1')`)).toContain('"left":"none"');
   });
 });

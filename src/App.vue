@@ -37,6 +37,7 @@ import MobileDrawer from './components/mobile/MobileDrawer.vue';
 import MobileBottomBar from './components/mobile/MobileBottomBar.vue';
 import MobileActionSheet from './components/mobile/MobileActionSheet.vue';
 import { loadSwipePreferences } from './lib/swipe-preferences';
+import SwipeActionSettings from './components/SwipeActionSettings.vue';
 import { createSubjectIndex } from './lib/subject-index';
 import ActionOverlay from './components/ActionOverlay.vue';
 import RemindersList from './components/RemindersList.vue';
@@ -88,7 +89,7 @@ const props = withDefaults(defineProps<{
   active?: boolean;
   switchAccountLabel?: string;
 }>(), { active: true });
-const swipePreferences = loadSwipePreferences();
+const swipePreferences = ref(loadSwipePreferences());
 const emit = defineEmits<{ switchAccount: []; workspaceTitle: [title: string] }>();
 const workspaceActive = computed(() => props.active !== false);
 const androidFixture = isTauriRuntime() && /Android/i.test(navigator.userAgent);
@@ -2639,11 +2640,11 @@ const searchSyntaxEditHint = computed(() =>
           role="region"
           tabindex="-1"
           ref="drawerEl"
-          :aria-label="drawerTitles[drawer]"
+          :aria-label="drawer === 'reminder-settings' && layoutMode === 'compact' ? 'Settings' : drawerTitles[drawer]"
           data-test="utility-drawer"
         >
           <header class="drawer-header">
-            <h2>{{ drawerHeadings[drawer] }}</h2>
+            <h2>{{ drawer === 'reminder-settings' && layoutMode === 'compact' ? 'Settings' : drawerHeadings[drawer] }}</h2>
             <button type="button" data-test="drawer-close" @click="closeDrawer()">Close</button>
           </header>
           <p v-if="drawer === 'destinations' && accountId && providerSignInExpired" role="note" data-test="destinations-sign-in-expired">
@@ -2657,7 +2658,9 @@ const searchSyntaxEditHint = computed(() =>
             Provider mail needs a connected Gmail account.<template v-if="providerAccountAction"> <button v-if="providerAccountAction.action === 'account' || accountActionsIdle" type="button" class="inline-action" data-test="destinations-account-action" @click="accountNoticeAction(providerAccountAction.action, 'drawer')">{{ providerAccountAction.label }}</button></template><template v-else-if="accountStatus?.connection === 'authenticating'"> Finish sign-in in your browser.</template><template v-else> Connect one from Account first.</template>
           </p>
           <section v-if="drawer === 'reminder-settings' && remindersSupported" class="utility-panel" data-test="reminder-settings-dialog">
+            <h3 class="drawer-section-title">Reminders</h3>
             <ReminderSettings @close="closeDrawer" @saved="reminderPreferencesSaved" />
+            <SwipeActionSettings @saved="swipePreferences = $event" />
           </section>
           <AccountPanel
             v-if="drawer === 'account' && accountStatus"
@@ -2770,6 +2773,7 @@ const searchSyntaxEditHint = computed(() =>
     <MobileDrawer
       v-if="layoutMode === 'compact'"
       :open="mobileNavOpen"
+      :compact="layoutMode === 'compact'"
       :email="accountStatus?.account?.emailAddress ?? ''"
       :current="mailbox.context.value === 'saved' ? 'saved' : mailbox.context.value === 'inbox' ? 'inbox' : mailbox.context.value === 'drafts' ? 'drafts' : mailbox.context.value === 'done' ? 'done' : mailbox.context.value === 'starred' ? 'starred' : mailbox.context.value === 'trash' ? 'trash' : mailbox.context.value === 'reminders' ? 'reminders' : null"
       :actions="availableActions"

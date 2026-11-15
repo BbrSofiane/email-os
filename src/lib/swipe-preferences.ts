@@ -22,11 +22,12 @@ export function loadSwipePreferences(): SwipePreferences {
   }
 }
 
-export function saveSwipePreferences(value: SwipePreferences): void {
-  if (!choices.includes(value.right) || !choices.includes(value.left)) return;
+export function saveSwipePreferences(value: SwipePreferences): boolean {
+  if (!choices.includes(value.right) || !choices.includes(value.left)) return false;
   try {
     globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify({ version: 1, ...value }));
+    return true;
   } catch {
-    // Inbox gestures keep their safe defaults when storage is unavailable.
+    return false;
   }
 }
