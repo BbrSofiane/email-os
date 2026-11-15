@@ -1,0 +1,43 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7F4HX5M47TQXJHYE71QK9JB",
+  "session_id": "5d0bff72-6561-427d-8886-987008a34c7a",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-15T08:18:08.05230574Z",
+  "branch": "maintenance/p4c-thin-shell-modules",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "src-tauri/src/commands/bridge_tests.rs",
+    "src-tauri/src/commands/mod.rs",
+    "src-tauri/src/lib.rs",
+    "src-tauri/src/setup.rs"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "232b21671a88",
+  "checkpoint_transcript_start": 922,
+  "transcript_lines_at_start": 922,
+  "compact_transcript_start": 115,
+  "token_usage": {
+    "input_tokens": 6,
+    "cache_creation_tokens": 5012,
+    "cache_read_tokens": 853680,
+    "output_tokens": 1719,
+    "api_call_count": 3
+  },
+  "session_metrics": {
+    "turn_count": 2
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-15T08:18:07.966117768Z",
+    "agent_lines": 362,
+    "agent_removed": 366,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 362,
+    "total_lines_changed": 728,
+    "agent_percentage": 100,
+    "metric_version": 2
+  }
+}
