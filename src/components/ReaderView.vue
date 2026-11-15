@@ -974,7 +974,7 @@ defineExpose({
         >{{ replyTargetLabel }}</span>
         <button v-if="props.canMovePrev !== undefined" type="button" class="header-glyph" data-test="reader-prev" title="Previous conversation — K" :disabled="!props.canMovePrev" @click="emit('move', -1)"><HeaderGlyph name="prev" /><span class="visually-hidden">Previous conversation (K)</span></button>
         <button v-if="props.canMoveNext !== undefined" type="button" class="header-glyph" data-test="reader-next" title="Next conversation — J" :disabled="!props.canMoveNext" @click="emit('move', 1)"><HeaderGlyph name="next" /><span class="visually-hidden">Next conversation (J)</span></button>
-        <button v-if="props.compact" type="button" class="header-glyph" data-test="reader-more" aria-label="More" aria-haspopup="dialog" @click="emit('more')"><HeaderGlyph name="menu" /><span class="visually-hidden">More actions</span></button>
+        <button v-if="props.compact" type="button" class="header-glyph" data-test="reader-more" aria-label="More" aria-haspopup="dialog" @click="emit('more')"><HeaderGlyph name="more" /><span class="visually-hidden">More actions</span></button>
       </div>
     </Teleport>
     <Teleport :to="props.contextHost ?? undefined" :disabled="!props.contextHost">
@@ -1149,7 +1149,7 @@ defineExpose({
                 aria-haspopup="dialog"
                 @click="messageMenu = message; copyUnavailable = false"
               >
-                <HeaderGlyph name="menu" />
+                <HeaderGlyph name="more" />
               </button>
               <MobileActionSheet
                 v-if="messageMenu?.id === message.id"

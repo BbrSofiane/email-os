@@ -103,7 +103,9 @@ describe('ReaderView compact toolbar', () => {
 
   it('opens the expanded message menu and replies to that message', async () => {
     wrapper = mountReaderView(conversationOf(), { compact: true });
+    expect(wrapper.find('[data-test="reader-more"] svg circle').exists()).toBe(true);
     await wrapper.get('[data-test="message-more"]').trigger('click');
+    expect(wrapper.find('[data-test="message-more"] svg circle').exists()).toBe(true);
     expect(wrapper.get('[role="dialog"]').attributes('aria-label')).toBe('Reader');
     await wrapper.get('[role="dialog"] button').trigger('click');
     expect(wrapper.emitted('prepareReply')?.[0]?.[0]).toMatchObject({ sourceMessageId: 'm1' });
