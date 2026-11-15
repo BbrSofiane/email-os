@@ -159,11 +159,15 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
       app.querySelector('[data-test="reader-archive-toggle"]').click();
     })()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 500))');
-    const notice = await harness!.cdp.js<{ rect: { top: number; bottom: number; left: number; right: number }; statusWidth: number; statusClient: number; undoHeight: number; replyTop: number; actionTop: number }>(`(() => {
+    const notice = await harness!.cdp.js<{ rect: { top: number; bottom: number; left: number; right: number }; statusWidth: number; statusClient: number; undoHeight: number; replyTop: number; actionTop: number; visibleKeycaps: number }>(`(() => {
       const app = document.querySelector(${JSON.stringify(appSelector)});
       const rect = element => { const box = element.getBoundingClientRect(); return { top: box.top, bottom: box.bottom, left: box.left, right: box.right }; };
       const toast = app.querySelector('[data-test="action-notice"]');
       const status = toast.querySelector('[data-test="action-notice-status"]');
+      const visibleKeycaps = [...app.querySelectorAll('.list-dock kbd')].filter(keycap => {
+        const box = keycap.getBoundingClientRect();
+        return box.width > 0 && box.height > 0;
+      }).length;
       return {
         rect: rect(toast),
         statusWidth: status.scrollWidth,
@@ -171,6 +175,7 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
         undoHeight: toast.querySelector('[data-test="action-notice-undo"]')?.getBoundingClientRect().height ?? 0,
         replyTop: app.querySelector('[data-test="mobile-reply-bar"]')?.getBoundingClientRect().top ?? innerHeight,
         actionTop: app.querySelector('[data-test="mobile-reader-actions"]').getBoundingClientRect().top,
+        visibleKeycaps,
       };
     })()`);
     expect(notice.rect.top).toBeGreaterThanOrEqual(0);
@@ -178,6 +183,7 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
     expect(notice.rect.bottom).toBeLessThanOrEqual(notice.actionTop);
     expect(notice.statusWidth).toBeLessThanOrEqual(notice.statusClient);
     expect(notice.undoHeight).toBeGreaterThanOrEqual(48);
+    expect(notice.visibleKeycaps).toBe(0);
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="action-notice-undo"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 400))');
     const restored = await harness!.cdp.js(`document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="action-notice-status"]')?.textContent ?? ''`);

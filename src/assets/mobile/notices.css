@@ -27,6 +27,9 @@
   border: 0;
   box-shadow: none;
 }
+.app[data-layout="compact"] .list-dock kbd {
+  display: none;
+}
 .app[data-layout="compact"] .action-notice-text {
   flex: 1 1 180px;
   min-width: 0;
