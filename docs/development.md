@@ -991,4 +991,16 @@ stderr in the app; to see them when running the shell, run it from a terminal.
 
 ### Mobile review screenshots
 
-With the rendered Chrome binary available, capture the browser preview at the phone preset with `EMAIL_OS_RENDERED_LAYOUT_CHROME=/path/to/chrome EMAIL_OS_SCREENSHOT_DIR=/tmp/email-os-mobile mise run test:rendered`. The opt-in rendered suite writes screenshot artifacts into the requested directory.
+The compact (phone) layout is reviewed from screenshots of the browser preview at
+412×915. With a Chrome or Chromium binary available:
+
+```sh
+EMAIL_OS_RENDERED_LAYOUT_CHROME=/path/to/chrome \
+EMAIL_OS_SCREENSHOT_DIR=/tmp/email-os-mobile \
+mise run screenshots:mobile
+```
+
+It writes one PNG per surface (inbox, reader, Destinations overlay, drafts,
+reminders, compose, search, account) and two at 1200×800 for comparison with the
+regular layout. It asserts nothing; the geometry checks are in
+`tests/layout/mobile-shell.rendered.test.ts`, which runs with `mise run test:rendered`.

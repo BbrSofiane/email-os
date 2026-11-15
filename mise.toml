@@ -138,6 +138,16 @@ run = "mise run test:core && mise run check:contract && mise run lint:core && mi
 description = "Run the full check, native lint and bridge tests, and web production build sequentially (native prerequisites required)"
 run = "mise run check && mise run lint:native && mise run test:native && mise run build:web"
 
+[tasks."screenshots:mobile"]
+description = "Save review screenshots of the compact (phone) layout from the browser preview"
+run = '''
+if [ -z "${EMAIL_OS_RENDERED_LAYOUT_CHROME:-}" ] || [ -z "${EMAIL_OS_SCREENSHOT_DIR:-}" ]; then
+  echo "Set EMAIL_OS_RENDERED_LAYOUT_CHROME (Chrome or Chromium) and EMAIL_OS_SCREENSHOT_DIR (output directory)." >&2
+  exit 1
+fi
+EMAIL_OS_RUN_RENDERED=1 pnpm vitest run --config vitest.config.ts tests/layout/mobile-screenshots.rendered.test.ts
+'''
+
 [tasks."test:rendered"]
 description = "Run opt-in rendered browser regressions with an explicit Chrome/Chromium binary"
 run = '''
