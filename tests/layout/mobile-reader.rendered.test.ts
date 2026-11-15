@@ -78,7 +78,7 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
     }
     expect(geometry.replyBar).not.toBeNull();
     expect(geometry.replyBar!.height).toBeGreaterThanOrEqual(48);
-    expect(geometry.replyBar!.bottom).toBeLessThanOrEqual(geometry.actionTop);
+    expect(Math.abs((geometry.actionTop - geometry.replyBar!.bottom) - 12)).toBeLessThanOrEqual(1);
     expect(geometry.messageMore).not.toBeNull();
     expect(geometry.messageMore!.width).toBe(48);
     expect(geometry.messageMore!.height).toBe(48);
