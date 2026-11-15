@@ -30,6 +30,9 @@
  *   IME composition, and modifier keys. Drafts have no send path.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useLayoutMode } from './composables/useLayoutMode';
+import MobileTopBar from './components/mobile/MobileTopBar.vue';
+import MobileBottomBar from './components/mobile/MobileBottomBar.vue';
 import { createSubjectIndex } from './lib/subject-index';
 import ActionOverlay from './components/ActionOverlay.vue';
 import RemindersList from './components/RemindersList.vue';
@@ -84,6 +87,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ switchAccount: []; workspaceTitle: [title: string] }>();
 const workspaceActive = computed(() => props.active !== false);
 const androidFixture = isTauriRuntime() && /Android/i.test(navigator.userAgent);
+const layoutMode = useLayoutMode();
 
 type UtilityDrawer = 'account' | 'activity' | 'destinations' | 'reminder-settings';
 /** Visible-row anchor for the reader round trip. */
@@ -974,6 +978,7 @@ const readerView = ref<InstanceType<typeof ReaderView> | null>(null);
 /** Header slots the open reader teleports its quiet icon actions into. */
 const readerBackHost = ref<HTMLElement | null>(null);
 const readerActionsHost = ref<HTMLElement | null>(null);
+const mobileActionsHost = ref<HTMLElement | null>(null);
 /** Message identity that currently owns reader focus (for the contact baseline). */
 
 function captureListOrigin(surface: ReaderOrigin['surface']): void {
@@ -2028,7 +2033,8 @@ const searchSyntaxEditHint = computed(() =>
 </script>
 
 <template>
-  <div ref="appRoot" class="app" :data-client-mode="props.mode">
+  <div ref="appRoot" class="app" :data-client-mode="props.mode" :data-layout="layoutMode">
+    <MobileTopBar v-if="layoutMode === 'compact'" :reader="readerOpen" :title="contextTitle" :execute-action="(id) => id === 'navigator' ? openOverlay('navigator') : executeAction(id)" />
     <main class="app-main" :class="{ 'contact-collapsed': contactCollapsed }" :inert="!!overlay || !!attachmentConversation || undefined">
       <!-- Split header (DESIGN.md "Split Tabs"): one borderless 78px strip in
            the list column. Destinations hamburger on the left, split tabs on
@@ -2444,7 +2450,7 @@ const searchSyntaxEditHint = computed(() =>
               :selection-count="selectedCount"
               :selection-context="mailbox.context.value"
               :back-host="readerBackHost"
-              :actions-host="readerActionsHost"
+              :actions-host="layoutMode === 'compact' ? mobileActionsHost : readerActionsHost"
               :can-move-prev="canMoveReaderPrev"
               :can-move-next="canMoveReaderNext"
               :client="props.client"
@@ -2674,6 +2680,7 @@ const searchSyntaxEditHint = computed(() =>
       </div>
     </main>
     <AttachmentChooser v-if="attachmentConversation" :client="props.client" :conversation="attachmentConversation" :preview="props.mode === 'browser-preview'" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" @close="closeAttachments" />
+    <MobileBottomBar v-if="layoutMode === 'compact'" :reader="readerOpen" :execute-action="executeAction"><template #context><span ref="mobileActionsHost" class="mobile-actions-host"></span></template></MobileBottomBar>
     <ActionOverlay v-if="overlay" v-model:query="overlayQuery" :account-first="accountCommandsFirst" :account-top="accountCommandsTop" :row-keys="paletteHasRows" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" :kind="overlay" :actions="availableActions" :key-scope="remindersList ? 'reminders' : draftsList ? 'drafts' : undefined" @close="closeOverlay()" @execute="executeOverlay" />
   </div>
 </template>

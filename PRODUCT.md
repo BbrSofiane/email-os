@@ -50,4 +50,4 @@ Standing constraints: ordinary reading stays local and non-mutating; message con
 
 ## Accessibility & Inclusion
 
-Not a formal priority at this stage; no WCAG conformance target or certification is implied. Keyboard operability and visible focus remain required because they are core to the keyboard-first model. Don't regress behavior that already exists (explicit action labels, editable/IME shortcut protection, reduced-motion alternatives, selection/outcome announcements). The existing desktop/contact breakpoints remain authoritative; no new mobile UI. Revisit if the audience expands beyond the author.
+Not a formal priority at this stage; no WCAG conformance target or certification is implied. Keyboard operability and visible focus remain required because they are core to the keyboard-first model. Don't regress behavior that already exists (explicit action labels, editable/IME shortcut protection, reduced-motion alternatives, selection/outcome announcements). The existing desktop/contact breakpoints remain authoritative; compact phone UI is in scope for the Android fixture target (ADR 0003), over existing features only.

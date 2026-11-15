@@ -11,3 +11,5 @@ if (isTauriRuntime()) {
 } else {
   createApp(FixtureWorkspaces, { sessions: createFixtureWorkspaces() }).mount('#app');
 }
+import './assets/mobile/tokens.css';
+import './assets/mobile/shell.css';

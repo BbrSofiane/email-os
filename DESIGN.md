@@ -507,3 +507,23 @@ The one row anatomy of the utility drawers (Activity). Rows are separated by rhy
 - **Don't** print opaque provider IDs as row text. Use the cached subject and put the id in a title; a ref that was never seen says `Unknown conversation`.
 - **Don't** introduce a third type size in the list, or use off-palette hex values (the old command-overlay violets are the cautionary example).
 - **Don't** load remote fonts, images or CDN assets.
+
+
+## Compact layout (phone)
+
+Viewport breakpoint: 719px maximum. The palette and system sans remain unchanged; hierarchy uses weight and tone.
+
+| Token | Value | Use |
+|---|---:|---|
+| `--mobile-page-inset-start` | 20px | List content start |
+| `--mobile-page-inset-end` | 16px | List content end |
+| `--mobile-touch-target` | 48px | Minimum interactive target |
+| `--mobile-top-bar-height` | 56px | Top frame |
+| `--mobile-context-slot-height` | 56px | Split/reply context |
+| `--mobile-bottom-bar-height` | 66px | Bottom pill and breathing room |
+| `--mobile-type-list` | 16px | List body |
+| `--mobile-type-meta` | 14px | Secondary metadata |
+| `--mobile-type-subject` | 22px | Reader subject |
+| `--mobile-safe-*` | `env(safe-area-inset-*, 0px)` | Native device insets |
+
+Compact bars use the existing `--surface` (#292826), existing divider and focus colors, and existing glyphs. Android keeps padded WebView content and colors the native system bars to `--surface` with light icons.
