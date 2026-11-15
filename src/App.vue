@@ -70,6 +70,7 @@ import { useAccountNotes } from './composables/useAccountNotes';
 import { useActionNotice } from './composables/useActionNotice';
 import { useContactContext } from './composables/useContactContext';
 import { useGoChord } from './composables/useGoChord';
+import { useViewportContact } from './composables/useViewportContact';
 import { useSearchSurface } from './composables/useSearchSurface';
 
 const props = withDefaults(defineProps<{
@@ -82,9 +83,6 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ switchAccount: []; workspaceTitle: [title: string] }>();
 const workspaceActive = computed(() => props.active !== false);
 const androidFixture = isTauriRuntime() && /Android/i.test(navigator.userAgent);
-
-/** Contact context breakpoint (supervisor-approved strict value). */
-const CONTACT_BREAKPOINT_PX = 1000;
 
 type UtilityDrawer = 'account' | 'activity' | 'destinations' | 'reminder-settings';
 /** Visible-row anchor for the reader round trip. */
@@ -746,19 +744,9 @@ watch(accountId, () => {
 // Contact context: pane at >=1000 CSS px, disclosure strictly below
 // ---------------------------------------------------------------------------
 
-const contactDisclosure = ref(false);
 const reminderActionEnabled = computed(() => remindersSupported.value && selectedCount.value === 0
   && !mailbox.bulkUnresolved.value && !mailbox.commandInFlight.value && !drafts.activeRef.value
   && !drawer.value && !contactDisclosure.value);
-const contactPanelEl = ref<HTMLElement | null>(null);
-const contactDisclosureButton = ref<HTMLElement | null>(null);
-/** Wide contact surface: focus target when the narrow disclosure is removed. */
-const contactColumnEl = ref<HTMLElement | null>(null);
-
-const wideQuery = typeof window.matchMedia === 'function'
-  ? window.matchMedia(`(min-width: ${CONTACT_BREAKPOINT_PX}px)`)
-  : null;
-const wideViewport = ref(wideQuery ? wideQuery.matches : true);
 
 /**
  * True while a fixed utility drawer or a narrow Contact disclosure overlays the
@@ -772,65 +760,6 @@ const wideViewport = ref(wideQuery ? wideQuery.matches : true);
  * the central surface and the contact pane stay interactive (non-inert).
  */
 const centralCovered = computed(() => !!overlay.value || !!attachmentConversation.value || !!drawer.value || (!wideViewport.value && contactDisclosure.value));
-
-function onViewportChange(event: MediaQueryListEvent): void {
-  const wasWide = wideViewport.value;
-  // Capture focus ownership BEFORE the template branches change: the wide
-  // contact column and the narrow disclosure panel/trigger are all removed by
-  // v-if as the reactive state updates, so ownership must be recorded first.
-  const active = document.activeElement;
-  const activeIsInWideContact = wasWide
-    && active instanceof Node
-    && (contactColumnEl.value?.contains(active) ?? false);
-  const focusInNarrowContact = !wasWide && (
-    (contactPanelEl.value instanceof HTMLElement && contactPanelEl.value.contains(active))
-    || active === contactDisclosureButton.value
-  );
-  wideViewport.value = event.matches;
-  if (wasWide && !event.matches) {
-    // The pane becomes hidden content; keep keyboard focus out of it.
-    contactDisclosure.value = false;
-    void nextTick().then(() => {
-      // Hand focus to the surviving narrow disclosure control only when the
-      // wide contact surface owned focus; no focus theft when focus was
-      // elsewhere (e.g. the list or a row).
-      if (workspaceActive.value && activeIsInWideContact) contactDisclosureButton.value?.focus();
-    });
-  } else if (!wasWide && event.matches) {
-    contactDisclosure.value = false;
-    void nextTick().then(() => {
-      if (workspaceActive.value && focusInNarrowContact) {
-        // The disclosure and trigger no longer exist; hand focus to the
-        // surviving wide contact surface instead of dropping it to the body.
-        contactColumnEl.value?.focus();
-      }
-    });
-  }
-}
-
-async function toggleContactDisclosure(): Promise<void> {
-  if (wideViewport.value || contactCollapsed.value) return;
-  // Leaving an active drafts editor must go through its protected lifecycle
-  // rather than unmounting the editor silently; on failure it stays visible.
-  if ((replyComposerOpen.value || composeCardOpen.value) && !contactDisclosure.value) {
-    if (!(await releaseEditorSurface())) return;
-  }
-  // Disclosures are mutually exclusive: the contact disclosure replaces any
-  // open utility drawer so the visible panel and keyboard owner agree.
-  drawer.value = null;
-  contactDisclosure.value = !contactDisclosure.value;
-  void nextTick().then(() => {
-    if (!workspaceActive.value) return;
-    if (contactDisclosure.value) contactPanelEl.value?.focus();
-    else contactDisclosureButton.value?.focus();
-  });
-}
-
-async function closeContactDisclosure(): Promise<void> {
-  contactDisclosure.value = false;
-  await nextTick();
-  if (workspaceActive.value) contactDisclosureButton.value?.focus();
-}
 
 onMounted(() => {
   window.addEventListener('keydown', onKeydown);
@@ -852,6 +781,7 @@ onBeforeUnmount(() => {
 });
 
 const { readerLoading, readerLoadingIdentity, contact, contactContext, contactCollapsed, composeRecipientLabel, cardTitle, onReaderActiveMessage, onReaderContactOverride } = useContactContext({ mailbox, drafts, readerOpen, accountReady });
+const { contactDisclosure, contactPanelEl, contactDisclosureButton, contactColumnEl, wideQuery, wideViewport, onViewportChange, toggleContactDisclosure, closeContactDisclosure } = useViewportContact({ workspaceActive, drawer, replyComposerOpen, composeCardOpen, releaseEditorSurface, contactCollapsed });
 
 // The column or the disclosure disappears with the last row: close the disclosure, and if focus was inside
 // the contact surface hand it to the empty line instead of dropping it to <body>.
