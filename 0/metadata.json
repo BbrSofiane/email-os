@@ -1,0 +1,56 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7GF5XVZ9SAS947N38DJ8P9J",
+  "session_id": "415cd333-37f5-4cfe-be88-ad6fe867d94b",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-15T20:43:05.511191444Z",
+  "branch": "mobile/p2-fixes",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/App.vue",
+    "src/assets/mobile/compose.css",
+    "src/components/ReplyComposer.vue",
+    "tests/layout/mobile-compose.rendered.test.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5-2",
+  "turn_id": "f8a92d675c00",
+  "checkpoint_transcript_start": 1421,
+  "transcript_lines_at_start": 1421,
+  "compact_transcript_start": 278,
+  "token_usage": {
+    "input_tokens": 0,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 0,
+    "output_tokens": 0,
+    "api_call_count": 0
+  },
+  "session_metrics": {
+    "turn_count": 5
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-15T20:43:04.798075058Z",
+    "agent_lines": 485,
+    "agent_removed": 99,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 485,
+    "total_lines_changed": 584,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 58,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".codex/hooks.json": 23,
+        "pi-scheduled-tasks": 35
+      }
+    }
+  ]
+}
