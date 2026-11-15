@@ -532,3 +532,7 @@ Viewport breakpoint: 719px maximum. The palette and system sans remain unchanged
 | `--mobile-safe-*` | `env(safe-area-inset-*, 0px)` | Native device insets |
 
 Compact bars use the existing `--surface` (#292826), existing divider and focus colors, and existing glyphs. Android keeps padded WebView content and colors the native system bars to `--surface` with light icons.
+
+### Compact list
+
+Conversation rows use a 12px block inset, 20px start inset and 16px end inset, with a 1px rule between rows and a 72px minimum height. Sender and subject are 1rem/body-size; preview is 0.875rem and clamps at two lines. Unread sender and subject use weight 600. Date stays on the sender line. Split and reminder tabs scroll in one row inside the 44px context pill, with 16px side padding and 20px between tabs; the navigation pill is 50px high with a 12px gap. The destination drawer is at most 320px wide or 80% of the app, with 48px rows, 24px glyphs and 16px label gap. Swipe right reveals Remind; swipe left reveals Mark done or Mark not done. A 500ms long-press selects a row.
