@@ -16,6 +16,7 @@
         "title": "email-os",
         "width": 1100,
         "height": 760,
+        "minWidth": 1060,
         "resizable": true
       }
     ],

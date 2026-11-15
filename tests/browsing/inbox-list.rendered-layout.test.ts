@@ -26,10 +26,20 @@
  * never real mail), and tears both down in `afterAll`. Default `pnpm test`
  * the default test task excludes it.
  */
+import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { startRenderedHarness, type RenderedHarness } from '../rendered/chromium';
 
 const chromePath = process.env.EMAIL_OS_RENDERED_LAYOUT_CHROME ?? '';
+
+/** The main window's configured minimum width, read from the native config so the two cannot drift apart. */
+function configuredMinWidth(): number {
+  const config = JSON.parse(readFileSync(new URL('../../src-tauri/tauri.conf.json', import.meta.url).pathname, 'utf8')) as { app: { windows: Array<{ label: string; width: number; minWidth?: number }> } };
+  const main = config.app.windows.find((w) => w.label === 'main');
+  if (!main || typeof main.minWidth !== 'number') throw new Error('src-tauri/tauri.conf.json: the main window needs a minWidth');
+  expect(main.minWidth).toBeLessThanOrEqual(main.width);
+  return main.minWidth;
+}
 
 interface Rect { left: number; right: number; top: number; bottom: number; width: number; height: number }
 interface RowMeasure {
@@ -412,6 +422,23 @@ describe.skipIf(chromePath === '')('InboxList rendered layout (real Chrome, opt-
       await realKey('Escape');
       const closed30 = await cdp!.js<string | null>("document.querySelector('[data-test=\"row-actions-toggle-conv-01\"]').getAttribute('aria-expanded')");
       expect(closed30).toBe('false');
+
+      // Minimum window width at 200% text (a 32px root font): the native window
+      // cannot be resized below `minWidth` in src-tauri/tauri.conf.json, so the
+      // worst-case row must have no overflow at exactly that width. Measured in
+      // real Chrome 156: the compact row has zero overflow from 1027px (1026px
+      // overflows by 1px, 1000px by 27px); the configured value adds a margin for
+      // the native WebKit webview, which nobody has measured. Lowering the config
+      // to 1000 makes this step fail (27px of overflow).
+      const minWidth = configuredMinWidth();
+      await resize(minWidth);
+      await setRootFont(32);
+      await tick();
+      const atMinWidth = await measure();
+      expect(atMinWidth.innerWidth).toBe(minWidth);
+      assertCompactRowLayout(atMinWidth, { minVisibleChars: 10, expectPending: true, expectCompact: true });
+      expect(atMinWidth.rowScrollWidth).toBeLessThanOrEqual(atMinWidth.rowClientWidth);
+      expect(atMinWidth.listScrollWidth).toBeLessThanOrEqual(atMinWidth.listClientWidth);
 
       // The pointer and keyboard sequence below runs at 28px, clearly inside
       // the range where the compact row fits.
