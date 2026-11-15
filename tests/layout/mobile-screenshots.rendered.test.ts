@@ -197,7 +197,7 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
       await waitFor(`app.querySelector('[data-test="utility-drawer"]')`, 'Account page');
       await shot('account');
     } else {
-      rmSync(`${outputDir}/account.png`, { force: true });
+      rmSync(`${outputDir}/account.png`, { recursive: false, force: true });
     }
 
     await freshInbox();
