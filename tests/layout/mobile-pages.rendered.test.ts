@@ -34,14 +34,22 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
       app.querySelector('[data-test="rail-drafts"]')?.click();
     })()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
-    const geometry = await harness!.cdp.js<{ intro: DOMRectReadOnly; button: DOMRectReadOnly }>(`(() => {
+    const geometry = await harness!.cdp.js<{ intro: DOMRectReadOnly; button: DOMRectReadOnly; empty: DOMRectReadOnly; paneLeft: number }>(`(() => {
       const app = document.querySelector(${JSON.stringify(workspaceApp)});
-      const intro = app.querySelector('[data-test="drafts-coverage"]').getBoundingClientRect();
+      const pane = app.querySelector('[data-test="drafts-pane"]');
+      const introElement = app.querySelector('[data-test="drafts-coverage"]');
+      const intro = introElement.getBoundingClientRect();
       const button = app.querySelector('[data-test="new-draft"]').getBoundingClientRect();
-      return { intro: { top: intro.top, bottom: intro.bottom, width: intro.width }, button: { top: button.top, height: button.height } };
+      const empty = app.querySelector('[data-test="draft-list-empty"]').getBoundingClientRect();
+      const text = document.createRange();
+      text.selectNodeContents(introElement.firstChild);
+      return { intro: { top: intro.top, bottom: intro.bottom, left: text.getBoundingClientRect().left }, button: { top: button.top, height: button.height, left: button.left }, empty: { left: empty.left }, paneLeft: pane.getBoundingClientRect().left };
     })()`);
     expect(geometry.button.top).toBeGreaterThanOrEqual(geometry.intro.bottom);
     expect(geometry.button.height).toBeGreaterThanOrEqual(48);
+    expect(Math.abs(geometry.intro.left - geometry.paneLeft - 20)).toBeLessThanOrEqual(1);
+    expect(Math.abs(geometry.button.left - geometry.paneLeft - 20)).toBeLessThanOrEqual(1);
+    expect(Math.abs(geometry.empty.left - geometry.paneLeft - 20)).toBeLessThanOrEqual(1);
   });
 
   it('stacks the Reminders intro and gives its refresh control a touch target', async () => {
@@ -49,15 +57,22 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
     await harness!.cdp.js(`[...document.querySelectorAll(${JSON.stringify(workspaceApp)} + ' .mobile-drawer-row')].find(row => row.textContent.trim() === 'Reminders').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 200))');
-    const geometry = await harness!.cdp.js<{ intro: DOMRectReadOnly; button: DOMRectReadOnly }>(`(() => {
+    const geometry = await harness!.cdp.js<{ intro: DOMRectReadOnly; button: DOMRectReadOnly; empty: DOMRectReadOnly; paneLeft: number }>(`(() => {
       const app = document.querySelector(${JSON.stringify(workspaceApp)});
-      const intro = app.querySelector('[data-test="reminders-coverage"]').getBoundingClientRect();
+      const pane = app.querySelector('[data-test="reminders-panel"]');
+      const introElement = app.querySelector('[data-test="reminders-coverage"]');
+      const intro = introElement.getBoundingClientRect();
       const button = app.querySelector('[data-test="reminders-refresh"]').getBoundingClientRect();
-      return { intro: { top: intro.top, bottom: intro.bottom, width: intro.width }, button: { top: button.top, height: button.height } };
+      const empty = app.querySelector('[data-test="reminders-empty"]').getBoundingClientRect();
+      const text = document.createRange();
+      text.selectNodeContents(introElement.firstChild);
+      return { intro: { top: intro.top, bottom: intro.bottom, left: text.getBoundingClientRect().left }, button: { top: button.top, height: button.height, left: button.left }, empty: { left: empty.left }, paneLeft: pane.getBoundingClientRect().left };
     })()`);
     expect(geometry.button.top).toBeGreaterThanOrEqual(geometry.intro.bottom);
     expect(geometry.button.height).toBeGreaterThanOrEqual(48);
-    expect(geometry.intro.width).toBeGreaterThan(300);
+    expect(Math.abs(geometry.intro.left - geometry.paneLeft - 20)).toBeLessThanOrEqual(1);
+    expect(Math.abs(geometry.button.left - geometry.paneLeft - 20)).toBeLessThanOrEqual(1);
+    expect(Math.abs(geometry.empty.left - geometry.paneLeft - 20)).toBeLessThanOrEqual(1);
   });
 
   it('anchors the Reminder picker to the phone bottom with touch sized controls', async () => {

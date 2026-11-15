@@ -64,14 +64,29 @@
   flex-direction: column;
   align-items: stretch;
   gap: 8px;
+  margin-inline: 0;
 }
 
 .app[data-layout="compact"] .context-pane .context-coverage .cached-coverage {
   width: 100%;
+  margin: 0;
+  padding: 6px 0 6px 20px;
+  color: var(--text-secondary);
 }
 
 .app[data-layout="compact"] .context-pane .context-coverage .drawer-quiet {
   min-height: 48px;
+  width: calc(100% - 20px);
+  margin-left: 20px;
+  border: 1px solid var(--divider);
+  border-radius: 12px;
+}
+
+.app[data-layout="compact"] .context-pane [data-test="draft-list-empty"],
+.app[data-layout="compact"] .context-pane [data-test="reminders-empty"] {
+  margin-inline: 20px 16px;
+  padding-inline: 0;
+  text-align: left;
 }
 
 .app[data-layout="compact"] [data-test="reminders-panel"] .context-item {
