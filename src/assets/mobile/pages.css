@@ -121,3 +121,32 @@
 .app[data-layout="compact"] [data-test="reminders-panel"] .context-row-actions button {
   min-height: 48px;
 }
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker {
+  align-items: flex-end;
+  padding: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--overlay-backdrop) 72%, transparent);
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker {
+  width: 100%;
+  max-height: 90dvh;
+  padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+  border-radius: 16px 16px 0 0;
+  background: var(--surface-raised);
+  overflow-y: auto;
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker input {
+  height: 48px;
+  font-size: 16px;
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker li[role="option"] {
+  min-height: 48px;
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .time-zone-note {
+  overflow-wrap: anywhere;
+}

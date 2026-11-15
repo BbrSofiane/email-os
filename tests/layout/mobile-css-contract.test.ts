@@ -8,7 +8,7 @@ describe('compact CSS contract', () => {
 
     for (const rule of rulesOf(allMobileCss)) {
       for (const selector of rule.selectors) {
-        expect(selector).toMatch(/^\.app\[data-layout="compact"\]/);
+        expect(selector).toMatch(/^(?:\.app\[data-layout="compact"\]|body:has\(\.app\[data-layout="compact"\]\))/);
       }
     }
   });

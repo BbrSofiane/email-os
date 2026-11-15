@@ -4,7 +4,7 @@ import { loadReminderPreferences } from '../lib/reminder-preferences';
 import { getReminderPresets, parseReminderTime, type ReminderTimeOption } from '../lib/reminder-time';
 import { formatReminderDateTime, getDeviceTimeZone } from '../lib/reminder-timezone';
 
-const props = defineProps<{ disabled?: boolean; initialValue?: string | null; rescheduling?: boolean; subject?: string | null; sender?: string | null }>();
+const props = defineProps<{ disabled?: boolean; compact?: boolean; initialValue?: string | null; rescheduling?: boolean; subject?: string | null; sender?: string | null }>();
 const emit = defineEmits<{ select: [dueAt: string | null]; editing: []; dismiss: [] }>();
 const input = ref<HTMLInputElement | null>(null);
 const dialog = ref<HTMLElement | null>(null);
@@ -132,7 +132,7 @@ onMounted(async () => {
 
 <template>
   <Teleport to="body">
-    <div class="backdrop" @click.self="dismiss">
+    <div class="backdrop" :class="{ 'compact-picker': compact }" @click.self="dismiss">
       <section ref="dialog" tabindex="-1" class="picker action-overlay" data-reminder-picker role="dialog" aria-modal="true" aria-labelledby="reminder-picker-title" aria-describedby="reminder-picker-help reminder-target-description" @keydown.stop="onDialogKeydown">
         <h2 id="reminder-picker-title">When should this return?</h2>
         <p id="reminder-picker-help">Enter a time or choose a suggestion.</p>
@@ -188,3 +188,4 @@ footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; p
 footer button { border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 </style>
+

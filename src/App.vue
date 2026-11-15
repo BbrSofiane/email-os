@@ -2419,7 +2419,7 @@ const searchSyntaxEditHint = computed(() =>
             @retry-close="drafts.retryClose()"
             @retry-close-setup="drafts.retryCloseSetup()"
           />
-          <RemindersList v-else-if="remindersContext && !readerOpen" ref="remindersPane" :model="reminders" @open="openReminderConversation" />
+          <RemindersList v-else-if="remindersContext && !readerOpen" ref="remindersPane" :model="reminders" :compact="layoutMode === 'compact'" @open="openReminderConversation" />
           <template v-else-if="!readerOpen">
             <!-- Coverage and continuation errors stay visible in search context
                  even while the entry form is collapsed. -->

@@ -54,4 +54,23 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
     expect(geometry.button.height).toBeGreaterThanOrEqual(48);
     expect(geometry.intro.width).toBeGreaterThan(300);
   });
+
+  it('anchors the Reminder picker to the phone bottom with touch sized controls', async () => {
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-mail"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="conversation-row-conv-01"] .row-subject').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 200))');
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="reader-remind"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
+    const geometry = await harness!.cdp.js<{ picker: DOMRectReadOnly; input: DOMRectReadOnly; options: DOMRectReadOnly[]; viewport: number }>(`(() => {
+      const picker = document.querySelector('[data-reminder-picker]');
+      const rect = element => { const box = element.getBoundingClientRect(); return { top: box.top, bottom: box.bottom, height: box.height, left: box.left, right: box.right }; };
+      return { picker: rect(picker), input: rect(picker.querySelector('input')), options: [...picker.querySelectorAll('[role="option"]')].map(rect), viewport: innerHeight };
+    })()`);
+    expect(geometry.picker.bottom).toBeCloseTo(geometry.viewport, 0);
+    expect(geometry.picker.left).toBe(0);
+    expect(geometry.input.height).toBeGreaterThanOrEqual(48);
+    expect(geometry.options.length).toBeGreaterThan(0);
+    expect(geometry.options.every(option => option.height >= 48)).toBe(true);
+  });
 });
