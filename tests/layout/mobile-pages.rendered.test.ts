@@ -167,4 +167,30 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
     expect(geometry.controls.every(height => height >= 48)).toBe(true);
     expect(geometry.contentWidth).toBeLessThanOrEqual(geometry.width);
   });
+
+  it('shows compact Commands as a touch sized, scrolling overlay', async () => {
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-menu"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-drawer-commands"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 200))');
+    const geometry = await harness!.cdp.js<{ panel: DOMRectReadOnly; input: DOMRectReadOnly; rows: DOMRectReadOnly[]; shortcuts: string[]; hints: string[] }>(`(() => {
+      const panel = document.querySelector('.compact-command-overlay');
+      const rect = element => { const box = element.getBoundingClientRect(); return { top: box.top, bottom: box.bottom, height: box.height, left: box.left, right: box.right }; };
+      return { panel: rect(panel), input: rect(panel.querySelector('input')), rows: [...panel.querySelectorAll('[role="option"]')].map(rect), shortcuts: [...panel.querySelectorAll('kbd')].map(element => getComputedStyle(element).display), hints: [...panel.querySelectorAll('.action-hint,.action-keys')].map(element => getComputedStyle(element).display) };
+    })()`);
+    expect(geometry.panel.top).toBeGreaterThanOrEqual(0);
+    expect(geometry.panel.top).toBe(16);
+    expect(geometry.panel.right).toBeLessThanOrEqual(PHONE_VIEWPORT.width);
+    expect(geometry.input.height).toBeGreaterThanOrEqual(48);
+    expect(geometry.rows.length).toBeGreaterThan(0);
+    expect(geometry.rows.every(row => row.height >= 48)).toBe(true);
+    expect(geometry.shortcuts.every(display => display === 'none')).toBe(true);
+    expect(geometry.hints.every(display => display === 'none')).toBe(true);
+    await harness!.cdp.js(`(() => {
+      const option = [...document.querySelectorAll('.compact-command-overlay [role="option"]')].find(row => row.textContent.includes('Go to local Drafts'));
+      option.click();
+    })()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 200))');
+    expect(await harness!.cdp.js(`!!document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="drafts-pane"]')`)).toBe(true);
+  });
 });

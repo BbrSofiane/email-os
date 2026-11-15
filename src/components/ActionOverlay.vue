@@ -5,6 +5,7 @@ import { compactShortcut, matchesQuery } from '../lib/action-palette';
 import CommandGlyph from './CommandGlyph.vue';
 const props = withDefaults(defineProps<{
   kind: 'palette' | 'navigator';
+  compact?: boolean;
   actions: AvailableAction[];
   idPrefix?: string;
   query?: string;
@@ -86,8 +87,8 @@ function keydown(event: KeyboardEvent): void {
 }
 </script>
 <template>
-  <div class="action-backdrop" @click.self="emit('close')">
-    <section class="action-overlay command-overlay" role="dialog" aria-modal="true" :aria-label="kind === 'palette' ? 'Command palette' : 'Destination navigator'" @keydown="keydown">
+  <div class="action-backdrop" :class="{ 'compact-action-backdrop': compact }" @click.self="emit('close')">
+    <section class="action-overlay command-overlay" :class="{ 'compact-command-overlay': compact }" role="dialog" aria-modal="true" :aria-label="kind === 'palette' ? 'Command palette' : 'Destination navigator'" @keydown="keydown">
       <input :id="queryId" :placeholder="kind === 'palette' ? 'Type a command…' : 'Go to…'" :aria-label="kind === 'palette' ? 'Command' : 'Destination'" ref="input" v-model="query" data-test="action-query" role="combobox" aria-autocomplete="list" aria-expanded="true" :aria-controls="resultsId" :aria-activedescendant="results[highlighted] ? actionId(results[highlighted]!.id) : undefined" autocomplete="off" />
       <ul :id="resultsId" role="listbox" aria-label="Available actions">
         <template v-for="(action, index) in results" :key="action.id">

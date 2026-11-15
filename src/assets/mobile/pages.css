@@ -322,3 +322,34 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .time-zone-note {
 .app[data-layout="compact"] .utility-drawer .reminder-settings button {
   min-height: 48px;
 }
+
+body:has(.app[data-layout="compact"]) .action-backdrop.compact-action-backdrop {
+  align-items: flex-start;
+  padding: 16px 8px;
+}
+
+body:has(.app[data-layout="compact"]) .action-backdrop.compact-action-backdrop .compact-command-overlay {
+  width: 100%;
+  max-height: 70dvh;
+  overflow: hidden;
+}
+
+body:has(.app[data-layout="compact"]) .compact-command-overlay > input {
+  min-height: 48px;
+  font-size: 16px;
+}
+
+body:has(.app[data-layout="compact"]) .compact-command-overlay > ul {
+  max-height: calc(70dvh - 112px);
+  overflow-y: auto;
+}
+
+body:has(.app[data-layout="compact"]) .compact-command-overlay [role="option"] {
+  min-height: 48px;
+}
+
+body:has(.app[data-layout="compact"]) .compact-command-overlay kbd,
+body:has(.app[data-layout="compact"]) .compact-command-overlay .action-keys,
+body:has(.app[data-layout="compact"]) .compact-command-overlay .action-hint {
+  display: none;
+}
