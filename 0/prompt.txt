@@ -1,0 +1,240 @@
+<cross-session-message from="uds:/run/user/1000/cc-socks/123515.sock" from-name="P4b: fixture on the Gmail core (ticket 14, stages 1–3)" from-mode="bypass">
+Stage 4 PR (a) is ready: #64, base main, head cfd6677 (remote head confirmed).
+- `mise run check:all` passed locally on that head. mail-core 390, email-os 25, frontend 1,856 in 102 files, check:contract clean. No Gmail test edited.
+- Contents:
+  - The synthetic policy requeues unlanded interrupted writes, as a policy method.
+  - The seeded Inbox is a read/unread mix: 6 of 16 conversations read, 10 unread. It is recorded in the ADR along with the other stage 4 decisions.
+  - `AccountStatus.capabilities.triageSurfaces` is a new optional wire field. Gmail leaves it absent, so Gmail status JSON is unchanged.
+  - In `main.rs` it is one line, `capabilities: None` in the legacy status.
+- The UI shows nothing new in this PR. The default backend is still the legacy one, which does not send the field.
+- Flake note: one KD-1 synthetic scenario run in `check:all` showed an unexpected pass once. My stage 2 re-arm beat could fire right after startup. I fixed it by pushing the first synthetic beat one interval out. It was 0 of 8 runs afterwards.
+- PR (b), the frontend capability gating, copy and browser fake, is stacked on this branch; I'm starting it now.
+</cross-session-message>
+
+---
+
+<cross-session-message from="uds:/run/user/1000/cc-socks/123515.sock" from-name="P4b: fixture on the Gmail core (ticket 14, stages 1–3)" from-mode="bypass">
+Stage 4 PR (b) is ready: #65, stacked on #64 (base stage4/a-policy; retarget to main after #64 merges). Head 356263c, remote head confirmed.
+- `mise run check:all` passed locally on that head: mail-core 390, email-os 25, frontend 1,864 in 103 files. `mise run test:rendered` also passed (5 files, 45 tests). No Rust changed.
+- Contents:
+  - Read state, read/star, Starred and Retry now follow `capabilities.triageSurfaces`. A status without the field keeps the old mode-based behaviour, so Gmail is unchanged.
+  - The `App.vue` change is wiring only (8 lines).
+  - Fixture error copy no longer mentions Google, and the reminder copy is truthful.
+  - The browser fake mirrors the unified fixture, which closes KD-2.
+- At this commit the default native backend does not send the capability, so the UI is unchanged there. The opt-in `EMAIL_OS_SYNTHETIC_CORE=1` path will show the new surfaces. That is a good smoke target for you: Starred rail, unread rows, read/star keys, Retry in Activity.
+- The PR lists 10 existing frontend tests that asserted the legacy fixture and the reason for each.
+- Starting PR (c) now (transition state machine, two IPC commands, startup gate, default switch).
+</cross-session-message>
+
+---
+
+<cross-session-message from="uds:/run/user/1000/cc-socks/123515.sock" from-name="P4b: fixture on the Gmail core (ticket 14, stages 1–3)" from-mode="bypass">
+#64 and #65 are rebased onto main 44b44a7 and force-pushed with `--force-with-lease`. The remote heads match local.
+- **#64 (a):** head 58bb310.
+  - The only Rust shell change is the single `capabilities: None` line, now in `src-tauri/src/lib.rs`. The conflict was only in the old `main.rs`; I took main's 5-line `main.rs`.
+  - No Android change was touched: `lock.rs`, `error.rs`, the Android gen/, the Android task and CI job.
+  - `check:all` passed on this head: mail-core 391, email-os 25, frontend 1,858 in 102 files. check:contract is clean.
+- **#65 (b):** head 964c1dc, stacked on #64.
+  - `check:all` passed: mail-core 391, email-os 25, frontend 1,866 in 103 files.
+  - The rendered suite also passed (5 files, 45 tests).
+  - `App.vue` merged cleanly with the Android `:android` prop change.
+- **Android checks I could run here:** this machine has the SDK, NDK 27.2.12479018, JDK 17 and both Android Rust targets.
+  - `mise run android:doctor` passes.
+  - `cargo check --locked -p mail-core --target aarch64-linux-android` is clean on #64. That is the only mail-core Android compile check I ran.
+  - I have NOT run `android:build` (APK/Gradle). I'll rely on your CI job for it, and I'll try a shell-target `cargo check` on (c).
+- **Libc note for (c):** it adds `libc` under `cfg(unix)` for `statvfs` (free-disk preflight), next to Android's existing `libc` entry in the `cfg(target_os = "android")` table. `libc::statvfs` exists on bionic.
+- Continuing PR (c) on top of the rebased (b).
+</cross-session-message>
+
+---
+
+<cross-session-message from="uds:/run/user/1000/cc-socks/123515.sock" from-name="P4b: fixture on the Gmail core (ticket 14, stages 1–3)" from-mode="bypass">
+Stage 4 PR (c) is ready: #66, stacked on #65 (base stage4/b-frontend). Head 8430766, remote head confirmed.
+- `mise run check:all` passed locally on that head: mail-core 403, email-os 18, frontend 1,886 in 104 files. check:contract and clippy -D warnings are clean. `mise run test:rendered` also passed (5 files, 45 tests).
+- Contents:
+  - Fixture mode now runs the synthetic core on desktop and Android, through the shared `setup` in `lib.rs`.
+  - `EMAIL_OS_SYNTHETIC_CORE` and `Backend::Fixture` are gone.
+  - The two new IPC commands are in all four manifest sources.
+  - The `mail_core::fixture_transition` state machine is covered by 12 tests on a real legacy `mail.db` fixture: cancel, a crash at each of the 11 steps, insufficient disk, backup failure at each stage, verified-backup-before-delete, a WAL-only row in the backup, and drafts untouched.
+  - `StartupRoot.vue` and `FixtureTransitionGate.vue` show the disclosure; `App.vue` is unchanged here.
+- The PR body has the disclosure copy verbatim.
+- Android:
+  - `cargo check` for aarch64-linux-android is clean for mail-core and the email-os lib.
+  - `android:doctor` passes.
+  - I did NOT run `android:build` or the emulator smoke; I'm relying on your CI.
+  - On Android there is no window-close, so cancelling means leaving the app, and the gate shows again on the next launch.
+- For your upgrade-from-legacy test: launch with a profile that has `fixture-profile/mail.db`. You should see the gate. After "Back up and start fresh" expect:
+  - `fixture-profile/backups/mail-<utc>.db` exists, and `mail.db` and its -wal/-shm are gone.
+  - `fixture-transition.json` says `done`.
+  - The 18 conversations are in their original state, and the drafts are untouched.
+- Next: PR (d), the deletions and docs.
+</cross-session-message>
+
+---
+
+<cross-session-message from="uds:/run/user/1000/cc-socks/123515.sock" from-name="P4b: fixture on the Gmail core (ticket 14, stages 1–3)" from-mode="bypass">
+Stage 4 PR (d) is ready: #67, stacked on #66 (base stage4/c-transition). Head 9f7c68d, remote head confirmed. Net -7,390 lines against #66.
+- `mise run check:all` passed locally on that head: mail-core 349, email-os 18, frontend 1,885 in 104 files. check:contract is clean. `mise run test:rendered` also passed. The `aarch64-linux-android` `cargo check` is clean for mail-core and the email-os lib.
+- Deleted:
+  - `MailCore`, `store.rs`, the worker, `seed.rs`, `provider.rs` and `ProviderError`.
+  - The legacy tests, the contract runner's `fixture` backend and the KD-2 scenario.
+  - `CancelToken` moved to `cancel.rs`.
+- Docs updated: README, current-status, current-architecture, development. ADR 0002 is now marked Implemented.
+- The only edit to an existing Gmail test is one import path in `gmail_auth_contract.rs`, `mail_core::provider::CancelToken` to `mail_core::CancelToken`. It is mechanical and listed in the PR.
+- Stack: all four stage 4 PRs are open and linked. They are #64 (a, base main), #65 (b, base a), #66 (c, base b) and #67 (d, base c). Merge them in order and retarget as each lands, so CI runs on the full tree.
+- Since I'm done, the final report follows now as my last message. Tell me if you want anything changed in the PRs first.
+</cross-session-message>
+
+---
+
+<task-notification>
+<task-id>bayv948w7</task-id>
+<tool-use-id>toolu_01Rrr3Dufywh8KnX3gDznyMe</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/bayv948w7.output</output-file>
+<status>completed</status>
+<summary>Background command "Use a logical drafts comparison, then gate the whole stage 4 stack" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+T3 Code stopped watching pull request #67 (https://github.int.exe.xyz/bbrsofiane/email-os/pull/67) because it failed to read it from the host 8 times in a row. Check it yourself, and call watch_pull_request to watch it again.
+
+---
+
+Update on pull request #67 (https://github.com/BbrSofiane/email-os/pull/67), which T3 Code is watching for you:
+- All 2 checks passed on 7e96fe1.
+
+Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.
+
+---
+
+Continue where you left off.
+
+---
+
+T16 PR (a) is ready: https://github.com/BbrSofiane/email-os/pull/68 (base main), head 8eaf2a29a3f569927b104718a8c0205b4483bfda (confirmed with git ls-remote). I have not merged it.
+
+Local `mise run check:all` is green:
+- mail-core 366 (was 349)
+- email-os 18 (was 18)
+- frontend 1,888 (was 1,885)
+- `check:contract`: empty diff
+- Clippy run after touching the crate roots: clean
+- Android `cargo check` for mail-core and email-os (aarch64, NDK 27.2.12479018): pass; email-os warnings 8 → 6, none new
+- An independent old-vs-new review found no behaviour change except where lock-poison failures are logged
+
+One thing differs from your brief: the startup gate already focused its heading when a phase appears (added in #66). So I made no component change and added only the missing tests: the button is never autofocused, it is the single Tab stop after the heading, and focus follows disclosure → working → failed. Say so if you want a `role="dialog"` change instead.
+
+I'm starting PR (b), the pure-move module split, stacked on this branch.
+
+---
+
+T16 final report. Both PRs are ready for your gate; I have not merged either.
+
+**PRs**
+- (a) https://github.com/BbrSofiane/email-os/pull/68, base main, head 8eaf2a29a3f569927b104718a8c0205b4483bfda. CI is green on `check` and `android-apk`.
+- (b) https://github.com/BbrSofiane/email-os/pull/69, base `maintenance/p4c-thin-shell` (stacked), head 4d312f6a3c66d48fe8a5652d5580838d726331e4. CI will not run until (a) merges and (b) is retargeted to main. Per your stacking rule, close and reopen it then.
+- Both heads were confirmed with `git ls-remote`.
+
+**Test counts (local `mise run check:all`, crate roots touched first)**
+
+| | before | after |
+|---|---|---|
+| mail-core | 349 | 366 |
+| email-os | 18 | 18 |
+| frontend | 1,885 | 1,888 |
+
+- mail-core gained 17 tests: 1 profile lock, 2 `DraftLifecycle`/epoch, 9 `DraftService`, 5 `AttachmentTransfers`.
+- Frontend gained 3 tests, all in `tests/transition/gate.test.ts`.
+- `check:contract` has an empty diff, and there is no frontend source change.
+- Clippy for `lint:core` and `lint:native` is clean.
+- The manifest test is untouched.
+
+**New layout (lines)**
+- `lib.rs` 74: module list, `run()` and the `generate_handler!` list.
+- `setup.rs` 208, `state.rs` 102.
+- `commands/`: `mailbox` 256, `attachments` 129, `account` 31, `drafts` 66, `transition` 25, `lifecycle` 79, `mod` 34, `bridge_tests` 358.
+- `manifest_tests.rs` 126, `test_support.rs` 25.
+- `close_gate.rs` and `diagnostics.rs` are unchanged.
+
+**What moved into mail-core, and why**
+- `DraftService` (`drafts/service.rs`) plus `GmailCore::active_account`.
+  - It holds `active_account`, `require_draft_account`, `validate_reply_conversation`, the reply-context re-check, and the session-epoch lifecycle that serialises draft operations against connect/disconnect, including the create-draft lock-ordered flow.
+  - These are mail rules (which account owns a draft, whether a reply is still valid), not IPC adaptation.
+- `AttachmentTransfers` (`attachments/transfers.rs`): one transfer at a time, a bounded memory of cancelled ids, and request-id validation.
+- Left in the shell on purpose: `open_external_link` (the macOS `open` spawn), window and close wiring, `EMAIL_OS_MODE` selection, and profile directory names. The profile directory layout is arguably core, but you named it as setup.
+
+**Backend collapse**
+- `AppState` holds one `GmailCore` and its `GmailUnsubscribe`. No code asks which session kind is open any more; the one test that matched the enum now reads `mode`.
+- An independent old-versus-new review of the collapse and both moves found no behaviour change.
+- One log difference: lock-poison failures in the moved code are now logged by mail-core's `storage_log`. The cause tag is the same and the target is `mail_core::storage`, which the shell logger already admits.
+
+**Existing tests edited (all email-os)**
+- `gmail_mutations_require_verified_access`: dropped the `Backend::Gmail` wrapper and renamed two calls (`enable_mutations`, `cancel_mutation_upgrade`).
+- `synthetic_bridge_tests` (all 9 tests):
+  - `open()` now returns `GmailCore`, and the same two calls are renamed.
+  - `the_default_is_the_synthetic_core…` asserts `mode == Fixture` instead of matching the enum.
+  - `open_fixture_backend` became `open_fixture_core`.
+  - `state_keeps_forwarding…` uses `state.core`.
+  - `draft_scope…` and `retiring_the_legacy_database…`: imports and `core.active_account()`, `session_epoch()`.
+  - The test modules were later split and moved with only import edits.
+- `attachment_transfer_tests::cancellation_before_or_during_admission_and_single_transfer_bound`:
+  - It now goes through the public API, and the 64-entry bound is observed as `r36` refused and `r35` admitted.
+  - The original test, with the exact `len() == 64`, moved verbatim to mail-core.
+
+**The two additions**
+- Profile-lock test: `a_held_profile_is_rejected_before_the_synthetic_provider_creates_any_file` fails if the lock is taken after the provider opens.
+- Startup gate focus: the gate already focuses its heading when each phase appears, added in #66 and already tested for the disclosure screen. I made no component change and added the missing tests:
+  - the accept button is not autofocused and is the single Tab stop after the heading;
+  - focus follows disclosure → working → failed;
+  - the unavailable screen focuses its heading.
+  - The tests fail when the focus call is removed.
+
+**Android** (NDK 27.2.12479018, aarch64, `cargo check --locked --lib`)
+- mail-core: pass.
+- email-os: pass.
+- CI `android-apk` on #68: pass.
+- Run on (a) and on (b).
+- Dead-code warnings: base 8, (a) 6, (b) 6. Nothing new. In (b) I gated imports with the existing android/mobile cfgs to avoid new warnings.
+
+**Reviewing (b)**
+- Each of the 15 commits compiles warning-free and passes 18 tests (`git rebase -x`).
+- The PR body explains the line-multiset check against #68's `lib.rs`.
+- The only differences are `pub(crate)`, rustfmt re-wraps, `mod`/`use` wiring and test import lists, the split of `let app = tauri::Builder::default()`, and the cfg gates on imports.
+
+**What I could not verify**
+- No native app run: I did not run the xvfb smoke scripts or the rendered tests.
+- No real Android APK build locally; CI built it for (a) only.
+- The create-draft race (a session change between the two reply reads) has no direct test. It had none before, and it would need an injectable hook in the core.
+- macOS-only code (`open_external_link`) is unchanged and not compiled here.
+
+I also updated `ARCHITECTURE.md` and `docs/current-architecture.md` in (b), because they described a layout that no longer exists.
+
+---
+
+<task-notification>
+<task-id>bdt633rxw</task-id>
+<tool-use-id>toolu_012yHr55Fh9R9jHdc2uDs3Pm</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev-email-os/51d622e1-6ef8-4cf7-94af-6048a9823193/tasks/bdt633rxw.output</output-file>
+<status>completed</status>
+<summary>Background command "Gate ticket 16 PRs merged onto main" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+Update on pull request #69 (https://github.com/BbrSofiane/email-os/pull/69), which T3 Code is watching for you:
+- All 2 checks passed on 4d312f6.
+
+Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.
+
+---
+
+For each item requiring my input suggest a path
+
+---
+
+1. Let's go with your proposal for now
+2. Sounds good
+3. Use a separate thread or a subagent to run it
+4. Sounds good
+5. Ok
