@@ -14,11 +14,8 @@ mod state;
 
 use commands::*;
 use diagnostics::{cause, init_logging, storage_failure};
-use mail_core::drafts::types::{
-    AppCloseRequest, CreateDraft, DeleteDraft, Draft, DraftDeleteReceipt, DraftReceipt, DraftRef,
-    DraftSummary, SaveDraft,
-};
-use mail_core::drafts::{DraftCore, DraftService};
+use mail_core::drafts::types::AppCloseRequest;
+use mail_core::drafts::DraftCore;
 use mail_core::error::MailError;
 use mail_core::fixture_transition::{FixtureTransition, FixtureTransitionStatus};
 use mail_core::gmail::provider::LiveGmailProvider;
@@ -45,58 +42,6 @@ fn open_fixture_core(
         Arc::new(mail_core::clock::SystemClock),
     )?;
     Ok((core, profile_dir))
-}
-
-#[tauri::command]
-async fn list_drafts(state: State<'_, AppState>) -> Result<Vec<DraftSummary>, MailError> {
-    run_blocking(state.drafts.clone(), DraftService::list_drafts).await
-}
-
-#[tauri::command]
-async fn get_draft(state: State<'_, AppState>, r#ref: DraftRef) -> Result<Draft, MailError> {
-    run_blocking(state.drafts.clone(), move |drafts| drafts.get_draft(&r#ref)).await
-}
-
-#[tauri::command]
-async fn create_draft(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    command: CreateDraft,
-) -> Result<DraftReceipt, MailError> {
-    let receipt = run_blocking(state.drafts.clone(), move |drafts| {
-        drafts.create_draft(&command)
-    })
-    .await?;
-    let _ = app.emit("drafts_changed", ());
-    Ok(receipt)
-}
-
-#[tauri::command]
-async fn save_draft(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    command: SaveDraft,
-) -> Result<DraftReceipt, MailError> {
-    let receipt = run_blocking(state.drafts.clone(), move |drafts| {
-        drafts.save_draft(&command)
-    })
-    .await?;
-    let _ = app.emit("drafts_changed", ());
-    Ok(receipt)
-}
-
-#[tauri::command]
-async fn delete_draft(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    command: DeleteDraft,
-) -> Result<DraftDeleteReceipt, MailError> {
-    let receipt = run_blocking(state.drafts.clone(), move |drafts| {
-        drafts.delete_draft(&command)
-    })
-    .await?;
-    let _ = app.emit("drafts_changed", ());
-    Ok(receipt)
 }
 
 #[tauri::command]
@@ -548,7 +493,7 @@ mod tests {
 mod synthetic_bridge_tests {
     use super::*;
     use mail_core::attachments::SaveAttachment;
-    use mail_core::drafts::types::DraftSource;
+    use mail_core::drafts::types::{DraftRef, DraftSource};
     use mail_core::drafts::DraftCore;
     use mail_core::drafts::{load_validated_reply_context, require_draft_account, DraftLifecycle};
     use mail_core::dto::{
