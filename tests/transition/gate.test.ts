@@ -126,6 +126,61 @@ describe('FixtureTransitionGate', () => {
     expect(wrapper.findAll('button')).toHaveLength(1);
   });
 
+  /** Elements a Tab press can land on, in DOM order (tabindex="-1" is script-focusable only). */
+  const tabStops = (root: Element) =>
+    Array.from(root.querySelectorAll<HTMLElement>('a[href], button, input, select, textarea, [tabindex]'))
+      .filter((element) => !element.hasAttribute('disabled') && Number(element.getAttribute('tabindex') ?? 0) >= 0);
+
+  it('puts focus on the heading, never the destructive button, so one Tab reaches "Back up and start fresh"', async () => {
+    const fake = createBrowserFakeMailClient();
+    fake.controls.setFixtureTransition(needs);
+    wrapper = mount(FixtureTransitionGate, { props: { client: fake }, attachTo: document.body });
+    await flushPromises();
+    const heading = wrapper.get('h1').element;
+    const accept = wrapper.get('[data-test="transition-accept"]').element;
+    // Focus is inside the gate, on the heading: screen readers announce it and a
+    // key press cannot trigger the action before the user has read the copy.
+    expect(document.activeElement).toBe(heading);
+    expect(document.activeElement).not.toBe(accept);
+    expect(accept.hasAttribute('autofocus')).toBe(false);
+    // The heading is focusable from script only, so it is not itself a Tab stop,
+    // and the accept button is the very next (and only) stop after it.
+    expect(tabStops(wrapper.element)).toEqual([accept]);
+    expect(heading.compareDocumentPosition(accept) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('moves focus to the new heading when the gate changes phase, instead of losing it with the button', async () => {
+    const fake = createBrowserFakeMailClient();
+    fake.controls.setFixtureTransition(needs, { state: 'failed', failure: { kind: 'backup_failed' } });
+    const gate = deferred<FixtureTransitionStatus>();
+    let release = false;
+    const client = { ...fake, acceptFixtureTransition: () => (release ? fake.acceptFixtureTransition() : gate.promise) } as MailClient;
+    wrapper = mount(FixtureTransitionGate, { props: { client }, attachTo: document.body });
+    await flushPromises();
+    (wrapper.get('[data-test="transition-accept"]').element as HTMLElement).focus();
+    await wrapper.get('[data-test="transition-accept"]').trigger('click');
+    await flushPromises();
+    // Working: the clicked button is gone; focus is on the working heading.
+    expect(wrapper.find('[data-test="transition-working"]').exists()).toBe(true);
+    expect(document.activeElement).toBe(wrapper.get('h1').element);
+    release = true;
+    gate.resolve({ state: 'failed', failure: { kind: 'backup_failed' } });
+    await flushPromises();
+    // Failed: focus is on the failure heading, not on "Try again".
+    expect(wrapper.find('[data-test="transition-failed"]').exists()).toBe(true);
+    expect(document.activeElement).toBe(wrapper.get('h1').element);
+    expect(document.activeElement).not.toBe(wrapper.get('[data-test="transition-retry"]').element);
+  });
+
+  it('focuses the heading of the unavailable screen too', async () => {
+    const fake = createBrowserFakeMailClient();
+    const client = { ...fake, getFixtureTransitionStatus: async () => { throw { kind: 'storage_unavailable' }; } } as MailClient;
+    wrapper = mount(FixtureTransitionGate, { props: { client }, attachTo: document.body });
+    await flushPromises();
+    expect(document.activeElement).toBe(wrapper.get('h1').element);
+    expect(document.activeElement).not.toBe(wrapper.get('[data-test="transition-recheck"]').element);
+  });
+
   it('emits cleared immediately when nothing needs disclosing', async () => {
     const fake = createBrowserFakeMailClient();
     wrapper = mount(FixtureTransitionGate, { props: { client: fake } });

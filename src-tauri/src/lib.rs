@@ -9,17 +9,17 @@
 
 mod close_gate;
 mod diagnostics;
-use mail_core::attachments::{AttachmentDescriptor, AttachmentSaved, SaveAttachment};
-use mail_core::CancelToken;
-use std::collections::{HashMap, VecDeque};
+use mail_core::attachments::{
+    AttachmentDescriptor, AttachmentSaved, AttachmentTransfers, SaveAttachment,
+};
 
 use close_gate::CloseGate;
 use diagnostics::{cause, init_logging, storage_failure};
 use mail_core::drafts::types::{
     AppCloseRequest, CreateDraft, DeleteDraft, Draft, DraftDeleteReceipt, DraftReceipt, DraftRef,
-    DraftSource, DraftSummary, SaveDraft,
+    DraftSummary, SaveDraft,
 };
-use mail_core::drafts::DraftCore;
+use mail_core::drafts::{DraftCore, DraftService};
 use mail_core::dto::{
     CachedDoneRequest, CachedDoneSnapshot, CachedTrashRequest, CachedTrashSnapshot, Conversation,
     ConversationRef, InboxSnapshot, OperationReceipt, RetryOperation, SetArchived, SetRead,
@@ -30,8 +30,8 @@ use mail_core::fixture_transition::{FixtureTransition, FixtureTransitionStatus};
 use mail_core::gmail::browsing::{DestinationCatalog, DestinationPage, DestinationRequest};
 use mail_core::gmail::provider::LiveGmailProvider;
 use mail_core::gmail::secrets::KeychainSecrets;
-use mail_core::gmail::sync::GmailCore;
-use mail_core::gmail::types::{AccountInfo, AccountStatus};
+use mail_core::gmail::sync::{GmailCore, GmailUnsubscribe};
+use mail_core::gmail::types::AccountStatus;
 use mail_core::groups::{
     GetOperationGroupRequest, GroupUndoReceipt, ListOperationGroupsRequest, OperationGroupPage,
     OperationGroupReceipt, OperationGroupStatus, SetArchivedGroup, SetReadGroup,
@@ -43,372 +43,26 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 
-#[derive(Clone)]
-enum Backend {
-    Gmail(GmailCore),
-    /// Fixture mode: the Gmail core on the built-in synthetic provider,
-    /// presenting itself as the fixture account under the synthetic session
-    /// policy (ADR 0002).
-    Synthetic(GmailCore),
-}
-
-impl Backend {
-    fn list_reminders(&self) -> Result<Vec<Reminder>, MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.list_reminders(),
-        }
-    }
-    fn put_reminder(&self, command: &PutReminder) -> Result<Reminder, MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.put_reminder(command),
-        }
-    }
-    fn cancel_reminder(&self, command: &CancelReminder) -> Result<Reminder, MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.cancel_reminder(command),
-        }
-    }
-    fn list_provider_destinations(
-        &self,
-        account_id: &str,
-        cached: bool,
-    ) -> Result<DestinationCatalog, MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => {
-                core.list_provider_destinations(account_id, cached)
-            }
-        }
-    }
-    fn browse_provider_destination(
-        &self,
-        request: &DestinationRequest,
-    ) -> Result<DestinationPage, MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.browse_provider_destination(request),
-        }
-    }
-
-    fn list_conversations(&self) -> Result<InboxSnapshot, MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.list_conversations(),
-        }
-    }
-
-    fn get_saved_split(
-        &self,
-        account: &str,
-    ) -> Result<Option<mail_core::splits::SavedSplit>, MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.get_saved_split(account),
-        }
-    }
-    fn save_saved_split(
-        &self,
-        account: &str,
-        split: &mail_core::splits::SavedSplit,
-    ) -> Result<mail_core::splits::SavedSplit, MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.save_saved_split(account, split),
-        }
-    }
-
-    fn search_mail(
-        &self,
-        request: &mail_core::search::SearchRequest,
-    ) -> Result<mail_core::search::SearchPage, MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.search_mail(request),
-        }
-    }
-    fn list_cached_trash(
-        &self,
-        request: &CachedTrashRequest,
-    ) -> Result<CachedTrashSnapshot, MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.list_cached_trash(request),
-        }
-    }
-
-    fn list_cached_done(
-        &self,
-        request: &CachedDoneRequest,
-    ) -> Result<CachedDoneSnapshot, MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.list_cached_done(request),
-        }
-    }
-
-    fn get_conversation(&self, r#ref: &ConversationRef) -> Result<Conversation, MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.get_conversation(r#ref),
-        }
-    }
-
-    fn list_attachments(
-        &self,
-        target: &ConversationRef,
-    ) -> Result<Vec<AttachmentDescriptor>, MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.list_attachments(target),
-        }
-    }
-
-    fn download_attachment(
-        &self,
-        request: &SaveAttachment,
-        cancel: &CancelToken,
-        directory: &std::path::Path,
-    ) -> Result<AttachmentSaved, MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => {
-                core.download_attachment(request, cancel, directory)
-            }
-        }
-    }
-
-    fn load_reply_context(
-        &self,
-        r#ref: &ConversationRef,
-        source_message_id: &str,
-    ) -> Result<Conversation, MailError> {
-        let conversation = match self {
-            Self::Gmail(core) | Self::Synthetic(core) => {
-                core.load_reply_context(r#ref, source_message_id)?
-            }
-        };
-        validate_reply_conversation(&conversation, r#ref, source_message_id)?;
-        if conversation
-            .reply_context
-            .as_ref()
-            .is_none_or(|context| context.source_message_id != source_message_id)
-        {
-            return Err(MailError::ReplyUnavailable);
-        }
-        Ok(conversation)
-    }
-
-    fn account_status(&self) -> Result<AccountStatus, MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.account_status(),
-        }
-    }
-
-    fn connect_account(&self) -> Result<(), MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.connect_account(),
-        }
-    }
-
-    fn disconnect_account(&self) -> Result<(), MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.disconnect_account(),
-        }
-    }
-
-    fn request_sync(&self) -> Result<(), MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.request_sync(),
-        }
-    }
-
-    fn enable_mailbox_actions(&self) -> Result<(), MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.enable_mutations(),
-        }
-    }
-
-    fn cancel_mailbox_action_upgrade(&self) -> Result<(), MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.cancel_mutation_upgrade(),
-        }
-    }
-
-    fn set_archived(&self, command: &SetArchived) -> Result<OperationReceipt, MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.set_archived(command),
-        }
-    }
-
-    fn set_starred(
-        &self,
-        command: &mail_core::stars::SetStarred,
-    ) -> Result<OperationReceipt, MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.set_starred(command),
-        }
-    }
-    fn set_starred_group(
-        &self,
-        command: &mail_core::stars::SetStarredGroup,
-    ) -> Result<OperationGroupReceipt, MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.set_starred_group(command),
-        }
-    }
-    fn list_cached_starred(
-        &self,
-        request: &CachedDoneRequest,
-    ) -> Result<CachedDoneSnapshot, MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.list_cached_starred(request),
-        }
-    }
-
-    fn set_read(&self, command: &SetRead) -> Result<OperationReceipt, MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.set_read(command),
-        }
-    }
-
-    fn retry_operation(&self, command: &RetryOperation) -> Result<OperationReceipt, MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.retry_operation(command),
-        }
-    }
-
-    /// Unlike the Gmail-only setters, Undo is forwarded for both backends:
-    /// the fixture store covers Done/Not Done undo (archive only).
-    fn undo_operation(&self, command: &UndoOperation) -> Result<UndoReceipt, MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.undo_operation(command),
-        }
-    }
-
-    /// Archive/unarchive group acceptance; both backends support it (the
-    /// fixture covers archive groups like the single setter).
-    fn set_archived_group(
-        &self,
-        command: &SetArchivedGroup,
-    ) -> Result<OperationGroupReceipt, MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.set_archived_group(command),
-        }
-    }
-
-    /// Group read/unread is Gmail-only, like the single `set_read`.
-    fn set_read_group(&self, command: &SetReadGroup) -> Result<OperationGroupReceipt, MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.set_read_group(command),
-        }
-    }
-
-    fn get_operation_group(
-        &self,
-        request: &GetOperationGroupRequest,
-    ) -> Result<Option<OperationGroupStatus>, MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.get_operation_group(request),
-        }
-    }
-
-    fn list_operation_groups(
-        &self,
-        request: &ListOperationGroupsRequest,
-    ) -> Result<OperationGroupPage, MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.list_operation_groups(request),
-        }
-    }
-
-    /// Group Undo is forwarded for both backends (fixture groups are archive
-    /// groups; Gmail groups are archive or read).
-    fn undo_operation_group(
-        &self,
-        command: &UndoOperationGroup,
-    ) -> Result<GroupUndoReceipt, MailError> {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.undo_operation_group(command),
-        }
-    }
-
-    fn subscribe(&self, on_change: impl Fn() + Send + Sync + 'static) -> Subscription {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => {
-                Subscription::Gmail(core.subscribe(on_change))
-            }
-        }
-    }
-
-    fn stop(&self) {
-        match self {
-            Self::Gmail(core) | Self::Synthetic(core) => core.stop(),
-        }
-    }
-}
-
-#[allow(dead_code)] // Retained solely for its Drop-based unsubscribe behavior.
-enum Subscription {
-    Gmail(mail_core::gmail::sync::GmailUnsubscribe),
-}
-
 /// Managed app state retains its change-listener guard for the full app life.
-#[derive(Default)]
-struct AttachmentTransfers {
-    active: HashMap<String, CancelToken>,
-    cancelled: VecDeque<String>,
-}
-impl AttachmentTransfers {
-    fn begin(&mut self, id: &str) -> Result<CancelToken, MailError> {
-        if !mail_core::attachments::valid_id(id) {
-            return Err(mail_core::attachments::invalid("requestId"));
-        }
-        if !self.active.is_empty() {
-            return Err(MailError::Busy);
-        }
-        if self.cancelled.iter().any(|v| v == id) {
-            return Err(MailError::AuthCancelled);
-        }
-        let token = CancelToken::default();
-        self.active.insert(id.into(), token.clone());
-        Ok(token)
-    }
-    fn cancel(&mut self, id: &str) {
-        if let Some(token) = self.active.get(id) {
-            token.cancel();
-        }
-        self.cancelled.push_back(id.into());
-        while self.cancelled.len() > 64 {
-            self.cancelled.pop_front();
-        }
-    }
-}
-
 struct AppState {
-    backend: Backend,
-    drafts: DraftCore,
-    draft_lifecycle: Arc<Mutex<DraftLifecycle>>,
-    attachment_transfers: Arc<Mutex<AttachmentTransfers>>,
+    core: GmailCore,
+    drafts: DraftService,
+    attachment_transfers: AttachmentTransfers,
     close_gate: Arc<Mutex<CloseGate>>,
-    _subscription: Subscription,
-}
-
-#[derive(Default)]
-struct DraftLifecycle {
-    session_epoch: u64,
-}
-
-impl DraftLifecycle {
-    fn advance(&mut self) {
-        self.session_epoch = self.session_epoch.wrapping_add(1);
-    }
-
-    fn is_current(&self, epoch: u64) -> bool {
-        self.session_epoch == epoch
-    }
+    _subscription: GmailUnsubscribe,
 }
 
 impl AppState {
     fn new(
-        backend: Backend,
+        core: GmailCore,
         drafts: DraftCore,
         on_change: impl Fn() + Send + Sync + 'static,
     ) -> Self {
-        let subscription = backend.subscribe(on_change);
+        let subscription = core.subscribe(on_change);
         Self {
-            backend,
-            drafts,
-            draft_lifecycle: Arc::new(Mutex::new(DraftLifecycle::default())),
-            attachment_transfers: Arc::new(Mutex::new(AttachmentTransfers::default())),
+            drafts: DraftService::new(core.clone(), drafts),
+            core,
+            attachment_transfers: AttachmentTransfers::default(),
             close_gate: Arc::new(Mutex::new(CloseGate::default())),
             _subscription: subscription,
         }
@@ -420,59 +74,26 @@ impl AppState {
 /// retiring it is the explicit, disclosed transition (`fixture_transition`).
 /// The profile lock and `local-drafts` live in the same directory, so a second
 /// writer is rejected.
-fn open_fixture_backend(
+fn open_fixture_core(
     app_data_dir: &std::path::Path,
-) -> Result<(Backend, std::path::PathBuf), Box<dyn std::error::Error>> {
+) -> Result<(GmailCore, std::path::PathBuf), Box<dyn std::error::Error>> {
     let profile_dir = app_data_dir.join("fixture-profile");
     let core = GmailCore::open_synthetic_profile(
         &profile_dir,
         mail_core::synthetic::WriteControls::from_env(),
         Arc::new(mail_core::clock::SystemClock),
     )?;
-    Ok((Backend::Synthetic(core), profile_dir))
-}
-
-fn active_account(backend: &Backend) -> Result<AccountInfo, MailError> {
-    backend
-        .account_status()?
-        .account
-        .ok_or(MailError::AuthRequired)
-}
-
-fn require_draft_account(account: &AccountInfo, draft_ref: &DraftRef) -> Result<(), MailError> {
-    if draft_ref.account_id == account.account_id {
-        Ok(())
-    } else {
-        Err(MailError::NotFound)
-    }
-}
-
-fn validate_reply_conversation(
-    conversation: &Conversation,
-    expected_ref: &ConversationRef,
-    source_message_id: &str,
-) -> Result<(), MailError> {
-    if &conversation.conversation_ref != expected_ref
-        || conversation.context_complete != Some(true)
-        || conversation.retained_snapshot_at.is_some()
-        || conversation
-            .messages
-            .last()
-            .map(|message| message.id.as_str())
-            != Some(source_message_id)
-    {
-        return Err(MailError::ReplyUnavailable);
-    }
-    Ok(())
+    Ok((core, profile_dir))
 }
 
 /// Run all synchronous core/storage operations outside Tauri's async/UI threads.
-async fn run_blocking<T, F>(backend: Backend, f: F) -> Result<T, MailError>
+async fn run_blocking<S, T, F>(subject: S, f: F) -> Result<T, MailError>
 where
-    F: FnOnce(&Backend) -> Result<T, MailError> + Send + 'static,
+    S: Send + 'static,
+    F: FnOnce(&S) -> Result<T, MailError> + Send + 'static,
     T: Send + 'static,
 {
-    tauri::async_runtime::spawn_blocking(move || f(&backend))
+    tauri::async_runtime::spawn_blocking(move || f(&subject))
         .await
         .map_err(|_| storage_failure(cause::TASK_JOIN))?
 }
@@ -482,35 +103,32 @@ async fn list_cached_starred(
     state: State<'_, AppState>,
     request: CachedDoneRequest,
 ) -> Result<CachedDoneSnapshot, MailError> {
-    let backend = state.backend.clone();
-    run_blocking(backend, move |backend| {
-        backend.list_cached_starred(&request)
-    })
-    .await
+    let core = state.core.clone();
+    run_blocking(core, move |core| core.list_cached_starred(&request)).await
 }
 #[tauri::command]
 async fn set_starred(
     state: State<'_, AppState>,
     command: mail_core::stars::SetStarred,
 ) -> Result<OperationReceipt, MailError> {
-    let backend = state.backend.clone();
-    run_blocking(backend, move |backend| backend.set_starred(&command)).await
+    let core = state.core.clone();
+    run_blocking(core, move |core| core.set_starred(&command)).await
 }
 #[tauri::command]
 async fn set_starred_group(
     state: State<'_, AppState>,
     command: mail_core::stars::SetStarredGroup,
 ) -> Result<OperationGroupReceipt, MailError> {
-    let backend = state.backend.clone();
-    run_blocking(backend, move |backend| backend.set_starred_group(&command)).await
+    let core = state.core.clone();
+    run_blocking(core, move |core| core.set_starred_group(&command)).await
 }
 #[tauri::command]
 async fn get_saved_split(
     state: State<'_, AppState>,
     account_id: String,
 ) -> Result<Option<mail_core::splits::SavedSplit>, MailError> {
-    let backend = state.backend.clone();
-    run_blocking(backend, move |backend| backend.get_saved_split(&account_id)).await
+    let core = state.core.clone();
+    run_blocking(core, move |core| core.get_saved_split(&account_id)).await
 }
 
 #[tauri::command]
@@ -519,11 +137,8 @@ async fn save_saved_split(
     account_id: String,
     split: mail_core::splits::SavedSplit,
 ) -> Result<mail_core::splits::SavedSplit, MailError> {
-    let backend = state.backend.clone();
-    run_blocking(backend, move |backend| {
-        backend.save_saved_split(&account_id, &split)
-    })
-    .await
+    let core = state.core.clone();
+    run_blocking(core, move |core| core.save_saved_split(&account_id, &split)).await
 }
 
 #[tauri::command]
@@ -531,38 +146,34 @@ async fn search_mail(
     state: State<'_, AppState>,
     request: mail_core::search::SearchRequest,
 ) -> Result<mail_core::search::SearchPage, MailError> {
-    let backend = state.backend.clone();
-    run_blocking(backend, move |backend| backend.search_mail(&request)).await
+    let core = state.core.clone();
+    run_blocking(core, move |core| core.search_mail(&request)).await
 }
 
 #[tauri::command]
 async fn cancel_search_mail(state: State<'_, AppState>) -> Result<(), MailError> {
-    let (Backend::Gmail(core) | Backend::Synthetic(core)) = &state.backend;
-    core.cancel_search_mail();
+    state.core.cancel_search_mail();
     Ok(())
 }
 
 #[tauri::command]
 async fn list_reminders(state: State<'_, AppState>) -> Result<Vec<Reminder>, MailError> {
-    run_blocking(state.backend.clone(), |backend| backend.list_reminders()).await
+    run_blocking(state.core.clone(), |core| core.list_reminders()).await
 }
 #[tauri::command]
 async fn put_reminder(
     state: State<'_, AppState>,
     command: PutReminder,
 ) -> Result<Reminder, MailError> {
-    run_blocking(state.backend.clone(), move |backend| {
-        backend.put_reminder(&command)
-    })
-    .await
+    run_blocking(state.core.clone(), move |core| core.put_reminder(&command)).await
 }
 #[tauri::command]
 async fn cancel_reminder(
     state: State<'_, AppState>,
     command: CancelReminder,
 ) -> Result<Reminder, MailError> {
-    run_blocking(state.backend.clone(), move |backend| {
-        backend.cancel_reminder(&command)
+    run_blocking(state.core.clone(), move |core| {
+        core.cancel_reminder(&command)
     })
     .await
 }
@@ -572,8 +183,8 @@ async fn list_cached_trash(
     state: State<'_, AppState>,
     request: CachedTrashRequest,
 ) -> Result<CachedTrashSnapshot, MailError> {
-    let backend = state.backend.clone();
-    run_blocking(backend, move |backend| backend.list_cached_trash(&request)).await
+    let core = state.core.clone();
+    run_blocking(core, move |core| core.list_cached_trash(&request)).await
 }
 
 #[tauri::command]
@@ -581,8 +192,8 @@ async fn list_cached_done(
     state: State<'_, AppState>,
     request: CachedDoneRequest,
 ) -> Result<CachedDoneSnapshot, MailError> {
-    let backend = state.backend.clone();
-    run_blocking(backend, move |backend| backend.list_cached_done(&request)).await
+    let core = state.core.clone();
+    run_blocking(core, move |core| core.list_cached_done(&request)).await
 }
 
 #[tauri::command]
@@ -591,8 +202,8 @@ async fn list_provider_destinations(
     account_id: String,
     cached: bool,
 ) -> Result<DestinationCatalog, MailError> {
-    let backend = state.backend.clone();
-    run_blocking(backend, move |b| {
+    let core = state.core.clone();
+    run_blocking(core, move |b| {
         b.list_provider_destinations(&account_id, cached)
     })
     .await
@@ -603,14 +214,14 @@ async fn browse_provider_destination(
     state: State<'_, AppState>,
     request: DestinationRequest,
 ) -> Result<DestinationPage, MailError> {
-    let backend = state.backend.clone();
-    run_blocking(backend, move |b| b.browse_provider_destination(&request)).await
+    let core = state.core.clone();
+    run_blocking(core, move |b| b.browse_provider_destination(&request)).await
 }
 
 #[tauri::command]
 async fn list_conversations(state: State<'_, AppState>) -> Result<InboxSnapshot, MailError> {
-    let backend = state.backend.clone();
-    run_blocking(backend, Backend::list_conversations).await
+    let core = state.core.clone();
+    run_blocking(core, GmailCore::list_conversations).await
 }
 
 #[tauri::command]
@@ -619,13 +230,12 @@ async fn get_conversation(
     r#ref: ConversationRef,
     load_missing_search_result: Option<bool>,
 ) -> Result<Conversation, MailError> {
-    let backend = state.backend.clone();
-    run_blocking(backend, move |backend| {
+    let core = state.core.clone();
+    run_blocking(core, move |core| {
         if load_missing_search_result == Some(true) {
-            let (Backend::Gmail(core) | Backend::Synthetic(core)) = backend;
             return core.load_search_conversation(&r#ref);
         }
-        backend.get_conversation(&r#ref)
+        core.get_conversation(&r#ref)
     })
     .await
 }
@@ -635,8 +245,8 @@ async fn list_attachments(
     state: State<'_, AppState>,
     target: ConversationRef,
 ) -> Result<Vec<AttachmentDescriptor>, MailError> {
-    run_blocking(state.backend.clone(), move |backend| {
-        backend.list_attachments(&target)
+    run_blocking(state.core.clone(), move |core| {
+        core.list_attachments(&target)
     })
     .await
 }
@@ -658,36 +268,21 @@ async fn save_attachment(
             .path()
             .download_dir()
             .map_err(|_| storage_failure(cause::PATH_UNAVAILABLE))?;
-        let transfers = Arc::clone(&state.attachment_transfers);
-        let cancel = transfers
-            .lock()
-            .map_err(|_| storage_failure(cause::LOCK_POISONED))?
-            .begin(&request.request_id)?;
+        let transfers = state.attachment_transfers.clone();
+        let cancel = transfers.begin(&request.request_id)?;
         let id = request.request_id.clone();
-        let result = run_blocking(state.backend.clone(), move |backend| {
-            backend.download_attachment(&request, &cancel, &directory)
+        let result = run_blocking(state.core.clone(), move |core| {
+            core.download_attachment(&request, &cancel, &directory)
         })
         .await;
-        transfers
-            .lock()
-            .map_err(|_| storage_failure(cause::LOCK_POISONED))?
-            .active
-            .remove(&id);
+        transfers.finish(&id)?;
         result
     }
 }
 
 #[tauri::command]
 fn cancel_attachment(state: State<'_, AppState>, request_id: String) -> Result<(), MailError> {
-    if !mail_core::attachments::valid_id(&request_id) {
-        return Err(mail_core::attachments::invalid("requestId"));
-    }
-    state
-        .attachment_transfers
-        .lock()
-        .map_err(|_| storage_failure(cause::LOCK_POISONED))?
-        .cancel(&request_id);
-    Ok(())
+    state.attachment_transfers.cancel(&request_id)
 }
 
 #[tauri::command]
@@ -735,20 +330,20 @@ async fn set_archived(
     state: State<'_, AppState>,
     command: SetArchived,
 ) -> Result<OperationReceipt, MailError> {
-    let backend = state.backend.clone();
-    run_blocking(backend, move |backend| backend.set_archived(&command)).await
+    let core = state.core.clone();
+    run_blocking(core, move |core| core.set_archived(&command)).await
 }
 
 #[tauri::command]
 async fn enable_mailbox_actions(state: State<'_, AppState>) -> Result<(), MailError> {
-    let backend = state.backend.clone();
-    run_blocking(backend, Backend::enable_mailbox_actions).await
+    let core = state.core.clone();
+    run_blocking(core, GmailCore::enable_mutations).await
 }
 
 #[tauri::command]
 async fn cancel_mailbox_action_upgrade(state: State<'_, AppState>) -> Result<(), MailError> {
-    let backend = state.backend.clone();
-    run_blocking(backend, Backend::cancel_mailbox_action_upgrade).await
+    let core = state.core.clone();
+    run_blocking(core, GmailCore::cancel_mutation_upgrade).await
 }
 
 #[tauri::command]
@@ -756,8 +351,8 @@ async fn set_read(
     state: State<'_, AppState>,
     command: SetRead,
 ) -> Result<OperationReceipt, MailError> {
-    let backend = state.backend.clone();
-    run_blocking(backend, move |backend| backend.set_read(&command)).await
+    let core = state.core.clone();
+    run_blocking(core, move |core| core.set_read(&command)).await
 }
 
 #[tauri::command]
@@ -765,8 +360,8 @@ async fn retry_operation(
     state: State<'_, AppState>,
     command: RetryOperation,
 ) -> Result<OperationReceipt, MailError> {
-    let backend = state.backend.clone();
-    run_blocking(backend, move |backend| backend.retry_operation(&command)).await
+    let core = state.core.clone();
+    run_blocking(core, move |core| core.retry_operation(&command)).await
 }
 
 #[tauri::command]
@@ -774,8 +369,8 @@ async fn undo_operation(
     state: State<'_, AppState>,
     command: UndoOperation,
 ) -> Result<UndoReceipt, MailError> {
-    let backend = state.backend.clone();
-    run_blocking(backend, move |backend| backend.undo_operation(&command)).await
+    let core = state.core.clone();
+    run_blocking(core, move |core| core.undo_operation(&command)).await
 }
 
 #[tauri::command]
@@ -783,8 +378,8 @@ async fn set_archived_group(
     state: State<'_, AppState>,
     command: SetArchivedGroup,
 ) -> Result<OperationGroupReceipt, MailError> {
-    let backend = state.backend.clone();
-    run_blocking(backend, move |backend| backend.set_archived_group(&command)).await
+    let core = state.core.clone();
+    run_blocking(core, move |core| core.set_archived_group(&command)).await
 }
 
 #[tauri::command]
@@ -792,8 +387,8 @@ async fn set_read_group(
     state: State<'_, AppState>,
     command: SetReadGroup,
 ) -> Result<OperationGroupReceipt, MailError> {
-    let backend = state.backend.clone();
-    run_blocking(backend, move |backend| backend.set_read_group(&command)).await
+    let core = state.core.clone();
+    run_blocking(core, move |core| core.set_read_group(&command)).await
 }
 
 #[tauri::command]
@@ -801,11 +396,8 @@ async fn get_operation_group(
     state: State<'_, AppState>,
     request: GetOperationGroupRequest,
 ) -> Result<Option<OperationGroupStatus>, MailError> {
-    let backend = state.backend.clone();
-    run_blocking(backend, move |backend| {
-        backend.get_operation_group(&request)
-    })
-    .await
+    let core = state.core.clone();
+    run_blocking(core, move |core| core.get_operation_group(&request)).await
 }
 
 #[tauri::command]
@@ -813,11 +405,8 @@ async fn list_operation_groups(
     state: State<'_, AppState>,
     request: ListOperationGroupsRequest,
 ) -> Result<OperationGroupPage, MailError> {
-    let backend = state.backend.clone();
-    run_blocking(backend, move |backend| {
-        backend.list_operation_groups(&request)
-    })
-    .await
+    let core = state.core.clone();
+    run_blocking(core, move |core| core.list_operation_groups(&request)).await
 }
 
 #[tauri::command]
@@ -825,77 +414,34 @@ async fn undo_operation_group(
     state: State<'_, AppState>,
     command: UndoOperationGroup,
 ) -> Result<GroupUndoReceipt, MailError> {
-    let backend = state.backend.clone();
-    run_blocking(backend, move |backend| {
-        backend.undo_operation_group(&command)
-    })
-    .await
+    let core = state.core.clone();
+    run_blocking(core, move |core| core.undo_operation_group(&command)).await
 }
 
 #[tauri::command]
 async fn get_account_status(state: State<'_, AppState>) -> Result<AccountStatus, MailError> {
-    let backend = state.backend.clone();
-    run_blocking(backend, Backend::account_status).await
+    let core = state.core.clone();
+    run_blocking(core, GmailCore::account_status).await
 }
 
 #[tauri::command]
 async fn connect_account(state: State<'_, AppState>) -> Result<(), MailError> {
-    let backend = state.backend.clone();
-    let lifecycle = Arc::clone(&state.draft_lifecycle);
-    run_blocking(backend, move |backend| {
-        let mut lifecycle = lifecycle
-            .lock()
-            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
-        backend.connect_account()?;
-        lifecycle.advance();
-        Ok(())
-    })
-    .await
+    run_blocking(state.drafts.clone(), DraftService::connect_account).await
 }
 
 #[tauri::command]
 async fn disconnect_account(state: State<'_, AppState>) -> Result<(), MailError> {
-    let backend = state.backend.clone();
-    let lifecycle = Arc::clone(&state.draft_lifecycle);
-    run_blocking(backend, move |backend| {
-        let mut lifecycle = lifecycle
-            .lock()
-            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
-        lifecycle.advance();
-        backend.disconnect_account()
-    })
-    .await
+    run_blocking(state.drafts.clone(), DraftService::disconnect_account).await
 }
 
 #[tauri::command]
 async fn list_drafts(state: State<'_, AppState>) -> Result<Vec<DraftSummary>, MailError> {
-    let backend = state.backend.clone();
-    let drafts = state.drafts.clone();
-    let lifecycle = Arc::clone(&state.draft_lifecycle);
-    run_blocking(backend, move |backend| {
-        let _lifecycle = lifecycle
-            .lock()
-            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
-        let account = active_account(backend)?;
-        drafts.list_drafts(&account)
-    })
-    .await
+    run_blocking(state.drafts.clone(), DraftService::list_drafts).await
 }
 
 #[tauri::command]
 async fn get_draft(state: State<'_, AppState>, r#ref: DraftRef) -> Result<Draft, MailError> {
-    let backend = state.backend.clone();
-    let drafts = state.drafts.clone();
-    let lifecycle = Arc::clone(&state.draft_lifecycle);
-    run_blocking(backend, move |backend| {
-        let _lifecycle = lifecycle
-            .lock()
-            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
-        let account = active_account(backend)?;
-        require_draft_account(&account, &r#ref)?;
-        drafts.get_draft(&account, &r#ref)
-    })
-    .await
+    run_blocking(state.drafts.clone(), move |drafts| drafts.get_draft(&r#ref)).await
 }
 
 #[tauri::command]
@@ -904,52 +450,8 @@ async fn create_draft(
     state: State<'_, AppState>,
     command: CreateDraft,
 ) -> Result<DraftReceipt, MailError> {
-    let backend = state.backend.clone();
-    let drafts = state.drafts.clone();
-    let lifecycle = Arc::clone(&state.draft_lifecycle);
-    let receipt = run_blocking(backend, move |backend| {
-        let lifecycle_guard = lifecycle
-            .lock()
-            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
-        let account = active_account(backend)?;
-        if let Some(receipt) = drafts.lookup_create_receipt(&account, &command)? {
-            return Ok(receipt);
-        }
-        match &command.source {
-            DraftSource::NewMessage => drafts.create_draft(&account, &command, None),
-            DraftSource::Reply {
-                conversation,
-                source_message_id,
-            } => {
-                if conversation.account_id != account.account_id {
-                    return Err(MailError::ReplyUnavailable);
-                }
-                let displayed = backend.get_conversation(conversation)?;
-                validate_reply_conversation(&displayed, conversation, source_message_id)?;
-                let session_epoch = lifecycle_guard.session_epoch;
-                drop(lifecycle_guard);
-
-                // This helper is a cache hit when metadata is ready. A legacy
-                // metadata fetch is readonly and deliberately happens unlocked.
-                let reply_conversation =
-                    backend.load_reply_context(conversation, source_message_id)?;
-
-                let lifecycle_guard = lifecycle
-                    .lock()
-                    .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
-                if !lifecycle_guard.is_current(session_epoch)
-                    || active_account(backend)?.account_id != account.account_id
-                {
-                    return Err(MailError::AuthRequired);
-                }
-                let current = backend.get_conversation(conversation)?;
-                validate_reply_conversation(&current, conversation, source_message_id)?;
-                if current.reply_context != reply_conversation.reply_context {
-                    return Err(MailError::ReplyUnavailable);
-                }
-                drafts.create_draft(&account, &command, Some(&reply_conversation))
-            }
-        }
+    let receipt = run_blocking(state.drafts.clone(), move |drafts| {
+        drafts.create_draft(&command)
     })
     .await?;
     let _ = app.emit("drafts_changed", ());
@@ -962,16 +464,8 @@ async fn save_draft(
     state: State<'_, AppState>,
     command: SaveDraft,
 ) -> Result<DraftReceipt, MailError> {
-    let backend = state.backend.clone();
-    let drafts = state.drafts.clone();
-    let lifecycle = Arc::clone(&state.draft_lifecycle);
-    let receipt = run_blocking(backend, move |backend| {
-        let _lifecycle = lifecycle
-            .lock()
-            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
-        let account = active_account(backend)?;
-        require_draft_account(&account, &command.draft_ref)?;
-        drafts.save_draft(&account, &command)
+    let receipt = run_blocking(state.drafts.clone(), move |drafts| {
+        drafts.save_draft(&command)
     })
     .await?;
     let _ = app.emit("drafts_changed", ());
@@ -984,16 +478,8 @@ async fn delete_draft(
     state: State<'_, AppState>,
     command: DeleteDraft,
 ) -> Result<DraftDeleteReceipt, MailError> {
-    let backend = state.backend.clone();
-    let drafts = state.drafts.clone();
-    let lifecycle = Arc::clone(&state.draft_lifecycle);
-    let receipt = run_blocking(backend, move |backend| {
-        let _lifecycle = lifecycle
-            .lock()
-            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
-        let account = active_account(backend)?;
-        require_draft_account(&account, &command.draft_ref)?;
-        drafts.delete_draft(&account, &command)
+    let receipt = run_blocking(state.drafts.clone(), move |drafts| {
+        drafts.delete_draft(&command)
     })
     .await?;
     let _ = app.emit("drafts_changed", ());
@@ -1065,8 +551,8 @@ fn cancel_app_close(state: State<'_, AppState>, request_id: String) -> Result<()
 
 #[tauri::command]
 async fn request_sync(state: State<'_, AppState>) -> Result<(), MailError> {
-    let backend = state.backend.clone();
-    run_blocking(backend, Backend::request_sync).await
+    let core = state.core.clone();
+    run_blocking(core, GmailCore::request_sync).await
 }
 
 fn fresh_close_request_id() -> String {
@@ -1098,21 +584,28 @@ mod attachment_transfer_tests {
     use super::*;
     #[test]
     fn cancellation_before_or_during_admission_and_single_transfer_bound() {
-        let mut transfers = AttachmentTransfers::default();
-        transfers.cancel("early");
+        let transfers = AttachmentTransfers::default();
+        transfers.cancel("early").unwrap();
         assert!(matches!(
             transfers.begin("early"),
             Err(MailError::AuthCancelled)
         ));
         let token = transfers.begin("active").unwrap();
         assert!(matches!(transfers.begin("other"), Err(MailError::Busy)));
-        transfers.cancel("active");
+        transfers.cancel("active").unwrap();
         assert!(token.is_cancelled());
-        transfers.active.remove("active");
+        transfers.finish("active").unwrap();
         for i in 0..100 {
-            transfers.cancel(&format!("r{i}"));
+            transfers.cancel(&format!("r{i}")).unwrap();
         }
-        assert_eq!(transfers.cancelled.len(), 64);
+        // Only the 64 most recent cancellations are remembered (the exact
+        // bound is asserted in mail-core): r36 is still refused, r35 is not.
+        assert!(matches!(
+            transfers.begin("r36"),
+            Err(MailError::AuthCancelled)
+        ));
+        transfers.finish("r36").unwrap();
+        assert!(transfers.begin("r35").is_ok());
     }
 }
 
@@ -1187,17 +680,14 @@ pub fn run() {
                 None => "fixture".to_owned(),
             };
             let app_data_dir = app.path().app_data_dir()?;
-            let (backend, profile_dir) = match mode.as_str() {
-                "fixture" => open_fixture_backend(&app_data_dir)?,
+            let (core, profile_dir) = match mode.as_str() {
+                "fixture" => open_fixture_core(&app_data_dir)?,
                 "gmail" => {
                     let profile_dir = app_data_dir.join("gmail-profile");
                     let provider = LiveGmailProvider::from_env(Arc::new(KeychainSecrets::new()))?;
                     let provider: Arc<dyn mail_core::gmail::types::GmailProvider> =
                         Arc::new(provider);
-                    (
-                        Backend::Gmail(GmailCore::open(&profile_dir, provider)?),
-                        profile_dir,
-                    )
+                    (GmailCore::open(&profile_dir, provider)?, profile_dir)
                 }
                 _ => return Err("EMAIL_OS_MODE must be fixture or gmail".into()),
             };
@@ -1211,7 +701,7 @@ pub fn run() {
             }));
 
             let handle = app.handle().clone();
-            app.manage(AppState::new(backend, drafts, move || {
+            app.manage(AppState::new(core, drafts, move || {
                 // Notifications are best-effort hints; the frontend refetches persisted state.
                 let _ = handle.emit("mailbox_changed", ());
             }));
@@ -1241,7 +731,7 @@ pub fn run() {
         #[cfg(not(mobile))]
         RunEvent::Exit => {
             if let Some(state) = app_handle.try_state::<AppState>() {
-                state.backend.stop();
+                state.core.stop();
             }
         }
         _ => {}
@@ -1390,7 +880,6 @@ mod tests {
         provider.set_credentials(false);
         let dir = temp_dir("gmail-readonly");
         let gmail = GmailCore::open(dir.path(), provider).unwrap();
-        let gmail = Backend::Gmail(gmail);
         assert!(gmail.list_reminders().unwrap().is_empty());
         let status = gmail.account_status().unwrap();
         assert_eq!(status.mode, MailMode::Gmail);
@@ -1407,11 +896,8 @@ mod tests {
             request_id: "bridge-readonly".into(),
         });
         assert_eq!(result, Err(MailError::PermissionRequired));
-        assert_eq!(
-            gmail.enable_mailbox_actions(),
-            Err(MailError::NotConfigured)
-        );
-        assert_eq!(gmail.cancel_mailbox_action_upgrade(), Ok(()));
+        assert_eq!(gmail.enable_mutations(), Err(MailError::NotConfigured));
+        assert_eq!(gmail.cancel_mutation_upgrade(), Ok(()));
         assert_eq!(
             gmail.set_read(&SetRead {
                 conversation: ConversationRef {
@@ -1431,7 +917,7 @@ mod tests {
             Err(MailError::PermissionRequired)
         );
         // Undo requires an active account that owns the operation; without
-        // credentials the Gmail backend has none.
+        // credentials the Gmail core has none.
         assert_eq!(
             gmail.undo_operation(&mail_core::dto::UndoOperation {
                 operation_id: "bridge-operation".into(),
@@ -1445,27 +931,28 @@ mod tests {
 }
 
 /// Native bridge tests for the opt-in synthetic core (ADR 0002 stage 3): the
-/// same `Backend` methods the Tauri commands call, on `Backend::Synthetic`.
+/// same core methods the Tauri commands call, on a synthetic session.
 #[cfg(test)]
 mod synthetic_bridge_tests {
     use super::*;
+    use mail_core::drafts::types::DraftSource;
+    use mail_core::drafts::{load_validated_reply_context, require_draft_account, DraftLifecycle};
     use mail_core::gmail::types::{ConnectionState, MailMode};
     use mail_core::synthetic::WriteControls;
     use mail_core::testing::{temp_profile, until, TIMEOUT};
+    use mail_core::CancelToken;
     use mail_core::ACCOUNT_ID;
     use std::sync::mpsc;
     use std::time::Duration;
 
-    fn open(app_data: &std::path::Path, controls: WriteControls) -> Backend {
+    fn open(app_data: &std::path::Path, controls: WriteControls) -> GmailCore {
         let profile_dir = app_data.join("fixture-profile");
-        Backend::Synthetic(
-            GmailCore::open_synthetic_profile(
-                profile_dir,
-                controls,
-                Arc::new(mail_core::clock::SystemClock),
-            )
-            .unwrap(),
+        GmailCore::open_synthetic_profile(
+            profile_dir,
+            controls,
+            Arc::new(mail_core::clock::SystemClock),
         )
+        .unwrap()
     }
 
     fn conv(id: &str) -> ConversationRef {
@@ -1484,30 +971,30 @@ mod synthetic_bridge_tests {
     #[test]
     fn status_is_explicit_and_mutations_need_no_google_grant() {
         let dir = temp_profile("synthetic-status");
-        let backend = open(dir.path(), WriteControls::default());
-        let status = backend.account_status().unwrap();
+        let core = open(dir.path(), WriteControls::default());
+        let status = core.account_status().unwrap();
         assert_eq!(status.mode, MailMode::Fixture);
         assert_eq!(status.connection, ConnectionState::Connected);
         assert_eq!(status.mutation_access, None);
         assert_eq!(status.sync.coverage_limit, 0);
         assert_eq!(status.sync.cached_conversations, 18);
-        let account = active_account(&backend).unwrap();
+        let account = core.active_account().unwrap();
         assert_eq!(account.account_id, ACCOUNT_ID);
         assert_eq!(account.email_address, mail_core::FIXTURE_MAILBOX);
-        backend.stop();
+        core.stop();
     }
 
     #[test]
     fn rejects_lifecycle_trash_and_destinations_with_todays_variants_and_admits_read_and_star() {
         let dir = temp_profile("synthetic-rejects");
-        let backend = open(dir.path(), WriteControls::default());
-        assert_eq!(backend.connect_account(), Err(mode_error()));
-        assert_eq!(backend.disconnect_account(), Err(mode_error()));
-        assert_eq!(backend.request_sync(), Err(mode_error()));
-        assert_eq!(backend.enable_mailbox_actions(), Err(mode_error()));
-        assert_eq!(backend.cancel_mailbox_action_upgrade(), Err(mode_error()));
+        let core = open(dir.path(), WriteControls::default());
+        assert_eq!(core.connect_account(), Err(mode_error()));
+        assert_eq!(core.disconnect_account(), Err(mode_error()));
+        assert_eq!(core.request_sync(), Err(mode_error()));
+        assert_eq!(core.enable_mutations(), Err(mode_error()));
+        assert_eq!(core.cancel_mutation_upgrade(), Err(mode_error()));
         assert_eq!(
-            backend.list_cached_trash(&CachedTrashRequest {
+            core.list_cached_trash(&CachedTrashRequest {
                 account_id: ACCOUNT_ID.into(),
                 limit: 50,
                 cursor: None,
@@ -1515,11 +1002,11 @@ mod synthetic_bridge_tests {
             Err(mode_error())
         );
         assert_eq!(
-            backend.list_provider_destinations(ACCOUNT_ID, false),
+            core.list_provider_destinations(ACCOUNT_ID, false),
             Err(MailError::ReadOnly)
         );
         assert_eq!(
-            backend.browse_provider_destination(&DestinationRequest {
+            core.browse_provider_destination(&DestinationRequest {
                 account_id: ACCOUNT_ID.into(),
                 destination_id: "SENT".into(),
                 cursor: None,
@@ -1528,19 +1015,16 @@ mod synthetic_bridge_tests {
             Err(MailError::ReadOnly)
         );
         // Nothing local was erased by the rejected lifecycle commands.
-        assert_eq!(
-            backend.account_status().unwrap().sync.cached_conversations,
-            18
-        );
+        assert_eq!(core.account_status().unwrap().sync.cached_conversations, 18);
         // Decision 2: read, star and retry are admitted.
-        let read = backend
+        let read = core
             .set_read(&SetRead {
                 conversation: conv("conv-02"),
                 read: true,
                 request_id: "bridge-read".into(),
             })
             .unwrap();
-        let star = backend
+        let star = core
             .set_starred(&mail_core::stars::SetStarred {
                 conversation: conv("conv-03"),
                 starred: true,
@@ -1548,14 +1032,14 @@ mod synthetic_bridge_tests {
             })
             .unwrap();
         assert!(until(|| {
-            let snapshot = backend.list_conversations().unwrap();
+            let snapshot = core.list_conversations().unwrap();
             [&read.operation_id, &star.operation_id].iter().all(|id| {
                 snapshot.activity.iter().any(|op| {
                     &op.id == *id && op.status == mail_core::dto::OperationStatus::Confirmed
                 })
             })
         }));
-        let starred = backend
+        let starred = core
             .list_cached_starred(&CachedDoneRequest {
                 account_id: ACCOUNT_ID.into(),
                 limit: 100,
@@ -1564,20 +1048,20 @@ mod synthetic_bridge_tests {
             .unwrap();
         assert_eq!(starred.conversations.len(), 1);
         assert_eq!(
-            backend.retry_operation(&RetryOperation {
+            core.retry_operation(&RetryOperation {
                 operation_id: "unknown-operation".into(),
                 request_id: "bridge-retry".into(),
             }),
             Err(MailError::NotFound)
         );
-        backend.stop();
+        core.stop();
     }
 
     #[test]
     fn reminder_bridge_preserves_exact_source_and_account_gate() {
         let dir = temp_profile("synthetic-reminders");
-        let backend = open(dir.path(), WriteControls::default());
-        let detail = backend.get_conversation(&conv("conv-01")).unwrap();
+        let core = open(dir.path(), WriteControls::default());
+        let detail = core.get_conversation(&conv("conv-01")).unwrap();
         let mut command = PutReminder {
             conversation: conv("conv-01"),
             source_message_id: detail.messages.last().unwrap().id.clone(),
@@ -1586,23 +1070,23 @@ mod synthetic_bridge_tests {
             expected_revision: None,
             request_id: "bridge-reminder".into(),
         };
-        let receipt = backend.put_reminder(&command).unwrap();
-        assert_eq!(backend.put_reminder(&command).unwrap(), receipt);
-        assert_eq!(backend.list_reminders().unwrap(), vec![receipt]);
+        let receipt = core.put_reminder(&command).unwrap();
+        assert_eq!(core.put_reminder(&command).unwrap(), receipt);
+        assert_eq!(core.list_reminders().unwrap(), vec![receipt]);
         command.conversation.account_id = "foreign".into();
-        assert_eq!(backend.put_reminder(&command), Err(MailError::NotFound));
+        assert_eq!(core.put_reminder(&command), Err(MailError::NotFound));
         let mut stale = command.clone();
         stale.conversation = conv("conv-02");
         stale.source_message_id = "not-the-latest".into();
         stale.request_id = "bridge-stale".into();
-        assert!(backend.put_reminder(&stale).is_err());
-        backend.stop();
+        assert!(core.put_reminder(&stale).is_err());
+        core.stop();
     }
 
     #[test]
     fn saved_split_bridge_coexists_with_the_star_surface() {
         let dir = temp_profile("synthetic-split");
-        let backend = open(dir.path(), WriteControls::default());
+        let core = open(dir.path(), WriteControls::default());
         let split = mail_core::splits::SavedSplit {
             name: "Clients".into(),
             criterion: mail_core::splits::SplitCriterion::Domain,
@@ -1610,25 +1094,25 @@ mod synthetic_bridge_tests {
             enabled: true,
             hide_when_empty: false,
         };
-        assert_eq!(backend.get_saved_split(ACCOUNT_ID).unwrap(), None);
-        assert_eq!(backend.save_saved_split(ACCOUNT_ID, &split).unwrap(), split);
-        assert_eq!(backend.get_saved_split(ACCOUNT_ID).unwrap(), Some(split));
-        assert_eq!(backend.get_saved_split("foreign"), Err(MailError::NotFound));
-        assert!(backend
+        assert_eq!(core.get_saved_split(ACCOUNT_ID).unwrap(), None);
+        assert_eq!(core.save_saved_split(ACCOUNT_ID, &split).unwrap(), split);
+        assert_eq!(core.get_saved_split(ACCOUNT_ID).unwrap(), Some(split));
+        assert_eq!(core.get_saved_split("foreign"), Err(MailError::NotFound));
+        assert!(core
             .set_starred(&mail_core::stars::SetStarred {
                 conversation: conv("conv-01"),
                 starred: true,
                 request_id: "split-star".into(),
             })
             .is_ok());
-        backend.stop();
+        core.stop();
     }
 
     #[test]
     fn draft_scope_and_reply_sources_come_from_the_synthetic_account() {
         let dir = temp_profile("synthetic-drafts");
-        let backend = open(dir.path(), WriteControls::default());
-        let account = active_account(&backend).unwrap();
+        let core = open(dir.path(), WriteControls::default());
+        let account = core.active_account().unwrap();
         assert_eq!(account.account_id, ACCOUNT_ID);
         assert_eq!(
             require_draft_account(
@@ -1641,39 +1125,37 @@ mod synthetic_bridge_tests {
             Err(MailError::NotFound)
         );
         // Reply context: complete, latest-source, deterministic headers.
-        let detail = backend.get_conversation(&conv("conv-02")).unwrap();
+        let detail = core.get_conversation(&conv("conv-02")).unwrap();
         let source = detail.messages.last().unwrap().id.clone();
-        let replied = backend
-            .load_reply_context(&conv("conv-02"), &source)
-            .unwrap();
+        let replied = load_validated_reply_context(&core, &conv("conv-02"), &source).unwrap();
         let context = replied.reply_context.unwrap();
         assert_eq!(context.source_message_id, source);
         assert!(context.message_id.ends_with("@fixture.emailos>"));
         assert_eq!(
-            backend.load_reply_context(&conv("conv-02"), "an-older-message"),
+            load_validated_reply_context(&core, &conv("conv-02"), "an-older-message"),
             Err(MailError::ReplyUnavailable)
         );
-        // A session change invalidates reply reads (backend-independent).
+        // A session change invalidates reply reads (core-independent).
         let mut lifecycle = DraftLifecycle::default();
-        let before = lifecycle.session_epoch;
+        let before = lifecycle.session_epoch();
         assert!(lifecycle.is_current(before));
         lifecycle.advance();
         assert!(!lifecycle.is_current(before));
-        assert!(lifecycle.is_current(lifecycle.session_epoch));
-        backend.stop();
+        assert!(lifecycle.is_current(lifecycle.session_epoch()));
+        core.stop();
     }
 
     #[test]
     fn state_keeps_forwarding_after_command_acceptance() {
         let dir = temp_profile("synthetic-events");
-        let backend = open(dir.path(), WriteControls::default());
+        let core = open(dir.path(), WriteControls::default());
         let (tx, rx) = mpsc::channel();
         let drafts = DraftCore::open(dir.path().join("local-drafts")).unwrap();
-        let state = AppState::new(backend, drafts, move || {
+        let state = AppState::new(core, drafts, move || {
             let _ = tx.send(());
         });
         let receipt = state
-            .backend
+            .core
             .set_archived(&SetArchived {
                 conversation: conv("conv-01"),
                 archived: true,
@@ -1684,7 +1166,7 @@ mod synthetic_bridge_tests {
             .expect("acceptance event");
         assert!(until(|| {
             state
-                .backend
+                .core
                 .list_conversations()
                 .unwrap()
                 .activity
@@ -1697,7 +1179,7 @@ mod synthetic_bridge_tests {
         // Completion also notified (drain until quiet, never sleeping).
         assert!(rx.try_iter().count() >= 1 || rx.recv_timeout(Duration::from_secs(2)).is_ok());
         let done = state
-            .backend
+            .core
             .list_cached_done(&CachedDoneRequest {
                 account_id: ACCOUNT_ID.into(),
                 limit: 10,
@@ -1710,27 +1192,27 @@ mod synthetic_bridge_tests {
             .any(|row| row.conversation_ref.conversation_id == "conv-01"));
         assert_eq!(done.exact_total, None);
         assert_eq!(
-            state.backend.list_cached_done(&CachedDoneRequest {
+            state.core.list_cached_done(&CachedDoneRequest {
                 account_id: "foreign".into(),
                 limit: 10,
                 cursor: None,
             }),
             Err(MailError::NotFound)
         );
-        state.backend.stop();
+        state.core.stop();
     }
 
     #[test]
     fn paused_write_does_not_block_reads_or_shutdown() {
         let dir = temp_profile("synthetic-paused");
-        let backend = open(
+        let core = open(
             dir.path(),
             WriteControls {
                 paused: true,
                 reject_next: false,
             },
         );
-        let receipt = backend
+        let receipt = core
             .set_archived(&SetArchived {
                 conversation: conv("conv-01"),
                 archived: true,
@@ -1738,7 +1220,7 @@ mod synthetic_bridge_tests {
             })
             .unwrap();
         // Reads, status and a second command stay responsive while paused.
-        assert!(until(|| backend
+        assert!(until(|| core
             .list_conversations()
             .unwrap()
             .activity
@@ -1747,10 +1229,10 @@ mod synthetic_bridge_tests {
                 op.id == receipt.operation_id
                     && op.status == mail_core::dto::OperationStatus::Applying
             })));
-        backend.get_conversation(&conv("conv-02")).unwrap();
-        backend.account_status().unwrap();
+        core.get_conversation(&conv("conv-02")).unwrap();
+        core.account_status().unwrap();
         let (done_tx, done_rx) = mpsc::channel();
-        let stopper = backend.clone();
+        let stopper = core.clone();
         std::thread::spawn(move || {
             stopper.stop();
             let _ = done_tx.send(());
@@ -1763,11 +1245,11 @@ mod synthetic_bridge_tests {
     #[test]
     fn download_revalidates_exact_targets_and_never_opens_documents() {
         let dir = temp_profile("synthetic-attachment");
-        let backend = open(dir.path(), WriteControls::default());
-        let target = backend.list_conversations().unwrap().conversations[0]
+        let core = open(dir.path(), WriteControls::default());
+        let target = core.list_conversations().unwrap().conversations[0]
             .conversation_ref
             .clone();
-        let descriptor = backend.list_attachments(&target).unwrap().remove(0);
+        let descriptor = core.list_attachments(&target).unwrap().remove(0);
         assert_eq!(descriptor.attachment_id, "fixture-text");
         assert_eq!(descriptor.filename, "example.txt");
         assert_eq!(descriptor.mime_type, "text/plain");
@@ -1778,7 +1260,7 @@ mod synthetic_bridge_tests {
             request_id: "r1".into(),
         };
         let downloads = temp_profile("synthetic-downloads");
-        let saved = backend
+        let saved = core
             .download_attachment(&request, &CancelToken::default(), downloads.path())
             .unwrap();
         assert_eq!(
@@ -1788,29 +1270,25 @@ mod synthetic_bridge_tests {
         let mut wrong_message = request.clone();
         wrong_message.message_id = "another-message".into();
         assert_eq!(
-            backend.download_attachment(&wrong_message, &CancelToken::default(), downloads.path()),
+            core.download_attachment(&wrong_message, &CancelToken::default(), downloads.path()),
             Err(MailError::NotFound)
         );
         let mut wrong_attachment = request.clone();
         wrong_attachment.attachment_id = "another-attachment".into();
         assert_eq!(
-            backend.download_attachment(
-                &wrong_attachment,
-                &CancelToken::default(),
-                downloads.path()
-            ),
+            core.download_attachment(&wrong_attachment, &CancelToken::default(), downloads.path()),
             Err(MailError::NotFound)
         );
         let mut foreign = request.clone();
         foreign.conversation.account_id = "foreign".into();
         assert_eq!(
-            backend.download_attachment(&foreign, &CancelToken::default(), downloads.path()),
+            core.download_attachment(&foreign, &CancelToken::default(), downloads.path()),
             Err(MailError::NotFound)
         );
         let cancelled = CancelToken::default();
         cancelled.cancel();
         assert_eq!(
-            backend.download_attachment(&request, &cancelled, downloads.path()),
+            core.download_attachment(&request, &cancelled, downloads.path()),
             Err(MailError::AuthCancelled)
         );
         assert_eq!(
@@ -1818,7 +1296,7 @@ mod synthetic_bridge_tests {
             1,
             "only the one download"
         );
-        backend.stop();
+        core.stop();
     }
 
     const LEGACY_MAIL_DB: &[u8] =
@@ -1830,8 +1308,8 @@ mod synthetic_bridge_tests {
         let profile = dir.path().join("fixture-profile");
         std::fs::create_dir_all(&profile).unwrap();
         std::fs::write(profile.join("mail.db"), LEGACY_MAIL_DB).unwrap();
-        let (backend, opened) = open_fixture_backend(dir.path()).unwrap();
-        assert!(matches!(backend, Backend::Synthetic(_)));
+        let (core, opened) = open_fixture_core(dir.path()).unwrap();
+        assert_eq!(core.account_status().unwrap().mode, MailMode::Fixture);
         assert_eq!(opened, profile);
         assert!(profile.join("synthetic-provider.db").exists());
         assert!(profile.join("gmail.db").exists());
@@ -1842,10 +1320,10 @@ mod synthetic_bridge_tests {
         assert!(!profile.join("mail.db-wal").exists() && !profile.join("mail.db-shm").exists());
         // The fixture profile has a single writer.
         assert!(matches!(
-            open_fixture_backend(dir.path()),
+            open_fixture_core(dir.path()),
             Err(error) if error.to_string().contains("another writer")
         ));
-        backend.stop();
+        core.stop();
     }
 
     /// The real startup order: the synthetic core is open (new files), then the
@@ -1857,12 +1335,12 @@ mod synthetic_bridge_tests {
         let profile = dir.path().join("fixture-profile");
         std::fs::create_dir_all(&profile).unwrap();
         std::fs::write(profile.join("mail.db"), LEGACY_MAIL_DB).unwrap();
-        let (backend, _) = open_fixture_backend(dir.path()).unwrap();
+        let (core, _) = open_fixture_core(dir.path()).unwrap();
 
-        // A reply draft written under the legacy backend (same account, same IDs).
+        // A reply draft written under the legacy core (same account, same IDs).
         let drafts = DraftCore::open(profile.join("local-drafts")).unwrap();
-        let account = active_account(&backend).unwrap();
-        let detail = backend.get_conversation(&conv("conv-01")).unwrap();
+        let account = core.active_account().unwrap();
+        let detail = core.get_conversation(&conv("conv-01")).unwrap();
         let source = detail.messages.last().unwrap().id.clone();
         let receipt = drafts
             .create_draft(
@@ -1900,10 +1378,7 @@ mod synthetic_bridge_tests {
         );
 
         // The core never noticed; drafts and their references are intact.
-        assert_eq!(
-            backend.account_status().unwrap().sync.cached_conversations,
-            18
-        );
+        assert_eq!(core.account_status().unwrap().sync.cached_conversations, 18);
         let again: Vec<_> = std::fs::read_dir(profile.join("local-drafts"))
             .unwrap()
             .map(|e| e.unwrap().file_name())
@@ -1911,10 +1386,8 @@ mod synthetic_bridge_tests {
         assert_eq!(draft_files, again, "local-drafts untouched");
         let draft = drafts.get_draft(&account, &receipt.draft_ref).unwrap();
         assert_eq!(draft.revision, receipt.revision);
-        let reply = backend
-            .load_reply_context(&conv("conv-01"), &source)
-            .unwrap();
+        let reply = load_validated_reply_context(&core, &conv("conv-01"), &source).unwrap();
         assert_eq!(reply.reply_context.unwrap().source_message_id, source);
-        backend.stop();
+        core.stop();
     }
 }
