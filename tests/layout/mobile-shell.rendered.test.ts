@@ -25,7 +25,11 @@ interface InboxGeometry {
   railDisplay: string | null;
   preview: Rect;
   previewButtonOverlaps: boolean[];
-  pillStyles: Array<{ background: string; borderColor: string; borderWidth: string }>;
+  pillStyles: [
+    { background: string; borderColor: string; borderWidth: string },
+    { background: string; borderColor: string; borderWidth: string },
+    { background: string; borderColor: string; borderWidth: string },
+  ];
 }
 
 interface ReaderGeometry {
