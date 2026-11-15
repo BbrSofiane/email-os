@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7F4BRJTC5WQM8KK6K8VE8BZ",
+  "strategy": "manual-commit",
+  "branch": "maintenance/p4c-thin-shell-modules",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "src-tauri/src/commands/attachments.rs"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 6,
+    "cache_creation_tokens": 4427,
+    "cache_read_tokens": 801192,
+    "output_tokens": 2184,
+    "api_call_count": 3
+  }
+}
