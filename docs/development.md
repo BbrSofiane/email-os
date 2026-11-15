@@ -131,7 +131,10 @@ For the device smoke check, build the APK and install it on an attached Android
 device or emulator. Use device interaction tools to launch the app and verify:
 
 1. The fixture inbox renders and a conversation opens.
-2. Mark done works and returns to the inbox.
+2. Mark done works. The reader moves to a neighbouring conversation (it does not
+   return to the inbox); open the inbox to confirm the count dropped. Tap Undo within
+   the 10-second undo window and confirm the row returns. Mark read/unread (reader button or
+   row menu) and Star/Unstar (command palette) also work.
 3. Gmail controls and Files and links are absent.
 4. Compose a draft, wait for “Saved locally · not sent”, then close the app
    process.
@@ -143,7 +146,21 @@ device or emulator. Use device interaction tools to launch the app and verify:
 Record the device/API version, APK path, persistence results, and screenshots.
 These steps passed on 2026-11-14 on an Android 15 x86_64 emulator, using APK
 SHA-256 `161befa9ca00e1a8dfb8bf97ff3685415ad4d55821ea0a4fcfa6d15fc5762708`.
-The keyboard stayed hidden during draft entry, so IME layout remains unverified.
+They were re-run on 2026-11-15 with the unified-fixture CI APK
+(`19ca1a225f4c9820b82d0a5d4aa0e4c8d10e8d8700582c8f6c40f1465db4197c`); results and
+open findings are in [current-status.md](current-status.md). The keyboard stayed
+hidden during draft entry, so IME layout remains unverified.
+
+Legacy reset check (when changing the transition): install an APK from before ADR
+0002, archive a conversation and save a draft, then run the new APK over the same
+profile. `adb install -r` is refused when the two APKs are signed with different
+debug keys (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`, as between the CI runs used on
+2026-11-15). In that case tar `fixture-profile/` out with `adb exec-out run-as
+dev.exedev.emailos.androidfixture tar -cf - fixture-profile`, uninstall, install the
+new APK without launching it, and extract the tarball back with `adb shell run-as ...
+tar -xf -`. Confirm the reset screen appears before any mailbox, closing the app
+there changes nothing, accepting it shows 16 Inbox rows with the draft intact, and
+`fixture-profile/backups/` holds one backup while `mail.db` is gone.
 
 If an older APK fails during startup with a profile-lock storage error, build
 and install the current version. Android uses nonblocking `flock` for profile
@@ -808,12 +825,34 @@ synthetic session; in TypeScript it is the browser fake's fixture mode. Scenario
 mailbox the fixed 18 conversations cannot provide list `gmail` only.
 
 The Rust `synthetic` profile matches the `gmail` profile except where the session policy differs,
-and every difference is a named, justified `KNOWN_DIVERGENCES` entry (today only KD-1: the same
-worker behaviour as Gmail after a definite failure). Scenarios whose mailbox is not a subset of the
+and every difference is a named, justified `KNOWN_DIVERGENCES` entry. Both Rust tables are empty
+today. KD-1 (the Gmail worker stopped at a definitely rejected write and left its siblings queued
+until the next retry tick) is fixed: see "Worker behaviour after a failed write" below. Scenarios whose mailbox is not a subset of the
 fixed 18 conversations get their extra threads from a test overlay on the synthetic provider. The
 browser fake's `fixture` mode mirrors the unified fixture: read, star, retry and the cached Starred
 list are admitted, Trash, destinations and the lifecycle commands answer `invalid_request{mode}` /
 `read_only` exactly as the synthetic policy does.
+
+### Worker behaviour after a failed write
+
+The serial Gmail worker (`gmail/operations.rs` `run_one`) treats a failed queued write in one of
+three ways:
+
+- **Definite, operation-scoped rejection** (the provider answered and refused this write:
+  `ProviderRejected`, or `InvalidRequest` for malformed message ids). The operation becomes
+  `failed` with its error and stays retryable from Activity. The pass counts as complete, clears
+  the sync error and backoff, and goes straight on to the next queued write, so the rest of a group
+  drains without waiting for a retry tick, as in the browser fake. If the provider rejects every
+  write, the queue fails one write at a time without pausing.
+- **Transient or account-wide error** (`NetworkUnavailable`, `ProviderUnavailable`,
+  `InvalidProviderResponse`, `RateLimited`, `AuthRequired`, `AuthFailed`, `PermissionRequired`,
+  `SecretsUnavailable`). The write is requeued with its error and the pass ends in sync-error
+  backoff; queued siblings wait for the retry beat (a completed periodic sync, or the periodic tick
+  in a synthetic session, which re-arms queued writes because it never runs discovery).
+- **Storage failure** halts the worker.
+
+An uncertain-outcome reconciliation that cannot read the thread still defers and ends the pass in
+backoff; that path is unchanged.
 
 ### File format
 

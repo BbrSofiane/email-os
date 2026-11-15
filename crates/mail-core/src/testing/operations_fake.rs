@@ -59,6 +59,8 @@ pub fn sample_thread() -> GmailThread {
 pub enum ApplyPlan {
     Success,
     Error(MailError),
+    /// The next write fails with the error; every later write succeeds.
+    ErrorThenSuccess(MailError),
     BeforeDispatchError(MailError),
     BlockThenSuccess,
     ApplyThenBlock,
@@ -766,6 +768,9 @@ impl FakeProvider {
         let plan = {
             let mut state = self.state.lock().unwrap();
             let plan = state.apply_plan.clone();
+            if matches!(plan, ApplyPlan::ErrorThenSuccess(_)) {
+                state.apply_plan = ApplyPlan::Success;
+            }
             if let ApplyPlan::BeforeDispatchError(error) = &plan {
                 state.before_dispatch_errors += 1;
                 return Err(error.clone());
@@ -813,7 +818,7 @@ impl FakeProvider {
                 self.apply_remote(kind, ids, value);
                 return Err(MailError::OutcomeUnknown);
             }
-            ApplyPlan::Error(error) => return Err(error),
+            ApplyPlan::Error(error) | ApplyPlan::ErrorThenSuccess(error) => return Err(error),
             ApplyPlan::BeforeDispatchError(_) => unreachable!("handled before fake dispatch"),
             ApplyPlan::Success => {}
         }

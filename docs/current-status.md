@@ -21,10 +21,12 @@ research and architecture proposals are not feature inventories.
 The Android fixture target builds a debug APK for ARM64 and x86_64 from the
 shared Rust shell. It uses SQLite and the same synthetic fixture core as desktop
 (ADR 0002); Gmail, attachment export, and external link dispatch are
-unavailable. APK build passed on 2026-11-14 (before the unified fixture became
-the default: re-run the smoke). A pre-existing legacy fixture database is
-retired once behind a startup screen. Device smoke passed on an Android 15 x86_64 emulator. See
-the [Android smoke steps](development.md#android-fixture-apk).
+unavailable. APK build passed on 2026-11-14. A pre-existing legacy fixture
+database is retired once behind a startup screen. The unified-fixture APK was
+smoke-tested on an Android 15 x86_64 emulator on 2026-11-15 (see below), with two
+open findings: an overlapping reader toolbar at phone width, and one ANR on a first
+launch on a loaded host that did not recur. See the
+[Android smoke steps](development.md#android-fixture-apk).
 
 Mode selection is deliberate: native defaults to fixture; `EMAIL_OS_MODE=gmail`
 selects a separate Gmail profile. Browser preview remains synthetic. See the
@@ -55,6 +57,123 @@ Gmail consent/deny/cancel flows, live provider convergence, Keychain behavior,
 WKWebView behavior, or native attachment/download handling. Check the contracts
 for feature-specific pending gates before treating a feature as operationally
 validated.
+
+### Android unified-fixture smoke (2026-11-15)
+
+Run on Android 15 (`t3-pixel`, x86_64 emulator) with the CI debug APK from the
+push run on `3061e54` (run 43696254970, artifact `email-os-android-fixture-debug`),
+SHA-256 `19ca1a225f4c9820b82d0a5d4aa0e4c8d10e8d8700582c8f6c40f1465db4197c`.
+The legacy-reset test used the CI APK from run 43645874365 (PR #63, head `63f7ab8`),
+SHA-256 `d8c9b5364e829578bb78f06ff04de779188e8e3fee0b250c2e992c6f4fd3cf74`.
+Neither APK was built locally. The UI was driven with `agent-device`; `adb` was used
+for installs, `run-as` file inspection and logs only. Synthetic data only.
+
+**Fresh install of the `3061e54` APK**
+
+- The Inbox rendered 16 rows, 6 Read and 10 Unread. A conversation opened.
+- Mark read and Mark unread worked from the reader button and from the row menu.
+  Star and Unstar worked from the command palette (the row menu and reader toolbar
+  have no star control); the starred conversation appeared under Cached Starred.
+- Mark done archived the conversation and the Inbox count went from 16 to 15. The
+  reader stayed open on a neighbouring conversation rather than returning to the
+  Inbox. After killing the process (`am force-stop`) and relaunching, the archived
+  conversation was still absent (Inbox 15).
+- Undo after Mark done restored the row ("Restored" toast, row back in the Inbox,
+  still Unread). A first attempt did not: Undo was tapped several tool calls (well over a few
+  seconds) after Mark done, and the toast showed "Undo expired — Mark not done
+  restores the whole conversation to Inbox". A second attempt, with Undo tapped about
+  two seconds after Mark done, worked. This is the intended behaviour: Undo is
+  available for 10 seconds after the action (`UNDO_WINDOW_SECONDS` in
+  `crates/mail-core/src/clock.rs`), and the first attempt was later than that.
+- Gmail account controls and Files and links were not present in the accessibility
+  tree of the Inbox, three reader views, the command palette or the Destinations
+  palette.
+- A draft (To, Subject, two-line body with `café ✓`) showed "Saved locally · not
+  sent". After sending Email OS to Android Settings and back (same process, pid
+  unchanged) the editor still held all three fields. After killing the process, the
+  Drafts list had the draft and opening it showed the exact To, Subject and body
+  ("Draft loaded from this device · not sent").
+
+**Legacy reset (pre-unification APK, then `3061e54` APK)**
+
+Route: `adb install -r` of the main APK over the old one was refused with
+`INSTALL_FAILED_UPDATE_INCOMPATIBLE` (the two CI debug APKs have different signing
+certificates: SHA-256 `f2e7be56…` for run 43645874365, `7880429c…` for run
+43696254970). So the data was carried across with `run-as`: the old install's
+`fixture-profile/` was tarred out, the old app uninstalled, the main APK installed
+and never launched, and the tarball extracted back into its data directory.
+
+- In the old APK I archived Plumbing (Inbox 16 to 15) and saved a draft
+  (`legacy@example.test`, "Legacy draft before unification", two-line body). The
+  profile held `mail.db` and `local-drafts/drafts.db`.
+- On first launch of the main APK, the "Your demo mailbox is being renewed" screen
+  appeared with no mailbox behind it. Closing the app there left `mail.db`,
+  `mail.db-wal` and `drafts.db` byte-identical (SHA-256 prefixes compared), and the
+  next launch showed the screen again.
+- Tapping "Back up and start fresh" led to the mailbox with 16 Inbox rows (6 Read,
+  10 Unread) including Plumbing, so the archive had been reset. The saved draft
+  opened with its exact text. `fixture-profile/` now had one backup
+  (`backups/mail-20261115T135002Z.db`, 102,400 bytes, `fixture-transition.json`
+  state `done`), and `mail.db` was gone. The backup pulled to the host passed
+  `PRAGMA integrity_check` and held 18 conversations and 1 operation.
+- A second launch (after killing the process) showed the Inbox directly, no reset
+  screen.
+
+**Findings**
+
+- ANR on the first cold launch after the fresh install. logcat: `ANR in
+  dev.exedev.emailos.androidfixture ... Input dispatching timed out ... Waited
+  5000ms for FocusEvent(hasFocus=true)`. The host was busy (load average 4.1 on 4
+  cores, CPU pressure `some avg10=50`, `kswapd0` active). The system dialog
+  "email-os isn't responding" is in
+  [first-launch-anr.png](<validation/android-smoke/first-launch-anr.png>). The Inbox
+  had rendered behind it. A relaunch did not ANR, and neither did the six or so
+  later cold launches. I did not reproduce it.
+- The reader toolbar buttons overlap on this screen width: the UI tree reports Close
+  (Esc) at x 212–301 and Remind me on this device at x 199–286, and the "Inbox"
+  title is drawn over the icons
+  ([reader-toolbar-overlap.png](<validation/android-smoke/reader-toolbar-overlap.png>)).
+  Tapping Close (Esc) twice opened the reminder UI instead of closing the reader.
+- Starting the app over the legacy profile created `gmail.db` and
+  `synthetic-provider.db` before the reset was
+  accepted. The legacy files were unchanged, but the screen's "Nothing is changed"
+  covers only the old mailbox.
+- The Drafts list row is cramped: the To is cut to `ana@exampl…`, the subject shows
+  as "Ar", and Discard is inline
+  ([drafts-list-truncated-row.png](<validation/android-smoke/drafts-list-truncated-row.png>)).
+
+**Checked against the code: as designed**
+
+- The reset screen says "The 18 sample conversations return to their original
+  state" and the Inbox after reset shows 16 rows. Both are right: the fixture has 18
+  conversations, 16 in the Inbox and two that start archived
+  (`crates/mail-core/src/synthetic/data.rs`).
+- Every Inbox row carries "Has attachments". The synthetic provider puts one
+  synthetic attachment on the first message of every conversation
+  (`crates/mail-core/src/synthetic/provider.rs`), so the marker is correct. The
+  preview text of Invoice 4471 says the fixture has no attachments, which is stale
+  sample copy. No attachment was opened in this run.
+
+Screenshots: [reset screen](<validation/android-smoke/legacy-reset-screen.png>),
+[legacy draft after reset](<validation/android-smoke/legacy-draft-after-reset.png>),
+[Inbox on second launch](<validation/android-smoke/inbox-after-reset-second-launch.png>),
+[Undo restored](<validation/android-smoke/mark-done-undo-restored.png>),
+[draft saved](<validation/android-smoke/draft-saved-before-restart.png>) and
+[draft recovered](<validation/android-smoke/draft-recovered-after-restart.png>).
+The last two replace the 2026-11-14 images of the same name.
+
+**Not verified**
+
+- IME layout: text was entered with `agent-device fill` and the soft keyboard did not
+  appear.
+- Whether star, read/unread or the Undo result survive a process restart. Only the
+  archived conversation and the drafts were checked after a restart.
+- Closing the reset screen by swiping the app away from Recents. The cancel path was
+  tested with `am force-stop`.
+- ARM64 devices, physical devices, other Android versions, and any Gmail, network
+  or attachment behaviour.
+- The data directory the emulator held before this run (the 2026-11-14 install) was
+  backed up before uninstalling; it was not restored afterwards.
 
 ### Android fixture target (2026-11-14)
 
