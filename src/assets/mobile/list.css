@@ -112,8 +112,8 @@
 }
 
 .app[data-layout="compact"] .row-read-state {
-  left: 5px;
-  top: 18px;
+  left: 7.5px;
+  top: 22px;
 }
 
 .app[data-layout="compact"] .row-sender {

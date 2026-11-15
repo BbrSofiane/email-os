@@ -66,6 +66,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       senderWeight: string;
       subjectWeight: string;
       paneRight: number;
+      unreadDot: { centerX: number; centerY: number } | null;
     }>>(`(() => {
       const app = document.querySelector(${JSON.stringify(workspaceApp)});
       const pane = app.querySelector('.inbox-scroll');
@@ -77,6 +78,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
         const sender = row.querySelector('.row-sender');
         const subject = row.querySelector('.row-subject');
         const preview = row.querySelector('.row-preview');
+        const dot = row.querySelector('[data-test="row-unread"]');
         return {
           sender: rect('.row-sender'),
           subject: rect('.row-subject'),
@@ -93,6 +95,10 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
           senderWeight: getComputedStyle(sender).fontWeight,
           subjectWeight: getComputedStyle(subject).fontWeight,
           paneRight: pane.getBoundingClientRect().right,
+          unreadDot: dot ? (() => {
+            const box = dot.getBoundingClientRect();
+            return { centerX: box.left + box.width / 2, centerY: box.top + box.height / 2 };
+          })() : null,
         };
       });
     })()`);
@@ -112,6 +118,9 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       if (row.unread) {
         expect(row.senderWeight).toBe('600');
         expect(row.subjectWeight).toBe('600');
+        expect(row.unreadDot).not.toBeNull();
+        expect(Math.abs(row.unreadDot!.centerX - (row.row.left + 10))).toBeLessThanOrEqual(2);
+        expect(Math.abs(row.unreadDot!.centerY - (row.sender.top + 10))).toBeLessThanOrEqual(2);
       }
     }
 
