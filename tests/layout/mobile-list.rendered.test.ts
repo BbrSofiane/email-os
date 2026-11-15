@@ -52,6 +52,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       mobile: true,
     });
     await harness!.cdp.js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="conversation-row-conv-01"]').focus()`);
 
     const rows = await harness!.cdp.js<Array<{
       sender: DOMRectReadOnly;
@@ -59,6 +60,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       preview: DOMRectReadOnly;
       time: DOMRectReadOnly;
       timeVisibility: string;
+      timeText: string;
       row: DOMRectReadOnly;
       actions: string;
       checkbox: string;
@@ -85,6 +87,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
           preview: rect('.row-preview'),
           time: rect('.row-time'),
           timeVisibility: getComputedStyle(row.querySelector('.row-time')).visibility,
+          timeText: row.querySelector('.row-time').textContent.trim(),
           row: (() => {
             const box = row.getBoundingClientRect();
             return { left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: box.width, height: box.height };
@@ -110,6 +113,9 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       expect(Math.abs(row.time.top - row.sender.top)).toBeLessThanOrEqual(2);
       expect(row.time.left).toBeGreaterThan(row.sender.left);
       expect(row.timeVisibility).toBe('visible');
+      expect(row.time.width).toBeGreaterThan(0);
+      expect(row.time.height).toBeGreaterThan(0);
+      expect(row.timeText).not.toBe('');
       expect(row.preview.height).toBeLessThanOrEqual(40);
       expect(row.row.height).toBeGreaterThanOrEqual(72);
       expect(row.row.right).toBeLessThanOrEqual(row.paneRight + 1);
