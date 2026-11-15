@@ -157,7 +157,10 @@
   visibility: visible;
 }
 
-.app[data-layout="compact"] .inbox-row.has-actions:is(.focused, :hover, :focus-within, .actions-open) .row-time {
+.app[data-layout="compact"] .inbox-row.has-actions.focused .row-time,
+.app[data-layout="compact"] .inbox-row.has-actions:hover .row-time,
+.app[data-layout="compact"] .inbox-row.has-actions:focus-within .row-time,
+.app[data-layout="compact"] .inbox-row.has-actions.actions-open .row-time {
   opacity: 1;
   pointer-events: auto;
 }
