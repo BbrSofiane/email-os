@@ -101,7 +101,7 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await click('.inbox-row');
     await waitFor(`app.querySelector('[data-test="reader-archive-toggle"]')`, 'reader archive action');
     await click('[data-test="reader-archive-toggle"]');
-    await waitFor(`app.querySelector('[data-test="action-notice-status"]')`, 'action notice');
+    await waitFor(`app.querySelector('[data-test="action-notice-undo"]')`, 'inbox Undo action');
     await click('[data-test="reader-close"]');
     await shot('inbox-undo-toast');
     await freshInbox();
@@ -129,9 +129,11 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await shot('reader-message-sheet');
     await click('[data-test="reader-more"]');
     await shot('reader-more-sheet');
-    await click('[data-test="action-sheet-scrim"]');
+    await freshInbox();
+    await click('.inbox-row');
+    await waitFor(`app.querySelector('[data-test="reader-archive-toggle"]')`, 'reader Mark done action');
     await click('[data-test="reader-archive-toggle"]');
-    await waitFor(`app.querySelector('[data-test="action-notice-status"]')`, 'reader action notice');
+    await waitFor(`app.querySelector('[data-test="action-notice-undo"]')`, 'reader Undo action');
     await shot('reader-undo-toast');
   }, 120_000);
 
