@@ -34,7 +34,7 @@ const chromePath = process.env.EMAIL_OS_RENDERED_LAYOUT_CHROME ?? '';
 
 /** The main window's configured minimum width, read from the native config so the two cannot drift apart. */
 function configuredMinWidth(): number {
-  const config = JSON.parse(readFileSync(new URL('../../src-tauri/tauri.conf.json', import.meta.url), 'utf8')) as { app: { windows: Array<{ label: string; width: number; minWidth?: number }> } };
+  const config = JSON.parse(readFileSync(new URL('../../src-tauri/tauri.conf.json', import.meta.url).pathname, 'utf8')) as { app: { windows: Array<{ label: string; width: number; minWidth?: number }> } };
   const main = config.app.windows.find((w) => w.label === 'main');
   if (!main || typeof main.minWidth !== 'number') throw new Error('src-tauri/tauri.conf.json: the main window needs a minWidth');
   expect(main.minWidth).toBeLessThanOrEqual(main.width);
