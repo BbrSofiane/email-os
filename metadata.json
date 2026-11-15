@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7F4TJ5ES4DNDC4GPR5PYHDS",
+  "strategy": "manual-commit",
+  "branch": "maintenance/p4c-thin-shell-modules",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "ARCHITECTURE.md",
+    "docs/current-architecture.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 16,
+    "cache_creation_tokens": 28971,
+    "cache_read_tokens": 2441251,
+    "output_tokens": 4495,
+    "api_call_count": 8
+  }
+}

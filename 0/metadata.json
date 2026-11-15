@@ -1,0 +1,41 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7F4TJ5ES4DNDC4GPR5PYHDS",
+  "session_id": "5d0bff72-6561-427d-8886-987008a34c7a",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-15T08:22:52.488258709Z",
+  "branch": "maintenance/p4c-thin-shell-modules",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "ARCHITECTURE.md",
+    "docs/current-architecture.md"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "232b21671a88",
+  "checkpoint_transcript_start": 963,
+  "transcript_lines_at_start": 963,
+  "compact_transcript_start": 120,
+  "token_usage": {
+    "input_tokens": 16,
+    "cache_creation_tokens": 28971,
+    "cache_read_tokens": 2441251,
+    "output_tokens": 4495,
+    "api_call_count": 8
+  },
+  "session_metrics": {
+    "turn_count": 2
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-15T08:22:52.393756519Z",
+    "agent_lines": 10,
+    "agent_removed": 7,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 10,
+    "total_lines_changed": 17,
+    "agent_percentage": 100,
+    "metric_version": 2
+  }
+}
