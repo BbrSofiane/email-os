@@ -17,7 +17,7 @@ use diagnostics::{cause, init_logging, storage_failure};
 use mail_core::drafts::types::AppCloseRequest;
 use mail_core::drafts::DraftCore;
 use mail_core::error::MailError;
-use mail_core::fixture_transition::{FixtureTransition, FixtureTransitionStatus};
+use mail_core::fixture_transition::FixtureTransition;
 use mail_core::gmail::provider::LiveGmailProvider;
 use mail_core::gmail::secrets::KeychainSecrets;
 use mail_core::gmail::sync::GmailCore;
@@ -42,26 +42,6 @@ fn open_fixture_core(
         Arc::new(mail_core::clock::SystemClock),
     )?;
     Ok((core, profile_dir))
-}
-
-#[tauri::command]
-async fn get_fixture_transition_status(
-    transition: State<'_, Arc<FixtureTransition>>,
-) -> Result<FixtureTransitionStatus, MailError> {
-    let transition = Arc::clone(&transition);
-    tauri::async_runtime::spawn_blocking(move || transition.status())
-        .await
-        .map_err(|_| storage_failure(cause::TASK_JOIN))?
-}
-
-#[tauri::command]
-async fn accept_fixture_transition(
-    transition: State<'_, Arc<FixtureTransition>>,
-) -> Result<FixtureTransitionStatus, MailError> {
-    let transition = Arc::clone(&transition);
-    tauri::async_runtime::spawn_blocking(move || transition.accept())
-        .await
-        .map_err(|_| storage_failure(cause::TASK_JOIN))?
 }
 
 #[tauri::command]

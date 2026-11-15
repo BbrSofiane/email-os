@@ -10,6 +10,9 @@ pub(crate) use account::*;
 mod drafts;
 pub(crate) use drafts::*;
 
+mod transition;
+pub(crate) use transition::*;
+
 use crate::diagnostics::{cause, storage_failure};
 use mail_core::error::MailError;
 
