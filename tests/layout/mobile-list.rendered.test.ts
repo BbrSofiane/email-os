@@ -18,6 +18,27 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     await harness?.close();
   });
 
+  async function touch(type: 'touchStart' | 'touchMove' | 'touchEnd', x?: number, y?: number): Promise<void> {
+    await harness!.cdp.cmd('Input.dispatchTouchEvent', {
+      type,
+      touchPoints: type === 'touchEnd' ? [] : [{ x, y, id: 1, radiusX: 1, radiusY: 1, force: 1 }],
+    });
+  }
+
+  async function swipeRow(selector: string, deltaX: number, deltaY = 0): Promise<void> {
+    const start = await harness!.cdp.js<{ x: number; y: number }>(`(() => {
+      const row = document.querySelector(${JSON.stringify(workspaceApp)}).querySelector(${JSON.stringify(selector)});
+      const rect = row.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + Math.min(28, rect.height / 2) };
+    })()`);
+    await touch('touchStart', start.x, start.y);
+    await touch('touchMove', start.x + deltaX * 0.35, start.y + deltaY * 0.35);
+    await touch('touchMove', start.x + deltaX * 0.7, start.y + deltaY * 0.7);
+    await touch('touchMove', start.x + deltaX, start.y + deltaY);
+    await touch('touchEnd');
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 300))');
+  }
+
   it.each([
     { width: 412, height: 915 },
     { width: 360, height: 800 },
@@ -150,5 +171,40 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="rail-drafts"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
     expect(await harness!.cdp.js(`getComputedStyle(document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('.mobile-context-slot')).display`)).toBe('none');
+  });
+
+  it('swipes to Mark done and Undo, opens Remind, and preserves vertical scrolling', async () => {
+    await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
+      width: 412,
+      height: 915,
+      screenWidth: 412,
+      screenHeight: 915,
+      deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor,
+      mobile: true,
+    });
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-mail"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
+
+    const first = await harness!.cdp.js<{ left: number; width: number }>(`(() => {
+      const row = document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="conversation-row-conv-01"]');
+      const rect = row.getBoundingClientRect();
+      return { left: rect.left, width: rect.width };
+    })()`);
+    await swipeRow('[data-test="conversation-row-conv-01"]', -first.width * 0.6);
+    expect(await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="conversation-row-conv-01"]') === null`)).toBe(true);
+    expect(await harness!.cdp.js(`!!document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="action-notice"]')`)).toBe(true);
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="action-notice-undo"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 300))');
+    expect(await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="conversation-row-conv-01"]') !== null`)).toBe(true);
+
+    await swipeRow('[data-test="conversation-row-conv-01"]', 150);
+    expect(await harness!.cdp.js(`document.querySelector('[data-reminder-picker]') !== null`)).toBe(true);
+
+    await harness!.cdp.js('window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }))');
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 200))');
+    const before = await harness!.cdp.js<number>(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('.inbox-scroll').scrollTop`);
+    await swipeRow('[data-test="conversation-row-conv-02"]', 4, -110);
+    const after = await harness!.cdp.js<number>(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('.inbox-scroll').scrollTop`);
+    expect(after).toBeGreaterThan(before);
   });
 });
