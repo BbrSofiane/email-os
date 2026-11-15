@@ -9,11 +9,9 @@
 
 mod close_gate;
 mod diagnostics;
-use mail_core::attachments::{
-    AttachmentDescriptor, AttachmentSaved, AttachmentTransfers, SaveAttachment,
-};
+mod state;
+use mail_core::attachments::{AttachmentDescriptor, AttachmentSaved, SaveAttachment};
 
-use close_gate::CloseGate;
 use diagnostics::{cause, init_logging, storage_failure};
 use mail_core::drafts::types::{
     AppCloseRequest, CreateDraft, DeleteDraft, Draft, DraftDeleteReceipt, DraftReceipt, DraftRef,
@@ -30,7 +28,7 @@ use mail_core::fixture_transition::{FixtureTransition, FixtureTransitionStatus};
 use mail_core::gmail::browsing::{DestinationCatalog, DestinationPage, DestinationRequest};
 use mail_core::gmail::provider::LiveGmailProvider;
 use mail_core::gmail::secrets::KeychainSecrets;
-use mail_core::gmail::sync::{GmailCore, GmailUnsubscribe};
+use mail_core::gmail::sync::GmailCore;
 use mail_core::gmail::types::AccountStatus;
 use mail_core::groups::{
     GetOperationGroupRequest, GroupUndoReceipt, ListOperationGroupsRequest, OperationGroupPage,
@@ -38,36 +36,11 @@ use mail_core::groups::{
     UndoOperationGroup,
 };
 use mail_core::reminders::{CancelReminder, PutReminder, Reminder};
+use state::AppState;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
-
-/// Managed app state retains its change-listener guard for the full app life.
-struct AppState {
-    core: GmailCore,
-    drafts: DraftService,
-    attachment_transfers: AttachmentTransfers,
-    close_gate: Arc<Mutex<CloseGate>>,
-    _subscription: GmailUnsubscribe,
-}
-
-impl AppState {
-    fn new(
-        core: GmailCore,
-        drafts: DraftCore,
-        on_change: impl Fn() + Send + Sync + 'static,
-    ) -> Self {
-        let subscription = core.subscribe(on_change);
-        Self {
-            drafts: DraftService::new(core.clone(), drafts),
-            core,
-            attachment_transfers: AttachmentTransfers::default(),
-            close_gate: Arc::new(Mutex::new(CloseGate::default())),
-            _subscription: subscription,
-        }
-    }
-}
 
 /// Opens the fixture profile under `app_data_dir`: the synthetic core on its
 /// own files. A legacy `mail.db` in the same directory is never opened here;
@@ -582,6 +555,7 @@ fn begin_native_close(app: &AppHandle) {
 #[cfg(test)]
 mod attachment_transfer_tests {
     use super::*;
+    use mail_core::attachments::AttachmentTransfers;
     #[test]
     fn cancellation_before_or_during_admission_and_single_transfer_bound() {
         let transfers = AttachmentTransfers::default();
