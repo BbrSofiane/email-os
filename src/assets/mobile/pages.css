@@ -150,3 +150,56 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker li[role="option"]
 body:has(.app[data-layout="compact"]) .backdrop.compact-picker .time-zone-note {
   overflow-wrap: anywhere;
 }
+
+.app[data-layout="compact"] form.mail-search {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 8px 16px 12px 20px;
+}
+
+.app[data-layout="compact"] .mail-search-entry {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.app[data-layout="compact"] .mail-search-entry input {
+  min-width: 0;
+  min-height: 48px;
+  flex: 1;
+  font-size: 16px;
+}
+
+.app[data-layout="compact"] .mail-search-entry button,
+.app[data-layout="compact"] .mail-search-help {
+  min-width: 48px;
+  min-height: 48px;
+}
+
+.app[data-layout="compact"] .search-suggestions {
+  width: 100%;
+  margin: 4px 0 8px;
+}
+
+.app[data-layout="compact"] .search-suggestion {
+  min-height: 48px;
+  overflow-wrap: anywhere;
+}
+
+.app[data-layout="compact"] .search-help,
+.app[data-layout="compact"] .search-coverage,
+.app[data-layout="compact"] .search-unsupported {
+  overflow-wrap: anywhere;
+}
+
+.app[data-layout="compact"] .search-results-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.app[data-layout="compact"] .search-results-header button {
+  min-height: 48px;
+}

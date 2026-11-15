@@ -73,4 +73,44 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
     expect(geometry.options.length).toBeGreaterThan(0);
     expect(geometry.options.every(option => option.height >= 48)).toBe(true);
   });
+
+  it('sizes compact Search controls and shows submitted results without overflow', async () => {
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="search-trigger"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
+    await harness!.cdp.js(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const input = app.querySelector('[data-test="search-input"]');
+      input.value = 'from:ada';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+    await harness!.cdp.js(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const input = app.querySelector('[data-test="search-input"]');
+      input.value = 'from:ada';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      app.querySelector('[data-test="search-submit"]').click();
+    })()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 400))');
+    const result = await harness!.cdp.js<{ visible: boolean; overflow: boolean }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const header = app.querySelector('[data-test="search-results-header"]');
+      return { visible: !!header, overflow: app.scrollWidth > app.clientWidth };
+    })()`);
+    expect(result.visible).toBe(true);
+    expect(result.overflow).toBe(false);
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="search-trigger"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
+    const suggestionGeometry = await harness!.cdp.js<{ input: DOMRectReadOnly; suggestions: DOMRectReadOnly[] }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const rect = element => { const box = element.getBoundingClientRect(); return { top: box.top, bottom: box.bottom, height: box.height, width: box.width }; };
+      const input = app.querySelector('[data-test="search-input"]');
+      input.value = '';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      return { input: rect(input), suggestions: [...app.querySelectorAll('[data-test="search-suggestion"]')].map(rect) };
+    })()`);
+    expect(suggestionGeometry.input.height).toBeGreaterThanOrEqual(48);
+    expect(suggestionGeometry.input.width).toBeGreaterThan(200);
+    expect(suggestionGeometry.suggestions.length).toBeGreaterThan(0);
+    expect(suggestionGeometry.suggestions.every(row => row.height >= 48)).toBe(true);
+  });
 });
