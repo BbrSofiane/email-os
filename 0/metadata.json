@@ -1,0 +1,39 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7GEDX8AXXTJC8J380Q4EYHT",
+  "session_id": "5f168d81-61f3-4c11-ac7c-9cf2d9a03706",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-15T20:29:55.353590511Z",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "save_step_count": 1,
+  "files_touched": [
+    "tests/app-shell/keyboard-ownership.test.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "5880fbd2f52c",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 244,
+    "cache_creation_tokens": 407427,
+    "cache_read_tokens": 31242885,
+    "output_tokens": 193062,
+    "api_call_count": 121
+  },
+  "session_metrics": {
+    "turn_count": 2
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-15T20:29:55.23381032Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 12349,
+    "human_modified": 2,
+    "human_removed": 0,
+    "total_committed": 12349,
+    "total_lines_changed": 22267,
+    "agent_percentage": 0,
+    "metric_version": 2
+  }
+}
