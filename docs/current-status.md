@@ -23,9 +23,9 @@ shared Rust shell. It uses SQLite and the same synthetic fixture core as desktop
 (ADR 0002); Gmail, attachment export, and external link dispatch are
 unavailable. APK build passed on 2026-11-14. A pre-existing legacy fixture
 database is retired once behind a startup screen. The unified-fixture APK was
-smoke-tested on an Android 15 x86_64 emulator on 2026-11-15 (see below), with open
-findings: an ANR on one first launch, an overlapping reader toolbar, and Undo
-that only works inside the toast window. See the
+smoke-tested on an Android 15 x86_64 emulator on 2026-11-15 (see below), with two
+open findings: an overlapping reader toolbar at phone width, and one ANR on a first
+launch on a loaded host that did not recur. See the
 [Android smoke steps](development.md#android-fixture-apk).
 
 Mode selection is deliberate: native defaults to fixture; `EMAIL_OS_MODE=gmail`
@@ -82,7 +82,9 @@ for installs, `run-as` file inspection and logs only. Synthetic data only.
   still Unread). A first attempt did not: Undo was tapped several tool calls (well over a few
   seconds) after Mark done, and the toast showed "Undo expired — Mark not done
   restores the whole conversation to Inbox". A second attempt, with Undo tapped about
-  two seconds after Mark done, worked. I did not measure the toast duration.
+  two seconds after Mark done, worked. This is the intended behaviour: Undo is
+  available for 10 seconds after the action (`UNDO_WINDOW_SECONDS` in
+  `crates/mail-core/src/clock.rs`), and the first attempt was later than that.
 - Gmail account controls and Files and links were not present in the accessibility
   tree of the Inbox, three reader views, the command palette or the Destinations
   palette.
@@ -136,13 +138,21 @@ and never launched, and the tarball extracted back into its data directory.
   `synthetic-provider.db` before the reset was
   accepted. The legacy files were unchanged, but the screen's "Nothing is changed"
   covers only the old mailbox.
-- The reset screen says "The 18 sample conversations return to their original
-  state"; the Inbox after reset shows 16 rows.
 - The Drafts list row is cramped: the To is cut to `ana@exampl…`, the subject shows
   as "Ar", and Discard is inline
   ([drafts-list-truncated-row.png](<validation/android-smoke/drafts-list-truncated-row.png>)).
-- Every Inbox row carries "Has attachments", including Invoice 4471, whose preview
-  says the fixture has no attachments. I did not open an attachment.
+
+**Checked against the code: as designed**
+
+- The reset screen says "The 18 sample conversations return to their original
+  state" and the Inbox after reset shows 16 rows. Both are right: the fixture has 18
+  conversations, 16 in the Inbox and two that start archived
+  (`crates/mail-core/src/synthetic/data.rs`).
+- Every Inbox row carries "Has attachments". The synthetic provider puts one
+  synthetic attachment on the first message of every conversation
+  (`crates/mail-core/src/synthetic/provider.rs`), so the marker is correct. The
+  preview text of Invoice 4471 says the fixture has no attachments, which is stale
+  sample copy. No attachment was opened in this run.
 
 Screenshots: [reset screen](<validation/android-smoke/legacy-reset-screen.png>),
 [legacy draft after reset](<validation/android-smoke/legacy-draft-after-reset.png>),

@@ -133,7 +133,7 @@ device or emulator. Use device interaction tools to launch the app and verify:
 1. The fixture inbox renders and a conversation opens.
 2. Mark done works. The reader moves to a neighbouring conversation (it does not
    return to the inbox); open the inbox to confirm the count dropped. Tap Undo within
-   a couple of seconds and confirm the row returns. Mark read/unread (reader button or
+   the 10-second undo window and confirm the row returns. Mark read/unread (reader button or
    row menu) and Star/Unstar (command palette) also work.
 3. Gmail controls and Files and links are absent.
 4. Compose a draft, wait for “Saved locally · not sent”, then close the app
