@@ -1,0 +1,36 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7FQNZ3V0TQ55QZ6QV7JCZYJ",
+  "strategy": "manual-commit",
+  "branch": "maintenance/android-unified-smoke",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "docs/current-status.md",
+    "docs/development.md",
+    "docs/validation/android-smoke/draft-recovered-after-restart.png",
+    "docs/validation/android-smoke/draft-saved-before-restart.png",
+    "docs/validation/android-smoke/drafts-list-truncated-row.png",
+    "docs/validation/android-smoke/first-launch-anr.png",
+    "docs/validation/android-smoke/inbox-after-reset-second-launch.png",
+    "docs/validation/android-smoke/legacy-draft-after-reset.png",
+    "docs/validation/android-smoke/legacy-reset-screen.png",
+    "docs/validation/android-smoke/mark-done-undo-restored.png",
+    "docs/validation/android-smoke/reader-toolbar-overlap.png"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 184,
+    "cache_creation_tokens": 141890,
+    "cache_read_tokens": 9044310,
+    "output_tokens": 37770,
+    "api_call_count": 86
+  }
+}

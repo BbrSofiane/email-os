@@ -1,0 +1,26 @@
+You are running the Android device smoke for Email OS on current main (`3061e54`). I coordinate the maintenance programme from thread `c07c9c54-0efc-4c81-81d7-dc1548e15e3c`; I review and merge, you do not merge.
+
+## Why
+The Android fixture APK was last smoke-tested on an emulator on 14 Nov, before fixture mode moved onto the unified core (`GmailCore` + built-in synthetic provider, ADR 0002) and before the native shell was split (#68, #69). `docs/current-status.md` says so itself ("before the unified fixture became the default: re-run the smoke"). CI builds the APK, but nobody has run today's APK on a device, and the one-time legacy-fixture reset screen has never been seen on Android. The owner asked for this to be run.
+
+## What to do
+1. **Device.** An Android 15 emulator is already booted on this machine: hostId `local`, device id `emulator-5554` (name `t3-pixel`). Load the device tools with ToolSearch `select:mcp__t3-code__device_list,mcp__t3-code__device_open,mcp__t3-code__device_screenshot,mcp__t3-code__device_close`, call `device_open` with that hostId and id, and use the `agent-device` command it returns for every launch, tap, text entry and screenshot. `adb` is fine for installs, file copies, `run-as` and logs only. Do not drive the UI with raw `adb shell input`.
+2. **APKs, from CI (do not build locally).**
+   - Current main: `gh run download 43696254970 -R BbrSofiane/email-os -n email-os-android-fixture-debug -D <dir>` (push run on `3061e54`).
+   - Pre-unification (for the reset test): the same artifact name from run `43645874365` (PR #63, head `63f7ab8`).
+   - Record the SHA-256 of each APK you install.
+3. **Protect what is on the emulator.** Package id is `dev.exedev.emailos.androidfixture`. If it is already installed, save its data directory first (`adb shell run-as … tar` to a tarball in your scratchpad) and tell me the path in your report. Then uninstall.
+4. **Fresh-install smoke on the main APK.** Follow the steps in `docs/development.md` ("Android fixture APK") and at least cover what the previous smoke covered (see `docs/current-status.md`, "Android fixture target"): inbox renders, open a conversation, Mark done, restart the process and the conversation is still gone, Gmail controls and Files/links absent, save a draft and reopen it with exact subject and body, background/resume keeps the editor intact. Add what is new since unification: the seeded read/unread mix is visible (6 of 16 read), star and mark read/unread work, and Undo after Mark done restores the row.
+5. **Legacy reset on a device.** Get a real legacy profile (one created by the pre-unification APK: archive something and save a draft in it), then run the main APK over it and check: the reset screen appears before any mailbox; closing the app at that screen changes nothing; accepting it leads to the mailbox with 16 Inbox rows; the saved draft is still there with its exact text; a second launch shows no reset screen. If `adb install -r` refuses because the two CI APKs are signed with different debug keys, carry the data across with `run-as` (tar the data dir out of the old install, uninstall, install main, restore, launch). Say in the report which route you used. If you can inspect the app's files with `run-as`, also confirm one backup file exists under `backups/` and `mail.db` is gone.
+6. **Evidence.** Take screenshots at the key points with `device_screenshot` and refresh `docs/validation/android-smoke/` with the ones worth keeping (same naming style; a few, not dozens).
+7. **PR.** Update `docs/current-status.md` (and `docs/development.md` only if a smoke step is wrong or missing) so it states what was run, on which APK hash and commit, and what was seen. Open a PR to `main` on `BbrSofiane/email-os` (the git remote is a proxy URL, so pass `-R BbrSofiane/email-os` to `gh`). Do not merge it.
+
+## Rules
+- Synthetic fixture data only. No real accounts, credentials or Google network.
+- If something fails or looks wrong, that is the result I need: capture the screenshot and `adb logcat` excerpt, try once more to rule out a flake, and report it. Do not fix product code in this thread and do not word the docs around it.
+- Write down only what you saw. Anything you could not check goes under a "Not verified" heading.
+- Never touch the root checkout `/home/exedev/email-os` (the owner's work). Work in your own worktree.
+- Do not run cargo or the Android build here; other threads are using the machine.
+
+## Report
+End with: pass or fail per step, APK hashes, which reset route you used, anything not verified, the path of any data backup you made, and the PR URL.
