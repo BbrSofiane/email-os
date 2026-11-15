@@ -39,9 +39,9 @@ export function useGoChord({ actionAvailable }: GoChordDeps) {
       goGraceTimer = setTimeout(endGoGrace, GO_CHORD_GRACE_MS);
     }, GO_CHORD_WINDOW_MS);
   }
-  /** Only what the palette and rail offer: Trash needs its rail item, Reminders its transport, Account Gmail mode. */
+  /** Only what the palette and rail offer: Done and Drafts need an account, Trash its rail item, Reminders its transport, Account Gmail mode. */
   function availableGoTargets() {
-    return goTargets.filter((target) => target.id === 'done' || actionAvailable(target.id));
+    return goTargets.filter((target) => actionAvailable(target.id));
   }
   /** The chord's target for an unmodified key, or undefined (the key keeps its plain meaning). */
   function goTargetFor(event: KeyboardEvent) {
@@ -54,6 +54,7 @@ export function useGoChord({ actionAvailable }: GoChordDeps) {
   }
   const goHintLabel = computed(() => {
     const phrases = availableGoTargets().map((target) => `${target.key.toUpperCase()} for ${target.word}`);
+    if (phrases.length === 0) return 'g pressed. Escape to cancel.';
     const list = phrases.length > 1 ? `${phrases.slice(0, -1).join(', ')} or ${phrases.at(-1)}` : phrases[0];
     return `g pressed. Press ${list}, Escape to cancel.`;
   });

@@ -64,6 +64,15 @@ export function useAccountNotes({ mailbox, accountStatus, readerOpen, drawer, ac
   const accountCommandsFirst = computed(() => actionAvailable('connect') || syncFailureFixable.value);
   // A visible sync failure has one fix, so Sync now leads the palette (triage commands follow).
   const accountCommandsTop = computed(() => syncFailureFixable.value);
+  // A plain Inbox that is ready and has no rows: there is nothing to split or to filter, so the palette does not offer
+  // Create split or Show unread only (Show all conversations stays, it is the way out of an empty filter).
+  const plainInboxEmpty = computed(() => mailbox.context.value === 'inbox' && !mailbox.unreadOnly.value && !mailbox.starredOnly.value
+    && mailbox.listState.value === 'ready' && mailbox.conversations.value.length === 0);
+  // Provider mail with an account whose sign-in has expired: it still lists what it can, and says why a refresh will not.
+  const providerSignInExpired = computed(() => {
+    const empty = inboxEmptyState(accountStatus.value);
+    return empty?.kind === 'auth_required' ? { text: empty.text, label: empty.actionLabel } : null;
+  });
   const paletteHasRows = computed(() => !(mailbox.listState.value === 'ready' && mailbox.conversations.value.length === 0));
   const emptyListText = computed(() => {
     if (mailbox.context.value === 'search') return mailbox.nextCursor.value ? 'No matches on this candidate page. Continue scanning older mail below.' : 'No matching conversations in the searched content.';
@@ -77,5 +86,5 @@ export function useAccountNotes({ mailbox, accountStatus, readerOpen, drawer, ac
     return 'No known archived conversations in this local cache.';
   });
 
-  return { statusNotice, readOnlyHint, inboxEmpty, emptyLineShown, headerAction, emptyActionShown, noteWordsHidden, noteAnnounces, noteParts, contactListEmpty, providerAccountAction, accountCommandsFirst, accountCommandsTop, paletteHasRows, emptyListText };
+  return { statusNotice, readOnlyHint, inboxEmpty, emptyLineShown, headerAction, emptyActionShown, noteWordsHidden, noteAnnounces, noteParts, contactListEmpty, providerAccountAction, accountCommandsFirst, accountCommandsTop, plainInboxEmpty, providerSignInExpired, paletteHasRows, emptyListText };
 }
