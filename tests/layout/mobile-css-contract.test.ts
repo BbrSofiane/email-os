@@ -85,4 +85,13 @@ describe('compact CSS contract', () => {
     expect(pages).toContain('.utility-drawer .drawer-header');
     expect(pages).toContain('min-height: 56px');
   });
+
+  it('defines compact attachment sheet and startup gate targets', () => {
+    const pages = mobileCss['pages.css'];
+    expect(pages).toContain('.attachment-chooser');
+    expect(pages).toContain('border-radius: 16px 16px 0 0');
+    expect(pages).toContain('.app[data-layout="compact"] .transition-card');
+    expect(pages).toContain('.app[data-layout="compact"] .transition-primary');
+    expect(pages).toContain('min-height: 48px');
+  });
 });
