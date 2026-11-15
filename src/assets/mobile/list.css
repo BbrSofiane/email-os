@@ -2,6 +2,15 @@
   font-size: var(--type-body);
 }
 
+.app[data-layout="compact"] .inbox-row,
+.app[data-layout="compact"] .inbox-row *,
+.app[data-layout="compact"] .context-row,
+.app[data-layout="compact"] .context-row * {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
 .app[data-layout="compact"] .mobile-context-slot:not(:empty) {
   display: flex;
   align-items: center;

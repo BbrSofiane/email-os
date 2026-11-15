@@ -359,6 +359,11 @@ function onRowPointerCancel(event: PointerEvent, row: ConversationSummaryLike): 
   swipeFor(row).pointercancel(event);
 }
 
+function onRowContextMenu(event: MouseEvent, row: ConversationSummaryLike): void {
+  if (!props.compact || props.readOnly || !longPressFor(row).fired.value) return;
+  event.preventDefault();
+}
+
 /** DOM id of the row's action disclosure panel (for aria-controls). */
 function actionsPanelId(row: ConversationSummaryLike): string {
   return `row-actions-${row.ref.accountId}-${row.ref.conversationId}`.replace(/[^A-Za-z0-9_-]/g, '-');
@@ -703,6 +708,7 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
         @pointermove="onRowPointerMove($event, item.row)"
         @pointerup="onRowPointerUp($event, item.row)"
         @pointercancel="onRowPointerCancel($event, item.row)"
+        @contextmenu="onRowContextMenu($event, item.row)"
         @focusin="onFocusIn($event, item.row)"
         @focusout="onFocusOut"
         @keydown.escape="onRowKeydown($event, item.row)"
