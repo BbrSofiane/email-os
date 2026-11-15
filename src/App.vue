@@ -2037,8 +2037,14 @@ const searchSyntaxEditHint = computed(() =>
 </script>
 
 <template>
-  <div ref="appRoot" class="app" :data-client-mode="props.mode" :data-layout="layoutMode">
-    <MobileTopBar v-if="layoutMode === 'compact'" :reader="readerOpen" :title="contextTitle" :execute-action="(id) => id === 'navigator' ? openOverlay('navigator') : executeAction(id)" />
+  <div ref="appRoot" class="app" :data-client-mode="props.mode" :data-layout="layoutMode" :data-mobile-context="!!(replyComposerOpen && readerOpen)">
+    <MobileTopBar
+      v-if="layoutMode === 'compact'"
+      :reader="readerOpen"
+      :title="contextTitle"
+      :execute-action="executeAction"
+      :open-destinations="() => openOverlay('navigator')"
+    />
     <main class="app-main" :class="{ 'contact-collapsed': contactCollapsed }" :inert="!!overlay || !!attachmentConversation || undefined">
       <!-- Split header (DESIGN.md "Split Tabs"): one borderless 78px strip in
            the list column. Destinations hamburger on the left, split tabs on
@@ -2052,7 +2058,7 @@ const searchSyntaxEditHint = computed(() =>
                active split tab already names it, so it is shown only when no
                rendered tab is active (Cached Done, Starred, Search, reader). -->
           <span ref="readerBackHost" class="reader-back-host"></span>
-          <h1 class="app-title" :class="{ 'visually-hidden': activeTabShown }" data-test="inbox-title">{{ contextTitle }}<template v-if="switchAccountLabel"><span class="app-title-account"> — {{ accountStatus?.account?.emailAddress }}</span></template></h1>
+          <h1 class="app-title" :class="{ 'visually-hidden': activeTabShown || layoutMode === 'compact' }" data-test="inbox-title">{{ contextTitle }}<template v-if="switchAccountLabel"><span class="app-title-account"> — {{ accountStatus?.account?.emailAddress }}</span></template></h1>
           <nav v-if="inboxSplitsShown" class="split-nav" aria-label="Inbox splits" :title="splitCoverageShown ? SPLIT_COVERAGE : undefined">
             <button type="button" class="split-tab" data-test="split-inbox" :aria-current="mailbox.context.value === 'inbox' ? 'page' : undefined" :aria-describedby="splitCoverageShown ? `${domIdPrefix}split-coverage` : undefined" @click="navigateContext('inbox')"><span class="split-label">Inbox</span> <span v-if="splitBadge(mailbox.inboxTotal.value)" class="split-count">{{ splitBadge(mailbox.inboxTotal.value) }}</span></button>
             <button v-if="savedTabVisible" type="button" class="split-tab" data-test="split-saved" :title="mailbox.savedSplit.value?.name" :aria-current="mailbox.context.value === 'saved' ? 'page' : undefined" :aria-describedby="splitCoverageShown ? `${domIdPrefix}split-coverage` : undefined" @click="navigateContext('saved')"><span class="split-label">{{ mailbox.savedSplit.value?.name }}</span> <span v-if="splitBadge(mailbox.savedTotal.value)" class="split-count">{{ splitBadge(mailbox.savedTotal.value) }}</span></button>
@@ -2684,7 +2690,16 @@ const searchSyntaxEditHint = computed(() =>
       </div>
     </main>
     <AttachmentChooser v-if="attachmentConversation" :client="props.client" :conversation="attachmentConversation" :preview="props.mode === 'browser-preview'" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" @close="closeAttachments" />
-    <MobileBottomBar v-if="layoutMode === 'compact'" :reader="readerOpen" :execute-action="executeAction"><template #context><span ref="mobileActionsHost" class="mobile-actions-host"></span></template></MobileBottomBar>
+    <MobileBottomBar
+      v-if="layoutMode === 'compact'"
+      :reader="readerOpen"
+      :execute-action="executeAction"
+      @account="openDrawer('account')"
+    >
+      <template #actions>
+        <span ref="mobileActionsHost" class="mobile-actions-host" />
+      </template>
+    </MobileBottomBar>
     <ActionOverlay v-if="overlay" v-model:query="overlayQuery" :account-first="accountCommandsFirst" :account-top="accountCommandsTop" :row-keys="paletteHasRows" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" :kind="overlay" :actions="availableActions" :key-scope="remindersList ? 'reminders' : draftsList ? 'drafts' : undefined" @close="closeOverlay()" @execute="executeOverlay" />
   </div>
 </template>
