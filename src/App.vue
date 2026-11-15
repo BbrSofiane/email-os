@@ -2468,6 +2468,7 @@ const searchSyntaxEditHint = computed(() =>
               :client="props.client"
               :preview="props.mode === 'browser-preview'"
               :reply-docked="replyComposerOpen && readerOpen"
+              :compact="layoutMode === 'compact'"
               @close="executeAction('back')"
               @move="moveReaderConversation"
               @archive="executeAction('archive')"

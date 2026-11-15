@@ -29,7 +29,7 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
       app.querySelector('[data-test="conversation-row-conv-01"]').click();
     })()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
-    const geometry = await harness!.cdp.js(`(() => {
+    const geometry = await harness!.cdp.js<{ width: number; viewport: number; pane: { top: number; bottom: number }; subject: { top: number; bottom: number }; messages: { top: number; bottom: number }; bodySize: string | null; lastBottom: number; bottomTop: number; scrollHeight: number; clientHeight: number }>(`(() => {
       const app = document.querySelector(${JSON.stringify(appSelector)});
       const pane = app.querySelector('.reader-pane').getBoundingClientRect();
       const subject = app.querySelector('.reader-subject').getBoundingClientRect();

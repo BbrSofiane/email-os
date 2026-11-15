@@ -74,6 +74,7 @@ const props = defineProps<{
   android?: boolean;
   /** A reply composer is docked under the thread: keep the message being answered (the latest) in view. */
   replyDocked?: boolean;
+  compact?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -922,7 +923,7 @@ defineExpose({
           @click="props.conversation?.isInInbox === false ? emit('unarchive') : emit('archive')"
         ><HeaderGlyph name="done" /><span class="visually-hidden">{{ props.conversation?.isInInbox === false ? 'Mark not done' : 'Mark done (E)' }}</span></button>
         <button
-          v-if="actionsShown && props.showReadControls && !bulkScope && (!props.conversation || props.conversation.isRead !== undefined)"
+          v-if="!props.compact && actionsShown && props.showReadControls && !bulkScope && (!props.conversation || props.conversation.isRead !== undefined)"
           type="button"
           class="header-glyph"
           :class="{ 'header-glyph-held': held }"
@@ -931,9 +932,9 @@ defineExpose({
           :disabled="!actionable || props.commandInFlight || props.navigationUnavailable"
           @click="emit('setRead', !props.conversation?.isRead)"
         ><HeaderGlyph :name="props.conversation?.isRead ? 'unread' : 'read'" /><span class="visually-hidden">Mark {{ props.conversation?.isRead ? 'unread' : 'read' }}</span></button>
-        <button v-if="actionsShown && !props.android" type="button" class="header-glyph" :class="{ 'header-glyph-held': held }" data-test="files-links" title="Files and links — ⌘O" :disabled="!actionable" @click="emit('attachments', $event.currentTarget as HTMLElement)"><HeaderGlyph name="files" /><span class="visually-hidden">Files and links (⌘O)</span></button>
+        <button v-if="!props.compact && actionsShown && !props.android" type="button" class="header-glyph" :class="{ 'header-glyph-held': held }" data-test="files-links" title="Files and links — ⌘O" :disabled="!actionable" @click="emit('attachments', $event.currentTarget as HTMLElement)"><HeaderGlyph name="files" /><span class="visually-hidden">Files and links (⌘O)</span></button>
         <button
-          v-if="actionsShown && !props.browsingOnly"
+          v-if="!props.compact && actionsShown && !props.browsingOnly"
           type="button"
           class="header-glyph"
           :class="{ 'header-glyph-held': held }"
