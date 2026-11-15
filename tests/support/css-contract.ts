@@ -6,6 +6,10 @@ import { readFileSync } from 'node:fs';
  */
 
 export const css = readFileSync('src/assets/style.css', 'utf8');
+/** Mobile styles remain separate while preserving the legacy `css` export. */
+export const mobileCssFiles = ['shell.css', 'tokens.css'];
+export const mobileCss = Object.fromEntries(mobileCssFiles.map((name) => [name, readFileSync(`src/assets/mobile/${name}`, 'utf8')]));
+export const allMobileCss = Object.values(mobileCss).join('\n');
 
 export function stripComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '');

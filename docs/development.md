@@ -89,12 +89,16 @@ no global configuration is needed.
 
 ### Android fixture APK
 
-The Android target is a fixture-only Tauri app. It uses the same synthetic fixture core
+The Android target is a fixture-only Tauri app with a viewport-driven compact phone shell
+(up to 719 CSS px); browser preview uses the same layout mode. It uses the same synthetic fixture core
 and SQLite profile as native fixture mode (ADR 0002). Android always selects fixture mode,
 even if `EMAIL_OS_MODE=gmail` is present. A pre-existing legacy fixture database is retired
 once behind the startup screen (closing the app is the cancel path). Gmail account controls, attachment
 export, and external link dispatch are unavailable on Android. The shell returns
-the typed `unsupported_platform` error for attachment export and external links.
+the typed `unsupported_platform` error for attachment export and external links. The WebView
+content remains padded for safe system insets; native status and navigation bars use the app
+surface color and light icons. Compact layout keeps the existing capabilities and adds no mail
+engine or IPC behavior. See [ADR 0003](adr/0003-mobile-layout.md) and [UX-14](ux-14-mobile-shell.md).
 
 The current repeatable build lane targets Linux x86_64. Install JDK 17, Android
 command-line tools, platform API 35, build-tools 35.0.0, and NDK 27.2.12479018.
@@ -983,3 +987,8 @@ subject, address, body, token, URL with ids or SQL with bound values; the
 privacy test in `storage_log.rs` provokes SQLite errors whose own text quotes
 synthetic sensitive strings and asserts none reaches the log line. Logs go to
 stderr in the app; to see them when running the shell, run it from a terminal.
+
+
+### Mobile review screenshots
+
+With the rendered Chrome binary available, capture the browser preview at the phone preset with `EMAIL_OS_RENDERED_LAYOUT_CHROME=/path/to/chrome EMAIL_OS_SCREENSHOT_DIR=/tmp/email-os-mobile mise run test:rendered`. The opt-in rendered suite writes screenshot artifacts into the requested directory.

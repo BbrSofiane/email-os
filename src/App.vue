@@ -30,6 +30,10 @@
  *   IME composition, and modifier keys. Drafts have no send path.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useLayoutMode } from './composables/useLayoutMode';
+import { installAndroidBackBridge } from './lib/android-back';
+import MobileTopBar from './components/mobile/MobileTopBar.vue';
+import MobileBottomBar from './components/mobile/MobileBottomBar.vue';
 import { createSubjectIndex } from './lib/subject-index';
 import ActionOverlay from './components/ActionOverlay.vue';
 import RemindersList from './components/RemindersList.vue';
@@ -84,6 +88,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ switchAccount: []; workspaceTitle: [title: string] }>();
 const workspaceActive = computed(() => props.active !== false);
 const androidFixture = isTauriRuntime() && /Android/i.test(navigator.userAgent);
+const layoutMode = useLayoutMode();
 
 type UtilityDrawer = 'account' | 'activity' | 'destinations' | 'reminder-settings';
 /** Visible-row anchor for the reader round trip. */
@@ -762,7 +767,9 @@ const reminderActionEnabled = computed(() => remindersSupported.value && selecte
  */
 const centralCovered = computed(() => !!overlay.value || !!attachmentConversation.value || !!drawer.value || (!wideViewport.value && contactDisclosure.value));
 
+let removeAndroidBack: () => void = () => undefined;
 onMounted(() => {
+  removeAndroidBack = installAndroidBackBridge(androidFixture, () => { const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }); window.dispatchEvent(event); return event.defaultPrevented; });
   window.addEventListener('keydown', onKeydown);
   window.addEventListener('blur', cancelGo);
   window.addEventListener('compositionstart', cancelGo);
@@ -771,6 +778,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  removeAndroidBack();
   reminderViewAlive = false;
   window.removeEventListener('keydown', onKeydown);
   window.removeEventListener('blur', cancelGo);
@@ -974,6 +982,8 @@ const readerView = ref<InstanceType<typeof ReaderView> | null>(null);
 /** Header slots the open reader teleports its quiet icon actions into. */
 const readerBackHost = ref<HTMLElement | null>(null);
 const readerActionsHost = ref<HTMLElement | null>(null);
+const mobileTopBar = ref<InstanceType<typeof MobileTopBar> | null>(null);
+const mobileBottomBar = ref<InstanceType<typeof MobileBottomBar> | null>(null);
 /** Message identity that currently owns reader focus (for the contact baseline). */
 
 function captureListOrigin(surface: ReaderOrigin['surface']): void {
@@ -2028,7 +2038,15 @@ const searchSyntaxEditHint = computed(() =>
 </script>
 
 <template>
-  <div ref="appRoot" class="app" :data-client-mode="props.mode">
+  <div ref="appRoot" class="app" :data-client-mode="props.mode" :data-layout="layoutMode" :data-mobile-context="!!(replyComposerOpen && readerOpen)">
+    <MobileTopBar
+      v-if="layoutMode === 'compact'"
+      ref="mobileTopBar"
+      :reader="readerOpen"
+      :title="contextTitle"
+      :execute-action="executeAction"
+      :open-destinations="() => openOverlay('navigator')"
+    />
     <main class="app-main" :class="{ 'contact-collapsed': contactCollapsed }" :inert="!!overlay || !!attachmentConversation || undefined">
       <!-- Split header (DESIGN.md "Split Tabs"): one borderless 78px strip in
            the list column. Destinations hamburger on the left, split tabs on
@@ -2042,7 +2060,7 @@ const searchSyntaxEditHint = computed(() =>
                active split tab already names it, so it is shown only when no
                rendered tab is active (Cached Done, Starred, Search, reader). -->
           <span ref="readerBackHost" class="reader-back-host"></span>
-          <h1 class="app-title" :class="{ 'visually-hidden': activeTabShown }" data-test="inbox-title">{{ contextTitle }}<template v-if="switchAccountLabel"><span class="app-title-account"> — {{ accountStatus?.account?.emailAddress }}</span></template></h1>
+          <h1 class="app-title" :class="{ 'visually-hidden': activeTabShown || layoutMode === 'compact' }" data-test="inbox-title">{{ contextTitle }}<template v-if="switchAccountLabel"><span class="app-title-account"> — {{ accountStatus?.account?.emailAddress }}</span></template></h1>
           <nav v-if="inboxSplitsShown" class="split-nav" aria-label="Inbox splits" :title="splitCoverageShown ? SPLIT_COVERAGE : undefined">
             <button type="button" class="split-tab" data-test="split-inbox" :aria-current="mailbox.context.value === 'inbox' ? 'page' : undefined" :aria-describedby="splitCoverageShown ? `${domIdPrefix}split-coverage` : undefined" @click="navigateContext('inbox')"><span class="split-label">Inbox</span> <span v-if="splitBadge(mailbox.inboxTotal.value)" class="split-count">{{ splitBadge(mailbox.inboxTotal.value) }}</span></button>
             <button v-if="savedTabVisible" type="button" class="split-tab" data-test="split-saved" :title="mailbox.savedSplit.value?.name" :aria-current="mailbox.context.value === 'saved' ? 'page' : undefined" :aria-describedby="splitCoverageShown ? `${domIdPrefix}split-coverage` : undefined" @click="navigateContext('saved')"><span class="split-label">{{ mailbox.savedSplit.value?.name }}</span> <span v-if="splitBadge(mailbox.savedTotal.value)" class="split-count">{{ splitBadge(mailbox.savedTotal.value) }}</span></button>
@@ -2443,8 +2461,8 @@ const searchSyntaxEditHint = computed(() =>
               :android="androidFixture"
               :selection-count="selectedCount"
               :selection-context="mailbox.context.value"
-              :back-host="readerBackHost"
-              :actions-host="readerActionsHost"
+              :back-host="layoutMode === 'compact' ? mobileTopBar?.backHost : readerBackHost"
+              :actions-host="layoutMode === 'compact' ? mobileBottomBar?.actionsHost : readerActionsHost"
               :can-move-prev="canMoveReaderPrev"
               :can-move-next="canMoveReaderNext"
               :client="props.client"
@@ -2674,6 +2692,15 @@ const searchSyntaxEditHint = computed(() =>
       </div>
     </main>
     <AttachmentChooser v-if="attachmentConversation" :client="props.client" :conversation="attachmentConversation" :preview="props.mode === 'browser-preview'" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" @close="closeAttachments" />
+    <MobileBottomBar
+      v-if="layoutMode === 'compact'"
+      ref="mobileBottomBar"
+      :reader="readerOpen"
+      :inbox-or-saved="mailbox.context.value === 'inbox' || mailbox.context.value === 'saved'"
+      :execute-action="executeAction"
+      :action-available="actionAvailable"
+      :action-label="actionLabel"
+    />
     <ActionOverlay v-if="overlay" v-model:query="overlayQuery" :account-first="accountCommandsFirst" :account-top="accountCommandsTop" :row-keys="paletteHasRows" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" :kind="overlay" :actions="availableActions" :key-scope="remindersList ? 'reminders' : draftsList ? 'drafts' : undefined" @close="closeOverlay()" @execute="executeOverlay" />
   </div>
 </template>

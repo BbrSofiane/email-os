@@ -23,9 +23,10 @@ shared Rust shell. It uses SQLite and the same synthetic fixture core as desktop
 (ADR 0002); Gmail, attachment export, and external link dispatch are
 unavailable. APK build passed on 2026-11-14. A pre-existing legacy fixture
 database is retired once behind a startup screen. The unified-fixture APK was
-smoke-tested on an Android 15 x86_64 emulator on 2026-11-15 (see below), with two
-open findings: an overlapping reader toolbar at phone width, and one ANR on a first
-launch on a loaded host that did not recur. See the
+smoke-tested on an Android 15 x86_64 emulator on 2026-11-15 (see below). Compact
+phone layout is now in scope at widths ≤719px for Android fixture and browser preview;
+the mobile shell frame is implemented, with list, reader and remaining surface work
+for later phases. See the
 [Android smoke steps](development.md#android-fixture-apk).
 
 Mode selection is deliberate: native defaults to fixture; `EMAIL_OS_MODE=gmail`

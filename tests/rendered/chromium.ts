@@ -10,17 +10,21 @@ export interface CdpSession {
   close(): void;
 }
 
+export interface RenderedViewport { width: number; height: number; deviceScaleFactor?: number; mobile?: boolean; touch?: boolean }
+export const PHONE_VIEWPORT: Required<RenderedViewport> = { width: 412, height: 915, deviceScaleFactor: 2.625, mobile: true, touch: true };
+
 export interface RenderedHarness {
   server: ViteDevServer;
   appUrl: string;
   chrome: ChildProcess;
   profileDir: string;
   cdp: CdpSession;
+  saveScreenshot(path: string): Promise<void>;
   close(): Promise<void>;
 }
 
 /** Start one isolated Vite + Chromium profile for one rendered test suite. */
-export async function startRenderedHarness(chromePath: string, profilePrefix: string, root: string): Promise<RenderedHarness> {
+export async function startRenderedHarness(chromePath: string, profilePrefix: string, root: string, viewport: RenderedViewport = { width: 1200, height: 800, deviceScaleFactor: 1, mobile: false, touch: false }): Promise<RenderedHarness> {
   let server: ViteDevServer | null = null;
   let chrome: ChildProcess | null = null;
   let profileDir: string | null = null;
@@ -42,11 +46,12 @@ export async function startRenderedHarness(chromePath: string, profilePrefix: st
     const spawnError = new Promise<never>((_, reject) => chrome!.on('error', reject));
     cdp = await Promise.race([connectCdp(profileDir, startup.signal), spawnError]);
     await cdp.cmd('Page.enable');
-    await cdp.cmd('Emulation.setDeviceMetricsOverride', { width: 1200, height: 800, deviceScaleFactor: 1, mobile: false });
+    await cdp.cmd('Emulation.setDeviceMetricsOverride', { width: viewport.width, height: viewport.height, screenWidth: viewport.width, screenHeight: viewport.height, deviceScaleFactor: viewport.deviceScaleFactor ?? 1, mobile: viewport.mobile ?? false });
+    if (viewport.touch) await cdp.cmd('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
     await cdp.cmd('Page.navigate', { url: appUrl });
     await waitForApp(cdp);
     const ownedServer = server, ownedChrome = chrome, ownedProfile = profileDir, ownedCdp = cdp;
-    return { server: ownedServer, appUrl, chrome: ownedChrome, profileDir: ownedProfile, cdp: ownedCdp, close: async () => {
+    return { server: ownedServer, appUrl, chrome: ownedChrome, profileDir: ownedProfile, cdp: ownedCdp, saveScreenshot: async (path: string) => { const shot = await ownedCdp.cmd('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }); const { writeFileSync } = await import('node:fs'); writeFileSync(path, Uint8Array.from(atob(shot.data), (char) => char.charCodeAt(0))); }, close: async () => {
       if (closed) return;
       closed = true;
       try { ownedCdp.close(); } catch { /* already closed */ }
