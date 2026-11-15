@@ -33,13 +33,14 @@ describe("InboxList (UX-01 compact rows)", () => {
   afterEach(() => {
     wrapper?.unmount();
     wrapper = null;
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
   function mountList(
     rows: ConversationSummary[],
     focusedRef: ConversationRef | null = null,
-    options: { showReadState?: boolean; showReadControls?: boolean; actionsEnabled?: boolean; reminderEnabled?: boolean; compact?: boolean; readOnly?: boolean; context?: 'inbox' | 'saved' | 'done' | 'starred' | 'search'; searchQuery?: string } = {},
+    options: { showReadState?: boolean; showReadControls?: boolean; actionsEnabled?: boolean; reminderEnabled?: boolean; compact?: boolean; readOnly?: boolean; selectedRefs?: ConversationRef[]; context?: 'inbox' | 'saved' | 'done' | 'starred' | 'search'; searchQuery?: string } = {},
   ): VueWrapper {
     const mounted = mount(InboxList, {
       props: { rows, focusedRef, actionsEnabled: true, ...options },
@@ -104,6 +105,25 @@ describe("InboxList (UX-01 compact rows)", () => {
     element.dispatchEvent(pointerEvent('pointerup', -100));
     expect(w.emitted('archive')).toBeUndefined();
     expect(w.emitted('remind')).toBeUndefined();
+  });
+
+  it('selects on long press and toggles the next row on a selection-mode tap', async () => {
+    vi.useFakeTimers();
+    const rows = [
+      row('long-press', { lastMessageAt: '2026-01-15T09:00:00Z' }),
+      row('next', { lastMessageAt: '2026-01-15T10:00:00Z' }),
+    ];
+    const w = mountList(rows, null, { compact: true });
+    const first = w.find('[data-test="conversation-row-long-press"]');
+    const pointerdown = pointerEvent('pointerdown', 20);
+    first.element.dispatchEvent(pointerdown);
+    vi.advanceTimersByTime(500);
+    await flushPromises();
+    expect(w.emitted('selectToggle')?.[0]).toEqual([{ accountId: ACCOUNT, conversationId: 'long-press' }]);
+
+    await w.setProps({ selectedRefs: [{ accountId: ACCOUNT, conversationId: 'long-press' }] });
+    await w.find('[data-test="conversation-row-next"]').trigger('click');
+    expect(w.emitted('selectToggle')?.[1]).toEqual([{ accountId: ACCOUNT, conversationId: 'next' }]);
   });
 
   it('renders group headings in backend order without selectable semantics', async () => {

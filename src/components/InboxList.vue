@@ -31,6 +31,7 @@ import { compactDateLabel, dateGroupCaption, dateGroupFor, fullDateLabel, machin
 import { groupRowsBySender, isSingleFromQuery, senderGroupKey, senderGroupLabel } from '../lib/search';
 import RowGlyph from './RowGlyph.vue';
 import { useSwipeAction } from '../composables/useSwipeAction';
+import { useLongPressSelection } from '../composables/useLongPressSelection';
 
 const props = defineProps<{
   rows: ConversationSummaryLike[];
@@ -80,8 +81,17 @@ function onRowClick(event: MouseEvent, row: ConversationSummaryLike): void {
     event.stopPropagation();
     return;
   }
+  if (props.compact && longPressFor(row).consumeClick()) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
   if (props.readOnly) {
     emit('open', row.ref);
+    return;
+  }
+  if (props.compact && selecting.value) {
+    emit('selectToggle', row.ref);
     return;
   }
   if (event.shiftKey) {
@@ -286,6 +296,7 @@ function hasRowActions(): boolean {
 }
 
 const swipes = new Map<string, ReturnType<typeof useSwipeAction>>();
+const longPresses = new Map<string, ReturnType<typeof useLongPressSelection>>();
 function swipeFor(row: ConversationSummaryLike): ReturnType<typeof useSwipeAction> {
   const key = rowKey(row.ref);
   let swipe = swipes.get(key);
@@ -306,6 +317,43 @@ function swipeFor(row: ConversationSummaryLike): ReturnType<typeof useSwipeActio
     swipes.set(key, swipe);
   }
   return swipe;
+}
+
+function longPressFor(row: ConversationSummaryLike): ReturnType<typeof useLongPressSelection> {
+  const key = rowKey(row.ref);
+  let press = longPresses.get(key);
+  if (!press) {
+    press = useLongPressSelection(
+      () => emit('selectToggle', row.ref),
+      () => swipeFor(row).cancel(),
+    );
+    longPresses.set(key, press);
+  }
+  return press;
+}
+
+function onRowPointerDown(event: PointerEvent, row: ConversationSummaryLike): void {
+  if (!props.compact || props.readOnly) return;
+  swipeFor(row).pointerdown(event);
+  longPressFor(row).pointerdown(event);
+}
+
+function onRowPointerMove(event: PointerEvent, row: ConversationSummaryLike): void {
+  if (!props.compact || props.readOnly) return;
+  longPressFor(row).pointermove(event);
+  swipeFor(row).pointermove(event);
+}
+
+function onRowPointerUp(event: PointerEvent, row: ConversationSummaryLike): void {
+  if (!props.compact || props.readOnly) return;
+  longPressFor(row).pointerup(event);
+  swipeFor(row).pointerup(event);
+}
+
+function onRowPointerCancel(event: PointerEvent, row: ConversationSummaryLike): void {
+  if (!props.compact || props.readOnly) return;
+  longPressFor(row).pointercancel(event);
+  swipeFor(row).pointercancel(event);
 }
 
 /** DOM id of the row's action disclosure panel (for aria-controls). */
@@ -648,10 +696,10 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
         :data-test="`conversation-row-${item.row.ref.conversationId}`"
         :ref="(el) => setRowRef(el, rowKey(item.row.ref))"
         :style="compact ? { '--swipe-offset': swipeFor(item.row).offset.value + 'px' } : undefined"
-        @pointerdown="compact && !readOnly && swipeFor(item.row).pointerdown($event)"
-        @pointermove="compact && !readOnly && swipeFor(item.row).pointermove($event)"
-        @pointerup="compact && !readOnly && swipeFor(item.row).pointerup($event)"
-        @pointercancel="compact && !readOnly && swipeFor(item.row).pointercancel($event)"
+        @pointerdown="onRowPointerDown($event, item.row)"
+        @pointermove="onRowPointerMove($event, item.row)"
+        @pointerup="onRowPointerUp($event, item.row)"
+        @pointercancel="onRowPointerCancel($event, item.row)"
         @focusin="onFocusIn($event, item.row)"
         @focusout="onFocusOut"
         @keydown.escape="onRowKeydown($event, item.row)"

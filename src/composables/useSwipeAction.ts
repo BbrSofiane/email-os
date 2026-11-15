@@ -69,6 +69,13 @@ export function useSwipeAction(
     revealed.value = null;
   }
 
+  function cancel(): void {
+    pointerId = null;
+    horizontal = false;
+    offset.value = 0;
+    revealed.value = null;
+  }
+
   return {
     offset,
     revealed,
@@ -76,6 +83,7 @@ export function useSwipeAction(
     pointermove,
     pointerup: (event: PointerEvent) => finish(event),
     pointercancel: (event: PointerEvent) => finish(event, true),
+    cancel,
     consumeClick: () => {
       if (!suppressClick.value) return false;
       suppressClick.value = false;
