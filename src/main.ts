@@ -9,6 +9,7 @@ import './assets/mobile/reader.css';
 import './assets/mobile/sheet.css';
 import './assets/mobile/notices.css';
 import './assets/mobile/compose.css';
+import './assets/mobile/pages.css';
 import { isTauriRuntime, selectMailClient } from './lib/ipc';
 import FixtureWorkspaces from './FixtureWorkspaces.vue';
 import { createFixtureWorkspaces } from './lib/fixture-workspaces';

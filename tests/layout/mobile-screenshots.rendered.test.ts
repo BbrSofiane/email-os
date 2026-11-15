@@ -110,6 +110,8 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await shot('inbox');
     await longPressFirstRow();
     await shot('selection');
+    await harness!.cdp.js('window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }))');
+    await pause(150);
 
     await freshInbox();
     await click('.inbox-row');
@@ -188,6 +190,38 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await freshInbox();
     await click('[data-test="mobile-account"]');
     await shot('account');
+
+    await freshInbox();
+    await click('[data-test="mobile-menu"]');
+    await chooseDrawerRow('Activity');
+    await shot('activity');
+
+    await freshInbox();
+    await click('[data-test="mobile-menu"]');
+    await chooseDrawerRow('Settings');
+    await shot('settings');
+
+    await freshInbox();
+    await click('[data-test="mobile-search"]');
+    await harness!.cdp.js(`(() => { const input = document.querySelector(${JSON.stringify(activeApp)}).querySelector('[data-test="search-input"]'); input.value = 'from:ada'; input.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector(${JSON.stringify(activeApp)}).querySelector('[data-test="search-submit"]').click(); })()`);
+    await waitFor(`app.querySelector('[data-test="search-results-header"]')`, 'search results');
+    await shot('search-results');
+
+    await freshInbox();
+    await click('[data-test="mobile-menu"]');
+    await click('[data-test="mobile-drawer-commands"]');
+    await shot('palette');
+
+    await freshInbox();
+    await click('.inbox-row');
+    await click('[data-test="reader-more"]');
+    await click('[data-test="action-sheet"] button');
+    await shot('contact');
+
+    await freshInbox();
+    await click('.inbox-row');
+    await click('[data-test="reader-remind"]');
+    await shot('reminder-picker');
   }, 180_000);
 
   it('captures the regular layout for comparison', async () => {

@@ -36,6 +36,8 @@ import MobileTopBar from './components/mobile/MobileTopBar.vue';
 import MobileDrawer from './components/mobile/MobileDrawer.vue';
 import MobileBottomBar from './components/mobile/MobileBottomBar.vue';
 import MobileActionSheet from './components/mobile/MobileActionSheet.vue';
+import { loadSwipePreferences } from './lib/swipe-preferences';
+import SwipeActionSettings from './components/SwipeActionSettings.vue';
 import { createSubjectIndex } from './lib/subject-index';
 import ActionOverlay from './components/ActionOverlay.vue';
 import RemindersList from './components/RemindersList.vue';
@@ -87,6 +89,7 @@ const props = withDefaults(defineProps<{
   active?: boolean;
   switchAccountLabel?: string;
 }>(), { active: true });
+const swipePreferences = ref(loadSwipePreferences());
 const emit = defineEmits<{ switchAccount: []; workspaceTitle: [title: string] }>();
 const workspaceActive = computed(() => props.active !== false);
 const androidFixture = isTauriRuntime() && /Android/i.test(navigator.userAgent);
@@ -859,6 +862,7 @@ const readerSheetItems = computed(() => {
     { id: readAction, label: conversation?.isRead ? 'Mark unread' : 'Mark read', glyph: conversation?.isRead ? 'unread' as const : 'read' as const, disabled: !actionAvailable(readAction) },
     { id: 'reply', label: 'Reply', glyph: 'reply' as const, disabled: !actionAvailable('reply'), disabledReason: replyReason ?? undefined, group: 'more' },
     ...(!androidFixture ? [{ id: 'files', label: 'Files and links', glyph: 'files' as const, disabled: !actionAvailable('open') }] : []),
+    { id: 'contact-details', label: 'Contact details', glyph: 'menu' as const, group: 'more' },
     { id: 'commands', label: 'Commands', glyph: 'commands' as const, group: 'commands' },
   ];
 });
@@ -2420,7 +2424,7 @@ const searchSyntaxEditHint = computed(() =>
             @retry-close="drafts.retryClose()"
             @retry-close-setup="drafts.retryCloseSetup()"
           />
-          <RemindersList v-else-if="remindersContext && !readerOpen" ref="remindersPane" :model="reminders" @open="openReminderConversation" />
+          <RemindersList v-else-if="remindersContext && !readerOpen" ref="remindersPane" :model="reminders" :compact="layoutMode === 'compact'" @open="openReminderConversation" />
           <template v-else-if="!readerOpen">
             <!-- Coverage and continuation errors stay visible in search context
                  even while the entry form is collapsed. -->
@@ -2465,6 +2469,8 @@ const searchSyntaxEditHint = computed(() =>
               :reminder-enabled="reminderActionEnabled"
               :read-only="mailbox.context.value === 'trash'"
               :compact="layoutMode === 'compact'"
+              :swipe-right="swipePreferences.right"
+              :swipe-left="swipePreferences.left"
               :selected-refs="mailbox.selectedRefs.value"
               @focus="mailbox.focusConversation($event)"
               @open="executeAction('open', $event)"
@@ -2638,11 +2644,11 @@ const searchSyntaxEditHint = computed(() =>
           role="region"
           tabindex="-1"
           ref="drawerEl"
-          :aria-label="drawerTitles[drawer]"
+          :aria-label="drawer === 'reminder-settings' && layoutMode === 'compact' ? 'Settings' : drawerTitles[drawer]"
           data-test="utility-drawer"
         >
           <header class="drawer-header">
-            <h2>{{ drawerHeadings[drawer] }}</h2>
+            <h2>{{ drawer === 'reminder-settings' && layoutMode === 'compact' ? 'Settings' : drawerHeadings[drawer] }}</h2>
             <button type="button" data-test="drawer-close" @click="closeDrawer()">Close</button>
           </header>
           <p v-if="drawer === 'destinations' && accountId && providerSignInExpired" role="note" data-test="destinations-sign-in-expired">
@@ -2656,7 +2662,9 @@ const searchSyntaxEditHint = computed(() =>
             Provider mail needs a connected Gmail account.<template v-if="providerAccountAction"> <button v-if="providerAccountAction.action === 'account' || accountActionsIdle" type="button" class="inline-action" data-test="destinations-account-action" @click="accountNoticeAction(providerAccountAction.action, 'drawer')">{{ providerAccountAction.label }}</button></template><template v-else-if="accountStatus?.connection === 'authenticating'"> Finish sign-in in your browser.</template><template v-else> Connect one from Account first.</template>
           </p>
           <section v-if="drawer === 'reminder-settings' && remindersSupported" class="utility-panel" data-test="reminder-settings-dialog">
+            <h3 class="drawer-section-title">Reminders</h3>
             <ReminderSettings @close="closeDrawer" @saved="reminderPreferencesSaved" />
+            <SwipeActionSettings @saved="swipePreferences = $event" />
           </section>
           <AccountPanel
             v-if="drawer === 'account' && accountStatus"
@@ -2753,7 +2761,7 @@ const searchSyntaxEditHint = computed(() =>
       :title="mailbox.conversation.value?.subject ?? 'Actions'"
       :items="readerSheetItems"
       @close="readerSheetOpen = false"
-      @choose="(id) => { if (id === 'commands') openOverlay('palette'); else if (id === 'reply') { const conversation = mailbox.conversation.value; const sourceMessage = conversation?.messages.at(-1); if (conversation && sourceMessage) void prepareReply({ kind: 'reply', conversation: conversation.ref, sourceMessageId: sourceMessage.id }); } else if (id === 'files') openAttachments(readerView?.$el as HTMLElement); else executeAction(id as ActionId); }"
+      @choose="(id) => { if (id === 'commands') openOverlay('palette'); else if (id === 'contact-details') toggleContactDisclosure(); else if (id === 'reply') { const conversation = mailbox.conversation.value; const sourceMessage = conversation?.messages.at(-1); if (conversation && sourceMessage) void prepareReply({ kind: 'reply', conversation: conversation.ref, sourceMessageId: sourceMessage.id }); } else if (id === 'files') openAttachments(readerView?.$el as HTMLElement); else executeAction(id as ActionId); }"
     />
     <AttachmentChooser v-if="attachmentConversation" :client="props.client" :conversation="attachmentConversation" :preview="props.mode === 'browser-preview'" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" @close="closeAttachments" />
     <MobileBottomBar
@@ -2769,6 +2777,7 @@ const searchSyntaxEditHint = computed(() =>
     <MobileDrawer
       v-if="layoutMode === 'compact'"
       :open="mobileNavOpen"
+      :compact="layoutMode === 'compact'"
       :email="accountStatus?.account?.emailAddress ?? ''"
       :current="mailbox.context.value === 'saved' ? 'saved' : mailbox.context.value === 'inbox' ? 'inbox' : mailbox.context.value === 'drafts' ? 'drafts' : mailbox.context.value === 'done' ? 'done' : mailbox.context.value === 'starred' ? 'starred' : mailbox.context.value === 'trash' ? 'trash' : mailbox.context.value === 'reminders' ? 'reminders' : null"
       :actions="availableActions"
@@ -2776,6 +2785,6 @@ const searchSyntaxEditHint = computed(() =>
       @execute="executeMobileDestination"
       @commands="() => { closeMobileDrawer(); openOverlay('palette'); }"
     />
-    <ActionOverlay v-if="overlay" v-model:query="overlayQuery" :account-first="accountCommandsFirst" :account-top="accountCommandsTop" :row-keys="paletteHasRows" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" :kind="overlay" :actions="availableActions" :key-scope="remindersList ? 'reminders' : draftsList ? 'drafts' : undefined" @close="closeOverlay()" @execute="executeOverlay" />
+    <ActionOverlay v-if="overlay" v-model:query="overlayQuery" :compact="layoutMode === 'compact'" :account-first="accountCommandsFirst" :account-top="accountCommandsTop" :row-keys="paletteHasRows" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" :kind="overlay" :actions="availableActions" :key-scope="remindersList ? 'reminders' : draftsList ? 'drafts' : undefined" @close="closeOverlay()" @execute="executeOverlay" />
   </div>
 </template>

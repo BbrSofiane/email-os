@@ -51,6 +51,8 @@ const props = defineProps<{
   /** UX-05: selected references (account-scoped); selection ≠ focus. */
   selectedRefs?: ConversationRef[];
   compact?: boolean;
+  swipeRight?: 'remind' | 'done' | 'none';
+  swipeLeft?: 'remind' | 'done' | 'none';
 }>();
 
 const emit = defineEmits<{
@@ -304,11 +306,12 @@ function swipeFor(row: ConversationSummaryLike): ReturnType<typeof useSwipeActio
     swipe = useSwipeAction(
       () => rowEls.get(key) ?? null,
       (side) => !props.readOnly && (side === 'right'
-        ? props.reminderEnabled === true && props.context === 'inbox'
-        : props.actionsEnabled === true && props.context !== 'starred'),
+        ? props.swipeRight !== 'none' && (props.swipeRight === 'done' ? props.actionsEnabled === true && props.context !== 'starred' : props.reminderEnabled === true && props.context === 'inbox')
+        : props.swipeLeft !== 'none' && (props.swipeLeft === 'remind' ? props.reminderEnabled === true && props.context === 'inbox' : props.actionsEnabled === true && props.context !== 'starred')),
       (side) => {
-        if (side === 'right' && props.reminderEnabled && props.context === 'inbox') emit('remind', row.ref);
-        else if (side === 'left' && props.actionsEnabled && props.context !== 'starred') {
+        const action = side === 'right' ? props.swipeRight ?? 'remind' : props.swipeLeft ?? 'done';
+        if (action === 'remind' && props.reminderEnabled && props.context === 'inbox') emit('remind', row.ref);
+        else if (action === 'done' && props.actionsEnabled && props.context !== 'starred') {
           if (props.context === 'done') emit('unarchive', row.ref);
           else emit('archive', row.ref);
         }
@@ -706,13 +709,13 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
         @click="onRowClick($event, item.row)"
       >
         <span
-          v-if="compact && !readOnly && swipeFor(item.row).revealed.value"
+          v-if="compact && !readOnly && swipeFor(item.row).revealed.value && (swipeFor(item.row).revealed.value === 'right' ? swipeRight ?? 'remind' : swipeLeft ?? 'done') !== 'none'"
           class="row-swipe-underlay"
-          :class="swipeFor(item.row).revealed.value === 'right' ? 'remind' : 'done'"
+          :class="(swipeFor(item.row).revealed.value === 'right' ? props.swipeRight ?? 'remind' : props.swipeLeft ?? 'done')"
           aria-hidden="true"
         >
           <span class="row-swipe-icon"><RowGlyph :name="swipeFor(item.row).revealed.value === 'right' ? 'reminder' : context === 'done' ? 'restore' : 'archive'" /></span>
-          <span>{{ swipeFor(item.row).revealed.value === 'right' ? 'Remind' : context === 'done' ? 'Mark not done' : 'Mark done' }}</span>
+          <span>{{ (swipeFor(item.row).revealed.value === 'right' ? props.swipeRight ?? 'remind' : props.swipeLeft ?? 'done') === 'remind' ? 'Remind' : context === 'done' ? 'Mark not done' : 'Mark done' }}</span>
         </span>
         <!-- UX-05 selection control: a native labelled checkbox in the 44px
              gutter; it stops propagation and never opens the row. Revealed by

@@ -6,6 +6,7 @@ import PaneGlyph from '../PaneGlyph.vue';
 
 const props = defineProps<{
   open: boolean;
+  compact?: boolean;
   email: string;
   current: ActionId | null;
   actions: AvailableAction[];
@@ -111,7 +112,7 @@ function choose(id: ActionId): void {
         >
           <PaneGlyph v-if="['inbox', 'done', 'drafts', 'trash', 'activity', 'account', 'destinations'].includes(row.id)" :name="glyph(row.id) as 'inbox'" />
           <HeaderGlyph v-else :name="glyph(row.id) as 'menu' | 'settings' | 'commands' | 'star' | 'reminders' | 'files'" />
-          <span>{{ row.label }}</span>
+          <span>{{ row.id === 'reminder-settings' && compact ? 'Settings' : row.label }}</span>
         </button>
       </template>
       <button type="button" class="mobile-drawer-row" data-test="mobile-drawer-commands" @click="emit('commands')">

@@ -7,12 +7,16 @@ import { ref } from 'vue';
 import App from './App.vue';
 import FixtureTransitionGate from './components/FixtureTransitionGate.vue';
 import type { MailClient } from './lib/ipc/client';
+import { useLayoutMode } from './composables/useLayoutMode';
 
 defineProps<{ client: MailClient; mode: 'native' | 'browser-preview' }>();
 const cleared = ref(false);
+const layoutMode = useLayoutMode();
 </script>
 
 <template>
   <App v-if="cleared" :client="client" :mode="mode" />
-  <FixtureTransitionGate v-else :client="client" @cleared="cleared = true" />
+  <div v-else class="app startup-shell" :data-layout="layoutMode">
+    <FixtureTransitionGate :client="client" @cleared="cleared = true" />
+  </div>
 </template>

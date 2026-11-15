@@ -8,7 +8,7 @@ describe('compact CSS contract', () => {
 
     for (const rule of rulesOf(allMobileCss)) {
       for (const selector of rule.selectors) {
-        expect(selector).toMatch(/^\.app\[data-layout="compact"\]/);
+        expect(selector).toMatch(/^(?:\.app\[data-layout="compact"\]|body:has\(\.app\[data-layout="compact"\]\))/);
       }
     }
   });
@@ -66,5 +66,32 @@ describe('compact CSS contract', () => {
     expect(list).toContain('.app[data-layout="compact"] .inbox-row.focused:not(:focus-visible)');
     expect(list).toContain('.app[data-layout="compact"] .row-group');
     expect(list).toContain('.app[data-layout="compact"] .inbox-empty');
+  });
+
+  it('stacks the compact Drafts intro and rows with touch sized actions', () => {
+    const pages = mobileCss['pages.css'];
+    expect(pages).toContain('.drafts-pane .context-coverage');
+    expect(pages).toContain('flex-direction: column');
+    expect(pages).toContain('.drafts-pane .context-row');
+    expect(pages).toContain('min-height: 64px');
+    expect(pages).toContain('.drafts-pane .context-row-actions button');
+    expect(pages).toContain('min-height: 48px');
+  });
+
+  it('covers compact utility pages with the shared app surface', () => {
+    const pages = mobileCss['pages.css'];
+    expect(pages).toContain('.app[data-layout="compact"] .utility-drawer');
+    expect(pages).toContain('inset: 0');
+    expect(pages).toContain('.utility-drawer .drawer-header');
+    expect(pages).toContain('min-height: 56px');
+  });
+
+  it('defines compact attachment sheet and startup gate targets', () => {
+    const pages = mobileCss['pages.css'];
+    expect(pages).toContain('.attachment-chooser');
+    expect(pages).toContain('border-radius: 16px 16px 0 0');
+    expect(pages).toContain('.app[data-layout="compact"] .transition-card');
+    expect(pages).toContain('.app[data-layout="compact"] .transition-primary');
+    expect(pages).toContain('min-height: 48px');
   });
 });

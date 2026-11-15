@@ -35,7 +35,7 @@ import ContextRowList from './ContextRowList.vue';
 import FullDate from './FullDate.vue';
 import ReminderPicker from './ReminderPicker.vue';
 
-const props = defineProps<{ model: RemindersModel }>();
+const props = defineProps<{ model: RemindersModel; compact?: boolean }>();
 const emit = defineEmits<{ open: [target: Reminder['conversation']] }>();
 const {
   error, preparationError, preparationTarget, busy, loading, source, dueAt, pickerReady, condition, destination,
@@ -175,6 +175,7 @@ function describedBy(item: ReminderItem): string {
       <p class="drawer-note">Conversation ready</p>
       <ReminderPicker
         ref="picker"
+        :compact="props.compact"
         :disabled="busy || retrying"
         :initial-value="dueAt"
         :rescheduling="source.revision !== null"
