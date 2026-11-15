@@ -20,6 +20,8 @@
   --mobile-bottom-clearance: calc(var(--mobile-bottom-bar-height) + 16px + var(--mobile-safe-bottom));
 }
 
-.app[data-layout="compact"][data-mobile-context="true"] {
+/* The context slot (split tabs, reply bar) is filled by Teleport; while it has
+   content, scrollers clear it as well as the bar row. */
+.app[data-layout="compact"]:has(.mobile-context-slot:not(:empty)) {
   --mobile-bottom-clearance: calc(var(--mobile-bottom-bar-height) + var(--mobile-context-slot-height) + 28px + var(--mobile-safe-bottom));
 }

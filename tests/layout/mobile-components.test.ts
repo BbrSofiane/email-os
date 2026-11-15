@@ -51,7 +51,9 @@ describe('MobileBottomBar', () => {
     expect(executeAction).toHaveBeenNthCalledWith(1, 'inbox');
     expect(executeAction).toHaveBeenNthCalledWith(2, 'search');
     expect(wrapper.vm.actionsHost).toBeTruthy();
-    expect(wrapper.html()).not.toContain('mobile-context-slot');
+    expect(wrapper.vm.contextHost).toBeTruthy();
+    // Always rendered as an empty Teleport target; CSS hides it while empty.
+    expect(wrapper.get('[data-test="mobile-context-slot"]').element.childNodes).toHaveLength(0);
   });
 
   it('shows the reader action host without navigation', () => {

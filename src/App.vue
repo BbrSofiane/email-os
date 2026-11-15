@@ -2038,7 +2038,7 @@ const searchSyntaxEditHint = computed(() =>
 </script>
 
 <template>
-  <div ref="appRoot" class="app" :data-client-mode="props.mode" :data-layout="layoutMode" :data-mobile-context="!!(replyComposerOpen && readerOpen)">
+  <div ref="appRoot" class="app" :data-client-mode="props.mode" :data-layout="layoutMode">
     <MobileTopBar
       v-if="layoutMode === 'compact'"
       ref="mobileTopBar"

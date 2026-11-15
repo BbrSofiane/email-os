@@ -13,18 +13,23 @@ defineProps<{
 }>();
 
 const actionsHost = ref<HTMLElement | null>(null);
-defineExpose({ actionsHost });
+/**
+ * Context slot above the bar row: the list teleports its split tabs here and
+ * the reader its reply bar. Always rendered so a Teleport has a target; CSS
+ * hides it while it is empty and adds its height to the scroll clearance
+ * while it is not.
+ */
+const contextHost = ref<HTMLElement | null>(null);
+defineExpose({ actionsHost, contextHost });
 </script>
 
 <template>
   <div class="mobile-bottom-region" data-test="mobile-bottom-region">
     <div
-      v-if="$slots.context"
+      ref="contextHost"
       class="mobile-context-slot"
       data-test="mobile-context-slot"
-    >
-      <slot name="context" />
-    </div>
+    />
     <div
       ref="actionsHost"
       class="mobile-reader-actions"
