@@ -67,4 +67,14 @@ describe('compact CSS contract', () => {
     expect(list).toContain('.app[data-layout="compact"] .row-group');
     expect(list).toContain('.app[data-layout="compact"] .inbox-empty');
   });
+
+  it('stacks the compact Drafts intro and rows with touch sized actions', () => {
+    const pages = mobileCss['pages.css'];
+    expect(pages).toContain('.drafts-pane .context-coverage');
+    expect(pages).toContain('flex-direction: column');
+    expect(pages).toContain('.drafts-pane .context-row');
+    expect(pages).toContain('min-height: 64px');
+    expect(pages).toContain('.drafts-pane .context-row-actions button');
+    expect(pages).toContain('min-height: 48px');
+  });
 });

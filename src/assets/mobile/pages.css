@@ -1,0 +1,60 @@
+.app[data-layout="compact"] .drafts-pane .context-coverage {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.app[data-layout="compact"] .drafts-pane .context-coverage .cached-coverage {
+  width: 100%;
+}
+
+.app[data-layout="compact"] .drafts-pane .context-coverage .drawer-quiet {
+  min-height: 48px;
+}
+
+.app[data-layout="compact"] .drafts-pane .context-item {
+  min-height: 64px;
+}
+
+.app[data-layout="compact"] .drafts-pane .context-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
+  min-height: 64px;
+  padding-inline: 20px 16px;
+}
+
+.app[data-layout="compact"] .drafts-pane .context-row-lead {
+  display: none;
+}
+
+.app[data-layout="compact"] .drafts-pane .context-row-main {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  min-height: 28px;
+  text-align: left;
+}
+
+.app[data-layout="compact"] .drafts-pane .context-row-secondary {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  min-width: 0;
+  color: var(--text-secondary);
+}
+
+.app[data-layout="compact"] .drafts-pane .context-row-trailing {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+}
+
+.app[data-layout="compact"] .drafts-pane .context-row-actions {
+  grid-column: 1 / -1;
+  grid-row: 3;
+}
+
+.app[data-layout="compact"] .drafts-pane .context-row-actions button {
+  min-height: 48px;
+}
