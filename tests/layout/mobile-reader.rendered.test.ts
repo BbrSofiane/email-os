@@ -29,7 +29,7 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
       app.querySelector('[data-test="conversation-row-conv-01"]').click();
     })()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
-    const geometry = await harness!.cdp.js<{ width: number; viewport: number; pane: { top: number; bottom: number }; subject: { top: number; bottom: number }; messages: { top: number; bottom: number }; bodySize: string | null; lastBottom: number; bottomTop: number; actionTop: number; replyBar: { top: number; bottom: number; height: number } | null; messageMore: { width: number; height: number } | null; scrollHeight: number; clientHeight: number }>(`(() => {
+    const geometry = await harness!.cdp.js<{ width: number; viewport: number; pane: { top: number; bottom: number }; subject: { top: number; bottom: number }; messages: { top: number; bottom: number }; bodySize: string | null; lastBottom: number; bottomTop: number; actionTop: number; replyBar: { top: number; bottom: number; height: number } | null; messageMore: { width: number; height: number } | null; headerLines: Array<{ senderCenter: number; senderRight: number; dateCenter: number; dateLeft: number }>; scrollHeight: number; clientHeight: number }>(`(() => {
       const app = document.querySelector(${JSON.stringify(appSelector)});
       const pane = app.querySelector('.reader-pane').getBoundingClientRect();
       const subject = app.querySelector('.reader-subject').getBoundingClientRect();
@@ -49,6 +49,11 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
         actionTop: app.querySelector('[data-test="mobile-reader-actions"]').getBoundingClientRect().top,
         replyBar: app.querySelector('[data-test="mobile-reply-bar"]')?.getBoundingClientRect().toJSON() ?? null,
         messageMore: app.querySelector('[data-test="message-more"]')?.getBoundingClientRect().toJSON() ?? null,
+        headerLines: [...app.querySelectorAll('.message')].map(message => {
+          const sender = message.querySelector('.message-from').getBoundingClientRect();
+          const date = message.querySelector('.message-time').getBoundingClientRect();
+          return { senderCenter: (sender.top + sender.bottom) / 2, senderRight: sender.right, dateCenter: (date.top + date.bottom) / 2, dateLeft: date.left };
+        }),
         scrollHeight: scroller.scrollHeight,
         clientHeight: scroller.clientHeight,
       };
@@ -58,6 +63,10 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
     expect(geometry.messages.bottom).toBeLessThanOrEqual(geometry.pane.bottom + geometry.scrollHeight);
     expect(geometry.bodySize).toBe('16px');
     expect(geometry.lastBottom).toBeLessThanOrEqual(geometry.bottomTop);
+    for (const line of geometry.headerLines) {
+      expect(Math.abs(line.senderCenter - line.dateCenter)).toBeLessThanOrEqual(3);
+      expect(line.dateLeft).toBeGreaterThan(line.senderRight);
+    }
     expect(geometry.replyBar).not.toBeNull();
     expect(geometry.replyBar!.height).toBeGreaterThanOrEqual(48);
     expect(geometry.replyBar!.bottom).toBeLessThanOrEqual(geometry.actionTop);
