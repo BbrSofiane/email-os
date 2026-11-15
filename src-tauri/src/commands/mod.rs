@@ -4,6 +4,9 @@ pub(crate) use mailbox::*;
 mod attachments;
 pub(crate) use attachments::*;
 
+mod account;
+pub(crate) use account::*;
+
 use crate::diagnostics::{cause, storage_failure};
 use mail_core::error::MailError;
 

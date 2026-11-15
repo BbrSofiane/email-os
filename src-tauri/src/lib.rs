@@ -24,7 +24,6 @@ use mail_core::fixture_transition::{FixtureTransition, FixtureTransitionStatus};
 use mail_core::gmail::provider::LiveGmailProvider;
 use mail_core::gmail::secrets::KeychainSecrets;
 use mail_core::gmail::sync::GmailCore;
-use mail_core::gmail::types::AccountStatus;
 use state::AppState;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -46,22 +45,6 @@ fn open_fixture_core(
         Arc::new(mail_core::clock::SystemClock),
     )?;
     Ok((core, profile_dir))
-}
-
-#[tauri::command]
-async fn get_account_status(state: State<'_, AppState>) -> Result<AccountStatus, MailError> {
-    let core = state.core.clone();
-    run_blocking(core, GmailCore::account_status).await
-}
-
-#[tauri::command]
-async fn connect_account(state: State<'_, AppState>) -> Result<(), MailError> {
-    run_blocking(state.drafts.clone(), DraftService::connect_account).await
-}
-
-#[tauri::command]
-async fn disconnect_account(state: State<'_, AppState>) -> Result<(), MailError> {
-    run_blocking(state.drafts.clone(), DraftService::disconnect_account).await
 }
 
 #[tauri::command]
@@ -177,12 +160,6 @@ fn cancel_app_close(state: State<'_, AppState>, request_id: String) -> Result<()
         });
     }
     Ok(())
-}
-
-#[tauri::command]
-async fn request_sync(state: State<'_, AppState>) -> Result<(), MailError> {
-    let core = state.core.clone();
-    run_blocking(core, GmailCore::request_sync).await
 }
 
 fn fresh_close_request_id() -> String {
