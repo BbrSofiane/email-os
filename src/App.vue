@@ -859,6 +859,7 @@ const readerSheetItems = computed(() => {
     { id: readAction, label: conversation?.isRead ? 'Mark unread' : 'Mark read', glyph: conversation?.isRead ? 'unread' as const : 'read' as const, disabled: !actionAvailable(readAction) },
     { id: 'reply', label: 'Reply', glyph: 'reply' as const, disabled: !actionAvailable('reply'), disabledReason: replyReason ?? undefined, group: 'more' },
     ...(!androidFixture ? [{ id: 'files', label: 'Files and links', glyph: 'files' as const, disabled: !actionAvailable('open') }] : []),
+    { id: 'contact-details', label: 'Contact details', glyph: 'contact' as const, group: 'more' },
     { id: 'commands', label: 'Commands', glyph: 'commands' as const, group: 'commands' },
   ];
 });
@@ -2749,7 +2750,7 @@ const searchSyntaxEditHint = computed(() =>
       :title="mailbox.conversation.value?.subject ?? 'Actions'"
       :items="readerSheetItems"
       @close="readerSheetOpen = false"
-      @choose="(id) => { if (id === 'commands') openOverlay('palette'); else if (id === 'reply') { const conversation = mailbox.conversation.value; const sourceMessage = conversation?.messages.at(-1); if (conversation && sourceMessage) void prepareReply({ kind: 'reply', conversation: conversation.ref, sourceMessageId: sourceMessage.id }); } else if (id === 'files') openAttachments(readerView?.$el as HTMLElement); else executeAction(id as ActionId); }"
+      @choose="(id) => { if (id === 'commands') openOverlay('palette'); else if (id === 'contact-details') toggleContactDisclosure(); else if (id === 'reply') { const conversation = mailbox.conversation.value; const sourceMessage = conversation?.messages.at(-1); if (conversation && sourceMessage) void prepareReply({ kind: 'reply', conversation: conversation.ref, sourceMessageId: sourceMessage.id }); } else if (id === 'files') openAttachments(readerView?.$el as HTMLElement); else executeAction(id as ActionId); }"
     />
     <AttachmentChooser v-if="attachmentConversation" :client="props.client" :conversation="attachmentConversation" :preview="props.mode === 'browser-preview'" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" @close="closeAttachments" />
     <MobileBottomBar
