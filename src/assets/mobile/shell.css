@@ -242,6 +242,14 @@
   gap: 12px;
 }
 
+.app[data-layout="compact"] .mobile-bottom-region:has(.mobile-navigation) .mobile-context-slot:not(:empty) {
+  position: absolute;
+  right: 16px;
+  bottom: calc(var(--mobile-bottom-bar-height) + 20px + var(--mobile-safe-bottom));
+  left: 16px;
+  justify-content: flex-start;
+}
+
 .app[data-layout="compact"] .mobile-navigation {
   display: flex;
   flex: 1;

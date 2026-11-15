@@ -97,4 +97,58 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="reader-close"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
   });
+
+  it.each([
+    { width: 412, height: 915 },
+    { width: 360, height: 800 },
+  ])('positions the split pill above navigation at $width × $height', async ({ width, height }) => {
+    await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
+      width,
+      height,
+      screenWidth: width,
+      screenHeight: height,
+      deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor,
+      mobile: true,
+    });
+    await harness!.cdp.js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-mail"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 120))');
+
+    const pill = await harness!.cdp.js<{
+      visible: boolean;
+      slot: { top: number; bottom: number; left: number; right: number; width: number; height: number };
+      nav: { top: number; bottom: number };
+      tabs: Array<{ width: number; height: number; weight: string; current: boolean }>;
+    }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const box = element => {
+        const r = element.getBoundingClientRect();
+        return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, width: r.width, height: r.height };
+      };
+      const slot = app.querySelector('.mobile-context-slot');
+      const nav = app.querySelector('.mobile-navigation');
+      return {
+        visible: getComputedStyle(slot).display !== 'none' && slot.getClientRects().length > 0,
+        slot: box(slot),
+        nav: box(nav),
+        tabs: [...slot.querySelectorAll('.split-tab')].map(tab => ({
+          ...box(tab),
+          weight: getComputedStyle(tab).fontWeight,
+          current: tab.getAttribute('aria-current') === 'page' || tab.getAttribute('aria-selected') === 'true',
+        })),
+      };
+    })()`);
+    expect(pill.visible).toBe(true);
+    expect(pill.slot.top).toBeGreaterThanOrEqual(0);
+    expect(pill.slot.bottom).toBeLessThanOrEqual(height);
+    expect(pill.slot.bottom + 12).toBeCloseTo(pill.nav.top, 0);
+    expect(pill.tabs.length).toBeGreaterThan(0);
+    expect(pill.tabs.every(tab => tab.width >= 48 && tab.height >= 48)).toBe(true);
+    expect(pill.tabs.find(tab => tab.current)?.weight).toBe('600');
+    expect(pill.nav.bottom).toBeLessThanOrEqual(height);
+
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="rail-drafts"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
+    expect(await harness!.cdp.js(`getComputedStyle(document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('.mobile-context-slot')).display`)).toBe('none');
+  });
 });
