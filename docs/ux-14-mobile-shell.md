@@ -16,6 +16,12 @@ Conversation rows stack sender and metadata on the first line, subject on the se
 
 Inbox/saved split tabs and Reminders membership tabs use the 44px context pill above navigation. The compact menu opens a left navigation drawer with available destinations, the current account and a Commands entry. The drawer uses the action registry and the same action handlers as the desktop navigator. Other contexts leave the context pill empty.
 
+## Other surfaces and settings
+
+Drafts and Reminders use stacked rows with their actions below the text. Search opens beneath the top bar and keeps its suggestions and syntax help available. Account, Activity, Provider mail, Settings and Contact details use full-screen utility pages with a 56px header and scrolling content. Commands and Destinations use a compact overlay; the command list scrolls inside it. The reminder picker and attachment chooser are bottom sheets.
+
+Settings combines the existing reminder defaults with Swipe actions. Swipe right and Swipe left each support Remind me, Mark done and None. Changes save to local storage immediately; storage failures are reported. The defaults are Remind me on the right and Mark done on the left. Swipe preferences follow the device profile.
+
 ## Interaction and accessibility
 
 All compact frame controls have at least 48×48 CSS px hit areas, visible focus, accessible names and titles. Honor reduced motion. Hardware Back follows the same Escape precedence: close overlay/drawer/editor/disclosure/details/selection, leave reader, return through context history, then background the app.

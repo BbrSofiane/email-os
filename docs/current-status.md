@@ -24,9 +24,12 @@ shared Rust shell. It uses SQLite and the same synthetic fixture core as desktop
 unavailable. APK build passed on 2026-11-14. A pre-existing legacy fixture
 database is retired once behind a startup screen. The unified-fixture APK was
 smoke-tested on an Android 15 x86_64 emulator on 2026-11-15 (see below). Compact
-phone layout is now in scope at widths ≤719px for Android fixture and browser preview;
-the mobile shell frame is implemented, with list, reader and remaining surface work
-for later phases. See the
+phone layout is now in scope at widths ≤719px for Android fixture and browser preview.
+The compact shell covers lists, reader, compose, search, reminders, utility pages,
+contact details, command overlays and device-local swipe settings. Sending, reply-all,
+forwarding, HTML bodies, label chips, multiple splits and destructive Trash/Spam/move
+actions are not supported. Android uses fixture data; compact layout adds no mail IPC
+or engine capabilities. See the
 [Android smoke steps](development.md#android-fixture-apk).
 
 Mode selection is deliberate: native defaults to fixture; `EMAIL_OS_MODE=gmail`
