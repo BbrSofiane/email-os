@@ -848,6 +848,7 @@ const { searchVisible, searchDraft, searchInput, cachedSearch, recentQueries, su
 const appRoot = ref<HTMLElement | null>(null);
 const overlay = ref<'palette' | 'navigator' | null>(null);
 const readerSheetOpen = ref(false);
+const messageSheetOpen = ref(false);
 const readerSheetItems = computed(() => {
   const conversation = mailbox.conversation.value;
   const readAction = conversation?.isRead ? 'unread' : 'read';
@@ -1851,6 +1852,7 @@ function keyFocus(event: KeyboardEvent): KeyFocus {
 /** Escape ladder (§3.2): drawer → composer → disclosure → message details → selection → Back. */
 function escapeLadder(event: KeyboardEvent): void {
   const readerIsOpen = readerOpen.value;
+  if (messageSheetOpen.value) { event.preventDefault(); readerView.value?.closeMessageSheet(); messageSheetOpen.value = false; return; }
   if (readerSheetOpen.value) { event.preventDefault(); readerSheetOpen.value = false; return; }
   // The active disclosure gets Escape precedence; mailbox actions underneath
   // are suppressed while it is open.
@@ -2061,7 +2063,7 @@ const searchSyntaxEditHint = computed(() =>
       :execute-action="executeAction"
       :open-destinations="() => openOverlay('navigator')"
     />
-      <main class="app-main" :class="{ 'contact-collapsed': contactCollapsed }" :inert="!!overlay || !!attachmentConversation || readerSheetOpen || undefined">
+      <main class="app-main" :class="{ 'contact-collapsed': contactCollapsed }" :inert="!!overlay || !!attachmentConversation || readerSheetOpen || messageSheetOpen || undefined">
       <!-- Split header (DESIGN.md "Split Tabs"): one borderless 78px strip in
            the list column. Destinations hamburger on the left, split tabs on
            the 50px content inset, quiet notes and glyphs on the right. It sits
@@ -2479,6 +2481,7 @@ const searchSyntaxEditHint = computed(() =>
               :back-host="layoutMode === 'compact' ? mobileTopBar?.backHost : readerBackHost"
               :actions-host="layoutMode === 'compact' ? mobileBottomBar?.actionsHost : readerActionsHost"
               :context-host="layoutMode === 'compact' ? mobileBottomBar?.contextHost : null"
+              :sheet-host="appRoot"
               :can-move-prev="canMoveReaderPrev"
               :can-move-next="canMoveReaderNext"
               :client="props.client"
@@ -2497,6 +2500,7 @@ const searchSyntaxEditHint = computed(() =>
               @prepare-reply="prepareReply"
               @star="executeAction(mailbox.conversation.value?.stars?.starredMessages ? 'unstar' : 'star')"
               @more="readerSheetOpen = true"
+              @message-sheet-open="messageSheetOpen = $event"
               @attachments="openAttachments"
               @active-message="onReaderActiveMessage"
               @contact-override="onReaderContactOverride"
@@ -2726,6 +2730,7 @@ const searchSyntaxEditHint = computed(() =>
     <MobileBottomBar
       v-if="layoutMode === 'compact'"
       ref="mobileBottomBar"
+      :inert="messageSheetOpen || undefined"
       :reader="readerOpen"
       :inbox-or-saved="mailbox.context.value === 'inbox' || mailbox.context.value === 'saved'"
       :execute-action="executeAction"

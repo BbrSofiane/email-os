@@ -65,6 +65,7 @@ const props = defineProps<{
   backHost?: HTMLElement | null;
   actionsHost?: HTMLElement | null;
   contextHost?: HTMLElement | null;
+  sheetHost?: HTMLElement | null;
   /** J/K availability; undefined hides the previous/next chevrons. */
   canMovePrev?: boolean;
   canMoveNext?: boolean;
@@ -102,6 +103,7 @@ const emit = defineEmits<{
   ];
   star: [];
   more: [];
+  messageSheetOpen: [open: boolean];
 }>();
 
 const container = ref<HTMLElement | null>(null);
@@ -218,9 +220,16 @@ async function copyMessageText(message: Message): Promise<void> {
     await navigator.clipboard.writeText(message.bodyText);
     copyAnnouncement.value = 'Copied';
     messageMenu.value = null;
+    emit('messageSheetOpen', false);
   } catch {
     copyUnavailable.value = true;
   }
+}
+
+function closeMessageSheet(): void {
+  if (!messageMenu.value) return;
+  messageMenu.value = null;
+  emit('messageSheetOpen', false);
 }
 
 function describeError(error: MailError): string {
@@ -906,6 +915,7 @@ function focusActiveMessage(): void {
 
 defineExpose({
   canPrepareReply,
+  closeMessageSheet,
   prepareReply,
   focusActiveMessage,
   moveMessage,
@@ -1147,21 +1157,10 @@ defineExpose({
                 data-test="message-more"
                 aria-label="Message actions"
                 aria-haspopup="dialog"
-                @click="messageMenu = message; copyUnavailable = false"
+                @click="messageMenu = message; copyUnavailable = false; emit('messageSheetOpen', true)"
               >
                 <HeaderGlyph name="more" />
               </button>
-              <MobileActionSheet
-                v-if="messageMenu?.id === message.id"
-                :title="message.from.displayName ?? message.from.mailbox"
-                :items="[
-                  { id: 'reply', label: 'Reply', glyph: 'reply', disabled: !canPrepareReply(), disabledReason: replyBlockedReason ?? undefined },
-                  { id: 'collapse', label: 'Collapse', glyph: 'back' },
-                  { id: 'copy', label: 'Copy text', glyph: 'files', disabled: copyUnavailable, disabledReason: copyUnavailable ? 'Copy unavailable' : undefined, keepOpenOnChoose: true },
-                ]"
-                @close="messageMenu = null"
-                @choose="(id) => { if (id === 'reply') prepareReply(message); else if (id === 'collapse') { toggleMessage(message); messageMenu = null; } else void copyMessageText(message); }"
-              />
             </div>
             <details
               class="message-details"
@@ -1256,5 +1255,18 @@ defineExpose({
       </template>
       <span v-if="copyAnnouncement" class="visually-hidden" role="status" aria-live="polite">{{ copyAnnouncement }}</span>
     </div>
+    <Teleport :to="props.sheetHost ?? undefined" :disabled="!props.sheetHost">
+      <MobileActionSheet
+        v-if="messageMenu"
+        :title="messageMenu.from.displayName ?? messageMenu.from.mailbox"
+        :items="[
+          { id: 'reply', label: 'Reply', glyph: 'reply', disabled: !canPrepareReply(), disabledReason: replyBlockedReason ?? undefined },
+          { id: 'collapse', label: 'Collapse', glyph: 'back' },
+          { id: 'copy', label: 'Copy text', glyph: 'files', disabled: copyUnavailable, disabledReason: copyUnavailable ? 'Copy unavailable' : undefined, keepOpenOnChoose: true },
+        ]"
+        @close="messageMenu = null; emit('messageSheetOpen', false)"
+        @choose="(id) => { const target = messageMenu; if (!target) return; if (id === 'reply') prepareReply(target); else if (id === 'collapse') toggleMessage(target); else void copyMessageText(target); }"
+      />
+    </Teleport>
   </article>
 </template>

@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PHONE_VIEWPORT, startRenderedHarness, type RenderedHarness } from '../rendered/chromium';
+import { pressRenderedKey } from '../rendered/keyboard';
 
 const chromePath = process.env.EMAIL_OS_RENDERED_LAYOUT_CHROME ?? '';
 const pageRoot = new URL('../..', import.meta.url).pathname;
@@ -117,16 +118,44 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
     expect(closed).toBe(true);
     await harness!.cdp.js(`(() => document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="message-more"]').click())()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
-    const messageMenu = await harness!.cdp.js<{ title: string | null; rows: number }>(`(() => {
+    const messageMenu = await harness!.cdp.js<{ title: string | null; rows: number; panelBottom: number; appBottom: number; rowBounds: Array<{ top: number; bottom: number }>; protectedPoints: boolean[] }>(`(() => {
       const app = document.querySelector(${JSON.stringify(appSelector)});
       const dialog = app.querySelector('[data-test="action-sheet"]');
-      return { title: dialog.querySelector('h2')?.textContent ?? null, rows: dialog.querySelectorAll('button').length };
+      const rect = element => element.getBoundingClientRect();
+      const panel = rect(dialog);
+      const appRect = rect(app);
+      const points = [app.querySelector('[data-test="mobile-reply-bar"]'), app.querySelector('[data-test="mobile-reader-actions"]')];
+      return {
+        title: dialog.querySelector('h2')?.textContent ?? null,
+        rows: dialog.querySelectorAll('button').length,
+        panelBottom: panel.bottom,
+        appBottom: appRect.bottom,
+        rowBounds: [...dialog.querySelectorAll('button')].map(row => ({ top: rect(row).top, bottom: rect(row).bottom })),
+        protectedPoints: points.map(element => {
+          const box = rect(element);
+          const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+          return !!hit && (dialog.contains(hit) || app.querySelector('[data-test="action-sheet-scrim"]').contains(hit));
+        }),
+      };
     })()`);
     expect(messageMenu.title).toBe('Ada Fixture');
     expect(messageMenu.rows).toBe(3);
+    expect(Math.abs(messageMenu.panelBottom - messageMenu.appBottom)).toBeLessThanOrEqual(1);
+    expect(messageMenu.protectedPoints.every(Boolean)).toBe(true);
+    for (const row of messageMenu.rowBounds) {
+      expect(row.top).toBeGreaterThanOrEqual(0);
+      expect(row.bottom).toBeLessThanOrEqual(height);
+    }
+    await pressRenderedKey(harness!.cdp, 'Escape');
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
+    const escapeState = await harness!.cdp.js<{ sheet: boolean; reader: boolean }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(appSelector)});
+      return { sheet: !!app.querySelector('[data-test="action-sheet"]'), reader: !!app.querySelector('[data-test="reader"]') };
+    })()`);
+    expect(escapeState.sheet).toBe(false);
+    expect(escapeState.reader).toBe(true);
     await harness!.cdp.js(`(() => {
       const app = document.querySelector(${JSON.stringify(appSelector)});
-      app.querySelector('[data-test="action-sheet-scrim"]').click();
       app.querySelector('[data-test="reader-archive-toggle"]').click();
     })()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 500))');
