@@ -1,0 +1,64 @@
+You are doing three frontend follow-ups for Email OS, as three separate PRs, in this order. I coordinate the maintenance programme from thread `c07c9c54-0efc-4c81-81d7-dc1548e15e3c`; I run the full end-to-end gate (native build, rendered suite, native smoke) and merge. You open PRs and do not merge. Finish and push each PR before starting the next, and tell me when each is ready (a cross-session message to my thread if you have a tool for it; otherwise carry on and put it in the final report).
+
+The owner approved all three. Current main is `3061e54`: frontend 1,888 tests in 104 files, rendered 45 of 45, `src/App.vue` 2,762 lines.
+
+## PR 1: minimum window width so 200% text cannot overflow the Inbox row
+Branch `maintenance/followups-min-width` (your worktree's branch), base `main`.
+
+**Background.** PR #57's description has the measurements (read it: `gh pr view 57 -R BbrSofiane/email-os`). In the worst-case row (old date, unknown read state, held unarchive) the compact Inbox row fits up to a 30.25px root font at 1000px wide and up to 36.5px at 1100px. So 32px text (200%) overflows by 27px at 1000px. The window opens at 1100px (`src-tauri/tauri.conf.json`) and has no minimum width. The owner chose: keep the row as it is and add a minimum window width, rather than tighten the documented 12px gaps or lower the sender/subject floors.
+
+**Do.**
+1. Measure, in the rendered harness (`tests/browsing/inbox-list.rendered-layout.test.ts`, real Chrome), the smallest width at which the worst-case compact row has zero overflow at a 32px root font. My interpolation says about 1030px; treat that as a guess.
+2. Set `minWidth` on the main window in `src-tauri/tauri.conf.json` to that width plus a margin, rounded to a tidy number. The native webview is WebKit, not Chrome, and nobody has measured it there, so the margin is the allowance for that: state the measured bound and the margin you chose. Do not exceed the 1100px default width.
+3. Add a rendered test step that reads `minWidth` from `src-tauri/tauri.conf.json` and asserts the worst-case row does not overflow at that width with a 32px root font, so the config and the layout cannot drift apart. It must fail if `minWidth` is lowered to 1000.
+4. Record the decision in `DESIGN.md` beside the existing large-text checkpoints ("Type scale and dates").
+5. Check whether a minimum height is already implied anywhere; do not add one unless a test needs it. Do not change any CSS in this PR.
+
+In the PR description say what is not covered: tiling window managers may ignore a minimum size, Android is unaffected, WebKit is unmeasured.
+
+## PR 2: follow-ups left open by PR #34
+Branch `maintenance/followups-account-ui`, base `main` (independent of PR 1).
+
+PR #34's description ends with a list of deferred follow-ups (`gh pr view 34 -R BbrSofiane/email-os`). Much has changed since (the action registry in `src/lib/action-registry.ts`, fixture unification, capability-based surfaces), so **first check each item still reproduces on main**, with a failing test where one can express it.
+
+**Fix if it still reproduces:**
+- g-chord hint advertising keys that do nothing while disconnected (for example `g e`).
+- Palette offering Create split and Show unread only on an Inbox with zero rows.
+- Provider mail not saying so when the sign-in has expired.
+- The duplicate empty `action-notice` live region.
+- Inline action hit areas that are 16px high. Use the minimum target the project's `DESIGN.md` sets; if it sets none, use 24px and say so. Enlarge the hit area, not the glyph or the row height, and prove it with a rendered measurement.
+
+**Re-check and report, fix only if it is a real bug on main:**
+- "Fixture inconsistencies (rows=0 still `18 conversations cached`)". Unification may have removed it. Say what you found.
+
+**Close without change (list them in the PR description as "not done, by the owner's decision"):**
+- Palette name `Sync now` vs `Retry`.
+- `Disconnect…` 8px indent.
+- `connect` keyword on Go to Account when not configured.
+- Under 1100px, `Mailbox permission pending` / `Gmail is read-only` collapsing to a bare `Review access` (PR 1's minimum width mostly removes the case).
+
+Availability rules belong in the registry or the existing availability functions, not in new `if`s in `App.vue`. Copy changes follow the wording already in `src/lib/account-status.ts`.
+
+## PR 3: two more extractions from App.vue (ticket 20, continued)
+Branch `maintenance/followups-app-shell`, stacked on PR 2's branch if PR 2 touches `src/App.vue`, otherwise on `main`. Say which.
+
+Earlier extractions (#60) moved `useGoChord`, `useActionNotice`, `useAccountNotes`, `useContactContext`, `useSearchSurface` and `src/lib/error-text.ts` out. Do the next two, in this order, as separate commits:
+1. Viewport and contact-disclosure handling.
+2. Attachment chooser state.
+
+Rules for this PR:
+- Pure moves. No behaviour change, no renamed user-facing strings, no test expectation changes. If a test needs changing, stop and tell me why.
+- **Do not touch reader navigation or focus restoration.** That is where the Undo focus race was fixed (#62) and its timing is thinly tested. If either extraction cannot be done without reaching into it, do the part that can and report the rest.
+- I verify moves by comparing whitespace-normalised line multisets per commit, so keep moved code textually the same and put any unavoidable glue (imports, the composable's return object, call sites) in as few lines as possible.
+- The 1,800-line target is retired by the owner's decision. Report the new line count; do not chase a number. If any doc states the 1,800 target as current, update it to say the target was retired and why (the remaining bulk is reader navigation and focus, left alone deliberately).
+
+## Rules for all three
+- Do not run cargo. I run the native side. Run `mise run test:ui`, `pnpm typecheck`, `mise run build:web`, and the rendered suite (`mise run test:rendered`; Chrome is at `/tmp/chrome-rendered/chrome/linux-156.0.8078.80/chrome-linux64/chrome`). Rendered tests time out when the machine is loaded: if you see timeouts, check `uptime` and rerun once it is quiet before believing them.
+- New tests must fail against the unchanged code first. Say that you checked.
+- Synthetic fixtures only. No real accounts, credentials or Google network. Never log subjects, addresses, bodies, tokens or URLs with ids.
+- Never touch the root checkout `/home/exedev/email-os` except `git fetch`. Create your further branches as worktrees or by switching branches inside your own worktree.
+- `gh` needs `-R BbrSofiane/email-os` (the git remote is a proxy URL). CI runs only on PRs whose base is `main`.
+- Commit at checkpoints so nothing is lost if you are cut off. Use subagents only if a search is broad enough to need one.
+
+## Report
+End with, per PR: URL, what changed, the measured numbers (PR 1, hit areas in PR 2, line counts in PR 3), which #34 items reproduced and which did not, test counts, and anything not verified.
