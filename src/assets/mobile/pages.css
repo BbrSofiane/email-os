@@ -243,3 +243,47 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .time-zone-note {
   padding: 0;
   border-radius: 50%;
 }
+
+.app[data-layout="compact"] .utility-drawer .account-panel {
+  gap: 24px;
+  overflow-wrap: anywhere;
+}
+
+.app[data-layout="compact"] .utility-drawer .account-section {
+  width: 100%;
+  align-items: stretch;
+}
+
+.app[data-layout="compact"] .utility-drawer .account-line,
+.app[data-layout="compact"] .utility-drawer .account-notice,
+.app[data-layout="compact"] .utility-drawer .account-action-error,
+.app[data-layout="compact"] .utility-drawer .account-note {
+  overflow-wrap: anywhere;
+}
+
+.app[data-layout="compact"] .utility-drawer .account-actions,
+.app[data-layout="compact"] .utility-drawer .account-confirm {
+  width: 100%;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.app[data-layout="compact"] .utility-drawer .account-actions button,
+.app[data-layout="compact"] .utility-drawer .account-confirm button {
+  width: 100%;
+  min-height: 48px;
+}
+
+.app[data-layout="compact"] .utility-drawer .activity {
+  overflow-wrap: anywhere;
+}
+
+.app[data-layout="compact"] .utility-drawer .activity-row {
+  min-height: 64px;
+  align-items: flex-start;
+}
+
+.app[data-layout="compact"] .utility-drawer .activity-row button,
+.app[data-layout="compact"] .utility-drawer .activity-action {
+  min-height: 48px;
+}

@@ -138,4 +138,17 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
     expect(await harness!.cdp.js(`!document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="utility-drawer"]')`)).toBe(true);
   });
+
+  it('keeps compact Account and Activity content inside the page with touch sized actions', async () => {
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-menu"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
+    await harness!.cdp.js(`[...document.querySelectorAll(${JSON.stringify(workspaceApp)} + ' .mobile-drawer-row')].find(row => row.textContent.trim() === 'Activity').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 200))');
+    const activity = await harness!.cdp.js<{ overflow: boolean; buttons: number[] }>(`(() => {
+      const page = document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="utility-drawer"]');
+      return { overflow: page.scrollWidth > page.clientWidth, buttons: [...page.querySelectorAll('.activity button')].map(button => button.getBoundingClientRect().height) };
+    })()`);
+    expect(activity.overflow).toBe(false);
+    expect(activity.buttons.every(height => height >= 48)).toBe(true);
+  });
 });
