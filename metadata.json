@@ -1,0 +1,31 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7GF4FRK6QXDDQW1VNQ85QV2",
+  "strategy": "manual-commit",
+  "branch": "mobile/p3-pages",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/App.vue",
+    "src/assets/mobile/pages.css",
+    "src/components/ReminderPicker.vue",
+    "src/components/RemindersList.vue",
+    "tests/layout/mobile-css-contract.test.ts",
+    "tests/layout/mobile-pages.rendered.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 18,
+    "cache_creation_tokens": 17779,
+    "cache_read_tokens": 3750211,
+    "output_tokens": 8166,
+    "api_call_count": 7
+  }
+}

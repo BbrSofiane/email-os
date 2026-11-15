@@ -1,0 +1,58 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7GF4FRK6QXDDQW1VNQ85QV2",
+  "session_id": "415cd333-37f5-4cfe-be88-ad6fe867d94b",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-15T20:42:18.099515063Z",
+  "branch": "mobile/p3-pages",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/App.vue",
+    "src/assets/mobile/pages.css",
+    "src/components/ReminderPicker.vue",
+    "src/components/RemindersList.vue",
+    "tests/layout/mobile-css-contract.test.ts",
+    "tests/layout/mobile-pages.rendered.test.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5-2",
+  "turn_id": "f8a92d675c00",
+  "checkpoint_transcript_start": 1347,
+  "transcript_lines_at_start": 1347,
+  "compact_transcript_start": 257,
+  "token_usage": {
+    "input_tokens": 18,
+    "cache_creation_tokens": 17779,
+    "cache_read_tokens": 3750211,
+    "output_tokens": 8166,
+    "api_call_count": 7
+  },
+  "session_metrics": {
+    "turn_count": 5
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-15T20:42:17.483133113Z",
+    "agent_lines": 427,
+    "agent_removed": 102,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 427,
+    "total_lines_changed": 529,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 58,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".codex/hooks.json": 23,
+        "pi-scheduled-tasks": 35
+      }
+    }
+  ]
+}
