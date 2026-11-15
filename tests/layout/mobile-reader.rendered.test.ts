@@ -116,6 +116,32 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
     const closed = await harness!.cdp.js(`document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="action-sheet"]') === null`);
     expect(closed).toBe(true);
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="reader-more"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
+    await harness!.cdp.js(`(() => {
+      const app = document.querySelector(${JSON.stringify(appSelector)});
+      const row = [...app.querySelectorAll('[data-test="action-sheet"] button')].find(button => button.textContent.includes('Contact details'));
+      if (!row) throw new Error('Missing Contact details action');
+      row.click();
+    })()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
+    const contactPage = await harness!.cdp.js<{ exists: boolean; text: string; coversTop: boolean; readerOpen: boolean }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(appSelector)});
+      const page = app.querySelector('[data-test="contact-disclosure-panel"]');
+      return {
+        exists: !!page,
+        text: page?.textContent ?? '',
+        coversTop: !!page && page.contains(document.elementFromPoint(10, 10)),
+        readerOpen: !!app.querySelector('[data-test="reader"]'),
+      };
+    })()`);
+    expect(contactPage.exists).toBe(true);
+    expect(contactPage.text).toContain('Ada Fixture');
+    expect(contactPage.coversTop).toBe(true);
+    expect(contactPage.readerOpen).toBe(true);
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="contact-disclosure-close"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
+    expect(await harness!.cdp.js(`!!document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="reader"]')`)).toBe(true);
     await harness!.cdp.js(`(() => document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="message-more"]').click())()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
     const messageMenu = await harness!.cdp.js<{ title: string | null; rows: number; panelBottom: number; appBottom: number; rowBounds: Array<{ top: number; bottom: number }>; protectedPoints: boolean[] }>(`(() => {
