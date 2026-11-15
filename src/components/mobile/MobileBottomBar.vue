@@ -61,11 +61,10 @@ defineExpose({ actionsHost, contextHost });
       </button>
     </nav>
     <button
-      v-if="!reader"
+      v-if="!reader && actionAvailable('account')"
       type="button"
       class="mobile-account"
       data-test="mobile-account"
-      :disabled="!actionAvailable('account')"
       :title="actionLabel('account')"
       @click="executeAction('account')"
     >
