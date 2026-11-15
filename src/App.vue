@@ -982,7 +982,8 @@ const readerView = ref<InstanceType<typeof ReaderView> | null>(null);
 /** Header slots the open reader teleports its quiet icon actions into. */
 const readerBackHost = ref<HTMLElement | null>(null);
 const readerActionsHost = ref<HTMLElement | null>(null);
-const mobileActionsHost = ref<HTMLElement | null>(null);
+const mobileTopBar = ref<InstanceType<typeof MobileTopBar> | null>(null);
+const mobileBottomBar = ref<InstanceType<typeof MobileBottomBar> | null>(null);
 /** Message identity that currently owns reader focus (for the contact baseline). */
 
 function captureListOrigin(surface: ReaderOrigin['surface']): void {
@@ -2040,6 +2041,7 @@ const searchSyntaxEditHint = computed(() =>
   <div ref="appRoot" class="app" :data-client-mode="props.mode" :data-layout="layoutMode" :data-mobile-context="!!(replyComposerOpen && readerOpen)">
     <MobileTopBar
       v-if="layoutMode === 'compact'"
+      ref="mobileTopBar"
       :reader="readerOpen"
       :title="contextTitle"
       :execute-action="executeAction"
@@ -2459,8 +2461,8 @@ const searchSyntaxEditHint = computed(() =>
               :android="androidFixture"
               :selection-count="selectedCount"
               :selection-context="mailbox.context.value"
-              :back-host="readerBackHost"
-              :actions-host="layoutMode === 'compact' ? mobileActionsHost : readerActionsHost"
+              :back-host="layoutMode === 'compact' ? mobileTopBar?.backHost : readerBackHost"
+              :actions-host="layoutMode === 'compact' ? mobileBottomBar?.actionsHost : readerActionsHost"
               :can-move-prev="canMoveReaderPrev"
               :can-move-next="canMoveReaderNext"
               :client="props.client"
@@ -2692,14 +2694,13 @@ const searchSyntaxEditHint = computed(() =>
     <AttachmentChooser v-if="attachmentConversation" :client="props.client" :conversation="attachmentConversation" :preview="props.mode === 'browser-preview'" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" @close="closeAttachments" />
     <MobileBottomBar
       v-if="layoutMode === 'compact'"
+      ref="mobileBottomBar"
       :reader="readerOpen"
+      :inbox-or-saved="mailbox.context.value === 'inbox' || mailbox.context.value === 'saved'"
       :execute-action="executeAction"
-      @account="openDrawer('account')"
-    >
-      <template #actions>
-        <span ref="mobileActionsHost" class="mobile-actions-host" />
-      </template>
-    </MobileBottomBar>
+      :action-available="actionAvailable"
+      :action-label="actionLabel"
+    />
     <ActionOverlay v-if="overlay" v-model:query="overlayQuery" :account-first="accountCommandsFirst" :account-top="accountCommandsTop" :row-keys="paletteHasRows" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" :kind="overlay" :actions="availableActions" :key-scope="remindersList ? 'reminders' : draftsList ? 'drafts' : undefined" @close="closeOverlay()" @execute="executeOverlay" />
   </div>
 </template>

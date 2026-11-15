@@ -216,3 +216,90 @@
     white-space: nowrap;
   }
 }
+
+.app[data-layout="compact"] .mobile-bottom-region:has(.mobile-navigation) {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+
+.app[data-layout="compact"] .mobile-navigation {
+  display: flex;
+  flex: 1;
+  height: var(--mobile-bottom-bar-height);
+  align-items: center;
+  justify-content: space-around;
+  border: 1px solid var(--divider);
+  border-radius: 28px;
+  background: var(--surface);
+  pointer-events: auto;
+}
+
+.app[data-layout="compact"] .mobile-reader-actions:empty {
+  display: none;
+}
+
+.app[data-layout="compact"] .mobile-bottom-region:has(.mobile-reader-actions:not(:empty)) {
+  gap: 0;
+}
+
+.app[data-layout="compact"] .mobile-bottom-region:has(.mobile-reader-actions:not(:empty)) .mobile-reader-actions {
+  width: 100%;
+}
+
+.app[data-layout="compact"] .mobile-nav-item[aria-current="page"] {
+  border-radius: 24px;
+  background: var(--focus-fill);
+}
+
+.app[data-layout="compact"] .mobile-back-host {
+  display: grid;
+  flex: none;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+}
+
+.app[data-layout="compact"] .mobile-round-button > svg,
+.app[data-layout="compact"] .mobile-nav-item > svg,
+.app[data-layout="compact"] .mobile-account > svg,
+.app[data-layout="compact"] .mobile-back-host > .reader-back > svg {
+  width: 24px;
+  height: 24px;
+}
+
+.app[data-layout="compact"] .mobile-round-button,
+.app[data-layout="compact"] .mobile-back-host > .reader-back {
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--divider);
+  border-radius: 50%;
+  background: var(--surface-raised);
+}
+
+.app[data-layout="compact"] .mobile-back-host > .reader-back {
+  display: grid;
+  place-items: center;
+}
+
+.app[data-layout="compact"] .mobile-reader-actions .reader-actions {
+  display: flex;
+  width: 100%;
+  height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+}
+
+.app[data-layout="compact"] .mobile-reader-actions .reader-actions > .header-glyph {
+  display: grid;
+  flex: none;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+}
+
+.app[data-layout="compact"] .mobile-reader-actions .header-glyph-icon {
+  width: 24px;
+  height: 24px;
+}
