@@ -105,10 +105,13 @@ src/                        # Vue 3 + TS frontend (Vite)
 
 src-tauri/                  # thin Tauri 2 shell
   src/
-    lib.rs                  # composition root: wires core into command handlers
-    commands.rs             # thin IPC forwarding — no business logic
-    events.rs               # typed events emitted to the frontend
-    lifecycle.rs            # startup, shutdown, hide-vs-quit behavior
+    lib.rs                  # module list, entry point, generate_handler! list
+    setup.rs                # EMAIL_OS_MODE selection, opening the cores, window and run events
+    state.rs                # AppState: one GmailCore, DraftService, transfer registry, close gate
+    commands/               # IPC translation only — mailbox, attachments, account, drafts,
+                            #   transition, lifecycle (app close); no mail logic
+    close_gate.rs           # native close request/acknowledgement gate
+    diagnostics.rs          # storage-failure logging with no mailbox data
   capabilities/             # per-window capability files
   config/                   # app config (no secrets here)
 
