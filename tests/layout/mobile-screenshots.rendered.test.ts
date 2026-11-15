@@ -76,14 +76,25 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await pause();
   }
 
-  /** Activate the overlay option whose label contains `text` (overlays render outside <main>). */
-  async function chooseOverlayOption(text: string): Promise<void> {
+  async function longPressFirstRow(): Promise<void> {
+    const point = await harness!.cdp.js<{ x: number; y: number }>(`(() => {
+      const rect = document.querySelector(${JSON.stringify(activeApp)}).querySelector('.inbox-row').getBoundingClientRect();
+      return { x: rect.left + 28, y: rect.top + 20 };
+    })()`);
+    await harness!.cdp.cmd('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ ...point, id: 1 }] });
+    await pause(600);
+    await harness!.cdp.cmd('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await waitFor(`app.querySelector('[data-test="selection-bar"]')`, 'selection bar');
+  }
+
+  /** Activate a compact drawer destination by its short row label. */
+  async function chooseDrawerRow(text: string): Promise<void> {
     await harness!.cdp.js(`(() => {
       const app = document.querySelector(${JSON.stringify(activeApp)});
-      const option = [...app.querySelectorAll('[role="option"]')]
-        .find(candidate => candidate.textContent.includes(${JSON.stringify(text)}));
-      if (!option) throw new Error('Missing overlay option ' + ${JSON.stringify(text)});
-      option.click();
+      const row = [...app.querySelectorAll('.mobile-drawer-row')]
+        .find(candidate => candidate.textContent.trim() === ${JSON.stringify(text)});
+      if (!row) throw new Error('Missing drawer row ' + ${JSON.stringify(text)});
+      row.click();
     })()`);
     await pause(400);
   }
@@ -97,6 +108,8 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await viewport(PHONE_VIEWPORT.width, PHONE_VIEWPORT.height, true);
     await freshInbox();
     await shot('inbox');
+    await longPressFirstRow();
+    await shot('selection');
 
     await harness!.cdp.js(`(() => {
       const list = document.querySelector(${JSON.stringify(activeApp)}).querySelector('.inbox-scroll');
@@ -124,14 +137,14 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
 
     await freshInbox();
     await click('[data-test="mobile-menu"]');
-    await shot('destinations-overlay');
+    await shot('drawer');
 
-    await chooseOverlayOption('Drafts');
+    await chooseDrawerRow('Drafts');
     await shot('drafts');
 
     await freshInbox();
     await click('[data-test="mobile-menu"]');
-    await chooseOverlayOption('Reminders');
+    await chooseDrawerRow('Reminders');
     await shot('reminders');
 
     await freshInbox();

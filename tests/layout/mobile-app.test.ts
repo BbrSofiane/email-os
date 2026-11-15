@@ -16,6 +16,69 @@ afterEach(() => {
 });
 
 describe('App compact and regular frame', () => {
+  it('teleports split tabs only in compact mode and keeps saved navigation active', async () => {
+    const fake = createBrowserFakeMailClient();
+    const first = (await fake.listConversations()).conversations[0]!;
+    await fake.saveSavedSplit(first.ref.accountId, {
+      name: 'Clients',
+      criterion: 'sender',
+      value: first.primaryCorrespondent!.mailbox,
+      enabled: true,
+      hideWhenEmpty: false,
+    });
+
+    stubLayout(true);
+    const compact = mountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+    expect(compact.get('[data-test="split-inbox"]').element.closest('.mobile-context-slot')).toBeTruthy();
+    await compact.get('[data-test="split-saved"]').trigger('click');
+    await flushFakeClientAndVueUpdates(fake);
+    expect(compact.get('[data-test="inbox-title"]').text()).toBe('Clients');
+    compact.unmount();
+
+    stubLayout(false);
+    const regular = mountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+    expect(regular.get('[data-test="split-inbox"]').element.closest('.app-header')).toBeTruthy();
+    expect(regular.get('[data-test="split-inbox"]').element.closest('.mobile-context-slot')).toBeFalsy();
+    regular.unmount();
+  });
+
+  it('opens the compact drawer, closes it before the next Escape rung, and navigates', async () => {
+    stubLayout(true);
+    const fake = createBrowserFakeMailClient();
+    const wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+
+    await wrapper.get('[data-test="mobile-menu"]').trigger('click');
+    expect(wrapper.find('[role="dialog"][aria-label="Destinations"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="action-overlay"]').exists()).toBe(false);
+    expect(wrapper.get('[data-test="mobile-menu"]').attributes('aria-expanded')).toBe('true');
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await flushFakeClientAndVueUpdates(fake);
+    expect(wrapper.find('[role="dialog"][aria-label="Destinations"]').exists()).toBe(false);
+    expect(wrapper.get('[data-test="mobile-menu"]').attributes('aria-expanded')).toBe('false');
+
+    await wrapper.get('[data-test="mobile-menu"]').trigger('click');
+    const draftsRow = wrapper.findAll('.mobile-drawer-row').find((row) => row.text() === 'Drafts');
+    expect(draftsRow).toBeDefined();
+    await draftsRow!.trigger('click');
+    await flushFakeClientAndVueUpdates(fake);
+    expect(wrapper.find('[data-test="drafts-pane"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('keeps the regular menu button on the navigator overlay', async () => {
+    stubLayout(false);
+    const fake = createBrowserFakeMailClient();
+    const wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+    await wrapper.get('[data-test="navigator-trigger"]').trigger('click');
+    expect(wrapper.find('[data-test="action-query"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="mobile-drawer"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
   it('keeps the status strip and moves reader teleports into mobile hosts', async () => {
     stubLayout(true);
     const fake = createBrowserFakeMailClient();

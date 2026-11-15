@@ -33,13 +33,14 @@ describe("InboxList (UX-01 compact rows)", () => {
   afterEach(() => {
     wrapper?.unmount();
     wrapper = null;
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
   function mountList(
     rows: ConversationSummary[],
     focusedRef: ConversationRef | null = null,
-    options: { showReadState?: boolean; showReadControls?: boolean; actionsEnabled?: boolean; context?: 'inbox' | 'saved' | 'done' | 'starred' | 'search'; searchQuery?: string } = {},
+    options: { showReadState?: boolean; showReadControls?: boolean; actionsEnabled?: boolean; reminderEnabled?: boolean; compact?: boolean; readOnly?: boolean; selectedRefs?: ConversationRef[]; context?: 'inbox' | 'saved' | 'done' | 'starred' | 'search'; searchQuery?: string } = {},
   ): VueWrapper {
     const mounted = mount(InboxList, {
       props: { rows, focusedRef, actionsEnabled: true, ...options },
@@ -56,6 +57,74 @@ describe("InboxList (UX-01 compact rows)", () => {
     row('earlier', { lastMessageAt: '2026-01-02T10:00:00Z', primaryCorrespondent: undefined } as Partial<ConversationSummary> & { lastMessageAt: string }),
     row('december', { lastMessageAt: '2025-12-20T10:00:00Z' }),
   ];
+
+  function pointerEvent(type: string, x: number, pointerType = 'touch'): Event {
+    const event = new Event(type, { bubbles: true });
+    Object.defineProperties(event, {
+      pointerId: { value: 1 },
+      pointerType: { value: pointerType },
+      clientX: { value: x },
+      clientY: { value: 0 },
+    });
+    return event;
+  }
+
+  it.each([
+    { context: 'inbox' as const, expected: 'archive' as const, side: 'left' as const, reminderEnabled: false },
+    { context: 'done' as const, expected: 'unarchive' as const, side: 'left' as const, reminderEnabled: false },
+    { context: 'inbox' as const, expected: 'remind' as const, side: 'right' as const, reminderEnabled: true },
+  ])('emits the configured compact swipe action for $context', async ({ context, expected, side, reminderEnabled }) => {
+    const w = mountList([row('swipe', { lastMessageAt: '2026-01-15T09:00:00Z' })], null, {
+      compact: true,
+      context,
+      reminderEnabled,
+    });
+    const element = w.get('.inbox-row').element;
+    element.dispatchEvent(pointerEvent('pointerdown', 0));
+    element.dispatchEvent(pointerEvent('pointermove', side === 'left' ? -80 : 80));
+    element.dispatchEvent(pointerEvent('pointerup', side === 'left' ? -80 : 80));
+    await flushPromises();
+    expect(w.emitted(expected)).toHaveLength(1);
+    expect(w.emitted(expected)?.[0]).toEqual([{ accountId: ACCOUNT, conversationId: 'swipe' }]);
+  });
+
+  it.each([
+    { compact: true, readOnly: true, actionsEnabled: true, reminderEnabled: true },
+    { compact: true, readOnly: false, actionsEnabled: false, reminderEnabled: false },
+    { compact: false, readOnly: false, actionsEnabled: true, reminderEnabled: true },
+  ])('does not swipe when unavailable or regular', ({ compact, readOnly, actionsEnabled, reminderEnabled }) => {
+    const w = mountList([row('no-swipe', { lastMessageAt: '2026-01-15T09:00:00Z' })], null, {
+      compact,
+      readOnly,
+      actionsEnabled,
+      reminderEnabled,
+    });
+    const element = w.get('.inbox-row').element;
+    element.dispatchEvent(pointerEvent('pointerdown', 0));
+    element.dispatchEvent(pointerEvent('pointermove', -100));
+    element.dispatchEvent(pointerEvent('pointerup', -100));
+    expect(w.emitted('archive')).toBeUndefined();
+    expect(w.emitted('remind')).toBeUndefined();
+  });
+
+  it('selects on long press and toggles the next row on a selection-mode tap', async () => {
+    vi.useFakeTimers();
+    const rows = [
+      row('long-press', { lastMessageAt: '2026-01-15T09:00:00Z' }),
+      row('next', { lastMessageAt: '2026-01-15T10:00:00Z' }),
+    ];
+    const w = mountList(rows, null, { compact: true });
+    const first = w.find('[data-test="conversation-row-long-press"]');
+    const pointerdown = pointerEvent('pointerdown', 20);
+    first.element.dispatchEvent(pointerdown);
+    vi.advanceTimersByTime(500);
+    await flushPromises();
+    expect(w.emitted('selectToggle')?.[0]).toEqual([{ accountId: ACCOUNT, conversationId: 'long-press' }]);
+
+    await w.setProps({ selectedRefs: [{ accountId: ACCOUNT, conversationId: 'long-press' }] });
+    await w.find('[data-test="conversation-row-next"]').trigger('click');
+    expect(w.emitted('selectToggle')?.[1]).toEqual([{ accountId: ACCOUNT, conversationId: 'next' }]);
+  });
 
   it('renders group headings in backend order without selectable semantics', async () => {
     const w = mountList(defaultRows(), { accountId: ACCOUNT, conversationId: 'today-1' });

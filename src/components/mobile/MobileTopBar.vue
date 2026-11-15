@@ -8,6 +8,7 @@ defineProps<{
   title: string;
   executeAction: (id: ActionId) => void;
   openDestinations: () => void;
+  menuExpanded?: boolean;
 }>();
 
 const backHost = ref<HTMLElement | null>(null);
@@ -29,6 +30,8 @@ defineExpose({ backHost });
       data-test="mobile-menu"
       title="Destinations"
       aria-label="Destinations"
+      :aria-expanded="menuExpanded ? 'true' : 'false'"
+      aria-controls="mobile-navigation-drawer"
       @click="openDestinations"
     >
       <HeaderGlyph name="menu" />
