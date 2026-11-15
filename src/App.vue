@@ -71,6 +71,7 @@ import { useActionNotice } from './composables/useActionNotice';
 import { useContactContext } from './composables/useContactContext';
 import { useGoChord } from './composables/useGoChord';
 import { useViewportContact } from './composables/useViewportContact';
+import { useAttachmentChooser } from './composables/useAttachmentChooser';
 import { useSearchSurface } from './composables/useSearchSurface';
 
 const props = withDefaults(defineProps<{
@@ -834,26 +835,8 @@ const { searchVisible, searchDraft, searchInput, cachedSearch, recentQueries, su
   mailbox, accountId, accountReady, drawer, contactDisclosure, replyComposerOpen, composeCardOpen, history,
   captureContext, releaseEditorSurface, nextNavigationToken: () => ++navigationToken, currentNavigationToken: () => navigationToken, focusFocusedRow,
 });
-const attachmentConversation = ref<import('./lib/ipc/client').Conversation | null>(null);
-let attachmentOrigin: HTMLElement | null = null;
-let attachmentScroll = 0;
 // Scope DOM lookups to this App: two workspaces each have their own reader scroller.
 const appRoot = ref<HTMLElement | null>(null);
-function openAttachments(origin?: HTMLElement) {
-  if (drawer.value || overlay.value || !readerOpen.value || mailbox.detailState.value !== 'ready' || !mailbox.conversation.value) return;
-  cancelGo();
-  attachmentOrigin = origin ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
-  attachmentScroll = appRoot.value?.querySelector('.reader-scroll')?.scrollTop ?? 0;
-  attachmentConversation.value = structuredClone(JSON.parse(JSON.stringify(mailbox.conversation.value)));
-}
-async function closeAttachments() {
-  attachmentConversation.value = null;
-  await nextTick();
-  if (attachmentOrigin?.isConnected && !attachmentOrigin.closest('[inert]')) attachmentOrigin.focus({ preventScroll: true });
-  const scroll = appRoot.value?.querySelector('.reader-scroll');
-  if (scroll) scroll.scrollTop = attachmentScroll;
-}
-watch(accountId, () => { attachmentConversation.value = null; });
 const overlay = ref<'palette' | 'navigator' | null>(null);
 // This App belongs to one immutable fixture session. Keep its command query
 // across transient overlay mounts, without sharing the destination query or
@@ -868,6 +851,7 @@ const paletteButton = ref<HTMLElement | null>(null);
 let overlayOrigin: HTMLElement | null = null;
 let overlayRowOrigin: ConversationRef | null = null;
 const { goPending, goHintLabel, endGoGrace, cancelGo, armGo, goTargetFor, isGoSecondKey, isArmed: chordArmed, inGraceWindow: chordInGrace } = useGoChord({ actionAvailable });
+const { attachmentConversation, openAttachments, closeAttachments } = useAttachmentChooser({ mailbox, accountId, appRoot, drawer, overlay, readerOpen, cancelGo });
 function openOverlay(kind: 'palette' | 'navigator'): void {
   cancelGo();
   if (!accountReady.value) return;
