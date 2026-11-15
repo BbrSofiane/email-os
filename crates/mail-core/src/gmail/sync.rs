@@ -2205,8 +2205,8 @@ fn run(
                         // No discovery to poll for, but the tick is still the
                         // retry beat: a Gmail session re-arms queued writes
                         // when its periodic Sync completes, so a synthetic
-                        // session re-arms them here. Without this, siblings
-                        // queued behind a definite failure would never run.
+                        // session re-arms them here. Without this, writes
+                        // requeued by a transient failure would never run.
                         st.operations_requested = true;
                     }
                 }
