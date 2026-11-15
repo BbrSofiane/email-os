@@ -76,14 +76,14 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await pause();
   }
 
-  /** Activate the overlay option whose label contains `text` (overlays render outside <main>). */
-  async function chooseOverlayOption(text: string): Promise<void> {
+  /** Activate a compact drawer destination by its short row label. */
+  async function chooseDrawerRow(text: string): Promise<void> {
     await harness!.cdp.js(`(() => {
       const app = document.querySelector(${JSON.stringify(activeApp)});
-      const option = [...app.querySelectorAll('[role="option"]')]
-        .find(candidate => candidate.textContent.includes(${JSON.stringify(text)}));
-      if (!option) throw new Error('Missing overlay option ' + ${JSON.stringify(text)});
-      option.click();
+      const row = [...app.querySelectorAll('.mobile-drawer-row')]
+        .find(candidate => candidate.textContent.trim() === ${JSON.stringify(text)});
+      if (!row) throw new Error('Missing drawer row ' + ${JSON.stringify(text)});
+      row.click();
     })()`);
     await pause(400);
   }
@@ -124,14 +124,14 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
 
     await freshInbox();
     await click('[data-test="mobile-menu"]');
-    await shot('destinations-overlay');
+    await shot('drawer');
 
-    await chooseOverlayOption('Drafts');
+    await chooseDrawerRow('Drafts');
     await shot('drafts');
 
     await freshInbox();
     await click('[data-test="mobile-menu"]');
-    await chooseOverlayOption('Reminders');
+    await chooseDrawerRow('Reminders');
     await shot('reminders');
 
     await freshInbox();
