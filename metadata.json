@@ -1,0 +1,50 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7GEQ9HQ1B7FFQFJNW89M950",
+  "strategy": "manual-commit",
+  "branch": "mobile/integration-work",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "DESIGN.md",
+    "docs/ux-14-mobile-shell.md",
+    "mise.toml",
+    "src/App.vue",
+    "src/assets/mobile/compose.css",
+    "src/assets/mobile/notices.css",
+    "src/assets/mobile/reader.css",
+    "src/assets/mobile/sheet.css",
+    "src/components/ComposeCard.vue",
+    "src/components/DraftEditorCore.vue",
+    "src/components/HeaderGlyph.vue",
+    "src/components/ReaderView.vue",
+    "src/components/ReplyComposer.vue",
+    "src/components/mobile/MobileActionSheet.vue",
+    "src/composables/useVisualViewportFocus.ts",
+    "src/main.ts",
+    "tests/layout/mobile-action-sheet.test.ts",
+    "tests/layout/mobile-app.test.ts",
+    "tests/layout/mobile-compose.rendered.test.ts",
+    "tests/layout/mobile-css-contract.test.ts",
+    "tests/layout/mobile-reader.rendered.test.ts",
+    "tests/layout/mobile-screenshots.rendered.test.ts",
+    "tests/layout/visual-viewport-focus.test.ts",
+    "tests/reader/reader-compact.test.ts",
+    "tests/support/css-contract.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 24,
+    "cache_creation_tokens": 469520,
+    "cache_read_tokens": 5292795,
+    "output_tokens": 7411,
+    "api_call_count": 12
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7GEQ9HQ1B7FFQFJNW89M950",
+  "session_id": "415cd333-37f5-4cfe-be88-ad6fe867d94b",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-15T20:35:05.526839142Z",
+  "branch": "mobile/integration-work",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "DESIGN.md",
+    "docs/ux-14-mobile-shell.md",
+    "mise.toml",
+    "src/App.vue",
+    "src/assets/mobile/compose.css",
+    "src/assets/mobile/notices.css",
+    "src/assets/mobile/reader.css",
+    "src/assets/mobile/sheet.css",
+    "src/components/ComposeCard.vue",
+    "src/components/DraftEditorCore.vue",
+    "src/components/HeaderGlyph.vue",
+    "src/components/ReaderView.vue",
+    "src/components/ReplyComposer.vue",
+    "src/components/mobile/MobileActionSheet.vue",
+    "src/composables/useVisualViewportFocus.ts",
+    "src/main.ts",
+    "tests/layout/mobile-action-sheet.test.ts",
+    "tests/layout/mobile-app.test.ts",
+    "tests/layout/mobile-compose.rendered.test.ts",
+    "tests/layout/mobile-css-contract.test.ts",
+    "tests/layout/mobile-reader.rendered.test.ts",
+    "tests/layout/mobile-screenshots.rendered.test.ts",
+    "tests/layout/visual-viewport-focus.test.ts",
+    "tests/reader/reader-compact.test.ts",
+    "tests/support/css-contract.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5-2",
+  "turn_id": "f8a92d675c00",
+  "checkpoint_transcript_start": 1111,
+  "transcript_lines_at_start": 1111,
+  "compact_transcript_start": 210,
+  "token_usage": {
+    "input_tokens": 24,
+    "cache_creation_tokens": 469520,
+    "cache_read_tokens": 5292795,
+    "output_tokens": 7411,
+    "api_call_count": 12
+  },
+  "session_metrics": {
+    "turn_count": 5
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-15T20:35:05.067028067Z",
+    "agent_lines": 1794,
+    "agent_removed": 110,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 1794,
+    "total_lines_changed": 1904,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 58,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".codex/hooks.json": 23,
+        "pi-scheduled-tasks": 35
+      }
+    }
+  ]
+}
