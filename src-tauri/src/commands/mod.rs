@@ -13,6 +13,9 @@ pub(crate) use drafts::*;
 mod transition;
 pub(crate) use transition::*;
 
+mod lifecycle;
+pub(crate) use lifecycle::*;
+
 use crate::diagnostics::{cause, storage_failure};
 use mail_core::error::MailError;
 
