@@ -75,6 +75,9 @@ const props = defineProps<{
   /** A reply composer is docked under the thread: keep the message being answered (the latest) in view. */
   replyDocked?: boolean;
   compact?: boolean;
+  starShown?: boolean;
+  starEnabled?: boolean;
+  starred?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -95,6 +98,7 @@ const emit = defineEmits<{
       | { ref: ConversationRef; messageId: string; displayName: string | null; mailbox: string }
       | null,
   ];
+  star: [];
 }>();
 
 const container = ref<HTMLElement | null>(null);
@@ -911,6 +915,7 @@ defineExpose({
     </Teleport>
     <Teleport :to="props.actionsHost ?? undefined" :disabled="!props.actionsHost">
       <div class="reader-actions" data-test="reader-toolbar">
+        <button v-if="props.compact && props.starShown" type="button" class="header-glyph" data-test="reader-star" :aria-label="props.starred ? 'Unstar' : 'Star'" :title="props.starred ? 'Unstar' : 'Star'" :disabled="!props.starEnabled" @click="emit('star')"><HeaderGlyph name="star" :filled="props.starred" /><span class="visually-hidden">{{ props.starred ? 'Unstar' : 'Star' }}</span></button>
         <button v-if="actionsShown && props.reminderEnabled && !bulkScope && props.conversation?.isInInbox" type="button" class="header-glyph" data-test="reader-remind" title="Remind me on this device" :disabled="!actionable || props.commandInFlight" @click="emit('remind')"><HeaderGlyph name="remind" /><span class="visually-hidden">Remind me on this device</span></button>
         <button
           v-if="actionsShown && !props.readOnly && !bulkScope"

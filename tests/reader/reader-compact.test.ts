@@ -49,4 +49,23 @@ describe('ReaderView compact toolbar', () => {
     expect(wrapper.findAll('[data-test="reader-toolbar"] button')).toHaveLength(7);
     expect(wrapper.find('[data-test="prepare-reply"]').exists()).toBe(true);
   });
+
+  it('shows the current star state and emits the star action', async () => {
+    wrapper = mountReaderView(conversationOf(), {
+      compact: true,
+      starShown: true,
+      starEnabled: true,
+      starred: true,
+    });
+    const star = wrapper.get('[data-test="reader-star"]');
+    expect(star.attributes('aria-label')).toBe('Unstar');
+    expect(star.find('svg path').attributes('fill')).toBe('currentColor');
+    await star.trigger('click');
+    expect(wrapper.emitted('star')).toHaveLength(1);
+  });
+
+  it('hides the star when the capability is absent', () => {
+    wrapper = mountReaderView(conversationOf(), { compact: true, starShown: false });
+    expect(wrapper.find('[data-test="reader-star"]').exists()).toBe(false);
+  });
 });
