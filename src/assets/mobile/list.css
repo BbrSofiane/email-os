@@ -143,6 +143,11 @@
   white-space: nowrap;
 }
 
+.app[data-layout="compact"] .inbox-row .row-time {
+  display: block;
+  visibility: visible;
+}
+
 .app[data-layout="compact"] .row-subject-snippet {
   display: contents;
 }

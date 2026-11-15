@@ -58,6 +58,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       subject: DOMRectReadOnly;
       preview: DOMRectReadOnly;
       time: DOMRectReadOnly;
+      timeVisibility: string;
       row: DOMRectReadOnly;
       actions: string;
       checkbox: string;
@@ -81,6 +82,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
           subject: rect('.row-subject'),
           preview: rect('.row-preview'),
           time: rect('.row-time'),
+          timeVisibility: getComputedStyle(row.querySelector('.row-time')).visibility,
           row: (() => {
             const box = row.getBoundingClientRect();
             return { left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: box.width, height: box.height };
@@ -101,6 +103,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       expect(row.subject.top).toBeLessThan(row.preview.top);
       expect(Math.abs(row.time.top - row.sender.top)).toBeLessThanOrEqual(2);
       expect(row.time.left).toBeGreaterThan(row.sender.left);
+      expect(row.timeVisibility).toBe('visible');
       expect(row.preview.height).toBeLessThanOrEqual(40);
       expect(row.row.height).toBeGreaterThanOrEqual(72);
       expect(row.row.right).toBeLessThanOrEqual(row.paneRight + 1);
