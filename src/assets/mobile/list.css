@@ -60,6 +60,46 @@
   border-bottom: 1px solid var(--rule);
   line-height: 1.25;
   touch-action: pan-y;
+  isolation: isolate;
+}
+
+.app[data-layout="compact"] .inbox-row > :not(.row-swipe-underlay) {
+  transform: translateX(var(--swipe-offset, 0px));
+  transition: transform 160ms ease;
+}
+
+.app[data-layout="compact"] .row-swipe-underlay {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-inline: 16px;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--focus-accent) 24%, transparent);
+}
+
+.app[data-layout="compact"] .row-swipe-underlay.remind {
+  justify-content: flex-start;
+  background: color-mix(in srgb, var(--unread-marker) 24%, transparent);
+}
+
+.app[data-layout="compact"] .row-swipe-underlay.done {
+  justify-content: flex-end;
+}
+
+.app[data-layout="compact"] .row-swipe-icon {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--focus-accent) 55%, transparent);
+}
+
+.app[data-layout="compact"] .row-swipe-underlay.remind .row-swipe-icon {
+  background: color-mix(in srgb, var(--unread-marker) 55%, transparent);
 }
 
 .app[data-layout="compact"] .row-read-state {

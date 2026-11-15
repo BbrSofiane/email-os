@@ -2446,6 +2446,7 @@ const searchSyntaxEditHint = computed(() =>
               :show-read-controls="gmailActionsEnabled"
               :reminder-enabled="reminderActionEnabled"
               :read-only="mailbox.context.value === 'trash'"
+              :compact="layoutMode === 'compact'"
               :selected-refs="mailbox.selectedRefs.value"
               @focus="mailbox.focusConversation($event)"
               @open="executeAction('open', $event)"

@@ -30,6 +30,7 @@ import { actionLabel } from '../lib/action-registry';
 import { compactDateLabel, dateGroupCaption, dateGroupFor, fullDateLabel, machineDateTime } from '../lib/browsing-dates';
 import { groupRowsBySender, isSingleFromQuery, senderGroupKey, senderGroupLabel } from '../lib/search';
 import RowGlyph from './RowGlyph.vue';
+import { useSwipeAction } from '../composables/useSwipeAction';
 
 const props = defineProps<{
   rows: ConversationSummaryLike[];
@@ -48,6 +49,7 @@ const props = defineProps<{
   readOnly?: boolean;
   /** UX-05: selected references (account-scoped); selection ≠ focus. */
   selectedRefs?: ConversationRef[];
+  compact?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -73,6 +75,11 @@ function isSelected(row: ConversationSummaryLike): boolean {
 
 /** Pointer click on a row: Cmd/Ctrl toggles, Shift/Cmd+Shift ranges, plain opens. */
 function onRowClick(event: MouseEvent, row: ConversationSummaryLike): void {
+  if (props.compact && swipeFor(row).consumeClick()) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
   if (props.readOnly) {
     emit('open', row.ref);
     return;
@@ -276,6 +283,29 @@ function readStateName(row: ConversationSummaryLike): string {
 function hasRowActions(): boolean {
   if (props.readOnly) return false;
   return Boolean(props.showReadControls || props.actionsEnabled || props.reminderEnabled);
+}
+
+const swipes = new Map<string, ReturnType<typeof useSwipeAction>>();
+function swipeFor(row: ConversationSummaryLike): ReturnType<typeof useSwipeAction> {
+  const key = rowKey(row.ref);
+  let swipe = swipes.get(key);
+  if (!swipe) {
+    swipe = useSwipeAction(
+      () => rowEls.get(key) ?? null,
+      (side) => !props.readOnly && (side === 'right'
+        ? props.reminderEnabled === true && props.context === 'inbox'
+        : props.actionsEnabled === true && props.context !== 'starred'),
+      (side) => {
+        if (side === 'right' && props.reminderEnabled && props.context === 'inbox') emit('remind', row.ref);
+        else if (side === 'left' && props.actionsEnabled && props.context !== 'starred') {
+          if (props.context === 'done') emit('unarchive', row.ref);
+          else emit('archive', row.ref);
+        }
+      },
+    );
+    swipes.set(key, swipe);
+  }
+  return swipe;
 }
 
 /** DOM id of the row's action disclosure panel (for aria-controls). */
@@ -617,11 +647,25 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
         :tabindex="tabIndexFor(item.row, item.index)"
         :data-test="`conversation-row-${item.row.ref.conversationId}`"
         :ref="(el) => setRowRef(el, rowKey(item.row.ref))"
+        :style="compact ? { '--swipe-offset': swipeFor(item.row).offset.value + 'px' } : undefined"
+        @pointerdown="compact && !readOnly && swipeFor(item.row).pointerdown($event)"
+        @pointermove="compact && !readOnly && swipeFor(item.row).pointermove($event)"
+        @pointerup="compact && !readOnly && swipeFor(item.row).pointerup($event)"
+        @pointercancel="compact && !readOnly && swipeFor(item.row).pointercancel($event)"
         @focusin="onFocusIn($event, item.row)"
         @focusout="onFocusOut"
         @keydown.escape="onRowKeydown($event, item.row)"
         @click="onRowClick($event, item.row)"
       >
+        <span
+          v-if="compact && !readOnly && swipeFor(item.row).revealed.value"
+          class="row-swipe-underlay"
+          :class="swipeFor(item.row).revealed.value === 'right' ? 'remind' : 'done'"
+          aria-hidden="true"
+        >
+          <span class="row-swipe-icon"><RowGlyph :name="swipeFor(item.row).revealed.value === 'right' ? 'reminder' : context === 'done' ? 'restore' : 'archive'" /></span>
+          <span>{{ swipeFor(item.row).revealed.value === 'right' ? 'Remind' : context === 'done' ? 'Mark not done' : 'Mark done' }}</span>
+        </span>
         <!-- UX-05 selection control: a native labelled checkbox in the 44px
              gutter; it stops propagation and never opens the row. Revealed by
              selection mode, hover, the focused row, or its own focus. No

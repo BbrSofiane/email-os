@@ -40,7 +40,7 @@ export function useSwipeAction(
         return;
       }
       horizontal = true;
-      element()?.setPointerCapture(event.pointerId);
+      element()?.setPointerCapture?.(event.pointerId);
     }
     if (!horizontal) return;
     const side = dx >= 0 ? 'right' : 'left';
