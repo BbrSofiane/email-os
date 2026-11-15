@@ -26,6 +26,9 @@
 .app[data-layout="compact"] .reader-scroll .reader-meta-row {
   margin-inline: 0;
 }
+.app[data-layout="compact"] .reader-meta-row .reader-status {
+  margin-inline: 0;
+}
 .app[data-layout="compact"] .reader-meta-row button {
   min-height: 48px;
 }

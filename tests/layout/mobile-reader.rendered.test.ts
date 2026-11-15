@@ -30,7 +30,7 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
       app.querySelector('[data-test="conversation-row-conv-01"]').click();
     })()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
-    const geometry = await harness!.cdp.js<{ width: number; viewport: number; pane: { top: number; bottom: number }; subject: { top: number; bottom: number; left: number }; statusLeft: number | null; firstSenderLeft: number; messages: { top: number; bottom: number }; bodySize: string | null; lastBottom: number; bottomTop: number; actionTop: number; replyBar: { top: number; bottom: number; height: number } | null; messageMore: { width: number; height: number } | null; headerLines: Array<{ senderCenter: number; senderRight: number; dateCenter: number; dateLeft: number }>; scrollHeight: number; clientHeight: number }>(`(() => {
+    const geometry = await harness!.cdp.js<{ width: number; viewport: number; pane: { top: number; bottom: number }; subject: { top: number; bottom: number; left: number }; statusLeft: number | null; readStateLeft: number | null; firstSenderLeft: number; messages: { top: number; bottom: number }; bodySize: string | null; lastBottom: number; bottomTop: number; actionTop: number; replyBar: { top: number; bottom: number; height: number } | null; messageMore: { width: number; height: number } | null; headerLines: Array<{ senderCenter: number; senderRight: number; dateCenter: number; dateLeft: number }>; scrollHeight: number; clientHeight: number }>(`(() => {
       const app = document.querySelector(${JSON.stringify(appSelector)});
       const pane = app.querySelector('.reader-pane').getBoundingClientRect();
       const subject = app.querySelector('.reader-subject').getBoundingClientRect();
@@ -47,6 +47,7 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
         pane: { top: pane.top, bottom: pane.bottom },
         subject: { top: subject.top, bottom: subject.bottom, left: subject.left },
         statusLeft: statusText ? statusText.getBoundingClientRect().left : null,
+        readStateLeft: app.querySelector('[data-test="reader-read-state"]')?.getBoundingClientRect().left ?? null,
         firstSenderLeft: firstSender.left,
         messages: { top: messages.top, bottom: messages.bottom },
         bodySize: body ? getComputedStyle(body).fontSize : null,
@@ -68,6 +69,9 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
     expect(geometry.subject.top).toBeGreaterThanOrEqual(geometry.pane.top);
     if (geometry.statusLeft !== null) {
       expect(Math.abs(geometry.subject.left - geometry.statusLeft)).toBeLessThanOrEqual(1);
+    }
+    if (geometry.readStateLeft !== null) {
+      expect(Math.abs(geometry.subject.left - geometry.readStateLeft)).toBeLessThanOrEqual(1);
     }
     expect(Math.abs(geometry.subject.left - geometry.firstSenderLeft)).toBeLessThanOrEqual(1);
     expect(geometry.messages.bottom).toBeLessThanOrEqual(geometry.pane.bottom + geometry.scrollHeight);
