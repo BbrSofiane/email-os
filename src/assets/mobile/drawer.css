@@ -63,6 +63,12 @@
   outline-offset: 1px;
 }
 
+.app[data-layout="compact"] .mobile-drawer-row svg {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+}
+
 .app[data-layout="compact"] .mobile-drawer-row:disabled {
   opacity: 0.55;
 }

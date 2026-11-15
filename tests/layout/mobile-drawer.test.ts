@@ -34,6 +34,10 @@ describe('MobileDrawer', () => {
     expect(wrapper.get('button[title="Unavailable offline"]').attributes('disabled')).toBeDefined();
     expect(wrapper.find('button[aria-description="Go to cached Trash (read only)"]').exists()).toBe(true);
     expect(wrapper.findAll('.mobile-drawer-row').map((row) => row.text())).toContain('Commands');
+    const settings = wrapper.findAll('.mobile-drawer-row').find((row) => row.text() === 'Reminder settings');
+    const commands = wrapper.findAll('.mobile-drawer-row').find((row) => row.text() === 'Commands');
+    expect(settings?.find('svg').attributes('data-glyph')).toBe('settings');
+    expect(commands?.find('svg').attributes('data-glyph')).toBe('commands');
     wrapper.unmount();
   });
 

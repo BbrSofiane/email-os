@@ -42,6 +42,7 @@ function glyph(id: ActionId): string {
   if (id === 'starred') return 'star';
   if (id === 'reminders') return 'reminders';
   if (id === 'saved') return 'files';
+  if (id === 'reminder-settings') return 'settings';
   return 'commands';
 }
 
@@ -109,7 +110,7 @@ function choose(id: ActionId): void {
           @click="choose(row.id)"
         >
           <PaneGlyph v-if="['inbox', 'done', 'drafts', 'trash', 'activity', 'account', 'destinations'].includes(row.id)" :name="glyph(row.id) as 'inbox'" />
-          <HeaderGlyph v-else :name="glyph(row.id) as 'menu'" />
+          <HeaderGlyph v-else :name="glyph(row.id) as 'menu' | 'settings' | 'commands' | 'star' | 'reminders' | 'files'" />
           <span>{{ row.label }}</span>
         </button>
       </template>

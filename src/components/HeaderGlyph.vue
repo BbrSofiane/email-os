@@ -5,7 +5,7 @@
  * carries the accessible name in visually hidden text.
  */
 defineProps<{
-  name: 'menu' | 'search' | 'commands' | 'star' | 'back' | 'remind' | 'reminders' | 'x' | 'compose' | 'done' | 'files' | 'reply' | 'read' | 'unread' | 'prev' | 'next';
+  name: 'menu' | 'search' | 'commands' | 'settings' | 'star' | 'back' | 'remind' | 'reminders' | 'x' | 'compose' | 'done' | 'files' | 'reply' | 'read' | 'unread' | 'prev' | 'next';
   /** Star only: a filled star for the pressed (filter on) state. */
   filled?: boolean;
 }>();
@@ -16,6 +16,7 @@ defineProps<{
     class="header-glyph-icon"
     width="16"
     height="16"
+    :data-glyph="name"
     viewBox="0 0 16 16"
     fill="none"
     stroke="currentColor"
@@ -37,6 +38,12 @@ defineProps<{
       v-else-if="name === 'commands'"
       d="M10 4v8a2 2 0 1 0 2-2H4a2 2 0 1 0 2 2V4a2 2 0 1 0-2 2h8a2 2 0 1 0-2-2"
     />
+    <!-- Starred only filter: outline at rest, filled while the filter is on. -->
+    <template v-else-if="name === 'settings'">
+      <circle cx="8" cy="8" r="2.1" />
+      <circle cx="8" cy="8" r="5.1" />
+      <path d="M8 1.2v1.4M8 13.4v1.4M1.2 8h1.4M13.4 8h1.4M3.2 3.2l1 1M11.8 11.8l1 1M12.8 3.2l-1 1M4.2 11.8l-1 1" />
+    </template>
     <!-- Starred only filter: outline at rest, filled while the filter is on. -->
     <path
       v-else-if="name === 'star'"
