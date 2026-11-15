@@ -1,0 +1,15 @@
+{
+  "tool_use_id": "toolu_01QTQnUuYydXsezkxaebQ7fe",
+  "agent_id": "a2a480a002db7e045",
+  "subagent_type": "general-purpose",
+  "task_description": "Review Backend collapse diff",
+  "token_usage": {
+    "input_tokens": 18,
+    "cache_creation_tokens": 89201,
+    "cache_read_tokens": 514765,
+    "output_tokens": 3534,
+    "api_call_count": 9
+  },
+  "started_at": "2026-11-14T23:42:48.048805442Z",
+  "completed_at": "2026-11-14T23:43:32.644815075Z"
+}
