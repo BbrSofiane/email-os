@@ -123,6 +123,7 @@
 }
 
 body:has(.app[data-layout="compact"]) .backdrop.compact-picker {
+  --type-body: var(--mobile-type-list);
   align-items: flex-end;
   padding: 0;
   overflow: hidden;
@@ -138,6 +139,47 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker {
   overflow-y: auto;
 }
 
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-title-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-inline: 16px;
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-title-line h2 {
+  flex: 1;
+  margin-inline: 0;
+  font-size: var(--type-body);
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-close {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  min-width: 48px;
+  min-height: 48px;
+  place-items: center;
+  border-radius: 50%;
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-close svg {
+  width: 18px;
+  height: 18px;
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker * {
+  font-size: var(--type-body);
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker small {
+  font-size: var(--mobile-type-meta);
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker [role="option"] span {
+  font-size: var(--type-body);
+}
+
 body:has(.app[data-layout="compact"]) .backdrop.compact-picker input {
   height: 48px;
   font-size: 16px;
@@ -149,6 +191,21 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker li[role="option"]
 
 body:has(.app[data-layout="compact"]) .backdrop.compact-picker .time-zone-note {
   overflow-wrap: anywhere;
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker footer {
+  display: none;
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-controls .picker-primary {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid var(--focus-accent);
+  border-radius: 12px;
+  background: var(--focus-fill);
+  color: var(--text-primary);
+  font-size: var(--mobile-type-list);
+  font-weight: 600;
 }
 
 .app[data-layout="compact"] form.mail-search {

@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { PHONE_VIEWPORT, startRenderedHarness, type RenderedHarness } from '../rendered/chromium';
 
 const chromePath = process.env.EMAIL_OS_RENDERED_LAYOUT_CHROME ?? '';
@@ -13,6 +13,11 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
     harness = await startRenderedHarness(chromePath, 'email-os-mobile-pages-', pageRoot, PHONE_VIEWPORT);
     await harness.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
   }, 120_000);
+
+  beforeEach(async () => {
+    await harness!.cdp.cmd('Page.reload');
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
+  });
 
   afterAll(async () => {
     await harness?.close();
@@ -62,16 +67,25 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 200))');
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="reader-remind"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
-    const geometry = await harness!.cdp.js<{ picker: DOMRectReadOnly; input: DOMRectReadOnly; options: DOMRectReadOnly[]; viewport: number }>(`(() => {
+    const geometry = await harness!.cdp.js<{ picker: DOMRectReadOnly; input: DOMRectReadOnly; options: Array<{ height: number; fontSize: string }>; viewport: number; footerDisplay: string; schedule: DOMRectReadOnly; close: DOMRectReadOnly }>(`(() => {
       const picker = document.querySelector('[data-reminder-picker]');
-      const rect = element => { const box = element.getBoundingClientRect(); return { top: box.top, bottom: box.bottom, height: box.height, left: box.left, right: box.right }; };
-      return { picker: rect(picker), input: rect(picker.querySelector('input')), options: [...picker.querySelectorAll('[role="option"]')].map(rect), viewport: innerHeight };
+      const rect = element => { const box = element.getBoundingClientRect(); return { top: box.top, bottom: box.bottom, height: box.height, width: box.width, left: box.left, right: box.right }; };
+      const options = [...picker.querySelectorAll('[role="option"]')].map(option => ({ ...rect(option), fontSize: getComputedStyle(option.querySelector('span')).fontSize }));
+      return { picker: rect(picker), input: rect(picker.querySelector('input')), options, viewport: innerHeight, footerDisplay: getComputedStyle(picker.querySelector('footer')).display, schedule: rect(picker.querySelector('.picker-primary')), close: rect(picker.querySelector('.picker-close')) };
     })()`);
     expect(geometry.picker.bottom).toBeCloseTo(geometry.viewport, 0);
     expect(geometry.picker.left).toBe(0);
     expect(geometry.input.height).toBeGreaterThanOrEqual(48);
     expect(geometry.options.length).toBeGreaterThan(0);
     expect(geometry.options.every(option => option.height >= 48)).toBe(true);
+    expect(geometry.options.every(option => Number.parseFloat(option.fontSize) >= 15)).toBe(true);
+    expect(geometry.footerDisplay).toBe('none');
+    expect(geometry.schedule.height).toBeGreaterThanOrEqual(48);
+    expect(geometry.schedule.width).toBeGreaterThanOrEqual(geometry.picker.right * 0.8);
+    expect(geometry.close.height).toBeGreaterThanOrEqual(48);
+    await harness!.cdp.js(`document.querySelector('[data-reminder-picker] .picker-close').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
+    expect(await harness!.cdp.js(`document.querySelector('[data-reminder-picker]') === null`)).toBe(true);
   });
 
   it('sizes compact Search controls and shows submitted results without overflow', async () => {
