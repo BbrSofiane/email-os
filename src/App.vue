@@ -31,6 +31,7 @@
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useLayoutMode } from './composables/useLayoutMode';
+import { installAndroidBackBridge } from './lib/android-back';
 import MobileTopBar from './components/mobile/MobileTopBar.vue';
 import MobileBottomBar from './components/mobile/MobileBottomBar.vue';
 import { createSubjectIndex } from './lib/subject-index';
@@ -766,7 +767,9 @@ const reminderActionEnabled = computed(() => remindersSupported.value && selecte
  */
 const centralCovered = computed(() => !!overlay.value || !!attachmentConversation.value || !!drawer.value || (!wideViewport.value && contactDisclosure.value));
 
+let removeAndroidBack: () => void = () => undefined;
 onMounted(() => {
+  removeAndroidBack = installAndroidBackBridge(androidFixture, () => { const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }); window.dispatchEvent(event); return event.defaultPrevented; });
   window.addEventListener('keydown', onKeydown);
   window.addEventListener('blur', cancelGo);
   window.addEventListener('compositionstart', cancelGo);
@@ -775,6 +778,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  removeAndroidBack();
   reminderViewAlive = false;
   window.removeEventListener('keydown', onKeydown);
   window.removeEventListener('blur', cancelGo);

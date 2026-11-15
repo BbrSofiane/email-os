@@ -987,3 +987,8 @@ subject, address, body, token, URL with ids or SQL with bound values; the
 privacy test in `storage_log.rs` provokes SQLite errors whose own text quotes
 synthetic sensitive strings and asserts none reaches the log line. Logs go to
 stderr in the app; to see them when running the shell, run it from a terminal.
+
+
+### Mobile review screenshots
+
+With the rendered Chrome binary available, capture the browser preview at the phone preset with `EMAIL_OS_RENDERED_LAYOUT_CHROME=/path/to/chrome EMAIL_OS_SCREENSHOT_DIR=/tmp/email-os-mobile mise run test:rendered`. The opt-in rendered suite writes screenshot artifacts into the requested directory.
