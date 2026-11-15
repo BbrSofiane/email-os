@@ -40,7 +40,7 @@ describe("InboxList (UX-01 compact rows)", () => {
   function mountList(
     rows: ConversationSummary[],
     focusedRef: ConversationRef | null = null,
-    options: { showReadState?: boolean; showReadControls?: boolean; actionsEnabled?: boolean; reminderEnabled?: boolean; compact?: boolean; readOnly?: boolean; selectedRefs?: ConversationRef[]; context?: 'inbox' | 'saved' | 'done' | 'starred' | 'search'; searchQuery?: string } = {},
+    options: { showReadState?: boolean; showReadControls?: boolean; actionsEnabled?: boolean; reminderEnabled?: boolean; compact?: boolean; readOnly?: boolean; selectedRefs?: ConversationRef[]; context?: 'inbox' | 'saved' | 'done' | 'starred' | 'search'; searchQuery?: string; swipeRight?: 'remind' | 'done' | 'none'; swipeLeft?: 'remind' | 'done' | 'none' } = {},
   ): VueWrapper {
     const mounted = mount(InboxList, {
       props: { rows, focusedRef, actionsEnabled: true, ...options },
@@ -86,6 +86,34 @@ describe("InboxList (UX-01 compact rows)", () => {
     await flushPromises();
     expect(w.emitted(expected)).toHaveLength(1);
     expect(w.emitted(expected)?.[0]).toEqual([{ accountId: ACCOUNT, conversationId: 'swipe' }]);
+  });
+
+  it('swaps swipe actions and resists a disabled side', async () => {
+    const swapped = mountList([row('swapped', { lastMessageAt: '2026-01-15T09:00:00Z' })], null, {
+      compact: true,
+      reminderEnabled: true,
+      swipeRight: 'done',
+      swipeLeft: 'remind',
+    });
+    const element = swapped.get('.inbox-row').element;
+    element.dispatchEvent(pointerEvent('pointerdown', 0));
+    element.dispatchEvent(pointerEvent('pointermove', 100));
+    element.dispatchEvent(pointerEvent('pointerup', 100));
+    await flushPromises();
+    expect(swapped.emitted('archive')).toHaveLength(1);
+
+    const disabled = mountList([row('disabled', { lastMessageAt: '2026-01-15T09:00:00Z' })], null, {
+      compact: true,
+      actionsEnabled: true,
+      swipeLeft: 'none',
+    });
+    const disabledRow = disabled.get('.inbox-row').element;
+    disabledRow.dispatchEvent(pointerEvent('pointerdown', 0));
+    disabledRow.dispatchEvent(pointerEvent('pointermove', -100));
+    disabledRow.dispatchEvent(pointerEvent('pointerup', -100));
+    await flushPromises();
+    expect(disabled.emitted('archive')).toBeUndefined();
+    expect(disabled.emitted('unarchive')).toBeUndefined();
   });
 
   it.each([

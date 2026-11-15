@@ -36,6 +36,7 @@ import MobileTopBar from './components/mobile/MobileTopBar.vue';
 import MobileDrawer from './components/mobile/MobileDrawer.vue';
 import MobileBottomBar from './components/mobile/MobileBottomBar.vue';
 import MobileActionSheet from './components/mobile/MobileActionSheet.vue';
+import { loadSwipePreferences } from './lib/swipe-preferences';
 import { createSubjectIndex } from './lib/subject-index';
 import ActionOverlay from './components/ActionOverlay.vue';
 import RemindersList from './components/RemindersList.vue';
@@ -87,6 +88,7 @@ const props = withDefaults(defineProps<{
   active?: boolean;
   switchAccountLabel?: string;
 }>(), { active: true });
+const swipePreferences = loadSwipePreferences();
 const emit = defineEmits<{ switchAccount: []; workspaceTitle: [title: string] }>();
 const workspaceActive = computed(() => props.active !== false);
 const androidFixture = isTauriRuntime() && /Android/i.test(navigator.userAgent);
@@ -859,7 +861,7 @@ const readerSheetItems = computed(() => {
     { id: readAction, label: conversation?.isRead ? 'Mark unread' : 'Mark read', glyph: conversation?.isRead ? 'unread' as const : 'read' as const, disabled: !actionAvailable(readAction) },
     { id: 'reply', label: 'Reply', glyph: 'reply' as const, disabled: !actionAvailable('reply'), disabledReason: replyReason ?? undefined, group: 'more' },
     ...(!androidFixture ? [{ id: 'files', label: 'Files and links', glyph: 'files' as const, disabled: !actionAvailable('open') }] : []),
-    { id: 'contact-details', label: 'Contact details', glyph: 'contact' as const, group: 'more' },
+    { id: 'contact-details', label: 'Contact details', glyph: 'menu' as const, group: 'more' },
     { id: 'commands', label: 'Commands', glyph: 'commands' as const, group: 'commands' },
   ];
 });
@@ -2465,6 +2467,8 @@ const searchSyntaxEditHint = computed(() =>
               :reminder-enabled="reminderActionEnabled"
               :read-only="mailbox.context.value === 'trash'"
               :compact="layoutMode === 'compact'"
+              :swipe-right="swipePreferences.right"
+              :swipe-left="swipePreferences.left"
               :selected-refs="mailbox.selectedRefs.value"
               @focus="mailbox.focusConversation($event)"
               @open="executeAction('open', $event)"

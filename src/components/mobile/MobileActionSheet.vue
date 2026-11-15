@@ -5,7 +5,7 @@ import HeaderGlyph from '../HeaderGlyph.vue';
 export interface MobileActionSheetItem {
   id: string;
   label: string;
-  glyph: 'menu' | 'search' | 'commands' | 'star' | 'back' | 'remind' | 'reminders' | 'x' | 'compose' | 'done' | 'files' | 'reply' | 'read' | 'unread' | 'prev' | 'next' | 'contact';
+  glyph: 'menu' | 'search' | 'commands' | 'star' | 'back' | 'remind' | 'reminders' | 'x' | 'compose' | 'done' | 'files' | 'reply' | 'read' | 'unread' | 'prev' | 'next';
   disabled?: boolean;
   disabledReason?: string;
   group?: string;
