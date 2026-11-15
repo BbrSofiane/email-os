@@ -252,7 +252,7 @@ were missing; this is historical environment evidence, not a result from the
 baseline above. Do not install OS packages as part of a routine validation run.
 
 Rendered Chromium suites are opt-in and excluded from the default `mise run test:ui`.
-Each suite starts its own Vite server and synthetic in-memory fixture. Run all five:
+Each suite starts its own Vite server and synthetic in-memory fixture. Run all six:
 
 ```sh
 EMAIL_OS_RENDERED_LAYOUT_CHROME=/path/to/chromium \

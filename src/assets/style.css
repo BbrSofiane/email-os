@@ -441,7 +441,8 @@ button:focus-visible {
 .header-note {
   flex: 0 1 auto;
   min-width: 0;
-  margin: 0 12px 0 0;
+  margin: -4px 12px -4px 0;
+  padding-block: 4px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -597,8 +598,13 @@ button:focus-visible {
   display: none;
 }
 
+/* Inline text actions keep a 24px hit area (DESIGN.md sets no minimum; 24px is the ghost button's height): the
+   button is padded 4px above and below and gives it back as a negative margin, so the text and the line keep
+   their size. The notes clip (overflow: hidden), so they carry the same padding and margin pair and the grown
+   area sits in their padding box, not outside it. */
 .header-link {
-  padding: 0 2px;
+  padding: 4px 2px;
+  margin-block: -4px;
   background: transparent;
   border: 0;
   color: var(--text-primary);
@@ -612,8 +618,8 @@ button:focus-visible {
 
 /* A link-style action inside an in-flow line (the empty inbox line). */
 .inline-action {
-  margin-left: 6px;
-  padding: 0 2px;
+  margin: -4px 0 -4px 6px;
+  padding: 4px 2px;
   background: transparent;
   border: 0;
   color: var(--text-primary);
