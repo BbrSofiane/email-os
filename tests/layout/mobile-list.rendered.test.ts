@@ -207,4 +207,75 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     const after = await harness!.cdp.js<number>(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('.inbox-scroll').scrollTop`);
     expect(after).toBeGreaterThan(before);
   });
+
+  it.each([
+    { width: 412, height: 915 },
+    { width: 360, height: 800 },
+  ])('selects on long press and keeps the selection pill clear at $width × $height', async ({ width, height }) => {
+    await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
+      width,
+      height,
+      screenWidth: width,
+      screenHeight: height,
+      deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor,
+      mobile: true,
+    });
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-mail"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
+    const start = await harness!.cdp.js<{ x: number; y: number }>(`(() => {
+      const row = document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="conversation-row-conv-01"]');
+      const rect = row.getBoundingClientRect();
+      return { x: rect.left + 30, y: rect.top + 20 };
+    })()`);
+    await touch('touchStart', start.x, start.y);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 600))');
+    await touch('touchEnd');
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 200))');
+
+    const measure = await harness!.cdp.js<{
+      selected: boolean;
+      checkbox: { width: number; height: number; opacity: string };
+      bar: { top: number; bottom: number; left: number; right: number };
+      bottomRegion: { top: number; left: number; right: number };
+      buttons: Array<{ width: number; height: number }>;
+    }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const box = element => {
+        const rect = element.getBoundingClientRect();
+        return { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, width: rect.width, height: rect.height };
+      };
+      const bar = app.querySelector('[data-test="selection-bar"]');
+      const checkbox = app.querySelector('[data-test="row-select-conv-01"]');
+      const bottom = app.querySelector('[data-test="mobile-bottom-region"]');
+      return {
+        selected: app.querySelector('[data-test="selection-count"]')?.textContent.includes('1 selected') ?? false,
+        checkbox: { ...box(checkbox), opacity: getComputedStyle(checkbox).opacity },
+        bar: box(bar),
+        bottomRegion: box(bottom),
+        buttons: [...bar.querySelectorAll('button')].map(box),
+      };
+    })()`);
+    expect(measure.selected).toBe(true);
+    expect(measure.checkbox.width).toBeGreaterThanOrEqual(48);
+    expect(measure.checkbox.height).toBeGreaterThanOrEqual(48);
+    expect(measure.checkbox.opacity).toBe('1');
+    expect(measure.bar.top).toBeGreaterThanOrEqual(0);
+    expect(measure.bar.left).toBeGreaterThanOrEqual(measure.bottomRegion.left - 1);
+    expect(measure.bar.right).toBeLessThanOrEqual(measure.bottomRegion.right + 1);
+    expect(measure.bar.bottom).toBeLessThanOrEqual(measure.bottomRegion.top - 11);
+    expect(measure.buttons.every(button => button.width >= 48 && button.height >= 48)).toBe(true);
+
+    const second = await harness!.cdp.js<{ x: number; y: number }>(`(() => {
+      const row = document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="conversation-row-conv-02"]');
+      const rect = row.getBoundingClientRect();
+      return { x: rect.left + 30, y: rect.top + 20 };
+    })()`);
+    await touch('touchStart', second.x, second.y);
+    await touch('touchEnd');
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 120))');
+    expect(await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="selection-count"]').textContent`)).toContain('2 selected');
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="selection-clear"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 120))');
+    expect(await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="selection-bar"]') === null`)).toBe(true);
+  });
 });

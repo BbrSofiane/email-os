@@ -76,6 +76,17 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await pause();
   }
 
+  async function longPressFirstRow(): Promise<void> {
+    const point = await harness!.cdp.js<{ x: number; y: number }>(`(() => {
+      const rect = document.querySelector(${JSON.stringify(activeApp)}).querySelector('.inbox-row').getBoundingClientRect();
+      return { x: rect.left + 28, y: rect.top + 20 };
+    })()`);
+    await harness!.cdp.cmd('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ ...point, id: 1 }] });
+    await pause(600);
+    await harness!.cdp.cmd('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await waitFor(`app.querySelector('[data-test="selection-bar"]')`, 'selection bar');
+  }
+
   /** Activate a compact drawer destination by its short row label. */
   async function chooseDrawerRow(text: string): Promise<void> {
     await harness!.cdp.js(`(() => {
@@ -97,6 +108,8 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await viewport(PHONE_VIEWPORT.width, PHONE_VIEWPORT.height, true);
     await freshInbox();
     await shot('inbox');
+    await longPressFirstRow();
+    await shot('selection');
 
     await harness!.cdp.js(`(() => {
       const list = document.querySelector(${JSON.stringify(activeApp)}).querySelector('.inbox-scroll');

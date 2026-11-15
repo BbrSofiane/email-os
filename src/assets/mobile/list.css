@@ -242,3 +242,41 @@
 .app[data-layout="compact"] .inbox-row.selected:focus-visible {
   box-shadow: inset 4px 0 0 var(--focus-accent), inset 6px 0 0 var(--text-secondary);
 }
+
+.app[data-layout="compact"] .selection-bar {
+  position: absolute;
+  z-index: 19;
+  right: 16px;
+  bottom: calc(var(--mobile-bottom-bar-height) + 20px + var(--mobile-safe-bottom));
+  left: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  min-height: 48px;
+  align-content: center;
+  padding: 8px 12px;
+  border: 1px solid var(--divider);
+  border-radius: 24px;
+  background: var(--surface-raised);
+}
+
+.app[data-layout="compact"]:has(.mobile-context-slot:not(:empty)) .selection-bar {
+  bottom: calc(var(--mobile-bottom-bar-height) + var(--mobile-context-slot-height) + 32px + var(--mobile-safe-bottom));
+}
+
+.app[data-layout="compact"] .selection-scope {
+  flex: 1 1 100%;
+}
+
+.app[data-layout="compact"] .selection-actions {
+  display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+}
+
+.app[data-layout="compact"] .selection-actions button {
+  min-width: 48px;
+  min-height: 48px;
+}
