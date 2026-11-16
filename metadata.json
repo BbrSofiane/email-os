@@ -1,0 +1,35 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7GZNBRW1A9FV0TQ73FK38VD",
+  "strategy": "manual-commit",
+  "branch": "mobile/integration-work",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "docs/current-status.md",
+    "docs/validation/mobile/android-compose-keyboard.png",
+    "docs/validation/mobile/android-drafts.png",
+    "docs/validation/mobile/android-drawer.png",
+    "docs/validation/mobile/android-inbox.png",
+    "docs/validation/mobile/android-reader-more.png",
+    "docs/validation/mobile/android-reader.png",
+    "docs/validation/mobile/android-selection.png",
+    "docs/validation/mobile/android-settings.png",
+    "docs/validation/mobile/android-swipe-done-undo.png"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 44,
+    "cache_creation_tokens": 27011,
+    "cache_read_tokens": 13897194,
+    "output_tokens": 15145,
+    "api_call_count": 22
+  }
+}
