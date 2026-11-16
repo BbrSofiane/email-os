@@ -46,7 +46,7 @@ afterEach(() => { wrapper?.unmount(); wrapper = null; document.body.innerHTML = 
 describe('draft status line', () => {
   it('stays terse and reveals the local-only caveats from a focusable toggle, not a tooltip', async () => {
     wrapper = mount(DraftEditorCore, { props: props(), attachTo: document.body });
-    expect(wrapper.get('[data-test="draft-status"]').text()).toBe('Saved locally · not sent');
+    expect(wrapper.get('[data-test="draft-status"]').text()).toBe('Saved locally · never sent');
     expect(wrapper.find('[data-test="draft-caveat"]').exists()).toBe(false);
     const toggle = wrapper.get('[data-test="draft-caveat-toggle"]');
     expect(toggle.element.tagName).toBe('BUTTON');
@@ -78,11 +78,11 @@ describe('draft status announcements', () => {
     wrapper = mount(DraftEditorCore, { props: props({ status: 'Creating local draft…' }) });
     expect(announced(wrapper)).toBe('');
     await wrapper.setProps({ status: 'Saved locally' });
-    expect(announced(wrapper)).toBe('Saved locally · not sent');
+    expect(announced(wrapper)).toBe('Saved locally · never sent');
     // Typing: Saving… then Saved. The live text never changes, so nothing is re-announced.
     for (let i = 0; i < 3; i += 1) {
       await wrapper.setProps({ status: 'Saving locally…' });
-      expect(announced(wrapper)).toBe('Saved locally · not sent');
+      expect(announced(wrapper)).toBe('Saved locally · never sent');
       await wrapper.setProps({ status: 'Saved locally' });
     }
     expect(wrapper.get('[data-test="draft-status-announce"]').attributes('role')).toBe('status');
@@ -98,7 +98,7 @@ describe('draft status announcements', () => {
     await wrapper.setProps({ status: 'Saving locally…', conflict: false, error: null });
     expect(announced(wrapper)).toBe('Conflict — edits preserved');
     await wrapper.setProps({ status: 'Saved locally' });
-    expect(announced(wrapper)).toBe('Saved locally · not sent');
+    expect(announced(wrapper)).toBe('Saved locally · never sent');
     // The visible error paragraph keeps its own alert role.
     await wrapper.setProps({ status: 'Save not confirmed', error: { kind: 'unavailable', message: 'x' } });
     expect(wrapper.find('[data-test="draft-error"]').attributes('role')).toBe('alert');

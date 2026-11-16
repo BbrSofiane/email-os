@@ -119,7 +119,7 @@ describe("ComposeCard inline new-message card", () => {
     expect(wrapper.find('.draft-local-note').exists()).toBe(false);
     expect(wrapper.text()).not.toContain('No Send action exists');
     const status = wrapper.get('[data-test="draft-status"]');
-    expect(status.text()).toBe('Local draft · not sent');
+    expect(status.text()).toBe('Local draft · never sent');
     expect(status.classes()).toContain('draft-status-calm');
     const detail = 'Local plain-text draft. Nothing is sent. Recipients are stored as typed and are not validated. Bcc, reply-all and rich text are not supported.';
     expect(status.attributes('title')).toBe(detail);
@@ -132,10 +132,10 @@ describe("ComposeCard inline new-message card", () => {
   });
 
   it.each([
-    ['Saved locally', 'Saved locally · not sent', true],
-    ['Draft loaded from this device', 'Draft loaded from this device · not sent', true],
-    ['Saved in preview memory (non-durable)', 'Saved in preview memory (non-durable) · not sent', false],
-    ['Loaded from preview memory (non-durable)', 'Loaded from preview memory (non-durable) · not sent', false],
+    ['Saved locally', 'Saved locally · never sent', true],
+    ['Draft loaded from this device', 'Draft loaded from this device · never sent', true],
+    ['Saved in preview memory (non-durable)', 'Saved in preview memory (non-durable) · never sent', false],
+    ['Loaded from preview memory (non-durable)', 'Loaded from preview memory (non-durable) · never sent', false],
     ['Saving locally…', 'Saving locally…', false],
     ['Creating local draft…', 'Creating local draft…', false],
     ['Save not confirmed', 'Save not confirmed', false],
@@ -172,11 +172,11 @@ describe("ComposeCard inline new-message card", () => {
       }),
     });
     const status = wrapper.get('[data-test="draft-status"]');
-    // One status line: the preview words stay, "not sent" is appended, and non-durable stays Amber.
-    expect(status.text()).toBe('Saved in preview memory (non-durable) · not sent');
+    // One status line: the preview words stay, "never sent" is appended, and non-durable stays Amber.
+    expect(status.text()).toBe('Saved in preview memory (non-durable) · never sent');
     // Not a live region itself: the hidden status region announces only meaningful transitions.
     expect(status.attributes('aria-live')).toBeUndefined();
-    expect(wrapper.get('[data-test="draft-status-announce"]').text()).toBe('Saved in preview memory (non-durable) · not sent');
+    expect(wrapper.get('[data-test="draft-status-announce"]').text()).toBe('Saved in preview memory (non-durable) · never sent');
     expect(wrapper.get('[data-test="draft-error"]').text()).toContain('revision 7');
     expect(wrapper.find('[data-test="draft-conflict-actions"]').exists()).toBe(true);
     await wrapper.get('[data-test="save-as-new"]').trigger('click');

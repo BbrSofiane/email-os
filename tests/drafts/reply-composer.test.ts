@@ -67,7 +67,7 @@ describe("inline reply composer docked in the open reader (TASK B)", () => {
     const w = sharedMountApp(fake, 'browser-preview', { attachTo: document.body }); wrapper = w; await flushPromises();
     await openReaderAndPrepareReply(w);
 
-    // One compact heading line: no separate "Draft" flag (the status line says "not sent").
+    // One compact heading line: no separate "Draft" flag (the status line says "never sent").
     expect(w.find('[data-test="draft-flag"]').exists()).toBe(false);
     // Latest message of the open conversation: from.displayName ?? mailbox.
     expect(w.find('[data-test="draft-recipient-label"]').text()).toBe('Ada Fixture');

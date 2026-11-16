@@ -95,15 +95,15 @@ const isReply = computed(() => props.variant === 'reply');
 
 /** Plain-language detail for the title and the body's hidden description. */
 const LOCAL_DETAIL = 'Local plain-text draft. Nothing is sent. Recipients are stored as typed and are not validated. Bcc, reply-all and rich text are not supported.';
-/** Settled states that read "<state> · not sent"; the first two stay calm (Ash). */
+/** Settled states that read "<state> · never sent"; the first two stay calm (Ash). */
 const SETTLED_CALM = new Set(['Saved locally', 'Draft loaded from this device']);
 const SETTLED_NON_DURABLE = new Set(['Saved in preview memory (non-durable)', 'Loaded from preview memory (non-durable)']);
 
 const statusLine = computed(() => {
   const status = props.status;
-  if (!status) return { text: 'Local draft · not sent', calm: true };
-  if (SETTLED_CALM.has(status)) return { text: `${status} · not sent`, calm: true };
-  if (SETTLED_NON_DURABLE.has(status)) return { text: `${status} · not sent`, calm: false };
+  if (!status) return { text: 'Local draft · never sent', calm: true };
+  if (SETTLED_CALM.has(status)) return { text: `${status} · never sent`, calm: true };
+  if (SETTLED_NON_DURABLE.has(status)) return { text: `${status} · never sent`, calm: false };
   // Saving, creating, unconfirmed and conflict states keep their own words, in Amber Notice.
   return { text: status, calm: false };
 });

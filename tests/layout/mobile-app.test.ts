@@ -148,7 +148,7 @@ describe('App compact and regular frame', () => {
     expect(wrapper.get('[data-test="mobile-top-bar"]').attributes('inert')).toBeDefined();
     expect(wrapper.get('.app-main').attributes('inert')).toBeDefined();
     expect(wrapper.get('[data-test="mobile-bottom-region"]').attributes('inert')).toBeDefined();
-    expect(wrapper.get('[data-test="draft-status"]').text()).toContain('not sent');
+    expect(wrapper.get('[data-test="draft-status"]').text()).toContain('never sent');
     expect(wrapper.find('[data-test="close-composer"]').text()).toContain('Save and close');
     expect(wrapper.find('[data-test="discard-draft"]').exists()).toBe(true);
     await wrapper.get('.app').trigger('keydown', { key: 'Escape' });

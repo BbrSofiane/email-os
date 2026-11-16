@@ -133,7 +133,7 @@ describe("App wiring: drawer label and contact-pane compose context for an activ
     // The reader stays open on the reply source, so the latest sender names the target.
     expect(w.find('[data-test="reader"]').exists()).toBe(true);
     expect(w.find('[data-test="drafts-pane"]').exists()).toBe(false);
-    // The compact heading replaces the old "Draft" flag; the status line says it is not sent.
+    // The compact heading replaces the old "Draft" flag; the status line says it is never sent.
     expect(w.find('[data-test="reply-composer"] [data-test="draft-flag"]').exists()).toBe(false);
     expect(w.get('[data-test="draft-recipient-label"]').text()).toBe('Ada Fixture');
     expect(w.get('[data-test="reply-source"]').attributes('data-source-message')).toBe('conv-01-m3');
