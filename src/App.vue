@@ -466,6 +466,7 @@ function showReminderConfirmation(receipt: Reminder, rescheduled: boolean): void
 }
 const remindersSupported = computed(() => !!props.client.reminders);
 function reminderPreferencesSaved(): void {
+  if (layoutMode.value === 'compact') return;
   void closeDrawer();
 }
 // Reminders is a list context: the rows, the tabs and the picker state live in
@@ -2677,7 +2678,7 @@ const searchSyntaxEditHint = computed(() =>
           </p>
           <section v-if="drawer === 'reminder-settings' && remindersSupported" class="utility-panel" data-test="reminder-settings-dialog">
             <h3 class="drawer-section-title compact-settings-heading">Reminders</h3>
-            <ReminderSettings @close="closeDrawer" @saved="reminderPreferencesSaved" />
+            <ReminderSettings :compact="layoutMode === 'compact'" @close="closeDrawer" @saved="reminderPreferencesSaved" />
             <SwipeActionSettings @saved="swipePreferences = $event" />
           </section>
           <AccountPanel

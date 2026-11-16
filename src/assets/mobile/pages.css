@@ -419,6 +419,14 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-controls 
   min-height: 48px;
 }
 
+.app[data-layout="compact"] .utility-drawer .settings-note summary {
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  color: var(--text-secondary);
+  font-size: var(--mobile-type-meta);
+}
+
 .app[data-layout="compact"] .utility-drawer .swipe-settings fieldset {
   display: grid;
   gap: 4px;

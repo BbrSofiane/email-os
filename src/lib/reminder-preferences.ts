@@ -26,11 +26,12 @@ export function loadReminderPreferences(): ReminderPreferences {
   }
 }
 
-export function saveReminderPreferences(value: ReminderPreferences): void {
-  if (!valid(value)) return;
+export function saveReminderPreferences(value: ReminderPreferences): boolean {
+  if (!valid(value)) return false;
   try {
     globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify({ version: 1, ...value }));
+    return true;
   } catch {
-    // Settings remain usable when storage is unavailable.
+    return false;
   }
 }
