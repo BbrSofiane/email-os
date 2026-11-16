@@ -82,10 +82,10 @@ describe('App compact and regular frame', () => {
     await contactAction!.trigger('click');
     await flushFakeClientAndVueUpdates(fake);
     expect(wrapper.get('[data-test="contact-disclosure-panel"]').text()).toContain('Ada Fixture');
-    expect(wrapper.get('[data-test="reader"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="reader"]').exists()).toBe(true);
     await wrapper.get('[data-test="contact-disclosure-close"]').trigger('click');
     await flushFakeClientAndVueUpdates(fake);
-    expect(wrapper.get('[data-test="reader"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="reader"]').exists()).toBe(true);
     wrapper.unmount();
   });
 
