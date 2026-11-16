@@ -2742,6 +2742,7 @@ const searchSyntaxEditHint = computed(() =>
           :actions-enabled="mailboxActionsEnabled && !mailbox.bulkUnresolved.value && !mailbox.commandInFlight.value"
           :read-available="gmailActionsEnabled && !mailbox.bulkUnresolved.value && !mailbox.commandInFlight.value"
           :limit-message="mailbox.selectionNotice.value"
+          :compact="layoutMode === 'compact'"
           @archive="bulkArchiveSelection()"
           @unarchive="bulkRestoreSelection()"
           @mark-read="bulkSetReadSelection(true)"

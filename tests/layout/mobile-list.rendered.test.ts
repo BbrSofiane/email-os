@@ -293,6 +293,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       bottomRegion: { top: number; left: number; right: number };
       context: { top: number; bottom: number; visible: boolean };
       buttons: Array<{ width: number; height: number }>;
+      rowBackgrounds: string[];
     }>(`(() => {
       const app = document.querySelector(${JSON.stringify(workspaceApp)});
       const box = element => {
