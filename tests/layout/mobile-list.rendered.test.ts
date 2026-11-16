@@ -329,9 +329,12 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
         bottomRegion: box(bottom),
         context: { ...box(context), visible: context.getClientRects().length > 0 && getComputedStyle(context).display !== 'none' },
         buttons: [...bar.querySelectorAll('button')].map(box),
+        rowBackgrounds: [...app.querySelectorAll('.inbox-row')].slice(0, 2).map(row => getComputedStyle(row).backgroundColor),
       };
     })()`);
     expect(measure.selected).toBe(true);
+    expect(measure.rowBackgrounds[0]).toBe('rgb(71, 70, 68)');
+    expect(measure.rowBackgrounds[1]).not.toBe(measure.rowBackgrounds[0]);
     expect(await harness!.cdp.js('window.getSelection().toString()')).toBe('');
     expect(measure.checkbox.width).toBeGreaterThanOrEqual(48);
     expect(measure.checkbox.height).toBeGreaterThanOrEqual(48);
@@ -362,5 +365,10 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="selection-clear"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 120))');
     expect(await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="selection-bar"]') === null`)).toBe(true);
+    const clearedBackgrounds = await harness!.cdp.js<string[]>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      return [...app.querySelectorAll('.inbox-row')].slice(0, 2).map(row => getComputedStyle(row).backgroundColor);
+    })()`);
+    expect(clearedBackgrounds[0]).toBe(clearedBackgrounds[1]);
   });
 });

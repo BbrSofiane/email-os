@@ -260,9 +260,10 @@
   box-shadow: none;
 }
 
-.app[data-layout="compact"] .inbox-row.selected {
+.app[data-layout="compact"] .inbox-row.selected,
+.app[data-layout="compact"] .inbox-row.selected.focused:not(:focus-visible) {
   background: var(--focus-fill);
-  box-shadow: inset 4px 0 0 var(--text-secondary);
+  box-shadow: none;
 }
 
 .app[data-layout="compact"] .row-group {
