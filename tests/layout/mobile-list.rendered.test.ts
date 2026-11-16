@@ -361,6 +361,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       bar: { top: number; bottom: number; left: number; right: number };
       barHeight: number;
       clearButton: { width: number; height: number; first: boolean };
+      scope: { scrollWidth: number; clientWidth: number; visibleText: string; loadedDisplay: string };
       primaryBackground: string;
       barBackground: string;
       buttonLayouts: Array<{ left: number; right: number; top: number; bottom: number; width: number; height: number; scrollWidth: number; clientWidth: number }>;
@@ -381,6 +382,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       const bottom = app.querySelector('[data-test="mobile-bottom-region"]');
       const navigation = app.querySelector('.mobile-navigation');
       const clear = bar.querySelector('[data-test="selection-clear"]');
+      const scope = bar.querySelector('[data-test="selection-scope"]');
       const primary = bar.querySelector('.selection-row-primary > button:not([data-test="selection-clear"])');
       const context = app.querySelector('.mobile-context-slot');
       const selectedRows = [...app.querySelectorAll('.inbox-row')].slice(0, 3).map(row => {
@@ -408,6 +410,12 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
         bar: barBox,
         barHeight: barBox.bottom - barBox.top,
         clearButton: { ...box(clear), first: bar.querySelector('button') === clear },
+        scope: {
+          scrollWidth: scope.scrollWidth,
+          clientWidth: scope.clientWidth,
+          visibleText: scope.querySelector('[data-test="selection-count"]').textContent.trim(),
+          loadedDisplay: getComputedStyle(scope.querySelector('.selection-loaded-scope')).display,
+        },
         primaryBackground: getComputedStyle(primary).backgroundColor,
         barBackground: getComputedStyle(bar).backgroundColor,
         buttonLayouts: [...bar.querySelectorAll('button')].map(button => ({ ...box(button), scrollWidth: button.scrollWidth, clientWidth: button.clientWidth })),
@@ -436,6 +444,9 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     expect(measure.clearButton.first).toBe(true);
     expect(measure.clearButton.width).toBeGreaterThanOrEqual(48);
     expect(measure.clearButton.height).toBeGreaterThanOrEqual(48);
+    expect(measure.scope.scrollWidth).toBeLessThanOrEqual(measure.scope.clientWidth);
+    expect(measure.scope.visibleText).toBe('1 selected');
+    expect(measure.scope.loadedDisplay).toBe('none');
     expect(measure.primaryBackground).not.toBe(measure.barBackground);
     expect(Math.abs(measure.bar.left - measure.navigationPill.left)).toBeLessThanOrEqual(1);
     expect(Math.abs(measure.bar.right - measure.navigationPill.right)).toBeLessThanOrEqual(1);
