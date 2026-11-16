@@ -79,36 +79,46 @@
   line-height: 1.25;
   touch-action: pan-y;
   isolation: isolate;
-}
-
-.app[data-layout="compact"] .inbox-row > :not(.row-swipe-underlay) {
   transform: translateX(var(--swipe-offset, 0px));
   transition: transform 160ms ease;
+  background: var(--surface);
 }
 
-.app[data-layout="compact"] .inbox-row.swiping > :not(.row-swipe-underlay) {
+.app[data-layout="compact"] .inbox-row.swiping {
   transition: none;
 }
 
 .app[data-layout="compact"] .row-swipe-underlay {
   position: absolute;
-  z-index: -1;
-  inset: 0;
+  z-index: auto;
   display: flex;
   align-items: center;
   gap: 12px;
   padding-inline: 16px;
+  top: 0;
+  bottom: 0;
+  width: var(--swipe-distance, 0px);
+  overflow: hidden;
+  white-space: nowrap;
   color: var(--text-primary);
   transition: background-color 120ms ease-out, color 120ms ease-out, transform 120ms ease-out;
 }
 
-.app[data-layout="compact"] .row-swipe-underlay.remind {
+.app[data-layout="compact"] .row-swipe-underlay.from-end {
+  left: 100%;
+  justify-content: flex-end;
+}
+
+.app[data-layout="compact"] .row-swipe-underlay.from-start {
+  right: 100%;
   justify-content: flex-start;
+}
+
+.app[data-layout="compact"] .row-swipe-underlay.remind {
   background: var(--focus-fill);
 }
 
 .app[data-layout="compact"] .row-swipe-underlay.done {
-  justify-content: flex-end;
   background: color-mix(in srgb, var(--focus-accent) 38%, var(--surface));
 }
 
@@ -279,7 +289,7 @@
 }
 
 .app[data-layout="compact"] .inbox-row.focused:not(:focus-visible) {
-  background: transparent;
+  background: var(--surface);
   box-shadow: none;
 }
 
@@ -414,7 +424,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .app[data-layout="compact"] .inbox-row > :not(.row-swipe-underlay),
+  .app[data-layout="compact"] .inbox-row,
   .app[data-layout="compact"] .row-swipe-underlay,
   .app[data-layout="compact"] .row-swipe-icon svg {
     transition: none;

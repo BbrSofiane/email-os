@@ -706,7 +706,10 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
         :tabindex="tabIndexFor(item.row, item.index)"
         :data-test="`conversation-row-${item.row.ref.conversationId}`"
         :ref="(el) => setRowRef(el, rowKey(item.row.ref))"
-        :style="compact ? { '--swipe-offset': swipeFor(item.row).offset.value + 'px' } : undefined"
+        :style="compact ? {
+          '--swipe-offset': swipeFor(item.row).offset.value + 'px',
+          '--swipe-distance': Math.abs(swipeFor(item.row).offset.value) + 'px',
+        } : undefined"
         @pointerdown="onRowPointerDown($event, item.row)"
         @pointermove="onRowPointerMove($event, item.row)"
         @pointerup="onRowPointerUp($event, item.row)"
@@ -722,7 +725,11 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
           class="row-swipe-underlay"
           :class="[
             swipeFor(item.row).revealed.value === 'right' ? props.swipeRight ?? 'remind' : props.swipeLeft ?? 'done',
-            { armed: swipeFor(item.row).armed.value },
+            {
+              armed: swipeFor(item.row).armed.value,
+              'from-end': swipeFor(item.row).revealed.value === 'left',
+              'from-start': swipeFor(item.row).revealed.value === 'right',
+            },
           ]"
           aria-hidden="true"
         >

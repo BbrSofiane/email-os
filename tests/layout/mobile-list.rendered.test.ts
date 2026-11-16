@@ -246,73 +246,176 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     expect(after).toBeGreaterThan(before);
   });
 
-  it('shows neutral and armed swipe cues during a drag', async () => {
+  it.each([
+    { width: 412, height: 915 },
+    { width: 360, height: 800 },
+  ])('slides the whole opaque row and exposes the swipe action at $width × $height', async ({ width, height }) => {
+    await harness!.cdp.cmd('Page.navigate', { url: harness!.appUrl });
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
     await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
-      width: 412,
-      height: 915,
-      screenWidth: 412,
-      screenHeight: 915,
+      width,
+      height,
+      screenWidth: width,
+      screenHeight: height,
       deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor,
       mobile: true,
     });
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-mail"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
 
-    const row = await harness!.cdp.js<{ left: number; width: number; y: number }>(`(() => {
+    const resting = await harness!.cdp.js<{
+      left: number;
+      right: number;
+      width: number;
+      y: number;
+      senderLeft: number;
+      subjectLeft: number;
+      previewLeft: number;
+    }>(`(() => {
       const row = document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="conversation-row-conv-01"]');
       const rect = row.getBoundingClientRect();
-      return { left: rect.left, width: rect.width, y: rect.top + 24 };
+      return {
+        left: rect.left,
+        right: rect.right,
+        width: rect.width,
+        y: rect.top + 24,
+        senderLeft: row.querySelector('.row-sender').getBoundingClientRect().left,
+        subjectLeft: row.querySelector('.row-subject').getBoundingClientRect().left,
+        previewLeft: row.querySelector('.row-preview').getBoundingClientRect().left,
+      };
     })()`);
-    const startX = row.left + row.width / 2;
-    await touch('touchStart', startX, row.y);
-    await touch('touchMove', startX - 40, row.y);
-    await harness!.cdp.js('new Promise(resolve => requestAnimationFrame(resolve))');
-    const restingCue = await harness!.cdp.js<{ classes: string; transition: string }>(`(() => {
+    const startX = resting.left + resting.width / 2;
+    const measureSwipe = async () => harness!.cdp.js<{
+      row: { left: number; right: number };
+      sender: { left: number; right: number };
+      subject: { left: number; right: number; top: number; bottom: number };
+      preview: { left: number; right: number; top: number; bottom: number };
+      cue: { left: number; right: number; top: number; bottom: number } | null;
+      cueClass: string;
+      label: { left: number; right: number; top: number; bottom: number } | null;
+      transition: string;
+      scrollWidth: number;
+      viewportWidth: number;
+    }>(`(() => {
       const app = document.querySelector(${JSON.stringify(workspaceApp)});
       const row = app.querySelector('[data-test="conversation-row-conv-01"]');
       const cue = row.querySelector('.row-swipe-underlay');
-      return { classes: cue.className, transition: getComputedStyle(row.querySelector('.row-sender')).transitionDuration };
+      const box = element => {
+        const rect = element.getBoundingClientRect();
+        return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+      };
+      const rect = element => element ? box(element) : null;
+      return {
+        row: box(row),
+        sender: box(row.querySelector('.row-sender')),
+        subject: box(row.querySelector('.row-subject')),
+        preview: box(row.querySelector('.row-preview')),
+        cue: rect(cue),
+        cueClass: cue?.className ?? '',
+        label: rect(cue?.querySelector(':scope > span:last-child')),
+        transition: getComputedStyle(row).transitionDuration,
+        scrollWidth: document.scrollingElement.scrollWidth,
+        viewportWidth: window.innerWidth,
+      };
     })()`);
-    expect(restingCue.classes.split(' ')).toContain('done');
-    expect(restingCue.classes.split(' ')).not.toContain('armed');
-    expect(restingCue.transition).toBe('0s');
+    const releaseAtRest = async () => {
+      await touch('touchMove', startX, resting.y);
+      await harness!.cdp.js('new Promise(resolve => requestAnimationFrame(resolve))');
+      await touch('touchEnd');
+      await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 200))');
+    };
 
-    await touch('touchMove', startX - row.width * 0.3, row.y);
+    await touch('touchStart', startX, resting.y);
+    await touch('touchMove', startX - 80, resting.y);
     await harness!.cdp.js('new Promise(resolve => requestAnimationFrame(resolve))');
-    await touch('touchMove', startX - row.width * 0.6, row.y);
+    const leftReveal = await measureSwipe();
+    expect(leftReveal.transition).toBe('0s');
+    expect(leftReveal.row.left).toBeCloseTo(resting.left - 80, 0);
+    expect(leftReveal.sender.left).toBeCloseTo(resting.senderLeft - 80, 0);
+    expect(leftReveal.subject.left).toBeCloseTo(resting.subjectLeft - 80, 0);
+    expect(leftReveal.preview.left).toBeCloseTo(resting.previewLeft - 80, 0);
+    expect(leftReveal.cue?.left).toBeCloseTo(resting.right - 80, 0);
+    expect(leftReveal.cue?.right).toBeCloseTo(resting.right, 0);
+    expect(leftReveal.cueClass.split(' ')).toContain('from-end');
+    expect(leftReveal.cueClass.split(' ')).toContain('done');
+    expect(leftReveal.cue).not.toBeNull();
+    expect(leftReveal.cue!.right <= leftReveal.subject.left + 1 || leftReveal.cue!.left >= leftReveal.subject.right - 1).toBe(true);
+    expect(leftReveal.cue!.right <= leftReveal.preview.left + 1 || leftReveal.cue!.left >= leftReveal.preview.right - 1).toBe(true);
+    expect(leftReveal.scrollWidth).toBe(leftReveal.viewportWidth);
+
+    await releaseAtRest();
+    const leftRestored = await harness!.cdp.js<number>(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="conversation-row-conv-01"] .row-sender').getBoundingClientRect().left`);
+    expect(leftRestored).toBeCloseTo(resting.senderLeft, 0);
+
+    await touch('touchStart', startX, resting.y);
+    await touch('touchMove', startX - resting.width * 0.3, resting.y);
+    await harness!.cdp.js('new Promise(resolve => requestAnimationFrame(resolve))');
+    await touch('touchMove', startX - resting.width * 0.6, resting.y);
     await harness!.cdp.js('new Promise(resolve => requestAnimationFrame(resolve))');
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
-    const armedDone = await harness!.cdp.js<{ classes: string; background: string }>(`(() => {
+    const armedDone = await harness!.cdp.js<{ classes: string; background: string; cue: { left: number; right: number; top: number; bottom: number }; label: { left: number; right: number; top: number; bottom: number } }>(`(() => {
       const cue = document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('.row-swipe-underlay');
+      const label = cue.querySelector(':scope > span:last-child');
+      const cueRect = cue.getBoundingClientRect();
+      const labelRect = label.getBoundingClientRect();
       const canvas = document.createElement('canvas');
       const context = canvas.getContext('2d');
       context.fillStyle = getComputedStyle(cue).backgroundColor;
       context.fillRect(0, 0, 1, 1);
       const [red, green, blue] = context.getImageData(0, 0, 1, 1).data;
-      return { classes: cue.className, background: 'rgb(' + red + ', ' + green + ', ' + blue + ')' };
+      return {
+        classes: cue.className,
+        background: 'rgb(' + red + ', ' + green + ', ' + blue + ')',
+        cue: { left: cueRect.left, right: cueRect.right, top: cueRect.top, bottom: cueRect.bottom },
+        label: { left: labelRect.left, right: labelRect.right, top: labelRect.top, bottom: labelRect.bottom },
+      };
     })()`);
     expect(armedDone.classes.split(' ')).toContain('armed');
     expect(armedDone.background).toBe('rgb(187, 165, 237)');
-    await touch('touchMove', startX, row.y);
-    await touch('touchEnd');
+    expect(armedDone.label.left).toBeGreaterThanOrEqual(armedDone.cue.left);
+    expect(armedDone.label.right).toBeLessThanOrEqual(armedDone.cue.right);
+    expect(armedDone.label.top).toBeGreaterThanOrEqual(armedDone.cue.top);
+    expect(armedDone.label.bottom).toBeLessThanOrEqual(armedDone.cue.bottom);
+    await releaseAtRest();
 
-    await touch('touchStart', startX, row.y);
-    await touch('touchMove', startX + 40, row.y);
+    await touch('touchStart', startX, resting.y);
+    await touch('touchMove', startX + 80, resting.y);
     await harness!.cdp.js('new Promise(resolve => requestAnimationFrame(resolve))');
-    const armedRemind = await harness!.cdp.js<{ classes: string; background: string }>(`(() => {
+    const rightReveal = await measureSwipe();
+    expect(rightReveal.transition).toBe('0s');
+    expect(rightReveal.row.left).toBeCloseTo(resting.left + 80, 0);
+    expect(rightReveal.sender.left).toBeCloseTo(resting.senderLeft + 80, 0);
+    expect(rightReveal.subject.left).toBeCloseTo(resting.subjectLeft + 80, 0);
+    expect(rightReveal.preview.left).toBeCloseTo(resting.previewLeft + 80, 0);
+    expect(rightReveal.cue?.left).toBeCloseTo(resting.left, 0);
+    expect(rightReveal.cue?.right).toBeCloseTo(resting.left + 80, 0);
+    expect(rightReveal.cueClass.split(' ')).toContain('from-start');
+    expect(rightReveal.cueClass.split(' ')).toContain('remind');
+    expect(rightReveal.cue).not.toBeNull();
+    expect(rightReveal.cue!.right <= rightReveal.subject.left + 1 || rightReveal.cue!.left >= rightReveal.subject.right - 1).toBe(true);
+    expect(rightReveal.cue!.right <= rightReveal.preview.left + 1 || rightReveal.cue!.left >= rightReveal.preview.right - 1).toBe(true);
+    expect(rightReveal.scrollWidth).toBe(rightReveal.viewportWidth);
+    await releaseAtRest();
+    const rightRestored = await harness!.cdp.js<number>(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="conversation-row-conv-01"] .row-sender').getBoundingClientRect().left`);
+    expect(rightRestored).toBeCloseTo(resting.senderLeft, 0);
+
+    await touch('touchStart', startX, resting.y);
+    await touch('touchMove', startX + resting.width * 0.6, resting.y);
+    await harness!.cdp.js('new Promise(resolve => requestAnimationFrame(resolve))');
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
+    const armedRemind = await harness!.cdp.js<{ classes: string; labelInside: boolean }>(`(() => {
       const cue = document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('.row-swipe-underlay');
-      const canvas = document.createElement('canvas');
-      const context = canvas.getContext('2d');
-      context.fillStyle = getComputedStyle(cue).backgroundColor;
-      context.fillRect(0, 0, 1, 1);
-      const [red, green, blue] = context.getImageData(0, 0, 1, 1).data;
-      return { classes: cue.className, background: 'rgb(' + red + ', ' + green + ', ' + blue + ')' };
+      const cueRect = cue.getBoundingClientRect();
+      const labelRect = cue.querySelector(':scope > span:last-child').getBoundingClientRect();
+      return {
+        classes: cue.className,
+        labelInside: labelRect.left >= cueRect.left && labelRect.right <= cueRect.right && labelRect.top >= cueRect.top && labelRect.bottom <= cueRect.bottom,
+      };
     })()`);
+    expect(armedRemind.classes.split(' ')).toContain('armed');
     expect(armedRemind.classes.split(' ')).toContain('remind');
-    expect(armedRemind.classes.split(' ')).not.toContain('armed');
-    expect(armedRemind.background).toBe('rgb(71, 70, 68)');
-    await touch('touchMove', startX, row.y);
-    await touch('touchEnd');
+    expect(armedRemind.labelInside).toBe(true);
+    await releaseAtRest();
   });
 
   it.each([
