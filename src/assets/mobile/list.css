@@ -309,28 +309,79 @@
   z-index: 19;
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 12px;
-  min-height: 48px;
-  align-content: center;
-  padding: 8px 12px;
+  gap: 0;
+  padding: 4px 8px;
   border: 1px solid var(--divider);
   border-radius: 24px;
   background: var(--surface-raised);
 }
 
-.app[data-layout="compact"] .selection-scope {
-  flex: 1 1 100%;
-}
-
-.app[data-layout="compact"] .selection-actions {
+.app[data-layout="compact"] .selection-row-primary {
   display: flex;
-  flex: 1 1 100%;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin: 0;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 48px;
 }
 
-.app[data-layout="compact"] .selection-actions button {
+.app[data-layout="compact"] [data-test="selection-clear"] {
+  display: flex;
+  flex: 0 0 48px;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.app[data-layout="compact"] [data-test="selection-clear"] svg {
+  width: 24px;
+  height: 24px;
+}
+
+.app[data-layout="compact"] .selection-scope {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app[data-layout="compact"] .selection-row-primary > button:not([data-test="selection-clear"]) {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--focus-fill);
+  color: var(--text-primary);
+  font-weight: var(--weight-strong);
+  white-space: nowrap;
+}
+
+.app[data-layout="compact"] .selection-row-secondary {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 48px;
+}
+
+.app[data-layout="compact"] .selection-row-secondary button {
   min-width: 48px;
   min-height: 48px;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+.app[data-layout="compact"] .selection-limit {
+  flex-basis: 100%;
 }

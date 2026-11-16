@@ -290,9 +290,15 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
         unreadVisible: boolean;
       }>;
       bar: { top: number; bottom: number; left: number; right: number };
+      barHeight: number;
+      clearButton: { width: number; height: number; first: boolean };
+      primaryBackground: string;
+      barBackground: string;
+      buttonLayouts: Array<{ left: number; right: number; top: number; bottom: number; width: number; height: number; scrollWidth: number; clientWidth: number }>;
+      navigationPill: { left: number; right: number };
       bottomRegion: { top: number; left: number; right: number };
       context: { top: number; bottom: number; visible: boolean };
-      buttons: Array<{ width: number; height: number }>;
+      buttons: Array<{ id: string | null; width: number; height: number }>;
       rowBackgrounds: string[];
     }>(`(() => {
       const app = document.querySelector(${JSON.stringify(workspaceApp)});
@@ -301,8 +307,12 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
         return { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, width: rect.width, height: rect.height };
       };
       const bar = app.querySelector('[data-test="selection-bar"]');
+      const barBox = box(bar);
       const checkbox = app.querySelector('[data-test="row-select-conv-01"]');
       const bottom = app.querySelector('[data-test="mobile-bottom-region"]');
+      const navigation = app.querySelector('.mobile-navigation');
+      const clear = bar.querySelector('[data-test="selection-clear"]');
+      const primary = bar.querySelector('.selection-row-primary > button:not([data-test="selection-clear"])');
       const context = app.querySelector('.mobile-context-slot');
       const selectedRows = [...app.querySelectorAll('.inbox-row')].slice(0, 3).map(row => {
         const rowBox = element => {
@@ -326,10 +336,16 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
         selected: app.querySelector('[data-test="selection-count"]')?.textContent.includes('1 selected') ?? false,
         checkbox: { ...box(checkbox), opacity: getComputedStyle(checkbox).opacity },
         selectedRows,
-        bar: box(bar),
+        bar: barBox,
+        barHeight: barBox.bottom - barBox.top,
+        clearButton: { ...box(clear), first: bar.querySelector('button') === clear },
+        primaryBackground: getComputedStyle(primary).backgroundColor,
+        barBackground: getComputedStyle(bar).backgroundColor,
+        buttonLayouts: [...bar.querySelectorAll('button')].map(button => ({ ...box(button), scrollWidth: button.scrollWidth, clientWidth: button.clientWidth })),
+        navigationPill: { left: box(navigation).left, right: box(navigation).right },
         bottomRegion: box(bottom),
         context: { ...box(context), visible: context.getClientRects().length > 0 && getComputedStyle(context).display !== 'none' },
-        buttons: [...bar.querySelectorAll('button')].map(box),
+        buttons: [...bar.querySelectorAll('button')].map(button => ({ id: button.getAttribute('data-test'), ...box(button) })),
         rowBackgrounds: [...app.querySelectorAll('.inbox-row')].slice(0, 2).map(row => getComputedStyle(row).backgroundColor),
       };
     })()`);
@@ -347,12 +363,31 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       expect(row.unreadVisible).toBe(false);
     }
     expect(measure.bar.top).toBeGreaterThanOrEqual(0);
+    expect(measure.barHeight).toBeLessThanOrEqual(112);
+    expect(measure.clearButton.first).toBe(true);
+    expect(measure.clearButton.width).toBeGreaterThanOrEqual(48);
+    expect(measure.clearButton.height).toBeGreaterThanOrEqual(48);
+    expect(measure.primaryBackground).not.toBe(measure.barBackground);
+    expect(Math.abs(measure.bar.left - measure.navigationPill.left)).toBeLessThanOrEqual(1);
+    expect(Math.abs(measure.bar.right - measure.navigationPill.right)).toBeLessThanOrEqual(1);
     expect(measure.bar.left).toBeGreaterThanOrEqual(measure.bottomRegion.left - 1);
     expect(measure.bar.right).toBeLessThanOrEqual(measure.bottomRegion.right + 1);
     expect(measure.context.visible).toBe(true);
     expect(measure.context.top - measure.bar.bottom).toBeGreaterThanOrEqual(8);
     expect(measure.context.top - measure.bar.bottom).toBeLessThanOrEqual(16);
-    expect(measure.buttons.every(button => button.width >= 48 && button.height >= 48)).toBe(true);
+    expect(measure.buttons.find(button => button.id === 'selection-clear')?.height).toBeGreaterThanOrEqual(48);
+    expect(measure.buttons.filter(button => button.id?.startsWith('selection-mark-') || button.id === 'selection-select-all').every(button => button.width >= 48 && button.height >= 48)).toBe(true);
+    expect(measure.buttons.filter(button => button.id === 'selection-archive' || button.id === 'selection-unarchive').every(button => button.height >= 40)).toBe(true);
+    expect(measure.buttonLayouts.every(button => button.left >= measure.bar.left && button.right <= measure.bar.right && button.top >= measure.bar.top && button.bottom <= measure.bar.bottom)).toBe(true);
+    expect(measure.buttonLayouts.every(button => button.scrollWidth <= button.clientWidth)).toBe(true);
+    for (let index = 0; index < measure.buttonLayouts.length; index += 1) {
+      for (let other = index + 1; other < measure.buttonLayouts.length; other += 1) {
+        const left = measure.buttonLayouts[index]!;
+        const right = measure.buttonLayouts[other]!;
+        const overlaps = left.left < right.right && left.right > right.left && left.top < right.bottom && left.bottom > right.top;
+        expect(overlaps).toBe(false);
+      }
+    }
 
     const second = await harness!.cdp.js<{ x: number; y: number }>(`(() => {
       const row = document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="conversation-row-conv-02"]');
