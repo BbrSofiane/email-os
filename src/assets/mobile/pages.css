@@ -267,13 +267,54 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-controls 
 
 .app[data-layout="compact"] .search-results-header {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 4px;
+  gap: 0;
+  margin: 0;
+  padding-inline: var(--mobile-page-inset-start) var(--mobile-page-inset-end);
 }
 
-.app[data-layout="compact"] .search-results-header button {
+.app[data-layout="compact"] .search-results-query {
+  flex: 1;
+  min-width: 0;
   min-height: 48px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: var(--mobile-type-list);
+  font-weight: 600;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app[data-layout="compact"] .search-results-header [data-test="search-clear"] {
+  display: grid;
+  flex: 0 0 48px;
+  width: 48px;
+  height: 48px;
+  min-height: 48px;
+  padding: 0;
+  place-items: center;
+}
+
+.app[data-layout="compact"] .search-results-header [data-test="search-clear"] svg {
+  width: 24px;
+  height: 24px;
+}
+
+.app[data-layout="compact"] .search-coverage {
+  margin: 0;
+  padding: 0 var(--mobile-page-inset-end) 0 var(--mobile-page-inset-start);
+  color: var(--text-secondary);
+  font-size: var(--mobile-type-meta);
+}
+
+.app[data-layout="compact"] .inbox-list .row-group {
+  padding-inline: var(--mobile-page-inset-start) var(--mobile-page-inset-end);
+  font-size: var(--mobile-type-meta);
+  color: var(--text-secondary);
 }
 
 .app[data-layout="compact"] .utility-drawer {

@@ -121,13 +121,52 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
     })()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 400))');
     expect(await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('.mobile-context-slot').getBoundingClientRect().height`)).toBe(0);
-    const result = await harness!.cdp.js<{ visible: boolean; overflow: boolean }>(`(() => {
-      const app = document.querySelector(${JSON.stringify(workspaceApp)});
-      const header = app.querySelector('[data-test="search-results-header"]');
-      return { visible: !!header, overflow: app.scrollWidth > app.clientWidth };
-    })()`);
-    expect(result.visible).toBe(true);
-    expect(result.overflow).toBe(false);
+    for (const width of [412, 360]) {
+      await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
+        width,
+        height: width === 412 ? 915 : 800,
+        screenWidth: width,
+        screenHeight: width === 412 ? 915 : 800,
+        deviceScaleFactor: 2.625,
+        mobile: true,
+      });
+      const result = await harness!.cdp.js<{ visible: boolean; overflow: boolean; lefts: number[]; clear: DOMRectReadOnly; viewport: number }>(`(() => {
+        const app = document.querySelector(${JSON.stringify(workspaceApp)});
+        const header = app.querySelector('[data-test="search-results-header"]');
+        const query = app.querySelector('[data-test="search-results-query"]');
+        const coverage = app.querySelector('[data-test="search-coverage"]');
+        const correspondent = app.querySelector('.inbox-list .row-group');
+        const sender = app.querySelector('.inbox-list .row-sender');
+        const textLeft = element => {
+          const range = document.createRange();
+          range.selectNodeContents(element);
+          return range.getBoundingClientRect().left;
+        };
+        const clear = app.querySelector('[data-test="search-clear"]').getBoundingClientRect();
+        return {
+          visible: !!header && !!correspondent && !!sender,
+          overflow: app.scrollWidth > app.clientWidth,
+          lefts: [textLeft(query), textLeft(coverage), textLeft(correspondent), sender.getBoundingClientRect().left],
+          clear: { left: clear.left, right: clear.right, width: clear.width, height: clear.height },
+          viewport: document.documentElement.clientWidth,
+        };
+      })()`);
+      expect(result.visible).toBe(true);
+      expect(result.overflow).toBe(false);
+      expect(Math.max(...result.lefts) - Math.min(...result.lefts), `${width}px anchor positions: ${result.lefts.join(', ')}`).toBeLessThanOrEqual(1);
+      expect(result.clear.width).toBeGreaterThanOrEqual(48);
+      expect(result.clear.height).toBeGreaterThanOrEqual(48);
+      expect(result.clear.left).toBeGreaterThanOrEqual(0);
+      expect(result.clear.right).toBeLessThanOrEqual(result.viewport);
+    }
+    await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
+      width: PHONE_VIEWPORT.width,
+      height: PHONE_VIEWPORT.height,
+      screenWidth: PHONE_VIEWPORT.width,
+      screenHeight: PHONE_VIEWPORT.height,
+      deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor,
+      mobile: true,
+    });
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="search-trigger"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
     const suggestionGeometry = await harness!.cdp.js<{ input: DOMRectReadOnly; suggestions: DOMRectReadOnly[] }>(`(() => {
