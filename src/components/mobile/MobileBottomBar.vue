@@ -7,6 +7,7 @@ import PaneGlyph from '../PaneGlyph.vue';
 defineProps<{
   reader: boolean;
   inboxOrSaved: boolean;
+  search: boolean;
   executeAction: (id: ActionId) => void;
   actionAvailable: (id: ActionId) => boolean;
   actionLabel: (id: ActionId) => string;
@@ -54,6 +55,7 @@ defineExpose({ actionsHost, contextHost });
         data-test="mobile-search"
         :disabled="!actionAvailable('search')"
         :title="actionLabel('search')"
+        :aria-current="search && !reader ? 'page' : undefined"
         @click="executeAction('search')"
       >
         <HeaderGlyph name="search" />

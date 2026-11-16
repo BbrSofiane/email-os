@@ -120,6 +120,7 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
       app.querySelector('[data-test="search-submit"]').click();
     })()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 400))');
+    expect(await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('.mobile-context-slot').getBoundingClientRect().height`)).toBe(0);
     const result = await harness!.cdp.js<{ visible: boolean; overflow: boolean }>(`(() => {
       const app = document.querySelector(${JSON.stringify(workspaceApp)});
       const header = app.querySelector('[data-test="search-results-header"]');
@@ -249,7 +250,7 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
       const settings = page.querySelector('.reminder-settings');
       const close = page.querySelector('[data-test="drawer-close"]');
       return {
-        controls: [...settings.querySelectorAll('select, button')].map(control => control.getBoundingClientRect().height),
+        controls: [...settings.querySelectorAll('select')].map(control => control.getBoundingClientRect().height),
         width: page.clientWidth,
         contentWidth: settings.scrollWidth,
         closeHasSvg: !!close.querySelector('svg'),
@@ -257,12 +258,12 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
         headingSizes: [...page.querySelectorAll('.compact-settings-heading')].map(heading => getComputedStyle(heading).fontSize),
       };
     })()`);
-    expect(geometry.controls.length).toBe(4);
+    expect(geometry.controls.length).toBe(2);
     expect(geometry.controls.every(height => height >= 48)).toBe(true);
     expect(geometry.contentWidth).toBeLessThanOrEqual(geometry.width);
     expect(geometry.closeHasSvg).toBe(true);
     expect(geometry.closeTextVisible).toBe(false);
-    expect(geometry.headingSizes).toEqual(['16px', '16px']);
+    expect(geometry.headingSizes).toEqual(['15px', '15px']);
   });
 
   it('shows compact Commands as a touch sized, scrolling overlay', async () => {
@@ -319,7 +320,7 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
       const legend = page.querySelector('.swipe-settings legend');
       const firstRadio = page.querySelector('.swipe-settings input[type="radio"]');
       const hour = page.querySelector('label[for="reminder-default-hour"]');
-      const lastReminderControl = page.querySelector('.reminder-settings form button:last-of-type');
+      const lastReminderControl = page.querySelector('.reminder-settings form select:last-of-type');
       const status = page.querySelector('.swipe-settings [role="status"]');
       return {
         rows: [...page.querySelectorAll('.swipe-settings label')].map(row => rect(row).height),

@@ -44,6 +44,29 @@ describe('App compact and regular frame', () => {
     regular.unmount();
   });
 
+  it('marks Search current without Inbox tabs in the context slot, then restores Inbox', async () => {
+    stubLayout(true);
+    const fake = createBrowserFakeMailClient();
+    const wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+
+    await wrapper.get('[data-test="mobile-search"]').trigger('click');
+    await flushFakeClientAndVueUpdates(fake);
+    await wrapper.get('[data-test="search-input"]').setValue('from:ada');
+    await wrapper.get('[data-test="search-submit"]').trigger('click');
+    await flushFakeClientAndVueUpdates(fake);
+    expect(wrapper.get('[data-test="mobile-context-slot"]').element.childElementCount).toBe(0);
+    expect(wrapper.get('[data-test="mobile-search"]').attributes('aria-current')).toBe('page');
+    expect(wrapper.get('[data-test="mobile-mail"]').attributes('aria-current')).toBeUndefined();
+
+    await wrapper.get('[data-test="mobile-mail"]').trigger('click');
+    await flushFakeClientAndVueUpdates(fake);
+    expect(wrapper.get('[data-test="split-inbox"]').element.closest('.mobile-context-slot')).toBeTruthy();
+    expect(wrapper.get('[data-test="mobile-mail"]').attributes('aria-current')).toBe('page');
+    expect(wrapper.get('[data-test="mobile-search"]').attributes('aria-current')).toBeUndefined();
+    wrapper.unmount();
+  });
+
   it('opens the compact drawer, closes it before the next Escape rung, and navigates', async () => {
     stubLayout(true);
     const fake = createBrowserFakeMailClient();
