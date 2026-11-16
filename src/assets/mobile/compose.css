@@ -116,9 +116,14 @@
 }
 .app[data-layout="compact"] .compose-card .composer-footer {
   flex: none;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-height: 48px;
+  align-items: center;
   margin: 0;
   padding: 8px 0 0;
+}
+.app[data-layout="compact"] .compose-card .composer-footer .composer-discard {
+  margin-inline-start: auto;
 }
 .app[data-layout="compact"] .compose-card .composer-footer button,
 .app[data-layout="compact"] .compose-card .conflict-actions button,
@@ -246,9 +251,14 @@
 }
 .app[data-layout="compact"] .reply-composer.compact-compose-sheet .composer-footer {
   flex: none;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-height: 48px;
+  align-items: center;
   margin: 0;
   padding-top: 8px;
+}
+.app[data-layout="compact"] .reply-composer.compact-compose-sheet .composer-footer .composer-discard {
+  margin-inline-start: auto;
 }
 .app[data-layout="compact"] .reply-composer.compact-compose-sheet .composer-footer button,
 .app[data-layout="compact"] .reply-composer.compact-compose-sheet .conflict-actions button,

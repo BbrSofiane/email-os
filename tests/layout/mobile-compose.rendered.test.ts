@@ -145,6 +145,8 @@ async function expectKeyboardLayout(harness: RenderedHarness, height: number): P
     status: { top: number; bottom: number };
     body: { top: number; bottom: number; height: number };
     footer: { top: number; bottom: number };
+    footerClosePresent: boolean;
+    footerKbdCount: number;
     footerButtons: Array<{ top: number; bottom: number; height: number }>;
     footerHits: Array<{ insideSheet: boolean; dockHit: boolean }>;
   }>(`(() => {
@@ -156,7 +158,7 @@ async function expectKeyboardLayout(harness: RenderedHarness, height: number): P
       return { top: rect.top, bottom: rect.bottom, height: rect.height };
     };
     const footer = sheet.querySelector('.composer-footer');
-    const buttons = [...footer.querySelectorAll('[data-test="close-composer"], [data-test="discard-draft"]')];
+    const buttons = [...footer.querySelectorAll('[data-test="discard-draft"], [data-test="cancel-reply-preparation"]')];
     return {
       viewport: innerHeight,
       app: box(app),
@@ -164,6 +166,8 @@ async function expectKeyboardLayout(harness: RenderedHarness, height: number): P
       status: box(editor.querySelector('[data-test="draft-status"]')),
       body: box(editor.querySelector('.field-body')),
       footer: box(footer),
+      footerClosePresent: !!footer.querySelector('[data-test="close-composer"]'),
+      footerKbdCount: footer.querySelectorAll('kbd').length,
       footerButtons: buttons.map(box),
       footerHits: buttons.map(button => {
         const rect = button.getBoundingClientRect();
@@ -181,7 +185,9 @@ async function expectKeyboardLayout(harness: RenderedHarness, height: number): P
   expect(layout.body.height).toBeGreaterThanOrEqual(80);
   expect(layout.footer.top).toBeGreaterThanOrEqual(layout.body.bottom);
   expect(layout.footer.bottom).toBeLessThanOrEqual(height);
-  expect(layout.footerButtons).toHaveLength(2);
+  expect(layout.footerClosePresent).toBe(false);
+  expect(layout.footerKbdCount).toBe(0);
+  expect(layout.footerButtons.length).toBeGreaterThan(0);
   for (const button of layout.footerButtons) {
     expect(button.top).toBeGreaterThanOrEqual(0);
     expect(button.bottom).toBeLessThanOrEqual(height);

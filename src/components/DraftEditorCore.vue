@@ -43,6 +43,7 @@ const props = defineProps<{
   recoveryRequired: boolean;
   canCancelReplyPreparation: boolean;
   closeError: string | null;
+  compact?: boolean;
   /** Which field receives focus when the editor appears (keyboard-first). */
   autofocus?: 'to' | 'body';
   /** Id of a note that explains why the To field is the first thing the user lands in. */
@@ -68,6 +69,8 @@ const emit = defineEmits<{
   saveAsNew: [];
   cancelReplyPreparation: [];
 }>();
+
+const closeDisabled = computed(() => props.closing || props.transitioning || props.deleting || props.deletePending);
 
 /** Single shared copy — do not fork per surface. */
 function fieldsDisabled(): boolean {
@@ -255,7 +258,7 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
 <template>
   <div ref="editorRoot" class="composer-body" :class="`composer-body-${props.variant ?? 'new'}`">
     <div class="composer-top">
-      <div class="composer-top-main"><slot name="header" /></div>
+      <div class="composer-top-main"><slot name="header" :close-disabled="closeDisabled" /></div>
       <!-- The local-only guarantee is one terse status line. The caveats are
            one extra line behind a focusable toggle (not a tooltip), and the
            body's hidden description. Announcements are quiet, see above. -->
@@ -359,8 +362,8 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
          still waits for the protected flush and stays open with the error if the
          flush fails. Esc does the same. There is no Send. -->
     <footer class="composer-footer">
-      <button type="button" class="composer-primary" data-test="close-composer" aria-keyshortcuts="Escape" :disabled="props.closing || props.transitioning || props.deleting || props.deletePending" @click="emit('closeEditor')">Save and close</button>
-      <kbd class="composer-kbd" aria-hidden="true">Esc</kbd>
+      <button v-if="!props.compact" type="button" class="composer-primary" data-test="close-composer" aria-keyshortcuts="Escape" :disabled="closeDisabled" @click="emit('closeEditor')">Save and close</button>
+      <kbd v-if="!props.compact" class="composer-kbd" aria-hidden="true">Esc</kbd>
       <button v-if="props.canCancelReplyPreparation" type="button" class="composer-quiet" data-test="cancel-reply-preparation" :disabled="props.closing || props.transitioning" @click="emit('cancelReplyPreparation')">Cancel reply preparation</button>
       <button type="button" class="composer-quiet composer-discard" data-test="discard-draft" :disabled="props.closing || props.transitioning || props.discardBusy || props.deleting || props.deletePending || props.creating || props.conflict || !props.activeRef?.draftId" @click="emit('askDiscard')">Discard…</button>
     </footer>

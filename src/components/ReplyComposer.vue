@@ -94,6 +94,7 @@ const headingTarget = computed<{ text: string } | null>(() => {
       <DraftEditorCore
         autofocus="body"
         variant="reply"
+        :compact="props.compact"
         :recipient-label="props.recipientLabel"
         :recipient-mailbox="props.recipientMailbox ?? null"
         :active-ref="props.activeRef"
@@ -128,10 +129,10 @@ const headingTarget = computed<{ text: string } | null>(() => {
         @save-as-new="emit('saveAsNew')"
         @cancel-reply-preparation="emit('cancelReplyPreparation')"
       >
-        <template #header>
+        <template #header="{ closeDisabled }">
           <header class="composer-heading">
             <h2>Reply draft<span v-if="headingTarget" class="reply-to" :title="props.content.to.trim() === '' ? undefined : props.content.to"> to <span data-test="draft-recipient-label">{{ headingTarget.text }}</span></span></h2>
-            <button v-if="props.compact" type="button" class="compose-sheet-close" data-test="reply-sheet-close" aria-label="Save and close" @click="emit('closeEditor')"><HeaderGlyph name="x" /></button>
+            <button v-if="props.compact" type="button" class="compose-sheet-close" data-test="reply-sheet-close" aria-label="Save and close" title="Save and close" aria-keyshortcuts="Escape" :disabled="closeDisabled" @click="emit('closeEditor')"><HeaderGlyph name="x" /></button>
           </header>
         </template>
         <template #context>
