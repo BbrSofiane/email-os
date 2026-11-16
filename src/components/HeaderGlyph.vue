@@ -5,7 +5,7 @@
  * carries the accessible name in visually hidden text.
  */
 defineProps<{
-  name: 'menu' | 'more' | 'search' | 'commands' | 'settings' | 'star' | 'back' | 'remind' | 'reminders' | 'x' | 'compose' | 'done' | 'files' | 'reply' | 'read' | 'unread' | 'prev' | 'next';
+  name: 'menu' | 'more' | 'search' | 'commands' | 'settings' | 'star' | 'back' | 'remind' | 'reminders' | 'x' | 'compose' | 'done' | 'files' | 'reply' | 'read' | 'unread' | 'prev' | 'next' | 'copy' | 'collapse' | 'contact' | 'prompt';
   /** Star only: a filled star for the pressed (filter on) state. */
   filled?: boolean;
 }>();
@@ -43,6 +43,16 @@ defineProps<{
       v-else-if="name === 'commands'"
       d="M10 4v8a2 2 0 1 0 2-2H4a2 2 0 1 0 2 2V4a2 2 0 1 0-2 2h8a2 2 0 1 0-2-2"
     />
+    <template v-else-if="name === 'copy'">
+      <path d="M5.75 5.75h6.5a1 1 0 011 1v6.5a1 1 0 01-1 1h-6.5a1 1 0 01-1-1v-6.5a1 1 0 011-1z" />
+      <path d="M11.25 3.75v-.5a1 1 0 00-1-1h-6.5a1 1 0 00-1 1v6.5a1 1 0 001 1h.5" />
+    </template>
+    <path v-else-if="name === 'collapse'" d="M4.5 3.25L8 6.5l3.5-3.25M4.5 12.75L8 9.5l3.5 3.25" />
+    <template v-else-if="name === 'contact'">
+      <circle cx="8" cy="5.5" r="2.5" />
+      <path d="M3 13.25c.6-2.4 2.6-3.75 5-3.75s4.4 1.35 5 3.75" />
+    </template>
+    <path v-else-if="name === 'prompt'" d="M3.5 5l3 3-3 3M8.5 11.25h4" />
     <!-- Starred only filter: outline at rest, filled while the filter is on. -->
     <template v-else-if="name === 'settings'">
       <circle cx="8" cy="8" r="2.1" />
