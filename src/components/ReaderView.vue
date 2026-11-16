@@ -1261,8 +1261,8 @@ defineExpose({
         :title="messageMenu.from.displayName ?? messageMenu.from.mailbox"
         :items="[
           { id: 'reply', label: 'Reply', glyph: 'reply', disabled: !canPrepareReply(), disabledReason: replyBlockedReason ?? undefined },
-          { id: 'collapse', label: 'Collapse', glyph: 'back' },
-          { id: 'copy', label: 'Copy text', glyph: 'files', disabled: copyUnavailable, disabledReason: copyUnavailable ? 'Copy unavailable' : undefined, keepOpenOnChoose: true },
+          { id: 'collapse', label: 'Collapse', glyph: 'collapse' },
+          { id: 'copy', label: 'Copy text', glyph: 'copy', disabled: copyUnavailable, disabledReason: copyUnavailable ? 'Copy unavailable' : undefined, keepOpenOnChoose: true },
         ]"
         @close="messageMenu = null; emit('messageSheetOpen', false)"
         @choose="(id) => { const target = messageMenu; if (!target) return; if (id === 'reply') prepareReply(target); else if (id === 'collapse') toggleMessage(target); else void copyMessageText(target); }"

@@ -79,6 +79,9 @@ describe('App compact and regular frame', () => {
     await flushFakeClientAndVueUpdates(fake);
     const contactAction = wrapper.findAll('[data-test="action-sheet"] button').find(button => button.text().includes('Contact details'));
     expect(contactAction).toBeDefined();
+    const commandsAction = wrapper.findAll('[data-test="action-sheet"] button').find(button => button.text().includes('Commands'));
+    expect(contactAction?.find('svg').attributes('data-glyph')).toBe('contact');
+    expect(commandsAction?.find('svg').attributes('data-glyph')).toBe('prompt');
     await contactAction!.trigger('click');
     await flushFakeClientAndVueUpdates(fake);
     expect(wrapper.get('[data-test="contact-disclosure-panel"]').text()).toContain('Ada Fixture');

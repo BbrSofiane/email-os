@@ -864,8 +864,8 @@ const readerSheetItems = computed(() => {
     { id: readAction, label: conversation?.isRead ? 'Mark unread' : 'Mark read', glyph: conversation?.isRead ? 'unread' as const : 'read' as const, disabled: !actionAvailable(readAction) },
     { id: 'reply', label: 'Reply', glyph: 'reply' as const, disabled: !actionAvailable('reply'), disabledReason: replyReason ?? undefined, group: 'more' },
     ...(!androidFixture ? [{ id: 'files', label: 'Files and links', glyph: 'files' as const, disabled: !actionAvailable('open') }] : []),
-    { id: 'contact-details', label: 'Contact details', glyph: 'menu' as const, group: 'more' },
-    { id: 'commands', label: 'Commands', glyph: 'commands' as const, group: 'commands' },
+    { id: 'contact-details', label: 'Contact details', glyph: 'contact' as const, group: 'more' },
+    { id: 'commands', label: 'Commands', glyph: 'prompt' as const, group: 'commands' },
   ];
 });
 // This App belongs to one immutable fixture session. Keep its command query

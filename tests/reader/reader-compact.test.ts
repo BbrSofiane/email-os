@@ -107,6 +107,10 @@ describe('ReaderView compact toolbar', () => {
     await wrapper.get('[data-test="message-more"]').trigger('click');
     expect(wrapper.find('[data-test="message-more"] svg circle').exists()).toBe(true);
     expect(wrapper.get('[role="dialog"]').attributes('aria-label')).toBe('Reader');
+    const collapse = wrapper.findAll('[role="dialog"] button').find(button => button.text().includes('Collapse'));
+    const copy = wrapper.findAll('[role="dialog"] button').find(button => button.text().includes('Copy text'));
+    expect(collapse?.find('svg').attributes('data-glyph')).toBe('collapse');
+    expect(copy?.find('svg').attributes('data-glyph')).toBe('copy');
     await wrapper.get('[role="dialog"] button').trigger('click');
     expect(wrapper.emitted('prepareReply')?.[0]?.[0]).toMatchObject({ sourceMessageId: 'm1' });
   });
