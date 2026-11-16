@@ -54,7 +54,8 @@
   justify-content: space-between;
   gap: 12px;
 }
-.app[data-layout="compact"] .compose-card .compose-sheet-close {
+.app[data-layout="compact"] .compose-card .compose-sheet-close,
+.app[data-layout="compact"] .reply-composer.compact-compose-sheet .compose-sheet-close {
   display: grid;
   flex: none;
   width: 48px;
@@ -64,7 +65,8 @@
   border-radius: 50%;
   background: var(--surface-raised);
 }
-.app[data-layout="compact"] .compose-card .compose-sheet-close svg {
+.app[data-layout="compact"] .compose-card .compose-sheet-close svg,
+.app[data-layout="compact"] .reply-composer.compact-compose-sheet .compose-sheet-close svg {
   width: 24px;
   height: 24px;
 }
@@ -308,13 +310,4 @@
 }
 .app[data-layout="compact"] .reply-composer.compact-compose-sheet .composer-kbd {
   display: none;
-}
-.app[data-layout="compact"] .reply-composer.compact-compose-sheet .compose-sheet-close {
-  display: grid;
-  flex: none;
-  width: 48px;
-  height: 48px;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--surface-raised);
 }

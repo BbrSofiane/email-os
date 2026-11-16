@@ -41,7 +41,7 @@ describe.skipIf(!chromePath)('compact compose geometry', () => {
     expect(initial.footer.bottom).toBeLessThanOrEqual(height);
     expect(initial.body.height).toBeGreaterThan(120);
     expect(initial.overflow).toBeLessThanOrEqual(width);
-    const newMessage = await harness!.cdp.js<{ boxMatches: boolean; hitResults: boolean[]; titleLeft: number; closeLeft: number }>(`(() => {
+    const newMessage = await harness!.cdp.js<{ boxMatches: boolean; hitResults: boolean[]; titleLeft: number; closeLeft: number; closeSize: { width: number; height: number }; glyphSize: { width: number; height: number } }>(`(() => {
       const app = document.querySelector(${JSON.stringify(appSelector)});
       const sheet = app.querySelector('[data-test="compose-card"]');
       const rect = element => element.getBoundingClientRect();
@@ -55,11 +55,17 @@ describe.skipIf(!chromePath)('compact compose geometry', () => {
         }),
         titleLeft: rect(sheet.querySelector('.composer-heading h2')).left,
         closeLeft: rect(sheet.querySelector('[data-test="compose-sheet-close"]')).left,
+        closeSize: { width: rect(sheet.querySelector('[data-test="compose-sheet-close"]')).width, height: rect(sheet.querySelector('[data-test="compose-sheet-close"]')).height },
+        glyphSize: { width: rect(sheet.querySelector('[data-test="compose-sheet-close"] svg')).width, height: rect(sheet.querySelector('[data-test="compose-sheet-close"] svg')).height },
       };
     })()`);
     expect(newMessage.boxMatches).toBe(true);
     expect(newMessage.hitResults.every(Boolean)).toBe(true);
     expect(newMessage.titleLeft).toBeLessThan(newMessage.closeLeft);
+    expect(Math.abs(newMessage.closeSize.width - 48)).toBeLessThanOrEqual(1);
+    expect(Math.abs(newMessage.closeSize.height - 48)).toBeLessThanOrEqual(1);
+    expect(Math.abs(newMessage.glyphSize.width - 24)).toBeLessThanOrEqual(1);
+    expect(Math.abs(newMessage.glyphSize.height - 24)).toBeLessThanOrEqual(1);
     await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
       width, height: 500, screenWidth: width, screenHeight: 500,
       deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor, mobile: true,
@@ -97,7 +103,7 @@ describe.skipIf(!chromePath)('compact compose geometry', () => {
     expect(reply.footer.bottom).toBeLessThanOrEqual(height);
     expect(reply.body.height).toBeGreaterThanOrEqual(120);
     expect(reply.inputSize).toBe('16px');
-    const overlay = await harness!.cdp.js<{ boxMatches: boolean; appBox: { top: number; right: number; bottom: number; left: number }; sheetBox: { top: number; right: number; bottom: number; left: number }; bodyHeight: number; hitResults: boolean[]; textHit: boolean; titleLeft: number; closeLeft: number }>(`(() => {
+    const overlay = await harness!.cdp.js<{ boxMatches: boolean; appBox: { top: number; right: number; bottom: number; left: number }; sheetBox: { top: number; right: number; bottom: number; left: number }; bodyHeight: number; hitResults: boolean[]; textHit: boolean; titleLeft: number; closeLeft: number; closeSize: { width: number; height: number }; glyphSize: { width: number; height: number } }>(`(() => {
       const app = document.querySelector(${JSON.stringify(appSelector)});
       const sheet = app.querySelector('[data-test="reply-composer"]');
       const box = element => element.getBoundingClientRect();
@@ -118,6 +124,8 @@ describe.skipIf(!chromePath)('compact compose geometry', () => {
         textHit: !!messageHit && !!messageHit.closest('.message-from'),
         titleLeft: box(sheet.querySelector('.composer-heading h2')).left,
         closeLeft: box(sheet.querySelector('[data-test="reply-sheet-close"]')).left,
+        closeSize: { width: box(sheet.querySelector('[data-test="reply-sheet-close"]')).width, height: box(sheet.querySelector('[data-test="reply-sheet-close"]')).height },
+        glyphSize: { width: box(sheet.querySelector('[data-test="reply-sheet-close"] svg')).width, height: box(sheet.querySelector('[data-test="reply-sheet-close"] svg')).height },
       };
     })()`);
     expect(overlay.sheetBox.top).toBeCloseTo(overlay.appBox.top, 0);
@@ -128,6 +136,10 @@ describe.skipIf(!chromePath)('compact compose geometry', () => {
     expect(overlay.textHit).toBe(false);
     expect(overlay.bodyHeight).toBeGreaterThanOrEqual(200);
     expect(overlay.titleLeft).toBeLessThan(overlay.closeLeft);
+    expect(Math.abs(overlay.closeSize.width - 48)).toBeLessThanOrEqual(1);
+    expect(Math.abs(overlay.closeSize.height - 48)).toBeLessThanOrEqual(1);
+    expect(Math.abs(overlay.glyphSize.width - 24)).toBeLessThanOrEqual(1);
+    expect(Math.abs(overlay.glyphSize.height - 24)).toBeLessThanOrEqual(1);
     await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
       width, height: 420, screenWidth: width, screenHeight: 420,
       deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor, mobile: true,
