@@ -278,7 +278,7 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-controls 
 
 .app[data-layout="compact"] .utility-drawer {
   position: fixed;
-  inset: 0;
+  inset: 24px 0 0;
   z-index: 50;
   width: auto;
   padding: 0;
@@ -297,20 +297,22 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-controls 
 
 .app[data-layout="compact"] .utility-drawer .drawer-header {
   display: flex;
-  height: 56px;
-  min-height: 56px;
+  align-items: center;
+  gap: 12px;
+  height: var(--mobile-top-bar-height);
+  min-height: var(--mobile-top-bar-height);
   margin: 0;
-  padding-inline: 20px 16px;
+  padding: 0 16px;
 }
 
 .app[data-layout="compact"] .utility-drawer .drawer-header h2 {
-  font-size: 1rem;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--mobile-type-list);
   font-weight: 600;
-}
-
-.app[data-layout="compact"] .utility-drawer .drawer-close-icon svg {
-  width: 18px;
-  height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .app[data-layout="compact"] .utility-drawer .compact-settings-heading {
@@ -329,14 +331,6 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-controls 
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
-}
-
-.app[data-layout="compact"] .utility-drawer .drawer-header button {
-  width: 48px;
-  height: 48px;
-  min-height: 48px;
-  padding: 0;
-  border-radius: 50%;
 }
 
 .app[data-layout="compact"] .utility-drawer .account-panel {

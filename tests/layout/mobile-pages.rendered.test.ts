@@ -155,9 +155,9 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
       const pageRect = rect(page);
       const header = rect(page.querySelector('.drawer-header'));
       const close = rect(page.querySelector('[data-test="drawer-close"]'));
-      return { top: pageRect, bottom: pageRect, headerHeight: header.height, close, topCovered: page.contains(document.elementFromPoint(10, 10)), bottomCovered: page.contains(document.elementFromPoint(innerWidth / 2, innerHeight - 10)) };
+      return { top: pageRect, bottom: pageRect, headerHeight: header.height, close, topCovered: page.contains(document.elementFromPoint(10, 30)), bottomCovered: page.contains(document.elementFromPoint(innerWidth / 2, innerHeight - 10)) };
     })()`);
-    expect(geometry.top.top).toBe(0);
+    expect(geometry.top.top).toBe(24);
     expect(geometry.bottom.bottom).toBeCloseTo(PHONE_VIEWPORT.height, 0);
     expect(geometry.headerHeight).toBe(56);
     expect(geometry.close.height).toBeGreaterThanOrEqual(48);
@@ -179,6 +179,63 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
     })()`);
     expect(activity.overflow).toBe(false);
     expect(activity.buttons.every(height => height >= 48)).toBe(true);
+  });
+
+  it.each([{ width: 412, height: 915 }, { width: 360, height: 800 }])('matches pushed page headers to the destination top bar at $width × $height', async ({ width, height }) => {
+    await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
+      width,
+      height,
+      screenWidth: width,
+      screenHeight: height,
+      deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor,
+      mobile: true,
+    });
+    await harness!.cdp.js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-menu"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
+    await harness!.cdp.js(`[...document.querySelectorAll(${JSON.stringify(workspaceApp)} + ' .mobile-drawer-row')].find(row => row.textContent.trim() === 'Drafts').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 200))');
+    const destination = await harness!.cdp.js<{ menu: DOMRectReadOnly; titleLeft: number; titleSize: string; titleWeight: string }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const menu = app.querySelector('[data-test="mobile-menu"]').getBoundingClientRect();
+      const title = app.querySelector('.mobile-title');
+      return {
+        menu: { top: menu.top, right: menu.right, bottom: menu.bottom, left: menu.left },
+        titleLeft: title.getBoundingClientRect().left,
+        titleSize: getComputedStyle(title).fontSize,
+        titleWeight: getComputedStyle(title).fontWeight,
+      };
+    })()`);
+
+    async function expectPushedPage(name: 'Settings' | 'Activity'): Promise<void> {
+      await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-menu"]').click()`);
+      await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
+      await harness!.cdp.js(`[...document.querySelectorAll(${JSON.stringify(workspaceApp)} + ' .mobile-drawer-row')].find(row => row.textContent.trim() === '${name}').click()`);
+      await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 400))');
+      const geometry = await harness!.cdp.js<{ back: DOMRectReadOnly; titleLeft: number; titleSize: string; titleWeight: string; closeExists: boolean }>(`(() => {
+        const app = document.querySelector(${JSON.stringify(workspaceApp)});
+        const page = app.querySelector('[data-test="utility-drawer"]');
+        const back = page.querySelector('[data-test="drawer-close"]').getBoundingClientRect();
+        const title = page.querySelector('.drawer-header h2');
+        return {
+          back: { top: back.top, right: back.right, bottom: back.bottom, left: back.left },
+          titleLeft: title.getBoundingClientRect().left,
+          titleSize: getComputedStyle(title).fontSize,
+          titleWeight: getComputedStyle(title).fontWeight,
+          closeExists: !!page.querySelector('.drawer-close-icon'),
+        };
+      })()`);
+      for (const edge of ['top', 'right', 'bottom', 'left'] as const) {
+        expect(geometry.back[edge], `${name} Back ${edge}`).toBeCloseTo(destination.menu[edge], 0);
+      }
+      expect(Math.abs(geometry.titleLeft - destination.titleLeft)).toBeLessThanOrEqual(1);
+      expect(geometry.titleSize).toBe(destination.titleSize);
+      expect(geometry.titleWeight).toBe(destination.titleWeight);
+      expect(geometry.closeExists).toBe(false);
+    }
+
+    await expectPushedPage('Settings');
+    await expectPushedPage('Activity');
   });
 
   it('sizes Reminder settings controls and allows the explanatory text to wrap', async () => {
