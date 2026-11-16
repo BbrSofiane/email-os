@@ -32,6 +32,24 @@ actions are not supported. Android uses fixture data; compact layout adds no mai
 or engine capabilities. See the
 [Android smoke steps](development.md#android-fixture-apk).
 
+The compact layout was checked on the same emulator on 2026-11-16 with a locally
+built debug APK of the merged branch: swipe left to mark done and Undo, swipe
+right to the reminder picker, long-press selection, the reader and its action
+sheet, contact details, a new message typed with the software keyboard up, and
+the saved draft in Drafts. Screenshots:
+[inbox](<validation/mobile/android-inbox.png>),
+[swipe and Undo](<validation/mobile/android-swipe-done-undo.png>),
+[selection](<validation/mobile/android-selection.png>),
+[drawer](<validation/mobile/android-drawer.png>),
+[reader](<validation/mobile/android-reader.png>),
+[reader actions](<validation/mobile/android-reader-more.png>),
+[compose with keyboard](<validation/mobile/android-compose-keyboard.png>),
+[drafts](<validation/mobile/android-drafts.png>),
+[settings](<validation/mobile/android-settings.png>).
+Known from that pass: the first launch right after a fresh install can still hit
+the Android "isn't responding" dialog recorded for the original APK (a relaunch
+is fine), and no physical device was used.
+
 Mode selection is deliberate: native defaults to fixture; `EMAIL_OS_MODE=gmail`
 selects a separate Gmail profile. Browser preview remains synthetic. See the
 [development guide](development.md) for launch and validation commands.
