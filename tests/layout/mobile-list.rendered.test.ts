@@ -246,6 +246,75 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     expect(after).toBeGreaterThan(before);
   });
 
+  it('shows neutral and armed swipe cues during a drag', async () => {
+    await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
+      width: 412,
+      height: 915,
+      screenWidth: 412,
+      screenHeight: 915,
+      deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor,
+      mobile: true,
+    });
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-mail"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
+
+    const row = await harness!.cdp.js<{ left: number; width: number; y: number }>(`(() => {
+      const row = document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="conversation-row-conv-01"]');
+      const rect = row.getBoundingClientRect();
+      return { left: rect.left, width: rect.width, y: rect.top + 24 };
+    })()`);
+    const startX = row.left + row.width / 2;
+    await touch('touchStart', startX, row.y);
+    await touch('touchMove', startX - 40, row.y);
+    await harness!.cdp.js('new Promise(resolve => requestAnimationFrame(resolve))');
+    const restingCue = await harness!.cdp.js<{ classes: string; transition: string }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const row = app.querySelector('[data-test="conversation-row-conv-01"]');
+      const cue = row.querySelector('.row-swipe-underlay');
+      return { classes: cue.className, transition: getComputedStyle(row.querySelector('.row-sender')).transitionDuration };
+    })()`);
+    expect(restingCue.classes.split(' ')).toContain('done');
+    expect(restingCue.classes.split(' ')).not.toContain('armed');
+    expect(restingCue.transition).toBe('0s');
+
+    await touch('touchMove', startX - row.width * 0.3, row.y);
+    await harness!.cdp.js('new Promise(resolve => requestAnimationFrame(resolve))');
+    await touch('touchMove', startX - row.width * 0.6, row.y);
+    await harness!.cdp.js('new Promise(resolve => requestAnimationFrame(resolve))');
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
+    const armedDone = await harness!.cdp.js<{ classes: string; background: string }>(`(() => {
+      const cue = document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('.row-swipe-underlay');
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+      context.fillStyle = getComputedStyle(cue).backgroundColor;
+      context.fillRect(0, 0, 1, 1);
+      const [red, green, blue] = context.getImageData(0, 0, 1, 1).data;
+      return { classes: cue.className, background: 'rgb(' + red + ', ' + green + ', ' + blue + ')' };
+    })()`);
+    expect(armedDone.classes.split(' ')).toContain('armed');
+    expect(armedDone.background).toBe('rgb(187, 165, 237)');
+    await touch('touchMove', startX, row.y);
+    await touch('touchEnd');
+
+    await touch('touchStart', startX, row.y);
+    await touch('touchMove', startX + 40, row.y);
+    await harness!.cdp.js('new Promise(resolve => requestAnimationFrame(resolve))');
+    const armedRemind = await harness!.cdp.js<{ classes: string; background: string }>(`(() => {
+      const cue = document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('.row-swipe-underlay');
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+      context.fillStyle = getComputedStyle(cue).backgroundColor;
+      context.fillRect(0, 0, 1, 1);
+      const [red, green, blue] = context.getImageData(0, 0, 1, 1).data;
+      return { classes: cue.className, background: 'rgb(' + red + ', ' + green + ', ' + blue + ')' };
+    })()`);
+    expect(armedRemind.classes.split(' ')).toContain('remind');
+    expect(armedRemind.classes.split(' ')).not.toContain('armed');
+    expect(armedRemind.background).toBe('rgb(71, 70, 68)');
+    await touch('touchMove', startX, row.y);
+    await touch('touchEnd');
+  });
+
   it.each([
     { width: 412, height: 915 },
     { width: 360, height: 800 },

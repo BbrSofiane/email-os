@@ -99,16 +99,26 @@
   gap: 12px;
   padding-inline: 16px;
   color: var(--text-primary);
-  background: color-mix(in srgb, var(--focus-accent) 24%, transparent);
+  transition: background-color 120ms ease-out, color 120ms ease-out, transform 120ms ease-out;
 }
 
 .app[data-layout="compact"] .row-swipe-underlay.remind {
   justify-content: flex-start;
-  background: color-mix(in srgb, var(--unread-marker) 24%, transparent);
+  background: var(--focus-fill);
 }
 
 .app[data-layout="compact"] .row-swipe-underlay.done {
   justify-content: flex-end;
+  background: color-mix(in srgb, var(--focus-accent) 38%, var(--surface));
+}
+
+.app[data-layout="compact"] .row-swipe-underlay.done.armed {
+  background: var(--focus-accent);
+  color: var(--surface);
+}
+
+.app[data-layout="compact"] .row-swipe-underlay.remind.armed {
+  background: color-mix(in srgb, var(--text-secondary) 45%, var(--surface));
 }
 
 .app[data-layout="compact"] .row-swipe-icon {
@@ -116,12 +126,21 @@
   width: 40px;
   height: 40px;
   place-items: center;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--focus-accent) 55%, transparent);
+  background: transparent;
 }
 
-.app[data-layout="compact"] .row-swipe-underlay.remind .row-swipe-icon {
-  background: color-mix(in srgb, var(--unread-marker) 55%, transparent);
+.app[data-layout="compact"] .row-swipe-icon svg {
+  width: 24px;
+  height: 24px;
+  transition: background-color 120ms ease-out, color 120ms ease-out, transform 120ms ease-out;
+}
+
+.app[data-layout="compact"] .row-swipe-underlay.armed .row-swipe-icon svg {
+  transform: scale(1.15);
+}
+
+.app[data-layout="compact"] .row-swipe-underlay.armed > span:last-child {
+  font-weight: 600;
 }
 
 .app[data-layout="compact"] .row-read-state {
