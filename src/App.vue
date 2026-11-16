@@ -2650,9 +2650,20 @@ const searchSyntaxEditHint = computed(() =>
           data-test="utility-drawer"
         >
           <header class="drawer-header">
+            <button
+              v-if="layoutMode === 'compact'"
+              type="button"
+              class="mobile-round-button page-back"
+              data-test="drawer-close"
+              aria-label="Back"
+              title="Back"
+              @click="closeDrawer()"
+            >
+              <HeaderGlyph name="back" />
+              <span class="visually-hidden">Back</span>
+            </button>
             <h2>{{ drawer === 'reminder-settings' && layoutMode === 'compact' ? 'Settings' : drawerHeadings[drawer] }}</h2>
-            <button v-if="layoutMode === 'compact'" type="button" class="drawer-close-icon" data-test="drawer-close" aria-label="Close" @click="closeDrawer()"><HeaderGlyph name="x" /><span class="visually-hidden">Close</span></button>
-            <button v-else type="button" data-test="drawer-close" @click="closeDrawer()">Close</button>
+            <button v-if="layoutMode !== 'compact'" type="button" data-test="drawer-close" @click="closeDrawer()">Close</button>
           </header>
           <p v-if="drawer === 'destinations' && accountId && providerSignInExpired" role="note" data-test="destinations-sign-in-expired">
             {{ providerSignInExpired.text }}<template v-if="accountActionsIdle"> <button type="button" class="inline-action" @click="accountNoticeAction('connect', 'drawer')">{{ providerSignInExpired.label }}</button></template>
@@ -2717,8 +2728,20 @@ const searchSyntaxEditHint = computed(() =>
           data-test="contact-disclosure-panel"
         >
           <header class="drawer-header">
+            <button
+              v-if="layoutMode === 'compact'"
+              type="button"
+              class="mobile-round-button page-back"
+              data-test="contact-disclosure-close"
+              aria-label="Back"
+              title="Back"
+              @click="closeContactDisclosure()"
+            >
+              <HeaderGlyph name="back" />
+              <span class="visually-hidden">Back</span>
+            </button>
             <h2>Contact</h2>
-            <button type="button" data-test="contact-disclosure-close" @click="closeContactDisclosure()">Close</button>
+            <button v-if="layoutMode !== 'compact'" type="button" data-test="contact-disclosure-close" @click="closeContactDisclosure()">Close</button>
           </header>
           <ContactPane :accountless="!accountId" :empty-list="contactListEmpty" :contact="contact" :loading="readerLoading" :context="contactContext" :recent="recentMail" @search-sender="senderSearch" @open-recent="openRecent" />
         </div>

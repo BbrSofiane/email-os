@@ -82,10 +82,40 @@ describe('App compact and regular frame', () => {
     await contactAction!.trigger('click');
     await flushFakeClientAndVueUpdates(fake);
     expect(wrapper.get('[data-test="contact-disclosure-panel"]').text()).toContain('Ada Fixture');
+    const contactHeader = wrapper.get('[data-test="contact-disclosure-panel"] .drawer-header').element;
+    expect(contactHeader.firstElementChild).toBe(wrapper.get('[data-test="contact-disclosure-close"]').element);
+    expect(wrapper.get('[data-test="contact-disclosure-close"]').attributes('aria-label')).toBe('Back');
     expect(wrapper.find('[data-test="reader"]').exists()).toBe(true);
     await wrapper.get('[data-test="contact-disclosure-close"]').trigger('click');
     await flushFakeClientAndVueUpdates(fake);
     expect(wrapper.find('[data-test="reader"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('uses Back first in compact Settings and Activity headers and returns to the list', async () => {
+    stubLayout(true);
+    const fake = createBrowserFakeMailClient();
+    const wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+
+    for (const pageName of ['Settings', 'Activity']) {
+      await wrapper.get('[data-test="mobile-menu"]').trigger('click');
+      await flushFakeClientAndVueUpdates(fake);
+      const pageRow = wrapper.findAll('.mobile-drawer-row').find(row => row.text().trim() === pageName);
+      expect(pageRow).toBeDefined();
+      await pageRow!.trigger('click');
+      await flushFakeClientAndVueUpdates(fake);
+
+      const page = wrapper.get('[data-test="utility-drawer"]');
+      const back = page.get('[data-test="drawer-close"]');
+      expect(page.get('.drawer-header').element.firstElementChild).toBe(back.element);
+      expect(back.attributes('aria-label')).toBe('Back');
+      expect(back.find('svg').attributes('data-glyph')).toBe('back');
+      await back.trigger('click');
+      await flushFakeClientAndVueUpdates(fake);
+      expect(wrapper.find('[data-test="utility-drawer"]').exists()).toBe(false);
+    }
+
     wrapper.unmount();
   });
 
@@ -97,6 +127,27 @@ describe('App compact and regular frame', () => {
     await wrapper.get('[data-test="navigator-trigger"]').trigger('click');
     expect(wrapper.find('[data-test="action-query"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="mobile-drawer"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('keeps regular pushed-page Close text buttons and header order', async () => {
+    stubLayout(false);
+    const fake = createBrowserFakeMailClient();
+    const wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+
+    await wrapper.get('[data-test="rail-activity"]').trigger('click');
+    await flushFakeClientAndVueUpdates(fake);
+    const activityHeader = wrapper.get('[data-test="utility-drawer"] .drawer-header');
+    expect(activityHeader.element.firstElementChild).toBe(activityHeader.get('h2').element);
+    expect(activityHeader.get('[data-test="drawer-close"]').text()).toBe('Close');
+
+    await wrapper.get('[data-test="drawer-close"]').trigger('click');
+    await wrapper.get('[data-test="contact-disclosure"]').trigger('click');
+    await flushFakeClientAndVueUpdates(fake);
+    const contactHeader = wrapper.get('[data-test="contact-disclosure-panel"] .drawer-header');
+    expect(contactHeader.element.firstElementChild).toBe(contactHeader.get('h2').element);
+    expect(contactHeader.get('[data-test="contact-disclosure-close"]').text()).toBe('Close');
     wrapper.unmount();
   });
 
