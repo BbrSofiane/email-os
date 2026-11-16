@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { allMobileCss, mobileCss, rulesOf } from '../support/css-contract';
+import { allMobileCss, mobileCss, mobileCssFiles, rulesOf } from '../support/css-contract';
 import design from '../../DESIGN.md?raw';
 
 describe('compact CSS contract', () => {
@@ -10,6 +10,19 @@ describe('compact CSS contract', () => {
       for (const selector of rule.selectors) {
         expect(selector).toMatch(/^(?:\.app\[data-layout="compact"\]|body:has\(\.app\[data-layout="compact"\]\))/);
       }
+    }
+  });
+
+  it('allows only documented media queries and covers every mobile animation with reduced motion', () => {
+    for (const name of mobileCssFiles) {
+      const source = mobileCss[name]!;
+      const queries = [...source.matchAll(/@media\s*([^\{]+)\{/g)].map((match) => match[1]!.trim());
+      for (const query of queries) {
+        expect(['(max-width: 719px)', '(prefers-reduced-motion: reduce)']).toContain(query);
+      }
+
+      const hasMotion = /(?:transition|animation)\s*:\s*(?!none(?:\s|;|$))[^;]+;/i.test(source);
+      if (hasMotion) expect(source).toContain('@media (prefers-reduced-motion: reduce)');
     }
   });
 

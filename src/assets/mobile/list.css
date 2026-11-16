@@ -408,3 +408,11 @@
 .app[data-layout="compact"] .selection-limit {
   flex-basis: 100%;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .app[data-layout="compact"] .inbox-row > :not(.row-swipe-underlay),
+  .app[data-layout="compact"] .row-swipe-underlay,
+  .app[data-layout="compact"] .row-swipe-icon svg {
+    transition: none;
+  }
+}

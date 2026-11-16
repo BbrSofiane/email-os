@@ -79,3 +79,9 @@
   background: var(--rule);
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .app[data-layout="compact"] .mobile-drawer {
+    transition: none;
+  }
+}
+
