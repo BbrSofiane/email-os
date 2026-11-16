@@ -265,6 +265,16 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-controls 
   overflow-wrap: anywhere;
 }
 
+.app[data-layout="compact"] .search-syntax > summary {
+  min-height: 48px;
+  color: var(--text-secondary);
+  font-size: var(--mobile-type-meta);
+}
+
+.app[data-layout="compact"] .search-syntax:not([open]) > :not(summary) {
+  display: none;
+}
+
 .app[data-layout="compact"] .search-results-header {
   display: flex;
   flex-wrap: nowrap;

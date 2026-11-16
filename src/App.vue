@@ -2349,15 +2349,29 @@ const searchSyntaxEditHint = computed(() =>
             </ul>
             <p v-if="searchError" id="search-error" class="search-error" role="alert" data-test="search-error">{{ searchError }}</p>
             <label class="search-cache-toggle"><input v-model="cachedSearch" type="checkbox" /> Cached mail only</label>
-            <ul id="search-help" class="search-help" data-test="search-help">
-              <li><strong class="search-op">from:</strong><span class="search-gloss">from sender</span></li>
-              <li><strong class="search-op">to:</strong><span class="search-gloss">to recipient</span></li>
-              <li><strong class="search-op">subject:</strong><span class="search-gloss">in subject</span></li>
-              <li><strong class="search-op">"…"</strong><span class="search-gloss">exact phrase in straight quotes</span></li>
-              <li><strong class="search-op">AND / OR</strong><span class="search-gloss">combine terms — AND binds before OR</span></li>
-              <li><strong class="search-op">-term</strong><span class="search-gloss">exclude a term or field</span></li>
-            </ul>
-            <p class="search-unsupported">Not supported: dates, labels, Cc/Bcc, parentheses.</p>
+            <details v-if="layoutMode === 'compact'" class="search-syntax">
+              <summary>Search syntax</summary>
+              <ul id="search-help" class="search-help" data-test="search-help">
+                <li><strong class="search-op">from:</strong><span class="search-gloss">from sender</span></li>
+                <li><strong class="search-op">to:</strong><span class="search-gloss">to recipient</span></li>
+                <li><strong class="search-op">subject:</strong><span class="search-gloss">in subject</span></li>
+                <li><strong class="search-op">"…"</strong><span class="search-gloss">exact phrase in straight quotes</span></li>
+                <li><strong class="search-op">AND / OR</strong><span class="search-gloss">combine terms — AND binds before OR</span></li>
+                <li><strong class="search-op">-term</strong><span class="search-gloss">exclude a term or field</span></li>
+              </ul>
+              <p class="search-unsupported">Not supported: dates, labels, Cc/Bcc, parentheses.</p>
+            </details>
+            <template v-else>
+              <ul id="search-help" class="search-help" data-test="search-help">
+                <li><strong class="search-op">from:</strong><span class="search-gloss">from sender</span></li>
+                <li><strong class="search-op">to:</strong><span class="search-gloss">to recipient</span></li>
+                <li><strong class="search-op">subject:</strong><span class="search-gloss">in subject</span></li>
+                <li><strong class="search-op">"…"</strong><span class="search-gloss">exact phrase in straight quotes</span></li>
+                <li><strong class="search-op">AND / OR</strong><span class="search-gloss">combine terms — AND binds before OR</span></li>
+                <li><strong class="search-op">-term</strong><span class="search-gloss">exclude a term or field</span></li>
+              </ul>
+              <p class="search-unsupported">Not supported: dates, labels, Cc/Bcc, parentheses.</p>
+            </template>
           </form>
           <!-- Inline compose card: while a new-message editor is active and no
                reader is open, the card replaces the list in the central surface

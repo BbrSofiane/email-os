@@ -106,6 +106,22 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
   it('sizes compact Search controls and shows submitted results without overflow', async () => {
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="search-trigger"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
+    const syntax = await harness!.cdp.js<{ closed: boolean; listHeight: number; summaryHeight: number }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const details = app.querySelector('.search-syntax');
+      const summary = details.querySelector('summary');
+      return {
+        closed: !details.open,
+        listHeight: app.querySelector('[data-test="search-help"]').getBoundingClientRect().height,
+        summaryHeight: summary.getBoundingClientRect().height,
+      };
+    })()`);
+    expect(syntax.closed).toBe(true);
+    expect(syntax.listHeight).toBe(0);
+    expect(syntax.summaryHeight).toBeGreaterThanOrEqual(48);
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('.search-syntax summary').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 50))');
+    expect(await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="search-help"]').getBoundingClientRect().height`)).toBeGreaterThan(0);
     await harness!.cdp.js(`(() => {
       const app = document.querySelector(${JSON.stringify(workspaceApp)});
       const input = app.querySelector('[data-test="search-input"]');
