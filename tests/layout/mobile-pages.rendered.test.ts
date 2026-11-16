@@ -291,14 +291,52 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
     expect(await harness!.cdp.js(`!!document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="drafts-pane"]')`)).toBe(true);
   });
 
-  it('renders Settings radio rows as 48px controls and saves a swipe choice', async () => {
+  it.each([{ width: 412, height: 915 }, { width: 360, height: 800 }])('renders Settings hierarchy and aligned radio controls at $width × $height', async ({ width, height }) => {
+    await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
+      width,
+      height,
+      screenWidth: width,
+      screenHeight: height,
+      deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor,
+      mobile: true,
+    });
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-menu"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
     await harness!.cdp.js(`[...document.querySelectorAll(${JSON.stringify(workspaceApp)} + ' .mobile-drawer-row')].find(row => row.textContent.trim() === 'Settings').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 200))');
-    const rows = await harness!.cdp.js<number[]>(`[...document.querySelectorAll(${JSON.stringify(workspaceApp)} + ' .swipe-settings label')].map(label => label.getBoundingClientRect().height)`);
-    expect(rows.length).toBe(6);
-    expect(rows.every(height => height >= 48)).toBe(true);
+    const geometry = await harness!.cdp.js<{
+      rows: number[];
+      lefts: number[];
+      firstBottom: number;
+      secondTop: number;
+      legendSize: number;
+      headingSize: number;
+      emptyStatusDisplay: string;
+    }>(`(() => {
+      const page = document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="reminder-settings-dialog"]');
+      const rect = element => element.getBoundingClientRect();
+      const headings = [...page.querySelectorAll('.compact-settings-heading')];
+      const legend = page.querySelector('.swipe-settings legend');
+      const firstRadio = page.querySelector('.swipe-settings input[type="radio"]');
+      const hour = page.querySelector('label[for="reminder-default-hour"]');
+      const lastReminderControl = page.querySelector('.reminder-settings form button:last-of-type');
+      const status = page.querySelector('.swipe-settings [role="status"]');
+      return {
+        rows: [...page.querySelectorAll('.swipe-settings label')].map(row => rect(row).height),
+        lefts: [rect(headings[0]).left, rect(headings[1]).left, rect(legend).left, rect(firstRadio).left, rect(hour).left],
+        firstBottom: rect(lastReminderControl).bottom,
+        secondTop: rect(headings[1]).top,
+        legendSize: Number.parseFloat(getComputedStyle(legend).fontSize),
+        headingSize: Number.parseFloat(getComputedStyle(headings[1]).fontSize),
+        emptyStatusDisplay: getComputedStyle(status).display,
+      };
+    })()`);
+    expect(geometry.rows).toHaveLength(6);
+    expect(geometry.rows.every(height => height >= 48)).toBe(true);
+    expect(geometry.lefts.every(left => Math.abs(left - geometry.lefts[0]!) <= 1)).toBe(true);
+    expect(geometry.secondTop - geometry.firstBottom).toBeGreaterThanOrEqual(40);
+    expect(geometry.legendSize).toBeLessThan(geometry.headingSize);
+    expect(geometry.emptyStatusDisplay).toBe('none');
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('input[name="swipe-left"][value="none"]').click()`);
     expect(await harness!.cdp.js(`localStorage.getItem('email-os.swipe-preferences.v1')`)).toContain('"left":"none"');
   });

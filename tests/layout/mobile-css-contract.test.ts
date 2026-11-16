@@ -81,9 +81,9 @@ describe('compact CSS contract', () => {
   it('covers compact utility pages with the shared app surface', () => {
     const pages = mobileCss['pages.css'];
     expect(pages).toContain('.app[data-layout="compact"] .utility-drawer');
-    expect(pages).toContain('inset: 0');
+    expect(pages).toContain('inset: 24px 0 0');
     expect(pages).toContain('.utility-drawer .drawer-header');
-    expect(pages).toContain('min-height: 56px');
+    expect(pages).toContain('min-height: var(--mobile-top-bar-height)');
   });
 
   it('defines compact attachment sheet and startup gate targets', () => {

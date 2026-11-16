@@ -316,9 +316,16 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-controls 
 }
 
 .app[data-layout="compact"] .utility-drawer .compact-settings-heading {
-  margin: 0;
-  font-size: 1rem;
+  margin: 0 0 8px;
+  color: var(--text-primary);
+  font-size: var(--mobile-type-list);
   font-weight: 600;
+}
+
+.app[data-layout="compact"] .utility-drawer .swipe-settings {
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--rule);
 }
 
 .app[data-layout="compact"] .utility-drawer .reminder-settings-accessible-title {
@@ -416,9 +423,21 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-controls 
   display: grid;
   gap: 4px;
   min-width: 0;
-  margin: 0 0 16px;
+  margin: 0;
   padding: 0;
   border: 0;
+}
+
+.app[data-layout="compact"] .utility-drawer .swipe-settings legend {
+  padding: 0;
+  margin: 16px 0 0;
+  color: var(--text-secondary);
+  font-size: var(--mobile-type-meta);
+  font-weight: 400;
+}
+
+.app[data-layout="compact"] .utility-drawer .swipe-settings [role="status"]:empty {
+  display: none;
 }
 
 .app[data-layout="compact"] .utility-drawer .swipe-settings label {
@@ -431,6 +450,7 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-controls 
 .app[data-layout="compact"] .utility-drawer .swipe-settings input {
   width: 20px;
   height: 20px;
+  margin: 0;
 }
 
 body:has(.app[data-layout="compact"]) .action-backdrop.compact-action-backdrop {
