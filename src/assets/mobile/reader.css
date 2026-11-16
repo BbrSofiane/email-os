@@ -101,6 +101,13 @@
 .app[data-layout="compact"] .message-reply {
   display: none;
 }
+.app[data-layout="compact"] .mobile-reader-actions [data-test="reader-archive-toggle"]:not(:disabled) {
+  color: var(--focus-accent);
+}
+.app[data-layout="compact"] .mobile-reader-actions .reader-actions > button:disabled {
+  opacity: 1;
+  color: var(--icon-muted);
+}
 .app[data-layout="compact"] .mobile-context-slot:has(.mobile-reply-bar) {
   display: flex;
   width: 100%;
