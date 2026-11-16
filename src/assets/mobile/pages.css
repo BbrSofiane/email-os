@@ -64,14 +64,29 @@
   flex-direction: column;
   align-items: stretch;
   gap: 8px;
+  margin-inline: 0;
 }
 
 .app[data-layout="compact"] .context-pane .context-coverage .cached-coverage {
   width: 100%;
+  margin: 0;
+  padding: 6px 0 6px 20px;
+  color: var(--text-secondary);
 }
 
 .app[data-layout="compact"] .context-pane .context-coverage .drawer-quiet {
   min-height: 48px;
+  width: calc(100% - 20px);
+  margin-left: 20px;
+  border: 1px solid var(--divider);
+  border-radius: 12px;
+}
+
+.app[data-layout="compact"] .context-pane [data-test="draft-list-empty"],
+.app[data-layout="compact"] .context-pane [data-test="reminders-empty"] {
+  margin-inline: 20px 16px;
+  padding-inline: 0;
+  text-align: left;
 }
 
 .app[data-layout="compact"] [data-test="reminders-panel"] .context-item {
@@ -123,6 +138,7 @@
 }
 
 body:has(.app[data-layout="compact"]) .backdrop.compact-picker {
+  --type-body: var(--mobile-type-list);
   align-items: flex-end;
   padding: 0;
   overflow: hidden;
@@ -138,6 +154,47 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker {
   overflow-y: auto;
 }
 
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-title-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-inline: 16px;
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-title-line h2 {
+  flex: 1;
+  margin-inline: 0;
+  font-size: var(--type-body);
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-close {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  min-width: 48px;
+  min-height: 48px;
+  place-items: center;
+  border-radius: 50%;
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-close svg {
+  width: 18px;
+  height: 18px;
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker * {
+  font-size: var(--type-body);
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker small {
+  font-size: var(--mobile-type-meta);
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker [role="option"] span {
+  font-size: var(--type-body);
+}
+
 body:has(.app[data-layout="compact"]) .backdrop.compact-picker input {
   height: 48px;
   font-size: 16px;
@@ -149,6 +206,21 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker li[role="option"]
 
 body:has(.app[data-layout="compact"]) .backdrop.compact-picker .time-zone-note {
   overflow-wrap: anywhere;
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker footer {
+  display: none;
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-controls .picker-primary {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid var(--focus-accent);
+  border-radius: 12px;
+  background: var(--focus-fill);
+  color: var(--text-primary);
+  font-size: var(--mobile-type-list);
+  font-weight: 600;
 }
 
 .app[data-layout="compact"] form.mail-search {
@@ -234,6 +306,29 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .time-zone-note {
 .app[data-layout="compact"] .utility-drawer .drawer-header h2 {
   font-size: 1rem;
   font-weight: 600;
+}
+
+.app[data-layout="compact"] .utility-drawer .drawer-close-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.app[data-layout="compact"] .utility-drawer .compact-settings-heading {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.app[data-layout="compact"] .utility-drawer .reminder-settings-accessible-title {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .app[data-layout="compact"] .utility-drawer .drawer-header button {

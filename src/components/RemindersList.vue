@@ -193,7 +193,7 @@ function describedBy(item: ReminderItem): string {
         </label>
         <p v-if="dueAt" class="chosen-time">Selected: <time :datetime="dueAt">{{ formatReminderDateTime(dueAt) }}</time></p>
         <p v-else-if="pickerReady" class="chosen-time">Selected: Someday</p>
-        <button type="button" :disabled="busy || retrying || !pickerReady" @click="model.submit()">{{ busy ? 'Saving reminder…' : source.revision === null ? 'Schedule reminder' : 'Save new time' }}</button>
+        <button type="button" class="picker-primary" :disabled="busy || retrying || !pickerReady" @click="model.submit()">{{ busy ? 'Saving reminder…' : source.revision === null ? 'Schedule reminder' : 'Save new time' }}</button>
       </ReminderPicker>
     </div>
     <!-- Names the tab after `[` / `]`; mounted all the time so each change is announced. -->

@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { loadReminderPreferences } from '../lib/reminder-preferences';
 import { getReminderPresets, parseReminderTime, type ReminderTimeOption } from '../lib/reminder-time';
 import { formatReminderDateTime, getDeviceTimeZone } from '../lib/reminder-timezone';
+import HeaderGlyph from './HeaderGlyph.vue';
 
 const props = defineProps<{ disabled?: boolean; compact?: boolean; initialValue?: string | null; rescheduling?: boolean; subject?: string | null; sender?: string | null }>();
 const emit = defineEmits<{ select: [dueAt: string | null]; editing: []; dismiss: [] }>();
@@ -134,7 +135,10 @@ onMounted(async () => {
   <Teleport to="body">
     <div class="backdrop" :class="{ 'compact-picker': compact }" @click.self="dismiss">
       <section ref="dialog" tabindex="-1" class="picker action-overlay" data-reminder-picker role="dialog" aria-modal="true" aria-labelledby="reminder-picker-title" aria-describedby="reminder-picker-help reminder-target-description" @keydown.stop="onDialogKeydown">
-        <h2 id="reminder-picker-title">When should this return?</h2>
+        <div class="picker-title-line">
+          <h2 id="reminder-picker-title">When should this return?</h2>
+          <button v-if="compact" type="button" class="picker-close" aria-label="Close reminder picker" :disabled="disabled" @click="dismiss"><HeaderGlyph name="x" /><span class="sr-only">Close</span></button>
+        </div>
         <p id="reminder-picker-help">Enter a time or choose a suggestion.</p>
         <p class="time-zone-note">Date-based defaults use your device timezone: <strong>{{ timeZone ?? 'name unavailable' }}</strong>.</p>
         <div id="reminder-target-description" class="reminder-target" aria-label="Conversation to remind">

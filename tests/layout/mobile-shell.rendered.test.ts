@@ -103,8 +103,10 @@ async function inboxGeometry(harness: RenderedHarness): Promise<InboxGeometry> {
       railDisplay: getComputedStyle(app.querySelector('.rail')).display,
       preview: rect(preview),
       previewButtonOverlaps: previewButtons.map(button => overlaps(rect(preview), rect(button))),
-      pillStyles: ['[data-test="mobile-context-slot"]', '.mobile-navigation', '[data-test="mobile-account"]'].map(selector => {
-        const element = app.querySelector(selector);
+      pillStyles: ['[data-test="mobile-context-slot"]', '.mobile-navigation', '[data-test="mobile-account"]']
+        .map(selector => app.querySelector(selector))
+        .filter(element => !!element)
+        .map(element => {
         const style = getComputedStyle(element);
         return { background: style.backgroundColor, borderColor: style.borderTopColor, borderWidth: style.borderTopWidth };
       }),

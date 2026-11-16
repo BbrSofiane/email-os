@@ -345,6 +345,8 @@ const quotedSnippet = computed(() => quotedPreview(replyLatestMessage.value?.bod
  * visible and interactive while composing.
  */
 const composeCardOpen = ref(false);
+/** Compact editors are teleported to the app root, so the other app surfaces can be inert. */
+const mobileEditorOpen = computed(() => layoutMode.value === 'compact' && (composeCardOpen.value || replyComposerOpen.value));
 
 // Reuse the exact draft transition protocol; never hide an unacknowledged buffer.
 defineExpose({ prepareWorkspaceSwitch: () => drafts.flushAndClose() });
@@ -2085,9 +2087,9 @@ const searchSyntaxEditHint = computed(() =>
       :execute-action="executeAction"
       :open-destinations="openMobileDrawer"
       :menu-expanded="mobileNavOpen"
-      :inert="mobileNavOpen || undefined"
+      :inert="mobileNavOpen || mobileEditorOpen || undefined"
     />
-    <main class="app-main" :class="{ 'contact-collapsed': contactCollapsed }" :inert="!!overlay || !!attachmentConversation || mobileNavOpen || readerSheetOpen || messageSheetOpen || undefined">
+    <main class="app-main" :class="{ 'contact-collapsed': contactCollapsed }" :inert="!!overlay || !!attachmentConversation || mobileNavOpen || readerSheetOpen || messageSheetOpen || mobileEditorOpen || undefined">
       <!-- Split header (DESIGN.md "Split Tabs"): one borderless 78px strip in
            the list column. Destinations hamburger on the left, split tabs on
            the 50px content inset, quiet notes and glyphs on the right. It sits
@@ -2649,7 +2651,8 @@ const searchSyntaxEditHint = computed(() =>
         >
           <header class="drawer-header">
             <h2>{{ drawer === 'reminder-settings' && layoutMode === 'compact' ? 'Settings' : drawerHeadings[drawer] }}</h2>
-            <button type="button" data-test="drawer-close" @click="closeDrawer()">Close</button>
+            <button v-if="layoutMode === 'compact'" type="button" class="drawer-close-icon" data-test="drawer-close" aria-label="Close" @click="closeDrawer()"><HeaderGlyph name="x" /><span class="visually-hidden">Close</span></button>
+            <button v-else type="button" data-test="drawer-close" @click="closeDrawer()">Close</button>
           </header>
           <p v-if="drawer === 'destinations' && accountId && providerSignInExpired" role="note" data-test="destinations-sign-in-expired">
             {{ providerSignInExpired.text }}<template v-if="accountActionsIdle"> <button type="button" class="inline-action" @click="accountNoticeAction('connect', 'drawer')">{{ providerSignInExpired.label }}</button></template>
@@ -2662,7 +2665,7 @@ const searchSyntaxEditHint = computed(() =>
             Provider mail needs a connected Gmail account.<template v-if="providerAccountAction"> <button v-if="providerAccountAction.action === 'account' || accountActionsIdle" type="button" class="inline-action" data-test="destinations-account-action" @click="accountNoticeAction(providerAccountAction.action, 'drawer')">{{ providerAccountAction.label }}</button></template><template v-else-if="accountStatus?.connection === 'authenticating'"> Finish sign-in in your browser.</template><template v-else> Connect one from Account first.</template>
           </p>
           <section v-if="drawer === 'reminder-settings' && remindersSupported" class="utility-panel" data-test="reminder-settings-dialog">
-            <h3 class="drawer-section-title">Reminders</h3>
+            <h3 class="drawer-section-title compact-settings-heading">Reminders</h3>
             <ReminderSettings @close="closeDrawer" @saved="reminderPreferencesSaved" />
             <SwipeActionSettings @saved="swipePreferences = $event" />
           </section>
@@ -2767,7 +2770,7 @@ const searchSyntaxEditHint = computed(() =>
     <MobileBottomBar
       v-if="layoutMode === 'compact'"
       ref="mobileBottomBar"
-      :inert="messageSheetOpen || mobileNavOpen || undefined"
+      :inert="messageSheetOpen || mobileNavOpen || mobileEditorOpen || undefined"
       :reader="readerOpen"
       :inbox-or-saved="mailbox.context.value === 'inbox' || mailbox.context.value === 'saved'"
       :execute-action="executeAction"

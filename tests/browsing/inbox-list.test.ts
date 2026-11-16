@@ -154,6 +154,22 @@ describe("InboxList (UX-01 compact rows)", () => {
     expect(w.emitted('selectToggle')?.[1]).toEqual([{ accountId: ACCOUNT, conversationId: 'next' }]);
   });
 
+  it('suppresses the context menu only after a compact touch long press', () => {
+    vi.useFakeTimers();
+    const compact = mountList([row('pressed', { lastMessageAt: '2026-01-15T09:00:00Z' })], null, { compact: true });
+    const compactRow = compact.get('.inbox-row').element;
+    compactRow.dispatchEvent(pointerEvent('pointerdown', 20));
+    vi.advanceTimersByTime(500);
+    const touchContextMenu = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    compactRow.dispatchEvent(touchContextMenu);
+    expect(touchContextMenu.defaultPrevented).toBe(true);
+
+    const regular = mountList([row('right-click', { lastMessageAt: '2026-01-15T09:00:00Z' })]);
+    const mouseContextMenu = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    regular.get('.inbox-row').element.dispatchEvent(mouseContextMenu);
+    expect(mouseContextMenu.defaultPrevented).toBe(false);
+  });
+
   it('renders group headings in backend order without selectable semantics', async () => {
     const w = mountList(defaultRows(), { accountId: ACCOUNT, conversationId: 'today-1' });
     await flushPromises();

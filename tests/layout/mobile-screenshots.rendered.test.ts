@@ -6,7 +6,7 @@
  * EMAIL_OS_SCREENSHOT_DIR are set (`mise run screenshots:mobile`), and writes
  * one PNG per surface for a person to look at.
  */
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
 import { afterAll, beforeAll, describe, it } from 'vitest';
 import { PHONE_VIEWPORT, startRenderedHarness, type RenderedHarness } from '../rendered/chromium';
 
@@ -188,8 +188,17 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await shot('search');
 
     await freshInbox();
-    await click('[data-test="mobile-account"]');
-    await shot('account');
+    const accountAvailable = await harness!.cdp.js<boolean>(`(() => {
+      const button = document.querySelector(${JSON.stringify(activeApp)})?.querySelector('[data-test="mobile-account"]');
+      return !!button && !button.disabled;
+    })()`);
+    if (accountAvailable) {
+      await click('[data-test="mobile-account"]');
+      await waitFor(`app.querySelector('[data-test="utility-drawer"]')`, 'Account page');
+      await shot('account');
+    } else {
+      rmSync(`${outputDir}/account.png`, { recursive: false, force: true });
+    }
 
     await freshInbox();
     await click('[data-test="mobile-menu"]');
@@ -215,7 +224,13 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await freshInbox();
     await click('.inbox-row');
     await click('[data-test="reader-more"]');
-    await click('[data-test="action-sheet"] button');
+    await harness!.cdp.js(`(() => {
+      const row = [...document.querySelectorAll(${JSON.stringify(activeApp)} + ' [data-test="action-sheet"] button')]
+        .find(button => button.textContent.includes('Contact details'));
+      if (!row) throw new Error('Missing Contact details action');
+      row.click();
+    })()`);
+    await waitFor(`app.querySelector('[data-test="contact-disclosure-panel"]')`, 'Contact details page');
     await shot('contact');
 
     await freshInbox();

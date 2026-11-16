@@ -30,7 +30,7 @@ describe('MobileTopBar', () => {
 });
 
 describe('MobileBottomBar', () => {
-  it('dispatches navigation, marks Mail current, disables unavailable actions, and exposes hosts', async () => {
+  it('hides unavailable Account navigation and exposes navigation hosts', async () => {
     const executeAction = vi.fn();
     const wrapper = mount(MobileBottomBar, {
       props: {
@@ -44,8 +44,7 @@ describe('MobileBottomBar', () => {
 
     expect(wrapper.get('nav').attributes('aria-label')).toBe('Primary');
     expect(wrapper.get('[data-test="mobile-mail"]').attributes('aria-current')).toBe('page');
-    expect(wrapper.get('[data-test="mobile-account"]').attributes('disabled')).toBeDefined();
-    expect(wrapper.get('[data-test="mobile-account"]').attributes('title')).toBe('Run account');
+    expect(wrapper.find('[data-test="mobile-account"]').exists()).toBe(false);
     await wrapper.get('[data-test="mobile-mail"]').trigger('click');
     await wrapper.get('[data-test="mobile-search"]').trigger('click');
     expect(executeAction).toHaveBeenNthCalledWith(1, 'inbox');
@@ -54,6 +53,20 @@ describe('MobileBottomBar', () => {
     expect(wrapper.vm.contextHost).toBeTruthy();
     // Always rendered as an empty Teleport target; CSS hides it while empty.
     expect(wrapper.get('[data-test="mobile-context-slot"]').element.childNodes).toHaveLength(0);
+  });
+
+  it('shows Account when the action is available', () => {
+    const wrapper = mount(MobileBottomBar, {
+      props: {
+        reader: false,
+        inboxOrSaved: true,
+        executeAction: vi.fn(),
+        actionAvailable: (id: string) => id === 'account',
+        actionLabel: label,
+      },
+    });
+    expect(wrapper.find('[data-test="mobile-account"]').exists()).toBe(true);
+    expect(wrapper.get('[data-test="mobile-account"]').attributes('disabled')).toBeUndefined();
   });
 
   it('shows the reader action host without navigation', () => {

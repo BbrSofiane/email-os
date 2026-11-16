@@ -267,6 +267,14 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       const rect = row.getBoundingClientRect();
       return { x: rect.left + 30, y: rect.top + 20 };
     })()`);
+    const selectionStyles = await harness!.cdp.js<{ row: string; child: string }>(`(() => {
+      const row = document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="conversation-row-conv-01"]');
+      return {
+        row: getComputedStyle(row).userSelect,
+        child: getComputedStyle(row.querySelector('.row-preview')).userSelect,
+      };
+    })()`);
+    expect(selectionStyles).toEqual({ row: 'none', child: 'none' });
     await touch('touchStart', start.x, start.y);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 600))');
     await touch('touchEnd');
@@ -324,6 +332,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       };
     })()`);
     expect(measure.selected).toBe(true);
+    expect(await harness!.cdp.js('window.getSelection().toString()')).toBe('');
     expect(measure.checkbox.width).toBeGreaterThanOrEqual(48);
     expect(measure.checkbox.height).toBeGreaterThanOrEqual(48);
     expect(measure.checkbox.opacity).toBe('1');
