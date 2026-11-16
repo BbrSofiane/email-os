@@ -89,6 +89,24 @@
   text-align: left;
 }
 
+.app[data-layout="compact"] [data-test="reminders-panel"] .context-coverage .drawer-quiet {
+  min-height: 48px;
+  width: auto;
+  margin: 0;
+  margin-inline-start: var(--mobile-page-inset-start);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+}
+
+.app[data-layout="compact"] .activity-empty-detail {
+  color: var(--text-secondary);
+  font-size: var(--mobile-type-meta);
+}
+
 .app[data-layout="compact"] [data-test="reminders-panel"] .context-item {
   min-height: 64px;
 }

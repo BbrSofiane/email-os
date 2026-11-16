@@ -16,6 +16,14 @@ function operation(status: OperationStatus): OperationSummary {
 }
 
 describe('ActivityPanel', () => {
+  it('explains the empty Activity page', () => {
+    const wrapper = mount(ActivityPanel, { props: { activity: [], groups: [], actionsEnabled: false, gmailMode: false } });
+
+    expect(wrapper.get('[data-test="activity-empty"]').text()).toBe('No operations yet.');
+    expect(wrapper.get('[data-test="activity-empty-detail"]').text()).toBe('Mail actions and their results appear here.');
+    wrapper.unmount();
+  });
+
   it.each(['queued', 'outcome_unknown'] as const)(
     'does not describe provider-unavailable %s operations as failed',
     (status) => {

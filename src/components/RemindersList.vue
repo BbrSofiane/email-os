@@ -151,6 +151,8 @@ function describedBy(item: ReminderItem): string {
 
 <template>
   <div ref="paneEl" class="context-pane" data-test="reminders-panel" tabindex="-1" @focusin="onPaneFocusin">
+    <p v-if="props.compact && loading" class="list-state" role="status">Loading local reminders…</p>
+    <p v-else-if="props.compact && loadedOnce && !displayed.length" class="list-state" data-test="reminders-empty">No {{ destination }} reminders.</p>
     <!-- Honest state, once: the device-local note is visible; the rest is its title and hidden text. -->
     <div class="context-coverage">
       <p class="cached-coverage" role="note" data-test="reminders-coverage" :title="REMINDERS_NOTE_DETAIL">{{ REMINDERS_NOTE_LINE }}<span class="visually-hidden"> · {{ REMINDERS_NOTE_DETAIL }}</span></p>
@@ -201,9 +203,9 @@ function describedBy(item: ReminderItem): string {
     <!-- Says what Cancel reminder / Reschedule did, only after it resolved or failed. -->
     <p class="visually-hidden" role="status" aria-live="polite" data-test="reminders-action-status">{{ actionAnnouncement }}</p>
     <div id="reminder-tabpanel" role="tabpanel" :aria-labelledby="`reminder-tab-${destination}`">
-      <p v-if="loading" class="list-state" role="status">Loading local reminders…</p>
+      <p v-if="!props.compact && loading" class="list-state" role="status">Loading local reminders…</p>
       <!-- Before the first successful read an empty list means "not read", not "none": the error above says so. -->
-      <p v-else-if="loadedOnce && !displayed.length" class="list-state" data-test="reminders-empty">No {{ destination }} reminders.</p>
+      <p v-else-if="!props.compact && loadedOnce && !displayed.length" class="list-state" data-test="reminders-empty">No {{ destination }} reminders.</p>
       <ContextRowList
         v-if="items.length"
         ref="list"

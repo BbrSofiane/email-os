@@ -372,7 +372,7 @@ watch(drawer, (next) => { if (next) editingSplit.value = false; });
 // own, not Inbox splits: the Inbox split nav gives way to the heading alone.
 const splitNavShown = computed(() => accountReady.value && !!accountId.value && !readerOpen.value && !drawer.value);
 const inboxSplitsShown = computed(() => splitNavShown.value
-  && (mailbox.context.value === 'inbox' || mailbox.context.value === 'saved' || remindersContext.value));
+  && (mailbox.context.value === 'inbox' || mailbox.context.value === 'saved'));
 const activeTabShown = computed(() => splitNavShown.value
   && (mailbox.context.value === 'inbox' || (mailbox.context.value === 'saved' && !!savedTabVisible.value)));
 /** Cached Trash standing limits: one Ash line; the whole caveat is its title and hidden text. */
@@ -2130,7 +2130,7 @@ const searchSyntaxEditHint = computed(() =>
               aria-controls="reminder-tabpanel"
               :tabindex="reminders.destination.value === tab.id ? 0 : -1"
               @click="reminders.destination.value = tab.id"
-            ><span class="split-label">{{ tab.label }}</span> <span v-if="reminders.loadedOnce.value" class="split-count">{{ reminders.counts.value[tab.id] }}</span> <span v-if="reminders.loadedOnce.value && tab.id === 'pending' && reminders.attentionTotal.value > 0" class="split-count">· {{ reminders.attentionTotal.value }} {{ reminders.attentionTotal.value === 1 ? 'needs' : 'need' }} attention</span></button>
+            ><span class="split-label">{{ tab.label }}</span> <span v-if="reminders.loadedOnce.value && (layoutMode !== 'compact' || reminders.counts.value[tab.id] > 0)" class="split-count">{{ reminders.counts.value[tab.id] }}</span> <span v-if="reminders.loadedOnce.value && tab.id === 'pending' && reminders.attentionTotal.value > 0" class="split-count">· {{ reminders.attentionTotal.value }} {{ reminders.attentionTotal.value === 1 ? 'needs' : 'need' }} attention</span></button>
           </div>
           </Teleport>
           <!-- Coverage qualifies the counts, so it lives on them: the tabs'

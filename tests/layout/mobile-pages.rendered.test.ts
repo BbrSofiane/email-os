@@ -57,7 +57,7 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
     await harness!.cdp.js(`[...document.querySelectorAll(${JSON.stringify(workspaceApp)} + ' .mobile-drawer-row')].find(row => row.textContent.trim() === 'Reminders').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 200))');
-    const geometry = await harness!.cdp.js<{ intro: DOMRectReadOnly; button: DOMRectReadOnly; empty: DOMRectReadOnly; paneLeft: number }>(`(() => {
+    const geometry = await harness!.cdp.js<{ intro: DOMRectReadOnly; button: DOMRectReadOnly; empty: DOMRectReadOnly; paneLeft: number; paneRight: number }>(`(() => {
       const app = document.querySelector(${JSON.stringify(workspaceApp)});
       const pane = app.querySelector('[data-test="reminders-panel"]');
       const introElement = app.querySelector('[data-test="reminders-coverage"]');
@@ -66,10 +66,13 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
       const empty = app.querySelector('[data-test="reminders-empty"]').getBoundingClientRect();
       const text = document.createRange();
       text.selectNodeContents(introElement.firstChild);
-      return { intro: { top: intro.top, bottom: intro.bottom, left: text.getBoundingClientRect().left }, button: { top: button.top, height: button.height, left: button.left }, empty: { left: empty.left }, paneLeft: pane.getBoundingClientRect().left };
+      const paneRect = pane.getBoundingClientRect();
+      return { intro: { top: intro.top, bottom: intro.bottom, left: text.getBoundingClientRect().left }, button: { top: button.top, height: button.height, left: button.left, right: button.right }, empty: { top: empty.top, left: empty.left }, paneLeft: paneRect.left, paneRight: paneRect.right };
     })()`);
     expect(geometry.button.top).toBeGreaterThanOrEqual(geometry.intro.bottom);
+    expect(geometry.empty.top).toBeLessThan(geometry.button.top);
     expect(geometry.button.height).toBeGreaterThanOrEqual(48);
+    expect(geometry.button.right).toBeLessThanOrEqual(geometry.paneRight - 16);
     expect(Math.abs(geometry.intro.left - geometry.paneLeft - 20)).toBeLessThanOrEqual(1);
     expect(Math.abs(geometry.button.left - geometry.paneLeft - 20)).toBeLessThanOrEqual(1);
     expect(Math.abs(geometry.empty.left - geometry.paneLeft - 20)).toBeLessThanOrEqual(1);

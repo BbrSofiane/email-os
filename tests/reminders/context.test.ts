@@ -12,13 +12,21 @@ import type { ConversationRef, PutReminder, Reminder, ReminderPhase } from '../.
 import { deferred, mountApp, press, useGmailMode } from '../helpers';
 
 let app: VueWrapper | null = null;
-afterEach(() => { app?.unmount(); app = null; document.body.innerHTML = ''; });
+afterEach(() => { app?.unmount(); app = null; document.body.innerHTML = ''; vi.restoreAllMocks(); });
 
 const ref = (id: string): ConversationRef => ({ accountId: 'fixture-account', conversationId: id });
 function reminder(id: string, phase: ReminderPhase, patch: Partial<Reminder> = {}): Reminder {
   return { conversation: ref(id), subject: `Reminder ${id}`, revision: 2, sourceMessageId: `${id}-m1`, dueAt: '2030-01-01T00:00:00Z', condition: 'if_no_reply', phase, ...patch };
 }
-async function mountRemindersContext(rows: Reminder[] = [reminder('conv-02', 'pending'), reminder('conv-03', 'pending'), reminder('conv-04', 'returned')]) {
+async function mountRemindersContext(rows: Reminder[] = [reminder('conv-02', 'pending'), reminder('conv-03', 'pending'), reminder('conv-04', 'returned')], compact = false) {
+  if (compact) {
+    vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+      matches: query === '(max-width: 719px)',
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }) as unknown as MediaQueryList);
+  }
   const fake = createBrowserFakeMailClient();
   const put = vi.fn(async (c: PutReminder): Promise<Reminder> => ({ conversation: c.conversation, subject: 'Saved', revision: 1, sourceMessageId: c.sourceMessageId, dueAt: c.dueAt, condition: c.condition, phase: 'removing' }));
   fake.reminders = { list: vi.fn(async () => structuredClone(rows)), put, cancel: vi.fn() };
@@ -31,6 +39,14 @@ const tabs = (w: VueWrapper) => w.findAll('[role="tab"]');
 const rowButtons = (w: VueWrapper) => w.findAll('[data-drawer-row]');
 
 describe('entering and leaving the Reminders context', () => {
+  it('hides zero counts from compact reminder tabs and keeps nonzero counts', async () => {
+    const { w } = await mountRemindersContext([reminder('pending-one', 'pending'), reminder('returned-one', 'returned')], true);
+    await w.get('[data-test="reminders-trigger"]').trigger('click');
+    await flushPromises();
+
+    expect(tabs(w).map((tab) => tab.text().replace(/\s+/g, ' '))).toEqual(['Pending 1', 'Returned 1', 'History']);
+  });
+
   it('G then H and the header glyph enter it; the h1, the header tabs and the active glyph name it', async () => {
     const { w } = await mountRemindersContext();
     const glyph = w.get('[data-test="reminders-trigger"]');
