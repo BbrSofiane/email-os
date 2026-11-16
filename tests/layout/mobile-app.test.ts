@@ -68,6 +68,27 @@ describe('App compact and regular frame', () => {
     wrapper.unmount();
   });
 
+  it('opens Contact details from the reader More sheet and returns to the reader', async () => {
+    stubLayout(true);
+    const fake = createBrowserFakeMailClient();
+    const wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+    await wrapper.get('[data-test="conversation-row-conv-01"]').trigger('click');
+    await flushFakeClientAndVueUpdates(fake);
+    await wrapper.get('[data-test="reader-more"]').trigger('click');
+    await flushFakeClientAndVueUpdates(fake);
+    const contactAction = wrapper.findAll('[data-test="action-sheet"] button').find(button => button.text().includes('Contact details'));
+    expect(contactAction).toBeDefined();
+    await contactAction!.trigger('click');
+    await flushFakeClientAndVueUpdates(fake);
+    expect(wrapper.get('[data-test="contact-disclosure-panel"]').text()).toContain('Ada Fixture');
+    expect(wrapper.get('[data-test="reader"]').exists()).toBe(true);
+    await wrapper.get('[data-test="contact-disclosure-close"]').trigger('click');
+    await flushFakeClientAndVueUpdates(fake);
+    expect(wrapper.get('[data-test="reader"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
   it('keeps the regular menu button on the navigator overlay', async () => {
     stubLayout(false);
     const fake = createBrowserFakeMailClient();
