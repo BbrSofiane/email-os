@@ -81,6 +81,7 @@ function describe(error: MailError): string {
 
 const toInput = ref<HTMLInputElement | null>(null);
 const ccInput = ref<HTMLInputElement | null>(null);
+const subjectInput = ref<HTMLInputElement | null>(null);
 const bodyInput = ref<HTMLTextAreaElement | null>(null);
 const dialog = ref<HTMLElement | null>(null);
 const editorRoot = ref<HTMLElement | null>(null);
@@ -173,6 +174,20 @@ async function toggleExtras(): Promise<void> {
   if (!extrasOpen.value) return;
   await nextTick();
   ccInput.value?.focus();
+}
+
+function onFieldEnter(event: KeyboardEvent, field: 'to' | 'cc' | 'subject'): void {
+  if (event.isComposing || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
+  event.preventDefault();
+  if (field === 'to' && ccShown.value && ccInput.value) {
+    ccInput.value.focus();
+    return;
+  }
+  if ((field === 'to' || field === 'cc') && subjectShown.value && subjectInput.value) {
+    subjectInput.value.focus();
+    return;
+  }
+  bodyInput.value?.focus();
 }
 
 // ---- Focus and body sizing --------------------------------------------------
@@ -280,7 +295,7 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
           :disabled="fieldsDisabled()"
           @click="editTo"
         ><template v-if="toAddress === ''">No recipient</template><template v-else><template v-if="toName"><span data-test="draft-to-name">{{ toName }}</span> <span class="field-summary-address" data-test="draft-to-address">&lt;{{ toAddress }}&gt;</span></template><template v-else>{{ toAddress }}</template></template></button>
-        <input v-else :id="ids.to" ref="toInput" class="field-input" data-test="draft-to" type="text" :aria-describedby="props.toDescribedBy" autocomplete="off" :value="props.content.to" :disabled="fieldsDisabled()" @input="emit('setField', 'to', ($event.target as HTMLInputElement).value)">
+        <input v-else :id="ids.to" ref="toInput" class="field-input" data-test="draft-to" type="text" inputmode="email" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="next" :aria-describedby="props.toDescribedBy" autocomplete="off" :value="props.content.to" :disabled="fieldsDisabled()" @input="emit('setField', 'to', ($event.target as HTMLInputElement).value)" @keydown.enter="onFieldEnter($event, 'to')">
         <button
           type="button"
           class="field-toggle"
@@ -294,11 +309,11 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
       <div :id="ids.extras" class="field-extras">
         <div v-if="ccShown" class="field-row" data-field="cc">
           <label class="field-label" :for="ids.cc">Cc</label>
-          <input :id="ids.cc" ref="ccInput" class="field-input" data-test="draft-cc" type="text" autocomplete="off" :value="props.content.cc" :disabled="fieldsDisabled()" @input="emit('setField', 'cc', ($event.target as HTMLInputElement).value)">
+          <input :id="ids.cc" ref="ccInput" class="field-input" data-test="draft-cc" type="text" inputmode="email" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="next" autocomplete="off" :value="props.content.cc" :disabled="fieldsDisabled()" @input="emit('setField', 'cc', ($event.target as HTMLInputElement).value)" @keydown.enter="onFieldEnter($event, 'cc')">
         </div>
         <div v-if="subjectShown" class="field-row" data-field="subject">
           <label class="field-label" :for="ids.subject">Subject</label>
-          <input :id="ids.subject" class="field-input" data-test="draft-subject" type="text" autocomplete="off" :value="props.content.subject" :disabled="fieldsDisabled()" @input="emit('setField', 'subject', ($event.target as HTMLInputElement).value)">
+          <input :id="ids.subject" ref="subjectInput" class="field-input" data-test="draft-subject" type="text" enterkeyhint="next" autocapitalize="sentences" autocomplete="off" :value="props.content.subject" :disabled="fieldsDisabled()" @input="emit('setField', 'subject', ($event.target as HTMLInputElement).value)" @keydown.enter="onFieldEnter($event, 'subject')">
         </div>
       </div>
       <div class="field-body">
@@ -308,6 +323,7 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
           ref="bodyInput"
           class="field-textarea"
           data-test="draft-body"
+          autocapitalize="sentences"
           :aria-describedby="ids.detail"
           :value="props.content.bodyText"
           :disabled="fieldsDisabled()"
