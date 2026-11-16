@@ -545,7 +545,7 @@ Draft and reminder context rows are at least 64px high; context actions and form
 
 ### Compact destinations and pushed pages
 
-Inbox, Drafts, Reminders, Search and the other mail lists are destinations: their top bar shows the menu button. Settings, Activity, Account, Provider mail and Contact are pushed pages that cover the app and show Back in the menu button's position. The Back control is 48×48px inside the 56px top bar; its page title matches the destination title in size, weight and left edge. The context pill holds Inbox/saved tabs or Reminders membership tabs on those contexts, and is empty on Search, Drafts and other destinations.
+Inbox, Drafts, Reminders, Search and the other mail lists are destinations: their top bar shows the menu button. Settings, Activity, Account, Provider mail and Contact are pushed pages that cover the app and show Back in the menu button's position. The Back control is 48×48px inside the 56px top bar; its page title matches the destination title in size, weight and left edge. Inbox split tabs remain available in Inbox, Done and Starred, and the custom saved split remains available from those lists. Reminders uses membership tabs. Search, Drafts, Trash and other contexts leave the context pill empty.
 
 ### Compact Settings, Search and Reminders
 
