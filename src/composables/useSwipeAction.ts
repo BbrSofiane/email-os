@@ -11,11 +11,13 @@ export function useSwipeAction(
   const offset = ref(0);
   const revealed = ref<SwipeSide>(null);
   const dragging = ref(false);
+  const armed = ref(false);
   const suppressClick = ref(false);
   let pointerId: number | null = null;
   let startX = 0;
   let startY = 0;
   let startedAt = 0;
+  let rowWidth = 0;
   let decided = false;
   let horizontal = false;
 
@@ -43,12 +45,14 @@ export function useSwipeAction(
       }
       horizontal = true;
       dragging.value = true;
+      rowWidth = element()?.getBoundingClientRect().width ?? 0;
       element()?.setPointerCapture?.(event.pointerId);
     }
     if (!horizontal) return;
     const side = dx >= 0 ? 'right' : 'left';
     offset.value = canReveal(side) ? dx : Math.sign(dx) * Math.min(24, Math.abs(dx));
     revealed.value = offset.value === 0 ? null : side;
+    armed.value = canReveal(side) && Math.abs(dx) >= rowWidth * 0.35;
   }
 
   function finish(event: PointerEvent, cancelled = false): void {
@@ -60,6 +64,7 @@ export function useSwipeAction(
         setTimeout(() => { suppressClick.value = false; }, 0);
       }
       dragging.value = false;
+      armed.value = false;
       offset.value = 0;
       revealed.value = null;
       return;
@@ -68,11 +73,11 @@ export function useSwipeAction(
     const side = dx >= 0 ? 'right' : 'left';
     const elapsed = Math.max(1, performance.now() - startedAt);
     const velocity = Math.abs(dx) / elapsed;
-    const width = element()?.getBoundingClientRect().width ?? 0;
-    const shouldCommit = canReveal(side) && (Math.abs(dx) >= width * 0.35 || (Math.abs(dx) >= 64 && velocity > 0.5));
+    const shouldCommit = canReveal(side) && (Math.abs(dx) >= rowWidth * 0.35 || (Math.abs(dx) >= 64 && velocity > 0.5));
     suppressClick.value = true;
     setTimeout(() => { suppressClick.value = false; }, 0);
     dragging.value = false;
+    armed.value = false;
     if (shouldCommit) commit(side);
     offset.value = 0;
     revealed.value = null;
@@ -82,6 +87,7 @@ export function useSwipeAction(
     pointerId = null;
     horizontal = false;
     dragging.value = false;
+    armed.value = false;
     offset.value = 0;
     revealed.value = null;
   }
@@ -90,6 +96,7 @@ export function useSwipeAction(
     offset,
     revealed,
     dragging,
+    armed,
     pointerdown,
     pointermove,
     pointerup: (event: PointerEvent) => finish(event),

@@ -719,7 +719,10 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
         <span
           v-if="compact && !readOnly && swipeFor(item.row).revealed.value && (swipeFor(item.row).revealed.value === 'right' ? swipeRight ?? 'remind' : swipeLeft ?? 'done') !== 'none'"
           class="row-swipe-underlay"
-          :class="(swipeFor(item.row).revealed.value === 'right' ? props.swipeRight ?? 'remind' : props.swipeLeft ?? 'done')"
+          :class="[
+            swipeFor(item.row).revealed.value === 'right' ? props.swipeRight ?? 'remind' : props.swipeLeft ?? 'done',
+            { armed: swipeFor(item.row).armed.value },
+          ]"
           aria-hidden="true"
         >
           <span class="row-swipe-icon"><RowGlyph :name="swipeFor(item.row).revealed.value === 'right' ? 'reminder' : context === 'done' ? 'restore' : 'archive'" /></span>

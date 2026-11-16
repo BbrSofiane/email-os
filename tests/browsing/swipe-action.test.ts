@@ -59,6 +59,24 @@ describe('useSwipeAction', () => {
     expect(swipe.dragging.value).toBe(false);
   });
 
+  it('arms at 35 percent, disarms when the finger returns, and respects unavailable sides', () => {
+    const { swipe } = setup();
+    swipe.pointerdown(pointer('pointerdown', 100, 20));
+    swipe.pointermove(pointer('pointermove', 169, 20));
+    expect(swipe.armed.value).toBe(false);
+    swipe.pointermove(pointer('pointermove', 170, 20));
+    expect(swipe.armed.value).toBe(true);
+    swipe.pointermove(pointer('pointermove', 150, 20));
+    expect(swipe.armed.value).toBe(false);
+    swipe.pointerup(pointer('pointerup', 150, 20));
+    expect(swipe.armed.value).toBe(false);
+
+    const unavailable = setup(() => false).swipe;
+    unavailable.pointerdown(pointer('pointerdown', 100, 20));
+    unavailable.pointermove(pointer('pointermove', 180, 20));
+    expect(unavailable.armed.value).toBe(false);
+  });
+
   it('cancels a short horizontal movement and suppresses the following click', () => {
     vi.useFakeTimers();
     const { commit, swipe } = setup();
