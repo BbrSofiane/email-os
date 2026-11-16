@@ -1,0 +1,85 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7K3NYRFMVTME23448JRQ7Y7",
+  "session_id": "415cd333-37f5-4cfe-be88-ad6fe867d94b",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-16T21:19:50.256641318Z",
+  "branch": "mobile/p5-editor",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/components/DraftEditorCore.vue",
+    "tests/drafts/draft-fields-keyboard.test.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5-2",
+  "turn_id": "b0a8a4cf196d",
+  "checkpoint_transcript_start": 2371,
+  "transcript_lines_at_start": 2371,
+  "compact_transcript_start": 430,
+  "token_usage": {
+    "input_tokens": 4,
+    "cache_creation_tokens": 6393,
+    "cache_read_tokens": 525048,
+    "output_tokens": 1773,
+    "api_call_count": 2
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-toolu_01BXU2tGKZrShGD3kxJ2QGyB",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "impeccable"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "b0a8a4cf196d",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 2023,
+        "end": 2024,
+        "entry_ids": [
+          "0b69cc53-a832-4b8b-bfe9-93b2277e4b40"
+        ],
+        "tool_use_id": "toolu_01BXU2tGKZrShGD3kxJ2QGyB"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_01BXU2tGKZrShGD3kxJ2QGyB"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: impeccable",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "initial_attribution": {
+    "calculated_at": "2026-11-16T21:19:49.275753826Z",
+    "agent_lines": 123,
+    "agent_removed": 8,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 123,
+    "total_lines_changed": 131,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 58,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".codex/hooks.json": 23,
+        "pi-scheduled-tasks": 35
+      }
+    }
+  ]
+}
