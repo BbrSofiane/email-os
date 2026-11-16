@@ -87,6 +87,23 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await waitFor(`app.querySelector('[data-test="selection-bar"]')`, 'selection bar');
   }
 
+  async function swipeCue(name: string, direction: 'left' | 'right', distance: number): Promise<void> {
+    await freshInbox();
+    const point = await harness!.cdp.js<{ x: number; y: number }>(`(() => {
+      const rect = document.querySelector(${JSON.stringify(activeApp)}).querySelector('.inbox-row').getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + Math.min(28, rect.height / 2) };
+    })()`);
+    await harness!.cdp.cmd('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ ...point, id: 1 }] });
+    await harness!.cdp.cmd('Input.dispatchTouchEvent', {
+      type: 'touchMove',
+      touchPoints: [{ x: point.x + (direction === 'left' ? -distance : distance), y: point.y, id: 1 }],
+    });
+    await shot(name);
+    await harness!.cdp.cmd('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ ...point, id: 1 }] });
+    await harness!.cdp.cmd('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await pause(180);
+  }
+
   /** Activate a compact drawer destination by its short row label. */
   async function chooseDrawerRow(text: string): Promise<void> {
     await harness!.cdp.js(`(() => {
@@ -127,6 +144,15 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
       list.scrollTop = list.scrollHeight;
     })()`);
     await shot('inbox-scrolled-end');
+  }, 120_000);
+
+  it('captures the swipe cues while each row is held mid-gesture', async () => {
+    await viewport(PHONE_VIEWPORT.width, PHONE_VIEWPORT.height, true);
+    await freshInbox();
+    const rowWidth = await harness!.cdp.js<number>(`document.querySelector(${JSON.stringify(activeApp)}).querySelector('.inbox-row').getBoundingClientRect().width`);
+    await swipeCue('swipe-done', 'left', 80);
+    await swipeCue('swipe-done-armed', 'left', rowWidth * 0.6);
+    await swipeCue('swipe-remind-armed', 'right', rowWidth * 0.6);
   }, 120_000);
 
   it('captures the reader', async () => {
