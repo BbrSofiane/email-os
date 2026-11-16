@@ -543,4 +543,16 @@ The compact reader subject is 1.375rem/600 with 8px above, 12px below, and 20px/
 
 Draft and reminder context rows are at least 64px high; context actions and form controls are at least 48px high. Utility pages cover the compact app with a 56px header and 20px/16px content insets. Reminder and attachment pickers use bottom sheets with 16px top corners and safe-area bottom padding. The command overlay sits 16px below the top edge and is at most 70% of the app height. Swipe preferences default to Remind right and Mark done left; None resists the gesture without running an action.
 
+### Compact destinations and pushed pages
+
+Inbox, Drafts, Reminders, Search and the other mail lists are destinations: their top bar shows the menu button. Settings, Activity, Account, Provider mail and Contact are pushed pages that cover the app and show Back in the menu button's position. The Back control is 48×48px inside the 56px top bar; its page title matches the destination title in size, weight and left edge. The context pill holds Inbox/saved tabs or Reminders membership tabs on those contexts, and is empty on Search, Drafts and other destinations.
+
+### Compact Settings, Search and Reminders
+
+Settings uses 15px/600 primary section headings. The next section starts 24px below a rule with 24px top padding; group legends are 13px regular secondary text, aligned with controls at the 20px start inset. Reminder hour and minute changes save immediately. A successful save shows `Saved`; a failed save restores the last confirmed values and reports the error. The longer note about existing reminders is behind the `About changing the default` disclosure.
+
+Search syntax is behind a closed-by-default `Search syntax` disclosure; the input remains described by the six-item help list. On results, the query, coverage notice, sender group captions and first sender share the 20px start inset; the end inset is 16px. The query uses 15px/600 type with ellipsis, beside a 48px clear control.
+
+Reminders show the loading or empty line before the explanation and quiet `Refresh reminders` control. Zero tab counts are omitted; positive counts remain visible.
+
 Compact outcome notices are full-width pills with 16px side margins, 12px/16px padding, 14px corners and a soft `0 4px 16px rgba(0, 0, 0, 0.35)` shadow. Undo is at least 48px high. Compose and reply use an app-sized absolute sheet, a 56px header, 48px field rows and footer actions, and a flexible body textarea at 1rem/1.5. Safe-area padding stays inside the sheet; focused fields follow visual viewport changes.

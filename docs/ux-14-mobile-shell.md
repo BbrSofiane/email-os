@@ -6,7 +6,7 @@ At viewport widths ≤719 CSS px, use a compact single-pane frame. The 1060px de
 
 ## Frame
 
-The top bar is 56px high including safe-area placement. Inbox shows a 40px menu and compose affordance in 48px targets, with no visible title; other browsing contexts show their title. Reader retains a Back control. Status, read-only and browser-preview disclosures remain available without colliding with controls.
+The top bar is 56px high including safe-area placement. Destinations (Inbox, Drafts, Reminders, Search and other mail lists) show the menu button. Pushed pages (Settings, Activity, Account, Provider mail and Contact) cover the app and show Back in the menu button's 48px target. Destination titles remain available in the accessibility tree; the Inbox frame keeps its existing compose affordance. Reader retains Back. Status, read-only and browser-preview disclosures remain available without colliding with controls.
 
 The content occupies the space between top and bottom frame, and scrolls with enough end padding to pass behind the bottom pills. The bottom region contains the existing notice dock, a 56px context slot, and a navigation or reader-action pill. Navigation offers Mail, Search, Account. ReaderView's actionsHost is the reader pill. Contact and rail are omitted; destinations remain reachable through the existing navigator overlay.
 
@@ -14,13 +14,15 @@ The content occupies the space between top and bottom frame, and scrolls with en
 
 Conversation rows stack sender and metadata on the first line, subject on the second, and a two-line preview below. The sender starts 20px from the pane edge; the end inset is 16px. The unread marker sits in the start gutter. A 1px rule separates rows. One tap opens the conversation. On touch, swipe right runs the existing Remind action and swipe left runs Mark done (or Mark not done in Done); unsupported actions do not reveal. Long-press a row for 500ms to select it. While selecting, taps add or remove rows; Clear exits selection. These gestures reuse the existing row actions and selection state. Read-only lists do not swipe or enter selection. Multi-split management, labels, and destructive actions remain unsupported.
 
-Inbox/saved split tabs and Reminders membership tabs use the 44px context pill above navigation. The compact menu opens a left navigation drawer with available destinations, the current account and a Commands entry. The drawer uses the action registry and the same action handlers as the desktop navigator. Other contexts leave the context pill empty.
+Inbox/saved split tabs and Reminders membership tabs use the 44px context pill above navigation. Search, Drafts and other contexts leave the context pill empty. Search is marked current in the navigation pill only while its results page is open. The compact menu opens a left navigation drawer with available destinations, the current account and a Commands entry. The drawer uses the action registry and the same action handlers as the desktop navigator.
 
 ## Other surfaces and settings
 
-Drafts and Reminders use stacked rows with their actions below the text. Search opens beneath the top bar and keeps its suggestions and syntax help available. Account, Activity, Provider mail, Settings and Contact details use full-screen utility pages with a 56px header and scrolling content. Commands and Destinations use a compact overlay; the command list scrolls inside it. The reminder picker and attachment chooser are bottom sheets.
+Drafts and Reminders use stacked rows with their actions below the text. Search opens beneath the top bar; its syntax list and unsupported-query note are in a closed-by-default Search syntax disclosure. Search results align the query, coverage notice, sender captions and first sender at the 20px start inset, with a 16px end inset; the query is 15px/600 with ellipsis and a 48px clear control. Account, Activity, Provider mail, Settings and Contact details use full-screen pushed pages with a 56px header and scrolling content. Commands and Destinations use a compact overlay; the command list scrolls inside it. The reminder picker and attachment chooser are bottom sheets.
 
-Settings combines the existing reminder defaults with Swipe actions. Swipe right and Swipe left each support Remind me, Mark done and None. Changes save to local storage immediately; storage failures are reported. The defaults are Remind me on the right and Mark done on the left. Swipe preferences follow the device profile.
+Settings groups Reminders and Swipe actions under 15px/600 section headings. The second section starts after a rule with 24px top spacing; group legends and controls align to the 20px page inset. Swipe right and Swipe left each support Remind me, Mark done and None. Reminder hour and minute changes save immediately; a successful save shows Saved, while a failure restores the last confirmed values and reports the error. The longer note about existing reminders is disclosed under About changing the default. Swipe preferences default to Remind me on the right and Mark done on the left and follow the device profile.
+
+On Reminders, the loading or empty line comes first, then the explanation and a quiet, borderless Refresh reminders control. Zero tab counts are hidden; positive counts remain visible.
 
 ## Interaction and accessibility
 
