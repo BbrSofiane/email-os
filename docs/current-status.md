@@ -114,7 +114,7 @@ for installs, `run-as` file inspection and logs only. Synthetic data only.
   sent". After sending Email OS to Android Settings and back (same process, pid
   unchanged) the editor still held all three fields. After killing the process, the
   Drafts list had the draft and opening it showed the exact To, Subject and body
-  ("Draft loaded from this device · not sent").
+  ("Draft loaded from this device · never sent").
 
 **Legacy reset (pre-unification APK, then `3061e54` APK)**
 

@@ -116,7 +116,7 @@ function choose(id: ActionId): void {
         </button>
       </template>
       <button type="button" class="mobile-drawer-row" data-test="mobile-drawer-commands" @click="emit('commands')">
-        <HeaderGlyph name="commands" />
+        <HeaderGlyph name="prompt" />
         <span>Commands</span>
       </button>
     </section>

@@ -143,6 +143,10 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await shot('reader-scrolled-end');
     await click('[data-test="message-more"]');
     await shot('reader-message-sheet');
+    await harness!.cdp.js('window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }))');
+    await pause(150);
+    const messageSheetClosed = await harness!.cdp.js<boolean>(`document.querySelector(${JSON.stringify(activeApp)}).querySelector('[data-test="action-sheet"]') === null`);
+    if (!messageSheetClosed) throw new Error('Message action sheet did not close before reader More screenshot');
     await click('[data-test="reader-more"]');
     await shot('reader-more-sheet');
     await freshInbox();

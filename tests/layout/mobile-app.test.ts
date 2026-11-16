@@ -79,6 +79,9 @@ describe('App compact and regular frame', () => {
     await flushFakeClientAndVueUpdates(fake);
     const contactAction = wrapper.findAll('[data-test="action-sheet"] button').find(button => button.text().includes('Contact details'));
     expect(contactAction).toBeDefined();
+    const commandsAction = wrapper.findAll('[data-test="action-sheet"] button').find(button => button.text().includes('Commands'));
+    expect(contactAction?.find('svg').attributes('data-glyph')).toBe('contact');
+    expect(commandsAction?.find('svg').attributes('data-glyph')).toBe('prompt');
     await contactAction!.trigger('click');
     await flushFakeClientAndVueUpdates(fake);
     expect(wrapper.get('[data-test="contact-disclosure-panel"]').text()).toContain('Ada Fixture');
@@ -137,7 +140,7 @@ describe('App compact and regular frame', () => {
     wrapper.unmount();
   });
 
-  it('opens compact compose as a local editor with status, footer, and protected Escape close', async () => {
+  it('opens compact compose as a local editor with status and a protected header close', async () => {
     stubLayout(true);
     const fake = createBrowserFakeMailClient();
     const wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
@@ -148,8 +151,11 @@ describe('App compact and regular frame', () => {
     expect(wrapper.get('[data-test="mobile-top-bar"]').attributes('inert')).toBeDefined();
     expect(wrapper.get('.app-main').attributes('inert')).toBeDefined();
     expect(wrapper.get('[data-test="mobile-bottom-region"]').attributes('inert')).toBeDefined();
-    expect(wrapper.get('[data-test="draft-status"]').text()).toContain('not sent');
-    expect(wrapper.find('[data-test="close-composer"]').text()).toContain('Save and close');
+    expect(wrapper.get('[data-test="draft-status"]').text()).toContain('never sent');
+    expect(wrapper.find('[data-test="close-composer"]').exists()).toBe(false);
+    expect(wrapper.get('[data-test="compose-sheet-close"]').attributes('aria-label')).toBe('Save and close');
+    expect(wrapper.get('[data-test="compose-sheet-close"]').attributes('title')).toBe('Save and close');
+    expect(wrapper.get('[data-test="compose-sheet-close"]').attributes('aria-keyshortcuts')).toBe('Escape');
     expect(wrapper.find('[data-test="discard-draft"]').exists()).toBe(true);
     await wrapper.get('.app').trigger('keydown', { key: 'Escape' });
     await flushFakeClientAndVueUpdates(fake);
@@ -173,7 +179,10 @@ describe('App compact and regular frame', () => {
     expect(compact.get('[data-test="mobile-top-bar"]').attributes('inert')).toBeDefined();
     expect(compact.get('.app-main').attributes('inert')).toBeDefined();
     expect(compact.get('[data-test="mobile-bottom-region"]').attributes('inert')).toBeDefined();
-    await compact.get('[data-test="close-composer"]').trigger('click');
+    expect(compact.find('[data-test="close-composer"]').exists()).toBe(false);
+    expect(compact.get('[data-test="reply-sheet-close"]').attributes('title')).toBe('Save and close');
+    expect(compact.get('[data-test="reply-sheet-close"]').attributes('aria-keyshortcuts')).toBe('Escape');
+    await compact.get('[data-test="reply-sheet-close"]').trigger('click');
     await flushFakeClientAndVueUpdates(fake);
     expect(compact.find('[data-test="reply-composer"]').exists()).toBe(false);
     expect(compact.get('[data-test="mobile-top-bar"]').attributes('inert')).toBeUndefined();

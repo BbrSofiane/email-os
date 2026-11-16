@@ -32,7 +32,11 @@ The reader uses a 1.375rem subject with a 20px start and 16px end inset. Metadat
 
 The context pill above the action pill offers Reply when the reply composer is closed. Expanded messages have their own More menu for replying to that message, collapsing it and copying its plain-text body. Copy reports failure when the clipboard cannot be used. Accepted actions appear as outcome toasts above the bottom pills; pending, confirmed, failed, partial and unknown outcomes remain distinct, and Undo follows the existing eligibility window.
 
-New-message and reply editors cover the compact app in a full-screen sheet. Their existing local-save status, fields, alerts and protected close/discard actions remain visible. The body is plain text and expands to fill the remaining height. When the visual viewport changes for the software keyboard, focused fields are scrolled into view. Drafts are local and are not sent. There is no Send path, reply-all, forward or HTML body support.
+New-message and reply editors cover the compact app in a full-screen sheet. The header X is the only exit on the phone: it saves and closes through the protected path and is disabled while closing. There is no footer “Save and close” button or Esc keycap; “Cancel reply preparation” remains when available, and “Discard…” stays at the end of the footer. Settled status text uses `Local draft · never sent` or `<state> · never sent`; active and problem states keep their existing wording.
+
+To and Cc keep their values as typed with `type="text"`, email input mode, disabled autocapitalization, autocorrect and spellcheck, plus `enterkeyhint="next"`. Subject uses sentence capitalization and next; the plain-text body uses sentence capitalization. Enter moves through visible fields in To, Cc, Subject, Body order; IME composition and modified Enter are left alone. Failure alerts use mobile list size and warning colour; a bordered 48px Retry action sits after the alert and before the fields. The body remains plain text and fills the available height. Focused fields follow visual viewport changes for the software keyboard. Drafts are local and never sent. There is no Send path, reply-all, forward or HTML body support.
+
+The reader’s enabled Mark done glyph uses `--focus-accent`; disabled toolbar buttons remain fully opaque in `--icon-muted`. The message menu uses the `collapse` glyph for Collapse and `copy` for Copy text. The reader More sheet uses `contact` for Contact details and `prompt` for Commands; the navigation drawer also uses `prompt` for Commands.
 
 ## Out of scope
 

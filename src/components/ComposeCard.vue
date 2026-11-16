@@ -83,6 +83,7 @@ function onSetField(field: keyof DraftContent, value: string): void {
       data-test="composer"
       autofocus="to"
       variant="new"
+      :compact="props.compact"
       :to-described-by="notice ? noticeId : undefined"
       :active-ref="activeRef"
       :source="source"
@@ -116,12 +117,12 @@ function onSetField(field: keyof DraftContent, value: string): void {
       @save-as-new="emit('saveAsNew')"
       @cancel-reply-preparation="emit('cancelReplyPreparation')"
     >
-      <template #header>
+      <template #header="{ closeDisabled }">
         <header class="composer-heading">
           <h2 v-if="source?.kind === 'reply' && recipientLabel">Reply draft <span class="reply-to">to <span data-test="draft-recipient-label">{{ recipientLabel }}</span></span></h2>
           <h2 v-else-if="source?.kind === 'reply'">Reply draft</h2>
           <h2 v-else>New Message</h2>
-          <button v-if="props.compact" type="button" class="compose-sheet-close" data-test="compose-sheet-close" aria-label="Save and close" @click="emit('closeEditor')"><HeaderGlyph name="x" /></button>
+          <button v-if="props.compact" type="button" class="compose-sheet-close" data-test="compose-sheet-close" aria-label="Save and close" title="Save and close" aria-keyshortcuts="Escape" :disabled="closeDisabled" @click="emit('closeEditor')"><HeaderGlyph name="x" /></button>
         </header>
         <!-- Honest state: the reply cannot be shown in its thread, so it is edited here. -->
         <p v-if="notice" :id="noticeId" class="compose-card-notice" role="note" data-test="compose-card-notice" :title="notice">{{ noticeLine }}</p>

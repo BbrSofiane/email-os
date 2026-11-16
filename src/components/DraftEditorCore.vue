@@ -43,6 +43,7 @@ const props = defineProps<{
   recoveryRequired: boolean;
   canCancelReplyPreparation: boolean;
   closeError: string | null;
+  compact?: boolean;
   /** Which field receives focus when the editor appears (keyboard-first). */
   autofocus?: 'to' | 'body';
   /** Id of a note that explains why the To field is the first thing the user lands in. */
@@ -69,6 +70,8 @@ const emit = defineEmits<{
   cancelReplyPreparation: [];
 }>();
 
+const closeDisabled = computed(() => props.closing || props.transitioning || props.deleting || props.deletePending);
+
 /** Single shared copy — do not fork per surface. */
 function fieldsDisabled(): boolean {
   const conflictBlocked = props.conflict && !(props.error?.kind === 'invalid_request' && !props.copyPending);
@@ -81,6 +84,7 @@ function describe(error: MailError): string {
 
 const toInput = ref<HTMLInputElement | null>(null);
 const ccInput = ref<HTMLInputElement | null>(null);
+const subjectInput = ref<HTMLInputElement | null>(null);
 const bodyInput = ref<HTMLTextAreaElement | null>(null);
 const dialog = ref<HTMLElement | null>(null);
 const editorRoot = ref<HTMLElement | null>(null);
@@ -95,15 +99,15 @@ const isReply = computed(() => props.variant === 'reply');
 
 /** Plain-language detail for the title and the body's hidden description. */
 const LOCAL_DETAIL = 'Local plain-text draft. Nothing is sent. Recipients are stored as typed and are not validated. Bcc, reply-all and rich text are not supported.';
-/** Settled states that read "<state> · not sent"; the first two stay calm (Ash). */
+/** Settled states that read "<state> · never sent"; the first two stay calm (Ash). */
 const SETTLED_CALM = new Set(['Saved locally', 'Draft loaded from this device']);
 const SETTLED_NON_DURABLE = new Set(['Saved in preview memory (non-durable)', 'Loaded from preview memory (non-durable)']);
 
 const statusLine = computed(() => {
   const status = props.status;
-  if (!status) return { text: 'Local draft · not sent', calm: true };
-  if (SETTLED_CALM.has(status)) return { text: `${status} · not sent`, calm: true };
-  if (SETTLED_NON_DURABLE.has(status)) return { text: `${status} · not sent`, calm: false };
+  if (!status) return { text: 'Local draft · never sent', calm: true };
+  if (SETTLED_CALM.has(status)) return { text: `${status} · never sent`, calm: true };
+  if (SETTLED_NON_DURABLE.has(status)) return { text: `${status} · never sent`, calm: false };
   // Saving, creating, unconfirmed and conflict states keep their own words, in Amber Notice.
   return { text: status, calm: false };
 });
@@ -175,6 +179,20 @@ async function toggleExtras(): Promise<void> {
   ccInput.value?.focus();
 }
 
+function onFieldEnter(event: KeyboardEvent, field: 'to' | 'cc' | 'subject'): void {
+  if (event.isComposing || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
+  event.preventDefault();
+  if (field === 'to' && ccShown.value && ccInput.value) {
+    ccInput.value.focus();
+    return;
+  }
+  if ((field === 'to' || field === 'cc') && subjectShown.value && subjectInput.value) {
+    subjectInput.value.focus();
+    return;
+  }
+  bodyInput.value?.focus();
+}
+
 // ---- Focus and body sizing --------------------------------------------------
 
 /** The body grows with its text (up to the CSS max-height); it never shrinks below the CSS minimum. */
@@ -240,7 +258,7 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
 <template>
   <div ref="editorRoot" class="composer-body" :class="`composer-body-${props.variant ?? 'new'}`">
     <div class="composer-top">
-      <div class="composer-top-main"><slot name="header" /></div>
+      <div class="composer-top-main"><slot name="header" :close-disabled="closeDisabled" /></div>
       <!-- The local-only guarantee is one terse status line. The caveats are
            one extra line behind a focusable toggle (not a tooltip), and the
            body's hidden description. Announcements are quiet, see above. -->
@@ -267,6 +285,11 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
     <p v-if="props.error" role="alert" data-test="draft-error">{{ describe(props.error) }}</p>
     <p v-if="props.createError" role="alert" data-test="draft-create-error">{{ describe(props.createError) }}</p>
     <p v-if="props.closeError" role="alert" data-test="draft-close-error">{{ props.closeError }}</p>
+    <div class="composer-actions" v-if="props.compact && (props.error || props.createError) && !props.recoveryRequired">
+      <button type="button" data-test="retry-draft-save" :disabled="props.closing || props.copyPending || props.transitioning" @click="emit('retry')">
+        {{ props.deletePending ? 'Retry discard' : 'Retry save' }}
+      </button>
+    </div>
     <div class="composer-fields" :aria-busy="props.saving || props.creating">
       <div class="field-row" data-field="to">
         <label class="field-label" :for="ids.to">To</label>
@@ -280,7 +303,7 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
           :disabled="fieldsDisabled()"
           @click="editTo"
         ><template v-if="toAddress === ''">No recipient</template><template v-else><template v-if="toName"><span data-test="draft-to-name">{{ toName }}</span> <span class="field-summary-address" data-test="draft-to-address">&lt;{{ toAddress }}&gt;</span></template><template v-else>{{ toAddress }}</template></template></button>
-        <input v-else :id="ids.to" ref="toInput" class="field-input" data-test="draft-to" type="text" :aria-describedby="props.toDescribedBy" autocomplete="off" :value="props.content.to" :disabled="fieldsDisabled()" @input="emit('setField', 'to', ($event.target as HTMLInputElement).value)">
+        <input v-else :id="ids.to" ref="toInput" class="field-input" data-test="draft-to" type="text" inputmode="email" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="next" :aria-describedby="props.toDescribedBy" autocomplete="off" :value="props.content.to" :disabled="fieldsDisabled()" @input="emit('setField', 'to', ($event.target as HTMLInputElement).value)" @keydown.enter="onFieldEnter($event, 'to')">
         <button
           type="button"
           class="field-toggle"
@@ -294,11 +317,11 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
       <div :id="ids.extras" class="field-extras">
         <div v-if="ccShown" class="field-row" data-field="cc">
           <label class="field-label" :for="ids.cc">Cc</label>
-          <input :id="ids.cc" ref="ccInput" class="field-input" data-test="draft-cc" type="text" autocomplete="off" :value="props.content.cc" :disabled="fieldsDisabled()" @input="emit('setField', 'cc', ($event.target as HTMLInputElement).value)">
+          <input :id="ids.cc" ref="ccInput" class="field-input" data-test="draft-cc" type="text" inputmode="email" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="next" autocomplete="off" :value="props.content.cc" :disabled="fieldsDisabled()" @input="emit('setField', 'cc', ($event.target as HTMLInputElement).value)" @keydown.enter="onFieldEnter($event, 'cc')">
         </div>
         <div v-if="subjectShown" class="field-row" data-field="subject">
           <label class="field-label" :for="ids.subject">Subject</label>
-          <input :id="ids.subject" class="field-input" data-test="draft-subject" type="text" autocomplete="off" :value="props.content.subject" :disabled="fieldsDisabled()" @input="emit('setField', 'subject', ($event.target as HTMLInputElement).value)">
+          <input :id="ids.subject" ref="subjectInput" class="field-input" data-test="draft-subject" type="text" enterkeyhint="next" autocapitalize="sentences" autocomplete="off" :value="props.content.subject" :disabled="fieldsDisabled()" @input="emit('setField', 'subject', ($event.target as HTMLInputElement).value)" @keydown.enter="onFieldEnter($event, 'subject')">
         </div>
       </div>
       <div class="field-body">
@@ -308,6 +331,7 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
           ref="bodyInput"
           class="field-textarea"
           data-test="draft-body"
+          autocapitalize="sentences"
           :aria-describedby="ids.detail"
           :value="props.content.bodyText"
           :disabled="fieldsDisabled()"
@@ -317,7 +341,7 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
       </div>
     </div>
     <slot name="context" />
-    <div class="composer-actions" v-if="(props.error || props.createError) && !props.recoveryRequired">
+    <div class="composer-actions" v-if="!props.compact && (props.error || props.createError) && !props.recoveryRequired">
       <button type="button" data-test="retry-draft-save" :disabled="props.closing || props.copyPending || props.transitioning" @click="emit('retry')">
         {{ props.deletePending ? 'Retry discard' : 'Retry save' }}
       </button>
@@ -343,8 +367,8 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
          still waits for the protected flush and stays open with the error if the
          flush fails. Esc does the same. There is no Send. -->
     <footer class="composer-footer">
-      <button type="button" class="composer-primary" data-test="close-composer" aria-keyshortcuts="Escape" :disabled="props.closing || props.transitioning || props.deleting || props.deletePending" @click="emit('closeEditor')">Save and close</button>
-      <kbd class="composer-kbd" aria-hidden="true">Esc</kbd>
+      <button v-if="!props.compact" type="button" class="composer-primary" data-test="close-composer" aria-keyshortcuts="Escape" :disabled="closeDisabled" @click="emit('closeEditor')">Save and close</button>
+      <kbd v-if="!props.compact" class="composer-kbd" aria-hidden="true">Esc</kbd>
       <button v-if="props.canCancelReplyPreparation" type="button" class="composer-quiet" data-test="cancel-reply-preparation" :disabled="props.closing || props.transitioning" @click="emit('cancelReplyPreparation')">Cancel reply preparation</button>
       <button type="button" class="composer-quiet composer-discard" data-test="discard-draft" :disabled="props.closing || props.transitioning || props.discardBusy || props.deleting || props.deletePending || props.creating || props.conflict || !props.activeRef?.draftId" @click="emit('askDiscard')">Discard…</button>
     </footer>

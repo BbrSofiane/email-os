@@ -37,7 +37,7 @@ describe('MobileDrawer', () => {
     const settings = wrapper.findAll('.mobile-drawer-row').find((row) => row.text() === 'Reminder settings');
     const commands = wrapper.findAll('.mobile-drawer-row').find((row) => row.text() === 'Commands');
     expect(settings?.find('svg').attributes('data-glyph')).toBe('settings');
-    expect(commands?.find('svg').attributes('data-glyph')).toBe('commands');
+    expect(commands?.find('svg').attributes('data-glyph')).toBe('prompt');
     wrapper.unmount();
   });
 

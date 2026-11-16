@@ -140,7 +140,7 @@ device or emulator. Use device interaction tools to launch the app and verify:
    the 10-second undo window and confirm the row returns. Mark read/unread (reader button or
    row menu) and Star/Unstar (command palette) also work.
 3. Gmail controls and Files and links are absent.
-4. Compose a draft, wait for “Saved locally · not sent”, then close the app
+4. Compose a draft, wait for “Saved locally · never sent”, then close the app
    process.
 5. Relaunch the app. Confirm the archived conversation remains absent and the
    draft reopens with its exact subject and body.
