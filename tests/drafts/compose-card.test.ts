@@ -191,6 +191,22 @@ describe("ComposeCard inline new-message card", () => {
     wrapper = mount(ComposeCard, { props: cardProps({ createError: { kind: 'storage_unavailable' } }) });
     expect(wrapper.get('[data-test="draft-create-error"]').text()).toContain('Retry is safe');
   });
+
+  it('places the compact retry action after its alert and before the fields', () => {
+    wrapper = mount(ComposeCard, {
+      props: cardProps({
+        compact: true,
+        createError: { kind: 'storage_unavailable' },
+      }),
+    });
+    const editor = wrapper.get('[data-test="composer"]');
+    const alert = editor.get('[data-test="draft-create-error"]').element;
+    const retry = editor.get('[data-test="retry-draft-save"]');
+    const firstField = editor.get('.composer-fields').element;
+    expect(alert.compareDocumentPosition(retry.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(retry.element.compareDocumentPosition(firstField) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(retry.element.closest('.composer-actions')).not.toBeNull();
+  });
 });
 
 describe("compose palette metadata", () => {

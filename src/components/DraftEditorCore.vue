@@ -285,6 +285,11 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
     <p v-if="props.error" role="alert" data-test="draft-error">{{ describe(props.error) }}</p>
     <p v-if="props.createError" role="alert" data-test="draft-create-error">{{ describe(props.createError) }}</p>
     <p v-if="props.closeError" role="alert" data-test="draft-close-error">{{ props.closeError }}</p>
+    <div class="composer-actions" v-if="props.compact && (props.error || props.createError) && !props.recoveryRequired">
+      <button type="button" data-test="retry-draft-save" :disabled="props.closing || props.copyPending || props.transitioning" @click="emit('retry')">
+        {{ props.deletePending ? 'Retry discard' : 'Retry save' }}
+      </button>
+    </div>
     <div class="composer-fields" :aria-busy="props.saving || props.creating">
       <div class="field-row" data-field="to">
         <label class="field-label" :for="ids.to">To</label>
@@ -336,7 +341,7 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
       </div>
     </div>
     <slot name="context" />
-    <div class="composer-actions" v-if="(props.error || props.createError) && !props.recoveryRequired">
+    <div class="composer-actions" v-if="!props.compact && (props.error || props.createError) && !props.recoveryRequired">
       <button type="button" data-test="retry-draft-save" :disabled="props.closing || props.copyPending || props.transitioning" @click="emit('retry')">
         {{ props.deletePending ? 'Retry discard' : 'Retry save' }}
       </button>

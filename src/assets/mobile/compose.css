@@ -140,6 +140,47 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
+.app[data-layout="compact"] .compose-card .composer-actions,
+.app[data-layout="compact"] .reply-composer.compact-compose-sheet .composer-actions {
+  order: 3;
+  margin: 0;
+}
+.app[data-layout="compact"] .compose-card .composer-fields,
+.app[data-layout="compact"] .reply-composer.compact-compose-sheet .composer-fields {
+  order: 4;
+}
+.app[data-layout="compact"] .compose-card .reply-quoted,
+.app[data-layout="compact"] .reply-composer.compact-compose-sheet .reply-quoted {
+  order: 5;
+}
+.app[data-layout="compact"] .compose-card .conflict-actions,
+.app[data-layout="compact"] .reply-composer.compact-compose-sheet .conflict-actions {
+  order: 6;
+}
+.app[data-layout="compact"] .compose-card .discard-confirm,
+.app[data-layout="compact"] .reply-composer.compact-compose-sheet .discard-confirm {
+  order: 7;
+}
+.app[data-layout="compact"] .compose-card .composer-footer,
+.app[data-layout="compact"] .reply-composer.compact-compose-sheet .composer-footer {
+  order: 8;
+}
+.app[data-layout="compact"] .compose-card [role="alert"],
+.app[data-layout="compact"] .reply-composer.compact-compose-sheet [role="alert"] {
+  font-size: var(--mobile-type-list);
+  color: var(--warning);
+  margin-top: 0;
+  padding: 8px 0;
+}
+.app[data-layout="compact"] .compose-card .composer-actions [data-test="retry-draft-save"],
+.app[data-layout="compact"] .reply-composer.compact-compose-sheet .composer-actions [data-test="retry-draft-save"] {
+  min-height: 48px;
+  padding: 0 16px;
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+}
 .app[data-layout="compact"] .reply-composer.compact-compose-sheet {
   position: absolute;
   z-index: 30;

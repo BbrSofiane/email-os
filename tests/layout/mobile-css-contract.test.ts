@@ -22,6 +22,16 @@ describe('compact CSS contract', () => {
     expect(mobileCss['notices.css']).toContain('.reminder-confirmation');
   });
 
+  it('styles compact draft failures above the fields with a visible retry target', () => {
+    const compose = mobileCss['compose.css'];
+    expect(compose).toContain('.app[data-layout="compact"] .compose-card .composer-actions [data-test="retry-draft-save"]');
+    expect(compose).toContain('.app[data-layout="compact"] .reply-composer.compact-compose-sheet .composer-actions [data-test="retry-draft-save"]');
+    expect(compose).toContain('font-size: var(--mobile-type-list)');
+    expect(compose).toContain('color: var(--warning)');
+    expect(compose).toContain('min-height: 48px');
+    expect(compose).toContain('border: 1px solid var(--divider)');
+  });
+
   it('defines every documented compact token at its documented value', () => {
     const declared = Object.values(mobileCss).join('\n');
     const tokens: Record<string, string> = {
