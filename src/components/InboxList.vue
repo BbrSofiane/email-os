@@ -343,8 +343,9 @@ function onRowPointerDown(event: PointerEvent, row: ConversationSummaryLike): vo
 
 function onRowPointerMove(event: PointerEvent, row: ConversationSummaryLike): void {
   if (!props.compact || props.readOnly) return;
-  longPressFor(row).pointermove(event);
   swipeFor(row).pointermove(event);
+  if (swipeFor(row).dragging.value) longPressFor(row).cancel();
+  else longPressFor(row).pointermove(event);
 }
 
 function onRowPointerUp(event: PointerEvent, row: ConversationSummaryLike): void {
@@ -698,6 +699,7 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
           'read-disclosed': readStateDisclosed(),
           'is-read': item.row.isRead === true,
           'has-actions': hasRowActions(),
+          swiping: swipeFor(item.row).dragging.value,
         }"
         :aria-current="isFocused(item.row) ? 'true' : undefined"
         :tabindex="tabIndexFor(item.row, item.index)"

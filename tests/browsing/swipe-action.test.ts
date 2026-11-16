@@ -29,9 +29,34 @@ describe('useSwipeAction', () => {
   it('gives vertical movement to scrolling', () => {
     const { element, swipe } = setup();
     swipe.pointerdown(pointer('pointerdown', 20, 20));
+    expect(swipe.dragging.value).toBe(false);
     swipe.pointermove(pointer('pointermove', 25, 40));
     expect(swipe.offset.value).toBe(0);
+    expect(swipe.dragging.value).toBe(false);
     expect(element.setPointerCapture).not.toHaveBeenCalled();
+  });
+
+  it('tracks horizontal drags without transition until the gesture ends', () => {
+    const { swipe } = setup();
+    swipe.pointerdown(pointer('pointerdown', 20, 20));
+    swipe.pointermove(pointer('pointermove', 29, 20));
+    expect(swipe.dragging.value).toBe(false);
+    swipe.pointermove(pointer('pointermove', 30, 20));
+    expect(swipe.dragging.value).toBe(true);
+    swipe.pointerup(pointer('pointerup', 30, 20));
+    expect(swipe.dragging.value).toBe(false);
+
+    swipe.pointerdown(pointer('pointerdown', 20, 20));
+    swipe.pointermove(pointer('pointermove', 30, 20));
+    expect(swipe.dragging.value).toBe(true);
+    swipe.pointercancel(pointer('pointercancel', 30, 20));
+    expect(swipe.dragging.value).toBe(false);
+
+    swipe.pointerdown(pointer('pointerdown', 20, 20));
+    swipe.pointermove(pointer('pointermove', 30, 20));
+    expect(swipe.dragging.value).toBe(true);
+    swipe.cancel();
+    expect(swipe.dragging.value).toBe(false);
   });
 
   it('cancels a short horizontal movement and suppresses the following click', () => {
@@ -80,7 +105,9 @@ describe('useSwipeAction', () => {
     swipe.pointermove(pointer('pointermove', -90, 0));
     swipe.pointercancel(pointer('pointercancel', -90, 0));
     expect(swipe.offset.value).toBe(0);
+    expect(swipe.dragging.value).toBe(false);
     expect(commit).not.toHaveBeenCalled();
+    expect(swipe.consumeClick()).toBe(true);
     const mouse = pointer('pointerdown', 0, 0, 1, 'mouse');
     swipe.pointerdown(mouse);
     swipe.pointermove(pointer('pointermove', 100, 0));

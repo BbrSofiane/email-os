@@ -86,6 +86,10 @@
   transition: transform 160ms ease;
 }
 
+.app[data-layout="compact"] .inbox-row.swiping > :not(.row-swipe-underlay) {
+  transition: none;
+}
+
 .app[data-layout="compact"] .row-swipe-underlay {
   position: absolute;
   z-index: -1;
