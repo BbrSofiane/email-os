@@ -74,6 +74,7 @@ describe("InboxList (UX-01 compact rows)", () => {
     { context: 'done' as const, expected: 'unarchive' as const, side: 'left' as const, reminderEnabled: false },
     { context: 'inbox' as const, expected: 'remind' as const, side: 'right' as const, reminderEnabled: true },
   ])('emits the configured compact swipe action for $context', async ({ context, expected, side, reminderEnabled }) => {
+    vi.useFakeTimers();
     const w = mountList([row('swipe', { lastMessageAt: '2026-01-15T09:00:00Z' })], null, {
       compact: true,
       context,
@@ -83,12 +84,14 @@ describe("InboxList (UX-01 compact rows)", () => {
     element.dispatchEvent(pointerEvent('pointerdown', 0));
     element.dispatchEvent(pointerEvent('pointermove', side === 'left' ? -80 : 80));
     element.dispatchEvent(pointerEvent('pointerup', side === 'left' ? -80 : 80));
+    vi.advanceTimersByTime(160);
     await flushPromises();
     expect(w.emitted(expected)).toHaveLength(1);
     expect(w.emitted(expected)?.[0]).toEqual([{ accountId: ACCOUNT, conversationId: 'swipe' }]);
   });
 
   it('swaps swipe actions and resists a disabled side', async () => {
+    vi.useFakeTimers();
     const swapped = mountList([row('swapped', { lastMessageAt: '2026-01-15T09:00:00Z' })], null, {
       compact: true,
       reminderEnabled: true,
@@ -99,6 +102,7 @@ describe("InboxList (UX-01 compact rows)", () => {
     element.dispatchEvent(pointerEvent('pointerdown', 0));
     element.dispatchEvent(pointerEvent('pointermove', 100));
     element.dispatchEvent(pointerEvent('pointerup', 100));
+    vi.advanceTimersByTime(160);
     await flushPromises();
     expect(swapped.emitted('archive')).toHaveLength(1);
 

@@ -316,6 +316,7 @@ function swipeFor(row: ConversationSummaryLike): ReturnType<typeof useSwipeActio
           else emit('archive', row.ref);
         }
       },
+      (side) => (side === 'right' ? props.swipeRight ?? 'remind' : props.swipeLeft ?? 'done') === 'done',
     );
     swipes.set(key, swipe);
   }
@@ -699,7 +700,7 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
           'read-disclosed': readStateDisclosed(),
           'is-read': item.row.isRead === true,
           'has-actions': hasRowActions(),
-          swiping: swipeFor(item.row).dragging.value,
+          swiping: swipeFor(item.row).dragging.value || swipeFor(item.row).resetting.value,
         }"
         :aria-current="isFocused(item.row) ? 'true' : undefined"
         :tabindex="tabIndexFor(item.row, item.index)"

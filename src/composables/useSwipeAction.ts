@@ -7,12 +7,17 @@ export function useSwipeAction(
   element: () => HTMLElement | null,
   canReveal: (side: Exclude<SwipeSide, null>) => boolean,
   commit: (side: Exclude<SwipeSide, null>) => void,
+  exitsOnCommit: (side: Exclude<SwipeSide, null>) => boolean = () => false,
 ) {
   const offset = ref(0);
   const revealed = ref<SwipeSide>(null);
   const dragging = ref(false);
   const armed = ref(false);
+  const leaving = ref<SwipeSide>(null);
+  const resetting = ref(false);
   const suppressClick = ref(false);
+  let commitTimer: ReturnType<typeof setTimeout> | null = null;
+  let resetFrame: number | null = null;
   let pointerId: number | null = null;
   let startX = 0;
   let startY = 0;
@@ -20,6 +25,33 @@ export function useSwipeAction(
   let rowWidth = 0;
   let decided = false;
   let horizontal = false;
+
+  function prefersReducedMotion(): boolean {
+    return typeof window !== 'undefined'
+      && typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  }
+
+  function clearCommitTimer(): void {
+    if (commitTimer !== null) clearTimeout(commitTimer);
+    commitTimer = null;
+  }
+
+  function clearResetFrame(): void {
+    if (resetFrame !== null) cancelAnimationFrame(resetFrame);
+    resetFrame = null;
+  }
+
+  function queueExitReset(): void {
+    resetFrame = requestAnimationFrame(() => {
+      offset.value = 0;
+      leaving.value = null;
+      resetFrame = requestAnimationFrame(() => {
+        resetting.value = false;
+        resetFrame = null;
+      });
+    });
+  }
 
   function pointerdown(event: PointerEvent): void {
     if (event.pointerType !== 'touch' && event.pointerType !== 'pen') return;
@@ -78,18 +110,35 @@ export function useSwipeAction(
     setTimeout(() => { suppressClick.value = false; }, 0);
     dragging.value = false;
     armed.value = false;
-    if (shouldCommit) commit(side);
-    offset.value = 0;
-    revealed.value = null;
+    if (shouldCommit && exitsOnCommit(side) && !prefersReducedMotion()) {
+      leaving.value = side;
+      offset.value = side === 'left' ? -rowWidth : rowWidth;
+      clearCommitTimer();
+      commitTimer = setTimeout(() => {
+        commitTimer = null;
+        commit(side);
+        resetting.value = true;
+        queueExitReset();
+      }, 160);
+    } else {
+      if (shouldCommit) commit(side);
+      offset.value = 0;
+      revealed.value = null;
+      leaving.value = null;
+    }
   }
 
   function cancel(): void {
+    clearCommitTimer();
+    clearResetFrame();
     pointerId = null;
     horizontal = false;
     dragging.value = false;
     armed.value = false;
+    resetting.value = false;
     offset.value = 0;
     revealed.value = null;
+    leaving.value = null;
   }
 
   return {
@@ -97,6 +146,8 @@ export function useSwipeAction(
     revealed,
     dragging,
     armed,
+    leaving,
+    resetting,
     pointerdown,
     pointermove,
     pointerup: (event: PointerEvent) => finish(event),
