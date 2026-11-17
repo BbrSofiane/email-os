@@ -63,7 +63,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       timeText: string;
       row: DOMRectReadOnly;
       actions: string;
-      checkbox: string;
+      checkbox: { display: string; width: number };
       unread: boolean;
       senderWeight: string;
       subjectWeight: string;
@@ -93,7 +93,10 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
             return { left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: box.width, height: box.height };
           })(),
           actions: getComputedStyle(row.querySelector('.row-actions')).display,
-          checkbox: getComputedStyle(row.querySelector('.row-select')).display,
+          checkbox: {
+            display: getComputedStyle(row.querySelector('.row-select')).display,
+            width: rect('.row-select').width,
+          },
           unread: row.querySelector('[data-test="row-unread"]') !== null,
           senderWeight: getComputedStyle(sender).fontWeight,
           subjectWeight: getComputedStyle(subject).fontWeight,
@@ -120,7 +123,8 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       expect(row.row.height).toBeGreaterThanOrEqual(72);
       expect(row.row.right).toBeLessThanOrEqual(row.paneRight + 1);
       expect(row.actions).toBe('none');
-      expect(row.checkbox).toBe('none');
+      expect(row.checkbox.display).not.toBe('none');
+      expect(row.checkbox.width).toBe(1);
       if (row.unread) {
         expect(row.senderWeight).toBe('600');
         expect(row.subjectWeight).toBe('600');
@@ -301,7 +305,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
         }),
       };
     })()`);
-    expect(geometry.selectionCount).toBe('2 selected');
+    expect(geometry.selectionCount).toBe('2 of 17 selected');
     expect(geometry.notice.bottom).toBeLessThanOrEqual(geometry.selection.top);
     expect(geometry.selection.bottom).toBeLessThanOrEqual(geometry.navigation.top);
     expect(geometry.contextHeight).toBe(0);
@@ -499,7 +503,6 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     { width: 360, height: 800 },
   ])('selects on long press and keeps the selection pill clear at $width × $height', async ({ width, height }) => {
     await harness!.cdp.cmd('Page.navigate', { url: harness!.appUrl });
-    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
     await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
       width,
       height,
@@ -508,8 +511,10 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor,
       mobile: true,
     });
-    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-mail"]').click()`);
-    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 300))');
+    const firstRow = `${workspaceApp} [data-test="conversation-row-conv-01"]`;
+    await expect.poll(() => harness!.cdp.js<boolean>(
+      `document.querySelector(${JSON.stringify(firstRow)}) !== null`,
+    ), { timeout: 5_000 }).toBe(true);
     const start = await harness!.cdp.js<{ x: number; y: number }>(`(() => {
       const row = document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="conversation-row-conv-01"]');
       const rect = row.getBoundingClientRect();
@@ -523,6 +528,9 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       };
     })()`);
     expect(selectionStyles).toEqual({ row: 'none', child: 'none' });
+    expect(await harness!.cdp.js<boolean>(
+      `document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="selection-bar"]') === null`,
+    )).toBe(true);
     await touch('touchStart', start.x, start.y);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 600))');
     await touch('touchEnd');
@@ -530,7 +538,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
 
     const measure = await harness!.cdp.js<{
       selected: boolean;
-      checkbox: { width: number; height: number; opacity: string };
+      checkbox: { width: number; height: number; opacity: string; checked: boolean };
       selectedRows: Array<{
         checkbox: { left: number; right: number; top: number; bottom: number; width: number };
         visualWidth: number;
@@ -539,8 +547,9 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       }>;
       bar: { top: number; bottom: number; left: number; right: number };
       barHeight: number;
+      barOverflows: boolean;
       clearButton: { width: number; height: number; first: boolean };
-      scope: { scrollWidth: number; clientWidth: number; visibleText: string; loadedDisplay: string };
+      scope: { scrollWidth: number; clientWidth: number; visibleText: string };
       primaryBackground: string;
       barBackground: string;
       buttonLayouts: Array<{ left: number; right: number; top: number; bottom: number; width: number; height: number; scrollWidth: number; clientWidth: number }>;
@@ -583,17 +592,17 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
         };
       });
       return {
-        selected: app.querySelector('[data-test="selection-count"]')?.textContent.includes('1 selected') ?? false,
-        checkbox: { ...box(checkbox), opacity: getComputedStyle(checkbox).opacity },
+        selected: app.querySelector('[data-test="selection-count"]')?.textContent.includes('1 of 18 selected') ?? false,
+        checkbox: { ...box(checkbox), opacity: getComputedStyle(checkbox).opacity, checked: checkbox.checked },
         selectedRows,
         bar: barBox,
         barHeight: barBox.bottom - barBox.top,
+        barOverflows: bar.scrollWidth > bar.clientWidth,
         clearButton: { ...box(clear), first: bar.querySelector('button') === clear },
         scope: {
           scrollWidth: scope.scrollWidth,
           clientWidth: scope.clientWidth,
           visibleText: scope.querySelector('[data-test="selection-count"]').textContent.trim(),
-          loadedDisplay: getComputedStyle(scope.querySelector('.selection-loaded-scope')).display,
         },
         primaryBackground: getComputedStyle(primary).backgroundColor,
         barBackground: getComputedStyle(bar).backgroundColor,
@@ -606,6 +615,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       };
     })()`);
     expect(measure.selected).toBe(true);
+    expect(measure.checkbox.checked).toBe(true);
     expect(measure.rowBackgrounds[0]).toBe('rgb(71, 70, 68)');
     expect(measure.rowBackgrounds[1]).not.toBe(measure.rowBackgrounds[0]);
     expect(await harness!.cdp.js('window.getSelection().toString()')).toBe('');
@@ -619,13 +629,15 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       expect(row.unreadVisible).toBe(false);
     }
     expect(measure.bar.top).toBeGreaterThanOrEqual(0);
-    expect(measure.barHeight).toBeLessThanOrEqual(112);
+    expect(measure.barHeight).toBeLessThanOrEqual(160);
+    expect(measure.bar.left).toBeGreaterThanOrEqual(0);
+    expect(measure.bar.right).toBeLessThanOrEqual(width);
+    expect(measure.barOverflows).toBe(false);
     expect(measure.clearButton.first).toBe(true);
     expect(measure.clearButton.width).toBeGreaterThanOrEqual(48);
     expect(measure.clearButton.height).toBeGreaterThanOrEqual(48);
     expect(measure.scope.scrollWidth).toBeLessThanOrEqual(measure.scope.clientWidth);
-    expect(measure.scope.visibleText).toBe('1 selected');
-    expect(measure.scope.loadedDisplay).toBe('none');
+    expect(measure.scope.visibleText).toBe('1 of 18 selected');
     expect(measure.primaryBackground).not.toBe(measure.barBackground);
     expect(Math.abs(measure.bar.left - measure.navigationPill.left)).toBeLessThanOrEqual(1);
     expect(Math.abs(measure.bar.right - measure.navigationPill.right)).toBeLessThanOrEqual(1);
@@ -636,7 +648,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     expect(measure.bar.bottom).toBeLessThanOrEqual(measure.navigationPill.top);
     expect(measure.buttons.find(button => button.id === 'selection-clear')?.height).toBeGreaterThanOrEqual(48);
     expect(measure.buttons.filter(button => button.id?.startsWith('selection-mark-') || button.id === 'selection-select-all').every(button => button.width >= 48 && button.height >= 48)).toBe(true);
-    expect(measure.buttons.filter(button => button.id === 'selection-archive' || button.id === 'selection-unarchive').every(button => button.height >= 40)).toBe(true);
+    expect(measure.buttons.every(button => button.height >= 48)).toBe(true);
     expect(measure.buttonLayouts.every(button => button.left >= measure.bar.left && button.right <= measure.bar.right && button.top >= measure.bar.top && button.bottom <= measure.bar.bottom)).toBe(true);
     expect(measure.buttonLayouts.every(button => button.scrollWidth <= button.clientWidth)).toBe(true);
     for (let index = 0; index < measure.buttonLayouts.length; index += 1) {
@@ -656,7 +668,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     await touch('touchStart', second.x, second.y);
     await touch('touchEnd');
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 120))');
-    expect(await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="selection-count"]').textContent`)).toContain('2 selected');
+    expect(await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="selection-count"]').textContent`)).toContain('2 of 18 selected');
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="selection-clear"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 120))');
     expect(await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="selection-bar"]') === null`)).toBe(true);

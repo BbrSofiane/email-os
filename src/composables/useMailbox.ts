@@ -168,6 +168,7 @@ export interface Mailbox {
   undoLastAction(): Promise<UndoReceipt | null>;
   // --- UX-05 selection state (account-scoped, additive ranges) ---
   /** Insertion-ordered selected references; never indexes, never focus. */
+  selectionMode: Ref<boolean>;
   selectedRefs: Ref<ConversationRef[]>;
   /** Range anchor for Shift+J/K and Shift-click ranges. */
   rangeAnchorRef: Ref<ConversationRef | null>;
@@ -258,7 +259,7 @@ export function useMailbox(client: MailClient): Mailbox {
   const lastAction = ref<LastAction | null>(null);
 
   const {
-    selectedRefs, rangeAnchorRef, selectionNotice, isSelected, toggleSelected, extendSelectionTo,
+    selectionMode, selectedRefs, rangeAnchorRef, selectionNotice, isSelected, toggleSelected, extendSelectionTo,
     selectAllLoaded, clearSelection, intersectSelectionWithLoaded, selectionInLoadedOrder,
   } = useMailboxSelection({ rows: () => conversations.value, targetAvailable: (target) => savedTargetAvailable(target) });
 
@@ -1216,7 +1217,7 @@ export function useMailbox(client: MailClient): Mailbox {
     inFlightCommandRef, commandInFlight, ready, refresh, focusConversation, moveFocus,
     openConversationByRef, openNeighbor, prefetchConversation, openFocused, closeReader, setArchived, unarchiveFromActivity, setRead, setStarred, setStarredGroup, retryOperation,
     lastAction, undoLastAction,
-    selectedRefs, rangeAnchorRef, selectionNotice, isSelected, toggleSelected, extendSelectionTo,
+    selectionMode, selectedRefs, rangeAnchorRef, selectionNotice, isSelected, toggleSelected, extendSelectionTo,
     selectAllLoaded, clearSelection, selectionInLoadedOrder,
     lastGroup, bulkUnresolved, groupInFlight, setArchivedGroup, setReadGroup, recoverGroupAcceptance,
     dismissGroupNotice, undoGroupAction, recentGroups, groupsError, groupsHasMore, groupsLoadingMore, loadMoreGroups,

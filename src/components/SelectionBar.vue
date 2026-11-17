@@ -58,18 +58,19 @@ const scopeCaveat = computed(
           <span class="visually-hidden">Clear selection</span>
         </button>
         <p class="selection-scope" data-test="selection-scope" :title="scopeCaveat">
-          <strong data-test="selection-count">{{ count }} selected</strong>{{ ' ' }}<span class="selection-loaded-scope" data-test="selection-loaded-scope">· {{ loadedCount }} loaded</span>
+          <strong v-if="count > 0" data-test="selection-count">{{ count }} of {{ loadedCount }} selected</strong>
+          <strong v-else>Select conversations</strong>
           <span class="visually-hidden" data-test="selection-scope-caveat">{{ scopeCaveat }}</span>
         </p>
         <button
-          v-if="context !== 'done'"
+          v-if="count > 0 && context !== 'done'"
           type="button"
           data-test="selection-archive"
           :disabled="!actionsEnabled"
           @click="emit('archive')"
         >Mark {{ count }} done</button>
         <button
-          v-if="context !== 'inbox'"
+          v-if="count > 0 && context !== 'inbox'"
           type="button"
           data-test="selection-unarchive"
           :disabled="!actionsEnabled"
@@ -78,14 +79,14 @@ const scopeCaveat = computed(
       </div>
       <div class="selection-row-secondary">
         <button
-          v-if="readAvailable"
+          v-if="count > 0 && readAvailable"
           type="button"
           data-test="selection-mark-read"
           :aria-label="'Mark ' + count + ' read'"
           @click="emit('markRead')"
         >Mark read</button>
         <button
-          v-if="readAvailable"
+          v-if="count > 0 && readAvailable"
           type="button"
           data-test="selection-mark-unread"
           :aria-label="'Mark ' + count + ' unread'"
@@ -94,11 +95,11 @@ const scopeCaveat = computed(
         <button
           type="button"
           data-test="selection-select-all"
-          :disabled="selectAllDisabled"
+          :disabled="selectAllDisabled || count === loadedCount"
           :title="selectAllTitle"
-          :aria-label="'Select all loaded (' + loadedCount + ')'"
+          :aria-label="`Select all ${loadedCount} loaded conversations`"
           @click="emit('selectAll')"
-        >Select all ({{ loadedCount }})</button>
+        >Select {{ loadedCount }} loaded</button>
       </div>
       <p v-if="limitMessage" class="selection-limit" role="note" data-test="selection-limit">{{ limitMessage }}</p>
     </template>

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mountApp, createBrowserFakeMailClient, flushFakeClientAndVueUpdates, useGmailMode } from '../helpers';
-import { allMobileCss } from '../support/css-contract';
+import { allMobileCss, mobileCss } from '../support/css-contract';
 
 function stubLayout(compact: boolean): void {
   vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
@@ -92,6 +92,73 @@ describe('App compact and regular frame', () => {
     regular.unmount();
   });
 
+  it('enters empty selection, selects by tapping a row, and exits with Clear', async () => {
+    stubLayout(true);
+    const fake = createBrowserFakeMailClient();
+    const wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+
+    await wrapper.get('[data-test="mobile-select"]').trigger('click');
+    expect(wrapper.find('[data-test="mobile-select"]').exists()).toBe(false);
+    expect(wrapper.get('.inbox-list').classes()).toContain('selecting');
+    expect(wrapper.get('[data-test="row-select-conv-01"]').element).toHaveProperty('checked', false);
+    expect(wrapper.find('[data-test="selection-bar"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="split-inbox"]').exists()).toBe(false);
+
+    await wrapper.get('[data-test="conversation-row-conv-01"]').trigger('click');
+    expect(wrapper.get('[data-test="row-select-conv-01"]').element).toHaveProperty('checked', true);
+    expect(wrapper.find('[data-test="reader"]').exists()).toBe(false);
+    await wrapper.get('[data-test="selection-clear"]').trigger('click');
+    expect(wrapper.find('[data-test="selection-bar"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="split-inbox"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('ends explicit selection after an accepted bulk action that leaves the row loaded', async () => {
+    stubLayout(true);
+    const fake = createBrowserFakeMailClient();
+    useGmailMode(fake, { mutationAccess: 'enabled' });
+    const wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+
+    await wrapper.get('[data-test="mobile-select"]').trigger('click');
+    await wrapper.get('[data-test="conversation-row-conv-01"]').trigger('click');
+    await wrapper.get('[data-test="selection-mark-read"]').trigger('click');
+    await flushFakeClientAndVueUpdates(fake);
+    expect(wrapper.find('[data-test="conversation-row-conv-01"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="selection-bar"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="mobile-select"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('keeps a labelled row checkbox reachable before selection mode opens', async () => {
+    stubLayout(true);
+    const style = document.createElement('style');
+    style.textContent = mobileCss['list.css']!;
+    document.head.append(style);
+    const fake = createBrowserFakeMailClient();
+    const wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
+
+    try {
+      await flushFakeClientAndVueUpdates(fake);
+      const checkbox = wrapper.get('[data-test="row-select-conv-01"]');
+      expect(wrapper.get('.inbox-list').classes()).not.toContain('selecting');
+      expect(checkbox.attributes('type')).toBe('checkbox');
+      expect(checkbox.attributes('aria-label')).toMatch(/^Select .+/);
+      expect(checkbox.element.closest('[hidden], [aria-hidden="true"], [inert]')).toBeNull();
+      const appearance = getComputedStyle(checkbox.element);
+      expect(appearance.display).not.toBe('none');
+      expect(appearance.width).toBe('1px');
+
+      await checkbox.setValue(true);
+      expect(wrapper.get('.inbox-list').classes()).toContain('selecting');
+      expect(wrapper.get('[data-test="selection-count"]').text()).toBe('1 of 18 selected');
+    } finally {
+      wrapper.unmount();
+      style.remove();
+    }
+  });
+
   it('marks Search current without Inbox tabs in the context slot, then restores Inbox', async () => {
     stubLayout(true);
     const fake = createBrowserFakeMailClient();
@@ -136,6 +203,7 @@ describe('App compact and regular frame', () => {
     await draftsRow!.trigger('click');
     await flushFakeClientAndVueUpdates(fake);
     expect(wrapper.find('[data-test="drafts-pane"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="mobile-select"]').exists()).toBe(false);
     wrapper.unmount();
   });
 
@@ -146,6 +214,7 @@ describe('App compact and regular frame', () => {
     await flushFakeClientAndVueUpdates(fake);
     await wrapper.get('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushFakeClientAndVueUpdates(fake);
+    expect(wrapper.find('[data-test="mobile-select"]').exists()).toBe(false);
     await wrapper.get('[data-test="reader-more"]').trigger('click');
     await flushFakeClientAndVueUpdates(fake);
     const contactAction = wrapper.findAll('[data-test="action-sheet"] button').find(button => button.text().includes('Contact details'));

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mountApp, createBrowserFakeMailClient, flushFakeClientAndVueUpdates } from '../helpers';
 
+
 interface AndroidBackWindow extends Window {
   __emailOsAndroidBack?: () => boolean;
   __TAURI_INTERNALS__?: object;
@@ -39,6 +40,16 @@ afterEach(() => {
 });
 
 describe('compact Android Back', () => {
+  it('exits empty selection mode and consumes Back', async () => {
+    const { wrapper, back } = await mountAndroidApp();
+    await wrapper.get('[data-test="mobile-select"]').trigger('click');
+    expect(wrapper.find('[data-test="selection-bar"]').exists()).toBe(true);
+    expect(back()).toBe(true);
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('[data-test="selection-bar"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
   it('closes Search when focus is on the body or a row', async () => {
     const { fake, wrapper, back } = await mountAndroidApp();
     await wrapper.get('[data-test="mobile-search"]').trigger('click');

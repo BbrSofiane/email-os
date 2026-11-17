@@ -175,6 +175,30 @@ describe.skipIf(!chromePath)('mobile frame geometry (real Chromium)', () => {
       return { rowBottom: row.bottom, bottomTop: bottom.top };
     })()`);
     expect(scroller.rowBottom).toBeLessThan(scroller.bottomTop);
+
+    await click(harness!, '[data-test="mobile-menu"]');
+    await harness!.cdp.js(`[...document.querySelector(${JSON.stringify(workspaceApp)})
+      .querySelectorAll('.mobile-drawer-row')].find(row => row.textContent.trim() === 'Done').click()`);
+    await settle(harness!);
+    const select = await harness!.cdp.js<{ button: Rect; title: Rect; compose: Rect; bar: Rect }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const box = selector => app.querySelector(selector).getBoundingClientRect().toJSON();
+      return {
+        button: box('[data-test="mobile-select"]'),
+        title: box('.mobile-title'),
+        compose: box('[data-test="mobile-compose"]'),
+        bar: box('[data-test="mobile-top-bar"]'),
+      };
+    })()`);
+    expect(select.button.width).toBe(48);
+    expect(select.button.height).toBe(48);
+    expect(select.button.top).toBeGreaterThanOrEqual(select.bar.top);
+    expect(select.button.bottom).toBeLessThanOrEqual(select.bar.bottom);
+    expect(select.button.left).toBeGreaterThanOrEqual(select.title.right);
+    expect(select.button.right).toBeLessThanOrEqual(select.compose.left);
+    expect(select.compose.right).toBeLessThanOrEqual(select.bar.right);
+    await click(harness!, '[data-test="mobile-mail"]');
+
   });
 
   it('moves reader actions into the bottom pill and returns to the list', async () => {

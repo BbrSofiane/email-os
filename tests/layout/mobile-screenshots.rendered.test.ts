@@ -84,7 +84,9 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await harness!.cdp.cmd('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ ...point, id: 1 }] });
     await pause(600);
     await harness!.cdp.cmd('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-    await waitFor(`app.querySelector('[data-test="selection-bar"]')`, 'selection bar');
+    await waitFor(`app.querySelector('[data-test="row-select-conv-01"]').checked
+      && app.querySelector('[data-test="selection-count"]')?.textContent.trim() === '1 of 18 selected'
+      && app.querySelector('[data-test="selection-archive"]')?.textContent.trim() === 'Mark 1 done'`, 'first row selected by long press');
   }
 
   async function swipeCue(name: string, direction: 'left' | 'right', distance: number): Promise<void> {
@@ -127,10 +129,14 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await viewport(PHONE_VIEWPORT.width, PHONE_VIEWPORT.height, true);
     await freshInbox();
     await shot('inbox');
+    await click('[data-test="mobile-select"]');
+    await waitFor(`app.querySelector('[data-test="selection-bar"]') && !app.querySelector('[data-test="selection-count"]')`, 'empty selection bar');
+    await shot('selection-empty');
+
+    await freshInbox();
+    await waitFor(`!app.querySelector('[data-test="selection-bar"]')`, 'browse mode before long press');
     await longPressFirstRow();
     await shot('selection');
-    await harness!.cdp.js('window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }))');
-    await pause(150);
 
     await freshInbox();
     await click('.inbox-row');
@@ -189,7 +195,7 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
       touchPoints: [{ x: row.x - row.width * 0.6, y: row.y, id: 1 }],
     });
     await harness!.cdp.cmd('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-    await waitFor(`app.querySelector('[data-test="action-notice"]') && app.querySelector('[data-test="selection-count"]')?.textContent.includes('1 selected')`, 'selection and action notice');
+    await waitFor(`app.querySelector('[data-test="action-notice-undo"]') && app.querySelector('[data-test="selection-count"]')?.textContent.includes('1 of 17 selected')`, 'selection and action notice');
     await shot('selection-with-notice');
   }, 120_000);
 
