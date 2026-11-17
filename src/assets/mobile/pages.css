@@ -411,6 +411,39 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-controls 
   white-space: nowrap;
 }
 
+.app[data-layout="compact"] .contact-disclosure-panel .contact-line > :is(.contact-name, .contact-mailbox) {
+  flex: 1;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.app[data-layout="compact"] .contact-disclosure-panel .contact-copy {
+  width: 48px;
+  height: 48px;
+  opacity: 1;
+  color: var(--text-secondary);
+}
+
+.app[data-layout="compact"] .contact-disclosure-panel .contact-copy > svg {
+  width: 20px;
+  height: 20px;
+}
+
+.app[data-layout="compact"] .contact-disclosure-panel .contact-recent button {
+  min-height: 48px;
+  height: auto;
+  padding-block: 12px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+  text-overflow: clip;
+}
+
+.app[data-layout="compact"] .contact-disclosure-panel .contact-recent li + li {
+  border-block-start: 1px solid var(--rule);
+}
+
 .app[data-layout="compact"] .utility-drawer .compact-settings-heading {
   margin: 0 0 8px;
   color: var(--text-primary);
