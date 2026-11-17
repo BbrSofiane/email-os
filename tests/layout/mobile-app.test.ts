@@ -16,6 +16,28 @@ afterEach(() => {
 });
 
 describe('App compact and regular frame', () => {
+  it('marks an open Search form as the current page and restores Inbox on Escape', async () => {
+    stubLayout(true);
+    const fake = createBrowserFakeMailClient();
+    const wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+
+    await wrapper.get('[data-test="mobile-search"]').trigger('click');
+    await flushFakeClientAndVueUpdates(fake);
+    expect(wrapper.get('[data-test="mobile-context-slot"]').element.childElementCount).toBe(0);
+    expect(wrapper.get('[data-test="mobile-search"]').attributes('aria-current')).toBe('page');
+    expect(wrapper.get('[data-test="mobile-mail"]').attributes('aria-current')).toBeUndefined();
+    expect(wrapper.get('[data-test="mobile-top-bar"]').text()).toContain('Search');
+
+    await wrapper.get('[data-test="search-input"]').trigger('keydown', { key: 'Escape' });
+    await flushFakeClientAndVueUpdates(fake);
+    expect(wrapper.find('[data-test="search-input"]').exists()).toBe(false);
+    expect(wrapper.get('[data-test="mobile-search"]').attributes('aria-current')).toBeUndefined();
+    expect(wrapper.get('[data-test="mobile-mail"]').attributes('aria-current')).toBe('page');
+    expect(wrapper.get('[data-test="split-inbox"]').element.closest('.mobile-context-slot')).toBeTruthy();
+    wrapper.unmount();
+  });
+
   it('teleports split tabs only in compact mode and keeps saved navigation active', async () => {
     const fake = createBrowserFakeMailClient();
     const first = (await fake.listConversations()).conversations[0]!;

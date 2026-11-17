@@ -107,8 +107,21 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
   });
 
   it('sizes compact Search controls and shows submitted results without overflow', async () => {
-    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="search-trigger"]').click()`);
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-search"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
+    const searchPage = await harness!.cdp.js<{ slotHeight: number; title: boolean; searchCurrent: string | null; inboxCurrent: string | null }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      return {
+        slotHeight: app.querySelector('.mobile-context-slot').getBoundingClientRect().height,
+        title: app.querySelector('[data-test="mobile-top-bar"]').textContent.includes('Search'),
+        searchCurrent: app.querySelector('[data-test="mobile-search"]').getAttribute('aria-current'),
+        inboxCurrent: app.querySelector('[data-test="mobile-mail"]').getAttribute('aria-current'),
+      };
+    })()`);
+    expect(searchPage.slotHeight).toBe(0);
+    expect(searchPage.title).toBe(true);
+    expect(searchPage.searchCurrent).toBe('page');
+    expect(searchPage.inboxCurrent).toBeNull();
     const syntax = await harness!.cdp.js<{ closed: boolean; listHeight: number; summaryHeight: number }>(`(() => {
       const app = document.querySelector(${JSON.stringify(workspaceApp)});
       const details = app.querySelector('.search-syntax');

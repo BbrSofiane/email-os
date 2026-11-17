@@ -372,7 +372,8 @@ watch(drawer, (next) => { if (next) editingSplit.value = false; });
 // own, not Inbox splits: the Inbox split nav gives way to the heading alone.
 const splitNavShown = computed(() => accountReady.value && !!accountId.value && !readerOpen.value && !drawer.value);
 const inboxSplitsShown = computed(() => splitNavShown.value
-  && ['inbox', 'saved', 'done', 'starred'].includes(mailbox.context.value));
+  && ['inbox', 'saved', 'done', 'starred'].includes(mailbox.context.value)
+  && !(layoutMode.value === 'compact' && searchVisible.value));
 const activeTabShown = computed(() => splitNavShown.value
   && (mailbox.context.value === 'inbox' || (mailbox.context.value === 'saved' && !!savedTabVisible.value)));
 /** Cached Trash standing limits: one Ash line; the whole caveat is its title and hidden text. */
@@ -2084,7 +2085,7 @@ const searchSyntaxEditHint = computed(() =>
       v-if="layoutMode === 'compact'"
       ref="mobileTopBar"
       :reader="readerOpen"
-      :title="contextTitle"
+      :title="searchVisible ? 'Search' : contextTitle"
       :execute-action="executeAction"
       :open-destinations="openMobileDrawer"
       :menu-expanded="mobileNavOpen"
@@ -2810,8 +2811,8 @@ const searchSyntaxEditHint = computed(() =>
       ref="mobileBottomBar"
       :inert="messageSheetOpen || mobileNavOpen || mobileEditorOpen || undefined"
       :reader="readerOpen"
-      :inbox-or-saved="mailbox.context.value === 'inbox' || mailbox.context.value === 'saved'"
-      :search="mailbox.context.value === 'search'"
+      :inbox-or-saved="(mailbox.context.value === 'inbox' || mailbox.context.value === 'saved') && !searchVisible"
+      :search="mailbox.context.value === 'search' || searchVisible"
       :execute-action="executeAction"
       :action-available="actionAvailable"
       :action-label="actionLabel"
