@@ -1,0 +1,88 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7NFPY2P8WCKG5FQW87V797Z",
+  "session_id": "415cd333-37f5-4cfe-be88-ad6fe867d94b",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-17T19:28:37.803429524Z",
+  "branch": "mobile/p5-list-2",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/assets/mobile/list.css",
+    "tests/layout/mobile-list.rendered.test.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-5-5",
+  "turn_id": "d7361811aa3b",
+  "checkpoint_transcript_start": 3312,
+  "transcript_lines_at_start": 3312,
+  "compact_transcript_start": 609,
+  "token_usage": {
+    "input_tokens": 30,
+    "cache_creation_tokens": 13690,
+    "cache_read_tokens": 2514151,
+    "output_tokens": 5121,
+    "api_call_count": 15
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-toolu_01BXU2tGKZrShGD3kxJ2QGyB",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "impeccable"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "9d4b515fc474",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 2023,
+        "end": 2024,
+        "entry_ids": [
+          "0b69cc53-a832-4b8b-bfe9-93b2277e4b40"
+        ],
+        "tool_use_id": "toolu_01BXU2tGKZrShGD3kxJ2QGyB"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_01BXU2tGKZrShGD3kxJ2QGyB"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: impeccable",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 1
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-17T19:28:35.916215731Z",
+    "agent_lines": 1101,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 1101,
+    "total_lines_changed": 1101,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 58,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".codex/hooks.json": 23,
+        "pi-scheduled-tasks": 35
+      }
+    }
+  ]
+}
