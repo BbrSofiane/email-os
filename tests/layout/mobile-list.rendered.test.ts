@@ -528,6 +528,9 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       };
     })()`);
     expect(selectionStyles).toEqual({ row: 'none', child: 'none' });
+    expect(await harness!.cdp.js<boolean>(
+      `document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="selection-bar"]') === null`,
+    )).toBe(true);
     await touch('touchStart', start.x, start.y);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 600))');
     await touch('touchEnd');
@@ -535,7 +538,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
 
     const measure = await harness!.cdp.js<{
       selected: boolean;
-      checkbox: { width: number; height: number; opacity: string };
+      checkbox: { width: number; height: number; opacity: string; checked: boolean };
       selectedRows: Array<{
         checkbox: { left: number; right: number; top: number; bottom: number; width: number };
         visualWidth: number;
@@ -590,7 +593,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       });
       return {
         selected: app.querySelector('[data-test="selection-count"]')?.textContent.includes('1 of 18 selected') ?? false,
-        checkbox: { ...box(checkbox), opacity: getComputedStyle(checkbox).opacity },
+        checkbox: { ...box(checkbox), opacity: getComputedStyle(checkbox).opacity, checked: checkbox.checked },
         selectedRows,
         bar: barBox,
         barHeight: barBox.bottom - barBox.top,
@@ -612,6 +615,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       };
     })()`);
     expect(measure.selected).toBe(true);
+    expect(measure.checkbox.checked).toBe(true);
     expect(measure.rowBackgrounds[0]).toBe('rgb(71, 70, 68)');
     expect(measure.rowBackgrounds[1]).not.toBe(measure.rowBackgrounds[0]);
     expect(await harness!.cdp.js('window.getSelection().toString()')).toBe('');
