@@ -753,6 +753,7 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
             swipeFor(item.row).cue.value!.action,
             {
               armed: swipeFor(item.row).armed.value,
+              labelled: Math.abs(swipeFor(item.row).offset.value) >= 128,
               'from-end': swipeFor(item.row).revealed.value === 'left',
               'from-start': swipeFor(item.row).revealed.value === 'right',
             },
@@ -760,7 +761,7 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
           aria-hidden="true"
         >
           <span class="row-swipe-icon"><RowGlyph :name="swipeFor(item.row).cue.value!.glyph" /></span>
-          <span>{{ swipeFor(item.row).cue.value!.label }}</span>
+          <span class="row-swipe-label">{{ swipeFor(item.row).cue.value!.label }}</span>
         </span>
         <!-- UX-05 selection control: a native labelled checkbox in the 44px
              gutter; it stops propagation and never opens the row. Revealed by

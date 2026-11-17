@@ -356,7 +356,8 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       preview: { left: number; right: number; top: number; bottom: number };
       cue: { left: number; right: number; top: number; bottom: number } | null;
       cueClass: string;
-      label: { left: number; right: number; top: number; bottom: number } | null;
+      icon: { left: number; right: number; top: number; bottom: number } | null;
+      labelDisplay: string | null;
       transition: string;
       scrollWidth: number;
       viewportWidth: number;
@@ -376,7 +377,8 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
         preview: box(row.querySelector('.row-preview')),
         cue: rect(cue),
         cueClass: cue?.className ?? '',
-        label: rect(cue?.querySelector(':scope > span:last-child')),
+        icon: rect(cue?.querySelector('.row-swipe-icon svg')),
+        labelDisplay: cue ? getComputedStyle(cue.querySelector('.row-swipe-label')).display : null,
         transition: getComputedStyle(row).transitionDuration,
         scrollWidth: document.scrollingElement.scrollWidth,
         viewportWidth: window.innerWidth,
@@ -390,19 +392,27 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     };
 
     await touch('touchStart', startX, resting.y);
-    await touch('touchMove', startX - 80, resting.y);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 225))');
+    await touch('touchMove', startX - 100, resting.y);
     await harness!.cdp.js('new Promise(resolve => requestAnimationFrame(resolve))');
     const leftReveal = await measureSwipe();
     expect(leftReveal.transition).toBe('0s');
-    expect(leftReveal.row.left).toBeCloseTo(resting.left - 80, 0);
-    expect(leftReveal.sender.left).toBeCloseTo(resting.senderLeft - 80, 0);
-    expect(leftReveal.subject.left).toBeCloseTo(resting.subjectLeft - 80, 0);
-    expect(leftReveal.preview.left).toBeCloseTo(resting.previewLeft - 80, 0);
-    expect(leftReveal.cue?.left).toBeCloseTo(resting.right - 80, 0);
+    expect(leftReveal.row.left).toBeCloseTo(resting.left - 100, 0);
+    expect(leftReveal.sender.left).toBeCloseTo(resting.senderLeft - 100, 0);
+    expect(leftReveal.subject.left).toBeCloseTo(resting.subjectLeft - 100, 0);
+    expect(leftReveal.preview.left).toBeCloseTo(resting.previewLeft - 100, 0);
+    expect(leftReveal.cue?.left).toBeCloseTo(resting.right - 100, 0);
     expect(leftReveal.cue?.right).toBeCloseTo(resting.right, 0);
     expect(leftReveal.cueClass.split(' ')).toContain('from-end');
     expect(leftReveal.cueClass.split(' ')).toContain('done');
     expect(leftReveal.cue).not.toBeNull();
+    expect(leftReveal.labelDisplay).toBe('none');
+    expect(leftReveal.icon).not.toBeNull();
+    expect(leftReveal.icon!.right - leftReveal.icon!.left).toBe(24);
+    expect(leftReveal.icon!.left).toBeGreaterThanOrEqual(leftReveal.cue!.left);
+    expect(leftReveal.icon!.right).toBeLessThanOrEqual(leftReveal.cue!.right);
+    expect(leftReveal.icon!.top).toBeGreaterThanOrEqual(leftReveal.cue!.top);
+    expect(leftReveal.icon!.bottom).toBeLessThanOrEqual(leftReveal.cue!.bottom);
     expect(leftReveal.cue!.right <= leftReveal.subject.left + 1 || leftReveal.cue!.left >= leftReveal.subject.right - 1).toBe(true);
     expect(leftReveal.cue!.right <= leftReveal.preview.left + 1 || leftReveal.cue!.left >= leftReveal.preview.right - 1).toBe(true);
     expect(leftReveal.scrollWidth).toBe(leftReveal.viewportWidth);
@@ -414,12 +424,12 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     await touch('touchStart', startX, resting.y);
     await touch('touchMove', startX - resting.width * 0.3, resting.y);
     await harness!.cdp.js('new Promise(resolve => requestAnimationFrame(resolve))');
-    await touch('touchMove', startX - resting.width * 0.6, resting.y);
+    await touch('touchMove', startX - Math.max(128, Math.ceil(resting.width * 0.35)), resting.y);
     await harness!.cdp.js('new Promise(resolve => requestAnimationFrame(resolve))');
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
     const armedDone = await harness!.cdp.js<{ classes: string; background: string; cue: { left: number; right: number; top: number; bottom: number }; label: { left: number; right: number; top: number; bottom: number } }>(`(() => {
       const cue = document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('.row-swipe-underlay');
-      const label = cue.querySelector(':scope > span:last-child');
+      const label = cue.querySelector('.row-swipe-label');
       const cueRect = cue.getBoundingClientRect();
       const labelRect = label.getBoundingClientRect();
       const canvas = document.createElement('canvas');
@@ -436,6 +446,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     })()`);
     expect(armedDone.classes.split(' ')).toContain('armed');
     expect(armedDone.background).toBe('rgb(187, 165, 237)');
+    expect(armedDone.label.right - armedDone.label.left).toBeGreaterThan(0);
     expect(armedDone.label.left).toBeGreaterThanOrEqual(armedDone.cue.left);
     expect(armedDone.label.right).toBeLessThanOrEqual(armedDone.cue.right);
     expect(armedDone.label.top).toBeGreaterThanOrEqual(armedDone.cue.top);
@@ -470,7 +481,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     const armedRemind = await harness!.cdp.js<{ classes: string; labelInside: boolean }>(`(() => {
       const cue = document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('.row-swipe-underlay');
       const cueRect = cue.getBoundingClientRect();
-      const labelRect = cue.querySelector(':scope > span:last-child').getBoundingClientRect();
+      const labelRect = cue.querySelector('.row-swipe-label').getBoundingClientRect();
       return {
         classes: cue.className,
         labelInside: labelRect.left >= cueRect.left && labelRect.right <= cueRect.right && labelRect.top >= cueRect.top && labelRect.bottom <= cueRect.bottom,
