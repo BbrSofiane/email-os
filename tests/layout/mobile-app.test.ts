@@ -66,6 +66,32 @@ describe('App compact and regular frame', () => {
     regular.unmount();
   });
 
+  it('replaces the compact split pill with the selection bar but keeps regular split navigation', async () => {
+    const fake = createBrowserFakeMailClient();
+
+    stubLayout(true);
+    const compact = mountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+    expect(compact.get('[data-test="split-inbox"]').element.closest('.mobile-context-slot')).toBeTruthy();
+    await compact.get('[data-test="row-select-conv-01"]').setValue(true);
+    await flushFakeClientAndVueUpdates(fake);
+    expect(compact.find('[data-test="selection-bar"]').exists()).toBe(true);
+    expect(compact.get('[data-test="mobile-context-slot"]').element.childElementCount).toBe(0);
+    await compact.get('[data-test="selection-clear"]').trigger('click');
+    await flushFakeClientAndVueUpdates(fake);
+    expect(compact.get('[data-test="split-inbox"]').element.closest('.mobile-context-slot')).toBeTruthy();
+    compact.unmount();
+
+    stubLayout(false);
+    const regular = mountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+    await regular.get('[data-test="row-select-conv-01"]').setValue(true);
+    await flushFakeClientAndVueUpdates(fake);
+    expect(regular.find('[data-test="selection-bar"]').exists()).toBe(true);
+    expect(regular.get('[data-test="split-inbox"]').element.closest('.app-header')).toBeTruthy();
+    regular.unmount();
+  });
+
   it('marks Search current without Inbox tabs in the context slot, then restores Inbox', async () => {
     stubLayout(true);
     const fake = createBrowserFakeMailClient();
