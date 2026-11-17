@@ -125,6 +125,7 @@ export function useActionNotice({ mailbox }: ActionNoticeDeps) {
       undone: slot.undone
         ? {
             outcome: slot.undone.outcome,
+            expectedCompensations: slot.undone.operationIds.length,
             compensations: mailbox.activity.value.filter((item) => slot.undone?.operationIds.includes(item.id) ?? false),
           }
         : null,

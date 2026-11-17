@@ -2806,7 +2806,18 @@ const searchSyntaxEditHint = computed(() =>
         <!-- Inert under a palette/navigator overlay exactly like header/main, so
              its Undo button cannot be reached while covered; drawer/disclosure
              guards apply through executeAction. -->
-        <ActionNotice v-if="!trashBrowsing" ref="actionNoticeComponent" :notice="actionNotice" :now="nowMs" :inert="!!overlay || !!attachmentConversation || undefined" @undo="executeAction('undo')" @undo-group="onNoticeGroupAction" @dismiss-group="mailbox.dismissGroupNotice()" />
+        <ActionNotice
+          v-if="!trashBrowsing"
+          ref="actionNoticeComponent"
+          :notice="actionNotice"
+          :now="nowMs"
+          :compact="layoutMode === 'compact'"
+          :inert="!!overlay || !!attachmentConversation || undefined"
+          @undo="executeAction('undo')"
+          @undo-group="onNoticeGroupAction"
+          @dismiss-group="mailbox.dismissGroupNotice()"
+          @open-activity="executeAction('activity')"
+        />
         <!-- The last command failure is an outcome the user must see: it sits
              in the same outcome slot as the action notice, as its own alert
              (not nested in the polite notice region, so it is announced once). -->

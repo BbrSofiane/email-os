@@ -78,15 +78,20 @@ const props = defineProps<{
     /** True once this action had an undo window; gates the expired wording. */
     hadWindow: boolean;
     /** Set after a successful undo: outcome plus the refreshed compensating rows. */
-    undone: { outcome: UndoOutcome; compensations: OperationSummaryLike[] } | null;
+    undone: {
+      outcome: UndoOutcome;
+      compensations: OperationSummaryLike[];
+      expectedCompensations?: number;
+    } | null;
     /** Present when the slot holds a bulk group action instead of a single. */
     group?: GroupNoticeView | null;
   } | null;
   /** Advisory wall-clock milliseconds (App-owned timer); the backend decides eligibility. */
   now: number;
+  compact?: boolean;
 }>();
 
-const emit = defineEmits<{ undo: []; undoGroup: []; dismissGroup: [] }>();
+const emit = defineEmits<{ undo: []; undoGroup: []; dismissGroup: []; openActivity: [] }>();
 
 const isGroup = computed(() => !!props.notice?.group);
 
@@ -190,6 +195,14 @@ const UNDO_EXPIRED_RECOVERY: Record<LastActionId, string> = {
   unstar: 'use Star',
 };
 
+const allCompensationsConfirmed = computed(() => {
+  const undone = props.notice?.undone;
+  if (!undone || undone.compensations.length === 0) return false;
+  if (props.compact && undone.expectedCompensations !== undefined
+    && undone.compensations.length < undone.expectedCompensations) return false;
+  return undone.compensations.every((operation) => operation.status === 'confirmed');
+});
+
 const statusText = computed(() => {
   const undone = props.notice?.undone ?? null;
   if (undone) {
@@ -197,7 +210,7 @@ const statusText = computed(() => {
     const statuses = undone.compensations.map((op) => op.status);
     if (statuses.includes('failed')) return 'Restore failed — see Activity';
     if (statuses.includes('outcome_unknown')) return 'Restore outcome unknown — see Activity';
-    if (statuses.length > 0 && statuses.every((status) => status === 'confirmed')) return 'Restored';
+    if (allCompensationsConfirmed.value) return 'Restored';
     // Compensations not landed/confirmed yet (or not visible in activity yet).
     return 'Restoring…';
   }
@@ -228,7 +241,7 @@ const statusTone = computed<NoticeStatusTone>(() => {
     const statuses = undone.compensations.map((op) => op.status);
     if (statuses.includes('failed')) return 'failed';
     if (statuses.includes('outcome_unknown')) return 'unknown';
-    if (statuses.length > 0 && statuses.every((status) => status === 'confirmed')) return 'settled';
+    if (allCompensationsConfirmed.value) return 'settled';
     return 'pending';
   }
   switch (props.notice?.operation?.status) {
@@ -249,6 +262,28 @@ const undoVisible = computed(() => {
   const until = props.notice?.undoableUntil;
   if (!until || props.notice?.undone) return false;
   return Date.parse(until) > props.now;
+});
+
+const showNotice = computed(() => {
+  const notice = props.notice;
+  if (!notice || !props.compact) return !!notice;
+  const group = notice.group;
+  if (!group) return statusTone.value !== 'settled' || undoVisible.value;
+  if (groupStatusTone.value !== 'settled' || groupUndoVisible.value) return true;
+  if (group.undone) return group.undone.compensationOutcomes.confirmed < group.undone.compensating;
+  return group.counts.confirmed < group.count;
+});
+
+const showActivity = computed(() => {
+  if (!props.compact || !showNotice.value) return false;
+  const group = props.notice?.group;
+  if (!group) return statusTone.value === 'failed' || statusTone.value === 'unknown';
+  if (group.acceptanceUnknown) return false;
+  if (group.undone) {
+    const outcomes = group.undone.compensationOutcomes;
+    return outcomes.failed > 0 || outcomes.unknown > 0;
+  }
+  return groupUndoExpired.value && groupStatusTone.value !== 'pending' && groupStatusTone.value !== 'settled';
 });
 
 const undoExpired = computed(() => {
@@ -273,13 +308,13 @@ const truncatedSubject = computed(() => {
 <template>
   <div
     class="action-notice"
-    :class="{ 'action-notice-empty': !notice }"
+    :class="{ 'action-notice-empty': !showNotice }"
     role="status"
     aria-live="polite"
     data-test="action-notice"
   >
     <!-- Bulk group slot (UX-05): one identity, per-status counts, partial undo. -->
-    <template v-if="notice && isGroup">
+    <template v-if="showNotice && notice && isGroup">
       <p class="action-notice-text" data-test="action-notice-text">
         <span class="action-notice-label" data-test="action-notice-label">{{ notice.label }} · {{ notice.group!.count }} conversations</span>
         <span
@@ -305,7 +340,7 @@ const truncatedSubject = computed(() => {
         <kbd data-test="action-notice-hint">Z</kbd>
       </span>
     </template>
-    <template v-else-if="notice">
+    <template v-else-if="showNotice && notice">
       <p class="action-notice-text" data-test="action-notice-text">
         <span class="action-notice-label" data-test="action-notice-label">
           {{ notice.label }}<template v-if="notice.subject"> · {{ truncatedSubject }}</template>
@@ -318,5 +353,8 @@ const truncatedSubject = computed(() => {
         <kbd data-test="action-notice-hint">Z</kbd>
       </span>
     </template>
+    <span v-if="showActivity" class="action-notice-undo">
+      <button type="button" data-test="action-notice-activity" @click="emit('openActivity')">Activity</button>
+    </span>
   </div>
 </template>

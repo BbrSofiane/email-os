@@ -22,7 +22,7 @@
  * - Anchor capture/restoration supports the reader round trip: a visible-row
  *   reference with its relative offset plus a scrollTop fallback.
  */
-import { computed, nextTick, onBeforeUnmount, onBeforeUpdate, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onBeforeUpdate, onMounted, reactive, ref, watch, type ComputedRef } from 'vue';
 import type { ConversationRef } from '../lib/ipc/client';
 import type { BrowseContext, ConversationSummaryLike } from '../composables/useMailbox';
 import { sameConversation } from '../composables/useMailbox';
@@ -30,7 +30,7 @@ import { actionLabel } from '../lib/action-registry';
 import { compactDateLabel, dateGroupCaption, dateGroupFor, fullDateLabel, machineDateTime } from '../lib/browsing-dates';
 import { groupRowsBySender, isSingleFromQuery, senderGroupKey, senderGroupLabel } from '../lib/search';
 import RowGlyph from './RowGlyph.vue';
-import { useSwipeAction } from '../composables/useSwipeAction';
+import { useSwipeAction, type SwipeSide } from '../composables/useSwipeAction';
 import { useLongPressSelection } from '../composables/useLongPressSelection';
 
 const props = defineProps<{
@@ -297,27 +297,53 @@ function hasRowActions(): boolean {
   return Boolean(props.showReadControls || props.actionsEnabled || props.reminderEnabled);
 }
 
-const swipes = new Map<string, ReturnType<typeof useSwipeAction>>();
+type SwipeCue = {
+  action: 'remind' | 'done';
+  glyph: 'reminder' | 'restore' | 'archive';
+  label: string;
+};
+type RowSwipe = ReturnType<typeof useSwipeAction> & { cue: ComputedRef<SwipeCue | null> };
+
+const swipes = new Map<string, RowSwipe>();
 const longPresses = new Map<string, ReturnType<typeof useLongPressSelection>>();
-function swipeFor(row: ConversationSummaryLike): ReturnType<typeof useSwipeAction> {
+
+function configuredSwipeAction(side: Exclude<SwipeSide, null>) {
+  return side === 'right' ? props.swipeRight ?? 'remind' : props.swipeLeft ?? 'done';
+}
+
+function swipeFor(row: ConversationSummaryLike): RowSwipe {
   const key = rowKey(row.ref);
   let swipe = swipes.get(key);
   if (!swipe) {
-    swipe = useSwipeAction(
+    const gesture = useSwipeAction(
       () => rowEls.get(key) ?? null,
-      (side) => !props.readOnly && (side === 'right'
-        ? props.swipeRight !== 'none' && (props.swipeRight === 'done' ? props.actionsEnabled === true && props.context !== 'starred' : props.reminderEnabled === true && props.context === 'inbox')
-        : props.swipeLeft !== 'none' && (props.swipeLeft === 'remind' ? props.reminderEnabled === true && props.context === 'inbox' : props.actionsEnabled === true && props.context !== 'starred')),
       (side) => {
-        const action = side === 'right' ? props.swipeRight ?? 'remind' : props.swipeLeft ?? 'done';
+        if (props.readOnly) return false;
+        const action = configuredSwipeAction(side);
+        if (action === 'remind') return props.reminderEnabled === true && props.context === 'inbox';
+        return action === 'done' && props.actionsEnabled === true && props.context !== 'starred';
+      },
+      (side) => {
+        const action = configuredSwipeAction(side);
         if (action === 'remind' && props.reminderEnabled && props.context === 'inbox') emit('remind', row.ref);
         else if (action === 'done' && props.actionsEnabled && props.context !== 'starred') {
           if (props.context === 'done') emit('unarchive', row.ref);
           else emit('archive', row.ref);
         }
       },
-      (side) => (side === 'right' ? props.swipeRight ?? 'remind' : props.swipeLeft ?? 'done') === 'done',
+      (side) => configuredSwipeAction(side) === 'done',
     );
+    const cue = computed<SwipeCue | null>(() => {
+      const side = gesture.revealed.value;
+      if (!side) return null;
+      const action = configuredSwipeAction(side);
+      if (action === 'none') return null;
+      if (action === 'remind') return { action, glyph: 'reminder', label: 'Remind' };
+      return props.context === 'done'
+        ? { action, glyph: 'restore', label: 'Mark not done' }
+        : { action, glyph: 'archive', label: 'Mark done' };
+    });
+    swipe = { ...gesture, cue };
     swipes.set(key, swipe);
   }
   return swipe;
@@ -721,20 +747,21 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
         @click="onRowClick($event, item.row)"
       >
         <span
-          v-if="compact && !readOnly && swipeFor(item.row).revealed.value && (swipeFor(item.row).revealed.value === 'right' ? swipeRight ?? 'remind' : swipeLeft ?? 'done') !== 'none'"
+          v-if="compact && !readOnly && swipeFor(item.row).cue.value"
           class="row-swipe-underlay"
           :class="[
-            swipeFor(item.row).revealed.value === 'right' ? props.swipeRight ?? 'remind' : props.swipeLeft ?? 'done',
+            swipeFor(item.row).cue.value!.action,
             {
               armed: swipeFor(item.row).armed.value,
+              labelled: Math.abs(swipeFor(item.row).offset.value) >= 128,
               'from-end': swipeFor(item.row).revealed.value === 'left',
               'from-start': swipeFor(item.row).revealed.value === 'right',
             },
           ]"
           aria-hidden="true"
         >
-          <span class="row-swipe-icon"><RowGlyph :name="swipeFor(item.row).revealed.value === 'right' ? 'reminder' : context === 'done' ? 'restore' : 'archive'" /></span>
-          <span>{{ (swipeFor(item.row).revealed.value === 'right' ? props.swipeRight ?? 'remind' : props.swipeLeft ?? 'done') === 'remind' ? 'Remind' : context === 'done' ? 'Mark not done' : 'Mark done' }}</span>
+          <span class="row-swipe-icon"><RowGlyph :name="swipeFor(item.row).cue.value!.glyph" /></span>
+          <span class="row-swipe-label">{{ swipeFor(item.row).cue.value!.label }}</span>
         </span>
         <!-- UX-05 selection control: a native labelled checkbox in the 44px
              gutter; it stops propagation and never opens the row. Revealed by

@@ -55,8 +55,31 @@ describe('useActionNotice', () => {
     const undone = { outcome: 'accepted', operationIds: ['op-9'] };
     const { notice, stop } = setup({ lastAction: single({ undone: undone as never }), activity: [row, { id: 'op-9' }, { id: 'op-8' }] });
     expect(notice.actionNotice.value?.undoableUntil).toBeNull();
-    expect(notice.actionNotice.value?.undone).toEqual({ outcome: 'accepted', compensations: [{ id: 'op-9' }] });
+    expect(notice.actionNotice.value?.undone).toEqual({
+      outcome: 'accepted',
+      expectedCompensations: 1,
+      compensations: [{ id: 'op-9' }],
+    });
     expect(notice.undoWindowOpen.value).toBe(false);
+    stop();
+  });
+
+  it('carries the expected compensation count even before all Activity rows land', () => {
+    const undone = {
+      undoneOperationId: 'op-1',
+      outcome: 'compensating' as const,
+      operationIds: ['comp-1', 'comp-2'],
+      acceptedAt: new Date(NOW).toISOString(),
+    };
+    const { notice, stop } = setup({
+      lastAction: single({ undone }),
+      activity: [{ id: 'comp-1', status: 'confirmed' }],
+    });
+    expect(notice.actionNotice.value?.undone).toEqual({
+      outcome: 'compensating',
+      expectedCompensations: 2,
+      compensations: [{ id: 'comp-1', status: 'confirmed' }],
+    });
     stop();
   });
 

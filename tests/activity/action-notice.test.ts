@@ -73,6 +73,77 @@ describe('ActionNotice', () => {
       .toBe('Undo expired — Mark not done restores the whole conversation to Inbox');
   });
 
+  it('empties the same compact live region when a confirmed action loses Undo', async () => {
+    const wrapper = mount(ActionNotice, {
+      props: { notice: { ...base, operation: operation('confirmed') }, now: NOW, compact: true },
+    });
+    const region = wrapper.get('[role="status"]').element;
+    expect(wrapper.get('[data-test="action-notice-status"]').text()).toBe('Confirmed');
+    expect(wrapper.get('[data-test="action-notice-undo"]').text()).toBe('Undo');
+
+    await wrapper.setProps({ now: Date.parse(base.undoableUntil) });
+    expect(wrapper.get('[role="status"]').element).toBe(region);
+    expect(wrapper.classes()).toContain('action-notice-empty');
+    expect(wrapper.text()).toBe('');
+  });
+
+  it('keeps an expired compact pending notice until the action confirms', async () => {
+    const notice = { ...base, operation: operation('applying') };
+    const wrapper = mount(ActionNotice, {
+      props: { notice, now: NOW + 5_001, compact: true },
+    });
+    expect(wrapper.get('[data-test="action-notice-expired"]').text())
+      .toBe('Undo expired — Mark not done restores the whole conversation to Inbox');
+
+    await wrapper.setProps({ notice: { ...notice, operation: operation('confirmed') } });
+    expect(wrapper.classes()).toContain('action-notice-empty');
+  });
+
+  it.each(['failed', 'outcome_unknown'] as const)('keeps a compact %s notice visible', (status) => {
+    const wrapper = mount(ActionNotice, {
+      props: { notice: { ...base, operation: operation(status), undoableUntil: null }, now: NOW, compact: true },
+    });
+    expect(wrapper.get('[data-test="action-notice-status"]').text()).toContain('see Activity');
+  });
+
+  it('keeps a compact Undo result visible until all expected compensations confirm', async () => {
+    const restored = operation('confirmed');
+    const notice = {
+      ...base,
+      operation: restored,
+      undoableUntil: null,
+      undone: { outcome: 'compensating' as const, expectedCompensations: 2, compensations: [restored] },
+    };
+    const wrapper = mount(ActionNotice, { props: { notice, now: NOW, compact: true } });
+    expect(wrapper.get('[data-test="action-notice-status"]').text()).toBe('Restoring…');
+
+    await wrapper.setProps({
+      notice: { ...notice, undone: { ...notice.undone, compensations: [restored, { ...restored, id: 'comp-2' }] } },
+    });
+    expect(wrapper.classes()).toContain('action-notice-empty');
+  });
+
+  it('offers Activity for a compact single-action failure and emits when pressed', async () => {
+    const wrapper = mount(ActionNotice, {
+      props: { notice: { ...base, operation: operation('failed'), undoableUntil: null }, now: NOW, compact: true },
+    });
+    const button = wrapper.get('[data-test="action-notice-activity"]');
+    expect(button.text()).toBe('Activity');
+    await button.trigger('click');
+    expect(wrapper.emitted('openActivity')).toEqual([[]]);
+  });
+
+  it.each([
+    [true, 'confirmed'],
+    [true, 'applying'],
+    [false, 'failed'],
+  ] as const)('omits Activity when compact is %s and the single action is %s', (compact, status) => {
+    const wrapper = mount(ActionNotice, {
+      props: { notice: { ...base, operation: operation(status) }, now: NOW, compact },
+    });
+    expect(wrapper.find('[data-test="action-notice-activity"]').exists()).toBe(false);
+  });
+
   it('derives the expired recovery clause from the action (unarchive, read)', () => {
     const unarchive = mount(ActionNotice, {
       props: {
@@ -188,6 +259,83 @@ describe('ActionNotice group undo wording (review fixes)', () => {
       },
     },
   };
+
+  it('empties a compact group notice when all members confirm and Undo closes', async () => {
+    const group = { ...groupBase.group, undone: null, undoableUntil: base.undoableUntil };
+    const wrapper = mount(ActionNotice, {
+      props: { notice: { ...groupBase, group }, now: NOW, compact: true },
+    });
+    expect(wrapper.get('[data-test="action-notice-undo-group"]').text()).toBe('Undo');
+
+    await wrapper.setProps({ now: Date.parse(base.undoableUntil) });
+    expect(wrapper.classes()).toContain('action-notice-empty');
+    expect(wrapper.text()).toBe('');
+  });
+
+  it.each(['pending', 'failed', 'unknown'] as const)('keeps a compact group notice with a %s member', (status) => {
+    const group = {
+      ...groupBase.group,
+      undone: null,
+      counts: { ...groupBase.group.counts, confirmed: 1, [status]: 1 },
+    };
+    const wrapper = mount(ActionNotice, {
+      props: { notice: { ...groupBase, group }, now: NOW, compact: true },
+    });
+    expect(wrapper.get('[data-test="action-notice-status"]').attributes('data-status')).toBe(status);
+  });
+
+  it('keeps a partial group Undo result visible in compact mode', () => {
+    const group = {
+      ...groupBase.group,
+      undone: {
+        ...groupBase.group.undone,
+        compensationOutcomes: { confirmed: 1, failed: 0, unknown: 0, pending: 0 },
+      },
+    };
+    const wrapper = mount(ActionNotice, {
+      props: { notice: { ...groupBase, group }, now: NOW, compact: true },
+    });
+    expect(wrapper.get('[data-test="action-notice-status"]').attributes('data-status')).toBe('partial');
+  });
+
+  it('keeps Check acceptance visible on the phone until group acceptance is known', () => {
+    const group = { ...groupBase.group, acceptanceUnknown: true, statusKnown: false, undone: null };
+    const wrapper = mount(ActionNotice, {
+      props: { notice: { ...groupBase, group }, now: NOW, compact: true },
+    });
+    expect(wrapper.get('[data-test="action-notice-recover-acceptance"]').text()).toBe('Check acceptance');
+  });
+
+  it.each([
+    ['failed', true],
+    ['unknown', true],
+    ['pending', false],
+  ] as const)('offers Activity for an expired compact group with a %s member: %s', (status, expected) => {
+    const group = {
+      ...groupBase.group,
+      undone: null,
+      counts: { ...groupBase.group.counts, confirmed: 1, [status]: 1 },
+    };
+    const wrapper = mount(ActionNotice, {
+      props: { notice: { ...groupBase, group }, now: NOW, compact: true },
+    });
+    expect(wrapper.get('[data-test="action-notice-expired"]').text()).toContain('recover individual members from Activity');
+    expect(wrapper.find('[data-test="action-notice-activity"]').exists()).toBe(expected);
+  });
+
+  it('offers Activity when a compact group restoration fails', () => {
+    const group = {
+      ...groupBase.group,
+      undone: {
+        ...groupBase.group.undone,
+        compensationOutcomes: { confirmed: 0, failed: 1, unknown: 0, pending: 0 },
+      },
+    };
+    const wrapper = mount(ActionNotice, {
+      props: { notice: { ...groupBase, group }, now: NOW, compact: true },
+    });
+    expect(wrapper.get('[data-test="action-notice-activity"]').text()).toBe('Activity');
+  });
 
   it('shows restoring wording while a compensation is still pending', () => {
     const wrapper = mount(ActionNotice, {
