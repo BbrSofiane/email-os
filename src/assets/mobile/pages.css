@@ -432,12 +432,17 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-controls 
 }
 
 .app[data-layout="compact"] .contact-disclosure-panel .contact-find-mail {
+  display: inline-flex;
   min-height: 48px;
-  padding-inline: 0;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--focus-accent);
   font-size: var(--mobile-type-list);
   font-weight: 600;
   text-align: left;
+  white-space: normal;
 }
 
 .app[data-layout="compact"] .contact-disclosure-panel .contact-recent button {

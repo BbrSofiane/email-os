@@ -447,7 +447,7 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
       horizontalOverflow: boolean;
       fields: { text: DOMRectReadOnly; copy: DOMRectReadOnly; opacity: string }[];
       recent: DOMRectReadOnly[];
-      search: DOMRectReadOnly;
+      search: { box: DOMRectReadOnly; borderWidth: string; scrollWidth: number; clientWidth: number };
       identityBottom: number;
       recentTop: number;
     }>(`(() => {
@@ -455,6 +455,7 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
       const page = app.querySelector('[data-test="contact-disclosure-panel"]');
       const pane = page.querySelector('[data-test="contact-pane"]');
       const recent = [...pane.querySelectorAll('.contact-recent button')];
+      const search = pane.querySelector('[data-test="contact-find-mail"]');
       const box = element => element.getBoundingClientRect().toJSON();
       return {
         page: box(page),
@@ -469,7 +470,12 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
           };
         }),
         recent: recent.map(box),
-        search: box(pane.querySelector('[data-test="contact-find-mail"]')),
+        search: {
+          box: box(search),
+          borderWidth: getComputedStyle(search).borderWidth,
+          scrollWidth: search.scrollWidth,
+          clientWidth: search.clientWidth,
+        },
         identityBottom: box(pane.querySelector('.contact-line:last-of-type')).bottom,
         recentTop: box(pane.querySelector('.contact-recent')).top,
       };
@@ -491,10 +497,14 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
       expect(row.left).toBeGreaterThanOrEqual(geometry.page.left);
       expect(row.right).toBeLessThanOrEqual(geometry.page.right);
     }
-    expect(geometry.search.height).toBeGreaterThanOrEqual(48);
-    expect(geometry.search.left).toBe(geometry.page.left + 20);
-    expect(geometry.search.top).toBeGreaterThanOrEqual(geometry.identityBottom);
-    expect(geometry.search.bottom).toBeLessThanOrEqual(geometry.recentTop);
+    const search = geometry.search;
+    expect(search.box.height).toBeGreaterThanOrEqual(48);
+    expect(search.box.left).toBe(geometry.page.left + 20);
+    expect(search.box.left).toBe(geometry.fields[0]!.text.left);
+    expect(search.box.top).toBeGreaterThanOrEqual(geometry.identityBottom);
+    expect(search.box.bottom).toBeLessThanOrEqual(geometry.recentTop);
+    expect(search.borderWidth).toBe('0px');
+    expect(search.scrollWidth).toBeLessThanOrEqual(search.clientWidth);
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="contact-find-mail"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
     const query = await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="search-results-query"]')?.textContent.trim()`);
