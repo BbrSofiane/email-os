@@ -15,10 +15,11 @@ function pointer(type: string, x: number, y: number, id = 1, pointerType = 'touc
 function setup(
   available: (side: 'left' | 'right') => boolean = () => true,
   exitsOnCommit: (side: 'left' | 'right') => boolean = () => false,
+  rowWidth = 200,
 ) {
   const element = document.createElement('div');
   element.setPointerCapture = vi.fn();
-  element.getBoundingClientRect = () => ({ width: 200 } as DOMRect);
+  element.getBoundingClientRect = () => ({ width: rowWidth } as DOMRect);
   const commit = vi.fn();
   const swipe = useSwipeAction(() => element, available, commit, exitsOnCommit);
   return { element, commit, swipe };
@@ -68,8 +69,10 @@ describe('useSwipeAction', () => {
   });
 
   it('arms at 35 percent, disarms when the finger returns, and respects unavailable sides', () => {
+    vi.useFakeTimers({ toFake: ['performance', 'setTimeout'] });
     const { swipe } = setup();
     swipe.pointerdown(pointer('pointerdown', 100, 20));
+    vi.advanceTimersByTime(200);
     swipe.pointermove(pointer('pointermove', 169, 20));
     expect(swipe.armed.value).toBe(false);
     swipe.pointermove(pointer('pointermove', 170, 20));
@@ -114,6 +117,23 @@ describe('useSwipeAction', () => {
     swipe.pointermove(pointer('pointermove', 65, 0));
     swipe.pointerup(pointer('pointerup', 65, 0));
     expect(commit).toHaveBeenCalledWith('right');
+  });
+
+  it.each([
+    { name: 'slow 100px drag', distance: 100, elapsed: 250, commits: false },
+    { name: 'fast 80px drag', distance: 80, elapsed: 50, commits: true },
+    { name: 'slow 40% drag', distance: 160, elapsed: 400, commits: true },
+  ])('matches the armed cue to release for a $name', ({ distance, elapsed, commits }) => {
+    vi.useFakeTimers({ toFake: ['performance', 'setTimeout'] });
+    const { commit, swipe } = setup(() => true, undefined, 400);
+    swipe.pointerdown(pointer('pointerdown', 0, 0));
+    vi.advanceTimersByTime(elapsed);
+    swipe.pointermove(pointer('pointermove', distance, 0));
+    expect(swipe.armed.value).toBe(commits);
+    expect(commit).not.toHaveBeenCalled();
+
+    swipe.pointerup(pointer('pointerup', distance, 0));
+    expect(commit).toHaveBeenCalledTimes(commits ? 1 : 0);
   });
 
   it('resists unavailable sides and never commits them', () => {
