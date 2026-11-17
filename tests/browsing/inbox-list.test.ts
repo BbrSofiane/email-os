@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import InboxList from "../../src/components/InboxList.vue";
+import RowGlyph from "../../src/components/RowGlyph.vue";
 import type { ConversationRef, ConversationSummary } from "../../src/lib/ipc/client";
 import { flushVueAndMacrotask } from "../helpers";
 
@@ -88,6 +89,30 @@ describe("InboxList (UX-01 compact rows)", () => {
     await flushPromises();
     expect(w.emitted(expected)).toHaveLength(1);
     expect(w.emitted(expected)?.[0]).toEqual([{ accountId: ACCOUNT, conversationId: 'swipe' }]);
+  });
+
+  it.each([
+    { context: 'inbox', distance: 100, action: 'done', glyph: 'archive', label: 'Mark done' },
+    { context: 'inbox', distance: -100, action: 'remind', glyph: 'reminder', label: 'Remind' },
+    { context: 'done', distance: 100, action: 'done', glyph: 'restore', label: 'Mark not done' },
+  ] as const)('reveals $label with the configured swipe in $context', async ({ context, distance, action, glyph, label }) => {
+    const w = mountList([row('swapped', { lastMessageAt: '2026-01-15T09:00:00Z' })], null, {
+      compact: true,
+      context,
+      reminderEnabled: true,
+      swipeRight: 'done',
+      swipeLeft: 'remind',
+    });
+    const element = w.get('.inbox-row').element;
+    element.dispatchEvent(pointerEvent('pointerdown', 0));
+    element.dispatchEvent(pointerEvent('pointermove', distance));
+    await flushPromises();
+
+    const cue = w.get('.row-swipe-underlay');
+    expect(cue.classes()).toContain(action);
+    expect(cue.text()).toBe(label);
+    const cueGlyph = w.findAllComponents(RowGlyph).find((candidate) => cue.element.contains(candidate.element));
+    expect(cueGlyph?.props('name')).toBe(glyph);
   });
 
   it('swaps swipe actions and resists a disabled side', async () => {
