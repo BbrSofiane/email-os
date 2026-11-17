@@ -373,8 +373,8 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-controls 
 }
 
 .app[data-layout="compact"] .utility-drawer {
-  position: fixed;
-  inset: 24px 0 0;
+  position: absolute;
+  inset: 0;
   z-index: 50;
   width: auto;
   padding: 0;
@@ -384,20 +384,11 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-controls 
   overflow: hidden;
 }
 
-.app[data-layout="compact"] .contact-disclosure-panel {
-  inset: 0;
-  padding-top: 24px;
-}
-
 .app[data-layout="compact"] .utility-drawer > :not(.drawer-header) {
   max-height: calc(100% - 56px);
   overflow-y: auto;
   padding-inline: 20px 16px;
   padding-block-end: var(--mobile-bottom-clearance);
-}
-
-.app[data-layout="compact"] .contact-disclosure-panel > :not(.drawer-header) {
-  max-height: calc(100% - 80px);
 }
 
 .app[data-layout="compact"] .utility-drawer .drawer-header {

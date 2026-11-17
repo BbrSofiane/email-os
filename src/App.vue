@@ -1893,6 +1893,11 @@ function escapeLadder(event: KeyboardEvent): void {
   // goes false.
   if (replyComposerOpen.value) { event.preventDefault(); void drafts.flushAndClose(); return; }
   if (composeCardOpen.value) { event.preventDefault(); void closeComposeCard(); return; }
+  if (layoutMode.value === 'compact' && reminders.source.value && !reminders.dismissBlocked.value) {
+    event.preventDefault();
+    reminders.closePicker();
+    return;
+  }
   if (!wideViewport.value && contactDisclosure.value) {
     event.preventDefault();
     void closeContactDisclosure();
@@ -1918,6 +1923,14 @@ function escapeLadder(event: KeyboardEvent): void {
     // including when no context history exists.
     event.preventDefault();
     clearSelectionAndReport();
+  } else if (layoutMode.value === 'compact' && searchVisible.value) {
+    event.preventDefault();
+    if (suggestionsOpen.value && searchSuggestions.value.length > 0) {
+      suggestionsOpen.value = false;
+      return;
+    }
+    searchVisible.value = false;
+    void focusFocusedRow();
   } else if (history.value.length) {
     event.preventDefault(); void executeAction('back');
   }

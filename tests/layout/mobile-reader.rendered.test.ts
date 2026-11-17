@@ -135,19 +135,24 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
       row.click();
     })()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
-    const contactPage = await harness!.cdp.js<{ exists: boolean; text: string; coversTop: boolean; readerOpen: boolean }>(`(() => {
+    const contactPage = await harness!.cdp.js<{ exists: boolean; text: string; coversTop: boolean; readerOpen: boolean; pageRect: DOMRectReadOnly; appRect: DOMRectReadOnly }>(`(() => {
       const app = document.querySelector(${JSON.stringify(appSelector)});
       const page = app.querySelector('[data-test="contact-disclosure-panel"]');
+      const pageRect = page?.getBoundingClientRect();
+      const topLeft = document.elementFromPoint(pageRect.left + 3, pageRect.top + 3);
+      const topRight = document.elementFromPoint(pageRect.right - 3, pageRect.top + 3);
       return {
         exists: !!page,
         text: page?.textContent ?? '',
-        coversTop: !!page && page.contains(document.elementFromPoint(10, 10)),
+        coversTop: !!page && page.contains(topLeft) && page.contains(topRight),
         readerOpen: !!app.querySelector('[data-test="reader"]'),
+        pageRect: pageRect && { top: pageRect.top, left: pageRect.left, right: pageRect.right, bottom: pageRect.bottom },
+        appRect: (() => { const rect = app.getBoundingClientRect(); return { top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom }; })(),
       };
     })()`);
     expect(contactPage.exists).toBe(true);
     expect(contactPage.text).toContain('Ada Fixture');
-    expect(contactPage.coversTop).toBe(true);
+    expect(contactPage.coversTop, JSON.stringify(contactPage)).toBe(true);
     expect(contactPage.readerOpen).toBe(true);
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="contact-disclosure-close"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');

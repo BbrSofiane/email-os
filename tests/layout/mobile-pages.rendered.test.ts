@@ -351,22 +351,35 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
       await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
       await harness!.cdp.js(`[...document.querySelectorAll(${JSON.stringify(workspaceApp)} + ' .mobile-drawer-row')].find(row => row.textContent.trim() === '${name}').click()`);
       await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 400))');
-      const geometry = await harness!.cdp.js<{ back: DOMRectReadOnly; titleLeft: number; titleSize: string; titleWeight: string; closeExists: boolean }>(`(() => {
+      const geometry = await harness!.cdp.js<{ appTop: number; pageTop: number; backTop: number; backCenter: number; menuTop: number; menuCenter: number; cornersCovered: boolean[]; titleLeft: number; titleSize: string; titleWeight: string; closeExists: boolean }>(`(() => {
         const app = document.querySelector(${JSON.stringify(workspaceApp)});
         const page = app.querySelector('[data-test="utility-drawer"]');
+        const pageRect = page.getBoundingClientRect();
+        const appRect = app.getBoundingClientRect();
         const back = page.querySelector('[data-test="drawer-close"]').getBoundingClientRect();
+        const menu = app.querySelector('[data-test="mobile-menu"]').getBoundingClientRect();
         const title = page.querySelector('.drawer-header h2');
         return {
-          back: { top: back.top, right: back.right, bottom: back.bottom, left: back.left },
+          appTop: appRect.top,
+          pageTop: pageRect.top,
+          backTop: back.top,
+          backCenter: (back.top + back.bottom) / 2,
+          menuTop: menu.top,
+          menuCenter: (menu.top + menu.bottom) / 2,
+          cornersCovered: [
+            [pageRect.left + 3, pageRect.top + 3],
+            [pageRect.right - 3, pageRect.top + 3],
+          ].map(([x, y]) => page.contains(document.elementFromPoint(x, y))),
           titleLeft: title.getBoundingClientRect().left,
           titleSize: getComputedStyle(title).fontSize,
           titleWeight: getComputedStyle(title).fontWeight,
           closeExists: !!page.querySelector('.drawer-close-icon'),
         };
       })()`);
-      for (const edge of ['top', 'right', 'bottom', 'left'] as const) {
-        expect(geometry.back[edge], `${name} Back ${edge}`).toBeCloseTo(destination.menu[edge], 0);
-      }
+      expect(Math.abs(geometry.pageTop - geometry.appTop)).toBeLessThanOrEqual(1);
+      expect(Math.abs(geometry.backTop - geometry.menuTop)).toBeLessThanOrEqual(1);
+      expect(Math.abs(geometry.backCenter - geometry.menuCenter)).toBeLessThanOrEqual(1);
+      expect(geometry.cornersCovered.every(Boolean)).toBe(true);
       expect(Math.abs(geometry.titleLeft - destination.titleLeft)).toBeLessThanOrEqual(1);
       expect(geometry.titleSize).toBe(destination.titleSize);
       expect(geometry.titleWeight).toBe(destination.titleWeight);
@@ -375,6 +388,44 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
 
     await expectPushedPage('Settings');
     await expectPushedPage('Activity');
+
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="drawer-close"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-mail"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('.inbox-row').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="reader-more"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
+    await harness!.cdp.js(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      [...app.querySelectorAll('[data-test="action-sheet"] button')]
+        .find((button) => button.textContent.includes('Contact details')).click();
+    })()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
+    const contact = await harness!.cdp.js<{ appTop: number; pageTop: number; backTop: number; backCenter: number; menuTop: number; menuCenter: number; cornersCovered: boolean[] }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const page = app.querySelector('[data-test="contact-disclosure-panel"]');
+      const pageRect = page.getBoundingClientRect();
+      const appRect = app.getBoundingClientRect();
+      const back = page.querySelector('[data-test="contact-disclosure-close"]').getBoundingClientRect();
+      return {
+        appTop: appRect.top,
+        pageTop: pageRect.top,
+        backTop: back.top,
+        backCenter: (back.top + back.bottom) / 2,
+        menuTop: ${JSON.stringify(destination.menu.top)},
+        menuCenter: ${JSON.stringify((destination.menu.top + destination.menu.bottom) / 2)},
+        cornersCovered: [
+          [pageRect.left + 3, pageRect.top + 3],
+          [pageRect.right - 3, pageRect.top + 3],
+        ].map(([x, y]) => page.contains(document.elementFromPoint(x, y))),
+      };
+    })()`);
+    expect(Math.abs(contact.pageTop - contact.appTop)).toBeLessThanOrEqual(1);
+    expect(Math.abs(contact.backTop - contact.menuTop)).toBeLessThanOrEqual(1);
+    expect(Math.abs(contact.backCenter - contact.menuCenter)).toBeLessThanOrEqual(1);
+    expect(contact.cornersCovered.every(Boolean)).toBe(true);
   });
 
   it('sizes Reminder settings controls and allows the explanatory text to wrap', async () => {
