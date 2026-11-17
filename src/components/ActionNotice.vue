@@ -252,9 +252,15 @@ const undoVisible = computed(() => {
   return Date.parse(until) > props.now;
 });
 
-const showNotice = computed(() => !!props.notice && (
-  !props.compact || isGroup.value || statusTone.value !== 'settled' || undoVisible.value
-));
+const showNotice = computed(() => {
+  const notice = props.notice;
+  if (!notice || !props.compact) return !!notice;
+  const group = notice.group;
+  if (!group) return statusTone.value !== 'settled' || undoVisible.value;
+  if (groupStatusTone.value !== 'settled' || groupUndoVisible.value) return true;
+  if (group.undone) return group.undone.compensationOutcomes.confirmed < group.undone.compensating;
+  return group.counts.confirmed < group.count;
+});
 
 const undoExpired = computed(() => {
   const status = props.notice?.operation?.status;
@@ -284,7 +290,7 @@ const truncatedSubject = computed(() => {
     data-test="action-notice"
   >
     <!-- Bulk group slot (UX-05): one identity, per-status counts, partial undo. -->
-    <template v-if="notice && isGroup">
+    <template v-if="showNotice && notice && isGroup">
       <p class="action-notice-text" data-test="action-notice-text">
         <span class="action-notice-label" data-test="action-notice-label">{{ notice.label }} · {{ notice.group!.count }} conversations</span>
         <span

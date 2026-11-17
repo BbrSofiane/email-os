@@ -222,6 +222,52 @@ describe('ActionNotice group undo wording (review fixes)', () => {
     },
   };
 
+  it('empties a compact group notice when all members confirm and Undo closes', async () => {
+    const group = { ...groupBase.group, undone: null, undoableUntil: base.undoableUntil };
+    const wrapper = mount(ActionNotice, {
+      props: { notice: { ...groupBase, group }, now: NOW, compact: true },
+    });
+    expect(wrapper.get('[data-test="action-notice-undo-group"]').text()).toBe('Undo');
+
+    await wrapper.setProps({ now: Date.parse(base.undoableUntil) });
+    expect(wrapper.classes()).toContain('action-notice-empty');
+    expect(wrapper.text()).toBe('');
+  });
+
+  it.each(['pending', 'failed', 'unknown'] as const)('keeps a compact group notice with a %s member', (status) => {
+    const group = {
+      ...groupBase.group,
+      undone: null,
+      counts: { ...groupBase.group.counts, confirmed: 1, [status]: 1 },
+    };
+    const wrapper = mount(ActionNotice, {
+      props: { notice: { ...groupBase, group }, now: NOW, compact: true },
+    });
+    expect(wrapper.get('[data-test="action-notice-status"]').attributes('data-status')).toBe(status);
+  });
+
+  it('keeps a partial group Undo result visible in compact mode', () => {
+    const group = {
+      ...groupBase.group,
+      undone: {
+        ...groupBase.group.undone,
+        compensationOutcomes: { confirmed: 1, failed: 0, unknown: 0, pending: 0 },
+      },
+    };
+    const wrapper = mount(ActionNotice, {
+      props: { notice: { ...groupBase, group }, now: NOW, compact: true },
+    });
+    expect(wrapper.get('[data-test="action-notice-status"]').attributes('data-status')).toBe('partial');
+  });
+
+  it('keeps Check acceptance visible on the phone until group acceptance is known', () => {
+    const group = { ...groupBase.group, acceptanceUnknown: true, statusKnown: false, undone: null };
+    const wrapper = mount(ActionNotice, {
+      props: { notice: { ...groupBase, group }, now: NOW, compact: true },
+    });
+    expect(wrapper.get('[data-test="action-notice-recover-acceptance"]').text()).toBe('Check acceptance');
+  });
+
   it('shows restoring wording while a compensation is still pending', () => {
     const wrapper = mount(ActionNotice, {
       props: { notice: { ...groupBase, group: { ...groupBase.group!, undone: { ...groupBase.group!.undone!, compensationOutcomes: { confirmed: 0, failed: 0, unknown: 0, pending: 1 } } } }, now: NOW },
