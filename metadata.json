@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7NMFCA49A3SZKEQE2J4MY8D",
+  "strategy": "manual-commit",
+  "branch": "mobile/p6-reader-contact",
+  "checkpoints_count": 6,
+  "files_touched": [
+    "src/assets/mobile/pages.css",
+    "tests/layout/mobile-pages.rendered.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 8,
+    "cache_creation_tokens": 3225,
+    "cache_read_tokens": 954057,
+    "output_tokens": 494,
+    "api_call_count": 3
+  }
+}
