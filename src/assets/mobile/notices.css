@@ -20,11 +20,12 @@
   gap: 4px 12px;
 }
 .app[data-layout="compact"] .list-dock .action-notice-empty {
-  display: none;
+  position: absolute;
   min-height: 0;
   margin: 0;
   padding: 0;
   border: 0;
+  background: transparent;
   box-shadow: none;
 }
 .app[data-layout="compact"] .list-dock kbd {

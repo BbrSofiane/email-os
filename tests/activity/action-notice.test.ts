@@ -73,6 +73,39 @@ describe('ActionNotice', () => {
       .toBe('Undo expired — Mark not done restores the whole conversation to Inbox');
   });
 
+  it('empties the same compact live region when a confirmed action loses Undo', async () => {
+    const wrapper = mount(ActionNotice, {
+      props: { notice: { ...base, operation: operation('confirmed') }, now: NOW, compact: true },
+    });
+    const region = wrapper.get('[role="status"]').element;
+    expect(wrapper.get('[data-test="action-notice-status"]').text()).toBe('Confirmed');
+    expect(wrapper.get('[data-test="action-notice-undo"]').text()).toBe('Undo');
+
+    await wrapper.setProps({ now: Date.parse(base.undoableUntil) });
+    expect(wrapper.get('[role="status"]').element).toBe(region);
+    expect(wrapper.classes()).toContain('action-notice-empty');
+    expect(wrapper.text()).toBe('');
+  });
+
+  it('keeps an expired compact pending notice until the action confirms', async () => {
+    const notice = { ...base, operation: operation('applying') };
+    const wrapper = mount(ActionNotice, {
+      props: { notice, now: NOW + 5_001, compact: true },
+    });
+    expect(wrapper.get('[data-test="action-notice-expired"]').text())
+      .toBe('Undo expired — Mark not done restores the whole conversation to Inbox');
+
+    await wrapper.setProps({ notice: { ...notice, operation: operation('confirmed') } });
+    expect(wrapper.classes()).toContain('action-notice-empty');
+  });
+
+  it.each(['failed', 'outcome_unknown'] as const)('keeps a compact %s notice visible', (status) => {
+    const wrapper = mount(ActionNotice, {
+      props: { notice: { ...base, operation: operation(status), undoableUntil: null }, now: NOW, compact: true },
+    });
+    expect(wrapper.get('[data-test="action-notice-status"]').text()).toContain('see Activity');
+  });
+
   it('derives the expired recovery clause from the action (unarchive, read)', () => {
     const unarchive = mount(ActionNotice, {
       props: {

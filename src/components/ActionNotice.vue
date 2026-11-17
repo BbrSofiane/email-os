@@ -84,6 +84,7 @@ const props = defineProps<{
   } | null;
   /** Advisory wall-clock milliseconds (App-owned timer); the backend decides eligibility. */
   now: number;
+  compact?: boolean;
 }>();
 
 const emit = defineEmits<{ undo: []; undoGroup: []; dismissGroup: [] }>();
@@ -251,6 +252,10 @@ const undoVisible = computed(() => {
   return Date.parse(until) > props.now;
 });
 
+const showNotice = computed(() => !!props.notice && (
+  !props.compact || isGroup.value || statusTone.value !== 'settled' || undoVisible.value
+));
+
 const undoExpired = computed(() => {
   const status = props.notice?.operation?.status;
   // Never after an undo: the original op row can stay `confirmed` while the
@@ -273,7 +278,7 @@ const truncatedSubject = computed(() => {
 <template>
   <div
     class="action-notice"
-    :class="{ 'action-notice-empty': !notice }"
+    :class="{ 'action-notice-empty': !showNotice }"
     role="status"
     aria-live="polite"
     data-test="action-notice"
@@ -305,7 +310,7 @@ const truncatedSubject = computed(() => {
         <kbd data-test="action-notice-hint">Z</kbd>
       </span>
     </template>
-    <template v-else-if="notice">
+    <template v-else-if="showNotice && notice">
       <p class="action-notice-text" data-test="action-notice-text">
         <span class="action-notice-label" data-test="action-notice-label">
           {{ notice.label }}<template v-if="notice.subject"> · {{ truncatedSubject }}</template>
