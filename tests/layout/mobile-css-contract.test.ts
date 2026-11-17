@@ -92,7 +92,7 @@ describe('compact CSS contract', () => {
   });
 
   it('stacks the compact Drafts intro and rows with touch sized actions', () => {
-    const pages = mobileCss['pages.css'];
+    const pages = mobileCss['pages.css']!;
     expect(pages).toContain('.drafts-pane .context-coverage');
     expect(pages).toContain('flex-direction: column');
     expect(pages).toContain('.drafts-pane .context-row');
@@ -102,9 +102,17 @@ describe('compact CSS contract', () => {
   });
 
   it('covers compact utility pages with the shared app surface', () => {
-    const pages = mobileCss['pages.css'];
-    expect(pages).toContain('.app[data-layout="compact"] .utility-drawer');
-    expect(pages).toContain('inset: 24px 0 0');
+    const pages = mobileCss['pages.css']!;
+    const pushedPageRules = rulesOf(pages).filter((rule) => rule.selectors.some((selector) =>
+      selector.endsWith('.utility-drawer') || selector.endsWith('.contact-disclosure-panel')));
+    const pushedPageDeclarations = pushedPageRules.flatMap((rule) => rule.decls);
+    const utilityDrawer = rulesOf(pages).find((rule) =>
+      rule.selectors.includes('.app[data-layout="compact"] .utility-drawer'));
+
+    expect(utilityDrawer?.decls).toContainEqual(['position', 'absolute']);
+    expect(utilityDrawer?.decls).toContainEqual(['inset', '0']);
+    expect(pushedPageDeclarations).not.toContainEqual(['inset', '24px 0 0']);
+    expect(pushedPageDeclarations).not.toContainEqual(['padding-top', '24px']);
     expect(pages).toContain('.utility-drawer .drawer-header');
     expect(pages).toContain('min-height: var(--mobile-top-bar-height)');
   });
