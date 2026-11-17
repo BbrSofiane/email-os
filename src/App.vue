@@ -795,6 +795,16 @@ const reminderActionEnabled = computed(() => remindersSupported.value && selecte
  * the central surface and the contact pane stay interactive (non-inert).
  */
 const centralCovered = computed(() => !!overlay.value || !!attachmentConversation.value || !!drawer.value || (!wideViewport.value && contactDisclosure.value));
+const mobileSelectShown = computed(() => !selectionActive.value && !readerOpen.value
+  && !centralCovered.value && !mobileEditorOpen.value && !searchVisible.value
+  && accountReady.value && mailbox.listState.value === 'ready'
+  && ['inbox', 'saved', 'done', 'starred', 'search'].includes(mailbox.context.value));
+
+async function enterMobileSelection(): Promise<void> {
+  mailbox.selectionMode.value = true;
+  await nextTick();
+  await focusFocusedRow(true);
+}
 
 let removeAndroidBack: () => void = () => undefined;
 onMounted(() => {
@@ -2122,7 +2132,8 @@ const searchSyntaxEditHint = computed(() =>
       :execute-action="executeAction"
       :open-destinations="openMobileDrawer"
       :menu-expanded="mobileNavOpen"
-      @select="mailbox.selectionMode.value = true"
+      :select-shown="mobileSelectShown"
+      @select="enterMobileSelection"
       :inert="mobileNavOpen || mobileEditorOpen || undefined"
     />
     <main class="app-main" :class="{ 'contact-collapsed': contactCollapsed }" :inert="!!overlay || !!attachmentConversation || mobileNavOpen || readerSheetOpen || messageSheetOpen || mobileEditorOpen || undefined">

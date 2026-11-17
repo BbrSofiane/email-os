@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mountApp, createBrowserFakeMailClient, flushFakeClientAndVueUpdates, useGmailMode } from '../helpers';
-import MobileTopBar from '../../src/components/mobile/MobileTopBar.vue';
 import { allMobileCss } from '../support/css-contract';
 
 function stubLayout(compact: boolean): void {
@@ -99,8 +98,8 @@ describe('App compact and regular frame', () => {
     const wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
     await flushFakeClientAndVueUpdates(fake);
 
-    wrapper.getComponent(MobileTopBar).vm.$emit('select');
-    await wrapper.vm.$nextTick();
+    await wrapper.get('[data-test="mobile-select"]').trigger('click');
+    expect(wrapper.find('[data-test="mobile-select"]').exists()).toBe(false);
     expect(wrapper.get('.inbox-list').classes()).toContain('selecting');
     expect(wrapper.get('[data-test="row-select-conv-01"]').element).toHaveProperty('checked', false);
     expect(wrapper.find('[data-test="selection-bar"]').exists()).toBe(true);
@@ -159,6 +158,7 @@ describe('App compact and regular frame', () => {
     await draftsRow!.trigger('click');
     await flushFakeClientAndVueUpdates(fake);
     expect(wrapper.find('[data-test="drafts-pane"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="mobile-select"]').exists()).toBe(false);
     wrapper.unmount();
   });
 
@@ -169,6 +169,7 @@ describe('App compact and regular frame', () => {
     await flushFakeClientAndVueUpdates(fake);
     await wrapper.get('[data-test="conversation-row-conv-01"]').trigger('click');
     await flushFakeClientAndVueUpdates(fake);
+    expect(wrapper.find('[data-test="mobile-select"]').exists()).toBe(false);
     await wrapper.get('[data-test="reader-more"]').trigger('click');
     await flushFakeClientAndVueUpdates(fake);
     const contactAction = wrapper.findAll('[data-test="action-sheet"] button').find(button => button.text().includes('Contact details'));

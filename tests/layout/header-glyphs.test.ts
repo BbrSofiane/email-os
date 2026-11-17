@@ -10,7 +10,7 @@ describe('HeaderGlyph additions', () => {
     wrappers = [];
   });
 
-  it.each(['copy', 'collapse', 'contact', 'prompt'] as const)('%s renders its named SVG with a shape', (name) => {
+  it.each(['copy', 'collapse', 'contact', 'prompt', 'select'] as const)('%s renders its named SVG with a shape', (name) => {
     const wrapper = mount(HeaderGlyph, { props: { name } });
     wrappers.push(wrapper);
     const svg = wrapper.get('svg');

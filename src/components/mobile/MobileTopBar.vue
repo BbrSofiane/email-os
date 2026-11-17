@@ -9,9 +9,10 @@ defineProps<{
   executeAction: (id: ActionId) => void;
   openDestinations: () => void;
   menuExpanded?: boolean;
+  selectShown?: boolean;
 }>();
 
-defineEmits<{ select: [] }>();
+const emit = defineEmits<{ select: [] }>();
 
 const backHost = ref<HTMLElement | null>(null);
 defineExpose({ backHost });
@@ -41,6 +42,16 @@ defineExpose({ backHost });
     </button>
     <span v-if="!reader && title !== 'Inbox'" class="mobile-title">{{ title }}</span>
     <span v-else class="mobile-spacer" />
+    <button
+      v-if="selectShown"
+      type="button"
+      class="mobile-round-button"
+      data-test="mobile-select"
+      aria-label="Select conversations"
+      @click="emit('select')"
+    >
+      <HeaderGlyph name="select" />
+    </button>
     <button
       v-if="!reader"
       type="button"

@@ -5,7 +5,7 @@
  * carries the accessible name in visually hidden text.
  */
 defineProps<{
-  name: 'menu' | 'more' | 'search' | 'commands' | 'settings' | 'star' | 'back' | 'remind' | 'reminders' | 'x' | 'compose' | 'done' | 'files' | 'reply' | 'read' | 'unread' | 'prev' | 'next' | 'copy' | 'collapse' | 'contact' | 'prompt';
+  name: 'menu' | 'more' | 'search' | 'commands' | 'settings' | 'star' | 'back' | 'remind' | 'reminders' | 'x' | 'compose' | 'done' | 'files' | 'reply' | 'read' | 'unread' | 'prev' | 'next' | 'copy' | 'collapse' | 'contact' | 'prompt' | 'select';
   /** Star only: a filled star for the pressed (filter on) state. */
   filled?: boolean;
 }>();
@@ -17,7 +17,7 @@ defineProps<{
     width="16"
     height="16"
     :data-glyph="name"
-    viewBox="0 0 16 16"
+    :viewBox="name === 'select' ? '0 0 24 24' : '0 0 16 16'"
     fill="none"
     stroke="currentColor"
     stroke-width="1.4"
@@ -71,6 +71,10 @@ defineProps<{
       <path d="M3 8h10.25" />
     </template>
     <!-- Compose: the pencil (local drafts). -->
+    <template v-else-if="name === 'select'">
+      <rect x="3" y="3" width="18" height="18" rx="4" stroke-width="2" />
+      <path d="m7.5 12 3 3 6-6" stroke-width="2" />
+    </template>
     <template v-else-if="name === 'compose'">
       <path d="M10.6 2.9l2.5 2.5-6.9 6.9-3.2.75.75-3.2z" />
       <path d="M9.1 4.4l2.5 2.5" />
