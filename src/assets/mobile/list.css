@@ -93,13 +93,12 @@
   z-index: auto;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding-inline: 16px;
+  gap: 8px;
+  padding-inline: 12px;
   top: 0;
   bottom: 0;
   width: var(--swipe-distance, 0px);
   overflow: hidden;
-  white-space: nowrap;
   color: var(--text-primary);
   transition: background-color 120ms ease-out, color 120ms ease-out, transform 120ms ease-out;
 }
@@ -133,8 +132,9 @@
 
 .app[data-layout="compact"] .row-swipe-icon {
   display: grid;
-  width: 40px;
-  height: 40px;
+  flex: none;
+  width: 24px;
+  height: 24px;
   place-items: center;
   background: transparent;
 }
@@ -149,8 +149,17 @@
   transform: scale(1.15);
 }
 
-.app[data-layout="compact"] .row-swipe-underlay.armed > span:last-child {
+.app[data-layout="compact"] .row-swipe-underlay.armed .row-swipe-label {
   font-weight: 600;
+}
+
+.app[data-layout="compact"] .row-swipe-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.app[data-layout="compact"] .row-swipe-underlay:not(.labelled) .row-swipe-label {
+  display: none;
 }
 
 .app[data-layout="compact"] .row-read-state {
