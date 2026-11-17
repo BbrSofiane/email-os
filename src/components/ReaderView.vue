@@ -158,6 +158,7 @@ const actionable = computed(() => props.state === 'ready' && !!props.conversatio
  * display only: nothing in it is actionable as if it were the open thread.
  */
 const held = computed(() => props.state === 'loading' && !!props.conversation && keyOfDisplayed() === null);
+const archiveActionName = computed(() => props.conversation?.isInInbox === false ? 'Mark not done' : 'Mark done (E)');
 /** Header actions stay mounted (disabled, not removed) for as long as a conversation is open. */
 const actionsShown = computed(() => props.openRef !== null || actionable.value);
 const hasMetaRow = computed(() => {
@@ -950,10 +951,15 @@ defineExpose({
           class="header-glyph"
           :class="{ 'header-glyph-held': held }"
           data-test="reader-archive-toggle"
+          :aria-label="props.compact ? archiveActionName : undefined"
           :title="actionLabel(props.conversation?.isInInbox === false ? 'unarchive' : 'archive')"
           :disabled="!actionable || props.commandInFlight || props.navigationUnavailable"
           @click="props.conversation?.isInInbox === false ? emit('unarchive') : emit('archive')"
-        ><HeaderGlyph name="done" /><span class="visually-hidden">{{ props.conversation?.isInInbox === false ? 'Mark not done' : 'Mark done (E)' }}</span></button>
+        >
+          <HeaderGlyph name="done" />
+          <span v-if="props.compact" class="reader-archive-label">{{ props.conversation?.isInInbox === false ? 'Not done' : 'Done' }}</span>
+          <span class="visually-hidden">{{ archiveActionName }}</span>
+        </button>
         <button
           v-if="!props.compact && actionsShown && props.showReadControls && !bulkScope && (!props.conversation || props.conversation.isRead !== undefined)"
           type="button"

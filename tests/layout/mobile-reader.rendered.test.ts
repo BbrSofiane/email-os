@@ -93,9 +93,52 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
     expect(geometry.messageMore).not.toBeNull();
     expect(geometry.messageMore!.width).toBe(48);
     expect(geometry.messageMore!.height).toBe(48);
+    const toolbar = await harness!.cdp.js<{
+      bar: DOMRectReadOnly;
+      buttons: { name: string; box: DOMRectReadOnly }[];
+      label: { box: DOMRectReadOnly; width: number; scrollWidth: number; textOverflow: string };
+    }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(appSelector)});
+      const bar = app.querySelector('[data-test="mobile-reader-actions"]');
+      const label = bar.querySelector('.reader-archive-label');
+      return {
+        bar: bar.getBoundingClientRect().toJSON(),
+        buttons: [...bar.querySelectorAll('button')].map(button => ({
+          name: button.dataset.test,
+          box: button.getBoundingClientRect().toJSON(),
+        })),
+        label: {
+          box: label.getBoundingClientRect().toJSON(),
+          width: label.clientWidth,
+          scrollWidth: label.scrollWidth,
+          textOverflow: getComputedStyle(label).textOverflow,
+        },
+      };
+    })()`);
+    expect(toolbar.buttons.map(button => button.name)).toEqual([
+      'reader-star', 'reader-remind', 'reader-archive-toggle', 'reader-prev', 'reader-next', 'reader-more',
+    ]);
+    let previousRight = toolbar.bar.left;
+    for (const { name, box } of toolbar.buttons) {
+      expect(box.left).toBeGreaterThanOrEqual(Math.max(previousRight, 0));
+      expect(box.right).toBeLessThanOrEqual(Math.min(toolbar.bar.right, width));
+      expect(box.top).toBeGreaterThanOrEqual(Math.max(toolbar.bar.top, 0));
+      expect(box.bottom).toBeLessThanOrEqual(Math.min(toolbar.bar.bottom, height));
+      expect(box.height).toBeGreaterThanOrEqual(48);
+      if (name !== 'reader-archive-toggle') expect(box.width).toBeGreaterThanOrEqual(48);
+      previousRight = box.right;
+    }
+    const doneBox = toolbar.buttons.find(button => button.name === 'reader-archive-toggle')!.box;
+    expect(toolbar.label.width).toBeGreaterThan(0);
+    expect(toolbar.label.scrollWidth).toBeLessThanOrEqual(toolbar.label.width);
+    expect(toolbar.label.textOverflow).toBe('clip');
+    expect(toolbar.label.box.left).toBeGreaterThanOrEqual(doneBox.left);
+    expect(toolbar.label.box.right).toBeLessThanOrEqual(doneBox.right);
+    expect(toolbar.label.box.top).toBeGreaterThanOrEqual(doneBox.top);
+    expect(toolbar.label.box.bottom).toBeLessThanOrEqual(doneBox.bottom);
     await harness!.cdp.js(`(() => document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="reader-more"]').click())()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
-    const sheet = await harness!.cdp.js<{ panel: { top: number; bottom: number }; viewport: number; rows: Array<{ width: number; height: number }>; toolbar: Array<{ name: string | null; width: number; height: number }> }>(`(() => {
+    const sheet = await harness!.cdp.js<{ panel: { top: number; bottom: number }; viewport: number; rows: Array<{ width: number; height: number }> }>(`(() => {
       const app = document.querySelector(${JSON.stringify(appSelector)});
       const panel = app.querySelector('[data-test="action-sheet"]').getBoundingClientRect();
       return {
@@ -105,23 +148,12 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
           const box = row.getBoundingClientRect();
           return { width: box.width, height: box.height };
         }),
-        toolbar: [...app.querySelectorAll('[data-test="reader-toolbar"] button')].map(button => {
-          const box = button.getBoundingClientRect();
-          return { name: button.getAttribute('data-test'), width: box.width, height: box.height };
-        }),
       };
     })()`);
     expect(sheet.panel.top).toBeGreaterThanOrEqual(0);
     expect(sheet.panel.bottom).toBeLessThanOrEqual(sheet.viewport);
     expect(sheet.rows.length).toBeGreaterThan(0);
     for (const row of sheet.rows) expect(row.height).toBeGreaterThanOrEqual(48);
-    expect(sheet.toolbar.map(button => button.name)).toEqual([
-      'reader-star', 'reader-remind', 'reader-archive-toggle', 'reader-prev', 'reader-next', 'reader-more',
-    ]);
-    for (const button of sheet.toolbar) {
-      expect(button.width).toBeGreaterThanOrEqual(48);
-      expect(button.height).toBeGreaterThanOrEqual(48);
-    }
     await harness!.cdp.js(`(() => document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="action-sheet"] button:not(:disabled)').click())()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
     const closed = await harness!.cdp.js(`document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="action-sheet"]') === null`);
@@ -227,14 +259,17 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
     expect(notice.visibleKeycaps).toBe(0);
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="action-notice-undo"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 400))');
-    const restored = await harness!.cdp.js<{ action: string; noticeHeight: number }>(`(() => {
+    const restored = await harness!.cdp.js<{ action: string; label: string; noticeHeight: number }>(`(() => {
       const app = document.querySelector(${JSON.stringify(appSelector)});
+      const done = app.querySelector('[data-test="reader-archive-toggle"]');
       return {
-        action: app.querySelector('[data-test="reader-archive-toggle"]').textContent.trim(),
+        action: done.getAttribute('aria-label'),
+        label: done.querySelector('.reader-archive-label').textContent.trim(),
         noticeHeight: app.querySelector('[data-test="action-notice"]').getBoundingClientRect().height,
       };
     })()`);
     expect(restored.action).toBe('Mark done (E)');
+    expect(restored.label).toBe('Done');
     expect(restored.noticeHeight).toBe(0);
   });
 });

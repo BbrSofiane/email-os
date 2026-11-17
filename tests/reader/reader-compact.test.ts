@@ -48,6 +48,20 @@ describe('ReaderView compact toolbar', () => {
     });
     expect(wrapper.findAll('[data-test="reader-toolbar"] button')).toHaveLength(7);
     expect(wrapper.find('[data-test="prepare-reply"]').exists()).toBe(true);
+    expect(wrapper.get('[data-test="reader-archive-toggle"]').find('.reader-archive-label').exists()).toBe(false);
+  });
+
+  it.each([
+    { isInInbox: true, label: 'Done', action: 'Mark done (E)' },
+    { isInInbox: false, label: 'Not done', action: 'Mark not done' },
+  ])('shows $label with the full accessible action in compact layout', ({ isInInbox, label, action }) => {
+    wrapper = mountReaderView({ ...conversationOf(), isInInbox }, { compact: true });
+    const button = wrapper.get('[data-test="reader-archive-toggle"]');
+    const visibleLabel = button.get('.reader-archive-label');
+    expect(visibleLabel.isVisible()).toBe(true);
+    expect(visibleLabel.text()).toBe(label);
+    expect(button.attributes('aria-label')).toBe(action);
+    expect(button.get('.visually-hidden').text()).toBe(action);
   });
 
   it('shows the current star state and emits the star action', async () => {

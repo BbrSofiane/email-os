@@ -277,6 +277,7 @@
 
 .app[data-layout="compact"] .mobile-bottom-region:has(.mobile-reader-actions:not(:empty)) {
   gap: 0;
+  padding-inline: 12px;
 }
 
 .app[data-layout="compact"] .mobile-bottom-region:has(.mobile-reader-actions:not(:empty)) .mobile-reader-actions {
@@ -324,7 +325,6 @@
   height: 48px;
   align-items: center;
   justify-content: space-between;
-  padding: 0 8px;
 }
 
 .app[data-layout="compact"] .mobile-reader-actions .reader-actions > .header-glyph {
@@ -366,6 +366,23 @@
 .app[data-layout="compact"] .mobile-reader-actions .reader-actions > .header-glyph {
   min-width: 48px;
   padding: 0;
+}
+
+.app[data-layout="compact"] .mobile-reader-actions .reader-actions > [data-test="reader-archive-toggle"] {
+  display: inline-flex;
+  width: auto;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding-inline: 12px;
+  border-radius: 24px;
+}
+
+.app[data-layout="compact"] .mobile-reader-actions .reader-archive-label {
+  font-size: var(--mobile-type-meta);
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 /* Rows keep the regular column layout until the list phase restyles them:

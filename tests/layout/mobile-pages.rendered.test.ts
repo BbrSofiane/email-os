@@ -428,6 +428,89 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
     expect(contact.cornersCovered.every(Boolean)).toBe(true);
   });
 
+  it.each([{ width: 412, height: 915 }, { width: 360, height: 800 }])('fits the Contact targets at $width × $height', async ({ width, height }) => {
+    await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
+      width, height, screenWidth: width, screenHeight: height,
+      deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor, mobile: true,
+    });
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="conversation-row-conv-01"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="reader-more"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
+    await harness!.cdp.js(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      [...app.querySelectorAll('[data-test="action-sheet"] button')]
+        .find(button => button.textContent.includes('Contact details')).click();
+    })()`);
+    const geometry = await harness!.cdp.js<{
+      page: DOMRectReadOnly;
+      horizontalOverflow: boolean;
+      fields: { text: DOMRectReadOnly; copy: DOMRectReadOnly; opacity: string }[];
+      recent: DOMRectReadOnly[];
+      search: { box: DOMRectReadOnly; borderWidth: string; scrollWidth: number; clientWidth: number };
+      identityBottom: number;
+      recentTop: number;
+    }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const page = app.querySelector('[data-test="contact-disclosure-panel"]');
+      const pane = page.querySelector('[data-test="contact-pane"]');
+      const recent = [...pane.querySelectorAll('.contact-recent button')];
+      const search = pane.querySelector('[data-test="contact-find-mail"]');
+      const box = element => element.getBoundingClientRect().toJSON();
+      return {
+        page: box(page),
+        horizontalOverflow: [document.documentElement, page, pane, ...recent]
+          .some(element => element.scrollWidth > element.clientWidth),
+        fields: [...pane.querySelectorAll('.contact-line')].map(line => {
+          const copy = line.querySelector('.contact-copy');
+          return {
+            text: box(line.querySelector('.contact-name, .contact-mailbox')),
+            copy: box(copy),
+            opacity: getComputedStyle(copy).opacity,
+          };
+        }),
+        recent: recent.map(box),
+        search: {
+          box: box(search),
+          borderWidth: getComputedStyle(search).borderWidth,
+          scrollWidth: search.scrollWidth,
+          clientWidth: search.clientWidth,
+        },
+        identityBottom: box(pane.querySelector('.contact-line:last-of-type')).bottom,
+        recentTop: box(pane.querySelector('.contact-recent')).top,
+      };
+    })()`);
+    expect(geometry.horizontalOverflow).toBe(false);
+    expect(geometry.page.left).toBeGreaterThanOrEqual(0);
+    expect(geometry.page.right).toBeLessThanOrEqual(width);
+    expect(geometry.fields).toHaveLength(2);
+    for (const { text, copy, opacity } of geometry.fields) {
+      expect(copy.width).toBe(48);
+      expect(copy.height).toBe(48);
+      expect(opacity).toBe('1');
+      expect(copy.left).toBeGreaterThanOrEqual(text.right);
+      expect(copy.right).toBeLessThanOrEqual(geometry.page.right);
+    }
+    expect(geometry.recent.length).toBeGreaterThan(1);
+    for (const row of geometry.recent) {
+      expect(row.height).toBeGreaterThanOrEqual(48);
+      expect(row.left).toBeGreaterThanOrEqual(geometry.page.left);
+      expect(row.right).toBeLessThanOrEqual(geometry.page.right);
+    }
+    const search = geometry.search;
+    expect(search.box.height).toBeGreaterThanOrEqual(48);
+    expect(search.box.left).toBe(geometry.page.left + 20);
+    expect(search.box.left).toBe(geometry.fields[0]!.text.left);
+    expect(search.box.top).toBeGreaterThanOrEqual(geometry.identityBottom);
+    expect(search.box.bottom).toBeLessThanOrEqual(geometry.recentTop);
+    expect(search.borderWidth).toBe('0px');
+    expect(search.scrollWidth).toBeLessThanOrEqual(search.clientWidth);
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="contact-find-mail"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
+    const query = await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="search-results-query"]')?.textContent.trim()`);
+    expect(query).toBe('Search: from:"ada@example.test"');
+  });
+
   it('sizes Reminder settings controls and allows the explanatory text to wrap', async () => {
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-menu"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
