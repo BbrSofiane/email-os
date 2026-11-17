@@ -545,6 +545,18 @@ The compact reader subject is 1.375rem/600 with 8px above, 12px below, and 20px/
 
 Draft and reminder context rows are at least 64px high; context actions and form controls are at least 48px high. Utility pages cover the compact app with a 56px header and 20px/16px content insets. Reminder and attachment pickers use bottom sheets with 16px top corners and safe-area bottom padding. The command overlay sits 16px below the top edge and is at most 70% of the app height. Swipe preferences default to Remind right and Mark done left; None resists the gesture without running an action.
 
+### Compact destinations and pushed pages
+
+Inbox, Drafts, Reminders, Search and the other mail lists are destinations: their top bar shows the menu button. Settings, Activity, Account, Provider mail and Contact are pushed pages that cover the app and show Back in the menu button's position. The Back control is 48×48px inside the 56px top bar; its page title matches the destination title in size, weight and left edge. Inbox split tabs remain available in Inbox, Done and Starred, and the custom saved split remains available from those lists. Reminders uses membership tabs. Search, Drafts, Trash and other contexts leave the context pill empty.
+
+### Compact Settings, Search and Reminders
+
+Settings uses 15px/600 primary section headings. The next section starts 24px below a rule with 24px top padding; group legends are 13px regular secondary text, aligned with controls at the 20px start inset. Reminder hour and minute changes save immediately. A successful save shows `Saved`; a failed save restores the last confirmed values and reports the error. The longer note about existing reminders is behind the `About changing the default` disclosure.
+
+Search syntax is behind a closed-by-default `Search syntax` disclosure; the input remains described by the six-item help list. On results, the query, coverage notice, sender group captions and first sender share the 20px start inset; the end inset is 16px. The query uses 15px/600 type with ellipsis, beside a 48px clear control.
+
+Reminders show the loading or empty line before the explanation and quiet `Refresh reminders` control. Zero tab counts are omitted; positive counts remain visible.
+
 Compact outcome notices are full-width pills with 16px side margins, 12px/16px padding, 14px corners and a soft `0 4px 16px rgba(0, 0, 0, 0.35)` shadow. Undo is at least 48px high. Compose and reply use an app-sized absolute sheet, a 56px header, 48px field rows and footer actions, and a flexible body textarea at 1rem/1.5. Safe-area padding stays inside the sheet; focused fields follow visual viewport changes.
 
 On phones the header X is the only editor exit: it saves and closes through the protected close path and is disabled while closing; the footer has no “Save and close” button or Esc keycap. The footer keeps “Cancel reply preparation” when available and “Discard…”. Settled editor states use `Local draft · never sent` or `<state> · never sent`; active and problem states keep their own wording. To and Cc remain text inputs with email input mode, no autocapitalization, autocorrect or spellcheck, and `enterkeyhint="next"`. Subject uses sentence capitalization and next; the body uses sentence capitalization. Enter advances To → visible Cc → visible Subject → Body, except during IME composition or with a modifier held. Compact failure alerts use mobile list size in warning colour; Retry is a bordered 48px secondary action before the fields. The reader’s enabled Mark done glyph uses `--focus-accent`; disabled toolbar glyphs stay at opacity 1 in `--icon-muted`. The action glyphs are `collapse` for Collapse, `copy` for Copy text, `contact` for Contact details and `prompt` for Commands.

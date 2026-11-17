@@ -239,6 +239,8 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await click('[data-test="mobile-menu"]');
     await chooseDrawerRow('Settings');
     await shot('settings');
+    await click('[data-test="utility-drawer"] .settings-note summary');
+    await shot('settings-note-open');
 
     await freshInbox();
     await click('[data-test="mobile-search"]');

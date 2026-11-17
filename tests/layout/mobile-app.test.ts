@@ -16,6 +16,28 @@ afterEach(() => {
 });
 
 describe('App compact and regular frame', () => {
+  it('marks an open Search form as the current page and restores Inbox on Escape', async () => {
+    stubLayout(true);
+    const fake = createBrowserFakeMailClient();
+    const wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+
+    await wrapper.get('[data-test="mobile-search"]').trigger('click');
+    await flushFakeClientAndVueUpdates(fake);
+    expect(wrapper.get('[data-test="mobile-context-slot"]').element.childElementCount).toBe(0);
+    expect(wrapper.get('[data-test="mobile-search"]').attributes('aria-current')).toBe('page');
+    expect(wrapper.get('[data-test="mobile-mail"]').attributes('aria-current')).toBeUndefined();
+    expect(wrapper.get('[data-test="mobile-top-bar"]').text()).toContain('Search');
+
+    await wrapper.get('[data-test="search-input"]').trigger('keydown', { key: 'Escape' });
+    await flushFakeClientAndVueUpdates(fake);
+    expect(wrapper.find('[data-test="search-input"]').exists()).toBe(false);
+    expect(wrapper.get('[data-test="mobile-search"]').attributes('aria-current')).toBeUndefined();
+    expect(wrapper.get('[data-test="mobile-mail"]').attributes('aria-current')).toBe('page');
+    expect(wrapper.get('[data-test="split-inbox"]').element.closest('.mobile-context-slot')).toBeTruthy();
+    wrapper.unmount();
+  });
+
   it('teleports split tabs only in compact mode and keeps saved navigation active', async () => {
     const fake = createBrowserFakeMailClient();
     const first = (await fake.listConversations()).conversations[0]!;
@@ -42,6 +64,29 @@ describe('App compact and regular frame', () => {
     expect(regular.get('[data-test="split-inbox"]').element.closest('.app-header')).toBeTruthy();
     expect(regular.get('[data-test="split-inbox"]').element.closest('.mobile-context-slot')).toBeFalsy();
     regular.unmount();
+  });
+
+  it('marks Search current without Inbox tabs in the context slot, then restores Inbox', async () => {
+    stubLayout(true);
+    const fake = createBrowserFakeMailClient();
+    const wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+
+    await wrapper.get('[data-test="mobile-search"]').trigger('click');
+    await flushFakeClientAndVueUpdates(fake);
+    await wrapper.get('[data-test="search-input"]').setValue('from:ada');
+    await wrapper.get('[data-test="search-submit"]').trigger('click');
+    await flushFakeClientAndVueUpdates(fake);
+    expect(wrapper.get('[data-test="mobile-context-slot"]').element.childElementCount).toBe(0);
+    expect(wrapper.get('[data-test="mobile-search"]').attributes('aria-current')).toBe('page');
+    expect(wrapper.get('[data-test="mobile-mail"]').attributes('aria-current')).toBeUndefined();
+
+    await wrapper.get('[data-test="mobile-mail"]').trigger('click');
+    await flushFakeClientAndVueUpdates(fake);
+    expect(wrapper.get('[data-test="split-inbox"]').element.closest('.mobile-context-slot')).toBeTruthy();
+    expect(wrapper.get('[data-test="mobile-mail"]').attributes('aria-current')).toBe('page');
+    expect(wrapper.get('[data-test="mobile-search"]').attributes('aria-current')).toBeUndefined();
+    wrapper.unmount();
   });
 
   it('opens the compact drawer, closes it before the next Escape rung, and navigates', async () => {
@@ -85,10 +130,40 @@ describe('App compact and regular frame', () => {
     await contactAction!.trigger('click');
     await flushFakeClientAndVueUpdates(fake);
     expect(wrapper.get('[data-test="contact-disclosure-panel"]').text()).toContain('Ada Fixture');
+    const contactHeader = wrapper.get('[data-test="contact-disclosure-panel"] .drawer-header').element;
+    expect(contactHeader.firstElementChild).toBe(wrapper.get('[data-test="contact-disclosure-close"]').element);
+    expect(wrapper.get('[data-test="contact-disclosure-close"]').attributes('aria-label')).toBe('Back');
     expect(wrapper.find('[data-test="reader"]').exists()).toBe(true);
     await wrapper.get('[data-test="contact-disclosure-close"]').trigger('click');
     await flushFakeClientAndVueUpdates(fake);
     expect(wrapper.find('[data-test="reader"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('uses Back first in compact Settings and Activity headers and returns to the list', async () => {
+    stubLayout(true);
+    const fake = createBrowserFakeMailClient();
+    const wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+
+    for (const pageName of ['Settings', 'Activity']) {
+      await wrapper.get('[data-test="mobile-menu"]').trigger('click');
+      await flushFakeClientAndVueUpdates(fake);
+      const pageRow = wrapper.findAll('.mobile-drawer-row').find(row => row.text().trim() === pageName);
+      expect(pageRow).toBeDefined();
+      await pageRow!.trigger('click');
+      await flushFakeClientAndVueUpdates(fake);
+
+      const page = wrapper.get('[data-test="utility-drawer"]');
+      const back = page.get('[data-test="drawer-close"]');
+      expect(page.get('.drawer-header').element.firstElementChild).toBe(back.element);
+      expect(back.attributes('aria-label')).toBe('Back');
+      expect(back.find('svg').attributes('data-glyph')).toBe('back');
+      await back.trigger('click');
+      await flushFakeClientAndVueUpdates(fake);
+      expect(wrapper.find('[data-test="utility-drawer"]').exists()).toBe(false);
+    }
+
     wrapper.unmount();
   });
 
@@ -100,6 +175,27 @@ describe('App compact and regular frame', () => {
     await wrapper.get('[data-test="navigator-trigger"]').trigger('click');
     expect(wrapper.find('[data-test="action-query"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="mobile-drawer"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('keeps regular pushed-page Close text buttons and header order', async () => {
+    stubLayout(false);
+    const fake = createBrowserFakeMailClient();
+    const wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+
+    await wrapper.get('[data-test="rail-activity"]').trigger('click');
+    await flushFakeClientAndVueUpdates(fake);
+    const activityHeader = wrapper.get('[data-test="utility-drawer"] .drawer-header');
+    expect(activityHeader.element.firstElementChild).toBe(activityHeader.get('h2').element);
+    expect(activityHeader.get('[data-test="drawer-close"]').text()).toBe('Close');
+
+    await wrapper.get('[data-test="drawer-close"]').trigger('click');
+    await wrapper.get('[data-test="contact-disclosure"]').trigger('click');
+    await flushFakeClientAndVueUpdates(fake);
+    const contactHeader = wrapper.get('[data-test="contact-disclosure-panel"] .drawer-header');
+    expect(contactHeader.element.firstElementChild).toBe(contactHeader.get('h2').element);
+    expect(contactHeader.get('[data-test="contact-disclosure-close"]').text()).toBe('Close');
     wrapper.unmount();
   });
 

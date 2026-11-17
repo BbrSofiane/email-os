@@ -36,6 +36,7 @@ describe('MobileBottomBar', () => {
       props: {
         reader: false,
         inboxOrSaved: true,
+        search: false,
         executeAction,
         actionAvailable: available,
         actionLabel: label,
@@ -60,6 +61,7 @@ describe('MobileBottomBar', () => {
       props: {
         reader: false,
         inboxOrSaved: true,
+        search: false,
         executeAction: vi.fn(),
         actionAvailable: (id: string) => id === 'account',
         actionLabel: label,
@@ -74,6 +76,7 @@ describe('MobileBottomBar', () => {
       props: {
         reader: true,
         inboxOrSaved: false,
+        search: false,
         executeAction: vi.fn(),
         actionAvailable: available,
         actionLabel: label,

@@ -57,7 +57,7 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
     await harness!.cdp.js(`[...document.querySelectorAll(${JSON.stringify(workspaceApp)} + ' .mobile-drawer-row')].find(row => row.textContent.trim() === 'Reminders').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 200))');
-    const geometry = await harness!.cdp.js<{ intro: DOMRectReadOnly; button: DOMRectReadOnly; empty: DOMRectReadOnly; paneLeft: number }>(`(() => {
+    const geometry = await harness!.cdp.js<{ intro: DOMRectReadOnly; button: DOMRectReadOnly; empty: DOMRectReadOnly; paneLeft: number; paneRight: number }>(`(() => {
       const app = document.querySelector(${JSON.stringify(workspaceApp)});
       const pane = app.querySelector('[data-test="reminders-panel"]');
       const introElement = app.querySelector('[data-test="reminders-coverage"]');
@@ -66,10 +66,13 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
       const empty = app.querySelector('[data-test="reminders-empty"]').getBoundingClientRect();
       const text = document.createRange();
       text.selectNodeContents(introElement.firstChild);
-      return { intro: { top: intro.top, bottom: intro.bottom, left: text.getBoundingClientRect().left }, button: { top: button.top, height: button.height, left: button.left }, empty: { left: empty.left }, paneLeft: pane.getBoundingClientRect().left };
+      const paneRect = pane.getBoundingClientRect();
+      return { intro: { top: intro.top, bottom: intro.bottom, left: text.getBoundingClientRect().left }, button: { top: button.top, height: button.height, left: button.left, right: button.right }, empty: { top: empty.top, left: empty.left }, paneLeft: paneRect.left, paneRight: paneRect.right };
     })()`);
     expect(geometry.button.top).toBeGreaterThanOrEqual(geometry.intro.bottom);
+    expect(geometry.empty.top).toBeLessThan(geometry.button.top);
     expect(geometry.button.height).toBeGreaterThanOrEqual(48);
+    expect(geometry.button.right).toBeLessThanOrEqual(geometry.paneRight - 16);
     expect(Math.abs(geometry.intro.left - geometry.paneLeft - 20)).toBeLessThanOrEqual(1);
     expect(Math.abs(geometry.button.left - geometry.paneLeft - 20)).toBeLessThanOrEqual(1);
     expect(Math.abs(geometry.empty.left - geometry.paneLeft - 20)).toBeLessThanOrEqual(1);
@@ -104,8 +107,37 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
   });
 
   it('sizes compact Search controls and shows submitted results without overflow', async () => {
-    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="search-trigger"]').click()`);
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-search"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
+    const searchPage = await harness!.cdp.js<{ slotHeight: number; title: boolean; searchCurrent: string | null; inboxCurrent: string | null }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      return {
+        slotHeight: app.querySelector('.mobile-context-slot').getBoundingClientRect().height,
+        title: app.querySelector('[data-test="mobile-top-bar"]').textContent.includes('Search'),
+        searchCurrent: app.querySelector('[data-test="mobile-search"]').getAttribute('aria-current'),
+        inboxCurrent: app.querySelector('[data-test="mobile-mail"]').getAttribute('aria-current'),
+      };
+    })()`);
+    expect(searchPage.slotHeight).toBe(0);
+    expect(searchPage.title).toBe(true);
+    expect(searchPage.searchCurrent).toBe('page');
+    expect(searchPage.inboxCurrent).toBeNull();
+    const syntax = await harness!.cdp.js<{ closed: boolean; listHeight: number; summaryHeight: number }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const details = app.querySelector('.search-syntax');
+      const summary = details.querySelector('summary');
+      return {
+        closed: !details.open,
+        listHeight: app.querySelector('[data-test="search-help"]').getBoundingClientRect().height,
+        summaryHeight: summary.getBoundingClientRect().height,
+      };
+    })()`);
+    expect(syntax.closed).toBe(true);
+    expect(syntax.listHeight).toBe(0);
+    expect(syntax.summaryHeight).toBeGreaterThanOrEqual(48);
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('.search-syntax summary').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 50))');
+    expect(await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="search-help"]').getBoundingClientRect().height`)).toBeGreaterThan(0);
     await harness!.cdp.js(`(() => {
       const app = document.querySelector(${JSON.stringify(workspaceApp)});
       const input = app.querySelector('[data-test="search-input"]');
@@ -120,13 +152,53 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
       app.querySelector('[data-test="search-submit"]').click();
     })()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 400))');
-    const result = await harness!.cdp.js<{ visible: boolean; overflow: boolean }>(`(() => {
-      const app = document.querySelector(${JSON.stringify(workspaceApp)});
-      const header = app.querySelector('[data-test="search-results-header"]');
-      return { visible: !!header, overflow: app.scrollWidth > app.clientWidth };
-    })()`);
-    expect(result.visible).toBe(true);
-    expect(result.overflow).toBe(false);
+    expect(await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('.mobile-context-slot').getBoundingClientRect().height`)).toBe(0);
+    for (const width of [412, 360]) {
+      await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
+        width,
+        height: width === 412 ? 915 : 800,
+        screenWidth: width,
+        screenHeight: width === 412 ? 915 : 800,
+        deviceScaleFactor: 2.625,
+        mobile: true,
+      });
+      const result = await harness!.cdp.js<{ visible: boolean; overflow: boolean; lefts: number[]; clear: DOMRectReadOnly; viewport: number }>(`(() => {
+        const app = document.querySelector(${JSON.stringify(workspaceApp)});
+        const header = app.querySelector('[data-test="search-results-header"]');
+        const query = app.querySelector('[data-test="search-results-query"]');
+        const coverage = app.querySelector('[data-test="search-coverage"]');
+        const correspondent = app.querySelector('.inbox-list .row-group');
+        const sender = app.querySelector('.inbox-list .row-sender');
+        const textLeft = element => {
+          const range = document.createRange();
+          range.selectNodeContents(element);
+          return range.getBoundingClientRect().left;
+        };
+        const clear = app.querySelector('[data-test="search-clear"]').getBoundingClientRect();
+        return {
+          visible: !!header && !!correspondent && !!sender,
+          overflow: app.scrollWidth > app.clientWidth,
+          lefts: [textLeft(query), textLeft(coverage), textLeft(correspondent), sender.getBoundingClientRect().left],
+          clear: { left: clear.left, right: clear.right, width: clear.width, height: clear.height },
+          viewport: document.documentElement.clientWidth,
+        };
+      })()`);
+      expect(result.visible).toBe(true);
+      expect(result.overflow).toBe(false);
+      expect(Math.max(...result.lefts) - Math.min(...result.lefts), `${width}px anchor positions: ${result.lefts.join(', ')}`).toBeLessThanOrEqual(1);
+      expect(result.clear.width).toBeGreaterThanOrEqual(48);
+      expect(result.clear.height).toBeGreaterThanOrEqual(48);
+      expect(result.clear.left).toBeGreaterThanOrEqual(0);
+      expect(result.clear.right).toBeLessThanOrEqual(result.viewport);
+    }
+    await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
+      width: PHONE_VIEWPORT.width,
+      height: PHONE_VIEWPORT.height,
+      screenWidth: PHONE_VIEWPORT.width,
+      screenHeight: PHONE_VIEWPORT.height,
+      deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor,
+      mobile: true,
+    });
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="search-trigger"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
     const suggestionGeometry = await harness!.cdp.js<{ input: DOMRectReadOnly; suggestions: DOMRectReadOnly[] }>(`(() => {
@@ -155,9 +227,9 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
       const pageRect = rect(page);
       const header = rect(page.querySelector('.drawer-header'));
       const close = rect(page.querySelector('[data-test="drawer-close"]'));
-      return { top: pageRect, bottom: pageRect, headerHeight: header.height, close, topCovered: page.contains(document.elementFromPoint(10, 10)), bottomCovered: page.contains(document.elementFromPoint(innerWidth / 2, innerHeight - 10)) };
+      return { top: pageRect, bottom: pageRect, headerHeight: header.height, close, topCovered: page.contains(document.elementFromPoint(10, 30)), bottomCovered: page.contains(document.elementFromPoint(innerWidth / 2, innerHeight - 10)) };
     })()`);
-    expect(geometry.top.top).toBe(0);
+    expect(geometry.top.top).toBe(24);
     expect(geometry.bottom.bottom).toBeCloseTo(PHONE_VIEWPORT.height, 0);
     expect(geometry.headerHeight).toBe(56);
     expect(geometry.close.height).toBeGreaterThanOrEqual(48);
@@ -166,6 +238,52 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="drawer-close"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
     expect(await harness!.cdp.js(`!document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="utility-drawer"]')`)).toBe(true);
+  });
+
+  it('uses centred, inset aligned disclosure summaries in Search and Settings', async () => {
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-search"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
+    const search = await harness!.cdp.js<{ left: number; height: number; centerDelta: number; chevronWidth: string }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const summary = app.querySelector('.search-syntax > summary');
+      const box = summary.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(summary);
+      const textBox = range.getBoundingClientRect();
+      return {
+        left: box.left,
+        height: box.height,
+        centerDelta: Math.abs((textBox.top + textBox.bottom) / 2 - (box.top + box.bottom) / 2),
+        chevronWidth: getComputedStyle(summary, '::before').width,
+      };
+    })()`);
+
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-menu"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
+    await harness!.cdp.js(`[...document.querySelectorAll(${JSON.stringify(workspaceApp)} + ' .mobile-drawer-row')].find(row => row.textContent.trim() === 'Settings').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
+    const settings = await harness!.cdp.js<{ left: number; height: number; centerDelta: number; chevronWidth: string }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const summary = app.querySelector('[data-test="utility-drawer"] .settings-note summary');
+      const box = summary.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(summary);
+      const textBox = range.getBoundingClientRect();
+      return {
+        left: box.left,
+        height: box.height,
+        centerDelta: Math.abs((textBox.top + textBox.bottom) / 2 - (box.top + box.bottom) / 2),
+        chevronWidth: getComputedStyle(summary, '::before').width,
+      };
+    })()`);
+
+    for (const summary of [search, settings]) {
+      expect(Math.abs(summary.left - 20)).toBeLessThanOrEqual(1);
+      expect(summary.height).toBeGreaterThanOrEqual(48);
+      expect(summary.centerDelta).toBeLessThanOrEqual(2);
+      expect(summary.chevronWidth).toBe('8px');
+    }
+    expect(Math.abs(search.left - settings.left)).toBeLessThanOrEqual(1);
   });
 
   it('keeps compact Account and Activity content inside the page with touch sized actions', async () => {
@@ -181,6 +299,63 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
     expect(activity.buttons.every(height => height >= 48)).toBe(true);
   });
 
+  it.each([{ width: 412, height: 915 }, { width: 360, height: 800 }])('matches pushed page headers to the destination top bar at $width × $height', async ({ width, height }) => {
+    await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
+      width,
+      height,
+      screenWidth: width,
+      screenHeight: height,
+      deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor,
+      mobile: true,
+    });
+    await harness!.cdp.js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-menu"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
+    await harness!.cdp.js(`[...document.querySelectorAll(${JSON.stringify(workspaceApp)} + ' .mobile-drawer-row')].find(row => row.textContent.trim() === 'Drafts').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 200))');
+    const destination = await harness!.cdp.js<{ menu: DOMRectReadOnly; titleLeft: number; titleSize: string; titleWeight: string }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const menu = app.querySelector('[data-test="mobile-menu"]').getBoundingClientRect();
+      const title = app.querySelector('.mobile-title');
+      return {
+        menu: { top: menu.top, right: menu.right, bottom: menu.bottom, left: menu.left },
+        titleLeft: title.getBoundingClientRect().left,
+        titleSize: getComputedStyle(title).fontSize,
+        titleWeight: getComputedStyle(title).fontWeight,
+      };
+    })()`);
+
+    async function expectPushedPage(name: 'Settings' | 'Activity'): Promise<void> {
+      await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-menu"]').click()`);
+      await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
+      await harness!.cdp.js(`[...document.querySelectorAll(${JSON.stringify(workspaceApp)} + ' .mobile-drawer-row')].find(row => row.textContent.trim() === '${name}').click()`);
+      await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 400))');
+      const geometry = await harness!.cdp.js<{ back: DOMRectReadOnly; titleLeft: number; titleSize: string; titleWeight: string; closeExists: boolean }>(`(() => {
+        const app = document.querySelector(${JSON.stringify(workspaceApp)});
+        const page = app.querySelector('[data-test="utility-drawer"]');
+        const back = page.querySelector('[data-test="drawer-close"]').getBoundingClientRect();
+        const title = page.querySelector('.drawer-header h2');
+        return {
+          back: { top: back.top, right: back.right, bottom: back.bottom, left: back.left },
+          titleLeft: title.getBoundingClientRect().left,
+          titleSize: getComputedStyle(title).fontSize,
+          titleWeight: getComputedStyle(title).fontWeight,
+          closeExists: !!page.querySelector('.drawer-close-icon'),
+        };
+      })()`);
+      for (const edge of ['top', 'right', 'bottom', 'left'] as const) {
+        expect(geometry.back[edge], `${name} Back ${edge}`).toBeCloseTo(destination.menu[edge], 0);
+      }
+      expect(Math.abs(geometry.titleLeft - destination.titleLeft)).toBeLessThanOrEqual(1);
+      expect(geometry.titleSize).toBe(destination.titleSize);
+      expect(geometry.titleWeight).toBe(destination.titleWeight);
+      expect(geometry.closeExists).toBe(false);
+    }
+
+    await expectPushedPage('Settings');
+    await expectPushedPage('Activity');
+  });
+
   it('sizes Reminder settings controls and allows the explanatory text to wrap', async () => {
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-menu"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
@@ -192,7 +367,7 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
       const settings = page.querySelector('.reminder-settings');
       const close = page.querySelector('[data-test="drawer-close"]');
       return {
-        controls: [...settings.querySelectorAll('select, button')].map(control => control.getBoundingClientRect().height),
+        controls: [...settings.querySelectorAll('select')].map(control => control.getBoundingClientRect().height),
         width: page.clientWidth,
         contentWidth: settings.scrollWidth,
         closeHasSvg: !!close.querySelector('svg'),
@@ -200,12 +375,12 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
         headingSizes: [...page.querySelectorAll('.compact-settings-heading')].map(heading => getComputedStyle(heading).fontSize),
       };
     })()`);
-    expect(geometry.controls.length).toBe(4);
+    expect(geometry.controls.length).toBe(2);
     expect(geometry.controls.every(height => height >= 48)).toBe(true);
     expect(geometry.contentWidth).toBeLessThanOrEqual(geometry.width);
     expect(geometry.closeHasSvg).toBe(true);
     expect(geometry.closeTextVisible).toBe(false);
-    expect(geometry.headingSizes).toEqual(['16px', '16px']);
+    expect(geometry.headingSizes).toEqual(['15px', '15px']);
   });
 
   it('shows compact Commands as a touch sized, scrolling overlay', async () => {
@@ -234,14 +409,52 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
     expect(await harness!.cdp.js(`!!document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="drafts-pane"]')`)).toBe(true);
   });
 
-  it('renders Settings radio rows as 48px controls and saves a swipe choice', async () => {
+  it.each([{ width: 412, height: 915 }, { width: 360, height: 800 }])('renders Settings hierarchy and aligned radio controls at $width × $height', async ({ width, height }) => {
+    await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
+      width,
+      height,
+      screenWidth: width,
+      screenHeight: height,
+      deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor,
+      mobile: true,
+    });
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-menu"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
     await harness!.cdp.js(`[...document.querySelectorAll(${JSON.stringify(workspaceApp)} + ' .mobile-drawer-row')].find(row => row.textContent.trim() === 'Settings').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 200))');
-    const rows = await harness!.cdp.js<number[]>(`[...document.querySelectorAll(${JSON.stringify(workspaceApp)} + ' .swipe-settings label')].map(label => label.getBoundingClientRect().height)`);
-    expect(rows.length).toBe(6);
-    expect(rows.every(height => height >= 48)).toBe(true);
+    const geometry = await harness!.cdp.js<{
+      rows: number[];
+      lefts: number[];
+      firstBottom: number;
+      secondTop: number;
+      legendSize: number;
+      headingSize: number;
+      emptyStatusDisplay: string;
+    }>(`(() => {
+      const page = document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="reminder-settings-dialog"]');
+      const rect = element => element.getBoundingClientRect();
+      const headings = [...page.querySelectorAll('.compact-settings-heading')];
+      const legend = page.querySelector('.swipe-settings legend');
+      const firstRadio = page.querySelector('.swipe-settings input[type="radio"]');
+      const hour = page.querySelector('label[for="reminder-default-hour"]');
+      const lastReminderControl = page.querySelector('.reminder-settings form select:last-of-type');
+      const status = page.querySelector('.swipe-settings [role="status"]');
+      return {
+        rows: [...page.querySelectorAll('.swipe-settings label')].map(row => rect(row).height),
+        lefts: [rect(headings[0]).left, rect(headings[1]).left, rect(legend).left, rect(firstRadio).left, rect(hour).left],
+        firstBottom: rect(lastReminderControl).bottom,
+        secondTop: rect(headings[1]).top,
+        legendSize: Number.parseFloat(getComputedStyle(legend).fontSize),
+        headingSize: Number.parseFloat(getComputedStyle(headings[1]).fontSize),
+        emptyStatusDisplay: getComputedStyle(status).display,
+      };
+    })()`);
+    expect(geometry.rows).toHaveLength(6);
+    expect(geometry.rows.every(height => height >= 48)).toBe(true);
+    expect(geometry.lefts.every(left => Math.abs(left - geometry.lefts[0]!) <= 1)).toBe(true);
+    expect(geometry.secondTop - geometry.firstBottom).toBeGreaterThanOrEqual(40);
+    expect(geometry.legendSize).toBeLessThan(geometry.headingSize);
+    expect(geometry.emptyStatusDisplay).toBe('none');
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('input[name="swipe-left"][value="none"]').click()`);
     expect(await harness!.cdp.js(`localStorage.getItem('email-os.swipe-preferences.v1')`)).toContain('"left":"none"');
   });

@@ -372,7 +372,8 @@ watch(drawer, (next) => { if (next) editingSplit.value = false; });
 // own, not Inbox splits: the Inbox split nav gives way to the heading alone.
 const splitNavShown = computed(() => accountReady.value && !!accountId.value && !readerOpen.value && !drawer.value);
 const inboxSplitsShown = computed(() => splitNavShown.value
-  && !remindersContext.value && mailbox.context.value !== 'trash' && mailbox.context.value !== 'drafts');
+  && ['inbox', 'saved', 'done', 'starred'].includes(mailbox.context.value)
+  && !(layoutMode.value === 'compact' && searchVisible.value));
 const activeTabShown = computed(() => splitNavShown.value
   && (mailbox.context.value === 'inbox' || (mailbox.context.value === 'saved' && !!savedTabVisible.value)));
 /** Cached Trash standing limits: one Ash line; the whole caveat is its title and hidden text. */
@@ -466,6 +467,7 @@ function showReminderConfirmation(receipt: Reminder, rescheduled: boolean): void
 }
 const remindersSupported = computed(() => !!props.client.reminders);
 function reminderPreferencesSaved(): void {
+  if (layoutMode.value === 'compact') return;
   void closeDrawer();
 }
 // Reminders is a list context: the rows, the tabs and the picker state live in
@@ -2083,7 +2085,7 @@ const searchSyntaxEditHint = computed(() =>
       v-if="layoutMode === 'compact'"
       ref="mobileTopBar"
       :reader="readerOpen"
-      :title="contextTitle"
+      :title="searchVisible ? 'Search' : contextTitle"
       :execute-action="executeAction"
       :open-destinations="openMobileDrawer"
       :menu-expanded="mobileNavOpen"
@@ -2129,7 +2131,7 @@ const searchSyntaxEditHint = computed(() =>
               aria-controls="reminder-tabpanel"
               :tabindex="reminders.destination.value === tab.id ? 0 : -1"
               @click="reminders.destination.value = tab.id"
-            ><span class="split-label">{{ tab.label }}</span> <span v-if="reminders.loadedOnce.value" class="split-count">{{ reminders.counts.value[tab.id] }}</span> <span v-if="reminders.loadedOnce.value && tab.id === 'pending' && reminders.attentionTotal.value > 0" class="split-count">· {{ reminders.attentionTotal.value }} {{ reminders.attentionTotal.value === 1 ? 'needs' : 'need' }} attention</span></button>
+            ><span class="split-label">{{ tab.label }}</span> <span v-if="reminders.loadedOnce.value && (layoutMode !== 'compact' || reminders.counts.value[tab.id] > 0)" class="split-count">{{ reminders.counts.value[tab.id] }}</span> <span v-if="reminders.loadedOnce.value && tab.id === 'pending' && reminders.attentionTotal.value > 0" class="split-count">· {{ reminders.attentionTotal.value }} {{ reminders.attentionTotal.value === 1 ? 'needs' : 'need' }} attention</span></button>
           </div>
           </Teleport>
           <!-- Coverage qualifies the counts, so it lives on them: the tabs'
@@ -2348,15 +2350,29 @@ const searchSyntaxEditHint = computed(() =>
             </ul>
             <p v-if="searchError" id="search-error" class="search-error" role="alert" data-test="search-error">{{ searchError }}</p>
             <label class="search-cache-toggle"><input v-model="cachedSearch" type="checkbox" /> Cached mail only</label>
-            <ul id="search-help" class="search-help" data-test="search-help">
-              <li><strong class="search-op">from:</strong><span class="search-gloss">from sender</span></li>
-              <li><strong class="search-op">to:</strong><span class="search-gloss">to recipient</span></li>
-              <li><strong class="search-op">subject:</strong><span class="search-gloss">in subject</span></li>
-              <li><strong class="search-op">"…"</strong><span class="search-gloss">exact phrase in straight quotes</span></li>
-              <li><strong class="search-op">AND / OR</strong><span class="search-gloss">combine terms — AND binds before OR</span></li>
-              <li><strong class="search-op">-term</strong><span class="search-gloss">exclude a term or field</span></li>
-            </ul>
-            <p class="search-unsupported">Not supported: dates, labels, Cc/Bcc, parentheses.</p>
+            <details v-if="layoutMode === 'compact'" class="search-syntax">
+              <summary>Search syntax</summary>
+              <ul id="search-help" class="search-help" data-test="search-help">
+                <li><strong class="search-op">from:</strong><span class="search-gloss">from sender</span></li>
+                <li><strong class="search-op">to:</strong><span class="search-gloss">to recipient</span></li>
+                <li><strong class="search-op">subject:</strong><span class="search-gloss">in subject</span></li>
+                <li><strong class="search-op">"…"</strong><span class="search-gloss">exact phrase in straight quotes</span></li>
+                <li><strong class="search-op">AND / OR</strong><span class="search-gloss">combine terms — AND binds before OR</span></li>
+                <li><strong class="search-op">-term</strong><span class="search-gloss">exclude a term or field</span></li>
+              </ul>
+              <p class="search-unsupported">Not supported: dates, labels, Cc/Bcc, parentheses.</p>
+            </details>
+            <template v-else>
+              <ul id="search-help" class="search-help" data-test="search-help">
+                <li><strong class="search-op">from:</strong><span class="search-gloss">from sender</span></li>
+                <li><strong class="search-op">to:</strong><span class="search-gloss">to recipient</span></li>
+                <li><strong class="search-op">subject:</strong><span class="search-gloss">in subject</span></li>
+                <li><strong class="search-op">"…"</strong><span class="search-gloss">exact phrase in straight quotes</span></li>
+                <li><strong class="search-op">AND / OR</strong><span class="search-gloss">combine terms — AND binds before OR</span></li>
+                <li><strong class="search-op">-term</strong><span class="search-gloss">exclude a term or field</span></li>
+              </ul>
+              <p class="search-unsupported">Not supported: dates, labels, Cc/Bcc, parentheses.</p>
+            </template>
           </form>
           <!-- Inline compose card: while a new-message editor is active and no
                reader is open, the card replaces the list in the central surface
@@ -2650,9 +2666,20 @@ const searchSyntaxEditHint = computed(() =>
           data-test="utility-drawer"
         >
           <header class="drawer-header">
+            <button
+              v-if="layoutMode === 'compact'"
+              type="button"
+              class="mobile-round-button page-back"
+              data-test="drawer-close"
+              aria-label="Back"
+              title="Back"
+              @click="closeDrawer()"
+            >
+              <HeaderGlyph name="back" />
+              <span class="visually-hidden">Back</span>
+            </button>
             <h2>{{ drawer === 'reminder-settings' && layoutMode === 'compact' ? 'Settings' : drawerHeadings[drawer] }}</h2>
-            <button v-if="layoutMode === 'compact'" type="button" class="drawer-close-icon" data-test="drawer-close" aria-label="Close" @click="closeDrawer()"><HeaderGlyph name="x" /><span class="visually-hidden">Close</span></button>
-            <button v-else type="button" data-test="drawer-close" @click="closeDrawer()">Close</button>
+            <button v-if="layoutMode !== 'compact'" type="button" data-test="drawer-close" @click="closeDrawer()">Close</button>
           </header>
           <p v-if="drawer === 'destinations' && accountId && providerSignInExpired" role="note" data-test="destinations-sign-in-expired">
             {{ providerSignInExpired.text }}<template v-if="accountActionsIdle"> <button type="button" class="inline-action" @click="accountNoticeAction('connect', 'drawer')">{{ providerSignInExpired.label }}</button></template>
@@ -2666,7 +2693,7 @@ const searchSyntaxEditHint = computed(() =>
           </p>
           <section v-if="drawer === 'reminder-settings' && remindersSupported" class="utility-panel" data-test="reminder-settings-dialog">
             <h3 class="drawer-section-title compact-settings-heading">Reminders</h3>
-            <ReminderSettings @close="closeDrawer" @saved="reminderPreferencesSaved" />
+            <ReminderSettings :compact="layoutMode === 'compact'" @close="closeDrawer" @saved="reminderPreferencesSaved" />
             <SwipeActionSettings @saved="swipePreferences = $event" />
           </section>
           <AccountPanel
@@ -2717,8 +2744,20 @@ const searchSyntaxEditHint = computed(() =>
           data-test="contact-disclosure-panel"
         >
           <header class="drawer-header">
+            <button
+              v-if="layoutMode === 'compact'"
+              type="button"
+              class="mobile-round-button page-back"
+              data-test="contact-disclosure-close"
+              aria-label="Back"
+              title="Back"
+              @click="closeContactDisclosure()"
+            >
+              <HeaderGlyph name="back" />
+              <span class="visually-hidden">Back</span>
+            </button>
             <h2>Contact</h2>
-            <button type="button" data-test="contact-disclosure-close" @click="closeContactDisclosure()">Close</button>
+            <button v-if="layoutMode !== 'compact'" type="button" data-test="contact-disclosure-close" @click="closeContactDisclosure()">Close</button>
           </header>
           <ContactPane :accountless="!accountId" :empty-list="contactListEmpty" :contact="contact" :loading="readerLoading" :context="contactContext" :recent="recentMail" @search-sender="senderSearch" @open-recent="openRecent" />
         </div>
@@ -2773,7 +2812,8 @@ const searchSyntaxEditHint = computed(() =>
       ref="mobileBottomBar"
       :inert="messageSheetOpen || mobileNavOpen || mobileEditorOpen || undefined"
       :reader="readerOpen"
-      :inbox-or-saved="mailbox.context.value === 'inbox' || mailbox.context.value === 'saved'"
+      :inbox-or-saved="(mailbox.context.value === 'inbox' || mailbox.context.value === 'saved') && !searchVisible"
+      :search="mailbox.context.value === 'search' || searchVisible"
       :execute-action="executeAction"
       :action-available="actionAvailable"
       :action-label="actionLabel"
