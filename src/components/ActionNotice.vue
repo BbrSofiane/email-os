@@ -87,7 +87,7 @@ const props = defineProps<{
   compact?: boolean;
 }>();
 
-const emit = defineEmits<{ undo: []; undoGroup: []; dismissGroup: [] }>();
+const emit = defineEmits<{ undo: []; undoGroup: []; dismissGroup: []; openActivity: [] }>();
 
 const isGroup = computed(() => !!props.notice?.group);
 
@@ -262,6 +262,18 @@ const showNotice = computed(() => {
   return group.counts.confirmed < group.count;
 });
 
+const showActivity = computed(() => {
+  if (!props.compact || !showNotice.value) return false;
+  const group = props.notice?.group;
+  if (!group) return statusTone.value === 'failed' || statusTone.value === 'unknown';
+  if (group.acceptanceUnknown) return false;
+  if (group.undone) {
+    const outcomes = group.undone.compensationOutcomes;
+    return outcomes.failed > 0 || outcomes.unknown > 0;
+  }
+  return groupUndoExpired.value && groupStatusTone.value !== 'pending' && groupStatusTone.value !== 'settled';
+});
+
 const undoExpired = computed(() => {
   const status = props.notice?.operation?.status;
   // Never after an undo: the original op row can stay `confirmed` while the
@@ -329,5 +341,8 @@ const truncatedSubject = computed(() => {
         <kbd data-test="action-notice-hint">Z</kbd>
       </span>
     </template>
+    <span v-if="showActivity" class="action-notice-undo">
+      <button type="button" data-test="action-notice-activity" @click="emit('openActivity')">Activity</button>
+    </span>
   </div>
 </template>

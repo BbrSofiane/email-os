@@ -106,6 +106,27 @@ describe('ActionNotice', () => {
     expect(wrapper.get('[data-test="action-notice-status"]').text()).toContain('see Activity');
   });
 
+  it('offers Activity for a compact single-action failure and emits when pressed', async () => {
+    const wrapper = mount(ActionNotice, {
+      props: { notice: { ...base, operation: operation('failed'), undoableUntil: null }, now: NOW, compact: true },
+    });
+    const button = wrapper.get('[data-test="action-notice-activity"]');
+    expect(button.text()).toBe('Activity');
+    await button.trigger('click');
+    expect(wrapper.emitted('openActivity')).toEqual([[]]);
+  });
+
+  it.each([
+    [true, 'confirmed'],
+    [true, 'applying'],
+    [false, 'failed'],
+  ] as const)('omits Activity when compact is %s and the single action is %s', (compact, status) => {
+    const wrapper = mount(ActionNotice, {
+      props: { notice: { ...base, operation: operation(status) }, now: NOW, compact },
+    });
+    expect(wrapper.find('[data-test="action-notice-activity"]').exists()).toBe(false);
+  });
+
   it('derives the expired recovery clause from the action (unarchive, read)', () => {
     const unarchive = mount(ActionNotice, {
       props: {
@@ -266,6 +287,37 @@ describe('ActionNotice group undo wording (review fixes)', () => {
       props: { notice: { ...groupBase, group }, now: NOW, compact: true },
     });
     expect(wrapper.get('[data-test="action-notice-recover-acceptance"]').text()).toBe('Check acceptance');
+  });
+
+  it.each([
+    ['failed', true],
+    ['unknown', true],
+    ['pending', false],
+  ] as const)('offers Activity for an expired compact group with a %s member: %s', (status, expected) => {
+    const group = {
+      ...groupBase.group,
+      undone: null,
+      counts: { ...groupBase.group.counts, confirmed: 1, [status]: 1 },
+    };
+    const wrapper = mount(ActionNotice, {
+      props: { notice: { ...groupBase, group }, now: NOW, compact: true },
+    });
+    expect(wrapper.get('[data-test="action-notice-expired"]').text()).toContain('recover individual members from Activity');
+    expect(wrapper.find('[data-test="action-notice-activity"]').exists()).toBe(expected);
+  });
+
+  it('offers Activity when a compact group restoration fails', () => {
+    const group = {
+      ...groupBase.group,
+      undone: {
+        ...groupBase.group.undone,
+        compensationOutcomes: { confirmed: 0, failed: 1, unknown: 0, pending: 0 },
+      },
+    };
+    const wrapper = mount(ActionNotice, {
+      props: { notice: { ...groupBase, group }, now: NOW, compact: true },
+    });
+    expect(wrapper.get('[data-test="action-notice-activity"]').text()).toBe('Activity');
   });
 
   it('shows restoring wording while a compensation is still pending', () => {
