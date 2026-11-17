@@ -1,13 +1,13 @@
 // @vitest-environment node
 /**
  * Review screenshots of the compact (phone) layout, taken from the browser
- * preview in real Chromium. Not an assertion suite and not part of
+ * preview in real Chromium. Also checks that the expired notice collapses. Not part of
  * `test:rendered`: it runs only when both EMAIL_OS_RENDERED_LAYOUT_CHROME and
  * EMAIL_OS_SCREENSHOT_DIR are set (`mise run screenshots:mobile`), and writes
  * one PNG per surface for a person to look at.
  */
 import { mkdirSync, rmSync } from 'node:fs';
-import { afterAll, beforeAll, describe, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PHONE_VIEWPORT, startRenderedHarness, type RenderedHarness } from '../rendered/chromium';
 
 const chromePath = process.env.EMAIL_OS_RENDERED_LAYOUT_CHROME ?? '';
@@ -137,6 +137,20 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await waitFor(`app.querySelector('[data-test="action-notice-undo"]')`, 'inbox Undo action');
     await click('[data-test="reader-close"]');
     await shot('inbox-undo-toast');
+    await waitFor(`app.querySelector('.list-dock .action-notice-status[data-status="settled"]')`, 'confirmed inbox action');
+    // Advance the notice clock past the browser fixture's ten-second Undo window.
+    await harness!.cdp.js(`(() => {
+      const now = Date.now;
+      Date.now = () => now() + 10_001;
+    })()`);
+    await waitFor(`app.querySelector('.list-dock .action-notice-empty')`, 'expired inbox notice');
+    const notice = await harness!.cdp.js<{ height: number; display: string }>(`(() => {
+      const notice = document.querySelector(${JSON.stringify(activeApp)}).querySelector('.list-dock .action-notice');
+      return { height: notice.getBoundingClientRect().height, display: getComputedStyle(notice).display };
+    })()`);
+    expect(notice.height).toBe(0);
+    expect(notice.display).not.toBe('none');
+    await shot('inbox-after-undo-window');
     await freshInbox();
 
     await harness!.cdp.js(`(() => {
