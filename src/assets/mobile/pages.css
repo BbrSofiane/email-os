@@ -283,10 +283,37 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-controls 
   overflow-wrap: anywhere;
 }
 
-.app[data-layout="compact"] .search-syntax > summary {
+.app[data-layout="compact"] .search-syntax > summary,
+.app[data-layout="compact"] .utility-drawer .settings-note summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-height: 48px;
+  list-style: none;
+  cursor: pointer;
   color: var(--text-secondary);
   font-size: var(--mobile-type-meta);
+}
+
+.app[data-layout="compact"] .search-syntax > summary::-webkit-details-marker,
+.app[data-layout="compact"] .utility-drawer .settings-note summary::-webkit-details-marker {
+  display: none;
+}
+
+.app[data-layout="compact"] .search-syntax > summary::before,
+.app[data-layout="compact"] .utility-drawer .settings-note summary::before {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  content: "";
+  transform: rotate(-45deg);
+}
+
+.app[data-layout="compact"] .search-syntax[open] > summary::before,
+.app[data-layout="compact"] .utility-drawer .settings-note[open] > summary::before {
+  transform: rotate(45deg);
 }
 
 .app[data-layout="compact"] .search-syntax:not([open]) > :not(summary) {
@@ -495,14 +522,6 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-controls 
 .app[data-layout="compact"] .utility-drawer .destination-reader button,
 .app[data-layout="compact"] .utility-drawer .reminder-settings button {
   min-height: 48px;
-}
-
-.app[data-layout="compact"] .utility-drawer .settings-note summary {
-  display: flex;
-  align-items: center;
-  min-height: 48px;
-  color: var(--text-secondary);
-  font-size: var(--mobile-type-meta);
 }
 
 .app[data-layout="compact"] .utility-drawer .swipe-settings fieldset {

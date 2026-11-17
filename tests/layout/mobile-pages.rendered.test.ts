@@ -240,6 +240,52 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
     expect(await harness!.cdp.js(`!document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="utility-drawer"]')`)).toBe(true);
   });
 
+  it('uses centred, inset aligned disclosure summaries in Search and Settings', async () => {
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-search"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
+    const search = await harness!.cdp.js<{ left: number; height: number; centerDelta: number; chevronWidth: string }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const summary = app.querySelector('.search-syntax > summary');
+      const box = summary.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(summary);
+      const textBox = range.getBoundingClientRect();
+      return {
+        left: box.left,
+        height: box.height,
+        centerDelta: Math.abs((textBox.top + textBox.bottom) / 2 - (box.top + box.bottom) / 2),
+        chevronWidth: getComputedStyle(summary, '::before').width,
+      };
+    })()`);
+
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-menu"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
+    await harness!.cdp.js(`[...document.querySelectorAll(${JSON.stringify(workspaceApp)} + ' .mobile-drawer-row')].find(row => row.textContent.trim() === 'Settings').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
+    const settings = await harness!.cdp.js<{ left: number; height: number; centerDelta: number; chevronWidth: string }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const summary = app.querySelector('[data-test="utility-drawer"] .settings-note summary');
+      const box = summary.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(summary);
+      const textBox = range.getBoundingClientRect();
+      return {
+        left: box.left,
+        height: box.height,
+        centerDelta: Math.abs((textBox.top + textBox.bottom) / 2 - (box.top + box.bottom) / 2),
+        chevronWidth: getComputedStyle(summary, '::before').width,
+      };
+    })()`);
+
+    for (const summary of [search, settings]) {
+      expect(Math.abs(summary.left - 20)).toBeLessThanOrEqual(1);
+      expect(summary.height).toBeGreaterThanOrEqual(48);
+      expect(summary.centerDelta).toBeLessThanOrEqual(2);
+      expect(summary.chevronWidth).toBe('8px');
+    }
+    expect(Math.abs(search.left - settings.left)).toBeLessThanOrEqual(1);
+  });
+
   it('keeps compact Account and Activity content inside the page with touch sized actions', async () => {
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-menu"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
