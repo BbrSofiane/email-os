@@ -155,6 +155,28 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await swipeCue('swipe-remind-armed', 'right', rowWidth * 0.6);
   }, 120_000);
 
+  it('captures a selection bar beside an action notice', async () => {
+    await viewport(PHONE_VIEWPORT.width, PHONE_VIEWPORT.height, true);
+    await freshInbox();
+    await click('[data-test="row-select-conv-01"]');
+    const row = await harness!.cdp.js<{ x: number; y: number; width: number }>(`(() => {
+      const rect = document.querySelector(${JSON.stringify(activeApp)}).querySelector('[data-test="conversation-row-conv-02"]').getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + 24, width: rect.width };
+    })()`);
+    await harness!.cdp.cmd('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: row.x, y: row.y, id: 1 }] });
+    await harness!.cdp.cmd('Input.dispatchTouchEvent', {
+      type: 'touchMove',
+      touchPoints: [{ x: row.x - row.width * 0.35, y: row.y, id: 1 }],
+    });
+    await harness!.cdp.cmd('Input.dispatchTouchEvent', {
+      type: 'touchMove',
+      touchPoints: [{ x: row.x - row.width * 0.6, y: row.y, id: 1 }],
+    });
+    await harness!.cdp.cmd('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await waitFor(`app.querySelector('[data-test="action-notice"]') && app.querySelector('[data-test="selection-count"]')?.textContent.includes('1 selected')`, 'selection and action notice');
+    await shot('selection-with-notice');
+  }, 120_000);
+
   it('captures the reader', async () => {
     await viewport(PHONE_VIEWPORT.width, PHONE_VIEWPORT.height, true);
     await freshInbox();

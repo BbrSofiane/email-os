@@ -246,6 +246,70 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     expect(after).toBeGreaterThan(before);
   });
 
+  it('stacks the notice above selection with the selection pill directly over navigation', async () => {
+    await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
+      width: 412,
+      height: 915,
+      screenWidth: 412,
+      screenHeight: 915,
+      deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor,
+      mobile: true,
+    });
+    await harness!.cdp.cmd('Page.navigate', { url: harness!.appUrl });
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-mail"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
+
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="row-select-conv-01"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
+    const secondRowWidth = await harness!.cdp.js<number>(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="conversation-row-conv-02"]').getBoundingClientRect().width`);
+    await swipeRow('[data-test="conversation-row-conv-02"]', -secondRowWidth * 0.6);
+    expect(await harness!.cdp.js(`!!document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="action-notice"]')`)).toBe(true);
+
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="row-select-conv-03"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
+
+    const geometry = await harness!.cdp.js<{
+      selectionCount: string;
+      notice: { top: number; bottom: number; left: number; right: number };
+      selection: { top: number; bottom: number; left: number; right: number };
+      navigation: { top: number; bottom: number; left: number; right: number };
+      contextHeight: number;
+      contextDisplay: string;
+      scrollWidth: number;
+      viewportWidth: number;
+      dockChildrenInside: boolean;
+    }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const box = selector => {
+        const rect = app.querySelector(selector).getBoundingClientRect();
+        return { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right };
+      };
+      const dock = app.querySelector('[data-test="list-dock"]');
+      return {
+        selectionCount: app.querySelector('[data-test="selection-count"]').textContent.trim(),
+        notice: box('[data-test="action-notice"]'),
+        selection: box('[data-test="selection-bar"]'),
+        navigation: box('.mobile-navigation'),
+        contextHeight: app.querySelector('.mobile-context-slot').getBoundingClientRect().height,
+        contextDisplay: getComputedStyle(app.querySelector('.mobile-context-slot')).display,
+        scrollWidth: document.scrollingElement.scrollWidth,
+        viewportWidth: window.innerWidth,
+        dockChildrenInside: [...dock.children].every(child => {
+          const rect = child.getBoundingClientRect();
+          return rect.left >= 0 && rect.right <= window.innerWidth;
+        }),
+      };
+    })()`);
+    expect(geometry.selectionCount).toBe('2 selected');
+    expect(geometry.notice.bottom).toBeLessThanOrEqual(geometry.selection.top);
+    expect(geometry.selection.bottom).toBeLessThanOrEqual(geometry.navigation.top);
+    expect(geometry.contextHeight).toBe(0);
+    expect(geometry.contextDisplay).toBe('none');
+    expect(geometry.scrollWidth).toBe(geometry.viewportWidth);
+    expect(geometry.dockChildrenInside).toBe(true);
+  });
+
   it.each([
     { width: 412, height: 915 },
     { width: 360, height: 800 },
@@ -468,7 +532,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       primaryBackground: string;
       barBackground: string;
       buttonLayouts: Array<{ left: number; right: number; top: number; bottom: number; width: number; height: number; scrollWidth: number; clientWidth: number }>;
-      navigationPill: { left: number; right: number };
+      navigationPill: { top: number; left: number; right: number };
       bottomRegion: { top: number; left: number; right: number };
       context: { top: number; bottom: number; visible: boolean };
       buttons: Array<{ id: string | null; width: number; height: number }>;
@@ -522,7 +586,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
         primaryBackground: getComputedStyle(primary).backgroundColor,
         barBackground: getComputedStyle(bar).backgroundColor,
         buttonLayouts: [...bar.querySelectorAll('button')].map(button => ({ ...box(button), scrollWidth: button.scrollWidth, clientWidth: button.clientWidth })),
-        navigationPill: { left: box(navigation).left, right: box(navigation).right },
+        navigationPill: { top: box(navigation).top, left: box(navigation).left, right: box(navigation).right },
         bottomRegion: box(bottom),
         context: { ...box(context), visible: context.getClientRects().length > 0 && getComputedStyle(context).display !== 'none' },
         buttons: [...bar.querySelectorAll('button')].map(button => ({ id: button.getAttribute('data-test'), ...box(button) })),
@@ -555,9 +619,9 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     expect(Math.abs(measure.bar.right - measure.navigationPill.right)).toBeLessThanOrEqual(1);
     expect(measure.bar.left).toBeGreaterThanOrEqual(measure.bottomRegion.left - 1);
     expect(measure.bar.right).toBeLessThanOrEqual(measure.bottomRegion.right + 1);
-    expect(measure.context.visible).toBe(true);
-    expect(measure.context.top - measure.bar.bottom).toBeGreaterThanOrEqual(8);
-    expect(measure.context.top - measure.bar.bottom).toBeLessThanOrEqual(16);
+    expect(measure.context.visible).toBe(false);
+    expect(measure.context.bottom - measure.context.top).toBe(0);
+    expect(measure.bar.bottom).toBeLessThanOrEqual(measure.navigationPill.top);
     expect(measure.buttons.find(button => button.id === 'selection-clear')?.height).toBeGreaterThanOrEqual(48);
     expect(measure.buttons.filter(button => button.id?.startsWith('selection-mark-') || button.id === 'selection-select-all').every(button => button.width >= 48 && button.height >= 48)).toBe(true);
     expect(measure.buttons.filter(button => button.id === 'selection-archive' || button.id === 'selection-unarchive').every(button => button.height >= 40)).toBe(true);

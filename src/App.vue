@@ -373,6 +373,7 @@ watch(drawer, (next) => { if (next) editingSplit.value = false; });
 const splitNavShown = computed(() => accountReady.value && !!accountId.value && !readerOpen.value && !drawer.value);
 const inboxSplitsShown = computed(() => splitNavShown.value
   && ['inbox', 'saved', 'done', 'starred'].includes(mailbox.context.value)
+  && !(layoutMode.value === 'compact' && selectedCount.value > 0)
   && !(layoutMode.value === 'compact' && searchVisible.value));
 const activeTabShown = computed(() => splitNavShown.value
   && (mailbox.context.value === 'inbox' || (mailbox.context.value === 'saved' && !!savedTabVisible.value)));
