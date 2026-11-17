@@ -316,6 +316,7 @@ function swipeFor(row: ConversationSummaryLike): ReturnType<typeof useSwipeActio
           else emit('archive', row.ref);
         }
       },
+      (side) => (side === 'right' ? props.swipeRight ?? 'remind' : props.swipeLeft ?? 'done') === 'done',
     );
     swipes.set(key, swipe);
   }
@@ -343,8 +344,9 @@ function onRowPointerDown(event: PointerEvent, row: ConversationSummaryLike): vo
 
 function onRowPointerMove(event: PointerEvent, row: ConversationSummaryLike): void {
   if (!props.compact || props.readOnly) return;
-  longPressFor(row).pointermove(event);
   swipeFor(row).pointermove(event);
+  if (swipeFor(row).dragging.value) longPressFor(row).cancel();
+  else longPressFor(row).pointermove(event);
 }
 
 function onRowPointerUp(event: PointerEvent, row: ConversationSummaryLike): void {
@@ -698,12 +700,16 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
           'read-disclosed': readStateDisclosed(),
           'is-read': item.row.isRead === true,
           'has-actions': hasRowActions(),
+          swiping: swipeFor(item.row).dragging.value || swipeFor(item.row).resetting.value,
         }"
         :aria-current="isFocused(item.row) ? 'true' : undefined"
         :tabindex="tabIndexFor(item.row, item.index)"
         :data-test="`conversation-row-${item.row.ref.conversationId}`"
         :ref="(el) => setRowRef(el, rowKey(item.row.ref))"
-        :style="compact ? { '--swipe-offset': swipeFor(item.row).offset.value + 'px' } : undefined"
+        :style="compact ? {
+          '--swipe-offset': swipeFor(item.row).offset.value + 'px',
+          '--swipe-distance': Math.abs(swipeFor(item.row).offset.value) + 'px',
+        } : undefined"
         @pointerdown="onRowPointerDown($event, item.row)"
         @pointermove="onRowPointerMove($event, item.row)"
         @pointerup="onRowPointerUp($event, item.row)"
@@ -717,7 +723,14 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
         <span
           v-if="compact && !readOnly && swipeFor(item.row).revealed.value && (swipeFor(item.row).revealed.value === 'right' ? swipeRight ?? 'remind' : swipeLeft ?? 'done') !== 'none'"
           class="row-swipe-underlay"
-          :class="(swipeFor(item.row).revealed.value === 'right' ? props.swipeRight ?? 'remind' : props.swipeLeft ?? 'done')"
+          :class="[
+            swipeFor(item.row).revealed.value === 'right' ? props.swipeRight ?? 'remind' : props.swipeLeft ?? 'done',
+            {
+              armed: swipeFor(item.row).armed.value,
+              'from-end': swipeFor(item.row).revealed.value === 'left',
+              'from-start': swipeFor(item.row).revealed.value === 'right',
+            },
+          ]"
           aria-hidden="true"
         >
           <span class="row-swipe-icon"><RowGlyph :name="swipeFor(item.row).revealed.value === 'right' ? 'reminder' : context === 'done' ? 'restore' : 'archive'" /></span>

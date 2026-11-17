@@ -249,6 +249,178 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
   it.each([
     { width: 412, height: 915 },
     { width: 360, height: 800 },
+  ])('slides the whole opaque row and exposes the swipe action at $width × $height', async ({ width, height }) => {
+    await harness!.cdp.cmd('Page.navigate', { url: harness!.appUrl });
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
+    await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
+      width,
+      height,
+      screenWidth: width,
+      screenHeight: height,
+      deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor,
+      mobile: true,
+    });
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-mail"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
+
+    const resting = await harness!.cdp.js<{
+      left: number;
+      right: number;
+      width: number;
+      y: number;
+      senderLeft: number;
+      subjectLeft: number;
+      previewLeft: number;
+    }>(`(() => {
+      const row = document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="conversation-row-conv-01"]');
+      const rect = row.getBoundingClientRect();
+      return {
+        left: rect.left,
+        right: rect.right,
+        width: rect.width,
+        y: rect.top + 24,
+        senderLeft: row.querySelector('.row-sender').getBoundingClientRect().left,
+        subjectLeft: row.querySelector('.row-subject').getBoundingClientRect().left,
+        previewLeft: row.querySelector('.row-preview').getBoundingClientRect().left,
+      };
+    })()`);
+    const startX = resting.left + resting.width / 2;
+    const measureSwipe = async () => harness!.cdp.js<{
+      row: { left: number; right: number };
+      sender: { left: number; right: number };
+      subject: { left: number; right: number; top: number; bottom: number };
+      preview: { left: number; right: number; top: number; bottom: number };
+      cue: { left: number; right: number; top: number; bottom: number } | null;
+      cueClass: string;
+      label: { left: number; right: number; top: number; bottom: number } | null;
+      transition: string;
+      scrollWidth: number;
+      viewportWidth: number;
+    }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const row = app.querySelector('[data-test="conversation-row-conv-01"]');
+      const cue = row.querySelector('.row-swipe-underlay');
+      const box = element => {
+        const rect = element.getBoundingClientRect();
+        return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+      };
+      const rect = element => element ? box(element) : null;
+      return {
+        row: box(row),
+        sender: box(row.querySelector('.row-sender')),
+        subject: box(row.querySelector('.row-subject')),
+        preview: box(row.querySelector('.row-preview')),
+        cue: rect(cue),
+        cueClass: cue?.className ?? '',
+        label: rect(cue?.querySelector(':scope > span:last-child')),
+        transition: getComputedStyle(row).transitionDuration,
+        scrollWidth: document.scrollingElement.scrollWidth,
+        viewportWidth: window.innerWidth,
+      };
+    })()`);
+    const releaseAtRest = async () => {
+      await touch('touchMove', startX, resting.y);
+      await harness!.cdp.js('new Promise(resolve => requestAnimationFrame(resolve))');
+      await touch('touchEnd');
+      await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 200))');
+    };
+
+    await touch('touchStart', startX, resting.y);
+    await touch('touchMove', startX - 80, resting.y);
+    await harness!.cdp.js('new Promise(resolve => requestAnimationFrame(resolve))');
+    const leftReveal = await measureSwipe();
+    expect(leftReveal.transition).toBe('0s');
+    expect(leftReveal.row.left).toBeCloseTo(resting.left - 80, 0);
+    expect(leftReveal.sender.left).toBeCloseTo(resting.senderLeft - 80, 0);
+    expect(leftReveal.subject.left).toBeCloseTo(resting.subjectLeft - 80, 0);
+    expect(leftReveal.preview.left).toBeCloseTo(resting.previewLeft - 80, 0);
+    expect(leftReveal.cue?.left).toBeCloseTo(resting.right - 80, 0);
+    expect(leftReveal.cue?.right).toBeCloseTo(resting.right, 0);
+    expect(leftReveal.cueClass.split(' ')).toContain('from-end');
+    expect(leftReveal.cueClass.split(' ')).toContain('done');
+    expect(leftReveal.cue).not.toBeNull();
+    expect(leftReveal.cue!.right <= leftReveal.subject.left + 1 || leftReveal.cue!.left >= leftReveal.subject.right - 1).toBe(true);
+    expect(leftReveal.cue!.right <= leftReveal.preview.left + 1 || leftReveal.cue!.left >= leftReveal.preview.right - 1).toBe(true);
+    expect(leftReveal.scrollWidth).toBe(leftReveal.viewportWidth);
+
+    await releaseAtRest();
+    const leftRestored = await harness!.cdp.js<number>(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="conversation-row-conv-01"] .row-sender').getBoundingClientRect().left`);
+    expect(leftRestored).toBeCloseTo(resting.senderLeft, 0);
+
+    await touch('touchStart', startX, resting.y);
+    await touch('touchMove', startX - resting.width * 0.3, resting.y);
+    await harness!.cdp.js('new Promise(resolve => requestAnimationFrame(resolve))');
+    await touch('touchMove', startX - resting.width * 0.6, resting.y);
+    await harness!.cdp.js('new Promise(resolve => requestAnimationFrame(resolve))');
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
+    const armedDone = await harness!.cdp.js<{ classes: string; background: string; cue: { left: number; right: number; top: number; bottom: number }; label: { left: number; right: number; top: number; bottom: number } }>(`(() => {
+      const cue = document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('.row-swipe-underlay');
+      const label = cue.querySelector(':scope > span:last-child');
+      const cueRect = cue.getBoundingClientRect();
+      const labelRect = label.getBoundingClientRect();
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+      context.fillStyle = getComputedStyle(cue).backgroundColor;
+      context.fillRect(0, 0, 1, 1);
+      const [red, green, blue] = context.getImageData(0, 0, 1, 1).data;
+      return {
+        classes: cue.className,
+        background: 'rgb(' + red + ', ' + green + ', ' + blue + ')',
+        cue: { left: cueRect.left, right: cueRect.right, top: cueRect.top, bottom: cueRect.bottom },
+        label: { left: labelRect.left, right: labelRect.right, top: labelRect.top, bottom: labelRect.bottom },
+      };
+    })()`);
+    expect(armedDone.classes.split(' ')).toContain('armed');
+    expect(armedDone.background).toBe('rgb(187, 165, 237)');
+    expect(armedDone.label.left).toBeGreaterThanOrEqual(armedDone.cue.left);
+    expect(armedDone.label.right).toBeLessThanOrEqual(armedDone.cue.right);
+    expect(armedDone.label.top).toBeGreaterThanOrEqual(armedDone.cue.top);
+    expect(armedDone.label.bottom).toBeLessThanOrEqual(armedDone.cue.bottom);
+    await releaseAtRest();
+
+    await touch('touchStart', startX, resting.y);
+    await touch('touchMove', startX + 80, resting.y);
+    await harness!.cdp.js('new Promise(resolve => requestAnimationFrame(resolve))');
+    const rightReveal = await measureSwipe();
+    expect(rightReveal.transition).toBe('0s');
+    expect(rightReveal.row.left).toBeCloseTo(resting.left + 80, 0);
+    expect(rightReveal.sender.left).toBeCloseTo(resting.senderLeft + 80, 0);
+    expect(rightReveal.subject.left).toBeCloseTo(resting.subjectLeft + 80, 0);
+    expect(rightReveal.preview.left).toBeCloseTo(resting.previewLeft + 80, 0);
+    expect(rightReveal.cue?.left).toBeCloseTo(resting.left, 0);
+    expect(rightReveal.cue?.right).toBeCloseTo(resting.left + 80, 0);
+    expect(rightReveal.cueClass.split(' ')).toContain('from-start');
+    expect(rightReveal.cueClass.split(' ')).toContain('remind');
+    expect(rightReveal.cue).not.toBeNull();
+    expect(rightReveal.cue!.right <= rightReveal.subject.left + 1 || rightReveal.cue!.left >= rightReveal.subject.right - 1).toBe(true);
+    expect(rightReveal.cue!.right <= rightReveal.preview.left + 1 || rightReveal.cue!.left >= rightReveal.preview.right - 1).toBe(true);
+    expect(rightReveal.scrollWidth).toBe(rightReveal.viewportWidth);
+    await releaseAtRest();
+    const rightRestored = await harness!.cdp.js<number>(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="conversation-row-conv-01"] .row-sender').getBoundingClientRect().left`);
+    expect(rightRestored).toBeCloseTo(resting.senderLeft, 0);
+
+    await touch('touchStart', startX, resting.y);
+    await touch('touchMove', startX + resting.width * 0.6, resting.y);
+    await harness!.cdp.js('new Promise(resolve => requestAnimationFrame(resolve))');
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
+    const armedRemind = await harness!.cdp.js<{ classes: string; labelInside: boolean }>(`(() => {
+      const cue = document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('.row-swipe-underlay');
+      const cueRect = cue.getBoundingClientRect();
+      const labelRect = cue.querySelector(':scope > span:last-child').getBoundingClientRect();
+      return {
+        classes: cue.className,
+        labelInside: labelRect.left >= cueRect.left && labelRect.right <= cueRect.right && labelRect.top >= cueRect.top && labelRect.bottom <= cueRect.bottom,
+      };
+    })()`);
+    expect(armedRemind.classes.split(' ')).toContain('armed');
+    expect(armedRemind.classes.split(' ')).toContain('remind');
+    expect(armedRemind.labelInside).toBe(true);
+    await releaseAtRest();
+  });
+
+  it.each([
+    { width: 412, height: 915 },
+    { width: 360, height: 800 },
   ])('selects on long press and keeps the selection pill clear at $width × $height', async ({ width, height }) => {
     await harness!.cdp.cmd('Page.navigate', { url: harness!.appUrl });
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
@@ -290,9 +462,17 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
         unreadVisible: boolean;
       }>;
       bar: { top: number; bottom: number; left: number; right: number };
+      barHeight: number;
+      clearButton: { width: number; height: number; first: boolean };
+      scope: { scrollWidth: number; clientWidth: number; visibleText: string; loadedDisplay: string };
+      primaryBackground: string;
+      barBackground: string;
+      buttonLayouts: Array<{ left: number; right: number; top: number; bottom: number; width: number; height: number; scrollWidth: number; clientWidth: number }>;
+      navigationPill: { left: number; right: number };
       bottomRegion: { top: number; left: number; right: number };
       context: { top: number; bottom: number; visible: boolean };
-      buttons: Array<{ width: number; height: number }>;
+      buttons: Array<{ id: string | null; width: number; height: number }>;
+      rowBackgrounds: string[];
     }>(`(() => {
       const app = document.querySelector(${JSON.stringify(workspaceApp)});
       const box = element => {
@@ -300,8 +480,13 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
         return { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, width: rect.width, height: rect.height };
       };
       const bar = app.querySelector('[data-test="selection-bar"]');
+      const barBox = box(bar);
       const checkbox = app.querySelector('[data-test="row-select-conv-01"]');
       const bottom = app.querySelector('[data-test="mobile-bottom-region"]');
+      const navigation = app.querySelector('.mobile-navigation');
+      const clear = bar.querySelector('[data-test="selection-clear"]');
+      const scope = bar.querySelector('[data-test="selection-scope"]');
+      const primary = bar.querySelector('.selection-row-primary > button:not([data-test="selection-clear"])');
       const context = app.querySelector('.mobile-context-slot');
       const selectedRows = [...app.querySelectorAll('.inbox-row')].slice(0, 3).map(row => {
         const rowBox = element => {
@@ -325,13 +510,28 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
         selected: app.querySelector('[data-test="selection-count"]')?.textContent.includes('1 selected') ?? false,
         checkbox: { ...box(checkbox), opacity: getComputedStyle(checkbox).opacity },
         selectedRows,
-        bar: box(bar),
+        bar: barBox,
+        barHeight: barBox.bottom - barBox.top,
+        clearButton: { ...box(clear), first: bar.querySelector('button') === clear },
+        scope: {
+          scrollWidth: scope.scrollWidth,
+          clientWidth: scope.clientWidth,
+          visibleText: scope.querySelector('[data-test="selection-count"]').textContent.trim(),
+          loadedDisplay: getComputedStyle(scope.querySelector('.selection-loaded-scope')).display,
+        },
+        primaryBackground: getComputedStyle(primary).backgroundColor,
+        barBackground: getComputedStyle(bar).backgroundColor,
+        buttonLayouts: [...bar.querySelectorAll('button')].map(button => ({ ...box(button), scrollWidth: button.scrollWidth, clientWidth: button.clientWidth })),
+        navigationPill: { left: box(navigation).left, right: box(navigation).right },
         bottomRegion: box(bottom),
         context: { ...box(context), visible: context.getClientRects().length > 0 && getComputedStyle(context).display !== 'none' },
-        buttons: [...bar.querySelectorAll('button')].map(box),
+        buttons: [...bar.querySelectorAll('button')].map(button => ({ id: button.getAttribute('data-test'), ...box(button) })),
+        rowBackgrounds: [...app.querySelectorAll('.inbox-row')].slice(0, 2).map(row => getComputedStyle(row).backgroundColor),
       };
     })()`);
     expect(measure.selected).toBe(true);
+    expect(measure.rowBackgrounds[0]).toBe('rgb(71, 70, 68)');
+    expect(measure.rowBackgrounds[1]).not.toBe(measure.rowBackgrounds[0]);
     expect(await harness!.cdp.js('window.getSelection().toString()')).toBe('');
     expect(measure.checkbox.width).toBeGreaterThanOrEqual(48);
     expect(measure.checkbox.height).toBeGreaterThanOrEqual(48);
@@ -343,12 +543,34 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       expect(row.unreadVisible).toBe(false);
     }
     expect(measure.bar.top).toBeGreaterThanOrEqual(0);
+    expect(measure.barHeight).toBeLessThanOrEqual(112);
+    expect(measure.clearButton.first).toBe(true);
+    expect(measure.clearButton.width).toBeGreaterThanOrEqual(48);
+    expect(measure.clearButton.height).toBeGreaterThanOrEqual(48);
+    expect(measure.scope.scrollWidth).toBeLessThanOrEqual(measure.scope.clientWidth);
+    expect(measure.scope.visibleText).toBe('1 selected');
+    expect(measure.scope.loadedDisplay).toBe('none');
+    expect(measure.primaryBackground).not.toBe(measure.barBackground);
+    expect(Math.abs(measure.bar.left - measure.navigationPill.left)).toBeLessThanOrEqual(1);
+    expect(Math.abs(measure.bar.right - measure.navigationPill.right)).toBeLessThanOrEqual(1);
     expect(measure.bar.left).toBeGreaterThanOrEqual(measure.bottomRegion.left - 1);
     expect(measure.bar.right).toBeLessThanOrEqual(measure.bottomRegion.right + 1);
     expect(measure.context.visible).toBe(true);
     expect(measure.context.top - measure.bar.bottom).toBeGreaterThanOrEqual(8);
     expect(measure.context.top - measure.bar.bottom).toBeLessThanOrEqual(16);
-    expect(measure.buttons.every(button => button.width >= 48 && button.height >= 48)).toBe(true);
+    expect(measure.buttons.find(button => button.id === 'selection-clear')?.height).toBeGreaterThanOrEqual(48);
+    expect(measure.buttons.filter(button => button.id?.startsWith('selection-mark-') || button.id === 'selection-select-all').every(button => button.width >= 48 && button.height >= 48)).toBe(true);
+    expect(measure.buttons.filter(button => button.id === 'selection-archive' || button.id === 'selection-unarchive').every(button => button.height >= 40)).toBe(true);
+    expect(measure.buttonLayouts.every(button => button.left >= measure.bar.left && button.right <= measure.bar.right && button.top >= measure.bar.top && button.bottom <= measure.bar.bottom)).toBe(true);
+    expect(measure.buttonLayouts.every(button => button.scrollWidth <= button.clientWidth)).toBe(true);
+    for (let index = 0; index < measure.buttonLayouts.length; index += 1) {
+      for (let other = index + 1; other < measure.buttonLayouts.length; other += 1) {
+        const left = measure.buttonLayouts[index]!;
+        const right = measure.buttonLayouts[other]!;
+        const overlaps = left.left < right.right && left.right > right.left && left.top < right.bottom && left.bottom > right.top;
+        expect(overlaps).toBe(false);
+      }
+    }
 
     const second = await harness!.cdp.js<{ x: number; y: number }>(`(() => {
       const row = document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="conversation-row-conv-02"]');
@@ -362,5 +584,10 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="selection-clear"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 120))');
     expect(await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="selection-bar"]') === null`)).toBe(true);
+    const clearedBackgrounds = await harness!.cdp.js<string[]>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      return [...app.querySelectorAll('.inbox-row')].slice(0, 2).map(row => getComputedStyle(row).backgroundColor);
+    })()`);
+    expect(clearedBackgrounds[0]).toBe(clearedBackgrounds[1]);
   });
 });

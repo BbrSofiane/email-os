@@ -16,6 +16,12 @@
   background: var(--surface-raised);
   animation: mobile-sheet-up 180ms ease-out;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .app[data-layout="compact"] .mobile-action-sheet {
+    animation: none;
+  }
+}
 .app[data-layout="compact"] .mobile-action-sheet-title {
   margin: 0 0 12px;
   overflow: hidden;
