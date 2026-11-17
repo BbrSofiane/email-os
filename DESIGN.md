@@ -541,13 +541,15 @@ Selected rows use `--focus-fill` with a checked gutter box and no edge bar. The 
 
 ### Compact reader, notices and compose
 
-The compact reader subject is 1.375rem/600 with 8px above, 12px below, and 20px/16px horizontal insets. Reader metadata uses `--mobile-type-meta`. Messages use 48px minimum collapsed rows; expanded body text is 1rem/1.5, monospace 0.875rem. The action pill uses evenly spaced 48px targets with 24px glyphs. The reply context pill has a 48px button; the action sheet uses 52px rows, 24px glyphs, 16px top corners and 16px safe-area-aware bottom padding.
+The compact reader subject is 1.375rem/600 with 8px above, 12px below, and 20px/16px horizontal insets. Reader metadata uses `--mobile-type-meta`. Messages use 48px minimum collapsed rows; expanded body text is 1rem/1.5, monospace 0.875rem. The reader toolbar uses 48px-high targets with 24px glyphs, and its accent pill reads “Done” for Inbox conversations and “Not done” for conversations outside Inbox. The reply context pill has a 48px button; the action sheet uses 52px rows, 24px glyphs, 16px top corners and 16px safe-area-aware bottom padding.
 
 Draft and reminder context rows are at least 64px high; context actions and form controls are at least 48px high. Utility pages cover the compact app with a 56px header and 20px/16px content insets. Reminder and attachment pickers use bottom sheets with 16px top corners and safe-area bottom padding. The command overlay sits 16px below the top edge and is at most 70% of the app height. Swipe preferences default to Remind right and Mark done left; None resists the gesture without running an action.
 
 ### Compact destinations and pushed pages
 
 Inbox, Drafts, Reminders, Search and the other mail lists are destinations: their top bar shows the menu button. Settings, Activity, Account, Provider mail and Contact are pushed pages that cover the app and show Back in the menu button's position. The Back control is 48×48px inside the 56px top bar; its page title matches the destination title in size, weight and left edge. Inbox split tabs remain available in Inbox, Done and Starred, and the custom saved split remains available from those lists. Reminders uses membership tabs. Search, Drafts, Trash and other contexts leave the context pill empty.
+
+Contact has wrapping recent-mail rows at least 48px high, visible 48×48px copy buttons beside the identity fields, and a 48px “Find mail from sender” button below the identity fields.
 
 ### Compact Settings, Search and Reminders
 

@@ -259,14 +259,17 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
     expect(notice.visibleKeycaps).toBe(0);
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(appSelector)}).querySelector('[data-test="action-notice-undo"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 400))');
-    const restored = await harness!.cdp.js<{ action: string; noticeHeight: number }>(`(() => {
+    const restored = await harness!.cdp.js<{ action: string; label: string; noticeHeight: number }>(`(() => {
       const app = document.querySelector(${JSON.stringify(appSelector)});
+      const done = app.querySelector('[data-test="reader-archive-toggle"]');
       return {
-        action: app.querySelector('[data-test="reader-archive-toggle"]').textContent.trim(),
+        action: done.getAttribute('aria-label'),
+        label: done.querySelector('.reader-archive-label').textContent.trim(),
         noticeHeight: app.querySelector('[data-test="action-notice"]').getBoundingClientRect().height,
       };
     })()`);
     expect(restored.action).toBe('Mark done (E)');
+    expect(restored.label).toBe('Done');
     expect(restored.noticeHeight).toBe(0);
   });
 });
