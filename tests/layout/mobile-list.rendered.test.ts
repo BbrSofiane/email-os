@@ -305,7 +305,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
         }),
       };
     })()`);
-    expect(geometry.selectionCount).toBe('2 of 17 loaded');
+    expect(geometry.selectionCount).toBe('2 of 17 selected');
     expect(geometry.notice.bottom).toBeLessThanOrEqual(geometry.selection.top);
     expect(geometry.selection.bottom).toBeLessThanOrEqual(geometry.navigation.top);
     expect(geometry.contextHeight).toBe(0);
@@ -589,7 +589,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
         };
       });
       return {
-        selected: app.querySelector('[data-test="selection-count"]')?.textContent.includes('1 of 18 loaded') ?? false,
+        selected: app.querySelector('[data-test="selection-count"]')?.textContent.includes('1 of 18 selected') ?? false,
         checkbox: { ...box(checkbox), opacity: getComputedStyle(checkbox).opacity },
         selectedRows,
         bar: barBox,
@@ -633,7 +633,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     expect(measure.clearButton.width).toBeGreaterThanOrEqual(48);
     expect(measure.clearButton.height).toBeGreaterThanOrEqual(48);
     expect(measure.scope.scrollWidth).toBeLessThanOrEqual(measure.scope.clientWidth);
-    expect(measure.scope.visibleText).toBe('1 of 18 loaded');
+    expect(measure.scope.visibleText).toBe('1 of 18 selected');
     expect(measure.primaryBackground).not.toBe(measure.barBackground);
     expect(Math.abs(measure.bar.left - measure.navigationPill.left)).toBeLessThanOrEqual(1);
     expect(Math.abs(measure.bar.right - measure.navigationPill.right)).toBeLessThanOrEqual(1);
@@ -664,7 +664,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     await touch('touchStart', second.x, second.y);
     await touch('touchEnd');
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 120))');
-    expect(await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="selection-count"]').textContent`)).toContain('2 of 18 loaded');
+    expect(await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="selection-count"]').textContent`)).toContain('2 of 18 selected');
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="selection-clear"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 120))');
     expect(await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="selection-bar"]') === null`)).toBe(true);

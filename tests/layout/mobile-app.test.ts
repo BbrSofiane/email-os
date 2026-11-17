@@ -152,7 +152,7 @@ describe('App compact and regular frame', () => {
 
       await checkbox.setValue(true);
       expect(wrapper.get('.inbox-list').classes()).toContain('selecting');
-      expect(wrapper.get('[data-test="selection-count"]').text()).toBe('1 of 18 loaded');
+      expect(wrapper.get('[data-test="selection-count"]').text()).toBe('1 of 18 selected');
     } finally {
       wrapper.unmount();
       style.remove();

@@ -58,7 +58,7 @@ const scopeCaveat = computed(
           <span class="visually-hidden">Clear selection</span>
         </button>
         <p class="selection-scope" data-test="selection-scope" :title="scopeCaveat">
-          <strong v-if="count > 0" data-test="selection-count">{{ count }} of {{ loadedCount }} loaded</strong>
+          <strong v-if="count > 0" data-test="selection-count">{{ count }} of {{ loadedCount }} selected</strong>
           <strong v-else>Select conversations</strong>
           <span class="visually-hidden" data-test="selection-scope-caveat">{{ scopeCaveat }}</span>
         </p>

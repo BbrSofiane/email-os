@@ -39,14 +39,14 @@ describe('SelectionBar compact structure', () => {
 
   it('states loaded scope and disables Select loaded once every row is selected', async () => {
     const wrapper = mount(SelectionBar, { props: { ...baseProps, compact: true, count: 1, loadedCount: 18 } });
-    expect(wrapper.get('[data-test="selection-count"]').text()).toBe('1 of 18 loaded');
+    expect(wrapper.get('[data-test="selection-count"]').text()).toBe('1 of 18 selected');
     expect(wrapper.get('[data-test="selection-scope-caveat"]').text()).toContain('unseen pages are not included');
     expect(wrapper.get('[data-test="selection-select-all"]').attributes('aria-label'))
       .toBe('Select all 18 loaded conversations');
     expect(wrapper.get('[data-test="selection-select-all"]').attributes('disabled')).toBeUndefined();
 
     await wrapper.setProps({ count: 18 });
-    expect(wrapper.get('[data-test="selection-count"]').text()).toBe('18 of 18 loaded');
+    expect(wrapper.get('[data-test="selection-count"]').text()).toBe('18 of 18 selected');
     expect(wrapper.get('[data-test="selection-select-all"]').attributes('disabled')).toBeDefined();
   });
 
