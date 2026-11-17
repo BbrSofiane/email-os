@@ -63,7 +63,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       timeText: string;
       row: DOMRectReadOnly;
       actions: string;
-      checkbox: string;
+      checkbox: { display: string; width: number };
       unread: boolean;
       senderWeight: string;
       subjectWeight: string;
@@ -93,7 +93,10 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
             return { left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: box.width, height: box.height };
           })(),
           actions: getComputedStyle(row.querySelector('.row-actions')).display,
-          checkbox: getComputedStyle(row.querySelector('.row-select')).display,
+          checkbox: {
+            display: getComputedStyle(row.querySelector('.row-select')).display,
+            width: rect('.row-select').width,
+          },
           unread: row.querySelector('[data-test="row-unread"]') !== null,
           senderWeight: getComputedStyle(sender).fontWeight,
           subjectWeight: getComputedStyle(subject).fontWeight,
@@ -120,7 +123,8 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       expect(row.row.height).toBeGreaterThanOrEqual(72);
       expect(row.row.right).toBeLessThanOrEqual(row.paneRight + 1);
       expect(row.actions).toBe('none');
-      expect(row.checkbox).toBe('none');
+      expect(row.checkbox.display).not.toBe('none');
+      expect(row.checkbox.width).toBe(1);
       if (row.unread) {
         expect(row.senderWeight).toBe('600');
         expect(row.subjectWeight).toBe('600');

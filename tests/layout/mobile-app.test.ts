@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mountApp, createBrowserFakeMailClient, flushFakeClientAndVueUpdates, useGmailMode } from '../helpers';
-import { allMobileCss } from '../support/css-contract';
+import { allMobileCss, mobileCss } from '../support/css-contract';
 
 function stubLayout(compact: boolean): void {
   vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
@@ -112,6 +112,34 @@ describe('App compact and regular frame', () => {
     expect(wrapper.find('[data-test="selection-bar"]').exists()).toBe(false);
     expect(wrapper.find('[data-test="split-inbox"]').exists()).toBe(true);
     wrapper.unmount();
+  });
+
+  it('keeps a labelled row checkbox reachable before selection mode opens', async () => {
+    stubLayout(true);
+    const style = document.createElement('style');
+    style.textContent = mobileCss['list.css']!;
+    document.head.append(style);
+    const fake = createBrowserFakeMailClient();
+    const wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
+
+    try {
+      await flushFakeClientAndVueUpdates(fake);
+      const checkbox = wrapper.get('[data-test="row-select-conv-01"]');
+      expect(wrapper.get('.inbox-list').classes()).not.toContain('selecting');
+      expect(checkbox.attributes('type')).toBe('checkbox');
+      expect(checkbox.attributes('aria-label')).toMatch(/^Select .+/);
+      expect(checkbox.element.closest('[hidden], [aria-hidden="true"], [inert]')).toBeNull();
+      const appearance = getComputedStyle(checkbox.element);
+      expect(appearance.display).not.toBe('none');
+      expect(appearance.width).toBe('1px');
+
+      await checkbox.setValue(true);
+      expect(wrapper.get('.inbox-list').classes()).toContain('selecting');
+      expect(wrapper.get('[data-test="selection-count"]').text()).toBe('1 of 18 loaded');
+    } finally {
+      wrapper.unmount();
+      style.remove();
+    }
   });
 
   it('marks Search current without Inbox tabs in the context slot, then restores Inbox', async () => {

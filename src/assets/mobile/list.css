@@ -254,8 +254,16 @@
   display: none;
 }
 
-.app[data-layout="compact"] .row-select {
-  display: none;
+/* Keep the native checkbox reachable even when the selection gutter is closed. */
+.app[data-layout="compact"] .inbox-list:not(.selecting) .row-select {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .app[data-layout="compact"] .inbox-list.selecting .row-select {
