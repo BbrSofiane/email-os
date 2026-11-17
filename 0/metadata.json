@@ -1,0 +1,122 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7NMKTSNKEAQ8KA4SBXGF8ZD",
+  "session_id": "415cd333-37f5-4cfe-be88-ad6fe867d94b",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-17T20:54:19.054375947Z",
+  "branch": "mobile/p6-reader-contact",
+  "checkpoints_count": 6,
+  "files_touched": [
+    "src/App.vue",
+    "src/assets/mobile/pages.css",
+    "src/components/ContactPane.vue",
+    "tests/contact-pane.component.test.ts",
+    "tests/layout/mobile-pages.rendered.test.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-5-5",
+  "turn_id": "053416316088",
+  "checkpoint_transcript_start": 4037,
+  "transcript_lines_at_start": 4037,
+  "compact_transcript_start": 739,
+  "token_usage": {
+    "input_tokens": 8,
+    "cache_creation_tokens": 1395,
+    "cache_read_tokens": 1285911,
+    "output_tokens": 568,
+    "api_call_count": 4
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-toolu_01BXU2tGKZrShGD3kxJ2QGyB",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "impeccable"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "9d4b515fc474",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 2023,
+        "end": 2024,
+        "entry_ids": [
+          "0b69cc53-a832-4b8b-bfe9-93b2277e4b40"
+        ],
+        "tool_use_id": "toolu_01BXU2tGKZrShGD3kxJ2QGyB"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_01BXU2tGKZrShGD3kxJ2QGyB"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: impeccable",
+        "default_collapsed": true
+      }
+    },
+    {
+      "id": "claude-skill-toolu_018s6fubobEycb88s3avaDqM",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "impeccable"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "053416316088",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 3730,
+        "end": 3731,
+        "entry_ids": [
+          "72d86fc5-3f4e-4c79-bc13-0492801cb816"
+        ],
+        "tool_use_id": "toolu_018s6fubobEycb88s3avaDqM"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_018s6fubobEycb88s3avaDqM"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: impeccable",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 7
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-17T20:54:17.134418858Z",
+    "agent_lines": 1505,
+    "agent_removed": 28,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 1505,
+    "total_lines_changed": 1533,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 58,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".codex/hooks.json": 23,
+        "pi-scheduled-tasks": 35
+      }
+    }
+  ]
+}
