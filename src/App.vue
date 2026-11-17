@@ -162,6 +162,8 @@ const actionNoticeComponent = ref<InstanceType<typeof ActionNotice> | null>(null
 // ---------------------------------------------------------------------------
 
 const selectedCount = computed(() => mailbox.selectedRefs.value.length);
+const selectionActive = computed(() => selectedCount.value > 0
+  || (layoutMode.value === 'compact' && mailbox.selectionMode.value));
 
 /**
  * One-target policy (§3.3): shared toolbar/palette/shortcut dispatch resolves
@@ -201,6 +203,16 @@ function rangeSelectRow(target: ConversationRef): void {
   mailbox.focusConversation(target);
   mailbox.extendSelectionTo(target, preFocus);
 }
+
+// Accepted groups end phone selection, including setters that leave the rows loaded.
+watch(() => mailbox.lastGroup.value?.receipt, (receipt) => {
+  if (!receipt || layoutMode.value !== 'compact') return;
+  const group = mailbox.lastGroup.value;
+  if (group && mailbox.selectedRefs.value.some((target) =>
+    group.members.some((member) => sameConversation(member, target)))) {
+    mailbox.clearSelection();
+  }
+}, { flush: 'sync' });
 
 function bulkArchiveSelection(): Promise<void> {
   const members = bulkMembers();
@@ -298,7 +310,14 @@ async function openActivityGroup(requestId: string): Promise<void> {
 }
 
 const readerOpen = computed(() => mailbox.openRef.value !== null);
-watch(readerOpen, (open) => { if (open) editingSplit.value = false; });
+watch(readerOpen, (open) => {
+  if (!open) return;
+  editingSplit.value = false;
+  if (layoutMode.value === 'compact' && selectionActive.value) mailbox.clearSelection();
+});
+watch(layoutMode, (mode) => {
+  if (mode !== 'compact') mailbox.selectionMode.value = false;
+});
 const gmailMode = computed(() => mailbox.isGmail.value);
 // Read state, read/star controls, Starred and Retry follow the backend's explicit capability, not the mode name.
 const triageSurfaces = computed(() => mailbox.triageSurfaces.value);
@@ -373,7 +392,7 @@ watch(drawer, (next) => { if (next) editingSplit.value = false; });
 const splitNavShown = computed(() => accountReady.value && !!accountId.value && !readerOpen.value && !drawer.value);
 const inboxSplitsShown = computed(() => splitNavShown.value
   && ['inbox', 'saved', 'done', 'starred'].includes(mailbox.context.value)
-  && !(layoutMode.value === 'compact' && selectedCount.value > 0)
+  && !(layoutMode.value === 'compact' && selectionActive.value)
   && !(layoutMode.value === 'compact' && searchVisible.value));
 const activeTabShown = computed(() => splitNavShown.value
   && (mailbox.context.value === 'inbox' || (mailbox.context.value === 'saved' && !!savedTabVisible.value)));
@@ -1918,7 +1937,7 @@ function escapeLadder(event: KeyboardEvent): void {
     }
     event.preventDefault();
     void executeAction('back');
-  } else if (selectedCount.value > 0) {
+  } else if (selectionActive.value) {
     // Escape order (§3.2): the selected set clears before any context Back,
     // including when no context history exists.
     event.preventDefault();
@@ -2103,6 +2122,7 @@ const searchSyntaxEditHint = computed(() =>
       :execute-action="executeAction"
       :open-destinations="openMobileDrawer"
       :menu-expanded="mobileNavOpen"
+      @select="mailbox.selectionMode.value = true"
       :inert="mobileNavOpen || mobileEditorOpen || undefined"
     />
     <main class="app-main" :class="{ 'contact-collapsed': contactCollapsed }" :inert="!!overlay || !!attachmentConversation || mobileNavOpen || readerSheetOpen || messageSheetOpen || mobileEditorOpen || undefined">
@@ -2504,6 +2524,7 @@ const searchSyntaxEditHint = computed(() =>
               :swipe-right="swipePreferences.right"
               :swipe-left="swipePreferences.left"
               :selected-refs="mailbox.selectedRefs.value"
+              :selection-mode="layoutMode === 'compact' && selectionActive"
               @focus="mailbox.focusConversation($event)"
               @open="executeAction('open', $event)"
               @archive="executeAction('archive', $event)"
@@ -2786,7 +2807,7 @@ const searchSyntaxEditHint = computed(() =>
       <div class="list-dock" data-test="list-dock">
         <!-- Covered by a drawer or disclosure exactly like the list it acts on. -->
         <SelectionBar
-          v-if="!readerOpen && accountReady && selectedCount > 0 && mailbox.listState.value === 'ready'"
+          v-if="!readerOpen && accountReady && selectionActive && mailbox.listState.value === 'ready'"
           ref="selectionBarRef"
           :inert="centralCovered || undefined"
           :count="selectedCount"

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mountApp, createBrowserFakeMailClient, flushFakeClientAndVueUpdates, useGmailMode } from '../helpers';
+import MobileTopBar from '../../src/components/mobile/MobileTopBar.vue';
 import { allMobileCss } from '../support/css-contract';
 
 function stubLayout(compact: boolean): void {
@@ -90,6 +91,28 @@ describe('App compact and regular frame', () => {
     expect(regular.find('[data-test="selection-bar"]').exists()).toBe(true);
     expect(regular.get('[data-test="split-inbox"]').element.closest('.app-header')).toBeTruthy();
     regular.unmount();
+  });
+
+  it('enters empty selection, selects by tapping a row, and exits with Clear', async () => {
+    stubLayout(true);
+    const fake = createBrowserFakeMailClient();
+    const wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+
+    wrapper.getComponent(MobileTopBar).vm.$emit('select');
+    await wrapper.vm.$nextTick();
+    expect(wrapper.get('.inbox-list').classes()).toContain('selecting');
+    expect(wrapper.get('[data-test="row-select-conv-01"]').element).toHaveProperty('checked', false);
+    expect(wrapper.find('[data-test="selection-bar"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="split-inbox"]').exists()).toBe(false);
+
+    await wrapper.get('[data-test="conversation-row-conv-01"]').trigger('click');
+    expect(wrapper.get('[data-test="row-select-conv-01"]').element).toHaveProperty('checked', true);
+    expect(wrapper.find('[data-test="reader"]').exists()).toBe(false);
+    await wrapper.get('[data-test="selection-clear"]').trigger('click');
+    expect(wrapper.find('[data-test="selection-bar"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="split-inbox"]').exists()).toBe(true);
+    wrapper.unmount();
   });
 
   it('marks Search current without Inbox tabs in the context slot, then restores Inbox', async () => {

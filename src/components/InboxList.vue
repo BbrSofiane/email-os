@@ -50,6 +50,7 @@ const props = defineProps<{
   readOnly?: boolean;
   /** UX-05: selected references (account-scoped); selection ≠ focus. */
   selectedRefs?: ConversationRef[];
+  selectionMode?: boolean;
   compact?: boolean;
   swipeRight?: 'remind' | 'done' | 'none';
   swipeLeft?: 'remind' | 'done' | 'none';
@@ -69,8 +70,8 @@ const emit = defineEmits<{
 }>();
 
 const selectedKeys = computed(() => new Set((props.readOnly ? [] : props.selectedRefs ?? []).map((ref) => `${ref.accountId}:${ref.conversationId}`)));
-/** Selection mode: any selected row reveals every row's gutter checkbox. */
-const selecting = computed(() => selectedKeys.value.size > 0);
+const selecting = computed(() => !props.readOnly
+  && (selectedKeys.value.size > 0 || (props.compact && props.selectionMode)));
 
 function isSelected(row: ConversationSummaryLike): boolean {
   return selectedKeys.value.has(`${row.ref.accountId}:${row.ref.conversationId}`);

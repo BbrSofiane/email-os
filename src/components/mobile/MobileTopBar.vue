@@ -11,6 +11,8 @@ defineProps<{
   menuExpanded?: boolean;
 }>();
 
+defineEmits<{ select: [] }>();
+
 const backHost = ref<HTMLElement | null>(null);
 defineExpose({ backHost });
 </script>
