@@ -114,6 +114,23 @@ describe('App compact and regular frame', () => {
     wrapper.unmount();
   });
 
+  it('ends explicit selection after an accepted bulk action that leaves the row loaded', async () => {
+    stubLayout(true);
+    const fake = createBrowserFakeMailClient();
+    useGmailMode(fake, { mutationAccess: 'enabled' });
+    const wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
+    await flushFakeClientAndVueUpdates(fake);
+
+    await wrapper.get('[data-test="mobile-select"]').trigger('click');
+    await wrapper.get('[data-test="conversation-row-conv-01"]').trigger('click');
+    await wrapper.get('[data-test="selection-mark-read"]').trigger('click');
+    await flushFakeClientAndVueUpdates(fake);
+    expect(wrapper.find('[data-test="conversation-row-conv-01"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="selection-bar"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="mobile-select"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
   it('keeps a labelled row checkbox reachable before selection mode opens', async () => {
     stubLayout(true);
     const style = document.createElement('style');

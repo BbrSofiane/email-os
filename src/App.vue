@@ -205,8 +205,8 @@ function rangeSelectRow(target: ConversationRef): void {
 }
 
 // Accepted groups end phone selection, including setters that leave the rows loaded.
-watch(() => mailbox.lastGroup.value?.receipt, (receipt) => {
-  if (!receipt || layoutMode.value !== 'compact') return;
+watch(() => mailbox.lastGroup.value?.receipt, (receipt, previous) => {
+  if (!receipt || receipt.groupId === previous?.groupId || layoutMode.value !== 'compact') return;
   const group = mailbox.lastGroup.value;
   if (group && mailbox.selectedRefs.value.some((target) =>
     group.members.some((member) => sameConversation(member, target)))) {
