@@ -1,0 +1,35 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7NEDMWSNH8V1RX7REGFGWAE",
+  "strategy": "manual-commit",
+  "branch": "mobile/p5-pages",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/App.vue",
+    "tests/layout/mobile-app.test.ts",
+    "tests/layout/mobile-pages.rendered.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 620,
+    "cache_creation_tokens": 2212998,
+    "cache_read_tokens": 100643544,
+    "output_tokens": 322745,
+    "api_call_count": 293,
+    "subagent_tokens": {
+      "input_tokens": 80,
+      "cache_creation_tokens": 299352,
+      "cache_read_tokens": 1789736,
+      "output_tokens": 49350,
+      "api_call_count": 37
+    }
+  }
+}
