@@ -405,10 +405,6 @@
   white-space: nowrap;
 }
 
-.app[data-layout="compact"] .selection-loaded-scope {
-  display: none;
-}
-
 .app[data-layout="compact"] .selection-row-primary > button:not([data-test="selection-clear"]) {
   flex: 0 0 auto;
   min-height: 40px;

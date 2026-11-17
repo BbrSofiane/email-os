@@ -25,7 +25,29 @@ describe('SelectionBar compact structure', () => {
     expect(wrapper.get('[data-test="selection-clear"]').attributes('aria-label')).toBe('Clear selection');
     expect(wrapper.get('[data-test="selection-mark-read"]').attributes('aria-label')).toBe('Mark 3 read');
     expect(wrapper.get('[data-test="selection-mark-unread"]').attributes('aria-label')).toBe('Mark 3 unread');
-    expect(wrapper.get('[data-test="selection-select-all"]').attributes('aria-label')).toBe('Select all loaded (9)');
+    expect(wrapper.get('[data-test="selection-select-all"]').attributes('aria-label')).toBe('Select all 9 loaded conversations');
+  });
+
+  it('prompts for selection and offers only Clear and Select loaded at count zero', () => {
+    const wrapper = mount(SelectionBar, { props: { ...baseProps, compact: true, count: 0, loadedCount: 18 } });
+    expect(wrapper.get('.selection-scope').text()).toContain('Select conversations');
+    expect(wrapper.find('[data-test="selection-count"]').exists()).toBe(false);
+    expect(wrapper.findAll('button').map(button => button.attributes('data-test')))
+      .toEqual(['selection-clear', 'selection-select-all']);
+    expect(wrapper.get('[data-test="selection-select-all"]').text()).toBe('Select 18 loaded');
+  });
+
+  it('states loaded scope and disables Select loaded once every row is selected', async () => {
+    const wrapper = mount(SelectionBar, { props: { ...baseProps, compact: true, count: 1, loadedCount: 18 } });
+    expect(wrapper.get('[data-test="selection-count"]').text()).toBe('1 of 18 loaded');
+    expect(wrapper.get('[data-test="selection-scope-caveat"]').text()).toContain('unseen pages are not included');
+    expect(wrapper.get('[data-test="selection-select-all"]').attributes('aria-label'))
+      .toBe('Select all 18 loaded conversations');
+    expect(wrapper.get('[data-test="selection-select-all"]').attributes('disabled')).toBeUndefined();
+
+    await wrapper.setProps({ count: 18 });
+    expect(wrapper.get('[data-test="selection-count"]').text()).toBe('18 of 18 loaded');
+    expect(wrapper.get('[data-test="selection-select-all"]').attributes('disabled')).toBeDefined();
   });
 
   it('emits every compact event and keeps the limit note below the rows', async () => {
