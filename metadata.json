@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7NFFGYFXYC1DPH5BM9TXMKS",
+  "strategy": "manual-commit",
+  "branch": "mobile/p5-list-2",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/App.vue",
+    "tests/layout/mobile-app.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 2,
+    "cache_creation_tokens": 296,
+    "cache_read_tokens": 160306,
+    "output_tokens": 499,
+    "api_call_count": 1
+  }
+}
