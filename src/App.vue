@@ -2773,7 +2773,7 @@ const searchSyntaxEditHint = computed(() =>
             <h2>Contact</h2>
             <button v-if="layoutMode !== 'compact'" type="button" data-test="contact-disclosure-close" @click="closeContactDisclosure()">Close</button>
           </header>
-          <ContactPane :accountless="!accountId" :empty-list="contactListEmpty" :contact="contact" :loading="readerLoading" :context="contactContext" :recent="recentMail" @search-sender="senderSearch" @open-recent="openRecent" />
+          <ContactPane :compact="layoutMode === 'compact'" :accountless="!accountId" :empty-list="contactListEmpty" :contact="contact" :loading="readerLoading" :context="contactContext" :recent="recentMail" @search-sender="senderSearch" @open-recent="openRecent" />
         </div>
       </template>
       <!-- Bottom dock of the list column (DESIGN.md "In-flow Notices"): the

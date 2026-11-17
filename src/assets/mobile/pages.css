@@ -411,7 +411,8 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-controls 
   white-space: nowrap;
 }
 
-.app[data-layout="compact"] .contact-disclosure-panel .contact-line > :is(.contact-name, .contact-mailbox) {
+.app[data-layout="compact"] .contact-disclosure-panel .contact-line > .contact-name,
+.app[data-layout="compact"] .contact-disclosure-panel .contact-line > .contact-mailbox {
   flex: 1;
   min-width: 0;
   white-space: normal;
@@ -428,6 +429,15 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-controls 
 .app[data-layout="compact"] .contact-disclosure-panel .contact-copy > svg {
   width: 20px;
   height: 20px;
+}
+
+.app[data-layout="compact"] .contact-disclosure-panel .contact-find-mail {
+  min-height: 48px;
+  padding-inline: 0;
+  color: var(--focus-accent);
+  font-size: var(--mobile-type-list);
+  font-weight: 600;
+  text-align: left;
 }
 
 .app[data-layout="compact"] .contact-disclosure-panel .contact-recent button {

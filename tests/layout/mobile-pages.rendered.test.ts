@@ -447,6 +447,9 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
       horizontalOverflow: boolean;
       fields: { text: DOMRectReadOnly; copy: DOMRectReadOnly; opacity: string }[];
       recent: DOMRectReadOnly[];
+      search: DOMRectReadOnly;
+      identityBottom: number;
+      recentTop: number;
     }>(`(() => {
       const app = document.querySelector(${JSON.stringify(workspaceApp)});
       const page = app.querySelector('[data-test="contact-disclosure-panel"]');
@@ -466,6 +469,9 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
           };
         }),
         recent: recent.map(box),
+        search: box(pane.querySelector('[data-test="contact-find-mail"]')),
+        identityBottom: box(pane.querySelector('.contact-line:last-of-type')).bottom,
+        recentTop: box(pane.querySelector('.contact-recent')).top,
       };
     })()`);
     expect(geometry.horizontalOverflow).toBe(false);
@@ -485,6 +491,14 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
       expect(row.left).toBeGreaterThanOrEqual(geometry.page.left);
       expect(row.right).toBeLessThanOrEqual(geometry.page.right);
     }
+    expect(geometry.search.height).toBeGreaterThanOrEqual(48);
+    expect(geometry.search.left).toBe(geometry.page.left + 20);
+    expect(geometry.search.top).toBeGreaterThanOrEqual(geometry.identityBottom);
+    expect(geometry.search.bottom).toBeLessThanOrEqual(geometry.recentTop);
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="contact-find-mail"]').click()`);
+    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
+    const query = await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="search-results-query"]')?.textContent.trim()`);
+    expect(query).toBe('Search: from:"ada@example.test"');
   });
 
   it('sizes Reminder settings controls and allows the explanatory text to wrap', async () => {

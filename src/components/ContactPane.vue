@@ -32,6 +32,7 @@ const props = defineProps<{
   accountless?: boolean;
   /** The list has no rows (and no reader is open): nothing is focused, so nothing is unknown. */
   emptyList?: boolean;
+  compact?: boolean;
 }>();
 
 const emit = defineEmits<{ searchSender: [mailbox: string]; openRecent: [ref: ConversationRef] }>();
@@ -92,7 +93,7 @@ async function copyValue(label: 'name' | 'email', value: string): Promise<void> 
 </script>
 
 <template>
-  <!-- Layout (DESIGN.md "Contact Pane"): no visible caption (the context
+  <!-- Regular layout (DESIGN.md "Contact Pane"): no visible caption (the context
        heading stays in the accessibility tree); the name sits on the split-tab
        line, the email on the first list line, each with a trailing copy glyph
        that is revealed on hover/focus without reserving a line of its own.
@@ -103,7 +104,8 @@ async function copyValue(label: 'name' | 'email', value: string): Promise<void> 
     <h2 class="contact-title visually-hidden">{{ props.context === 'focused' ? 'Focused conversation' : 'Open conversation' }}</h2>
     <div v-if="props.contact" class="contact-identity" data-test="contact-identity">
       <p class="contact-line contact-line-name">
-        <button type="button" class="contact-name contact-search" data-test="contact-name" title="Find mail from this sender" @click="emit('searchSender', props.contact.mailbox)">{{ nameLabel(props.contact) }}</button>
+        <span v-if="props.compact" class="contact-name" data-test="contact-name">{{ nameLabel(props.contact) }}</span>
+        <button v-else type="button" class="contact-name contact-search" data-test="contact-name" title="Find mail from this sender" @click="emit('searchSender', props.contact.mailbox)">{{ nameLabel(props.contact) }}</button>
         <button
           v-if="props.contact.displayName"
           type="button"
@@ -132,6 +134,13 @@ async function copyValue(label: 'name' | 'email', value: string): Promise<void> 
           @click="copyValue('email', props.contact.mailbox)"
         ><PaneGlyph name="copy" /><span class="visually-hidden">Copy email</span></button>
       </p>
+      <button
+        v-if="props.compact"
+        type="button"
+        class="contact-find-mail"
+        data-test="contact-find-mail"
+        @click="emit('searchSender', props.contact.mailbox)"
+      >Find mail from sender</button>
     </div>
     <p v-else-if="!props.loading && !props.accountless && !props.emptyList" class="contact-unknown" data-test="contact-unknown">
       No correspondent information is available.
