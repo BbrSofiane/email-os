@@ -373,6 +373,7 @@
 .app[data-layout="compact"] .selection-row-primary {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   width: 100%;
   min-height: 48px;
@@ -398,16 +399,14 @@
 }
 
 .app[data-layout="compact"] .selection-scope {
-  flex: 1;
+  flex: 1 1 100px;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .app[data-layout="compact"] .selection-row-primary > button:not([data-test="selection-clear"]) {
   flex: 0 0 auto;
-  min-height: 40px;
+  min-height: 48px;
   padding: 0 16px;
   border: 0;
   border-radius: 4px;
@@ -420,7 +419,8 @@
 .app[data-layout="compact"] .selection-row-secondary {
   display: flex;
   justify-content: space-between;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 0 8px;
   width: 100%;
   min-height: 48px;
 }

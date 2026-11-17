@@ -127,6 +127,9 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await viewport(PHONE_VIEWPORT.width, PHONE_VIEWPORT.height, true);
     await freshInbox();
     await shot('inbox');
+    await click('[data-test="mobile-select"]');
+    await waitFor(`app.querySelector('[data-test="selection-bar"]') && !app.querySelector('[data-test="selection-count"]')`, 'empty selection bar');
+    await shot('selection-empty');
     await longPressFirstRow();
     await shot('selection');
     await harness!.cdp.js('window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }))');
@@ -189,7 +192,7 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
       touchPoints: [{ x: row.x - row.width * 0.6, y: row.y, id: 1 }],
     });
     await harness!.cdp.cmd('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-    await waitFor(`app.querySelector('[data-test="action-notice"]') && app.querySelector('[data-test="selection-count"]')?.textContent.includes('1 of 17 loaded')`, 'selection and action notice');
+    await waitFor(`app.querySelector('[data-test="action-notice-undo"]') && app.querySelector('[data-test="selection-count"]')?.textContent.includes('1 of 17 loaded')`, 'selection and action notice');
     await shot('selection-with-notice');
   }, 120_000);
 

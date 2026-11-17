@@ -499,7 +499,6 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     { width: 360, height: 800 },
   ])('selects on long press and keeps the selection pill clear at $width × $height', async ({ width, height }) => {
     await harness!.cdp.cmd('Page.navigate', { url: harness!.appUrl });
-    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
     await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
       width,
       height,
@@ -508,8 +507,10 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor,
       mobile: true,
     });
-    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-mail"]').click()`);
-    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 300))');
+    const firstRow = `${workspaceApp} [data-test="conversation-row-conv-01"]`;
+    await expect.poll(() => harness!.cdp.js<boolean>(
+      `document.querySelector(${JSON.stringify(firstRow)}) !== null`,
+    ), { timeout: 5_000 }).toBe(true);
     const start = await harness!.cdp.js<{ x: number; y: number }>(`(() => {
       const row = document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="conversation-row-conv-01"]');
       const rect = row.getBoundingClientRect();
@@ -539,6 +540,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       }>;
       bar: { top: number; bottom: number; left: number; right: number };
       barHeight: number;
+      barOverflows: boolean;
       clearButton: { width: number; height: number; first: boolean };
       scope: { scrollWidth: number; clientWidth: number; visibleText: string };
       primaryBackground: string;
@@ -588,6 +590,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
         selectedRows,
         bar: barBox,
         barHeight: barBox.bottom - barBox.top,
+        barOverflows: bar.scrollWidth > bar.clientWidth,
         clearButton: { ...box(clear), first: bar.querySelector('button') === clear },
         scope: {
           scrollWidth: scope.scrollWidth,
@@ -618,7 +621,10 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       expect(row.unreadVisible).toBe(false);
     }
     expect(measure.bar.top).toBeGreaterThanOrEqual(0);
-    expect(measure.barHeight).toBeLessThanOrEqual(112);
+    expect(measure.barHeight).toBeLessThanOrEqual(160);
+    expect(measure.bar.left).toBeGreaterThanOrEqual(0);
+    expect(measure.bar.right).toBeLessThanOrEqual(width);
+    expect(measure.barOverflows).toBe(false);
     expect(measure.clearButton.first).toBe(true);
     expect(measure.clearButton.width).toBeGreaterThanOrEqual(48);
     expect(measure.clearButton.height).toBeGreaterThanOrEqual(48);
@@ -634,7 +640,7 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     expect(measure.bar.bottom).toBeLessThanOrEqual(measure.navigationPill.top);
     expect(measure.buttons.find(button => button.id === 'selection-clear')?.height).toBeGreaterThanOrEqual(48);
     expect(measure.buttons.filter(button => button.id?.startsWith('selection-mark-') || button.id === 'selection-select-all').every(button => button.width >= 48 && button.height >= 48)).toBe(true);
-    expect(measure.buttons.filter(button => button.id === 'selection-archive' || button.id === 'selection-unarchive').every(button => button.height >= 40)).toBe(true);
+    expect(measure.buttons.every(button => button.height >= 48)).toBe(true);
     expect(measure.buttonLayouts.every(button => button.left >= measure.bar.left && button.right <= measure.bar.right && button.top >= measure.bar.top && button.bottom <= measure.bar.bottom)).toBe(true);
     expect(measure.buttonLayouts.every(button => button.scrollWidth <= button.clientWidth)).toBe(true);
     for (let index = 0; index < measure.buttonLayouts.length; index += 1) {
