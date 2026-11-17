@@ -315,7 +315,6 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     { width: 360, height: 800 },
   ])('slides the whole opaque row and exposes the swipe action at $width × $height', async ({ width, height }) => {
     await harness!.cdp.cmd('Page.navigate', { url: harness!.appUrl });
-    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
     await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
       width,
       height,
@@ -324,8 +323,10 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor,
       mobile: true,
     });
-    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-mail"]').click()`);
-    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
+    const firstRow = `${workspaceApp} [data-test="conversation-row-conv-01"]`;
+    await expect.poll(() => harness!.cdp.js<boolean>(
+      `document.querySelector(${JSON.stringify(firstRow)}) !== null`,
+    ), { timeout: 5_000 }).toBe(true);
 
     const resting = await harness!.cdp.js<{
       left: number;

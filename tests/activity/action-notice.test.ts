@@ -106,6 +106,23 @@ describe('ActionNotice', () => {
     expect(wrapper.get('[data-test="action-notice-status"]').text()).toContain('see Activity');
   });
 
+  it('keeps a compact Undo result visible until all expected compensations confirm', async () => {
+    const restored = operation('confirmed');
+    const notice = {
+      ...base,
+      operation: restored,
+      undoableUntil: null,
+      undone: { outcome: 'compensating' as const, expectedCompensations: 2, compensations: [restored] },
+    };
+    const wrapper = mount(ActionNotice, { props: { notice, now: NOW, compact: true } });
+    expect(wrapper.get('[data-test="action-notice-status"]').text()).toBe('Restoring…');
+
+    await wrapper.setProps({
+      notice: { ...notice, undone: { ...notice.undone, compensations: [restored, { ...restored, id: 'comp-2' }] } },
+    });
+    expect(wrapper.classes()).toContain('action-notice-empty');
+  });
+
   it('offers Activity for a compact single-action failure and emits when pressed', async () => {
     const wrapper = mount(ActionNotice, {
       props: { notice: { ...base, operation: operation('failed'), undoableUntil: null }, now: NOW, compact: true },
