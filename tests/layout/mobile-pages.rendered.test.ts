@@ -15,8 +15,29 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
   }, 120_000);
 
   beforeEach(async () => {
+    await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
+      width: PHONE_VIEWPORT.width,
+      height: PHONE_VIEWPORT.height,
+      screenWidth: PHONE_VIEWPORT.width,
+      screenHeight: PHONE_VIEWPORT.height,
+      deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor,
+      mobile: true,
+    });
     await harness!.cdp.cmd('Page.reload');
-    await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
+    const ready = await harness!.cdp.js<boolean>(`new Promise(resolve => {
+      const deadline = Date.now() + 5000;
+      const check = () => {
+        if (document.querySelector(${JSON.stringify(workspaceApp)})) {
+          resolve(true);
+        } else if (Date.now() >= deadline) {
+          resolve(false);
+        } else {
+          setTimeout(check, 50);
+        }
+      };
+      check();
+    })`);
+    expect(ready).toBe(true);
   });
 
   afterAll(async () => {
