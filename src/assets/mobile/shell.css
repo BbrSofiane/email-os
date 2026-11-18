@@ -307,8 +307,8 @@
 
 .app[data-layout="compact"] .mobile-round-button,
 .app[data-layout="compact"] .mobile-back-host > .reader-back {
-  width: 40px;
-  height: 40px;
+  width: var(--mobile-touch-target);
+  height: var(--mobile-touch-target);
   border: 1px solid var(--divider);
   border-radius: 50%;
   background: var(--surface-raised);

@@ -83,12 +83,57 @@ describe("InboxList (UX-01 compact rows)", () => {
     });
     const element = w.get('.inbox-row').element;
     element.dispatchEvent(pointerEvent('pointerdown', 0));
-    element.dispatchEvent(pointerEvent('pointermove', side === 'left' ? -80 : 80));
-    element.dispatchEvent(pointerEvent('pointerup', side === 'left' ? -80 : 80));
+    element.dispatchEvent(pointerEvent('pointermove', side === 'left' ? -160 : 160));
+    element.dispatchEvent(pointerEvent('pointerup', side === 'left' ? -160 : 160));
     vi.advanceTimersByTime(160);
     await flushPromises();
     expect(w.emitted(expected)).toHaveLength(1);
     expect(w.emitted(expected)?.[0]).toEqual([{ accountId: ACCOUNT, conversationId: 'swipe' }]);
+  });
+
+  it.each([
+    { distance: -160, action: 'archive' },
+    { distance: 160, action: 'remind' },
+  ])('suppresses $action swipes during selection and restores them after Clear', async ({ distance, action }) => {
+    vi.useFakeTimers();
+    const rows = defaultRows();
+    const w = mountList(rows, null, {
+      compact: true,
+      context: 'inbox',
+      reminderEnabled: true,
+      selectedRefs: [rows[0]!.ref],
+    });
+    const element = w.get<HTMLElement>('[data-test="conversation-row-today-2"]').element;
+    const drag = () => {
+      element.dispatchEvent(pointerEvent('pointerdown', 0));
+      element.dispatchEvent(pointerEvent('pointermove', distance));
+    };
+    const release = async () => {
+      element.dispatchEvent(pointerEvent('pointerup', distance));
+      vi.advanceTimersByTime(160);
+      await flushPromises();
+    };
+
+    drag();
+    await release();
+    expect(w.emitted(action)).toBeUndefined();
+    expect(element.style.getPropertyValue('--swipe-offset')).toBe('0px');
+
+    await w.setProps({ selectedRefs: [] });
+    drag();
+    await flushPromises();
+    expect(w.get('.row-swipe-underlay').classes()).toContain('armed');
+
+    await w.setProps({ selectionMode: true });
+    await release();
+    expect(w.emitted(action)).toBeUndefined();
+    expect(w.find('.row-swipe-underlay').exists()).toBe(false);
+    expect(element.style.getPropertyValue('--swipe-offset')).toBe('0px');
+
+    await w.setProps({ selectionMode: false });
+    drag();
+    await release();
+    expect(w.emitted(action)).toEqual([[rows[1]!.ref]]);
   });
 
   it.each([
@@ -125,8 +170,8 @@ describe("InboxList (UX-01 compact rows)", () => {
     });
     const element = swapped.get('.inbox-row').element;
     element.dispatchEvent(pointerEvent('pointerdown', 0));
-    element.dispatchEvent(pointerEvent('pointermove', 100));
-    element.dispatchEvent(pointerEvent('pointerup', 100));
+    element.dispatchEvent(pointerEvent('pointermove', 160));
+    element.dispatchEvent(pointerEvent('pointerup', 160));
     vi.advanceTimersByTime(160);
     await flushPromises();
     expect(swapped.emitted('archive')).toHaveLength(1);

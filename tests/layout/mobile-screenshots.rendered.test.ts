@@ -96,8 +96,6 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
       return { x: rect.left + rect.width / 2, y: rect.top + Math.min(28, rect.height / 2) };
     })()`);
     await harness!.cdp.cmd('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ ...point, id: 1 }] });
-    // Hold long enough that the narrow cue uses distance, without triggering selection.
-    await pause(225);
     await harness!.cdp.cmd('Input.dispatchTouchEvent', {
       type: 'touchMove',
       touchPoints: [{ x: point.x + (direction === 'left' ? -distance : distance), y: point.y, id: 1 }],
@@ -180,7 +178,6 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
   it('captures a selection bar beside an action notice', async () => {
     await viewport(PHONE_VIEWPORT.width, PHONE_VIEWPORT.height, true);
     await freshInbox();
-    await click('[data-test="row-select-conv-01"]');
     const row = await harness!.cdp.js<{ x: number; y: number; width: number }>(`(() => {
       const rect = document.querySelector(${JSON.stringify(activeApp)}).querySelector('[data-test="conversation-row-conv-02"]').getBoundingClientRect();
       return { x: rect.left + rect.width / 2, y: rect.top + 24, width: rect.width };
@@ -195,7 +192,9 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
       touchPoints: [{ x: row.x - row.width * 0.6, y: row.y, id: 1 }],
     });
     await harness!.cdp.cmd('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-    await waitFor(`app.querySelector('[data-test="action-notice-undo"]') && app.querySelector('[data-test="selection-count"]')?.textContent.includes('1 of 17 selected')`, 'selection and action notice');
+    await waitFor(`app.querySelector('[data-test="action-notice-undo"]')`, 'action notice');
+    await click('[data-test="row-select-conv-01"]');
+    await waitFor(`app.querySelector('[data-test="selection-count"]')?.textContent.includes('1 of 17 selected')`, 'selection beside the action notice');
     await shot('selection-with-notice');
   }, 120_000);
 

@@ -580,8 +580,22 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-controls 
   font-weight: 400;
 }
 
-.app[data-layout="compact"] .utility-drawer .swipe-settings [role="status"]:empty {
-  display: none;
+.app[data-layout="compact"] .utility-drawer .swipe-settings-status {
+  margin: 0;
+  font-size: var(--mobile-type-meta);
+  color: var(--text-secondary);
+}
+
+.app[data-layout="compact"] .utility-drawer .swipe-settings-status[data-status="failed"] {
+  color: var(--danger);
+}
+
+.app[data-layout="compact"] .utility-drawer .swipe-settings-status:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
 }
 
 .app[data-layout="compact"] .utility-drawer .swipe-settings label {

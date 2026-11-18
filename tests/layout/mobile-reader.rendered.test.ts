@@ -30,7 +30,7 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
       app.querySelector('[data-test="conversation-row-conv-01"]').click();
     })()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
-    const geometry = await harness!.cdp.js<{ width: number; viewport: number; pane: { top: number; bottom: number }; subject: { top: number; bottom: number; left: number }; statusLeft: number | null; readStateLeft: number | null; firstSenderLeft: number; messages: { top: number; bottom: number }; bodySize: string | null; archiveColor: string; previousOpacity: string; previousColor: string; lastBottom: number; bottomTop: number; actionTop: number; replyBar: { top: number; bottom: number; height: number } | null; messageMore: { width: number; height: number } | null; headerLines: Array<{ senderCenter: number; senderRight: number; dateCenter: number; dateLeft: number }>; scrollHeight: number; clientHeight: number }>(`(() => {
+    const geometry = await harness!.cdp.js<{ width: number; viewport: number; pane: { top: number; bottom: number }; subject: { top: number; bottom: number; left: number }; statusLeft: number | null; readStateLeft: number | null; firstSenderLeft: number; messages: { top: number; bottom: number }; bodySize: string | null; archiveColor: string; previous: { disabled: boolean; opacity: number; color: string }; next: { disabled: boolean; opacity: number; color: string }; back: { width: number; height: number }; backGlyph: { width: number; height: number }; lastBottom: number; bottomTop: number; actionTop: number; replyBar: { top: number; bottom: number; height: number } | null; messageMore: { width: number; height: number } | null; headerLines: Array<{ senderCenter: number; senderRight: number; dateCenter: number; dateLeft: number }>; scrollHeight: number; clientHeight: number }>(`(() => {
       const app = document.querySelector(${JSON.stringify(appSelector)});
       const pane = app.querySelector('.reader-pane').getBoundingClientRect();
       const subject = app.querySelector('.reader-subject').getBoundingClientRect();
@@ -41,6 +41,12 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
       const scroller = app.querySelector('[data-test="reader-scroll"]');
       const last = app.querySelector('.message:last-child').getBoundingClientRect();
       const body = app.querySelector('.message-body');
+      const buttonState = selector => {
+        const button = app.querySelector(selector);
+        const { opacity, color } = getComputedStyle(button);
+        return { disabled: button.disabled, opacity: Number(opacity), color };
+      };
+      const back = app.querySelector('[data-test="reader-close"]');
       return {
         width: document.documentElement.scrollWidth,
         viewport: innerWidth,
@@ -52,8 +58,10 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
         messages: { top: messages.top, bottom: messages.bottom },
         bodySize: body ? getComputedStyle(body).fontSize : null,
         archiveColor: getComputedStyle(app.querySelector('[data-test="reader-archive-toggle"]')).color,
-        previousOpacity: getComputedStyle(app.querySelector('[data-test="reader-prev"]')).opacity,
-        previousColor: getComputedStyle(app.querySelector('[data-test="reader-prev"]')).color,
+        previous: buttonState('[data-test="reader-prev"]'),
+        next: buttonState('[data-test="reader-next"]'),
+        back: back.getBoundingClientRect().toJSON(),
+        backGlyph: back.querySelector('svg').getBoundingClientRect().toJSON(),
         lastBottom: last.bottom,
         bottomTop: app.querySelector('[data-test="mobile-bottom-region"]').getBoundingClientRect().top,
         actionTop: app.querySelector('[data-test="mobile-reader-actions"]').getBoundingClientRect().top,
@@ -80,8 +88,13 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
     expect(geometry.messages.bottom).toBeLessThanOrEqual(geometry.pane.bottom + geometry.scrollHeight);
     expect(geometry.bodySize).toBe('16px');
     expect(geometry.archiveColor).toBe('rgb(187, 165, 237)');
-    expect(geometry.previousOpacity).toBe('1');
-    expect(geometry.previousColor).toBe('rgb(142, 138, 135)');
+    expect(geometry.previous.disabled).toBe(true);
+    expect(geometry.previous.opacity).toBeLessThanOrEqual(0.5);
+    expect(geometry.next.disabled).toBe(false);
+    expect(geometry.next.opacity).toBe(1);
+    expect(geometry.next.color).not.toBe(geometry.previous.color);
+    expect(geometry.back).toMatchObject({ width: 48, height: 48 });
+    expect(geometry.backGlyph).toMatchObject({ width: 24, height: 24 });
     expect(geometry.lastBottom).toBeLessThanOrEqual(geometry.bottomTop);
     for (const line of geometry.headerLines) {
       expect(Math.abs(line.senderCenter - line.dateCenter)).toBeLessThanOrEqual(3);
