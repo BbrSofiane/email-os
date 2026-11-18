@@ -308,6 +308,11 @@ type RowSwipe = ReturnType<typeof useSwipeAction> & { cue: ComputedRef<SwipeCue 
 const swipes = new Map<string, RowSwipe>();
 const longPresses = new Map<string, ReturnType<typeof useLongPressSelection>>();
 
+watch(selecting, (active) => {
+  if (!props.compact || !active) return;
+  for (const swipe of swipes.values()) swipe.cancel();
+});
+
 function configuredSwipeAction(side: Exclude<SwipeSide, null>) {
   return side === 'right' ? props.swipeRight ?? 'remind' : props.swipeLeft ?? 'done';
 }
@@ -319,7 +324,7 @@ function swipeFor(row: ConversationSummaryLike): RowSwipe {
     const gesture = useSwipeAction(
       () => rowEls.get(key) ?? null,
       (side) => {
-        if (props.readOnly) return false;
+        if (props.readOnly || selecting.value) return false;
         const action = configuredSwipeAction(side);
         if (action === 'remind') return props.reminderEnabled === true && props.context === 'inbox';
         return action === 'done' && props.actionsEnabled === true && props.context !== 'starred';
@@ -365,7 +370,7 @@ function longPressFor(row: ConversationSummaryLike): ReturnType<typeof useLongPr
 
 function onRowPointerDown(event: PointerEvent, row: ConversationSummaryLike): void {
   if (!props.compact || props.readOnly) return;
-  swipeFor(row).pointerdown(event);
+  if (!selecting.value) swipeFor(row).pointerdown(event);
   longPressFor(row).pointerdown(event);
 }
 

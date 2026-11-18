@@ -268,9 +268,16 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
     const secondRowWidth = await harness!.cdp.js<number>(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="conversation-row-conv-02"]').getBoundingClientRect().width`);
     await swipeRow('[data-test="conversation-row-conv-02"]', -secondRowWidth * 0.6);
-    expect(await harness!.cdp.js(`!!document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="action-notice"]')`)).toBe(true);
+    expect(await harness!.cdp.js(`!!document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="conversation-row-conv-02"]')`)).toBe(true);
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="selection-clear"]').click()`);
+    await swipeRow('[data-test="conversation-row-conv-02"]', -secondRowWidth * 0.6);
+    expect(await harness!.cdp.js(`!!document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="action-notice-undo"]')`)).toBe(true);
 
-    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="row-select-conv-03"]').click()`);
+    await harness!.cdp.js(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      app.querySelector('[data-test="row-select-conv-01"]').click();
+      app.querySelector('[data-test="row-select-conv-03"]').click();
+    })()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 150))');
 
     const geometry = await harness!.cdp.js<{

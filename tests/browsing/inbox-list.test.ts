@@ -92,6 +92,51 @@ describe("InboxList (UX-01 compact rows)", () => {
   });
 
   it.each([
+    { distance: -160, action: 'archive' },
+    { distance: 160, action: 'remind' },
+  ])('suppresses $action swipes during selection and restores them after Clear', async ({ distance, action }) => {
+    vi.useFakeTimers();
+    const rows = defaultRows();
+    const w = mountList(rows, null, {
+      compact: true,
+      context: 'inbox',
+      reminderEnabled: true,
+      selectedRefs: [rows[0]!.ref],
+    });
+    const element = w.get<HTMLElement>('[data-test="conversation-row-today-2"]').element;
+    const drag = () => {
+      element.dispatchEvent(pointerEvent('pointerdown', 0));
+      element.dispatchEvent(pointerEvent('pointermove', distance));
+    };
+    const release = async () => {
+      element.dispatchEvent(pointerEvent('pointerup', distance));
+      vi.advanceTimersByTime(160);
+      await flushPromises();
+    };
+
+    drag();
+    await release();
+    expect(w.emitted(action)).toBeUndefined();
+    expect(element.style.getPropertyValue('--swipe-offset')).toBe('0px');
+
+    await w.setProps({ selectedRefs: [] });
+    drag();
+    await flushPromises();
+    expect(w.get('.row-swipe-underlay').classes()).toContain('armed');
+
+    await w.setProps({ selectionMode: true });
+    await release();
+    expect(w.emitted(action)).toBeUndefined();
+    expect(w.find('.row-swipe-underlay').exists()).toBe(false);
+    expect(element.style.getPropertyValue('--swipe-offset')).toBe('0px');
+
+    await w.setProps({ selectionMode: false });
+    drag();
+    await release();
+    expect(w.emitted(action)).toEqual([[rows[1]!.ref]]);
+  });
+
+  it.each([
     { context: 'inbox', distance: 100, action: 'done', glyph: 'archive', label: 'Mark done' },
     { context: 'inbox', distance: -100, action: 'remind', glyph: 'reminder', label: 'Remind' },
     { context: 'done', distance: 100, action: 'done', glyph: 'restore', label: 'Mark not done' },
