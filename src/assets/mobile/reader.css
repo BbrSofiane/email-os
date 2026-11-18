@@ -101,11 +101,16 @@
 .app[data-layout="compact"] .message-reply {
   display: none;
 }
-.app[data-layout="compact"] .mobile-reader-actions [data-test="reader-archive-toggle"]:not(:disabled) {
+.app[data-layout="compact"] .mobile-reader-actions .reader-actions > button,
+.app[data-layout="compact"] .mobile-back-host > .reader-back {
+  color: var(--text-secondary);
+}
+.app[data-layout="compact"] .mobile-reader-actions [data-test="reader-archive-toggle"]:is(:enabled, .header-glyph-held) {
   color: var(--focus-accent);
 }
-.app[data-layout="compact"] .mobile-reader-actions .reader-actions > button:disabled {
-  opacity: 1;
+.app[data-layout="compact"] .mobile-reader-actions .reader-actions > button:disabled:not(.header-glyph-held),
+.app[data-layout="compact"] .mobile-back-host > .reader-back:disabled:not(.header-glyph-held) {
+  opacity: 0.4;
   color: var(--icon-muted);
 }
 .app[data-layout="compact"] .mobile-context-slot:has(.mobile-reply-bar) {
