@@ -68,14 +68,12 @@ describe('useSwipeAction', () => {
     expect(swipe.dragging.value).toBe(false);
   });
 
-  it('arms at 35 percent, disarms when the finger returns, and respects unavailable sides', () => {
-    vi.useFakeTimers({ toFake: ['performance', 'setTimeout'] });
+  it('arms at the 128px minimum, disarms when the finger returns, and respects unavailable sides', () => {
     const { swipe } = setup();
     swipe.pointerdown(pointer('pointerdown', 100, 20));
-    vi.advanceTimersByTime(200);
-    swipe.pointermove(pointer('pointermove', 169, 20));
+    swipe.pointermove(pointer('pointermove', 227, 20));
     expect(swipe.armed.value).toBe(false);
-    swipe.pointermove(pointer('pointermove', 170, 20));
+    swipe.pointermove(pointer('pointermove', 228, 20));
     expect(swipe.armed.value).toBe(true);
     swipe.pointermove(pointer('pointermove', 150, 20));
     expect(swipe.armed.value).toBe(false);
@@ -84,7 +82,7 @@ describe('useSwipeAction', () => {
 
     const unavailable = setup(() => false).swipe;
     unavailable.pointerdown(pointer('pointerdown', 100, 20));
-    unavailable.pointermove(pointer('pointermove', 180, 20));
+    unavailable.pointermove(pointer('pointermove', 240, 20));
     expect(unavailable.armed.value).toBe(false);
   });
 
@@ -100,31 +98,23 @@ describe('useSwipeAction', () => {
     vi.runAllTimers();
   });
 
-  it('commits at 35 percent of the row width', () => {
-    const { commit, swipe } = setup();
+  it('uses 35 percent of the row width when that distance exceeds 128px', () => {
+    const { commit, swipe } = setup(undefined, undefined, 400);
     swipe.pointerdown(pointer('pointerdown', 0, 0));
-    swipe.pointermove(pointer('pointermove', -70, 0));
-    swipe.pointerup(pointer('pointerup', -70, 0));
-    expect(commit).toHaveBeenCalledTimes(1);
-    expect(commit).toHaveBeenCalledWith('left');
-  });
-
-  it('commits a fast flick at 64px', () => {
-    vi.useFakeTimers();
-    const { commit, swipe } = setup();
-    swipe.pointerdown(pointer('pointerdown', 0, 0));
-    vi.advanceTimersByTime(20);
-    swipe.pointermove(pointer('pointermove', 65, 0));
-    swipe.pointerup(pointer('pointerup', 65, 0));
-    expect(commit).toHaveBeenCalledWith('right');
+    swipe.pointermove(pointer('pointermove', -139, 0));
+    expect(swipe.armed.value).toBe(false);
+    swipe.pointermove(pointer('pointermove', -140, 0));
+    expect(swipe.armed.value).toBe(true);
+    swipe.pointerup(pointer('pointerup', -140, 0));
+    expect(commit).toHaveBeenCalledExactlyOnceWith('left');
   });
 
   it.each([
     { name: 'slow 100px drag', distance: 100, elapsed: 250, commits: false },
-    { name: 'fast 80px drag', distance: 80, elapsed: 50, commits: true },
+    { name: 'fast 80px drag', distance: 80, elapsed: 50, commits: false },
     { name: 'slow 40% drag', distance: 160, elapsed: 400, commits: true },
   ])('matches the armed cue to release for a $name', ({ distance, elapsed, commits }) => {
-    vi.useFakeTimers({ toFake: ['performance', 'setTimeout'] });
+    vi.useFakeTimers();
     const { commit, swipe } = setup(() => true, undefined, 400);
     swipe.pointerdown(pointer('pointerdown', 0, 0));
     vi.advanceTimersByTime(elapsed);
@@ -139,9 +129,9 @@ describe('useSwipeAction', () => {
   it('resists unavailable sides and never commits them', () => {
     const { commit, swipe } = setup((side) => side === 'left');
     swipe.pointerdown(pointer('pointerdown', 100, 0));
-    swipe.pointermove(pointer('pointermove', 170, 0));
+    swipe.pointermove(pointer('pointermove', 240, 0));
     expect(swipe.offset.value).toBe(24);
-    swipe.pointerup(pointer('pointerup', 170, 0));
+    swipe.pointerup(pointer('pointerup', 240, 0));
     expect(commit).not.toHaveBeenCalled();
   });
 
@@ -167,8 +157,8 @@ describe('useSwipeAction', () => {
     vi.stubGlobal('cancelAnimationFrame', (timer: number) => clearTimeout(timer));
     const { commit, swipe } = setup(() => true, () => true);
     swipe.pointerdown(pointer('pointerdown', 100, 10));
-    swipe.pointermove(pointer('pointermove', 30, 10));
-    swipe.pointerup(pointer('pointerup', 30, 10));
+    swipe.pointermove(pointer('pointermove', -30, 10));
+    swipe.pointerup(pointer('pointerup', -30, 10));
     expect(commit).not.toHaveBeenCalled();
     expect(swipe.offset.value).toBe(-200);
     expect(swipe.leaving.value).toBe('left');
@@ -189,8 +179,8 @@ describe('useSwipeAction', () => {
     vi.stubGlobal('cancelAnimationFrame', (timer: number) => clearTimeout(timer));
     const { commit, swipe } = setup(() => true, () => true);
     swipe.pointerdown(pointer('pointerdown', 100, 10));
-    swipe.pointermove(pointer('pointermove', 30, 10));
-    swipe.pointerup(pointer('pointerup', 30, 10));
+    swipe.pointermove(pointer('pointermove', -30, 10));
+    swipe.pointerup(pointer('pointerup', -30, 10));
     swipe.cancel();
     vi.advanceTimersByTime(200);
     expect(commit).not.toHaveBeenCalled();
@@ -200,8 +190,8 @@ describe('useSwipeAction', () => {
   it('commits immediately for non-exit and reduced-motion actions', () => {
     const immediate = setup(() => true);
     immediate.swipe.pointerdown(pointer('pointerdown', 100, 10));
-    immediate.swipe.pointermove(pointer('pointermove', 30, 10));
-    immediate.swipe.pointerup(pointer('pointerup', 30, 10));
+    immediate.swipe.pointermove(pointer('pointermove', -30, 10));
+    immediate.swipe.pointerup(pointer('pointerup', -30, 10));
     expect(immediate.commit).toHaveBeenCalledTimes(1);
 
     Object.defineProperty(window, 'matchMedia', {
@@ -210,8 +200,8 @@ describe('useSwipeAction', () => {
     });
     const reduced = setup(() => true, () => true);
     reduced.swipe.pointerdown(pointer('pointerdown', 100, 10));
-    reduced.swipe.pointermove(pointer('pointermove', 30, 10));
-    reduced.swipe.pointerup(pointer('pointerup', 30, 10));
+    reduced.swipe.pointermove(pointer('pointermove', -30, 10));
+    reduced.swipe.pointerup(pointer('pointerup', -30, 10));
     expect(reduced.commit).toHaveBeenCalledTimes(1);
     expect(reduced.swipe.offset.value).toBe(0);
   });

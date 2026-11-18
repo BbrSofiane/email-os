@@ -96,8 +96,6 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
       return { x: rect.left + rect.width / 2, y: rect.top + Math.min(28, rect.height / 2) };
     })()`);
     await harness!.cdp.cmd('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ ...point, id: 1 }] });
-    // Hold long enough that the narrow cue uses distance, without triggering selection.
-    await pause(225);
     await harness!.cdp.cmd('Input.dispatchTouchEvent', {
       type: 'touchMove',
       touchPoints: [{ x: point.x + (direction === 'left' ? -distance : distance), y: point.y, id: 1 }],

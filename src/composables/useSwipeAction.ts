@@ -21,7 +21,6 @@ export function useSwipeAction(
   let pointerId: number | null = null;
   let startX = 0;
   let startY = 0;
-  let startedAt = 0;
   let rowWidth = 0;
   let decided = false;
   let horizontal = false;
@@ -58,20 +57,12 @@ export function useSwipeAction(
     pointerId = event.pointerId;
     startX = event.clientX;
     startY = event.clientY;
-    startedAt = performance.now();
     decided = horizontal = false;
     dragging.value = false;
   }
 
-  function swipeVelocity(dx: number): number {
-    const elapsed = Math.max(1, performance.now() - startedAt);
-    return Math.abs(dx) / elapsed;
-  }
-
-  function wouldCommit(dx: number, velocity: number): boolean {
-    const distance = Math.abs(dx);
-    return (rowWidth > 0 && distance >= rowWidth * 0.35)
-      || (distance >= 64 && velocity > 0.5);
+  function wouldCommit(dx: number): boolean {
+    return Math.abs(dx) >= Math.max(128, rowWidth * 0.35);
   }
 
   function pointermove(event: PointerEvent): void {
@@ -96,7 +87,7 @@ export function useSwipeAction(
     const available = canReveal(side);
     offset.value = available ? dx : Math.sign(dx) * Math.min(24, Math.abs(dx));
     revealed.value = offset.value === 0 ? null : side;
-    armed.value = available && wouldCommit(dx, swipeVelocity(dx));
+    armed.value = available && wouldCommit(dx);
   }
 
   function finish(event: PointerEvent, cancelled = false): void {
@@ -115,7 +106,7 @@ export function useSwipeAction(
     }
     const dx = event.clientX - startX;
     const side = dx >= 0 ? 'right' : 'left';
-    const shouldCommit = canReveal(side) && wouldCommit(dx, swipeVelocity(dx));
+    const shouldCommit = canReveal(side) && wouldCommit(dx);
     suppressClick.value = true;
     setTimeout(() => { suppressClick.value = false; }, 0);
     dragging.value = false;

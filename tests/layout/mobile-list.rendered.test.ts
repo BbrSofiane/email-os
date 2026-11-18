@@ -232,6 +232,10 @@ describe.skipIf(!chromePath)('compact conversation rows (real Chromium)', () => 
       const rect = row.getBoundingClientRect();
       return { left: rect.left, width: rect.width };
     })()`);
+    await swipeRow('[data-test="conversation-row-conv-01"]', -80);
+    expect(await harness!.cdp.js(`!!document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="conversation-row-conv-01"]')`)).toBe(true);
+    expect(await harness!.cdp.js(`!!document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="action-notice-undo"]')`)).toBe(false);
+
     await swipeRow('[data-test="conversation-row-conv-01"]', -first.width * 0.6);
     expect(await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="conversation-row-conv-01"]') === null`)).toBe(true);
     expect(await harness!.cdp.js(`!!document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="action-notice"]')`)).toBe(true);

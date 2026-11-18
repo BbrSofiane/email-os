@@ -83,8 +83,8 @@ describe("InboxList (UX-01 compact rows)", () => {
     });
     const element = w.get('.inbox-row').element;
     element.dispatchEvent(pointerEvent('pointerdown', 0));
-    element.dispatchEvent(pointerEvent('pointermove', side === 'left' ? -80 : 80));
-    element.dispatchEvent(pointerEvent('pointerup', side === 'left' ? -80 : 80));
+    element.dispatchEvent(pointerEvent('pointermove', side === 'left' ? -160 : 160));
+    element.dispatchEvent(pointerEvent('pointerup', side === 'left' ? -160 : 160));
     vi.advanceTimersByTime(160);
     await flushPromises();
     expect(w.emitted(expected)).toHaveLength(1);
@@ -170,8 +170,8 @@ describe("InboxList (UX-01 compact rows)", () => {
     });
     const element = swapped.get('.inbox-row').element;
     element.dispatchEvent(pointerEvent('pointerdown', 0));
-    element.dispatchEvent(pointerEvent('pointermove', 100));
-    element.dispatchEvent(pointerEvent('pointerup', 100));
+    element.dispatchEvent(pointerEvent('pointermove', 160));
+    element.dispatchEvent(pointerEvent('pointerup', 160));
     vi.advanceTimersByTime(160);
     await flushPromises();
     expect(swapped.emitted('archive')).toHaveLength(1);
