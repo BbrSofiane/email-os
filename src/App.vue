@@ -878,6 +878,7 @@ async function openRecent(target: ConversationRef): Promise<void> {
 }
 const history = ref<ContextEntry[]>([]);
 let navigationToken = 0;
+const SEARCH_EXAMPLE = 'from:ada "weekly status" -invoice';
 const { searchVisible, searchDraft, searchInput, cachedSearch, recentQueries, suggestionsOpen, suggestionIndex, suggestionsId, suggestionId, searchSuggestions, searchError, activeSuggestionId, revealSearch, submitSearch, applySuggestion, highlightSuggestion, onSearchInputKeydown, senderSearch } = useSearchSurface({
   mailbox, accountId, accountReady, drawer, contactDisclosure, replyComposerOpen, composeCardOpen, history,
   captureContext, releaseEditorSurface, nextNavigationToken: () => ++navigationToken, currentNavigationToken: () => navigationToken,
@@ -2376,7 +2377,7 @@ const searchSyntaxEditHint = computed(() =>
                 :aria-activedescendant="activeSuggestionId"
                 :aria-describedby="searchError ? 'search-help search-error' : 'search-help'"
                 data-test="search-input"
-                placeholder='from:ada "weekly status" -invoice'
+                :placeholder="layoutMode === 'compact' ? 'Search mail' : SEARCH_EXAMPLE"
                 autocomplete="off"
                 @keydown="onSearchInputKeydown"
               />
@@ -2407,6 +2408,7 @@ const searchSyntaxEditHint = computed(() =>
             <details v-if="layoutMode === 'compact'" class="search-syntax">
               <summary>Search syntax</summary>
               <ul id="search-help" class="search-help" data-test="search-help">
+                <li class="search-example"><span>Example:</span><code class="search-op">{{ SEARCH_EXAMPLE }}</code></li>
                 <li><strong class="search-op">from:</strong><span class="search-gloss">from sender</span></li>
                 <li><strong class="search-op">to:</strong><span class="search-gloss">to recipient</span></li>
                 <li><strong class="search-op">subject:</strong><span class="search-gloss">in subject</span></li>

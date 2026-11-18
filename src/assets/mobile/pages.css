@@ -283,6 +283,14 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-controls 
   overflow-wrap: anywhere;
 }
 
+.app[data-layout="compact"] .search-example {
+  color: var(--text-secondary);
+}
+
+.app[data-layout="compact"] .search-example > .search-op {
+  color: inherit;
+}
+
 .app[data-layout="compact"] .search-syntax > summary,
 .app[data-layout="compact"] .utility-drawer .settings-note summary {
   display: flex;
