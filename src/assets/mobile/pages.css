@@ -259,7 +259,7 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-controls 
   min-width: 0;
   min-height: 48px;
   flex: 1;
-  padding-inline-start: 0;
+  padding-inline: 12px;
   font-size: 16px;
 }
 

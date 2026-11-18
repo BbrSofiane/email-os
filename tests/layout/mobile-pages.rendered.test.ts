@@ -133,19 +133,17 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
       deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor, mobile: true,
     });
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-search"]').click()`);
-    const form = await harness!.cdp.js<{ inset: number; starts: number[]; submit: DOMRectReadOnly }>(`(() => {
+    const form = await harness!.cdp.js<{ inset: number; starts: number[]; inputPaddingLeft: number; submit: DOMRectReadOnly }>(`(() => {
       const app = document.querySelector(${JSON.stringify(workspaceApp)});
       const input = app.querySelector('[data-test="search-input"]');
-      const style = getComputedStyle(input);
-      const inputTextLeft = input.getBoundingClientRect().left
-        + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
       return {
         inset: app.getBoundingClientRect().left + 20,
         starts: [
-          inputTextLeft,
+          input.getBoundingClientRect().left,
           app.querySelector('.search-cache-toggle input').getBoundingClientRect().left,
           app.querySelector('.search-syntax summary').getBoundingClientRect().left,
         ],
+        inputPaddingLeft: parseFloat(getComputedStyle(input).paddingLeft),
         submit: app.querySelector('[data-test="search-submit"]').getBoundingClientRect().toJSON(),
       };
     })()`);
@@ -153,6 +151,7 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
     for (const start of form.starts) {
       expect(Math.abs(start - form.inset)).toBeLessThanOrEqual(2);
     }
+    expect(form.inputPaddingLeft).toBeGreaterThanOrEqual(12);
     expect(form.submit.width).toBeGreaterThanOrEqual(48);
     expect(form.submit.height).toBeGreaterThanOrEqual(48);
   });
