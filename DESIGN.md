@@ -557,7 +557,7 @@ Contact has wrapping recent-mail rows at least 48px high, visible 48×48px copy 
 
 Settings uses 15px/600 primary section headings. The next section starts 24px below a rule with 24px top padding; group legends are 13px regular secondary text, aligned with controls at the 20px start inset. Reminder hour and minute changes save immediately. A successful save shows `Saved`; a failed save restores the last confirmed values and reports the error. The longer note about existing reminders is behind the `About changing the default` disclosure.
 
-Search syntax is behind a closed-by-default `Search syntax` disclosure; the input remains described by the six-item help list. On results, the query, coverage notice, sender group captions and first sender share the 20px start inset; the end inset is 16px. The query uses 15px/600 type with ellipsis, beside a 48px clear control.
+The compact Search form stands alone when opened from a mail list, and closing it returns to the same focus and scroll position. Existing results stay visible while their query is edited. The `Search mail` field border, cached-mail checkbox and syntax chevron align at the 20px start inset, with 12px of inline padding inside the field. The closed-by-default `Search syntax` disclosure starts with a monospace example followed by the six operator rows. On results, the query, coverage notice, sender group captions and first sender share the 20px start inset; the end inset is 16px. The query uses 15px/600 type with ellipsis, beside a 48px clear control.
 
 Reminders show the loading or empty line before the explanation and quiet `Refresh reminders` control. Zero tab counts are omitted; positive counts remain visible.
 
