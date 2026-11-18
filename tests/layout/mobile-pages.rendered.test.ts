@@ -127,6 +127,36 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
     expect(await harness!.cdp.js(`document.querySelector('[data-reminder-picker]') === null`)).toBe(true);
   });
 
+  it.each([{ width: 412, height: 915 }, { width: 360, height: 800 }])('aligns the Search form controls at $width × $height', async ({ width, height }) => {
+    await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
+      width, height, screenWidth: width, screenHeight: height,
+      deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor, mobile: true,
+    });
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-search"]').click()`);
+    const form = await harness!.cdp.js<{ inset: number; starts: number[]; submit: DOMRectReadOnly }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const input = app.querySelector('[data-test="search-input"]');
+      const style = getComputedStyle(input);
+      const inputTextLeft = input.getBoundingClientRect().left
+        + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
+      return {
+        inset: app.getBoundingClientRect().left + 20,
+        starts: [
+          inputTextLeft,
+          app.querySelector('.search-cache-toggle input').getBoundingClientRect().left,
+          app.querySelector('.search-syntax summary').getBoundingClientRect().left,
+        ],
+        submit: app.querySelector('[data-test="search-submit"]').getBoundingClientRect().toJSON(),
+      };
+    })()`);
+    expect(Math.max(...form.starts) - Math.min(...form.starts)).toBeLessThanOrEqual(2);
+    for (const start of form.starts) {
+      expect(Math.abs(start - form.inset)).toBeLessThanOrEqual(2);
+    }
+    expect(form.submit.width).toBeGreaterThanOrEqual(48);
+    expect(form.submit.height).toBeGreaterThanOrEqual(48);
+  });
+
   it('sizes compact Search controls and shows submitted results without overflow', async () => {
     const inbox = await harness!.cdp.js<{ scrollTop: number; focused: string }>(`(() => {
       const app = document.querySelector(${JSON.stringify(workspaceApp)});

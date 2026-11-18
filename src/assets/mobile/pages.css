@@ -245,7 +245,8 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-controls 
   display: block;
   width: 100%;
   margin: 0;
-  padding: 8px 16px 12px 20px;
+  padding-block: 8px 12px;
+  padding-inline: var(--mobile-page-inset-start) var(--mobile-page-inset-end);
 }
 
 .app[data-layout="compact"] .mail-search-entry {
@@ -258,7 +259,12 @@ body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-controls 
   min-width: 0;
   min-height: 48px;
   flex: 1;
+  padding-inline-start: 0;
   font-size: 16px;
+}
+
+.app[data-layout="compact"] .search-cache-toggle input {
+  margin-inline-start: 0;
 }
 
 .app[data-layout="compact"] .mail-search-entry button,
