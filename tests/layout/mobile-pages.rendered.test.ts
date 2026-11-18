@@ -584,7 +584,7 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
       secondTop: number;
       legendSize: number;
       headingSize: number;
-      emptyStatusDisplay: string;
+      emptyStatusClip: string;
     }>(`(() => {
       const page = document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="reminder-settings-dialog"]');
       const rect = element => element.getBoundingClientRect();
@@ -601,7 +601,7 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
         secondTop: rect(headings[1]).top,
         legendSize: Number.parseFloat(getComputedStyle(legend).fontSize),
         headingSize: Number.parseFloat(getComputedStyle(headings[1]).fontSize),
-        emptyStatusDisplay: getComputedStyle(status).display,
+        emptyStatusClip: getComputedStyle(status).clipPath,
       };
     })()`);
     expect(geometry.rows).toHaveLength(6);
@@ -609,7 +609,7 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
     expect(geometry.lefts.every(left => Math.abs(left - geometry.lefts[0]!) <= 1)).toBe(true);
     expect(geometry.secondTop - geometry.firstBottom).toBeGreaterThanOrEqual(40);
     expect(geometry.legendSize).toBeLessThan(geometry.headingSize);
-    expect(geometry.emptyStatusDisplay).toBe('none');
+    expect(geometry.emptyStatusClip).toBe('inset(50%)');
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('input[name="swipe-left"][value="none"]').click()`);
     expect(await harness!.cdp.js(`localStorage.getItem('email-os.swipe-preferences.v1')`)).toContain('"left":"none"');
   });

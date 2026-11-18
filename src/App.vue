@@ -2740,7 +2740,7 @@ const searchSyntaxEditHint = computed(() =>
           <section v-if="drawer === 'reminder-settings' && remindersSupported" class="utility-panel" data-test="reminder-settings-dialog">
             <h3 class="drawer-section-title compact-settings-heading">Reminders</h3>
             <ReminderSettings :compact="layoutMode === 'compact'" @close="closeDrawer" @saved="reminderPreferencesSaved" />
-            <SwipeActionSettings @saved="swipePreferences = $event" />
+            <SwipeActionSettings :compact="layoutMode === 'compact'" @saved="swipePreferences = $event" />
           </section>
           <AccountPanel
             v-if="drawer === 'account' && accountStatus"
