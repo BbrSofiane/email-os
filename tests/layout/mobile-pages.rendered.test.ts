@@ -128,8 +128,33 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
   });
 
   it('sizes compact Search controls and shows submitted results without overflow', async () => {
+    const inbox = await harness!.cdp.js<{ scrollTop: number; focused: string }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const list = app.querySelector('.inbox-scroll');
+      list.scrollTop = 180;
+      return {
+        scrollTop: list.scrollTop,
+        focused: list.querySelector('[aria-current="true"]').dataset.test,
+      };
+    })()`);
+    expect(inbox.scrollTop).toBeGreaterThan(0);
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-search"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
+    const visibleInboxRows = await harness!.cdp.js<number>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      return [...app.querySelectorAll('.inbox-row')].filter(row => row.getClientRects().length > 0).length;
+    })()`);
+    expect(visibleInboxRows).toBe(0);
+    await harness!.cdp.js(`document.querySelector('[data-test="search-input"]').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))`);
+    const restored = await harness!.cdp.js<{ scrollTop: number; focused: string }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      return {
+        scrollTop: app.querySelector('.inbox-scroll').scrollTop,
+        focused: document.activeElement.dataset.test,
+      };
+    })()`);
+    expect(restored).toEqual(inbox);
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-search"]').click()`);
     const searchPage = await harness!.cdp.js<{ slotHeight: number; title: boolean; searchCurrent: string | null; inboxCurrent: string | null }>(`(() => {
       const app = document.querySelector(${JSON.stringify(workspaceApp)});
       return {

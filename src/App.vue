@@ -880,8 +880,16 @@ const history = ref<ContextEntry[]>([]);
 let navigationToken = 0;
 const { searchVisible, searchDraft, searchInput, cachedSearch, recentQueries, suggestionsOpen, suggestionIndex, suggestionsId, suggestionId, searchSuggestions, searchError, activeSuggestionId, revealSearch, submitSearch, applySuggestion, highlightSuggestion, onSearchInputKeydown, senderSearch } = useSearchSurface({
   mailbox, accountId, accountReady, drawer, contactDisclosure, replyComposerOpen, composeCardOpen, history,
-  captureContext, releaseEditorSurface, nextNavigationToken: () => ++navigationToken, currentNavigationToken: () => navigationToken, focusFocusedRow,
+  captureContext, releaseEditorSurface, nextNavigationToken: () => ++navigationToken, currentNavigationToken: () => navigationToken,
+  focusFocusedRow: () => focusFocusedRow(layoutMode.value === 'compact' && mailbox.context.value !== 'search'),
 });
+const standaloneSearchForm = computed(() =>
+  layoutMode.value === 'compact' && searchVisible.value && mailbox.context.value !== 'search');
+let searchOriginAnchor: ReaderOrigin['anchor'] = null;
+watch(standaloneSearchForm, (standalone) => {
+  // A hidden scroller has no geometry when a submitted search saves its origin.
+  searchOriginAnchor = standalone ? inboxList.value?.captureAnchor() ?? null : null;
+}, { flush: 'sync' });
 // Scope DOM lookups to this App: two workspaces each have their own reader scroller.
 const appRoot = ref<HTMLElement | null>(null);
 const overlay = ref<'palette' | 'navigator' | null>(null);
@@ -963,7 +971,7 @@ function captureContext(): ContextEntry | null {
     doneBoundary: mailbox.loadedDoneBoundary.value ? { ...mailbox.loadedDoneBoundary.value } : null,
     focusedRef: entry?.focusedRef ?? mailbox.focusedRef.value,
     ordering: entry?.ordering ?? listRows.value.map((row) => ({ ...row.ref })),
-    anchor: entry?.anchor ?? inboxList.value?.captureAnchor() ?? null,
+    anchor: entry?.anchor ?? (standaloneSearchForm.value ? searchOriginAnchor : inboxList.value?.captureAnchor() ?? null),
   };
 }
 async function navigateContext(context: BrowseContext, saved?: ContextEntry): Promise<boolean> {
@@ -1947,19 +1955,20 @@ function escapeLadder(event: KeyboardEvent): void {
     }
     event.preventDefault();
     void executeAction('back');
-  } else if (selectionActive.value) {
-    // Escape order (§3.2): the selected set clears before any context Back,
-    // including when no context history exists.
-    event.preventDefault();
-    clearSelectionAndReport();
   } else if (layoutMode.value === 'compact' && searchVisible.value) {
     event.preventDefault();
     if (suggestionsOpen.value && searchSuggestions.value.length > 0) {
       suggestionsOpen.value = false;
       return;
     }
+    const preserveScroll = standaloneSearchForm.value;
     searchVisible.value = false;
-    void focusFocusedRow();
+    void focusFocusedRow(preserveScroll);
+  } else if (selectionActive.value) {
+    // Escape order (§3.2): the selected set clears before any context Back,
+    // including when no context history exists.
+    event.preventDefault();
+    clearSelectionAndReport();
   } else if (history.value.length) {
     event.preventDefault(); void executeAction('back');
   }
@@ -2464,6 +2473,7 @@ const searchSyntaxEditHint = computed(() =>
           </Teleport>
           <DraftsList
             v-else-if="draftsContext && !readerOpen"
+            v-show="!standaloneSearchForm"
             ref="draftsPane"
             v-model:active-key="draftsActiveKey"
             :summaries="drafts.summaries.value"
@@ -2487,20 +2497,21 @@ const searchSyntaxEditHint = computed(() =>
             @retry-close="drafts.retryClose()"
             @retry-close-setup="drafts.retryCloseSetup()"
           />
-          <RemindersList v-else-if="remindersContext && !readerOpen" ref="remindersPane" :model="reminders" :compact="layoutMode === 'compact'" @open="openReminderConversation" />
+          <RemindersList v-else-if="remindersContext && !readerOpen" v-show="!standaloneSearchForm" ref="remindersPane" :model="reminders" :compact="layoutMode === 'compact'" @open="openReminderConversation" />
           <template v-else-if="!readerOpen">
             <!-- Coverage and continuation errors stay visible in search context
                  even while the entry form is collapsed. -->
             <p v-if="mailbox.context.value === 'search'" class="search-coverage" role="status" data-test="search-coverage">{{ mailbox.listState.value === 'loading' ? 'Searching… coverage not yet known.' : mailbox.listState.value === 'error' ? 'Search did not complete. Retry, edit the query, or choose cached mail only.' : mailbox.searchCoverage.value === 'cached_incomplete' ? 'Cached content only — incomplete mailbox coverage. Missing or HTML-only content may not match.' : 'Online · scans 20 mailbox candidates per page, including older archived mail. Spam/Trash excluded. A page can have no matches; continue to scan older mail.' }}</p>
-            <p v-if="mailbox.listError.value && mailbox.listState.value === 'ready'" class="search-inline-error" role="alert" data-test="search-inline-error">{{ errorText(mailbox.listError.value) }}</p>
-            <p v-if="mailbox.listState.value === 'loading'" class="list-state" data-test="inbox-loading">Loading {{ contextTitle }}…</p>
-            <div v-else-if="mailbox.listState.value === 'error'" class="recovery-banner" data-test="inbox-error">
+            <p v-if="mailbox.listError.value && mailbox.listState.value === 'ready'" v-show="!standaloneSearchForm" class="search-inline-error" role="alert" data-test="search-inline-error">{{ errorText(mailbox.listError.value) }}</p>
+            <p v-if="mailbox.listState.value === 'loading'" v-show="!standaloneSearchForm" class="list-state" data-test="inbox-loading">Loading {{ contextTitle }}…</p>
+            <div v-else-if="mailbox.listState.value === 'error'" v-show="!standaloneSearchForm" class="recovery-banner" data-test="inbox-error">
               <p role="alert">Could not load {{ contextTitle }}: {{ mailbox.listError.value ? errorText(mailbox.listError.value) : 'unknown error' }}{{ listErrorIsSearchSyntax ? searchSyntaxEditHint : '.' }}</p>
               <!-- A deterministic syntax error re-fails identically, so Retry is a dead control there; provider/load errors keep it. -->
               <button v-if="!listErrorIsSearchSyntax" type="button" data-test="inbox-retry" @click="mailbox.refresh()">Retry</button>
             </div>
             <p
               v-else-if="mailbox.conversations.value.length === 0"
+              v-show="!standaloneSearchForm"
               class="list-state"
               :class="inboxEmpty ? `tone-${inboxEmpty.tone}` : undefined"
               :data-tone="inboxEmpty?.tone"
@@ -2521,6 +2532,7 @@ const searchSyntaxEditHint = computed(() =>
             </p>
             <InboxList
               v-else
+              v-show="!standaloneSearchForm"
               ref="inboxList"
               :rows="listRows"
               :context="mailbox.context.value"
@@ -2545,7 +2557,7 @@ const searchSyntaxEditHint = computed(() =>
               @select-toggle="toggleRowSelection"
               @select-range="rangeSelectRow"
             />
-            <button v-if="mailbox.nextCursor.value" type="button" class="list-more" :disabled="mailbox.loadingMore.value || mailbox.listState.value !== 'ready'" data-test="done-more" @click="mailbox.loadMore()">{{ mailbox.context.value === 'search' ? 'Continue searching older mail' : `Load more ${contextTitle}` }}</button>
+            <button v-if="mailbox.nextCursor.value" v-show="!standaloneSearchForm" type="button" class="list-more" :disabled="mailbox.loadingMore.value || mailbox.listState.value !== 'ready'" data-test="done-more" @click="mailbox.loadMore()">{{ mailbox.context.value === 'search' ? 'Continue searching older mail' : `Load more ${contextTitle}` }}</button>
           </template>
           <section v-else class="reader-pane" aria-label="Reader">
             <p
@@ -2819,6 +2831,7 @@ const searchSyntaxEditHint = computed(() =>
         <!-- Covered by a drawer or disclosure exactly like the list it acts on. -->
         <SelectionBar
           v-if="!readerOpen && accountReady && selectionActive && mailbox.listState.value === 'ready'"
+          v-show="!standaloneSearchForm"
           ref="selectionBarRef"
           :inert="centralCovered || undefined"
           :count="selectedCount"
