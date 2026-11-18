@@ -127,9 +127,63 @@ describe.skipIf(!chromePath)('compact pages (real Chromium)', () => {
     expect(await harness!.cdp.js(`document.querySelector('[data-reminder-picker]') === null`)).toBe(true);
   });
 
+  it.each([{ width: 412, height: 915 }, { width: 360, height: 800 }])('aligns the Search form controls at $width × $height', async ({ width, height }) => {
+    await harness!.cdp.cmd('Emulation.setDeviceMetricsOverride', {
+      width, height, screenWidth: width, screenHeight: height,
+      deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor, mobile: true,
+    });
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-search"]').click()`);
+    const form = await harness!.cdp.js<{ inset: number; starts: number[]; inputPaddingLeft: number; submit: DOMRectReadOnly }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const input = app.querySelector('[data-test="search-input"]');
+      return {
+        inset: app.getBoundingClientRect().left + 20,
+        starts: [
+          input.getBoundingClientRect().left,
+          app.querySelector('.search-cache-toggle input').getBoundingClientRect().left,
+          app.querySelector('.search-syntax summary').getBoundingClientRect().left,
+        ],
+        inputPaddingLeft: parseFloat(getComputedStyle(input).paddingLeft),
+        submit: app.querySelector('[data-test="search-submit"]').getBoundingClientRect().toJSON(),
+      };
+    })()`);
+    expect(Math.max(...form.starts) - Math.min(...form.starts)).toBeLessThanOrEqual(2);
+    for (const start of form.starts) {
+      expect(Math.abs(start - form.inset)).toBeLessThanOrEqual(2);
+    }
+    expect(form.inputPaddingLeft).toBeGreaterThanOrEqual(12);
+    expect(form.submit.width).toBeGreaterThanOrEqual(48);
+    expect(form.submit.height).toBeGreaterThanOrEqual(48);
+  });
+
   it('sizes compact Search controls and shows submitted results without overflow', async () => {
+    const inbox = await harness!.cdp.js<{ scrollTop: number; focused: string }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      const list = app.querySelector('.inbox-scroll');
+      list.scrollTop = 180;
+      return {
+        scrollTop: list.scrollTop,
+        focused: list.querySelector('[aria-current="true"]').dataset.test,
+      };
+    })()`);
+    expect(inbox.scrollTop).toBeGreaterThan(0);
     await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-search"]').click()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 100))');
+    const visibleInboxRows = await harness!.cdp.js<number>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      return [...app.querySelectorAll('.inbox-row')].filter(row => row.getClientRects().length > 0).length;
+    })()`);
+    expect(visibleInboxRows).toBe(0);
+    await harness!.cdp.js(`document.querySelector('[data-test="search-input"]').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))`);
+    const restored = await harness!.cdp.js<{ scrollTop: number; focused: string }>(`(() => {
+      const app = document.querySelector(${JSON.stringify(workspaceApp)});
+      return {
+        scrollTop: app.querySelector('.inbox-scroll').scrollTop,
+        focused: document.activeElement.dataset.test,
+      };
+    })()`);
+    expect(restored).toEqual(inbox);
+    await harness!.cdp.js(`document.querySelector(${JSON.stringify(workspaceApp)}).querySelector('[data-test="mobile-search"]').click()`);
     const searchPage = await harness!.cdp.js<{ slotHeight: number; title: boolean; searchCurrent: string | null; inboxCurrent: string | null }>(`(() => {
       const app = document.querySelector(${JSON.stringify(workspaceApp)});
       return {

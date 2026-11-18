@@ -120,8 +120,13 @@ describe('search help operator+gloss list (P2)', () => {
     const help = h.w.get('[data-test="search-help"]');
     expect((details.element as HTMLDetailsElement).open).toBe(false);
     expect(help.element.parentElement).toBe(details.element);
-    expect(help.findAll('li')).toHaveLength(6);
-    expect(h.w.get('[data-test="search-input"]').attributes('aria-describedby')).toBe('search-help');
+    expect(help.findAll('li')).toHaveLength(7);
+    const example = help.get('li:first-child');
+    expect(example.get('span').text()).toBe('Example:');
+    expect(example.get('code.search-op').text()).toBe('from:ada "weekly status" -invoice');
+    const input = h.w.get('[data-test="search-input"]');
+    expect(input.attributes('placeholder')).toBe('Search mail');
+    expect(input.attributes('aria-describedby')).toBe('search-help');
   });
 
   it('keeps the regular search help list outside a disclosure', async () => {

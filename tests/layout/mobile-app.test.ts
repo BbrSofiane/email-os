@@ -22,12 +22,16 @@ describe('App compact and regular frame', () => {
     const wrapper = mountApp(fake, 'browser-preview', { attachTo: document.body });
     await flushFakeClientAndVueUpdates(fake);
 
+    const previousRow = wrapper.get<HTMLElement>('[data-test="conversation-row-conv-04"]');
+    previousRow.element.focus();
+    await flushFakeClientAndVueUpdates(fake);
     await wrapper.get('[data-test="mobile-search"]').trigger('click');
     await flushFakeClientAndVueUpdates(fake);
     expect(wrapper.get('[data-test="mobile-context-slot"]').element.childElementCount).toBe(0);
     expect(wrapper.get('[data-test="mobile-search"]').attributes('aria-current')).toBe('page');
     expect(wrapper.get('[data-test="mobile-mail"]').attributes('aria-current')).toBeUndefined();
     expect(wrapper.get('[data-test="mobile-top-bar"]').text()).toContain('Search');
+    expect(previousRow.isVisible()).toBe(false);
 
     await wrapper.get('[data-test="search-input"]').trigger('keydown', { key: 'Escape' });
     await flushFakeClientAndVueUpdates(fake);
@@ -35,6 +39,8 @@ describe('App compact and regular frame', () => {
     expect(wrapper.get('[data-test="mobile-search"]').attributes('aria-current')).toBeUndefined();
     expect(wrapper.get('[data-test="mobile-mail"]').attributes('aria-current')).toBe('page');
     expect(wrapper.get('[data-test="split-inbox"]').element.closest('.mobile-context-slot')).toBeTruthy();
+    expect(previousRow.isVisible()).toBe(true);
+    expect(document.activeElement).toBe(previousRow.element);
     wrapper.unmount();
   });
 
@@ -173,6 +179,12 @@ describe('App compact and regular frame', () => {
     expect(wrapper.get('[data-test="mobile-context-slot"]').element.childElementCount).toBe(0);
     expect(wrapper.get('[data-test="mobile-search"]').attributes('aria-current')).toBe('page');
     expect(wrapper.get('[data-test="mobile-mail"]').attributes('aria-current')).toBeUndefined();
+
+    const result = wrapper.get('.inbox-row');
+    await wrapper.get('[data-test="search-results-query"]').trigger('click');
+    await flushFakeClientAndVueUpdates(fake);
+    expect(wrapper.get('[data-test="search-input"]').isVisible()).toBe(true);
+    expect(result.isVisible()).toBe(true);
 
     await wrapper.get('[data-test="mobile-mail"]').trigger('click');
     await flushFakeClientAndVueUpdates(fake);
