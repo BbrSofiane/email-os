@@ -9,6 +9,7 @@
  * announced through the app-level polite live region, not from here.
  */
 import type { BrowseContext } from '../composables/useMailbox';
+import HeaderGlyph from './HeaderGlyph.vue';
 
 const props = defineProps<{
   count: number;
@@ -20,6 +21,7 @@ const props = defineProps<{
   readAvailable?: boolean;
   /** Bound/scope wording from the last rejected selection change. */
   limitMessage?: string | null;
+  compact?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -49,6 +51,59 @@ const scopeCaveat = computed(
 
 <template>
   <div class="selection-bar" role="group" aria-label="Selected conversations" data-test="selection-bar">
+    <template v-if="compact">
+      <div class="selection-row-primary">
+        <button type="button" data-test="selection-clear" aria-label="Clear selection" @click="emit('clear')">
+          <HeaderGlyph name="x" />
+          <span class="visually-hidden">Clear selection</span>
+        </button>
+        <p class="selection-scope" data-test="selection-scope" :title="scopeCaveat">
+          <strong v-if="count > 0" data-test="selection-count">{{ count }} of {{ loadedCount }} selected</strong>
+          <strong v-else>Select conversations</strong>
+          <span class="visually-hidden" data-test="selection-scope-caveat">{{ scopeCaveat }}</span>
+        </p>
+        <button
+          v-if="count > 0 && context !== 'done'"
+          type="button"
+          data-test="selection-archive"
+          :disabled="!actionsEnabled"
+          @click="emit('archive')"
+        >Mark {{ count }} done</button>
+        <button
+          v-if="count > 0 && context !== 'inbox'"
+          type="button"
+          data-test="selection-unarchive"
+          :disabled="!actionsEnabled"
+          @click="emit('unarchive')"
+        >Mark {{ count }} not done</button>
+      </div>
+      <div class="selection-row-secondary">
+        <button
+          v-if="count > 0 && readAvailable"
+          type="button"
+          data-test="selection-mark-read"
+          :aria-label="'Mark ' + count + ' read'"
+          @click="emit('markRead')"
+        >Mark read</button>
+        <button
+          v-if="count > 0 && readAvailable"
+          type="button"
+          data-test="selection-mark-unread"
+          :aria-label="'Mark ' + count + ' unread'"
+          @click="emit('markUnread')"
+        >Mark unread</button>
+        <button
+          type="button"
+          data-test="selection-select-all"
+          :disabled="selectAllDisabled || count === loadedCount"
+          :title="selectAllTitle"
+          :aria-label="`Select all ${loadedCount} loaded conversations`"
+          @click="emit('selectAll')"
+        >Select {{ loadedCount }} loaded</button>
+      </div>
+      <p v-if="limitMessage" class="selection-limit" role="note" data-test="selection-limit">{{ limitMessage }}</p>
+    </template>
+    <template v-else>
     <!-- Terse line; the exact scope lives in the title and a visually hidden description. -->
     <p class="selection-scope" data-test="selection-scope" :title="scopeCaveat">
       <strong data-test="selection-count">{{ count }} selected</strong>{{ ' ' }}<span class="selection-loaded-scope" data-test="selection-loaded-scope">· {{ loadedCount }} loaded</span>
@@ -92,5 +147,6 @@ const scopeCaveat = computed(
       <button type="button" data-test="selection-clear" @click="emit('clear')">Clear selection</button>
     </span>
     <p v-if="limitMessage" class="selection-limit" role="note" data-test="selection-limit">{{ limitMessage }}</p>
+    </template>
   </div>
 </template>

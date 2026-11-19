@@ -22,7 +22,7 @@
  * - Anchor capture/restoration supports the reader round trip: a visible-row
  *   reference with its relative offset plus a scrollTop fallback.
  */
-import { computed, nextTick, onBeforeUnmount, onBeforeUpdate, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onBeforeUpdate, onMounted, reactive, ref, watch, type ComputedRef } from 'vue';
 import type { ConversationRef } from '../lib/ipc/client';
 import type { BrowseContext, ConversationSummaryLike } from '../composables/useMailbox';
 import { sameConversation } from '../composables/useMailbox';
@@ -30,6 +30,8 @@ import { actionLabel } from '../lib/action-registry';
 import { compactDateLabel, dateGroupCaption, dateGroupFor, fullDateLabel, machineDateTime } from '../lib/browsing-dates';
 import { groupRowsBySender, isSingleFromQuery, senderGroupKey, senderGroupLabel } from '../lib/search';
 import RowGlyph from './RowGlyph.vue';
+import { useSwipeAction, type SwipeSide } from '../composables/useSwipeAction';
+import { useLongPressSelection } from '../composables/useLongPressSelection';
 
 const props = defineProps<{
   rows: ConversationSummaryLike[];
@@ -48,6 +50,10 @@ const props = defineProps<{
   readOnly?: boolean;
   /** UX-05: selected references (account-scoped); selection ≠ focus. */
   selectedRefs?: ConversationRef[];
+  selectionMode?: boolean;
+  compact?: boolean;
+  swipeRight?: 'remind' | 'done' | 'none';
+  swipeLeft?: 'remind' | 'done' | 'none';
 }>();
 
 const emit = defineEmits<{
@@ -64,8 +70,8 @@ const emit = defineEmits<{
 }>();
 
 const selectedKeys = computed(() => new Set((props.readOnly ? [] : props.selectedRefs ?? []).map((ref) => `${ref.accountId}:${ref.conversationId}`)));
-/** Selection mode: any selected row reveals every row's gutter checkbox. */
-const selecting = computed(() => selectedKeys.value.size > 0);
+const selecting = computed(() => !props.readOnly
+  && (selectedKeys.value.size > 0 || (props.compact && props.selectionMode)));
 
 function isSelected(row: ConversationSummaryLike): boolean {
   return selectedKeys.value.has(`${row.ref.accountId}:${row.ref.conversationId}`);
@@ -73,8 +79,22 @@ function isSelected(row: ConversationSummaryLike): boolean {
 
 /** Pointer click on a row: Cmd/Ctrl toggles, Shift/Cmd+Shift ranges, plain opens. */
 function onRowClick(event: MouseEvent, row: ConversationSummaryLike): void {
+  if (props.compact && swipeFor(row).consumeClick()) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+  if (props.compact && longPressFor(row).consumeClick()) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
   if (props.readOnly) {
     emit('open', row.ref);
+    return;
+  }
+  if (props.compact && selecting.value) {
+    emit('selectToggle', row.ref);
     return;
   }
   if (event.shiftKey) {
@@ -276,6 +296,106 @@ function readStateName(row: ConversationSummaryLike): string {
 function hasRowActions(): boolean {
   if (props.readOnly) return false;
   return Boolean(props.showReadControls || props.actionsEnabled || props.reminderEnabled);
+}
+
+type SwipeCue = {
+  action: 'remind' | 'done';
+  glyph: 'reminder' | 'restore' | 'archive';
+  label: string;
+};
+type RowSwipe = ReturnType<typeof useSwipeAction> & { cue: ComputedRef<SwipeCue | null> };
+
+const swipes = new Map<string, RowSwipe>();
+const longPresses = new Map<string, ReturnType<typeof useLongPressSelection>>();
+
+watch(selecting, (active) => {
+  if (!props.compact || !active) return;
+  for (const swipe of swipes.values()) swipe.cancel();
+});
+
+function configuredSwipeAction(side: Exclude<SwipeSide, null>) {
+  return side === 'right' ? props.swipeRight ?? 'remind' : props.swipeLeft ?? 'done';
+}
+
+function swipeFor(row: ConversationSummaryLike): RowSwipe {
+  const key = rowKey(row.ref);
+  let swipe = swipes.get(key);
+  if (!swipe) {
+    const gesture = useSwipeAction(
+      () => rowEls.get(key) ?? null,
+      (side) => {
+        if (props.readOnly || selecting.value) return false;
+        const action = configuredSwipeAction(side);
+        if (action === 'remind') return props.reminderEnabled === true && props.context === 'inbox';
+        return action === 'done' && props.actionsEnabled === true && props.context !== 'starred';
+      },
+      (side) => {
+        const action = configuredSwipeAction(side);
+        if (action === 'remind' && props.reminderEnabled && props.context === 'inbox') emit('remind', row.ref);
+        else if (action === 'done' && props.actionsEnabled && props.context !== 'starred') {
+          if (props.context === 'done') emit('unarchive', row.ref);
+          else emit('archive', row.ref);
+        }
+      },
+      (side) => configuredSwipeAction(side) === 'done',
+    );
+    const cue = computed<SwipeCue | null>(() => {
+      const side = gesture.revealed.value;
+      if (!side) return null;
+      const action = configuredSwipeAction(side);
+      if (action === 'none') return null;
+      if (action === 'remind') return { action, glyph: 'reminder', label: 'Remind' };
+      return props.context === 'done'
+        ? { action, glyph: 'restore', label: 'Mark not done' }
+        : { action, glyph: 'archive', label: 'Mark done' };
+    });
+    swipe = { ...gesture, cue };
+    swipes.set(key, swipe);
+  }
+  return swipe;
+}
+
+function longPressFor(row: ConversationSummaryLike): ReturnType<typeof useLongPressSelection> {
+  const key = rowKey(row.ref);
+  let press = longPresses.get(key);
+  if (!press) {
+    press = useLongPressSelection(
+      () => emit('selectToggle', row.ref),
+      () => swipeFor(row).cancel(),
+    );
+    longPresses.set(key, press);
+  }
+  return press;
+}
+
+function onRowPointerDown(event: PointerEvent, row: ConversationSummaryLike): void {
+  if (!props.compact || props.readOnly) return;
+  if (!selecting.value) swipeFor(row).pointerdown(event);
+  longPressFor(row).pointerdown(event);
+}
+
+function onRowPointerMove(event: PointerEvent, row: ConversationSummaryLike): void {
+  if (!props.compact || props.readOnly) return;
+  swipeFor(row).pointermove(event);
+  if (swipeFor(row).dragging.value) longPressFor(row).cancel();
+  else longPressFor(row).pointermove(event);
+}
+
+function onRowPointerUp(event: PointerEvent, row: ConversationSummaryLike): void {
+  if (!props.compact || props.readOnly) return;
+  longPressFor(row).pointerup(event);
+  swipeFor(row).pointerup(event);
+}
+
+function onRowPointerCancel(event: PointerEvent, row: ConversationSummaryLike): void {
+  if (!props.compact || props.readOnly) return;
+  longPressFor(row).pointercancel(event);
+  swipeFor(row).pointercancel(event);
+}
+
+function onRowContextMenu(event: MouseEvent, row: ConversationSummaryLike): void {
+  if (!props.compact || props.readOnly || !longPressFor(row).fired.value) return;
+  event.preventDefault();
 }
 
 /** DOM id of the row's action disclosure panel (for aria-controls). */
@@ -612,16 +732,43 @@ defineExpose({ focusRef, captureAnchor, restoreAnchor });
           'read-disclosed': readStateDisclosed(),
           'is-read': item.row.isRead === true,
           'has-actions': hasRowActions(),
+          swiping: swipeFor(item.row).dragging.value || swipeFor(item.row).resetting.value,
         }"
         :aria-current="isFocused(item.row) ? 'true' : undefined"
         :tabindex="tabIndexFor(item.row, item.index)"
         :data-test="`conversation-row-${item.row.ref.conversationId}`"
         :ref="(el) => setRowRef(el, rowKey(item.row.ref))"
+        :style="compact ? {
+          '--swipe-offset': swipeFor(item.row).offset.value + 'px',
+          '--swipe-distance': Math.abs(swipeFor(item.row).offset.value) + 'px',
+        } : undefined"
+        @pointerdown="onRowPointerDown($event, item.row)"
+        @pointermove="onRowPointerMove($event, item.row)"
+        @pointerup="onRowPointerUp($event, item.row)"
+        @pointercancel="onRowPointerCancel($event, item.row)"
+        @contextmenu="onRowContextMenu($event, item.row)"
         @focusin="onFocusIn($event, item.row)"
         @focusout="onFocusOut"
         @keydown.escape="onRowKeydown($event, item.row)"
         @click="onRowClick($event, item.row)"
       >
+        <span
+          v-if="compact && !readOnly && swipeFor(item.row).cue.value"
+          class="row-swipe-underlay"
+          :class="[
+            swipeFor(item.row).cue.value!.action,
+            {
+              armed: swipeFor(item.row).armed.value,
+              labelled: Math.abs(swipeFor(item.row).offset.value) >= 128,
+              'from-end': swipeFor(item.row).revealed.value === 'left',
+              'from-start': swipeFor(item.row).revealed.value === 'right',
+            },
+          ]"
+          aria-hidden="true"
+        >
+          <span class="row-swipe-icon"><RowGlyph :name="swipeFor(item.row).cue.value!.glyph" /></span>
+          <span class="row-swipe-label">{{ swipeFor(item.row).cue.value!.label }}</span>
+        </span>
         <!-- UX-05 selection control: a native labelled checkbox in the 44px
              gutter; it stops propagation and never opens the row. Revealed by
              selection mode, hover, the focused row, or its own focus. No

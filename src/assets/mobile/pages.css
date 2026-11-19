@@ -1,0 +1,705 @@
+.app[data-layout="compact"] .drafts-pane .context-coverage {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.app[data-layout="compact"] .drafts-pane .context-coverage .cached-coverage {
+  width: 100%;
+}
+
+.app[data-layout="compact"] .drafts-pane .context-coverage .drawer-quiet {
+  min-height: 48px;
+}
+
+.app[data-layout="compact"] .drafts-pane .context-item {
+  min-height: 64px;
+}
+
+.app[data-layout="compact"] .drafts-pane .context-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
+  min-height: 64px;
+  padding-inline: 20px 16px;
+}
+
+.app[data-layout="compact"] .drafts-pane .context-row-lead {
+  display: none;
+}
+
+.app[data-layout="compact"] .drafts-pane .context-row-main {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  min-height: 28px;
+  text-align: left;
+}
+
+.app[data-layout="compact"] .drafts-pane .context-row-secondary {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  min-width: 0;
+  color: var(--text-secondary);
+}
+
+.app[data-layout="compact"] .drafts-pane .context-row-trailing {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+}
+
+.app[data-layout="compact"] .drafts-pane .context-row-actions {
+  grid-column: 1 / -1;
+  grid-row: 3;
+}
+
+.app[data-layout="compact"] .drafts-pane .context-row-actions button {
+  min-height: 48px;
+}
+
+.app[data-layout="compact"] .context-pane .context-coverage {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  margin-inline: 0;
+}
+
+.app[data-layout="compact"] .context-pane .context-coverage .cached-coverage {
+  width: 100%;
+  margin: 0;
+  padding: 6px 0 6px 20px;
+  color: var(--text-secondary);
+}
+
+.app[data-layout="compact"] .context-pane .context-coverage .drawer-quiet {
+  min-height: 48px;
+  width: calc(100% - 20px);
+  margin-left: 20px;
+  border: 1px solid var(--divider);
+  border-radius: 12px;
+}
+
+.app[data-layout="compact"] .context-pane [data-test="draft-list-empty"],
+.app[data-layout="compact"] .context-pane [data-test="reminders-empty"] {
+  margin-inline: 20px 16px;
+  padding-inline: 0;
+  text-align: left;
+}
+
+.app[data-layout="compact"] [data-test="reminders-panel"] .context-coverage .drawer-quiet {
+  min-height: 48px;
+  width: auto;
+  margin: 0;
+  margin-inline-start: var(--mobile-page-inset-start);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+}
+
+.app[data-layout="compact"] .activity-empty-detail {
+  color: var(--text-secondary);
+  font-size: var(--mobile-type-meta);
+}
+
+.app[data-layout="compact"] [data-test="reminders-panel"] .context-item {
+  min-height: 64px;
+}
+
+.app[data-layout="compact"] [data-test="reminders-panel"] .context-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
+  min-height: 64px;
+  padding-inline: 20px 16px;
+}
+
+.app[data-layout="compact"] [data-test="reminders-panel"] .context-row-lead {
+  display: none;
+}
+
+.app[data-layout="compact"] [data-test="reminders-panel"] .context-row-main {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  min-height: 28px;
+  text-align: left;
+}
+
+.app[data-layout="compact"] [data-test="reminders-panel"] .context-row-secondary {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  min-width: 0;
+  color: var(--text-secondary);
+}
+
+.app[data-layout="compact"] [data-test="reminders-panel"] .context-row-trailing {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+}
+
+.app[data-layout="compact"] [data-test="reminders-panel"] .context-row-actions {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.app[data-layout="compact"] [data-test="reminders-panel"] .context-row-actions button {
+  min-height: 48px;
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker {
+  --type-body: var(--mobile-type-list);
+  align-items: flex-end;
+  padding: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--overlay-backdrop) 72%, transparent);
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker {
+  width: 100%;
+  max-height: 90dvh;
+  padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+  border-radius: 16px 16px 0 0;
+  background: var(--surface-raised);
+  overflow-y: auto;
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-title-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-inline: 16px;
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-title-line h2 {
+  flex: 1;
+  margin-inline: 0;
+  font-size: var(--type-body);
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-close {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  min-width: 48px;
+  min-height: 48px;
+  place-items: center;
+  border-radius: 50%;
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-close svg {
+  width: 18px;
+  height: 18px;
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker * {
+  font-size: var(--type-body);
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker small {
+  font-size: var(--mobile-type-meta);
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker [role="option"] span {
+  font-size: var(--type-body);
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker input {
+  height: 48px;
+  font-size: 16px;
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker li[role="option"] {
+  min-height: 48px;
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .time-zone-note {
+  overflow-wrap: anywhere;
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker footer {
+  display: none;
+}
+
+body:has(.app[data-layout="compact"]) .backdrop.compact-picker .picker-controls .picker-primary {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid var(--focus-accent);
+  border-radius: 12px;
+  background: var(--focus-fill);
+  color: var(--text-primary);
+  font-size: var(--mobile-type-list);
+  font-weight: 600;
+}
+
+.app[data-layout="compact"] form.mail-search {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding-block: 8px 12px;
+  padding-inline: var(--mobile-page-inset-start) var(--mobile-page-inset-end);
+}
+
+.app[data-layout="compact"] .mail-search-entry {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.app[data-layout="compact"] .mail-search-entry input {
+  min-width: 0;
+  min-height: 48px;
+  flex: 1;
+  padding-inline: 12px;
+  font-size: 16px;
+}
+
+.app[data-layout="compact"] .search-cache-toggle input {
+  margin-inline-start: 0;
+}
+
+.app[data-layout="compact"] .mail-search-entry button,
+.app[data-layout="compact"] .mail-search-help {
+  min-width: 48px;
+  min-height: 48px;
+}
+
+.app[data-layout="compact"] .search-suggestions {
+  width: 100%;
+  margin: 4px 0 8px;
+}
+
+.app[data-layout="compact"] .search-suggestion {
+  min-height: 48px;
+  overflow-wrap: anywhere;
+}
+
+.app[data-layout="compact"] .search-help,
+.app[data-layout="compact"] .search-coverage,
+.app[data-layout="compact"] .search-unsupported {
+  overflow-wrap: anywhere;
+}
+
+.app[data-layout="compact"] .search-example {
+  color: var(--text-secondary);
+}
+
+.app[data-layout="compact"] .search-example > .search-op {
+  color: inherit;
+}
+
+.app[data-layout="compact"] .search-syntax > summary,
+.app[data-layout="compact"] .utility-drawer .settings-note summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  list-style: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: var(--mobile-type-meta);
+}
+
+.app[data-layout="compact"] .search-syntax > summary::-webkit-details-marker,
+.app[data-layout="compact"] .utility-drawer .settings-note summary::-webkit-details-marker {
+  display: none;
+}
+
+.app[data-layout="compact"] .search-syntax > summary::before,
+.app[data-layout="compact"] .utility-drawer .settings-note summary::before {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  content: "";
+  transform: rotate(-45deg);
+}
+
+.app[data-layout="compact"] .search-syntax[open] > summary::before,
+.app[data-layout="compact"] .utility-drawer .settings-note[open] > summary::before {
+  transform: rotate(45deg);
+}
+
+.app[data-layout="compact"] .search-syntax:not([open]) > :not(summary) {
+  display: none;
+}
+
+.app[data-layout="compact"] .search-results-header {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0;
+  margin: 0;
+  padding-inline: var(--mobile-page-inset-start) var(--mobile-page-inset-end);
+}
+
+.app[data-layout="compact"] .search-results-query {
+  flex: 1;
+  min-width: 0;
+  min-height: 48px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: var(--mobile-type-list);
+  font-weight: 600;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app[data-layout="compact"] .search-results-header [data-test="search-clear"] {
+  display: grid;
+  flex: 0 0 48px;
+  width: 48px;
+  height: 48px;
+  min-height: 48px;
+  padding: 0;
+  place-items: center;
+}
+
+.app[data-layout="compact"] .search-results-header [data-test="search-clear"] svg {
+  width: 24px;
+  height: 24px;
+}
+
+.app[data-layout="compact"] .search-coverage {
+  margin: 0;
+  padding: 0 var(--mobile-page-inset-end) 0 var(--mobile-page-inset-start);
+  color: var(--text-secondary);
+  font-size: var(--mobile-type-meta);
+}
+
+.app[data-layout="compact"] .inbox-list .row-group {
+  padding-inline: var(--mobile-page-inset-start) var(--mobile-page-inset-end);
+  font-size: var(--mobile-type-meta);
+  color: var(--text-secondary);
+}
+
+.app[data-layout="compact"] .utility-drawer {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  width: auto;
+  padding: 0;
+  border: 0;
+  background: var(--surface);
+  box-shadow: none;
+  overflow: hidden;
+}
+
+.app[data-layout="compact"] .utility-drawer > :not(.drawer-header) {
+  max-height: calc(100% - 56px);
+  overflow-y: auto;
+  padding-inline: 20px 16px;
+  padding-block-end: var(--mobile-bottom-clearance);
+}
+
+.app[data-layout="compact"] .utility-drawer .drawer-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: var(--mobile-top-bar-height);
+  min-height: var(--mobile-top-bar-height);
+  margin: 0;
+  padding: 0 16px;
+}
+
+.app[data-layout="compact"] .utility-drawer .drawer-header h2 {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--mobile-type-list);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app[data-layout="compact"] .contact-disclosure-panel .contact-line > .contact-name,
+.app[data-layout="compact"] .contact-disclosure-panel .contact-line > .contact-mailbox {
+  flex: 1;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.app[data-layout="compact"] .contact-disclosure-panel .contact-copy {
+  width: 48px;
+  height: 48px;
+  opacity: 1;
+  color: var(--text-secondary);
+}
+
+.app[data-layout="compact"] .contact-disclosure-panel .contact-copy > svg {
+  width: 20px;
+  height: 20px;
+}
+
+.app[data-layout="compact"] .contact-disclosure-panel .contact-find-mail {
+  display: inline-flex;
+  min-height: 48px;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--focus-accent);
+  font-size: var(--mobile-type-list);
+  font-weight: 600;
+  text-align: left;
+  white-space: normal;
+}
+
+.app[data-layout="compact"] .contact-disclosure-panel .contact-recent button {
+  min-height: 48px;
+  height: auto;
+  padding-block: 12px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+  text-overflow: clip;
+}
+
+.app[data-layout="compact"] .contact-disclosure-panel .contact-recent li + li {
+  border-block-start: 1px solid var(--rule);
+}
+
+.app[data-layout="compact"] .utility-drawer .compact-settings-heading {
+  margin: 0 0 8px;
+  color: var(--text-primary);
+  font-size: var(--mobile-type-list);
+  font-weight: 600;
+}
+
+.app[data-layout="compact"] .utility-drawer .swipe-settings {
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--rule);
+}
+
+.app[data-layout="compact"] .utility-drawer .reminder-settings-accessible-title {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.app[data-layout="compact"] .utility-drawer .account-panel {
+  gap: 24px;
+  overflow-wrap: anywhere;
+}
+
+.app[data-layout="compact"] .utility-drawer .account-section {
+  width: 100%;
+  align-items: stretch;
+}
+
+.app[data-layout="compact"] .utility-drawer .account-line,
+.app[data-layout="compact"] .utility-drawer .account-notice,
+.app[data-layout="compact"] .utility-drawer .account-action-error,
+.app[data-layout="compact"] .utility-drawer .account-note {
+  overflow-wrap: anywhere;
+}
+
+.app[data-layout="compact"] .utility-drawer .account-actions,
+.app[data-layout="compact"] .utility-drawer .account-confirm {
+  width: 100%;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.app[data-layout="compact"] .utility-drawer .account-actions button,
+.app[data-layout="compact"] .utility-drawer .account-confirm button {
+  width: 100%;
+  min-height: 48px;
+}
+
+.app[data-layout="compact"] .utility-drawer .activity {
+  overflow-wrap: anywhere;
+}
+
+.app[data-layout="compact"] .utility-drawer .activity-row {
+  min-height: 64px;
+  align-items: flex-start;
+}
+
+.app[data-layout="compact"] .utility-drawer .activity-row button,
+.app[data-layout="compact"] .utility-drawer .activity-action {
+  min-height: 48px;
+}
+
+.app[data-layout="compact"] .utility-drawer .destination-search,
+.app[data-layout="compact"] .utility-drawer .destination-find input,
+.app[data-layout="compact"] .utility-drawer .reminder-settings input,
+.app[data-layout="compact"] .utility-drawer .reminder-settings select {
+  min-height: 48px;
+  font-size: 16px;
+}
+
+.app[data-layout="compact"] .utility-drawer .destination-item,
+.app[data-layout="compact"] .utility-drawer .destination-row {
+  min-height: 48px;
+  padding-inline: 20px 16px;
+  overflow-wrap: anywhere;
+}
+
+.app[data-layout="compact"] .utility-drawer .destination-reader,
+.app[data-layout="compact"] .utility-drawer .destination-list,
+.app[data-layout="compact"] .utility-drawer .provider-destinations {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.app[data-layout="compact"] .utility-drawer .destination-actions,
+.app[data-layout="compact"] .utility-drawer .reminder-settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.app[data-layout="compact"] .utility-drawer .destination-actions button,
+.app[data-layout="compact"] .utility-drawer .destination-reader button,
+.app[data-layout="compact"] .utility-drawer .reminder-settings button {
+  min-height: 48px;
+}
+
+.app[data-layout="compact"] .utility-drawer .swipe-settings fieldset {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.app[data-layout="compact"] .utility-drawer .swipe-settings legend {
+  padding: 0;
+  margin: 16px 0 0;
+  color: var(--text-secondary);
+  font-size: var(--mobile-type-meta);
+  font-weight: 400;
+}
+
+.app[data-layout="compact"] .utility-drawer .swipe-settings-status {
+  margin: 0;
+  font-size: var(--mobile-type-meta);
+  color: var(--text-secondary);
+}
+
+.app[data-layout="compact"] .utility-drawer .swipe-settings-status[data-status="failed"] {
+  color: var(--danger);
+}
+
+.app[data-layout="compact"] .utility-drawer .swipe-settings-status:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.app[data-layout="compact"] .utility-drawer .swipe-settings label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+}
+
+.app[data-layout="compact"] .utility-drawer .swipe-settings input {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+}
+
+body:has(.app[data-layout="compact"]) .action-backdrop.compact-action-backdrop {
+  align-items: flex-start;
+  padding: 16px 8px;
+}
+
+body:has(.app[data-layout="compact"]) .action-backdrop.compact-action-backdrop .compact-command-overlay {
+  width: 100%;
+  max-height: 70dvh;
+  overflow: hidden;
+}
+
+body:has(.app[data-layout="compact"]) .compact-command-overlay > input {
+  min-height: 48px;
+  font-size: 16px;
+}
+
+body:has(.app[data-layout="compact"]) .compact-command-overlay > ul {
+  max-height: calc(70dvh - 112px);
+  overflow-y: auto;
+}
+
+body:has(.app[data-layout="compact"]) .compact-command-overlay [role="option"] {
+  min-height: 48px;
+}
+
+body:has(.app[data-layout="compact"]) .compact-command-overlay kbd,
+body:has(.app[data-layout="compact"]) .compact-command-overlay .action-keys,
+body:has(.app[data-layout="compact"]) .compact-command-overlay .action-hint {
+  display: none;
+}
+
+body:has(.app[data-layout="compact"]) .backdrop:has(.attachment-chooser) {
+  align-items: flex-end;
+  padding: 0;
+  overflow: hidden;
+}
+
+body:has(.app[data-layout="compact"]) .attachment-chooser {
+  width: 100%;
+  max-height: 90dvh;
+  padding: 12px 20px calc(16px + env(safe-area-inset-bottom, 0px));
+  border-radius: 16px 16px 0 0;
+  background: var(--surface-raised);
+}
+
+body:has(.app[data-layout="compact"]) .attachment-chooser header button,
+body:has(.app[data-layout="compact"]) .attachment-chooser li button,
+body:has(.app[data-layout="compact"]) .attachment-chooser > button,
+body:has(.app[data-layout="compact"]) .attachment-chooser [role="group"] button {
+  min-height: 48px;
+}
+
+body:has(.app[data-layout="compact"]) .attachment-chooser li > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+body:has(.app[data-layout="compact"]) .attachment-chooser header {
+  flex-wrap: wrap;
+}
+
+.app[data-layout="compact"] .transition-gate {
+  padding: 20px;
+}
+
+.app[data-layout="compact"] .transition-card {
+  width: 100%;
+  font-size: var(--type-body);
+}
+
+.app[data-layout="compact"] .transition-actions {
+  flex-direction: column;
+}
+
+.app[data-layout="compact"] .transition-primary {
+  width: 100%;
+  min-height: 48px;
+}

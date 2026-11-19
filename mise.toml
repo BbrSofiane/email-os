@@ -138,6 +138,16 @@ run = "mise run test:core && mise run check:contract && mise run lint:core && mi
 description = "Run the full check, native lint and bridge tests, and web production build sequentially (native prerequisites required)"
 run = "mise run check && mise run lint:native && mise run test:native && mise run build:web"
 
+[tasks."screenshots:mobile"]
+description = "Save review screenshots of the compact (phone) layout from the browser preview"
+run = '''
+if [ -z "${EMAIL_OS_RENDERED_LAYOUT_CHROME:-}" ] || [ -z "${EMAIL_OS_SCREENSHOT_DIR:-}" ]; then
+  echo "Set EMAIL_OS_RENDERED_LAYOUT_CHROME (Chrome or Chromium) and EMAIL_OS_SCREENSHOT_DIR (output directory)." >&2
+  exit 1
+fi
+EMAIL_OS_RUN_RENDERED=1 pnpm vitest run --config vitest.config.ts tests/layout/mobile-screenshots.rendered.test.ts
+'''
+
 [tasks."test:rendered"]
 description = "Run opt-in rendered browser regressions with an explicit Chrome/Chromium binary"
 run = '''
@@ -150,5 +160,5 @@ if ! command -v "$EMAIL_OS_RENDERED_LAYOUT_CHROME" >/dev/null 2>&1 && [ ! -x "$E
   echo "Chrome/Chromium binary not found or not executable: $EMAIL_OS_RENDERED_LAYOUT_CHROME" >&2
   exit 1
 fi
-EMAIL_OS_RUN_RENDERED=1 pnpm vitest run --config vitest.config.ts tests/reader/reader.rendered.test.ts tests/discovery/discovery.rendered.test.ts tests/layout/disclosure-focus.rendered.test.ts tests/layout/account-header.rendered.test.ts tests/layout/inline-action-targets.rendered.test.ts tests/browsing/inbox-list.rendered-layout.test.ts
+EMAIL_OS_RUN_RENDERED=1 pnpm vitest run --config vitest.config.ts tests/reader/reader.rendered.test.ts tests/discovery/discovery.rendered.test.ts tests/layout/disclosure-focus.rendered.test.ts tests/layout/account-header.rendered.test.ts tests/layout/inline-action-targets.rendered.test.ts tests/browsing/inbox-list.rendered-layout.test.ts tests/layout/mobile-shell.rendered.test.ts tests/layout/mobile-list.rendered.test.ts tests/layout/mobile-drawer.rendered.test.ts tests/layout/mobile-reader.rendered.test.ts tests/layout/mobile-compose.rendered.test.ts tests/layout/mobile-pages.rendered.test.ts tests/layout/mobile-reduced-motion.rendered.test.ts
 '''

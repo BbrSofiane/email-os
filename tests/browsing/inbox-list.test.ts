@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import InboxList from "../../src/components/InboxList.vue";
+import RowGlyph from "../../src/components/RowGlyph.vue";
 import type { ConversationRef, ConversationSummary } from "../../src/lib/ipc/client";
 import { flushVueAndMacrotask } from "../helpers";
 
@@ -33,13 +34,14 @@ describe("InboxList (UX-01 compact rows)", () => {
   afterEach(() => {
     wrapper?.unmount();
     wrapper = null;
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
   function mountList(
     rows: ConversationSummary[],
     focusedRef: ConversationRef | null = null,
-    options: { showReadState?: boolean; showReadControls?: boolean; actionsEnabled?: boolean; context?: 'inbox' | 'saved' | 'done' | 'starred' | 'search'; searchQuery?: string } = {},
+    options: { showReadState?: boolean; showReadControls?: boolean; actionsEnabled?: boolean; reminderEnabled?: boolean; compact?: boolean; readOnly?: boolean; selectedRefs?: ConversationRef[]; context?: 'inbox' | 'saved' | 'done' | 'starred' | 'search'; searchQuery?: string; swipeRight?: 'remind' | 'done' | 'none'; swipeLeft?: 'remind' | 'done' | 'none' } = {},
   ): VueWrapper {
     const mounted = mount(InboxList, {
       props: { rows, focusedRef, actionsEnabled: true, ...options },
@@ -56,6 +58,191 @@ describe("InboxList (UX-01 compact rows)", () => {
     row('earlier', { lastMessageAt: '2026-01-02T10:00:00Z', primaryCorrespondent: undefined } as Partial<ConversationSummary> & { lastMessageAt: string }),
     row('december', { lastMessageAt: '2025-12-20T10:00:00Z' }),
   ];
+
+  function pointerEvent(type: string, x: number, pointerType = 'touch'): Event {
+    const event = new Event(type, { bubbles: true });
+    Object.defineProperties(event, {
+      pointerId: { value: 1 },
+      pointerType: { value: pointerType },
+      clientX: { value: x },
+      clientY: { value: 0 },
+    });
+    return event;
+  }
+
+  it.each([
+    { context: 'inbox' as const, expected: 'archive' as const, side: 'left' as const, reminderEnabled: false },
+    { context: 'done' as const, expected: 'unarchive' as const, side: 'left' as const, reminderEnabled: false },
+    { context: 'inbox' as const, expected: 'remind' as const, side: 'right' as const, reminderEnabled: true },
+  ])('emits the configured compact swipe action for $context', async ({ context, expected, side, reminderEnabled }) => {
+    vi.useFakeTimers();
+    const w = mountList([row('swipe', { lastMessageAt: '2026-01-15T09:00:00Z' })], null, {
+      compact: true,
+      context,
+      reminderEnabled,
+    });
+    const element = w.get('.inbox-row').element;
+    element.dispatchEvent(pointerEvent('pointerdown', 0));
+    element.dispatchEvent(pointerEvent('pointermove', side === 'left' ? -160 : 160));
+    element.dispatchEvent(pointerEvent('pointerup', side === 'left' ? -160 : 160));
+    vi.advanceTimersByTime(160);
+    await flushPromises();
+    expect(w.emitted(expected)).toHaveLength(1);
+    expect(w.emitted(expected)?.[0]).toEqual([{ accountId: ACCOUNT, conversationId: 'swipe' }]);
+  });
+
+  it.each([
+    { distance: -160, action: 'archive' },
+    { distance: 160, action: 'remind' },
+  ])('suppresses $action swipes during selection and restores them after Clear', async ({ distance, action }) => {
+    vi.useFakeTimers();
+    const rows = defaultRows();
+    const w = mountList(rows, null, {
+      compact: true,
+      context: 'inbox',
+      reminderEnabled: true,
+      selectedRefs: [rows[0]!.ref],
+    });
+    const element = w.get<HTMLElement>('[data-test="conversation-row-today-2"]').element;
+    const drag = () => {
+      element.dispatchEvent(pointerEvent('pointerdown', 0));
+      element.dispatchEvent(pointerEvent('pointermove', distance));
+    };
+    const release = async () => {
+      element.dispatchEvent(pointerEvent('pointerup', distance));
+      vi.advanceTimersByTime(160);
+      await flushPromises();
+    };
+
+    drag();
+    await release();
+    expect(w.emitted(action)).toBeUndefined();
+    expect(element.style.getPropertyValue('--swipe-offset')).toBe('0px');
+
+    await w.setProps({ selectedRefs: [] });
+    drag();
+    await flushPromises();
+    expect(w.get('.row-swipe-underlay').classes()).toContain('armed');
+
+    await w.setProps({ selectionMode: true });
+    await release();
+    expect(w.emitted(action)).toBeUndefined();
+    expect(w.find('.row-swipe-underlay').exists()).toBe(false);
+    expect(element.style.getPropertyValue('--swipe-offset')).toBe('0px');
+
+    await w.setProps({ selectionMode: false });
+    drag();
+    await release();
+    expect(w.emitted(action)).toEqual([[rows[1]!.ref]]);
+  });
+
+  it.each([
+    { context: 'inbox', distance: 100, action: 'done', glyph: 'archive', label: 'Mark done' },
+    { context: 'inbox', distance: -100, action: 'remind', glyph: 'reminder', label: 'Remind' },
+    { context: 'done', distance: 100, action: 'done', glyph: 'restore', label: 'Mark not done' },
+  ] as const)('reveals $label with the configured swipe in $context', async ({ context, distance, action, glyph, label }) => {
+    const w = mountList([row('swapped', { lastMessageAt: '2026-01-15T09:00:00Z' })], null, {
+      compact: true,
+      context,
+      reminderEnabled: true,
+      swipeRight: 'done',
+      swipeLeft: 'remind',
+    });
+    const element = w.get('.inbox-row').element;
+    element.dispatchEvent(pointerEvent('pointerdown', 0));
+    element.dispatchEvent(pointerEvent('pointermove', distance));
+    await flushPromises();
+
+    const cue = w.get('.row-swipe-underlay');
+    expect(cue.classes()).toContain(action);
+    expect(cue.text()).toBe(label);
+    const cueGlyph = w.findAllComponents(RowGlyph).find((candidate) => cue.element.contains(candidate.element));
+    expect(cueGlyph?.props('name')).toBe(glyph);
+  });
+
+  it('swaps swipe actions and resists a disabled side', async () => {
+    vi.useFakeTimers();
+    const swapped = mountList([row('swapped', { lastMessageAt: '2026-01-15T09:00:00Z' })], null, {
+      compact: true,
+      reminderEnabled: true,
+      swipeRight: 'done',
+      swipeLeft: 'remind',
+    });
+    const element = swapped.get('.inbox-row').element;
+    element.dispatchEvent(pointerEvent('pointerdown', 0));
+    element.dispatchEvent(pointerEvent('pointermove', 160));
+    element.dispatchEvent(pointerEvent('pointerup', 160));
+    vi.advanceTimersByTime(160);
+    await flushPromises();
+    expect(swapped.emitted('archive')).toHaveLength(1);
+
+    const disabled = mountList([row('disabled', { lastMessageAt: '2026-01-15T09:00:00Z' })], null, {
+      compact: true,
+      actionsEnabled: true,
+      swipeLeft: 'none',
+    });
+    const disabledRow = disabled.get('.inbox-row').element;
+    disabledRow.dispatchEvent(pointerEvent('pointerdown', 0));
+    disabledRow.dispatchEvent(pointerEvent('pointermove', -100));
+    disabledRow.dispatchEvent(pointerEvent('pointerup', -100));
+    await flushPromises();
+    expect(disabled.emitted('archive')).toBeUndefined();
+    expect(disabled.emitted('unarchive')).toBeUndefined();
+  });
+
+  it.each([
+    { compact: true, readOnly: true, actionsEnabled: true, reminderEnabled: true },
+    { compact: true, readOnly: false, actionsEnabled: false, reminderEnabled: false },
+    { compact: false, readOnly: false, actionsEnabled: true, reminderEnabled: true },
+  ])('does not swipe when unavailable or regular', ({ compact, readOnly, actionsEnabled, reminderEnabled }) => {
+    const w = mountList([row('no-swipe', { lastMessageAt: '2026-01-15T09:00:00Z' })], null, {
+      compact,
+      readOnly,
+      actionsEnabled,
+      reminderEnabled,
+    });
+    const element = w.get('.inbox-row').element;
+    element.dispatchEvent(pointerEvent('pointerdown', 0));
+    element.dispatchEvent(pointerEvent('pointermove', -100));
+    element.dispatchEvent(pointerEvent('pointerup', -100));
+    expect(w.emitted('archive')).toBeUndefined();
+    expect(w.emitted('remind')).toBeUndefined();
+  });
+
+  it('selects on long press and toggles the next row on a selection-mode tap', async () => {
+    vi.useFakeTimers();
+    const rows = [
+      row('long-press', { lastMessageAt: '2026-01-15T09:00:00Z' }),
+      row('next', { lastMessageAt: '2026-01-15T10:00:00Z' }),
+    ];
+    const w = mountList(rows, null, { compact: true });
+    const first = w.find('[data-test="conversation-row-long-press"]');
+    const pointerdown = pointerEvent('pointerdown', 20);
+    first.element.dispatchEvent(pointerdown);
+    vi.advanceTimersByTime(500);
+    await flushPromises();
+    expect(w.emitted('selectToggle')?.[0]).toEqual([{ accountId: ACCOUNT, conversationId: 'long-press' }]);
+
+    await w.setProps({ selectedRefs: [{ accountId: ACCOUNT, conversationId: 'long-press' }] });
+    await w.find('[data-test="conversation-row-next"]').trigger('click');
+    expect(w.emitted('selectToggle')?.[1]).toEqual([{ accountId: ACCOUNT, conversationId: 'next' }]);
+  });
+
+  it('suppresses the context menu only after a compact touch long press', () => {
+    vi.useFakeTimers();
+    const compact = mountList([row('pressed', { lastMessageAt: '2026-01-15T09:00:00Z' })], null, { compact: true });
+    const compactRow = compact.get('.inbox-row').element;
+    compactRow.dispatchEvent(pointerEvent('pointerdown', 20));
+    vi.advanceTimersByTime(500);
+    const touchContextMenu = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    compactRow.dispatchEvent(touchContextMenu);
+    expect(touchContextMenu.defaultPrevented).toBe(true);
+
+    const regular = mountList([row('right-click', { lastMessageAt: '2026-01-15T09:00:00Z' })]);
+    const mouseContextMenu = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    regular.get('.inbox-row').element.dispatchEvent(mouseContextMenu);
+    expect(mouseContextMenu.defaultPrevented).toBe(false);
+  });
 
   it('renders group headings in backend order without selectable semantics', async () => {
     const w = mountList(defaultRows(), { accountId: ACCOUNT, conversationId: 'today-1' });

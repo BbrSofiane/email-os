@@ -8,7 +8,7 @@ import type { MailClient, SearchPage, SearchRequest } from '../../src/lib/ipc/cl
 import { deferred, mountApp, press } from '../helpers';
 
 let wrapper: VueWrapper | null = null;
-afterEach(() => { wrapper?.unmount(); wrapper = null; });
+afterEach(() => { wrapper?.unmount(); wrapper = null; vi.restoreAllMocks(); });
 
 type SearchMailImpl = (request: SearchRequest, fake: ReturnType<typeof createBrowserFakeMailClient>) => ReturnType<MailClient['searchMail']>;
 
@@ -104,6 +104,45 @@ describe('search help operator+gloss list (P2)', () => {
     expect(input.attributes('placeholder')).toBe('from:ada "weekly status" -invoice');
     expect(validateSearch('from:ada "weekly status" -invoice')).toBeNull();
     expect(input.attributes('maxlength')).toBe('512');
+  });
+
+  it('keeps compact search syntax in a closed disclosure and described by the input', async () => {
+    vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+      matches: query === '(max-width: 719px)',
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }) as unknown as MediaQueryList);
+    const h = await setup();
+    await h.openSearch();
+
+    const details = h.w.get('.search-syntax');
+    const help = h.w.get('[data-test="search-help"]');
+    expect((details.element as HTMLDetailsElement).open).toBe(false);
+    expect(help.element.parentElement).toBe(details.element);
+    expect(help.findAll('li')).toHaveLength(7);
+    const example = help.get('li:first-child');
+    expect(example.get('span').text()).toBe('Example:');
+    expect(example.get('code.search-op').text()).toBe('from:ada "weekly status" -invoice');
+    const input = h.w.get('[data-test="search-input"]');
+    expect(input.attributes('placeholder')).toBe('Search mail');
+    expect(input.attributes('aria-describedby')).toBe('search-help');
+  });
+
+  it('keeps the regular search help list outside a disclosure', async () => {
+    vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+      matches: false,
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }) as unknown as MediaQueryList);
+    const h = await setup();
+    await h.openSearch();
+
+    const help = h.w.get('[data-test="search-help"]');
+    expect(h.w.find('.search-syntax').exists()).toBe(false);
+    expect(help.element.parentElement).toBe(h.w.get('form[role="search"]').element);
+    expect(help.findAll('li')).toHaveLength(6);
   });
 });
 

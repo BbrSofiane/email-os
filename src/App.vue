@@ -30,6 +30,14 @@
  *   IME composition, and modifier keys. Drafts have no send path.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useLayoutMode } from './composables/useLayoutMode';
+import { installAndroidBackBridge } from './lib/android-back';
+import MobileTopBar from './components/mobile/MobileTopBar.vue';
+import MobileDrawer from './components/mobile/MobileDrawer.vue';
+import MobileBottomBar from './components/mobile/MobileBottomBar.vue';
+import MobileActionSheet from './components/mobile/MobileActionSheet.vue';
+import { loadSwipePreferences } from './lib/swipe-preferences';
+import SwipeActionSettings from './components/SwipeActionSettings.vue';
 import { createSubjectIndex } from './lib/subject-index';
 import ActionOverlay from './components/ActionOverlay.vue';
 import RemindersList from './components/RemindersList.vue';
@@ -81,9 +89,11 @@ const props = withDefaults(defineProps<{
   active?: boolean;
   switchAccountLabel?: string;
 }>(), { active: true });
+const swipePreferences = ref(loadSwipePreferences());
 const emit = defineEmits<{ switchAccount: []; workspaceTitle: [title: string] }>();
 const workspaceActive = computed(() => props.active !== false);
 const androidFixture = isTauriRuntime() && /Android/i.test(navigator.userAgent);
+const layoutMode = useLayoutMode();
 
 type UtilityDrawer = 'account' | 'activity' | 'destinations' | 'reminder-settings';
 /** Visible-row anchor for the reader round trip. */
@@ -152,6 +162,8 @@ const actionNoticeComponent = ref<InstanceType<typeof ActionNotice> | null>(null
 // ---------------------------------------------------------------------------
 
 const selectedCount = computed(() => mailbox.selectedRefs.value.length);
+const selectionActive = computed(() => selectedCount.value > 0
+  || (layoutMode.value === 'compact' && mailbox.selectionMode.value));
 
 /**
  * One-target policy (§3.3): shared toolbar/palette/shortcut dispatch resolves
@@ -191,6 +203,16 @@ function rangeSelectRow(target: ConversationRef): void {
   mailbox.focusConversation(target);
   mailbox.extendSelectionTo(target, preFocus);
 }
+
+// Accepted groups end phone selection, including setters that leave the rows loaded.
+watch(() => mailbox.lastGroup.value?.receipt, (receipt, previous) => {
+  if (!receipt || receipt.groupId === previous?.groupId || layoutMode.value !== 'compact') return;
+  const group = mailbox.lastGroup.value;
+  if (group && mailbox.selectedRefs.value.some((target) =>
+    group.members.some((member) => sameConversation(member, target)))) {
+    mailbox.clearSelection();
+  }
+}, { flush: 'sync' });
 
 function bulkArchiveSelection(): Promise<void> {
   const members = bulkMembers();
@@ -288,7 +310,14 @@ async function openActivityGroup(requestId: string): Promise<void> {
 }
 
 const readerOpen = computed(() => mailbox.openRef.value !== null);
-watch(readerOpen, (open) => { if (open) editingSplit.value = false; });
+watch(readerOpen, (open) => {
+  if (!open) return;
+  editingSplit.value = false;
+  if (layoutMode.value === 'compact' && selectionActive.value) mailbox.clearSelection();
+});
+watch(layoutMode, (mode) => {
+  if (mode !== 'compact') mailbox.selectionMode.value = false;
+});
 const gmailMode = computed(() => mailbox.isGmail.value);
 // Read state, read/star controls, Starred and Retry follow the backend's explicit capability, not the mode name.
 const triageSurfaces = computed(() => mailbox.triageSurfaces.value);
@@ -335,6 +364,8 @@ const quotedSnippet = computed(() => quotedPreview(replyLatestMessage.value?.bod
  * visible and interactive while composing.
  */
 const composeCardOpen = ref(false);
+/** Compact editors are teleported to the app root, so the other app surfaces can be inert. */
+const mobileEditorOpen = computed(() => layoutMode.value === 'compact' && (composeCardOpen.value || replyComposerOpen.value));
 
 // Reuse the exact draft transition protocol; never hide an unacknowledged buffer.
 defineExpose({ prepareWorkspaceSwitch: () => drafts.flushAndClose() });
@@ -360,7 +391,9 @@ watch(drawer, (next) => { if (next) editingSplit.value = false; });
 // own, not Inbox splits: the Inbox split nav gives way to the heading alone.
 const splitNavShown = computed(() => accountReady.value && !!accountId.value && !readerOpen.value && !drawer.value);
 const inboxSplitsShown = computed(() => splitNavShown.value
-  && !remindersContext.value && mailbox.context.value !== 'trash' && mailbox.context.value !== 'drafts');
+  && ['inbox', 'saved', 'done', 'starred'].includes(mailbox.context.value)
+  && !(layoutMode.value === 'compact' && selectionActive.value)
+  && !(layoutMode.value === 'compact' && searchVisible.value));
 const activeTabShown = computed(() => splitNavShown.value
   && (mailbox.context.value === 'inbox' || (mailbox.context.value === 'saved' && !!savedTabVisible.value)));
 /** Cached Trash standing limits: one Ash line; the whole caveat is its title and hidden text. */
@@ -454,6 +487,7 @@ function showReminderConfirmation(receipt: Reminder, rescheduled: boolean): void
 }
 const remindersSupported = computed(() => !!props.client.reminders);
 function reminderPreferencesSaved(): void {
+  if (layoutMode.value === 'compact') return;
   void closeDrawer();
 }
 // Reminders is a list context: the rows, the tabs and the picker state live in
@@ -761,8 +795,20 @@ const reminderActionEnabled = computed(() => remindersSupported.value && selecte
  * the central surface and the contact pane stay interactive (non-inert).
  */
 const centralCovered = computed(() => !!overlay.value || !!attachmentConversation.value || !!drawer.value || (!wideViewport.value && contactDisclosure.value));
+const mobileSelectShown = computed(() => !selectionActive.value && !readerOpen.value
+  && !centralCovered.value && !mobileEditorOpen.value && !searchVisible.value
+  && accountReady.value && mailbox.listState.value === 'ready'
+  && ['inbox', 'saved', 'done', 'starred', 'search'].includes(mailbox.context.value));
 
+async function enterMobileSelection(): Promise<void> {
+  mailbox.selectionMode.value = true;
+  await nextTick();
+  await focusFocusedRow(true);
+}
+
+let removeAndroidBack: () => void = () => undefined;
 onMounted(() => {
+  removeAndroidBack = installAndroidBackBridge(androidFixture, () => { const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }); window.dispatchEvent(event); return event.defaultPrevented; });
   window.addEventListener('keydown', onKeydown);
   window.addEventListener('blur', cancelGo);
   window.addEventListener('compositionstart', cancelGo);
@@ -771,6 +817,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  removeAndroidBack();
   reminderViewAlive = false;
   window.removeEventListener('keydown', onKeydown);
   window.removeEventListener('blur', cancelGo);
@@ -831,13 +878,37 @@ async function openRecent(target: ConversationRef): Promise<void> {
 }
 const history = ref<ContextEntry[]>([]);
 let navigationToken = 0;
+const SEARCH_EXAMPLE = 'from:ada "weekly status" -invoice';
 const { searchVisible, searchDraft, searchInput, cachedSearch, recentQueries, suggestionsOpen, suggestionIndex, suggestionsId, suggestionId, searchSuggestions, searchError, activeSuggestionId, revealSearch, submitSearch, applySuggestion, highlightSuggestion, onSearchInputKeydown, senderSearch } = useSearchSurface({
   mailbox, accountId, accountReady, drawer, contactDisclosure, replyComposerOpen, composeCardOpen, history,
-  captureContext, releaseEditorSurface, nextNavigationToken: () => ++navigationToken, currentNavigationToken: () => navigationToken, focusFocusedRow,
+  captureContext, releaseEditorSurface, nextNavigationToken: () => ++navigationToken, currentNavigationToken: () => navigationToken,
+  focusFocusedRow: () => focusFocusedRow(layoutMode.value === 'compact' && mailbox.context.value !== 'search'),
 });
+const standaloneSearchForm = computed(() =>
+  layoutMode.value === 'compact' && searchVisible.value && mailbox.context.value !== 'search');
+let searchOriginAnchor: ReaderOrigin['anchor'] = null;
+watch(standaloneSearchForm, (standalone) => {
+  // A hidden scroller has no geometry when a submitted search saves its origin.
+  searchOriginAnchor = standalone ? inboxList.value?.captureAnchor() ?? null : null;
+}, { flush: 'sync' });
 // Scope DOM lookups to this App: two workspaces each have their own reader scroller.
 const appRoot = ref<HTMLElement | null>(null);
 const overlay = ref<'palette' | 'navigator' | null>(null);
+const mobileNavOpen = ref(false);
+const readerSheetOpen = ref(false);
+const messageSheetOpen = ref(false);
+const readerSheetItems = computed(() => {
+  const conversation = mailbox.conversation.value;
+  const readAction = conversation?.isRead ? 'unread' : 'read';
+  const replyReason = replyBlockedReason(conversation);
+  return [
+    { id: readAction, label: conversation?.isRead ? 'Mark unread' : 'Mark read', glyph: conversation?.isRead ? 'unread' as const : 'read' as const, disabled: !actionAvailable(readAction) },
+    { id: 'reply', label: 'Reply', glyph: 'reply' as const, disabled: !actionAvailable('reply'), disabledReason: replyReason ?? undefined, group: 'more' },
+    ...(!androidFixture ? [{ id: 'files', label: 'Files and links', glyph: 'files' as const, disabled: !actionAvailable('open') }] : []),
+    { id: 'contact-details', label: 'Contact details', glyph: 'contact' as const, group: 'more' },
+    { id: 'commands', label: 'Commands', glyph: 'prompt' as const, group: 'commands' },
+  ];
+});
 // This App belongs to one immutable fixture session. Keep its command query
 // across transient overlay mounts, without sharing the destination query or
 // changing standalone/native palette reset behavior.
@@ -859,6 +930,17 @@ function openOverlay(kind: 'palette' | 'navigator'): void {
   overlayRowOrigin = overlayOrigin?.matches('.inbox-row') && mailbox.focusedRef.value
     ? { ...mailbox.focusedRef.value } : null;
   overlay.value = kind;
+}
+function openMobileDrawer(): void {
+  cancelGo();
+  if (accountReady.value) mobileNavOpen.value = true;
+}
+function closeMobileDrawer(): void {
+  mobileNavOpen.value = false;
+}
+function executeMobileDestination(id: ActionId): void {
+  mobileNavOpen.value = false;
+  void executeAction(id);
 }
 async function closeOverlay(restore = true): Promise<void> {
   overlay.value = null;
@@ -890,7 +972,7 @@ function captureContext(): ContextEntry | null {
     doneBoundary: mailbox.loadedDoneBoundary.value ? { ...mailbox.loadedDoneBoundary.value } : null,
     focusedRef: entry?.focusedRef ?? mailbox.focusedRef.value,
     ordering: entry?.ordering ?? listRows.value.map((row) => ({ ...row.ref })),
-    anchor: entry?.anchor ?? inboxList.value?.captureAnchor() ?? null,
+    anchor: entry?.anchor ?? (standaloneSearchForm.value ? searchOriginAnchor : inboxList.value?.captureAnchor() ?? null),
   };
 }
 async function navigateContext(context: BrowseContext, saved?: ContextEntry): Promise<boolean> {
@@ -974,6 +1056,8 @@ const readerView = ref<InstanceType<typeof ReaderView> | null>(null);
 /** Header slots the open reader teleports its quiet icon actions into. */
 const readerBackHost = ref<HTMLElement | null>(null);
 const readerActionsHost = ref<HTMLElement | null>(null);
+const mobileTopBar = ref<InstanceType<typeof MobileTopBar> | null>(null);
+const mobileBottomBar = ref<InstanceType<typeof MobileBottomBar> | null>(null);
 /** Message identity that currently owns reader focus (for the contact baseline). */
 
 function captureListOrigin(surface: ReaderOrigin['surface']): void {
@@ -1828,6 +1912,13 @@ function keyFocus(event: KeyboardEvent): KeyFocus {
 /** Escape ladder (§3.2): drawer → composer → disclosure → message details → selection → Back. */
 function escapeLadder(event: KeyboardEvent): void {
   const readerIsOpen = readerOpen.value;
+  if (mobileNavOpen.value) {
+    event.preventDefault();
+    closeMobileDrawer();
+    return;
+  }
+  if (messageSheetOpen.value) { event.preventDefault(); readerView.value?.closeMessageSheet(); messageSheetOpen.value = false; return; }
+  if (readerSheetOpen.value) { event.preventDefault(); readerSheetOpen.value = false; return; }
   // The active disclosure gets Escape precedence; mailbox actions underneath
   // are suppressed while it is open.
   if (drawer.value) {
@@ -1840,6 +1931,11 @@ function escapeLadder(event: KeyboardEvent): void {
   // goes false.
   if (replyComposerOpen.value) { event.preventDefault(); void drafts.flushAndClose(); return; }
   if (composeCardOpen.value) { event.preventDefault(); void closeComposeCard(); return; }
+  if (layoutMode.value === 'compact' && reminders.source.value && !reminders.dismissBlocked.value) {
+    event.preventDefault();
+    reminders.closePicker();
+    return;
+  }
   if (!wideViewport.value && contactDisclosure.value) {
     event.preventDefault();
     void closeContactDisclosure();
@@ -1860,7 +1956,16 @@ function escapeLadder(event: KeyboardEvent): void {
     }
     event.preventDefault();
     void executeAction('back');
-  } else if (selectedCount.value > 0) {
+  } else if (layoutMode.value === 'compact' && searchVisible.value) {
+    event.preventDefault();
+    if (suggestionsOpen.value && searchSuggestions.value.length > 0) {
+      suggestionsOpen.value = false;
+      return;
+    }
+    const preserveScroll = standaloneSearchForm.value;
+    searchVisible.value = false;
+    void focusFocusedRow(preserveScroll);
+  } else if (selectionActive.value) {
     // Escape order (§3.2): the selected set clears before any context Back,
     // including when no context history exists.
     event.preventDefault();
@@ -2028,8 +2133,20 @@ const searchSyntaxEditHint = computed(() =>
 </script>
 
 <template>
-  <div ref="appRoot" class="app" :data-client-mode="props.mode">
-    <main class="app-main" :class="{ 'contact-collapsed': contactCollapsed }" :inert="!!overlay || !!attachmentConversation || undefined">
+  <div ref="appRoot" class="app" :data-client-mode="props.mode" :data-layout="layoutMode">
+    <MobileTopBar
+      v-if="layoutMode === 'compact'"
+      ref="mobileTopBar"
+      :reader="readerOpen"
+      :title="searchVisible ? 'Search' : contextTitle"
+      :execute-action="executeAction"
+      :open-destinations="openMobileDrawer"
+      :menu-expanded="mobileNavOpen"
+      :select-shown="mobileSelectShown"
+      @select="enterMobileSelection"
+      :inert="mobileNavOpen || mobileEditorOpen || undefined"
+    />
+    <main class="app-main" :class="{ 'contact-collapsed': contactCollapsed }" :inert="!!overlay || !!attachmentConversation || mobileNavOpen || readerSheetOpen || messageSheetOpen || mobileEditorOpen || undefined">
       <!-- Split header (DESIGN.md "Split Tabs"): one borderless 78px strip in
            the list column. Destinations hamburger on the left, split tabs on
            the 50px content inset, quiet notes and glyphs on the right. It sits
@@ -2042,17 +2159,20 @@ const searchSyntaxEditHint = computed(() =>
                active split tab already names it, so it is shown only when no
                rendered tab is active (Cached Done, Starred, Search, reader). -->
           <span ref="readerBackHost" class="reader-back-host"></span>
-          <h1 class="app-title" :class="{ 'visually-hidden': activeTabShown }" data-test="inbox-title">{{ contextTitle }}<template v-if="switchAccountLabel"><span class="app-title-account"> — {{ accountStatus?.account?.emailAddress }}</span></template></h1>
+          <h1 class="app-title" :class="{ 'visually-hidden': activeTabShown || layoutMode === 'compact' }" data-test="inbox-title">{{ contextTitle }}<template v-if="switchAccountLabel"><span class="app-title-account"> — {{ accountStatus?.account?.emailAddress }}</span></template></h1>
+          <Teleport :to="mobileBottomBar?.contextHost" :disabled="layoutMode !== 'compact' || !mobileBottomBar?.contextHost">
           <nav v-if="inboxSplitsShown" class="split-nav" aria-label="Inbox splits" :title="splitCoverageShown ? SPLIT_COVERAGE : undefined">
             <button type="button" class="split-tab" data-test="split-inbox" :aria-current="mailbox.context.value === 'inbox' ? 'page' : undefined" :aria-describedby="splitCoverageShown ? `${domIdPrefix}split-coverage` : undefined" @click="navigateContext('inbox')"><span class="split-label">Inbox</span> <span v-if="splitBadge(mailbox.inboxTotal.value)" class="split-count">{{ splitBadge(mailbox.inboxTotal.value) }}</span></button>
             <button v-if="savedTabVisible" type="button" class="split-tab" data-test="split-saved" :title="mailbox.savedSplit.value?.name" :aria-current="mailbox.context.value === 'saved' ? 'page' : undefined" :aria-describedby="splitCoverageShown ? `${domIdPrefix}split-coverage` : undefined" @click="navigateContext('saved')"><span class="split-label">{{ mailbox.savedSplit.value?.name }}</span> <span v-if="splitBadge(mailbox.savedTotal.value)" class="split-count">{{ splitBadge(mailbox.savedTotal.value) }}</span></button>
           </nav>
+          </Teleport>
           <!-- Reminders: the list's sections take the split-tab slot (Pending,
                Returned, History, each with the count of its loaded rows once
                a read has succeeded: before that a count would say 0 for
                "not read"),
                after the context heading, which stays visible so the tabs are
                named. -->
+          <Teleport :to="mobileBottomBar?.contextHost" :disabled="layoutMode !== 'compact' || !mobileBottomBar?.contextHost">
           <div v-if="splitNavShown && remindersContext" class="split-nav" role="tablist" aria-label="Reminder membership" @keydown="reminders.onTabKeydown">
             <button
               v-for="tab in REMINDER_TABS"
@@ -2066,8 +2186,9 @@ const searchSyntaxEditHint = computed(() =>
               aria-controls="reminder-tabpanel"
               :tabindex="reminders.destination.value === tab.id ? 0 : -1"
               @click="reminders.destination.value = tab.id"
-            ><span class="split-label">{{ tab.label }}</span> <span v-if="reminders.loadedOnce.value" class="split-count">{{ reminders.counts.value[tab.id] }}</span> <span v-if="reminders.loadedOnce.value && tab.id === 'pending' && reminders.attentionTotal.value > 0" class="split-count">· {{ reminders.attentionTotal.value }} {{ reminders.attentionTotal.value === 1 ? 'needs' : 'need' }} attention</span></button>
+            ><span class="split-label">{{ tab.label }}</span> <span v-if="reminders.loadedOnce.value && (layoutMode !== 'compact' || reminders.counts.value[tab.id] > 0)" class="split-count">{{ reminders.counts.value[tab.id] }}</span> <span v-if="reminders.loadedOnce.value && tab.id === 'pending' && reminders.attentionTotal.value > 0" class="split-count">· {{ reminders.attentionTotal.value }} {{ reminders.attentionTotal.value === 1 ? 'needs' : 'need' }} attention</span></button>
           </div>
+          </Teleport>
           <!-- Coverage qualifies the counts, so it lives on them: the tabs'
                accessible description and the nav's hover title. -->
           <p v-if="splitCoverageShown" :id="`${domIdPrefix}split-coverage`" class="visually-hidden" role="note" data-test="split-coverage">{{ SPLIT_COVERAGE }}</p>
@@ -2256,7 +2377,7 @@ const searchSyntaxEditHint = computed(() =>
                 :aria-activedescendant="activeSuggestionId"
                 :aria-describedby="searchError ? 'search-help search-error' : 'search-help'"
                 data-test="search-input"
-                placeholder='from:ada "weekly status" -invoice'
+                :placeholder="layoutMode === 'compact' ? 'Search mail' : SEARCH_EXAMPLE"
                 autocomplete="off"
                 @keydown="onSearchInputKeydown"
               />
@@ -2284,23 +2405,39 @@ const searchSyntaxEditHint = computed(() =>
             </ul>
             <p v-if="searchError" id="search-error" class="search-error" role="alert" data-test="search-error">{{ searchError }}</p>
             <label class="search-cache-toggle"><input v-model="cachedSearch" type="checkbox" /> Cached mail only</label>
-            <ul id="search-help" class="search-help" data-test="search-help">
-              <li><strong class="search-op">from:</strong><span class="search-gloss">from sender</span></li>
-              <li><strong class="search-op">to:</strong><span class="search-gloss">to recipient</span></li>
-              <li><strong class="search-op">subject:</strong><span class="search-gloss">in subject</span></li>
-              <li><strong class="search-op">"…"</strong><span class="search-gloss">exact phrase in straight quotes</span></li>
-              <li><strong class="search-op">AND / OR</strong><span class="search-gloss">combine terms — AND binds before OR</span></li>
-              <li><strong class="search-op">-term</strong><span class="search-gloss">exclude a term or field</span></li>
-            </ul>
-            <p class="search-unsupported">Not supported: dates, labels, Cc/Bcc, parentheses.</p>
+            <details v-if="layoutMode === 'compact'" class="search-syntax">
+              <summary>Search syntax</summary>
+              <ul id="search-help" class="search-help" data-test="search-help">
+                <li class="search-example"><span>Example:</span><code class="search-op">{{ SEARCH_EXAMPLE }}</code></li>
+                <li><strong class="search-op">from:</strong><span class="search-gloss">from sender</span></li>
+                <li><strong class="search-op">to:</strong><span class="search-gloss">to recipient</span></li>
+                <li><strong class="search-op">subject:</strong><span class="search-gloss">in subject</span></li>
+                <li><strong class="search-op">"…"</strong><span class="search-gloss">exact phrase in straight quotes</span></li>
+                <li><strong class="search-op">AND / OR</strong><span class="search-gloss">combine terms — AND binds before OR</span></li>
+                <li><strong class="search-op">-term</strong><span class="search-gloss">exclude a term or field</span></li>
+              </ul>
+              <p class="search-unsupported">Not supported: dates, labels, Cc/Bcc, parentheses.</p>
+            </details>
+            <template v-else>
+              <ul id="search-help" class="search-help" data-test="search-help">
+                <li><strong class="search-op">from:</strong><span class="search-gloss">from sender</span></li>
+                <li><strong class="search-op">to:</strong><span class="search-gloss">to recipient</span></li>
+                <li><strong class="search-op">subject:</strong><span class="search-gloss">in subject</span></li>
+                <li><strong class="search-op">"…"</strong><span class="search-gloss">exact phrase in straight quotes</span></li>
+                <li><strong class="search-op">AND / OR</strong><span class="search-gloss">combine terms — AND binds before OR</span></li>
+                <li><strong class="search-op">-term</strong><span class="search-gloss">exclude a term or field</span></li>
+              </ul>
+              <p class="search-unsupported">Not supported: dates, labels, Cc/Bcc, parentheses.</p>
+            </template>
           </form>
           <!-- Inline compose card: while a new-message editor is active and no
                reader is open, the card replaces the list in the central surface
                (list OR reader OR compose card). It is in-flow — no backdrop, no
                dimming — so the rail, header and contact pane stay visible and
                non-inert while composing. -->
+          <Teleport v-if="composeCardOpen && !readerOpen" :to="appRoot ?? undefined" :disabled="layoutMode !== 'compact'">
           <ComposeCard
-            v-if="composeCardOpen && !readerOpen"
+            :compact="layoutMode === 'compact'"
             :recipient-label="composeRecipientLabel"
             :notice="cardNotice"
             :active-ref="drafts.activeRef.value"
@@ -2335,8 +2472,10 @@ const searchSyntaxEditHint = computed(() =>
             @save-as-new="drafts.saveAsNew()"
             @cancel-reply-preparation="drafts.cancelReplyPreparation()"
           />
+          </Teleport>
           <DraftsList
             v-else-if="draftsContext && !readerOpen"
+            v-show="!standaloneSearchForm"
             ref="draftsPane"
             v-model:active-key="draftsActiveKey"
             :summaries="drafts.summaries.value"
@@ -2360,20 +2499,21 @@ const searchSyntaxEditHint = computed(() =>
             @retry-close="drafts.retryClose()"
             @retry-close-setup="drafts.retryCloseSetup()"
           />
-          <RemindersList v-else-if="remindersContext && !readerOpen" ref="remindersPane" :model="reminders" @open="openReminderConversation" />
+          <RemindersList v-else-if="remindersContext && !readerOpen" v-show="!standaloneSearchForm" ref="remindersPane" :model="reminders" :compact="layoutMode === 'compact'" @open="openReminderConversation" />
           <template v-else-if="!readerOpen">
             <!-- Coverage and continuation errors stay visible in search context
                  even while the entry form is collapsed. -->
             <p v-if="mailbox.context.value === 'search'" class="search-coverage" role="status" data-test="search-coverage">{{ mailbox.listState.value === 'loading' ? 'Searching… coverage not yet known.' : mailbox.listState.value === 'error' ? 'Search did not complete. Retry, edit the query, or choose cached mail only.' : mailbox.searchCoverage.value === 'cached_incomplete' ? 'Cached content only — incomplete mailbox coverage. Missing or HTML-only content may not match.' : 'Online · scans 20 mailbox candidates per page, including older archived mail. Spam/Trash excluded. A page can have no matches; continue to scan older mail.' }}</p>
-            <p v-if="mailbox.listError.value && mailbox.listState.value === 'ready'" class="search-inline-error" role="alert" data-test="search-inline-error">{{ errorText(mailbox.listError.value) }}</p>
-            <p v-if="mailbox.listState.value === 'loading'" class="list-state" data-test="inbox-loading">Loading {{ contextTitle }}…</p>
-            <div v-else-if="mailbox.listState.value === 'error'" class="recovery-banner" data-test="inbox-error">
+            <p v-if="mailbox.listError.value && mailbox.listState.value === 'ready'" v-show="!standaloneSearchForm" class="search-inline-error" role="alert" data-test="search-inline-error">{{ errorText(mailbox.listError.value) }}</p>
+            <p v-if="mailbox.listState.value === 'loading'" v-show="!standaloneSearchForm" class="list-state" data-test="inbox-loading">Loading {{ contextTitle }}…</p>
+            <div v-else-if="mailbox.listState.value === 'error'" v-show="!standaloneSearchForm" class="recovery-banner" data-test="inbox-error">
               <p role="alert">Could not load {{ contextTitle }}: {{ mailbox.listError.value ? errorText(mailbox.listError.value) : 'unknown error' }}{{ listErrorIsSearchSyntax ? searchSyntaxEditHint : '.' }}</p>
               <!-- A deterministic syntax error re-fails identically, so Retry is a dead control there; provider/load errors keep it. -->
               <button v-if="!listErrorIsSearchSyntax" type="button" data-test="inbox-retry" @click="mailbox.refresh()">Retry</button>
             </div>
             <p
               v-else-if="mailbox.conversations.value.length === 0"
+              v-show="!standaloneSearchForm"
               class="list-state"
               :class="inboxEmpty ? `tone-${inboxEmpty.tone}` : undefined"
               :data-tone="inboxEmpty?.tone"
@@ -2394,6 +2534,7 @@ const searchSyntaxEditHint = computed(() =>
             </p>
             <InboxList
               v-else
+              v-show="!standaloneSearchForm"
               ref="inboxList"
               :rows="listRows"
               :context="mailbox.context.value"
@@ -2404,7 +2545,11 @@ const searchSyntaxEditHint = computed(() =>
               :show-read-controls="gmailActionsEnabled"
               :reminder-enabled="reminderActionEnabled"
               :read-only="mailbox.context.value === 'trash'"
+              :compact="layoutMode === 'compact'"
+              :swipe-right="swipePreferences.right"
+              :swipe-left="swipePreferences.left"
               :selected-refs="mailbox.selectedRefs.value"
+              :selection-mode="layoutMode === 'compact' && selectionActive"
               @focus="mailbox.focusConversation($event)"
               @open="executeAction('open', $event)"
               @archive="executeAction('archive', $event)"
@@ -2414,7 +2559,7 @@ const searchSyntaxEditHint = computed(() =>
               @select-toggle="toggleRowSelection"
               @select-range="rangeSelectRow"
             />
-            <button v-if="mailbox.nextCursor.value" type="button" class="list-more" :disabled="mailbox.loadingMore.value || mailbox.listState.value !== 'ready'" data-test="done-more" @click="mailbox.loadMore()">{{ mailbox.context.value === 'search' ? 'Continue searching older mail' : `Load more ${contextTitle}` }}</button>
+            <button v-if="mailbox.nextCursor.value" v-show="!standaloneSearchForm" type="button" class="list-more" :disabled="mailbox.loadingMore.value || mailbox.listState.value !== 'ready'" data-test="done-more" @click="mailbox.loadMore()">{{ mailbox.context.value === 'search' ? 'Continue searching older mail' : `Load more ${contextTitle}` }}</button>
           </template>
           <section v-else class="reader-pane" aria-label="Reader">
             <p
@@ -2443,13 +2588,19 @@ const searchSyntaxEditHint = computed(() =>
               :android="androidFixture"
               :selection-count="selectedCount"
               :selection-context="mailbox.context.value"
-              :back-host="readerBackHost"
-              :actions-host="readerActionsHost"
+              :back-host="layoutMode === 'compact' ? mobileTopBar?.backHost : readerBackHost"
+              :actions-host="layoutMode === 'compact' ? mobileBottomBar?.actionsHost : readerActionsHost"
+              :context-host="layoutMode === 'compact' ? mobileBottomBar?.contextHost : null"
+              :sheet-host="appRoot"
               :can-move-prev="canMoveReaderPrev"
               :can-move-next="canMoveReaderNext"
               :client="props.client"
               :preview="props.mode === 'browser-preview'"
               :reply-docked="replyComposerOpen && readerOpen"
+              :compact="layoutMode === 'compact'"
+              :star-shown="actionAvailable('star') || actionAvailable('unstar')"
+              :star-enabled="actionAvailable(mailbox.conversation.value?.stars?.starredMessages ? 'unstar' : 'star')"
+              :starred="!!mailbox.conversation.value?.stars?.starredMessages"
               @close="executeAction('back')"
               @move="moveReaderConversation"
               @archive="executeAction('archive')"
@@ -2457,6 +2608,9 @@ const searchSyntaxEditHint = computed(() =>
               @unarchive="executeAction('unarchive')"
               @set-read="executeAction($event ? 'read' : 'unread')"
               @prepare-reply="prepareReply"
+              @star="executeAction(mailbox.conversation.value?.stars?.starredMessages ? 'unstar' : 'star')"
+              @more="readerSheetOpen = true"
+              @message-sheet-open="messageSheetOpen = $event"
               @attachments="openAttachments"
               @active-message="onReaderActiveMessage"
               @contact-override="onReaderContactOverride"
@@ -2464,8 +2618,10 @@ const searchSyntaxEditHint = computed(() =>
             <!-- Inline reply composer docked at the bottom of the reader pane:
                  the thread stays visible above it. Wired directly to the shared
                  drafts state, like the inline compose card. -->
+            <Teleport :to="appRoot ?? undefined" :disabled="layoutMode !== 'compact'">
             <ReplyComposer
               v-if="replyComposerOpen && readerOpen"
+              :compact="layoutMode === 'compact'"
               :recipient-label="replyRecipientLabel"
               :recipient-mailbox="replyRecipientMailbox"
               :quoted-snippet="quotedSnippet"
@@ -2502,11 +2658,13 @@ const searchSyntaxEditHint = computed(() =>
               @save-as-new="drafts.saveAsNew()"
               @cancel-reply-preparation="drafts.cancelReplyPreparation()"
             />
+            </Teleport>
             <!-- A new-message editor while the reader is open docks the same
                  inline compose card at the bottom of the reader pane, exactly
                  like the reply composer above it. -->
+            <Teleport v-if="composeCardOpen && readerOpen" :to="appRoot ?? undefined" :disabled="layoutMode !== 'compact'">
             <ComposeCard
-              v-if="composeCardOpen && readerOpen"
+              :compact="layoutMode === 'compact'"
               :recipient-label="composeRecipientLabel"
               :notice="cardNotice"
               :active-ref="drafts.activeRef.value"
@@ -2541,6 +2699,7 @@ const searchSyntaxEditHint = computed(() =>
               @save-as-new="drafts.saveAsNew()"
               @cancel-reply-preparation="drafts.cancelReplyPreparation()"
             />
+            </Teleport>
           </section>
         </section>
 
@@ -2563,12 +2722,24 @@ const searchSyntaxEditHint = computed(() =>
           role="region"
           tabindex="-1"
           ref="drawerEl"
-          :aria-label="drawerTitles[drawer]"
+          :aria-label="drawer === 'reminder-settings' && layoutMode === 'compact' ? 'Settings' : drawerTitles[drawer]"
           data-test="utility-drawer"
         >
           <header class="drawer-header">
-            <h2>{{ drawerHeadings[drawer] }}</h2>
-            <button type="button" data-test="drawer-close" @click="closeDrawer()">Close</button>
+            <button
+              v-if="layoutMode === 'compact'"
+              type="button"
+              class="mobile-round-button page-back"
+              data-test="drawer-close"
+              aria-label="Back"
+              title="Back"
+              @click="closeDrawer()"
+            >
+              <HeaderGlyph name="back" />
+              <span class="visually-hidden">Back</span>
+            </button>
+            <h2>{{ drawer === 'reminder-settings' && layoutMode === 'compact' ? 'Settings' : drawerHeadings[drawer] }}</h2>
+            <button v-if="layoutMode !== 'compact'" type="button" data-test="drawer-close" @click="closeDrawer()">Close</button>
           </header>
           <p v-if="drawer === 'destinations' && accountId && providerSignInExpired" role="note" data-test="destinations-sign-in-expired">
             {{ providerSignInExpired.text }}<template v-if="accountActionsIdle"> <button type="button" class="inline-action" @click="accountNoticeAction('connect', 'drawer')">{{ providerSignInExpired.label }}</button></template>
@@ -2581,7 +2752,9 @@ const searchSyntaxEditHint = computed(() =>
             Provider mail needs a connected Gmail account.<template v-if="providerAccountAction"> <button v-if="providerAccountAction.action === 'account' || accountActionsIdle" type="button" class="inline-action" data-test="destinations-account-action" @click="accountNoticeAction(providerAccountAction.action, 'drawer')">{{ providerAccountAction.label }}</button></template><template v-else-if="accountStatus?.connection === 'authenticating'"> Finish sign-in in your browser.</template><template v-else> Connect one from Account first.</template>
           </p>
           <section v-if="drawer === 'reminder-settings' && remindersSupported" class="utility-panel" data-test="reminder-settings-dialog">
-            <ReminderSettings @close="closeDrawer" @saved="reminderPreferencesSaved" />
+            <h3 class="drawer-section-title compact-settings-heading">Reminders</h3>
+            <ReminderSettings :compact="layoutMode === 'compact'" @close="closeDrawer" @saved="reminderPreferencesSaved" />
+            <SwipeActionSettings :compact="layoutMode === 'compact'" @saved="swipePreferences = $event" />
           </section>
           <AccountPanel
             v-if="drawer === 'account' && accountStatus"
@@ -2631,10 +2804,22 @@ const searchSyntaxEditHint = computed(() =>
           data-test="contact-disclosure-panel"
         >
           <header class="drawer-header">
+            <button
+              v-if="layoutMode === 'compact'"
+              type="button"
+              class="mobile-round-button page-back"
+              data-test="contact-disclosure-close"
+              aria-label="Back"
+              title="Back"
+              @click="closeContactDisclosure()"
+            >
+              <HeaderGlyph name="back" />
+              <span class="visually-hidden">Back</span>
+            </button>
             <h2>Contact</h2>
-            <button type="button" data-test="contact-disclosure-close" @click="closeContactDisclosure()">Close</button>
+            <button v-if="layoutMode !== 'compact'" type="button" data-test="contact-disclosure-close" @click="closeContactDisclosure()">Close</button>
           </header>
-          <ContactPane :accountless="!accountId" :empty-list="contactListEmpty" :contact="contact" :loading="readerLoading" :context="contactContext" :recent="recentMail" @search-sender="senderSearch" @open-recent="openRecent" />
+          <ContactPane :compact="layoutMode === 'compact'" :accountless="!accountId" :empty-list="contactListEmpty" :contact="contact" :loading="readerLoading" :context="contactContext" :recent="recentMail" @search-sender="senderSearch" @open-recent="openRecent" />
         </div>
       </template>
       <!-- Bottom dock of the list column (DESIGN.md "In-flow Notices"): the
@@ -2647,7 +2832,8 @@ const searchSyntaxEditHint = computed(() =>
       <div class="list-dock" data-test="list-dock">
         <!-- Covered by a drawer or disclosure exactly like the list it acts on. -->
         <SelectionBar
-          v-if="!readerOpen && accountReady && selectedCount > 0 && mailbox.listState.value === 'ready'"
+          v-if="!readerOpen && accountReady && selectionActive && mailbox.listState.value === 'ready'"
+          v-show="!standaloneSearchForm"
           ref="selectionBarRef"
           :inert="centralCovered || undefined"
           :count="selectedCount"
@@ -2656,6 +2842,7 @@ const searchSyntaxEditHint = computed(() =>
           :actions-enabled="mailboxActionsEnabled && !mailbox.bulkUnresolved.value && !mailbox.commandInFlight.value"
           :read-available="gmailActionsEnabled && !mailbox.bulkUnresolved.value && !mailbox.commandInFlight.value"
           :limit-message="mailbox.selectionNotice.value"
+          :compact="layoutMode === 'compact'"
           @archive="bulkArchiveSelection()"
           @unarchive="bulkRestoreSelection()"
           @mark-read="bulkSetReadSelection(true)"
@@ -2666,14 +2853,54 @@ const searchSyntaxEditHint = computed(() =>
         <!-- Inert under a palette/navigator overlay exactly like header/main, so
              its Undo button cannot be reached while covered; drawer/disclosure
              guards apply through executeAction. -->
-        <ActionNotice v-if="!trashBrowsing" ref="actionNoticeComponent" :notice="actionNotice" :now="nowMs" :inert="!!overlay || !!attachmentConversation || undefined" @undo="executeAction('undo')" @undo-group="onNoticeGroupAction" @dismiss-group="mailbox.dismissGroupNotice()" />
+        <ActionNotice
+          v-if="!trashBrowsing"
+          ref="actionNoticeComponent"
+          :notice="actionNotice"
+          :now="nowMs"
+          :compact="layoutMode === 'compact'"
+          :inert="!!overlay || !!attachmentConversation || undefined"
+          @undo="executeAction('undo')"
+          @undo-group="onNoticeGroupAction"
+          @dismiss-group="mailbox.dismissGroupNotice()"
+          @open-activity="executeAction('activity')"
+        />
         <!-- The last command failure is an outcome the user must see: it sits
              in the same outcome slot as the action notice, as its own alert
              (not nested in the polite notice region, so it is announced once). -->
         <p v-if="commandError" class="command-error" role="alert" data-test="command-error">Last command failed: {{ errorText(commandError) }}</p>
       </div>
     </main>
+    <MobileActionSheet
+      v-if="readerSheetOpen"
+      :title="mailbox.conversation.value?.subject ?? 'Actions'"
+      :items="readerSheetItems"
+      @close="readerSheetOpen = false"
+      @choose="(id) => { if (id === 'commands') openOverlay('palette'); else if (id === 'contact-details') toggleContactDisclosure(); else if (id === 'reply') { const conversation = mailbox.conversation.value; const sourceMessage = conversation?.messages.at(-1); if (conversation && sourceMessage) void prepareReply({ kind: 'reply', conversation: conversation.ref, sourceMessageId: sourceMessage.id }); } else if (id === 'files') openAttachments(readerView?.$el as HTMLElement); else executeAction(id as ActionId); }"
+    />
     <AttachmentChooser v-if="attachmentConversation" :client="props.client" :conversation="attachmentConversation" :preview="props.mode === 'browser-preview'" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" @close="closeAttachments" />
-    <ActionOverlay v-if="overlay" v-model:query="overlayQuery" :account-first="accountCommandsFirst" :account-top="accountCommandsTop" :row-keys="paletteHasRows" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" :kind="overlay" :actions="availableActions" :key-scope="remindersList ? 'reminders' : draftsList ? 'drafts' : undefined" @close="closeOverlay()" @execute="executeOverlay" />
+    <MobileBottomBar
+      v-if="layoutMode === 'compact'"
+      ref="mobileBottomBar"
+      :inert="messageSheetOpen || mobileNavOpen || mobileEditorOpen || undefined"
+      :reader="readerOpen"
+      :inbox-or-saved="(mailbox.context.value === 'inbox' || mailbox.context.value === 'saved') && !searchVisible"
+      :search="mailbox.context.value === 'search' || searchVisible"
+      :execute-action="executeAction"
+      :action-available="actionAvailable"
+      :action-label="actionLabel"
+    />
+    <MobileDrawer
+      v-if="layoutMode === 'compact'"
+      :open="mobileNavOpen"
+      :compact="layoutMode === 'compact'"
+      :email="accountStatus?.account?.emailAddress ?? ''"
+      :current="mailbox.context.value === 'saved' ? 'saved' : mailbox.context.value === 'inbox' ? 'inbox' : mailbox.context.value === 'drafts' ? 'drafts' : mailbox.context.value === 'done' ? 'done' : mailbox.context.value === 'starred' ? 'starred' : mailbox.context.value === 'trash' ? 'trash' : mailbox.context.value === 'reminders' ? 'reminders' : null"
+      :actions="availableActions"
+      @close="closeMobileDrawer"
+      @execute="executeMobileDestination"
+      @commands="() => { closeMobileDrawer(); openOverlay('palette'); }"
+    />
+    <ActionOverlay v-if="overlay" v-model:query="overlayQuery" :compact="layoutMode === 'compact'" :account-first="accountCommandsFirst" :account-top="accountCommandsTop" :row-keys="paletteHasRows" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" :kind="overlay" :actions="availableActions" :key-scope="remindersList ? 'reminders' : draftsList ? 'drafts' : undefined" @close="closeOverlay()" @execute="executeOverlay" />
   </div>
 </template>

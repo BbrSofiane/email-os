@@ -195,6 +195,7 @@ const rows = useDrawerRows({ keys: () => rowKeys.value });
 <template>
   <div class="activity" data-test="activity-panel" @keydown="rows.onKeydown">
     <p v-if="activity.length === 0 && (groups ?? []).length === 0 && !groupsError" class="drawer-note" data-test="activity-empty">No operations yet.</p>
+    <p v-if="activity.length === 0 && (groups ?? []).length === 0 && !groupsError" class="drawer-note activity-empty-detail" data-test="activity-empty-detail">Mail actions and their results appear here.</p>
 
     <!-- UX-05 durable groups: addressable independently of current list rows;
          per-member recovery and one partial group Undo. -->

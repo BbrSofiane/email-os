@@ -1,0 +1,392 @@
+.app[data-layout="compact"] {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.app[data-layout="compact"] .mobile-top-bar {
+  position: relative;
+  z-index: 20;
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+  height: var(--mobile-top-bar-height);
+  padding: 0 16px;
+  background: var(--surface);
+}
+
+.app[data-layout="compact"] .mobile-round-button {
+  display: grid;
+  flex: none;
+  width: var(--mobile-touch-target);
+  height: var(--mobile-touch-target);
+  place-items: center;
+  border: 1px solid var(--divider);
+  border-radius: 50%;
+  background: var(--surface-raised, var(--surface));
+  color: inherit;
+}
+
+.app[data-layout="compact"] .mobile-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--mobile-type-list);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app[data-layout="compact"] .mobile-spacer {
+  flex: 1;
+}
+
+.app[data-layout="compact"] .app-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0;
+  position: static;
+}
+
+.app[data-layout="compact"] .app-main > .rail,
+.app[data-layout="compact"] .app-main > .contact-column,
+.app[data-layout="compact"] .contact-disclosure {
+  display: none;
+}
+
+.app[data-layout="compact"] .app-header {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  min-width: 0;
+  height: auto;
+  /* Split tabs, filter statuses and notes sit on one wrapping line. */
+  align-items: baseline;
+  gap: 4px 12px;
+  padding: 0 16px;
+}
+
+.app[data-layout="compact"] .app-header:empty {
+  display: none;
+}
+
+.app[data-layout="compact"] .app-header .header-menu,
+.app[data-layout="compact"] .app-header .reader-back-host,
+.app[data-layout="compact"] .app-header .reader-actions-host,
+.app[data-layout="compact"] .app-header .header-trail > .header-glyph {
+  display: none;
+}
+
+.app[data-layout="compact"] .app-header .header-tabs,
+.app[data-layout="compact"] .app-header .header-trail {
+  display: contents;
+}
+
+.app[data-layout="compact"] .app-header .header-tabs,
+.app[data-layout="compact"] .app-header .header-trail,
+.app[data-layout="compact"] .app-header .split-nav,
+.app[data-layout="compact"] .app-header .header-filter,
+.app[data-layout="compact"] .app-header .header-note,
+.app[data-layout="compact"] .app-header .header-row {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.app[data-layout="compact"] .app-header .header-note {
+  margin: 0;
+}
+
+.app[data-layout="compact"] .central {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.app[data-layout="compact"] .central .inbox-scroll,
+.app[data-layout="compact"] .central .reader-scroll,
+.app[data-layout="compact"] .central .drafts-list,
+.app[data-layout="compact"] .central .reminders-list,
+.app[data-layout="compact"] .central .search-results {
+  padding-block-end: var(--mobile-bottom-clearance);
+  scroll-padding-block-end: var(--mobile-bottom-clearance);
+}
+
+.app[data-layout="compact"] .mobile-bottom-region {
+  position: absolute;
+  z-index: 20;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 16px calc(8px + var(--mobile-safe-bottom));
+  background: linear-gradient(transparent, var(--surface) 35%);
+  pointer-events: none;
+}
+
+.app[data-layout="compact"] .mobile-context-slot {
+  display: flex;
+  flex: none;
+  height: var(--mobile-context-slot-height);
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--divider);
+  border-radius: 24px;
+  background: var(--surface-raised);
+  pointer-events: auto;
+}
+
+.app[data-layout="compact"] .mobile-context-slot:empty {
+  display: none;
+}
+
+.app[data-layout="compact"] .mobile-bottom-bar,
+.app[data-layout="compact"] .mobile-reader-actions {
+  display: flex;
+  flex: none;
+  min-width: 0;
+  height: var(--mobile-bottom-bar-height);
+  align-items: center;
+  justify-content: space-around;
+  border: 1px solid var(--divider);
+  border-radius: 28px;
+  background: var(--surface-raised);
+  pointer-events: auto;
+}
+
+.app[data-layout="compact"] .mobile-nav-item,
+.app[data-layout="compact"] .mobile-account {
+  display: grid;
+  min-width: var(--mobile-touch-target);
+  min-height: var(--mobile-touch-target);
+  place-items: center;
+  border: 0;
+  border-radius: 24px;
+  background: transparent;
+  color: inherit;
+}
+
+.app[data-layout="compact"] .mobile-account {
+  width: var(--mobile-touch-target);
+  height: var(--mobile-touch-target);
+  border: 1px solid var(--divider);
+  border-radius: 50%;
+  background: var(--surface-raised);
+}
+
+.app[data-layout="compact"] .mobile-actions-host {
+  display: contents;
+}
+
+.app[data-layout="compact"] .mobile-actions-host > * {
+  pointer-events: auto;
+}
+
+.app[data-layout="compact"] .list-dock {
+  position: absolute;
+  z-index: 19;
+  right: 0;
+  bottom: var(--mobile-bottom-clearance);
+  left: 0;
+  min-height: 0;
+  padding: 0 16px;
+}
+
+.app[data-layout="compact"] :focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+
+/* The sole media query handles the preview strip outside each .app frame. */
+@media (max-width: 719px) {
+  .fixture-workspaces,
+  .fixture-workspaces .workspace-panel {
+    flex: 1 1 0;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .fixture-workspaces .workspace-panel > .app {
+    width: 100vw;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+
+  .fixture-workspaces .workspace-header {
+    height: 24px;
+    flex: none;
+    overflow: hidden;
+    padding: 0 12px;
+  }
+
+  .fixture-workspaces .workspace-header .workspace-boundary {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .fixture-workspaces .workspace-header nav {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 6px;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+}
+
+.app[data-layout="compact"] .mobile-bottom-region:has(.mobile-navigation) {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+
+.app[data-layout="compact"] .mobile-bottom-region:has(.mobile-navigation) .mobile-context-slot:not(:empty) {
+  position: absolute;
+  right: 16px;
+  bottom: calc(var(--mobile-bottom-bar-height) + 20px + var(--mobile-safe-bottom));
+  left: 16px;
+  justify-content: flex-start;
+}
+
+.app[data-layout="compact"] .mobile-navigation {
+  display: flex;
+  flex: 1;
+  height: var(--mobile-bottom-bar-height);
+  align-items: center;
+  justify-content: space-around;
+  border: 1px solid var(--divider);
+  border-radius: 28px;
+  background: var(--surface-raised);
+  pointer-events: auto;
+}
+
+.app[data-layout="compact"] .mobile-reader-actions:empty {
+  display: none;
+}
+
+.app[data-layout="compact"] .mobile-bottom-region:has(.mobile-reader-actions:not(:empty)) {
+  gap: 0;
+  padding-inline: 12px;
+}
+
+.app[data-layout="compact"] .mobile-bottom-region:has(.mobile-reader-actions:not(:empty)) .mobile-reader-actions {
+  width: 100%;
+}
+
+.app[data-layout="compact"] .mobile-nav-item[aria-current="page"] {
+  border-radius: 24px;
+  background: var(--focus-fill);
+}
+
+.app[data-layout="compact"] .mobile-back-host {
+  display: grid;
+  flex: none;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+}
+
+.app[data-layout="compact"] .mobile-round-button > svg,
+.app[data-layout="compact"] .mobile-nav-item > svg,
+.app[data-layout="compact"] .mobile-account > svg,
+.app[data-layout="compact"] .mobile-back-host > .reader-back > svg {
+  width: 24px;
+  height: 24px;
+}
+
+.app[data-layout="compact"] .mobile-round-button,
+.app[data-layout="compact"] .mobile-back-host > .reader-back {
+  width: var(--mobile-touch-target);
+  height: var(--mobile-touch-target);
+  border: 1px solid var(--divider);
+  border-radius: 50%;
+  background: var(--surface-raised);
+}
+
+.app[data-layout="compact"] .mobile-back-host > .reader-back {
+  display: grid;
+  place-items: center;
+}
+
+.app[data-layout="compact"] .mobile-reader-actions .reader-actions {
+  display: flex;
+  width: 100%;
+  height: 48px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.app[data-layout="compact"] .mobile-reader-actions .reader-actions > .header-glyph {
+  display: grid;
+  flex: none;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+}
+
+.app[data-layout="compact"] .mobile-reader-actions .header-glyph-icon {
+  width: 24px;
+  height: 24px;
+}
+
+.app[data-layout="compact"] .app-main > .central {
+  width: 100%;
+  max-width: 100%;
+}
+
+.app[data-layout="compact"] .mobile-round-button {
+  width: 48px;
+  height: 48px;
+  background: radial-gradient(circle 20px, var(--surface-raised) 99%, transparent 100%);
+}
+
+.app[data-layout="compact"] .mobile-reader-actions {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.app[data-layout="compact"] .mobile-reader-actions .reader-actions {
+  min-width: 0;
+  box-sizing: border-box;
+  gap: 0;
+  overflow: hidden;
+}
+
+.app[data-layout="compact"] .mobile-reader-actions .reader-actions > .header-glyph {
+  min-width: 48px;
+  padding: 0;
+}
+
+.app[data-layout="compact"] .mobile-reader-actions .reader-actions > [data-test="reader-archive-toggle"] {
+  display: inline-flex;
+  width: auto;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding-inline: 12px;
+  border-radius: 24px;
+}
+
+.app[data-layout="compact"] .mobile-reader-actions .reader-archive-label {
+  font-size: var(--mobile-type-meta);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Rows keep the regular column layout until the list phase restyles them:
+   clip them to the pane so the page never scrolls sideways. */
+.app[data-layout="compact"] .central .inbox-scroll {
+  overflow-x: hidden;
+}

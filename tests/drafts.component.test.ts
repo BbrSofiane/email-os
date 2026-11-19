@@ -490,7 +490,7 @@ describe('local plain-text drafts UI', () => {
     await flushPromises();
     expect(commands).toHaveLength(2);
     expect(commands[1]).toEqual(commands[0]);
-    expect((w.find('[data-test="draft-status"]').text())).toBe('Saved in preview memory (non-durable) · not sent');
+    expect((w.find('[data-test="draft-status"]').text())).toBe('Saved in preview memory (non-durable) · never sent');
     expect(await fake.getDraft(commands[0]!.ref)).toMatchObject({ revision: 2, content: { bodyText: 'saved but not yet verified' } });
   });
 
@@ -762,7 +762,7 @@ describe('local plain-text drafts UI', () => {
       const remaining = await fake.listDrafts();
       expect(remaining).toHaveLength(1);
       expect((await fake.getDraft(remaining[0]!.ref)).content.bodyText).toBe('latest exact recovery buffer');
-      expect(w.find('[data-test="draft-status"]').text()).toBe('Saved in preview memory (non-durable) · not sent');
+      expect(w.find('[data-test="draft-status"]').text()).toBe('Saved in preview memory (non-durable) · never sent');
       const unload = new Event('beforeunload', { cancelable: true }) as BeforeUnloadEvent;
       window.dispatchEvent(unload);
       expect(unload.defaultPrevented).toBe(false);
@@ -910,7 +910,7 @@ describe('local plain-text drafts UI', () => {
     else oldRetry.resolve({ ref: original.ref, revision: original.revision + 1, savedAt: '2025-01-01T00:00:00Z' });
     await flushPromises();
     expect(w.find('[data-test="draft-error"]').exists()).toBe(false);
-    expect(w.find('[data-test="draft-status"]').text()).toBe('Saved in preview memory (non-durable) · not sent');
+    expect(w.find('[data-test="draft-status"]').text()).toBe('Saved in preview memory (non-durable) · never sent');
     const unload = new Event('beforeunload', { cancelable: true }) as BeforeUnloadEvent;
     window.dispatchEvent(unload);
     expect(unload.defaultPrevented).toBe(false);

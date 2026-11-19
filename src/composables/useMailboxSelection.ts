@@ -29,6 +29,7 @@ export interface MailboxSelectionDeps {
 }
 
 export function useMailboxSelection({ rows: loadedRows, targetAvailable }: MailboxSelectionDeps) {
+  const selectionMode = ref(false);
   const selectedRefs = ref<ConversationRef[]>([]);
   const rangeAnchorRef = ref<ConversationRef | null>(null);
   const selectionNotice = ref<string | null>(null);
@@ -138,6 +139,7 @@ export function useMailboxSelection({ rows: loadedRows, targetAvailable }: Mailb
 
   /** Clear set, anchor and bound wording; navigation state is untouched. */
   function clearSelection(): void {
+    selectionMode.value = false;
     selectedRefs.value = [];
     rangeAnchorRef.value = null;
     selectionNotice.value = null;
@@ -168,7 +170,7 @@ export function useMailboxSelection({ rows: loadedRows, targetAvailable }: Mailb
   }
 
   return {
-    selectedRefs, rangeAnchorRef, selectionNotice,
+    selectionMode, selectedRefs, rangeAnchorRef, selectionNotice,
     isSelected, toggleSelected, extendSelectionTo, selectAllLoaded, clearSelection,
     intersectSelectionWithLoaded, selectionInLoadedOrder,
   };

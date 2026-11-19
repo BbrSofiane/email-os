@@ -23,10 +23,32 @@ shared Rust shell. It uses SQLite and the same synthetic fixture core as desktop
 (ADR 0002); Gmail, attachment export, and external link dispatch are
 unavailable. APK build passed on 2026-11-14. A pre-existing legacy fixture
 database is retired once behind a startup screen. The unified-fixture APK was
-smoke-tested on an Android 15 x86_64 emulator on 2026-11-15 (see below), with two
-open findings: an overlapping reader toolbar at phone width, and one ANR on a first
-launch on a loaded host that did not recur. See the
+smoke-tested on an Android 15 x86_64 emulator on 2026-11-15 (see below). Compact
+phone layout is now in scope at widths ≤719px for Android fixture and browser preview.
+The compact shell covers lists, reader, compose, search, reminders, utility pages,
+contact details, command overlays and device-local swipe settings. Sending, reply-all,
+forwarding, HTML bodies, label chips, multiple splits and destructive Trash/Spam/move
+actions are not supported. Android uses fixture data; compact layout adds no mail IPC
+or engine capabilities. See the
 [Android smoke steps](development.md#android-fixture-apk).
+
+The compact layout was checked on the same emulator on 2026-11-16 with a locally
+built debug APK of the merged branch: swipe left to mark done and Undo, swipe
+right to the reminder picker, long-press selection, the reader and its action
+sheet, contact details, a new message typed with the software keyboard up, and
+the saved draft in Drafts. Screenshots:
+[inbox](<validation/mobile/android-inbox.png>),
+[swipe and Undo](<validation/mobile/android-swipe-done-undo.png>),
+[selection](<validation/mobile/android-selection.png>),
+[drawer](<validation/mobile/android-drawer.png>),
+[reader](<validation/mobile/android-reader.png>),
+[reader actions](<validation/mobile/android-reader-more.png>),
+[compose with keyboard](<validation/mobile/android-compose-keyboard.png>),
+[drafts](<validation/mobile/android-drafts.png>),
+[settings](<validation/mobile/android-settings.png>).
+Known from that pass: the first launch right after a fresh install can still hit
+the Android "isn't responding" dialog recorded for the original APK (a relaunch
+is fine), and no physical device was used.
 
 Mode selection is deliberate: native defaults to fixture; `EMAIL_OS_MODE=gmail`
 selects a separate Gmail profile. Browser preview remains synthetic. See the
@@ -92,7 +114,7 @@ for installs, `run-as` file inspection and logs only. Synthetic data only.
   sent". After sending Email OS to Android Settings and back (same process, pid
   unchanged) the editor still held all three fields. After killing the process, the
   Drafts list had the draft and opening it showed the exact To, Subject and body
-  ("Draft loaded from this device · not sent").
+  ("Draft loaded from this device · never sent").
 
 **Legacy reset (pre-unification APK, then `3061e54` APK)**
 

@@ -178,6 +178,27 @@ describe('ContactPane layout markup (rail/contact layout pass)', () => {
     expect(wrapper.find('.contact-recent').exists()).toBe(false);
   });
 
+  it.each([ADA, { displayName: null, mailbox: 'anon@example.test' }])('offers a separate sender search on phones for $mailbox', async (contact) => {
+    wrapper = mount(ContactPane, { props: { contact, context: 'open', compact: true } });
+    const name = wrapper.get('[data-test="contact-name"]');
+    expect(name.element.tagName).toBe('SPAN');
+    expect(name.text()).toBe(contact.displayName ?? contact.mailbox);
+    const findMail = wrapper.get('button[data-test="contact-find-mail"]');
+    expect(findMail.text()).toBe('Find mail from sender');
+    await findMail.trigger('click');
+    expect(wrapper.emitted('searchSender')).toEqual([[contact.mailbox]]);
+  });
+
+  it('keeps the name as the sender-search button in regular layout', async () => {
+    wrapper = mount(ContactPane, { props: { contact: ADA, context: 'open' } });
+    expect(wrapper.find('[data-test="contact-find-mail"]').exists()).toBe(false);
+    const name = wrapper.get('button[data-test="contact-name"]');
+    expect(name.text()).toBe(ADA.displayName);
+    expect(name.attributes('title')).toBe('Find mail from this sender');
+    await name.trigger('click');
+    expect(wrapper.emitted('searchSender')).toEqual([[ADA.mailbox]]);
+  });
+
   it('lists recent cached mail as plain activatable text rows with the full subject as title', async () => {
     const ref = { accountId: 'acct', conversationId: 'conv-01' };
     wrapper = mount(ContactPane, { props: { contact: ADA, context: 'focused', recent: [{ ref, subject: 'A long fixture subject' }, { ref: { ...ref, conversationId: 'conv-02' }, subject: '' }] } });

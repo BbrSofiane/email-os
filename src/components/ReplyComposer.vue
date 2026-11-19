@@ -17,6 +17,7 @@
 import { computed } from 'vue';
 import type { DraftContent, DraftRef, DraftSource, MailError } from '../lib/ipc/client';
 import DraftEditorCore from './DraftEditorCore.vue';
+import HeaderGlyph from './HeaderGlyph.vue';
 
 const props = defineProps<{
   /** Heading name while To is the default sender: displayName ?? mailbox of the latest message. */
@@ -46,6 +47,7 @@ const props = defineProps<{
   recoveryRequired: boolean;
   canCancelReplyPreparation: boolean;
   closeError: string | null;
+  compact?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -87,11 +89,12 @@ const headingTarget = computed<{ text: string } | null>(() => {
 </script>
 
 <template>
-  <section class="reply-composer" aria-label="Inline reply draft composer" data-test="reply-composer">
+  <section class="reply-composer" :class="{ 'compact-compose-sheet': props.compact }" aria-label="Inline reply draft composer" data-test="reply-composer">
     <section v-if="props.visible" class="composer" aria-label="Plain-text draft editor" data-test="composer">
       <DraftEditorCore
         autofocus="body"
         variant="reply"
+        :compact="props.compact"
         :recipient-label="props.recipientLabel"
         :recipient-mailbox="props.recipientMailbox ?? null"
         :active-ref="props.activeRef"
@@ -126,9 +129,10 @@ const headingTarget = computed<{ text: string } | null>(() => {
         @save-as-new="emit('saveAsNew')"
         @cancel-reply-preparation="emit('cancelReplyPreparation')"
       >
-        <template #header>
+        <template #header="{ closeDisabled }">
           <header class="composer-heading">
             <h2>Reply draft<span v-if="headingTarget" class="reply-to" :title="props.content.to.trim() === '' ? undefined : props.content.to"> to <span data-test="draft-recipient-label">{{ headingTarget.text }}</span></span></h2>
+            <button v-if="props.compact" type="button" class="compose-sheet-close" data-test="reply-sheet-close" aria-label="Save and close" title="Save and close" aria-keyshortcuts="Escape" :disabled="closeDisabled" @click="emit('closeEditor')"><HeaderGlyph name="x" /></button>
           </header>
         </template>
         <template #context>

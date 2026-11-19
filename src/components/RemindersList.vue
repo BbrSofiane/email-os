@@ -35,7 +35,7 @@ import ContextRowList from './ContextRowList.vue';
 import FullDate from './FullDate.vue';
 import ReminderPicker from './ReminderPicker.vue';
 
-const props = defineProps<{ model: RemindersModel }>();
+const props = defineProps<{ model: RemindersModel; compact?: boolean }>();
 const emit = defineEmits<{ open: [target: Reminder['conversation']] }>();
 const {
   error, preparationError, preparationTarget, busy, loading, source, dueAt, pickerReady, condition, destination,
@@ -151,6 +151,8 @@ function describedBy(item: ReminderItem): string {
 
 <template>
   <div ref="paneEl" class="context-pane" data-test="reminders-panel" tabindex="-1" @focusin="onPaneFocusin">
+    <p v-if="props.compact && loading" class="list-state" role="status">Loading local reminders…</p>
+    <p v-else-if="props.compact && loadedOnce && !displayed.length" class="list-state" data-test="reminders-empty">No {{ destination }} reminders.</p>
     <!-- Honest state, once: the device-local note is visible; the rest is its title and hidden text. -->
     <div class="context-coverage">
       <p class="cached-coverage" role="note" data-test="reminders-coverage" :title="REMINDERS_NOTE_DETAIL">{{ REMINDERS_NOTE_LINE }}<span class="visually-hidden"> · {{ REMINDERS_NOTE_DETAIL }}</span></p>
@@ -175,6 +177,7 @@ function describedBy(item: ReminderItem): string {
       <p class="drawer-note">Conversation ready</p>
       <ReminderPicker
         ref="picker"
+        :compact="props.compact"
         :disabled="busy || retrying"
         :initial-value="dueAt"
         :rescheduling="source.revision !== null"
@@ -192,7 +195,7 @@ function describedBy(item: ReminderItem): string {
         </label>
         <p v-if="dueAt" class="chosen-time">Selected: <time :datetime="dueAt">{{ formatReminderDateTime(dueAt) }}</time></p>
         <p v-else-if="pickerReady" class="chosen-time">Selected: Someday</p>
-        <button type="button" :disabled="busy || retrying || !pickerReady" @click="model.submit()">{{ busy ? 'Saving reminder…' : source.revision === null ? 'Schedule reminder' : 'Save new time' }}</button>
+        <button type="button" class="picker-primary" :disabled="busy || retrying || !pickerReady" @click="model.submit()">{{ busy ? 'Saving reminder…' : source.revision === null ? 'Schedule reminder' : 'Save new time' }}</button>
       </ReminderPicker>
     </div>
     <!-- Names the tab after `[` / `]`; mounted all the time so each change is announced. -->
@@ -200,9 +203,9 @@ function describedBy(item: ReminderItem): string {
     <!-- Says what Cancel reminder / Reschedule did, only after it resolved or failed. -->
     <p class="visually-hidden" role="status" aria-live="polite" data-test="reminders-action-status">{{ actionAnnouncement }}</p>
     <div id="reminder-tabpanel" role="tabpanel" :aria-labelledby="`reminder-tab-${destination}`">
-      <p v-if="loading" class="list-state" role="status">Loading local reminders…</p>
+      <p v-if="!props.compact && loading" class="list-state" role="status">Loading local reminders…</p>
       <!-- Before the first successful read an empty list means "not read", not "none": the error above says so. -->
-      <p v-else-if="loadedOnce && !displayed.length" class="list-state" data-test="reminders-empty">No {{ destination }} reminders.</p>
+      <p v-else-if="!props.compact && loadedOnce && !displayed.length" class="list-state" data-test="reminders-empty">No {{ destination }} reminders.</p>
       <ContextRowList
         v-if="items.length"
         ref="list"
