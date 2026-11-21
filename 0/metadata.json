@@ -1,0 +1,98 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7ZAJ8YSRYAARJ3CG0CF7Y5B",
+  "session_id": "ee85c0c8-b2b0-43e9-b640-7729bf4a26ee",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-21T15:11:00.97228822Z",
+  "branch": "usable/html-reader",
+  "checkpoints_count": 4,
+  "save_step_count": 2,
+  "files_touched": [
+    "crates/mail-core/Cargo.toml",
+    "crates/mail-core/src/gmail/parse.rs",
+    "crates/mail-core/src/gmail/parse/tests.rs",
+    "crates/mail-core/src/gmail/store_tests.rs",
+    "crates/mail-core/src/gmail/types.rs",
+    "crates/mail-core/src/synthetic/provider.rs",
+    "crates/mail-core/src/testing.rs"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-5-5",
+  "turn_id": "e9ee81635892",
+  "checkpoint_transcript_start": 644,
+  "transcript_lines_at_start": 644,
+  "compact_transcript_start": 88,
+  "token_usage": {
+    "input_tokens": 78,
+    "cache_creation_tokens": 47404,
+    "cache_read_tokens": 8795933,
+    "output_tokens": 21869,
+    "api_call_count": 34
+  },
+  "session_metrics": {
+    "turn_count": 9
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-21T15:11:00.875355086Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 636,
+    "human_modified": 206,
+    "human_removed": 0,
+    "total_committed": 636,
+    "total_lines_changed": 872,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 32,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "crates/mail-core/Cargo.toml": 1,
+        "crates/mail-core/src/gmail/parse.rs": 2,
+        "crates/mail-core/src/gmail/store_tests.rs": 2,
+        "crates/mail-core/src/gmail/types.rs": 23,
+        "crates/mail-core/src/synthetic/provider.rs": 2,
+        "crates/mail-core/src/testing.rs": 2
+      }
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 228,
+      "user_lines_removed": 67,
+      "agent_lines_added": 32,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "crates/mail-core/src/gmail/parse.rs": 135,
+        "crates/mail-core/src/gmail/parse/tests.rs": 93
+      },
+      "user_removed_per_file": {
+        "crates/mail-core/src/gmail/parse.rs": 66,
+        "crates/mail-core/src/gmail/parse/tests.rs": 1
+      }
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 328,
+      "user_lines_removed": 78,
+      "agent_lines_added": 272,
+      "agent_lines_removed": 68,
+      "user_added_per_file": {
+        "Cargo.lock": 136,
+        "crates/mail-core/src/gmail/parse.rs": 124,
+        "crates/mail-core/src/gmail/parse/tests.rs": 66,
+        "crates/mail-core/src/synthetic/provider.rs": 2
+      },
+      "user_removed_per_file": {
+        "Cargo.lock": 20,
+        "crates/mail-core/src/gmail/parse.rs": 33,
+        "crates/mail-core/src/gmail/parse/tests.rs": 23,
+        "crates/mail-core/src/synthetic/provider.rs": 2
+      }
+    }
+  ]
+}

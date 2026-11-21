@@ -1,0 +1,18 @@
+Delegated task node:delegated-task:command%3Amcp%3A60b9dc2b-5271-462b-90eb-f39918b85e09%3Adelegate-task%3Af587cb90-da73-4ed5-99d7-9e65cdc861f8 (C stage 2: Rust HTML part selection) [completed]:
+I did not complete stage 2, so I made no commit and did not push. The checkout remains unchanged; no tests were run.
+
+The implementation, required checks, test counts, and Cargo.lock diff summary are still outstanding. One detail the implementation must handle is that the current attachment predicate treats every part with an `attachmentId` as an attachment, including CID resources that this stage needs to collect from `multipart/related`.
+
+---
+
+Delegated task node:delegated-task:command%3Amcp%3A60b9dc2b-5271-462b-90eb-f39918b85e09%3Adelegate-task%3A296110c9-0505-4bf5-96fa-568d36221211 (C stage 2 (retry): Rust HTML part selection) [completed]:
+The stage is **incomplete and uncommitted**. I added the `MessageHtml` and `InlinePart` types, initialized the new `GmailThread` fields, and added the dependency declaration. The parser behavior, tests, and lockfile update remain unfinished.
+
+I did not run the required checks or create a commit. The requested test counts and committed lockfile diff are therefore unavailable. Another track’s Android build was using the shared Cargo target when I checked.
+
+---
+
+Delegated task node:delegated-task:command%3Amcp%3A60b9dc2b-5271-462b-90eb-f39918b85e09%3Adelegate-task%3A5bdddbfe-620c-45ae-92f2-2f240fa98424 (C stage 2 (code only): Rust HTML part selection) [completed]:
+Implemented HTML body selection and strict decoding in the Gmail parser, with text fallback, per-message and thread HTML limits, inline image metadata, and updated omission reasons. Added regression tests for the main HTML, charset, resource, depth, and size cases.
+
+I did not run builds or tests, edit `Cargo.lock`, commit, or push, as requested. Compilation and behavior remain unverified; in particular, the `html2text` configuration and its link-footnote behavior need the coordinator’s checks.
