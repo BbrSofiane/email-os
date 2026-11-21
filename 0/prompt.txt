@@ -1,0 +1,6 @@
+Owner decisions for ADR 0005 (fold into your revision; record them in a "Decisions" section dated 2026-11-21):
+1. Google Play services: acceptable; the owner's phone has it. Authorization API (option C) approved; no custom-scheme fallback in this programme.
+2. First run: the choice screen (your mail or the demo), switchable later from Account. Approved.
+3. Disconnect: local only, as on desktop; no revoke at Google.
+- App ID is `dev.exedev.emailos` (track A, approved). Release signing key lives with the owner and CI; debug/local builds use the debug key, so plan one Android OAuth client per signer (release SHA-1 from the owner, debug SHA-1 from this machine's debug keystore) and say how the emulator build gets a registered signer.
+- Still open (I'll ask the owner after your revision): which Google account for the emulator, same Cloud project as desktop or new, and Testing vs unverified production (point 2 of my review).
