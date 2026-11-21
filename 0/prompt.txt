@@ -1,0 +1,1 @@
+Owner decision for ADR 0006 (fold into your revision; record it in a "Decisions" section dated 2026-11-21): "Load images" applies to that message only, until the conversation is closed. Nothing is remembered per sender. Drop the per-sender option.
