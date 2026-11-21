@@ -54,7 +54,21 @@ signing setup outside this owner's initial install path.
 [Android app signing](https://developer.android.com/studio/publish/app-signing)
 and [GitHub artifact downloads](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts).
 
-## Decision
+## Decisions (2026-11-21)
+
+- The owner approved `dev.exedev.emailos` and the launcher label **Email OS**.
+- The owner will generate the release key on their own computer, back it up
+  in their password manager, and add the signing inputs to a protected GitHub
+  environment. CI signs the owner APK. The key stays off the shared VM.
+- The owner chose public GitHub Releases with one directly downloadable APK per
+  version.
+- The owner's phone has Google Play services. The model and Android version
+  are pending.
+- The coordinator assumes the old fixture app has no data worth keeping
+  because it held the synthetic demo mailbox. The app will have no automatic
+  migration. The owner can copy any wanted draft text before uninstalling it.
+
+## Design
 
 ### App identity and signing
 
@@ -90,7 +104,7 @@ and require a reviewer, a protection available on public repositories. The
 workflow builds from its own checkout and takes no PR refs, artifacts or build
 caches as inputs. Decode the base64 JKS to a restricted runner temporary file
 for signing, disable shell tracing and remove the file on exit, including on
-failure. Upload only the APK and public metadata after checking the certificate
+failure. Publish only the APK and public metadata after checking the certificate
 against the owner's configured SHA-256 fingerprint.
 [GitHub deployment environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments).
 
@@ -134,15 +148,25 @@ in-place update keeps app data when the ID and signer match, the version
 advances, and app migrations preserve the data.
 [Android versioning](https://developer.android.com/studio/publish/versioning).
 
-Start with one universal signed release APK for `arm64-v8a` and `x86_64`, named
-`email-os-android-release.apk` in a versioned Actions artifact. The owner downloads
-and unzips it from the approved run, or uses `gh run download` with the run ID
-and artifact name. Record the commit, versions, file size, APK SHA-256 and
-certificate fingerprints. This repository is public. Any signed-in GitHub
-user can download the Actions artifacts and any public GitHub Release assets.
-The APK contains no secrets. Track B's Android OAuth client ID is a public
-identifier. The owner can retain the APK after artifact expiry. Revisit GitHub
-Releases if a durable direct download becomes necessary.
+Publish one universal signed APK for `arm64-v8a` and `x86_64` per GitHub
+Release, named `email-os-android-release.apk`. After building, signing and
+verifying the signer and package metadata, the manually dispatched workflow
+creates the tag `android-v<versionName>-<versionCode>` at the exact main
+commit it built, for example `android-v0.1.0-1001`. Generate release notes
+from commits since the previous Android release. For the first release, use
+the commit range from the Android install programme's baseline to the build
+commit. Include the commit, versions, APK size, APK SHA-256 and certificate
+fingerprints in the notes.
+
+Give only the protected release job repository contents write permission.
+Serialize release publication and attach the verified APK to a draft before
+publishing. A rerun may finish an
+unpublished draft for the same commit and code. It leaves published assets
+and tags intact. Skip publishing if a higher Android code has already been
+published. GitHub Release assets are public, like the repository, and the APK
+contains no secrets. Track B's Android OAuth client ID is a public identifier.
+The owner opens the version's release page and taps the APK asset on the phone.
+[GitHub release publication](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository).
 
 Keep R8 and start with resource shrinking off. Verify that the minified
 release's JNI, WebView and IPC work on both ABIs before considering additional
@@ -290,17 +314,18 @@ the certificate fingerprint, and runs the first owner-key build after merge.
 3. Open **Actions → Android Release → Run workflow**, select `main`, then
    run it. On the run page, verify the branch and commit, then select
    **Review deployments → android-release → Approve and deploy**, or have
-   the configured reviewer do that. When the run succeeds, download the
-   versioned artifact under **Artifacts**, unzip it, and verify the reported
+   the configured reviewer do that. When the run succeeds, open the
+   `android-v<versionName>-<versionCode>` entry under **Releases** and
+   download `email-os-android-release.apk`. Verify the reported
    application ID with `aapt dump badging` and the SHA-256 certificate digest
    with `apksigner verify --verbose --print-certs`. Compare the digest to the
    owner key and the output of `sha256sum email-os-android-release.apk` to
    the published APK checksum before installing.
    Start a new dispatch for the second phone-test APK so it receives a higher
-   code. A rerun of the first dispatch keeps the first code.
-4. Before starting the phone test, report device model and Android version, and
-   whether the old fixture app has any drafts to keep. Perform the phone steps
-   below using two approved signed versions. If Android blocks direct APK
+   code and its own release. A rerun of the first dispatch keeps the first code.
+4. Before starting the phone test, report device model and Android version.
+   Perform the phone steps below using two approved signed versions.
+   If Android blocks direct APK
    install, record the exact message and report whether USB/ADB is available.
    If developer verification becomes required for this install route, the
    owner handles registration for the final ID and signing certificate.
@@ -352,11 +377,12 @@ Owner-key distribution and phone validation follow merge.
    release manifest, release/debug networking, and bundled offline boot. Check
    launcher, splash, Inbox and keyboard screenshots for label, clipping, insets
    and first-frame continuity.
-5. **Trusted delivery and update.** Add the main-only owner workflow and the
+5. **Trusted delivery and update.** Add the main-only GitHub Release workflow and the
    PR release build check. Verify in PR CI that an ephemeral key signs a release
    APK and that the package, version, signer and ABIs match expectations.
-   Discard the APK and key. Review the production trigger, secret scope and
-   artifact allowlist, then complete the throwaway-key emulator update below.
+   Discard the APK and key. Check release tag and notes generation with
+   synthetic inputs. Review the production trigger, secret scope and
+   publication conditions, then complete the throwaway-key emulator update below.
    Record versions, hashes, APK size and persistence results. Document the
    validated path and the post-merge owner build and phone checks in the
    development and current status guides.
@@ -404,14 +430,15 @@ Owner-key distribution and phone validation follow merge.
 
 ### Owner's physical phone after merge
 
-1. Keep any existing fixture install. In **Settings → About phone**, note the
-   model and Android version. Use a device on Android 7 or later with an ABI
-   in the artifact. If the ABI or page size needs confirmation and USB
+1. In **Settings → About phone**, note the model and Android version. The
+   old fixture app can stay installed alongside Email OS. Copy any draft text
+   you want before uninstalling the old app. Use a device on Android 7 or later
+   with an ABI in the APK. If the ABI or page size needs confirmation and USB
    debugging is available, check `adb shell getprop ro.product.cpu.abilist`
    and `adb shell getconf PAGE_SIZE` from the owner's computer.
-2. On the phone, sign in to GitHub if required, open the provided Actions run,
-   download the approved version N artifact and unzip it in Files. Open
-   `email-os-android-release.apk`. If prompted, allow installs from this source
+2. On the phone, open the approved version N under **Releases** and tap
+   `email-os-android-release.apk` under **Assets**. Open the downloaded APK.
+   If prompted, allow installs from this source
    for Files (or the app opening the APK), then tap **Install**. If local
    signing is used, copy the verified APK to Downloads first. If the direct
    install is blocked and the device allows USB debugging, use
@@ -423,7 +450,7 @@ Owner-key distribution and phone validation follow merge.
    Mark a known fixture conversation done and change a swipe setting.
    Background and reopen Email OS. Force stop it in Android App info,
    then open from the launcher and confirm the draft, Done and setting.
-4. Download and unzip the approved N+1 artifact in the same way. Open the APK
+4. Open the approved N+1 release and download its APK in the same way. Open the APK
    and tap **Update** (or use `adb install -r <version-N+1.apk>`). If Android
    rejects the update, keep the app installed and report the exact error.
    After success, verify the displayed version if changed (or use the APK
@@ -438,11 +465,6 @@ Owner-key distribution and phone validation follow merge.
 
 ## Risks and open questions
 
-- Approve `dev.exedev.emailos` as the long-lived Android ID. Does an existing
-  fixture install hold drafts the owner needs to keep?
-- Can the owner hold and back up the release key and configure the required
-  reviewer? Are expiring Actions artifacts suitable, or does the owner want
-  durable GitHub Release assets?
 - Which phone model and Android version will be used, and can the owner run
   the two-version update test? Sideloading support depends on device policy.
   Record installation friction even if ADB works.
