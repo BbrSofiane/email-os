@@ -57,6 +57,7 @@ fn message(id: &str, sent_at: &str) -> Message {
         sent_at: sent_at.to_string(),
         body_text: "plain text body".to_string(),
         has_attachment: None,
+        html_body: None,
     }
 }
 
@@ -3271,4 +3272,92 @@ fn gmail_retry_lineage_persists_across_restart() {
         crate::groups::GroupMemberStatus::Failed
     );
     drop(store);
+}
+
+#[test]
+fn html_cache_round_trip_and_legacy_state() {
+    use crate::gmail::types::{InlinePart, MessageHtml};
+    let (store, _dir) = open_store("html-round-trip");
+    store
+        .begin_account(&profile("acct", "test@example.test", "h1"), 0)
+        .unwrap();
+    let mut source = thread(
+        "acct",
+        "thread",
+        "h1",
+        vec![
+            message("one", "2026-01-01"),
+            message("two", "2026-01-02"),
+            message("three", "2026-01-03"),
+        ],
+        &["one"],
+    );
+    source
+        .message_html
+        .insert("one".into(), MessageHtml::Present("<p>hello</p>".into()));
+    source
+        .message_html
+        .insert("two".into(), MessageHtml::TooLarge);
+    for id in ["one", "two"] {
+        source.inline_parts.push(InlinePart {
+            message_id: id.into(),
+            content_id: id.into(),
+            attachment_id: format!("attachment-{id}"),
+            mime_type: "image/png".into(),
+            size: 12,
+        });
+    }
+    upsert_thread(&store.lock_conn().unwrap(), "acct", &source).unwrap();
+    let target = source.conversation.conversation_ref.clone();
+    let conversation = store.get_conversation(&target).unwrap();
+    assert_eq!(
+        conversation.messages[0].html_body,
+        Some(HtmlBodyState::Available)
+    );
+    assert_eq!(
+        conversation.messages[1].html_body,
+        Some(HtmlBodyState::TooLarge)
+    );
+    assert_eq!(conversation.messages[2].html_body, None);
+    let body = store.get_message_html(&target, "one").unwrap();
+    assert_eq!(body.html, "<p>hello</p>");
+    assert_eq!(body.inline_images.len(), 1);
+    assert_eq!(body.inline_images[0].content_id, "one");
+    for id in ["two", "three", "unknown"] {
+        assert!(matches!(
+            store.get_message_html(&target, id),
+            Err(MailError::NotFound)
+        ));
+    }
+    let wrong = ConversationRef {
+        account_id: "other".into(),
+        ..target.clone()
+    };
+    assert!(matches!(
+        store.get_message_html(&wrong, "one"),
+        Err(MailError::NotFound)
+    ));
+    store
+        .lock_conn()
+        .unwrap()
+        .execute(
+            "UPDATE gmail_messages SET html_state = NULL WHERE message_id = 'one'",
+            [],
+        )
+        .unwrap();
+    assert_eq!(
+        store.get_conversation(&target).unwrap().messages[0].html_body,
+        None
+    );
+}
+
+#[test]
+fn message_html_state_serde() {
+    let mut msg = message("one", "2026-01-01");
+    assert!(serde_json::to_value(&msg)
+        .unwrap()
+        .get("htmlBody")
+        .is_none());
+    msg.html_body = Some(HtmlBodyState::TooLarge);
+    assert_eq!(serde_json::to_value(&msg).unwrap()["htmlBody"], "too_large");
 }

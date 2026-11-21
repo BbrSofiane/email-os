@@ -330,6 +330,7 @@ fn parse_message(
             // P5a: the parse already knows per-message attachment presence;
             // persist it with the cached message instead of guessing later.
             has_attachment: Some(payload_has_attachment(payload, 0)),
+            html_body: None,
         },
         subject,
     ))

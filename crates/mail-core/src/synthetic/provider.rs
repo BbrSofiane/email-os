@@ -210,6 +210,7 @@ impl SyntheticGmailProvider {
                 // Exactly one synthetic attachment on the first message; no
                 // other message carries an attachment fact.
                 has_attachment: (index == 0).then_some(true),
+                html_body: None,
             })
             .collect();
         let ids_where = |predicate: fn(&MessageFacts) -> bool| -> Vec<String> {

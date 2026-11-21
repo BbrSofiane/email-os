@@ -129,6 +129,34 @@ pub struct UndoReceipt {
     pub accepted_at: String,
 }
 
+/// Availability of a cached formatted message body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum HtmlBodyState {
+    /// The HTML body is available in the cache.
+    Available,
+    /// The HTML body exceeded a retention limit.
+    TooLarge,
+}
+
+/// Cached HTML and its fetchable inline images.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageHtmlBody {
+    pub html: String,
+    pub inline_images: Vec<InlineImage>,
+}
+
+/// Metadata identifying one inline image.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct InlineImage {
+    pub content_id: String,
+    pub attachment_id: String,
+    pub mime_type: String,
+    pub size: u32,
+}
+
 /// One cached plain-text message.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -145,6 +173,10 @@ pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub has_attachment: Option<bool>,
+    /// Whether a formatted (HTML) rendering is cached for this message. Absent when there is none or it is unknown (legacy rows, retained snapshots).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub html_body: Option<HtmlBodyState>,
 }
 
 /// Full conversation for the reader.

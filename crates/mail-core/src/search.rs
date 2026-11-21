@@ -287,6 +287,7 @@ mod tests {
             sent_at: "2026-01-01T00:00:00Z".to_string(),
             body_text: String::new(),
             has_attachment,
+            html_body: None,
         }
     }
 

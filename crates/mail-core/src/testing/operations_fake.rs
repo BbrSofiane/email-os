@@ -740,6 +740,7 @@ impl FakeProvider {
             sent_at: "2026-02-01T00:00:00Z".to_string(),
             body_text: "new incoming".to_string(),
             has_attachment: None,
+            html_body: None,
         });
         let primary = state.thread.clone();
         if let Some(first) = state.threads.first_mut() {
@@ -1187,6 +1188,7 @@ impl crate::gmail::types::GmailProvider for FakeProvider {
                         sent_at: "2026-01-01T00:02:00Z".into(),
                         body_text: "synthetic reply".into(),
                         has_attachment: None,
+                        html_body: None,
                     });
                     thread.message_ids = Some(vec!["message-1".into(), "reply-1".into()]);
                 }

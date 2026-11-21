@@ -96,6 +96,7 @@ fn seeded_conversation() -> crate::dto::Conversation {
             sent_at: "2024-04-05T10:00:00Z".to_string(),
             body_text: "durable historical body".to_string(),
             has_attachment: None,
+            html_body: None,
         }],
         is_in_inbox: true,
         is_read: None,

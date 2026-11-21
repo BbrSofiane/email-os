@@ -2,6 +2,8 @@
 // Contracts: docs/vertical-slice-01.md through docs/vertical-slice-04.md and docs/ux-05-safe-bulk-processing.md, docs/ux-06-saved-split.md / docs/ux-08-stars.md; UX-09 reads: docs/ux-09-provider-destinations.md; UX-12: docs/ux-12-safe-attachments.md — camelCase fields, snake_case discriminants.
 
 export const LIST_ATTACHMENTS_COMMAND = 'list_attachments';
+export const GET_MESSAGE_HTML_COMMAND = 'get_message_html';
+export const GET_INLINE_IMAGE_COMMAND = 'get_inline_image';
 export const SAVE_ATTACHMENT_COMMAND = 'save_attachment';
 export const CANCEL_ATTACHMENT_COMMAND = 'cancel_attachment';
 export const OPEN_EXTERNAL_LINK_COMMAND = 'open_external_link';
@@ -309,6 +311,8 @@ preview: string, lastMessageAt: string, isRead?: boolean,
  */
 hasAttachments?: boolean, pendingOperationId: string | null, };
 
+export type HtmlBodyState = "available" | "too_large";
+
 export type Message = { id: string, from: Address, to: Array<Address>, sentAt: string,
 /**
  * Literal fixture text; hostile markup is data, never rendered.
@@ -319,7 +323,15 @@ bodyText: string,
  * known (provider parse or a v4+ cache write). Absent when unknown
  * (legacy cache rows); never inferred.
  */
-hasAttachment?: boolean, };
+hasAttachment?: boolean,
+/**
+ * Whether a formatted (HTML) rendering is cached for this message. Absent when there is none or it is unknown (legacy rows, retained snapshots).
+ */
+htmlBody?: HtmlBodyState, };
+
+export type MessageHtmlBody = { html: string, inlineImages: Array<InlineImage>, };
+
+export type InlineImage = { contentId: string, attachmentId: string, mimeType: string, size: number, };
 
 export type Conversation = {
 /**

@@ -1007,6 +1007,15 @@ impl GmailCore {
         Ok(result)
     }
 
+    /// Returns a cached HTML body and inline image metadata.
+    pub fn get_message_html(
+        &self,
+        target: &ConversationRef,
+        message_id: &str,
+    ) -> Result<crate::dto::MessageHtmlBody, MailError> {
+        self.inner.store.get_message_html(target, message_id)
+    }
+
     pub fn list_attachments(
         &self,
         target: &ConversationRef,
