@@ -34,7 +34,7 @@ use crate::storage_log::{storage_err, storage_fault};
 /// discovery/history pass. Disclosed to the wire through `SyncInfo.coverageLimit`.
 pub(crate) const DISCOVERY_CAP: usize = 100;
 
-const SCHEMA_VERSION: &str = "gmail-migrations-9";
+const SCHEMA_VERSION: &str = "gmail-migrations-10";
 
 #[path = "store/acceptance.rs"]
 mod acceptance;

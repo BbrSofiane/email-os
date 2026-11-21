@@ -2647,12 +2647,15 @@ fn run_discovery(
                 break;
             }
             match provider.get_thread(id, cancel) {
-                Ok(Some(thread)) => {
+                Ok(Some(mut thread)) => {
                     if thread.conversation.conversation_ref.conversation_id != *id {
                         return StageOutcome::SyncError(MailError::InvalidProviderResponse);
                     }
-                    if !include_retained_bytes(&mut retained_bytes, retained_thread_bytes(&thread))
-                    {
+                    if !admit_thread(
+                        &mut retained_bytes,
+                        &mut thread,
+                        MAX_RETAINED_THREAD_BYTES_PER_PAGE,
+                    ) {
                         return StageOutcome::SyncError(MailError::InvalidProviderResponse);
                     }
                     fetched.push(ThreadFetch::Cached(Box::new(thread)));
@@ -2797,11 +2800,15 @@ fn fetch_changed_threads(
             continue;
         }
         match provider.get_thread(id, cancel)? {
-            Some(thread) => {
+            Some(mut thread) => {
                 if thread.conversation.conversation_ref.conversation_id != *id {
                     return Err(MailError::InvalidProviderResponse);
                 }
-                if !include_retained_bytes(&mut retained_bytes, retained_thread_bytes(&thread)) {
+                if !admit_thread(
+                    &mut retained_bytes,
+                    &mut thread,
+                    MAX_RETAINED_THREAD_BYTES_PER_PAGE,
+                ) {
                     return Err(MailError::InvalidProviderResponse);
                 }
                 fetched.push(ThreadFetch::Cached(Box::new(thread)));
@@ -2816,6 +2823,29 @@ fn fetch_changed_threads(
         }
     }
     Ok(fetched)
+}
+
+/// Admits one fetched thread into the page's retained-byte budget. A thread
+/// that only fits without its HTML keeps its text and records the HTML as too
+/// large (ADR 0006 decision 3) instead of failing the whole page.
+fn admit_thread(total: &mut usize, thread: &mut GmailThread, budget: usize) -> bool {
+    let fits = |total: usize, bytes: usize| total.checked_add(bytes).filter(|next| *next <= budget);
+    if let Some(next) = fits(*total, retained_thread_bytes(thread)) {
+        *total = next;
+        return true;
+    }
+    if thread
+        .message_html
+        .values()
+        .any(|html| matches!(html, super::types::MessageHtml::Present(_)))
+    {
+        thread.drop_html();
+        if let Some(next) = fits(*total, retained_thread_bytes(thread)) {
+            *total = next;
+            return true;
+        }
+    }
+    false
 }
 
 fn include_retained_bytes(total: &mut usize, additional: usize) -> bool {
@@ -2864,6 +2894,31 @@ fn retained_thread_bytes(thread: &GmailThread) -> usize {
                 .saturating_mul(std::mem::size_of::<String>()),
         )
         .saturating_add(thread.history_id.capacity());
+    bytes = bytes.saturating_add(
+        thread
+            .message_html
+            .capacity()
+            .saturating_mul(std::mem::size_of::<(String, super::types::MessageHtml)>()),
+    );
+    for (id, html) in &thread.message_html {
+        bytes = bytes.saturating_add(id.capacity());
+        if let super::types::MessageHtml::Present(body) = html {
+            bytes = bytes.saturating_add(body.capacity());
+        }
+    }
+    bytes = bytes.saturating_add(
+        thread
+            .inline_parts
+            .capacity()
+            .saturating_mul(std::mem::size_of::<super::types::InlinePart>()),
+    );
+    for part in &thread.inline_parts {
+        bytes = bytes
+            .saturating_add(part.message_id.capacity())
+            .saturating_add(part.content_id.capacity())
+            .saturating_add(part.attachment_id.capacity())
+            .saturating_add(part.mime_type.capacity());
+    }
     if let Some(sender) = &thread.newest_sender {
         bytes = bytes
             .saturating_add(sender.mailbox.capacity())

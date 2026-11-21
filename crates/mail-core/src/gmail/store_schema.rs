@@ -5,7 +5,7 @@ use super::{has_column, meta_get, meta_set, MailError, SCHEMA_VERSION};
 use crate::storage_log::{storage_err, storage_fault};
 use rusqlite::Connection;
 
-const CURRENT: u32 = 9;
+const CURRENT: u32 = 10;
 
 pub(super) fn migrate(conn: &mut Connection) -> Result<(), MailError> {
     migrate_with_hook(conn, |_| Ok(()))
@@ -143,6 +143,11 @@ fn apply(conn: &Connection, version: u32) -> Result<(), MailError> {
                 PRIMARY KEY(account_id, conversation_id));
                 INSERT OR IGNORE INTO meta (key, value) VALUES ('generation', '0');")
                 .map_err(storage_err())?;
+        }
+        10 => {
+            add_legacy_column(conn, "gmail_messages", "body_html", "ALTER TABLE gmail_messages ADD COLUMN body_html TEXT")?;
+            add_legacy_column(conn, "gmail_messages", "html_state", "ALTER TABLE gmail_messages ADD COLUMN html_state TEXT CHECK (html_state IN ('available', 'too_large'))")?;
+            add_legacy_column(conn, "gmail_conversations", "inline_parts_json", "ALTER TABLE gmail_conversations ADD COLUMN inline_parts_json TEXT")?;
         }
         _ => unreachable!("only ordered known migration numbers are dispatched"),
     }

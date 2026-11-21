@@ -708,3 +708,24 @@ mod enrichment_lifecycle_tests {
         close(core, dir);
     }
 }
+
+#[test]
+fn retained_thread_budget_drops_html_when_needed() {
+    use crate::gmail::types::MessageHtml;
+    let mut observed = thread(None, true);
+    let before = retained_thread_bytes(&observed);
+    observed
+        .message_html
+        .insert("message".into(), MessageHtml::Present("x".repeat(4096)));
+    let with_html = retained_thread_bytes(&observed);
+    assert!(with_html >= before + 4096);
+    let mut without_html = observed.clone();
+    without_html.drop_html();
+    let budget = retained_thread_bytes(&without_html);
+    let mut retained = 0;
+    assert!(admit_thread(&mut retained, &mut observed, budget));
+    assert!(matches!(
+        observed.message_html.get("message"),
+        Some(MessageHtml::TooLarge)
+    ));
+}

@@ -140,6 +140,17 @@ pub struct GmailThread {
     pub history_id: String,
 }
 
+impl GmailThread {
+    /// Discard retained HTML while preserving its unavailable state.
+    pub fn drop_html(&mut self) {
+        for html in self.message_html.values_mut() {
+            if matches!(html, MessageHtml::Present(_)) {
+                *html = MessageHtml::TooLarge;
+            }
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct HistoryPage {
     pub changed_thread_ids: Vec<String>,
