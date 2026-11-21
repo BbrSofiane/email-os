@@ -1,6 +1,6 @@
 # ADR 0005: Google sign-in and Gmail on Android
 
-**Status:** Proposed (revised with the owner's decisions of 2026-11-21) — track B of the "usable Android app" programme. Nothing here is implemented. Implementation starts only after the coordinator's GREENLIGHT.
+**Status:** Approved by the coordinator (2026-11-21), with the owner's decisions below — track B of the "usable Android app" programme. Nothing here is implemented. Implementation starts when the coordinator sends START (a build slot frees, likely after track A merges).
 
 ## Decisions (owner, 2026-11-21)
 
@@ -11,10 +11,17 @@
    - the release SHA-1, supplied by the owner;
    - the debug SHA-1 of this machine's debug keystore, which signs the emulator builds.
 
-**Still open** (the coordinator will ask the owner):
-- which Google account is used on the emulator;
-- the same Cloud project as desktop or a new one;
-- the publishing setup: Personal mode, In production unverified, or Testing.
+5. **Emulator account:** a throwaway Google account holding only synthetic mail. The owner signs it into the emulator through the Device panel when stage 7 needs it. At that point B stops with `BLOCKED:` and the exact steps.
+6. **Publishing: External, Testing, with weekly re-consent.** The owner chose this over Personal mode.
+7. **One project: the existing desktop Google Cloud project** (coordinator's decision, fewer steps). It holds:
+   - both Android clients: the release SHA-1 and this VM's debug SHA-1;
+   - the owner's account and the throwaway account as test users.
+8. **The weekly expiry must be clean.** When the grant expires, the app shows **Sign-in expired** with **Sign in again**. Nothing is lost:
+   - the cache, drafts, reminders and local state stay;
+   - queued writes stay queued;
+   - after re-consent for the same account, queued writes resume and mailbox actions stay enabled.
+
+   A test that an expired grant produces this state replaces the earlier 8-day "lasting sign-in" check (section 1, Validation plan).
 
 ## Context
 
@@ -85,7 +92,7 @@ A small Kotlin bridge calls `Identity.getAuthorizationClient(context).authorize(
 
   **How the emulator gets a registered signer:** stage 3 onward installs only debug APKs built on this VM, which are signed by the registered debug key. CI debug artifacts are never used for sign-in tests.
   - If `~/.android/debug.keystore` is deleted or regenerated, its SHA-1 changes and the debug client must be registered again. The stage 7 report records the SHA-1 used.
-  - Google is expected to refuse registering the same package + SHA-1 pair in two clients, across projects too (to confirm at registration). The debug client therefore lives in the project whose account signs in on the emulator, and the release client in the project the owner uses daily. Those can be the same project or two projects (still open).
+  - Google is expected to refuse registering the same package + SHA-1 pair in two clients, across projects too (to confirm at registration). The debug client therefore lives in the project whose account signs in on the emulator, and the release client in the project the owner uses daily. Both are in the existing desktop project (Decision 7).
   - A release APK is not debuggable, so `run-as` checks run only on the emulator's debug build.
 - **No client id in the build.** Play services matches package + signature. "Configured" therefore cannot be known before the first call. A `DEVELOPER_ERROR` result (package/SHA-1 not registered) maps to `not_configured`, with a next step that says this build is not registered. "Play services missing or too old" maps to `unsupported_platform` on connect. The account status says so plainly; it is not shown as an expired sign-in.
 - **Bridge:** a Kotlin class in the Android app (`GoogleAuthBridge`), registered as an Android plugin from Rust with `tauri::plugin::Builder` and `register_android_plugin`. Rust calls it with `PluginHandle::run_mobile_plugin` from worker threads, never from the main thread. **The webview cannot call it:** no plugin permission is added to `main-window`, and tokens never cross IPC. Operations:
@@ -100,6 +107,13 @@ A small Kotlin bridge calls `Identity.getAuthorizationClient(context).authorize(
   - `LoopbackPkceSource` is today's code, unchanged in behaviour, used on desktop.
   - `PlatformAuthorizerSource` sits over a small `PlatformAuthorizer` trait (`authorize`, `clear_token`). On Android its implementation is the bridge. In tests it is a scripted fake, so the whole Android path is tested on Linux.
 - **Token lifetime on Android:** the access token lives only in process memory with its expiry. Before expiry, and after a 401, the source clears the cached token (`clearToken`) and calls `authorize(interactive = false)` **once**. A second failure is `AuthRequired`. No refresh token exists on the phone.
+- **Weekly expiry in Testing** (Decision 8). When a test user's grant expires, the silent `authorize` returns `needsUserInteraction`, which becomes `AuthRequired`. Today's code already gives this the right outcome:
+  - The connection becomes `auth_required`, shown as **Sign-in expired** with **Sign in again**.
+  - The worker treats `AuthRequired` as account-wide: the write is requeued, not failed (`crates/mail-core/src/gmail/operations.rs:91-103`), and the pass stops.
+  - Cached reading, drafts, reminders, the saved split and Undo history stay.
+  - Search falls back to cached results with its disclosure (`gmail/sync.rs:680-695`).
+
+  **Sign in again** runs Connect for the bound account (pinned with `setAccount`), asking for the stored scopes. If modify was granted, it is asked for again, so mailbox actions stay enabled after re-consent. Afterwards the queued writes run in their original order. Nothing in this path clears the binding or the cache; only **Disconnect** does. Stages 2 and 6 test this.
 
 ### 2. Token storage on Android
 
@@ -201,26 +215,26 @@ The publishing choice decides whether the phone keeps working week to week. Goog
 | Setup | What Google documents | Effect here |
 |---|---|---|
 | **External, Testing** | "Authorizations by a test user will expire seven days from the time of consent". The only exception is apps that request nothing beyond name, email and profile, so Gmail scopes get the 7-day rule. At most 100 test users ([Manage app audience](https://support.google.com/cloud/answer/15549945); [OAuth 2.0: refresh token expiration](https://developers.google.com/identity/protocols/oauth2#expiration)). | **Sign-in expired** every week; **Sign in again** shows the consent screen again. Usable for a validation run, not for daily use. |
-| **External, In production, not verified** | The app "might display an 'unverified app' screen before it displays the consent screen" ([Unverified apps](https://support.google.com/cloud/answer/7454865)). It is limited to "100 new users in total", over the project's lifetime ([Manage app audience](https://support.google.com/cloud/answer/15549945)). The restricted-scope verification page names personal use as a case where verification may not be needed: "if you are the only user of your app or if your app is used by only a few users, all of whom are known personally to you" ([Restricted scope verification](https://developers.google.com/identity/protocols/oauth2/production-readiness/restricted-scope-verification)). Google states the 7-day expiry **only** for Testing. It does **not** say whether authorizations last longer for an unverified production app with restricted scopes. The general expiry rules (six months unused; password change for Gmail scopes) still apply. | The owner clicks through the unverified-app screen at each consent. That expected screen is the only ongoing cost. **Unconfirmed:** whether consent survives past 7 days. To check, at least 8 days after consent, kill and relaunch the app; it must sync with no sign-in UI (validation plan). |
+| **External, In production, not verified** | The app "might display an 'unverified app' screen before it displays the consent screen" ([Unverified apps](https://support.google.com/cloud/answer/7454865)). It is limited to "100 new users in total", over the project's lifetime ([Manage app audience](https://support.google.com/cloud/answer/15549945)). The restricted-scope verification page names personal use as a case where verification may not be needed: "if you are the only user of your app or if your app is used by only a few users, all of whom are known personally to you" ([Restricted scope verification](https://developers.google.com/identity/protocols/oauth2/production-readiness/restricted-scope-verification)). Google states the 7-day expiry **only** for Testing. It does **not** say whether authorizations last longer for an unverified production app with restricted scopes. The general expiry rules (six months unused; password change for Gmail scopes) still apply. | The owner clicks through the unverified-app screen at each consent. That expected screen is the only ongoing cost. **Unconfirmed:** whether consent survives past 7 days. Not pursued: the owner chose Testing. |
 | **Personal mode** (user type chosen when the project is created) | "Personal mode apps do not require OAuth app verification, are not subject to the OAuth user cap or 7-day test user token expiration, and do not display the unverified app screen." "Only the Google Account that created the Personal mode application can sign in or authorize scopes for its OAuth clients." It is "a one-time selection when configuring a new application": an existing project cannot switch. Android is listed as a client type ([Manage app audience](https://support.google.com/cloud/answer/15549945); [Personal mode onboarding](https://support.google.com/cloud/answer/15544987#personal-mode-onboarding)). These pages do not list scope restrictions, and they do not say explicitly that restricted Gmail scopes are allowed. Workspace accounts "might still require configuration by your organization's administrators". | Fits a one-person app exactly: no weekly expiry, no unverified screen, no cap. It needs a **new** project, created **by the account whose mail the phone reads**. **To check at setup:** **Data access** accepts the Gmail scopes, and the first Connect shows no unverified-app screen. |
 
-**Recommendation:** **Personal mode**, in a new project created by the Google account the owner will read on the phone. If it does not accept the Gmail scopes, or is not offered for that account, use **External, In production, not verified**. Keep the "unverified app" screen at consent, and confirm the 8-day check before relying on it. **Testing** is only for a throwaway validation account. Because a Personal project accepts only its creator, a throwaway emulator account needs its own small project: either its own Personal project created while signed in as that account, or an External Testing project where it is a test user.
+**Decided (2026-11-21):** **External, Testing**, in the existing desktop project, with weekly re-consent (Decisions 6–7). The table above is kept as the record of the alternatives. The app must handle the weekly expiry cleanly (Decision 8, section 1).
 
 ### Steps
 
-1. **Create the project.** For Personal mode, open the Personal mode onboarding (Google Cloud console → Google Auth Platform → Overview → personal onboarding, `console.cloud.google.com/auth/overview/personal`) while signed in as the account the phone will read. Otherwise use an External project. Enable **Gmail API** under **APIs & Services → Library**.
+1. **Use the existing desktop project.** Confirm **Gmail API** is enabled under **APIs & Services → Library**.
 2. **Google Auth Platform → Branding:** app name, user support email, developer contact. No logo is needed.
-3. **Google Auth Platform → Audience** (External projects only):
-   - For daily use, set **Publish app** to **In production**, with no verification submission.
-   - For a throwaway validation project, keep **Testing** and add the throwaway account as a **Test user**.
+3. **Google Auth Platform → Audience:** user type **External**, publishing status **Testing**. Under **Test users**, add the owner's Google account and the throwaway emulator account. Do not publish, and do not submit for verification.
 4. **Google Auth Platform → Data access:** add `.../auth/gmail.readonly` and `.../auth/gmail.modify`. Track D adds `.../auth/gmail.send` only for accounts without modify. Do not submit for verification.
 5. **Google Auth Platform → Clients → Create client → Android:**
    - Package name: `dev.exedev.emailos` (Decision 4) for both clients.
-   - **Release client:** the SHA-1 of the owner's release certificate. ADR 0004's owner steps print it (`keytool -list -v -keystore <release.jks> -alias <alias>`). Register it in the project the owner uses daily.
-   - **Debug client:** `93:06:D5:83:0B:27:BE:95:BB:48:80:7B:52:9C:95:D5:C8:18:C6:03`, this VM's debug key. Register it in the project whose account signs in on the emulator.
+   - **Release client:** the SHA-1 of the owner's release certificate. ADR 0004's owner steps print it (`keytool -list -v -keystore <release.jks> -alias <alias>`).
+   - **Debug client:** `93:06:D5:83:0B:27:BE:95:BB:48:80:7B:52:9C:95:D5:C8:18:C6:03`, this VM's debug key.
+   
+   Both go in the existing desktop project.
    
    Leave **Advanced settings → custom URI scheme** off. No Web client, no secret. No client id has to be sent to me or put in the build. If Google refuses a pair as "already in use", it is registered in another client; delete it there first.
-6. **For the emulator run:** sign a throwaway Google account into the emulator yourself through the T3 Device panel (**Settings → Passwords & accounts**, or the account chooser during Connect). I never type, see or store the password. Put a few synthetic messages in that account so the recording contains no real mail. With an account signed in, the emulator's Play Store can update Google Play services if stage 3 finds the installed version too old.
+6. **For the emulator run** (when B reports `BLOCKED:` at stage 7): sign the throwaway Google account into the emulator yourself through the T3 Device panel (**Settings → Passwords & accounts**, or the account chooser during Connect). I never type, see or store the password. Put a few synthetic messages in that account so the recording contains no real mail. With an account signed in, the emulator's Play Store can update Google Play services if stage 3 finds the installed version too old.
 7. **For your phone** (after track A's install path works): confirm it has Google Play services, install the APK signed with a registered key, and run the short checklist in the Validation plan.
 8. **Verification and the security assessment** for public distribution are **not** needed and are not requested here.
 
@@ -253,7 +267,11 @@ Each stage is one sub-agent run in this worktree. Each must pass its check, then
    - a covered request (for example `Readonly` with modify stored) returns `AlreadyCovered` and the fake authorizer records zero calls.
    
    Existing `gmail::provider` tests are unchanged and pass.
-2. **Credential seam.** Extract `CredentialSource` from `LiveGmailProvider`: `access_token`, `authorize(scopes, account, interactive)`, `invalidate(token)`. `LoopbackPkceSource` wraps today's `auth.rs`, with identical behaviour. Add `PlatformAuthorizerSource` over the `PlatformAuthorizer` trait and a scripted fake covering granted, missing modify, cancelled, needs-interaction, developer error, Play services missing, wrong account, network, and 401 → one silent retry → `AuthRequired`. *Check:* all existing provider and auth tests pass untouched; the new fake-driven tests pass; `cargo clippy` is clean.
+2. **Credential seam.** Extract `CredentialSource` from `LiveGmailProvider`: `access_token`, `authorize(scopes, account, interactive)`, `invalidate(token)`. `LoopbackPkceSource` wraps today's `auth.rs`, with identical behaviour. Add `PlatformAuthorizerSource` over the `PlatformAuthorizer` trait and a scripted fake covering granted, missing modify, cancelled, needs-interaction, developer error, Play services missing, wrong account, network, and 401 → one silent retry → `AuthRequired`. It also covers the **weekly-expiry** case: a bound account with modify and a queued write, then a silent `authorize` that returns `needsUserInteraction`. The test asserts:
+   - the status is `auth_required`;
+   - the write is still queued, not failed;
+   - the cache and drafts are intact;
+   - after an interactive `authorize` for the same account, the stored scopes still include modify and the queued write is applied once. *Check:* all existing provider and auth tests pass untouched; the new fake-driven tests pass; `cargo clippy` is clean.
 3. **Android bridge and Keystore secrets** (after track A is merged; based on A's package path and manifest). Add the Kotlin `GoogleAuthBridge`:
    - Authorization API, with the `PendingIntent` launched through `MainActivity`;
    - `clearToken`, reporting `unsupported` when the device's Play services lacks it;
@@ -308,7 +326,7 @@ Each stage is one sub-agent run in this worktree. Each must pass its check, then
   - **Disconnect** → **Not connected**, cache gone, drafts kept, Keystore file gone (`run-as` listing only; file contents are never printed).
 - A screen recording (≤60 s) of Connect through first sync. It contains the account address and mail, so it is **not committed**. It is kept in `/home/exedev/email-os-usable/android-gmail/` and listed in the PR, unless the account holds only synthetic mail and the owner agrees to commit it.
 - On the owner's phone (after track A): install, Connect, sync, Enable mailbox actions, archive + Undo, background/resume. The owner reports the results; no screenshots of real mail are committed.
-- **Lasting sign-in:** at least 8 days after the owner's first consent on the phone, in the project set up for daily use (Personal mode, or In production unverified), kill and relaunch the app. It must sync with no sign-in UI. This is the check for what Google does not document (Owner actions). The owner reports the result.
+- **Weekly expiry, on the emulator:** with a write queued (archive while in airplane mode), remove the app's access in the throwaway account's Google settings to stand in for the 7-day expiry, then restore the network. The app must show **Sign-in expired** → **Sign in again**, with the cached inbox and the draft still there and the archive still pending. After re-consent the archive is applied and mailbox actions are still enabled. Screenshots of each step use the synthetic-mail account.
 
 ## Risks and open questions
 
@@ -321,14 +339,10 @@ Each stage is one sub-agent run in this worktree. Each must pass its check, then
   - Inferred, not documented: `authorize()` predates the 21.x library releases, so 24.23.35 very likely supports it. Then the emulator can run the real flow with a throwaway Google account. `clearToken` may be missing from a June 2024 Play services (B does not use `revokeAccess`).
   - Handling: stage 3's probe records what the emulator supports. The bridge treats a missing `clearToken` as `unsupported` and degrades as described in section 1. With a throwaway account signed in, the Play Store can update Play services; an update changes the emulator, so it needs the coordinator's agreement. The owner's phone, with current Play services, is the final check either way.
 - **Bridge mechanics.** A blocking `run_mobile_plugin` call that waits on an activity result must not deadlock with the main thread, and the `PendingIntent` result must reach the bridge after a configuration change. Stage 3 proves this before anything depends on it.
-- **Consent lifetime.** Testing expires every 7 days (documented). Personal mode documents no 7-day expiry, but its pages do not say explicitly that restricted Gmail scopes are allowed. Unverified production has no documented 7-day rule but no positive statement either. The 8-day check in the validation plan settles it for the chosen setup.
+- **Consent lifetime.** Testing expires every 7 days (documented), so the owner re-consents weekly by choice (Decision 6). The risk is a messy expiry path, not the expiry itself. It is covered by the stage 2 test and the emulator check above.
 - **Process freeze in background.** Android may freeze or kill the process during a write. This relies on the existing outcome-unknown reconciliation; no new guarantee is claimed.
 - **Package rename by track A** after the Android client is registered means a new client. Register only after A's rename is merged.
 
 **Open questions for the owner**
 
-Questions 1–3 were decided on 2026-11-21 (see Decisions), and 4–5 were resolved by the coordinator. Still open:
-
-6. Which **Google account** will be used on the emulator? A throwaway one is recommended, holding only synthetic mail. Will you sign it in yourself through the Device panel when stage 7 starts? This also decides which project holds the debug client.
-7. **Same Cloud project as desktop, or a new one?** A Personal mode project must be new, because existing projects cannot switch to Personal. Desktop can keep its current project, or add a Desktop client in the new one later.
-8. **Publishing setup for daily use:** Personal mode (recommended), In production without verification, or Testing with weekly re-consent? See Owner actions.
+None. Questions 1–3 and 6–8 were decided on 2026-11-21 (Decisions 1–7), and 4–5 were resolved by the coordinator.
