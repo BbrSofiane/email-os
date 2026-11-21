@@ -31,20 +31,26 @@ async function open() {
     <template v-if="isMailto">
       <p v-if="address" class="link-confirm-url">{{ address }}</p>
       <p v-else>This address is not valid.</p>
-      <template v-if="address">
-        <button type="button" @click="copy(address)">Copy address</button>
-        <button type="button" @click="emit('compose', address)">New message to {{ address }}</button>
-      </template>
     </template>
     <template v-else>
       <p>Leave Email OS and open this link in your system browser?</p>
       <p class="link-confirm-url">{{ url }}</p>
       <p v-if="linkHostMismatch(url, text ?? '')">The link text shows a different address.</p>
       <p v-if="!canOpen">Opening links is not available on this device.</p>
-      <button v-if="canOpen" type="button" @click="open">Open in browser</button>
-      <button type="button" @click="copy(url)">Copy link</button>
     </template>
-    <button type="button" @click="emit('close')">Keep reading</button>
+    <div class="link-confirm-actions">
+      <template v-if="isMailto">
+        <template v-if="address">
+          <button type="button" @click="copy(address)">Copy address</button>
+          <button type="button" @click="emit('compose', address)">New message to {{ address }}</button>
+        </template>
+      </template>
+      <template v-else>
+        <button v-if="canOpen" type="button" @click="open">Open in browser</button>
+        <button type="button" @click="copy(url)">Copy link</button>
+      </template>
+      <button type="button" @click="emit('close')">Keep reading</button>
+    </div>
     <p v-if="status" role="status" aria-live="polite">{{ status }}</p>
   </div>
 </template>
@@ -52,5 +58,6 @@ async function open() {
 <style scoped>
 p { margin: 0 0 0.75rem; line-height: 1.5; }
 .link-confirm-url { color: var(--text-primary); overflow-wrap: anywhere; font-family: var(--font-mono); }
-button + button { margin-inline-start: 0.5rem; }
+.link-confirm-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.link-confirm-actions + p { margin-top: 0.75rem; }
 </style>
