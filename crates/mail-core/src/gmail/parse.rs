@@ -3,7 +3,7 @@ use crate::drafts::types::{
 };
 use crate::dto::{Address, Conversation, ConversationRef, Message};
 use crate::error::MailError;
-use crate::gmail::types::{GmailThread, HistoryPage};
+use crate::gmail::types::{GmailThread, HistoryPage, InlinePart, MessageHtml};
 use base64::Engine;
 use serde_json::Value;
 use std::collections::HashSet;
@@ -16,6 +16,17 @@ pub(super) const MAX_MESSAGE_TEXT_CHARS: usize = 256 * 1024;
 /// Recursion bound on Gmail payload trees (hostile/deep structures).
 pub(super) const MAX_PAYLOAD_DEPTH: usize = 10;
 /// Bound on work retained from one nested Gmail history response.
+/// Bound on one decoded HTML body, in characters (ADR 0006 decision 3).
+pub(super) const MAX_MESSAGE_HTML_CHARS: usize = 512 * 1024;
+/// Bound on all HTML bodies kept for one thread, in bytes; later bodies are
+/// recorded as too large once it is reached.
+pub(super) const MAX_THREAD_HTML_BYTES: usize = 2 * 1024 * 1024;
+/// Bound on inline (`cid:`) images described per thread.
+const MAX_INLINE_PARTS: usize = 32;
+/// Bound on one inline image the reader may fetch.
+const MAX_INLINE_PART_BYTES: u64 = 2 * 1024 * 1024;
+/// Width passed to html2text: wide enough that derived text is never hard-wrapped.
+const HTML_TEXT_WIDTH: usize = 10_000;
 const MAX_HISTORY_RECORDS: usize = 10_000;
 const MAX_CHANGED_THREAD_IDS: usize = 1_000;
 const MAX_DELETED_MESSAGE_IDS: usize = 5_000;
@@ -108,6 +119,10 @@ pub(super) fn parse_thread(
     let mut attachments = false;
     let mut attachment_descriptors = Vec::new();
     let mut omitted_inline_content = false;
+    let mut message_html = std::collections::HashMap::new();
+    let mut inline_parts = Vec::new();
+    let mut html_bytes = 0usize;
+    let mut html_budget_exhausted = false;
     let mut latest_payload: Option<&Value> = None;
     let mut latest_key: Option<(String, String)> = None;
     for message in messages {
@@ -139,13 +154,39 @@ pub(super) fn parse_thread(
             .get("payload")
             .ok_or(MailError::InvalidProviderResponse)?;
         crate::attachments::descriptors(&id, payload, &mut attachment_descriptors, 0);
-        if payload_has_attachment(payload, 0) {
-            attachments = true;
+        let mut selection = Selection::default();
+        select_parts(payload, 0, false, &mut selection);
+        attachments |= selection.attachments;
+        for part in &selection.inline {
+            if inline_parts.len() < MAX_INLINE_PARTS {
+                if let Some(inline) = inline_part(&id, part) {
+                    inline_parts.push(inline);
+                }
+            }
         }
-        if let Some(plain_part) = find_plain_part(payload, 0) {
-            omitted_inline_content |= has_omitted_inline_content(payload, plain_part, 0);
+        let plain = selection
+            .plain
+            .and_then(|part| decode_part(part, false).ok())
+            .filter(|text| text.chars().count() <= MAX_MESSAGE_TEXT_CHARS);
+        let html = selection.html.and_then(|part| decode_part(part, true).ok());
+        if let Some(ref html) = html {
+            let too_large = html.chars().count() > MAX_MESSAGE_HTML_CHARS;
+            if html_budget_exhausted
+                || html_bytes.saturating_add(html.len()) > MAX_THREAD_HTML_BYTES
+            {
+                html_budget_exhausted = true;
+                message_html.insert(id.clone(), MessageHtml::TooLarge);
+            } else if too_large {
+                message_html.insert(id.clone(), MessageHtml::TooLarge);
+            } else {
+                html_bytes += html.len();
+                message_html.insert(id.clone(), MessageHtml::Present(html.clone()));
+            }
         }
-        match parse_message(&id, message) {
+        if let Some(selected) = selection.plain.or(selection.html) {
+            omitted_inline_content |= has_omitted_inline_content(payload, selected, 0);
+        }
+        match parse_message(&id, message, plain, html.as_deref()) {
             Ok(pair) => parsed.push(pair),
             Err(_) => no_plain_text += 1,
         }
@@ -164,7 +205,7 @@ pub(super) fn parse_thread(
     let mut reasons = Vec::new();
     if no_plain_text > 0 {
         reasons.push(format!(
-            "{no_plain_text} of {} messages had no safe plain-text body",
+            "{no_plain_text} of {} messages had no displayable body",
             messages.len()
         ));
     }
@@ -206,6 +247,8 @@ pub(super) fn parse_thread(
                 .find(|address| address.mailbox == mailbox)
         });
     Ok(GmailThread {
+        message_html,
+        inline_parts,
         star_facts: Some(star_facts),
         attachments: attachment_descriptors,
         conversation,
@@ -252,10 +295,15 @@ fn pick_subject(messages: &[(Message, String)]) -> String {
 
 /// Parses one `format=full` message into the wire DTO. Header facts
 /// (From/To/Subject) come from the root payload headers (RFC2047-decoded);
-/// the body is the first literal `text/plain` part in the payload tree.
-/// Gmail's base64url wrapper is removed once, then its declared charset is decoded
-/// strictly without replaying the original MIME transfer-encoding header.
-fn parse_message(id: &str, message: &Value) -> Result<(Message, String), String> {
+/// `body_text` is the already decoded plain part when there is one, otherwise
+/// text derived from the decoded HTML part (ADR 0006 decision 2). A message
+/// with neither is rejected and counted as having no displayable body.
+fn parse_message(
+    id: &str,
+    message: &Value,
+    plain: Option<String>,
+    html: Option<&str>,
+) -> Result<(Message, String), String> {
     let payload = message
         .get("payload")
         .ok_or_else(|| "message payload missing".to_string())?;
@@ -266,33 +314,12 @@ fn parse_message(id: &str, message: &Value) -> Result<(Message, String), String>
         .ok_or_else(|| "missing From address".to_string())?;
     let to = parse_addresses(&json_header_value(payload, "To"));
     let sent_at = message_sent_at(message);
-    let part = find_plain_part(payload, 0).ok_or_else(|| "no plain-text body".to_string())?;
-    let data = part
-        .get("body")
-        .and_then(|body| body.get("data"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| "missing body data".to_string())?;
-    let bytes = b64url_decode(data).map_err(|_| "undecodable body data".to_string())?;
-    if bytes.len() > MAX_PART_BODY_BYTES {
-        return Err("body too large".to_string());
-    }
-    let raw = part_raw(part, &bytes);
-    let parsed = mailparse::parse_mail(&raw).map_err(|_| "unparseable body".to_string())?;
-    let decoded_bytes = parsed
-        .get_body_raw()
-        .map_err(|_| "undecodable body transfer wrapper".to_string())?;
-    let charset = charset::Charset::for_label(parsed.ctype.charset.as_bytes())
-        .ok_or_else(|| "unsupported body charset".to_string())?;
-    let (decoded, _, had_errors) = charset.decode(&decoded_bytes);
-    if had_errors {
-        return Err("lossy body charset decoding".to_string());
-    }
-    let mut body_text = decoded.into_owned();
-    // Normalize newlines; hostile markup stays literal data for the UI to escape.
-    body_text = body_text.replace("\r\n", "\n").replace('\r', "\n");
-    if body_text.chars().count() > MAX_MESSAGE_TEXT_CHARS {
-        return Err("body too large".to_string());
-    }
+    let body_text = match plain {
+        Some(text) => text,
+        None => html
+            .and_then(html_to_text)
+            .ok_or_else(|| "no displayable body".to_string())?,
+    };
     Ok((
         Message {
             id: id.to_string(),
@@ -606,40 +633,195 @@ fn decoded_header(value: &str) -> String {
     }
 }
 
-/// Recursively finds the first literal `text/plain` part in a Gmail payload
-/// tree, skipping attachments. HTML-only payloads yield `None`.
-fn find_plain_part(payload: &Value, depth: usize) -> Option<&Value> {
-    if depth > MAX_PAYLOAD_DEPTH || is_attachment_part(payload) {
-        return None;
+/// The first body candidates and related resources found during a bounded walk.
+#[derive(Default)]
+struct Selection<'a> {
+    plain: Option<&'a Value>,
+    html: Option<&'a Value>,
+    inline: Vec<&'a Value>,
+    attachments: bool,
+    /// Set while walking a `multipart/alternative` group: each child may supply
+    /// the missing plain or html rendering of the same body.
+    alternative: bool,
+}
+
+/// Select body candidates and identify related resources before attachment filtering.
+fn select_parts<'a>(part: &'a Value, depth: usize, related: bool, out: &mut Selection<'a>) {
+    if depth > MAX_PAYLOAD_DEPTH {
+        return;
     }
-    let mime = payload
-        .get("mimeType")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if mime.eq_ignore_ascii_case("text/plain") {
-        return Some(payload);
+    let cid = json_header_value(part, "Content-ID");
+    let disposition = json_header_value(part, "Content-Disposition");
+    let resource = related
+        && !cid.trim().is_empty()
+        && part["body"]["attachmentId"].as_str().is_some()
+        && !disposition
+            .trim_start()
+            .to_ascii_lowercase()
+            .starts_with("attachment");
+    if resource {
+        out.inline.push(part);
+        return;
     }
-    if mime.starts_with("multipart/") {
-        let parts = payload.get("parts").and_then(Value::as_array)?;
-        for part in parts {
-            if is_attachment_part(part) {
-                continue;
-            }
-            let part_mime = part
-                .get("mimeType")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            if part_mime.eq_ignore_ascii_case("text/plain") {
-                return Some(part);
-            }
-            if part_mime.starts_with("multipart/") {
-                if let Some(found) = find_plain_part(part, depth + 1) {
-                    return Some(found);
+    if is_attachment_part(part) {
+        out.attachments = true;
+        return;
+    }
+    let mime = part["mimeType"].as_str().unwrap_or_default();
+    // Outside an alternative group the first body part decides; later text
+    // parts are additional content, never another rendering of the body.
+    let open = (out.plain.is_none() && out.html.is_none()) || out.alternative;
+    if open && mime.eq_ignore_ascii_case("text/plain") && out.plain.is_none() {
+        out.plain = Some(part);
+    }
+    if open && mime.eq_ignore_ascii_case("text/html") && out.html.is_none() {
+        out.html = Some(part);
+    }
+    if mime.to_ascii_lowercase().starts_with("multipart/") {
+        if let Some(parts) = part["parts"].as_array() {
+            if mime.eq_ignore_ascii_case("multipart/alternative") {
+                let mut group = Selection {
+                    alternative: true,
+                    ..Selection::default()
+                };
+                for child in parts {
+                    select_parts(child, depth + 1, false, &mut group);
+                }
+                // The group supplies the body only when no body was chosen yet
+                // (or it is nested in the chosen alternative group); otherwise it
+                // is additional content and its inline images stay attachments.
+                let takes_body = (out.plain.is_none() && out.html.is_none()) || out.alternative;
+                if takes_body {
+                    if out.plain.is_none() {
+                        out.plain = group.plain;
+                    }
+                    if out.html.is_none() {
+                        out.html = group.html;
+                    }
+                    out.inline.extend(group.inline);
+                } else if !group.inline.is_empty() {
+                    out.attachments = true;
+                }
+                out.attachments |= group.attachments;
+            } else {
+                for child in parts {
+                    select_parts(
+                        child,
+                        depth + 1,
+                        mime.eq_ignore_ascii_case("multipart/related"),
+                        out,
+                    );
                 }
             }
         }
     }
+}
+
+/// Validate fetchable inline image metadata.
+fn inline_part(message_id: &str, part: &Value) -> Option<InlinePart> {
+    let id = part["body"]["attachmentId"].as_str()?;
+    let size = part["body"]["size"].as_u64()?;
+    let mime = part["mimeType"].as_str()?.to_ascii_lowercase();
+    let cid = json_header_value(part, "Content-ID");
+    let cid = cid.trim().trim_start_matches('<').trim_end_matches('>');
+    if !crate::attachments::valid_id(message_id)
+        || cid.is_empty()
+        || cid.len() > 998
+        || cid.chars().any(|c| c.is_control() || c.is_whitespace())
+        || !crate::attachments::valid_attachment_id(id)
+        || !crate::attachments::valid_mime(&mime)
+        || !matches!(
+            mime.as_str(),
+            "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+        )
+        || size > MAX_INLINE_PART_BYTES
+    {
+        return None;
+    }
+    Some(InlinePart {
+        message_id: message_id.into(),
+        content_id: cid.into(),
+        attachment_id: id.into(),
+        mime_type: mime,
+        size: size as u32,
+    })
+}
+
+/// Decode Gmail's wrapper and the declared charset strictly for either body type.
+fn decode_part(part: &Value, html: bool) -> Result<String, String> {
+    let data = part["body"]["data"].as_str().ok_or("missing body")?;
+    let bytes = b64url_decode(data).map_err(|_| "invalid body")?;
+    if bytes.len() > MAX_PART_BODY_BYTES {
+        return Err("body too large".into());
+    }
+    let raw = part_raw(part, &bytes);
+    let parsed = mailparse::parse_mail(&raw).map_err(|_| "invalid MIME")?;
+    let bytes = parsed.get_body_raw().map_err(|_| "invalid body")?;
+    let content_type = json_header_value(part, "Content-Type");
+    let has_charset = content_type.split(';').skip(1).any(|p| {
+        p.trim()
+            .split('=')
+            .next()
+            .is_some_and(|n| n.trim().eq_ignore_ascii_case("charset"))
+    });
+    if html && !has_charset {
+        if let Ok(text) = std::str::from_utf8(&bytes) {
+            return Ok(text.replace("\r\n", "\n").replace('\r', "\n"));
+        }
+        let label = sniff_charset(&bytes).ok_or("missing charset")?;
+        return decode_charset(&bytes, &label);
+    }
+    decode_charset(&bytes, &parsed.ctype.charset)
+}
+
+/// Read a charset declaration from a meta tag in the first 1024 bytes.
+fn sniff_charset(bytes: &[u8]) -> Option<String> {
+    let prefix = String::from_utf8_lossy(&bytes[..bytes.len().min(1024)]).to_ascii_lowercase();
+    for tag in prefix.split('<').skip(1) {
+        let tag = tag.split('>').next()?;
+        if !tag.trim_start().starts_with("meta") {
+            continue;
+        }
+        if let Some(pos) = tag.find("charset") {
+            let rest = tag[pos + 7..].trim_start();
+            let rest = rest
+                .strip_prefix('=')?
+                .trim_start()
+                .trim_start_matches(['\"', '\'']);
+            let label: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+                .collect();
+            if !label.is_empty() {
+                return Some(label);
+            }
+        }
+    }
     None
+}
+
+fn decode_charset(bytes: &[u8], label: &str) -> Result<String, String> {
+    let charset = charset::Charset::for_label(label.as_bytes()).ok_or("unsupported charset")?;
+    let (decoded, _, errors) = charset.decode(bytes);
+    if errors {
+        return Err("lossy charset".into());
+    }
+    Ok(decoded.replace("\r\n", "\n").replace('\r', "\n"))
+}
+
+/// Derive unwrapped, undecorated searchable text, retaining link destinations.
+fn html_to_text(html: &str) -> Option<String> {
+    let text = html2text::config::plain_no_decorate()
+        .link_footnotes(true)
+        .string_from_read(html.as_bytes(), HTML_TEXT_WIDTH)
+        .ok()?;
+    Some(
+        text.replace("\r\n", "\n")
+            .replace('\r', "\n")
+            .chars()
+            .take(MAX_MESSAGE_TEXT_CHARS)
+            .collect(),
+    )
 }
 
 /// Whether a MIME tree contains inline content that the single-body reader

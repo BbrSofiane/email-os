@@ -88,6 +88,8 @@ pub fn thread(
     };
     let message_ids = conversation.messages.iter().map(|m| m.id.clone()).collect();
     GmailThread {
+        message_html: Default::default(),
+        inline_parts: Vec::new(),
         star_facts: None,
         newest_sender: None,
         attachments: Vec::new(),

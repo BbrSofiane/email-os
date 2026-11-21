@@ -96,8 +96,31 @@ pub struct InboxPage {
     pub next_page_token: Option<String>,
 }
 
+/// Bounded HTML retained for a message.
+#[derive(Clone, PartialEq, Eq)]
+pub enum MessageHtml {
+    /// The decoded HTML body.
+    Present(String),
+    /// The body exceeds the per-message or thread retention limit.
+    TooLarge,
+}
+
+/// Fetchable inline image metadata. Parts with only body data are ignored.
+#[derive(Clone, PartialEq, Eq)]
+pub struct InlinePart {
+    pub message_id: String,
+    pub content_id: String,
+    pub attachment_id: String,
+    pub mime_type: String,
+    pub size: u32,
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct GmailThread {
+    /// HTML bodies by message ID; absence means no decodable HTML part.
+    pub message_html: std::collections::HashMap<String, MessageHtml>,
+    /// Bounded metadata for fetchable inline images.
+    pub inline_parts: Vec<InlinePart>,
     /// Observed STARRED values keyed by message ID, including unsupported bodies.
     /// Absent map/entries are unknown, not false (legacy/partial label coverage).
     pub star_facts: Option<std::collections::HashMap<String, bool>>,

@@ -71,6 +71,8 @@ fn thread(
         .iter()
         .any(|inbox_id| msgs.iter().any(|m| m.id == **inbox_id));
     GmailThread {
+        message_html: Default::default(),
+        inline_parts: Vec::new(),
         star_facts: None,
         newest_sender: msgs
             .iter()

@@ -248,6 +248,8 @@ impl SyntheticGmailProvider {
             pending_operation_id: None,
         };
         Ok(GmailThread {
+            message_html: Default::default(),
+            inline_parts: Vec::new(),
             star_facts: Some(
                 ordered
                     .iter()
