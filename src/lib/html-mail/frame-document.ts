@@ -23,7 +23,7 @@ export function buildFrameDocument(mail: SanitizedMail, options: { remoteImages:
   const safe = (value: string, pattern: RegExp, fallback: string) => pattern.test(value) ? value : fallback;
   const family = safe(theme.fontFamily, /^[a-zA-Z0-9 ,'"-]+$/, 'sans-serif');
   const size = safe(theme.fontSize, /^\d+(?:\.\d+)?(?:px|rem|em)$/, '16px');
-  const leading = safe(theme.lineHeight, /^\d+(?:\.\d+)?(?:px|rem|em)$/, '24px');
+  const leading = safe(theme.lineHeight, /^\d+(?:\.\d+)?(?:px|rem|em)?$/, '24px');
   const colour = /^#(?:[a-fA-F0-9]{3,4}|[a-fA-F0-9]{6}|[a-fA-F0-9]{8})$|^rgba?\([\d\s,.]+\)$/;
   const text = safe(theme.textColour, colour, '#ffffff');
   const link = safe(theme.linkColour, colour, '#bba5ed');

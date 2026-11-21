@@ -9,7 +9,7 @@ import { FRAME_PROBE_SOURCE, type FrameProbeResult } from './html-frame-probe';
 const chrome = process.env.EMAIL_OS_RENDERED_LAYOUT_CHROME ?? '';
 const config = JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8'));
 const csp: string = config.app.security.csp;
-const token = "img-src 'self' data:";
+const token = "img-src 'self' data: https:";
 const guardSource = ts.transpileModule(readFileSync('src/lib/html-mail/frame-guard.ts', 'utf8').replaceAll('export ', ''), { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText;
 
 describe.skipIf(!chrome)('HTML frame spike', () => {
@@ -20,7 +20,7 @@ describe.skipIf(!chrome)('HTML frame spike', () => {
   beforeAll(async () => {
     expect(csp.split(token)).toHaveLength(2);
     server = createServer((req, res) => {
-      res.setHeader('Content-Security-Policy', req.url === '/wide' ? csp.replace(token, token + ' https:') : csp);
+      res.setHeader('Content-Security-Policy', req.url === '/wide' ? csp : csp.replace(token, "img-src 'self' data:"));
       res.end('<!doctype html><title>spike</title><body></body>');
     });
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));

@@ -26,6 +26,10 @@ describe('frame document', () => {
     const doc = buildFrameDocument(mail, { remoteImages: false, theme: { ...theme, [field]: 'red; } body { background: url(https://x.invalid) }' }, quoteOpen: false });
     expect(doc).not.toContain('x.invalid');
   });
+  it('accepts unitless line height', () => {
+    const doc = buildFrameDocument(mail, { remoteImages: false, theme: { ...theme, lineHeight: '1.6' }, quoteOpen: false });
+    expect(doc).toContain('line-height: 1.6;');
+  });
   it('fits with a floor', () => {
     expect(fitZoom(300, 360)).toBe(1);
     expect(fitZoom(600, 360)).toBe(0.6);

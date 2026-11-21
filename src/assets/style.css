@@ -2342,6 +2342,12 @@ button:focus-visible {
  * Bodies that rely on column alignment (quotes, indented blocks, tables) keep
  * the raw monospace.
  */
+.message-html-body { width: 100%; }
+.message-html-note, .message-format-toggle {
+  color: var(--text-secondary);
+  font-size: var(--type-body);
+}
+
 .message-body {
   white-space: pre-wrap;
   font-family: var(--font-ui);
