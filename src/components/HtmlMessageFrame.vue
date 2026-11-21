@@ -76,7 +76,8 @@ watch([result, () => props.theme], () => {
     theme,
     quoteOpen: props.quoteOpen,
   });
-}, { deep: true });
+  // Immediate: a cached message sets `result` during setup, before this watch exists.
+}, { deep: true, immediate: true });
 watch(() => props.quoteOpen, (open) => {
   frame.value?.contentDocument?.documentElement.classList.toggle('eos-quote-open', open);
   requestAnimationFrame(() => fit());

@@ -29,3 +29,18 @@ it('reports fetch failures', async () => {
   expect(wrapper.emitted('fallback')).toEqual([['error']]);
   wrapper.unmount();
 });
+
+it('renders a cached message again after the reader remounts', async () => {
+  const client = { getMessageHtml: vi.fn().mockResolvedValue({ html: '<p>Cached body</p>', inlineImages: [] }) } as unknown as MailClient;
+  const props = { client, conversation, messageId: 'cached', title: 'Message', remoteImages: false, quoteOpen: false, theme };
+  const first = mount(HtmlMessageFrame, { props });
+  await flushPromises();
+  expect(first.get('iframe').attributes('srcdoc')).toContain('Cached body');
+  first.unmount();
+
+  const second = mount(HtmlMessageFrame, { props });
+  await flushPromises();
+  expect(client.getMessageHtml).toHaveBeenCalledTimes(1);
+  expect(second.get('iframe').attributes('srcdoc')).toContain('Cached body');
+  second.unmount();
+});
