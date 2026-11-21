@@ -1,0 +1,13 @@
+Delegated task node:delegated-task:command%3Amcp%3A60b9dc2b-5271-462b-90eb-f39918b85e09%3Adelegate-task%3Ae2b29078-4611-4b6b-badb-de4fecabf60d (C stage 4a (code only): synthetic HTML samples (Rust)) [completed]:
+Implemented the synthetic HTML fixtures, additive seed-version upgrade, provider support, and focused tests.
+
+Changed or created:
+
+- [gmail/mod.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/gmail/mod.rs) and [gmail/parse.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/gmail/parse.rs)
+- [synthetic/data.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/synthetic/data.rs), [facts.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/synthetic/facts.rs), [mod.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/synthetic/mod.rs), and [provider.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/synthetic/provider.rs)
+- Eight shared samples in [synthetic/html](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/synthetic/html)
+- [synthetic_core_lifecycle.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/tests/synthetic_core_lifecycle.rs) and [synthetic_core_projections.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/tests/synthetic_core_projections.rs)
+
+I did not run a build or tests, as requested, so compilation and the new tests remain unverified. In particular, the coordinator should check the new integration-test imports and derived-text assertions.
+
+Existing tests I expect to fail after the fixture expansion include `seeds_18_conversations_exactly_once_and_survives_restart`, `provider_inbox_lists_newest_first_and_archived_seeds_are_not_inbox`, `status_is_the_fixture_presentation_from_the_first_call`, `bootstrap_loads_all_18_without_pretending_archived_seeds_are_inbox_or_done`, `reopening_bootstraps_again_without_changing_cache_or_facts`, and `seeded_inbox_is_a_realistic_read_unread_mix`. The recorded cached-search expectations may also change.
