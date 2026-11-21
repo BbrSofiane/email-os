@@ -1,0 +1,10 @@
+Delegated task node:delegated-task:command%3Amcp%3A60b9dc2b-5271-462b-90eb-f39918b85e09%3Adelegate-task%3A3316beab-074b-4d55-9f4b-4efae86c96e5 (C stage 4b: browser-fake HTML samples) [completed]:
+Implemented the six HTML fixture conversations in [browser-fake.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/src/lib/ipc/browser-fake.ts), including HTML retrieval, the inline logo, attachment metadata, and oversized-body handling. Added coverage in [html-samples.test.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/tests/browser-fake/html-samples.test.ts).
+
+`pnpm typecheck` passed. The requested Vitest run passed 142 of 145 tests; these three existing tests failed on expectations affected by the fixture count changing from 18 to 24:
+
+- `keeps identical group/request IDs, immutable targets and one-level Undo scoped to each client`
+- `seeds 18 conversations once, newest first`
+- `reports a connected fixture-mode status by default`
+
+All other tests in the requested run passed. The count-dependent tests were left unchanged for the later mechanical stage.
