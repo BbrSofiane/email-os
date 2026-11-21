@@ -1,0 +1,41 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7ZB12Z0HGN5896VYNTKNKMZ",
+  "strategy": "manual-commit",
+  "branch": "usable/html-reader",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "crates/mail-core/src/bin/generate-types.rs",
+    "crates/mail-core/src/dto.rs",
+    "crates/mail-core/src/gmail/migration_tests.rs",
+    "crates/mail-core/src/gmail/parse.rs",
+    "crates/mail-core/src/gmail/reply_context_sync_tests.rs",
+    "crates/mail-core/src/gmail/store.rs",
+    "crates/mail-core/src/gmail/store/cache.rs",
+    "crates/mail-core/src/gmail/store/cache_rows.rs",
+    "crates/mail-core/src/gmail/store_tests.rs",
+    "crates/mail-core/src/gmail/sync.rs",
+    "crates/mail-core/src/search.rs",
+    "crates/mail-core/src/synthetic/provider.rs",
+    "crates/mail-core/src/testing.rs",
+    "crates/mail-core/src/testing/operations_fake.rs",
+    "crates/mail-core/tests/draft_core.rs",
+    "src/lib/ipc/generated.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 14,
+    "cache_creation_tokens": 11760,
+    "cache_read_tokens": 1917427,
+    "output_tokens": 2190,
+    "api_call_count": 6
+  }
+}

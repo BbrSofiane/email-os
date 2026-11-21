@@ -1,0 +1,13 @@
+Delegated task node:delegated-task:command%3Amcp%3A60b9dc2b-5271-462b-90eb-f39918b85e09%3Adelegate-task%3Aeb42472d-3900-49fc-bb60-34f4ada23b95 (C stage 3b (code only): HTML DTO, store, core) [completed]:
+Implemented the HTML body DTOs, cache persistence and lookup, snapshot handling, core delegation, and requested tests. `git diff --check` passed. I did not run a build or tests, so compilation remains unverified.
+
+Files changed:
+
+- [dto.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/dto.rs)
+- [generate-types.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/bin/generate-types.rs)
+- [store.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/gmail/store.rs)
+- [cache.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/gmail/store/cache.rs)
+- [cache_rows.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/gmail/store/cache_rows.rs)
+- [store_tests.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/gmail/store_tests.rs)
+- [sync.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/gmail/sync.rs)
+- Message literal updates in [parse.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/gmail/parse.rs), [migration_tests.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/gmail/migration_tests.rs), [reply_context_sync_tests.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/gmail/reply_context_sync_tests.rs), [search.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/search.rs), [synthetic/provider.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/synthetic/provider.rs), [testing.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/testing.rs), [operations_fake.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/testing/operations_fake.rs), and [draft_core.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/tests/draft_core.rs).
