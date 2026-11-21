@@ -1,6 +1,6 @@
 # ADR 0006: Displaying HTML mail
 
-- Status: Proposed (revision 3: coordinator review of `4de4826`, owner decision on remote images)
+- Status: Accepted (implemented on `usable/html-reader`; see Implementation record)
 - Date: 2026-11-21
 - Track: C ("usable Android app" programme), branch `usable/html-reader`
 
@@ -117,6 +117,86 @@ cover.
 - Locked tauri is 2.11.6 (`Cargo.lock:3647`).
 - The Android manifest already has `INTERNET`
   (`src-tauri/gen/android/app/src/main/AndroidManifest.xml:3`).
+
+## Implementation record (2026-11-21)
+
+Implemented as decided below, with these departures, each taken during the
+implementation and recorded here instead of rewriting the proposal:
+
+1. **No probe build flag.** The coordinator allowed inspecting the debug
+   build's WebView over DevTools, so the probe is a self-contained script
+   (`tests/rendered/html-frame-probe.ts`, `FRAME_PROBE_SOURCE`) evaluated with
+   CDP: in headless Chrome by `tests/rendered/html-frame-spike.rendered.test.ts`
+   and in the Android WebView over `adb forward`. No probe code ships in the
+   app. The runtime guard ships as decided.
+2. **Android dispatch without `tauri-plugin-opener`.** Adding the plugin
+   (2.5.5, the newest accepting tauri 2.11) re-resolved existing tauri-stack
+   crates (about 730 Cargo.lock lines, several removed or moved) and pulled
+   crates that need a newer rustc than the workspace's 1.89. Instead,
+   `open_external_link` validates the URL and starts
+   `Intent(ACTION_VIEW, Uri.parse(url))` from the app's activity on the
+   webview's JNI thread, through Tauri's documented `jni_handle().exec` hook,
+   with the `jni` 0.21.1 crate tauri and wry already use (one Cargo.lock edge).
+   This is the "small intent" route the coordinator allowed (option 6b),
+   without a Kotlin file. No plugin, permission or frontend surface was added.
+3. **Browser-preview samples are opt-in in the fake.** The six samples are on
+   in the browser preview's primary workspace and off in the fake's default
+   test seed, which keeps its 18 conversations, so existing frontend tests did
+   not change. The native fixture has all 24.
+4. **Frame height** is measured by collapsing the frame for one synchronous
+   layout and reading the document's scroll height, because engines disagree
+   on how sizes of a zoomed root are reported (found by the phone-width
+   rendered test).
+5. **Sanitiser output** is post-processed and serialised inside DOMPurify's
+   inert document and never parsed in the app document (review fix), and the
+   CSS filter rejects `<` so filtered text cannot close the frame's `<style>`.
+6. **Process.** Stages were written by sub-agents and reviewed by the track
+   owner, but because of the one-heavy-command rule, the sub-agents only wrote
+   code. The owner ran every cargo, gradle and vitest check and made every
+   commit.
+
+### Validation (2026-11-21)
+
+- **No-script proof (condition of decision 1).** `FRAME_PROBE_SOURCE` loads
+  unsanitised payloads (script, handlers, SVG, `javascript:` URLs, nested
+  frames, meta refresh, object, form, navigation, remote image) into
+  `sandbox="allow-same-origin"` `srcdoc` frames. It checks that none ran, that
+  the parent is untouched, and that no Tauri global is visible in any frame:
+  - headless Chrome: `tests/rendered/html-frame-spike.rendered.test.ts`, which
+    also injects a script into every frame over CDP to prove the guard catches
+    native injection;
+  - Android 15 emulator WebView (Chrome 124) on the debug APK: 37 of 37 checks
+    pass, in [android-frame-probe.txt](../validation/html-reader/android-frame-probe.txt).
+  The parent exposes `__TAURI_INTERNALS__` and `ipc`; no frame does.
+- **Browser screenshots** at desktop and phone widths, produced by
+  `tests/reader/html-reader.rendered.test.ts` (newsletter blocked and loaded,
+  HTML-only, cid image, reply chain collapsed and expanded, hostile sample,
+  oversized, link and mailto confirmation):
+  [validation/html-reader/browser](../validation/html-reader/browser/).
+- **Android emulator** screenshots (inbox, newsletter blocked, link
+  confirmation, link opened in the system browser, HTML-only, cid, reply chain,
+  hostile, oversized, a reopened conversation, the `mailto:` confirmation, New
+  message with only To filled, long-press selection inside the frame, and font
+  scale 1.35, the nearest step to 1.3, where frame text follows the system
+  scale), and a 31-second recording: open the newsletter, Load images, tap a
+  link, confirm, the system browser opens, Back returns to the reader
+  ([validation/html-reader/android](../validation/html-reader/android/)).
+  The probe ran over DevTools instead of a probe APK (departure 1).
+- **Found by the emulator pass and fixed:** reopening a conversation whose
+  message was already sanitised showed an empty frame (the cached result was
+  set before the frame-document watch existed); a regression test covers it.
+  The link dialog's actions were indented when they wrapped on a phone; they
+  are now a wrapping row. The `mailto:` screenshot predates that layout fix.
+- **macOS WKWebView** is not verified here; it is the owner's checklist in the
+  pull request (run the probe in Safari Web Inspector, check the samples and one
+  confirmed link).
+- **Risk seen.** Three times, at the first or second launch right after
+  installing a new APK, the app hit an input-dispatch ANR ("Input dispatching
+  timed out … Waited 5001ms for FocusEvent(hasFocus=true)"); twice at load
+  average 4–10, once at about 2.7. Choosing "Wait" recovered each time, and later
+  launches were clean. Nothing in this ADR runs at startup (the frame only exists
+  in the reader), but this was not compared with a `main` build, so the cause is
+  not established. Startup belongs to track A's first-launch work.
 
 ## Decisions
 

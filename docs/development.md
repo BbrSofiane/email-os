@@ -93,9 +93,8 @@ The Android target is a fixture-only Tauri app with a viewport-driven compact ph
 (up to 719 CSS px); browser preview uses the same layout mode. It uses the same synthetic fixture core
 and SQLite profile as native fixture mode (ADR 0002). Android always selects fixture mode,
 even if `EMAIL_OS_MODE=gmail` is present. A pre-existing legacy fixture database is retired
-once behind the startup screen (closing the app is the cancel path). Gmail account controls, attachment
-export, and external link dispatch are unavailable on Android. The shell returns
-the typed `unsupported_platform` error for attachment export and external links. The WebView
+once behind the startup screen (closing the app is the cancel path). Gmail account controls and attachment export are unavailable on Android. The shell returns
+the typed `unsupported_platform` error for attachment export. Confirmed external links dispatch through an Android ACTION_VIEW intent via JNI. The WebView
 content remains padded for safe system insets; native status and navigation bars use the app
 surface color and light icons. Compact layout keeps the existing capabilities and adds no mail
 engine or IPC behavior. See [ADR 0003](adr/0003-mobile-layout.md) and [UX-14](ux-14-mobile-shell.md).
@@ -288,6 +287,14 @@ Use the suite's environment variable and command shown in its source for other
 rendered suites; some use `EMAIL_OS_DISCLOSURE_FOCUS_CHROME`. A passing rendered
 suite is browser interaction evidence only. It does not validate native IPC,
 WKWebView, real mail, or provider behavior.
+
+For the HTML reader suites, run:
+
+```sh
+EMAIL_OS_RUN_RENDERED=1 mise exec -- pnpm exec vitest run tests/reader/html-reader.rendered.test.ts tests/reader/html-sanitize.rendered.test.ts tests/rendered/html-frame-spike.rendered.test.ts
+```
+
+Set `EMAIL_OS_SCREENSHOT_DIR` when running `html-reader.rendered.test.ts` to produce screenshots. To probe a debug Android WebView over DevTools, use `adb forward tcp:<port> localabstract:webview_devtools_remote_<pid>` and evaluate `FRAME_PROBE_SOURCE` from `tests/rendered/html-frame-probe.ts`.
 
 ## Running the app
 
@@ -638,11 +645,10 @@ transfer (a blocked HTTP call can take its existing 30-second timeout to return)
 a completed save or process crash may leave an inert file. A lost save response
 may leave a completed download; retries can create another unique file. Browser
 preview only models a memory-only save and external handoff, not filesystem or
-provider effects. External HTTP(S) dispatch currently targets macOS only.
+provider effects. External HTTP(S) dispatch supports macOS and Android.
 
 PDF preview is **not implemented**: the restricted macOS platform sandbox and
-compatibility spike has not passed. No PDF/HTML/Office document enters a webview,
-trusted DOM or third-party viewer. Native build/bridge tests do not satisfy
+compatibility spike has not passed. No PDF/HTML/Office attachment enters a webview, trusted DOM or third-party viewer. HTML mail bodies render in a sandboxed frame (ADR 0006). Native build/bridge tests do not satisfy
 WKWebView key handling, VoiceOver, Downloads permissions, OS browser dispatch,
 or the PDF security spike. Disposable provider validation remains separately
 operator-gated, not authorized by implementation work.
