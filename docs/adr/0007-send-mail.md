@@ -1,6 +1,6 @@
 # ADR 0007: Send plain-text mail on macOS and Android
 
-**Status:** Proposed
+**Status:** Approved for implementation. Start awaits a programme build slot.
 
 ## Context
 
@@ -68,8 +68,11 @@
   window ends while offline, the intent stays queued until it can dispatch.
 - Show the temporary Undo action after Send. Subsequent status belongs in
   Drafts and Activity, with no countdown or completion toast.
+- The coordinator approved keeping `local-drafts` separate with the operation
+  ledger as the authority for send state. Activity uses compact send rows in
+  its existing list, with relevant actions on each row.
 
-## Decision (proposed)
+## Design
 
 Use `users.messages.send` with an immutable send intent in the operation ledger.
 It preserves local draft ownership, requires only one sending write, and lets the
@@ -232,13 +235,6 @@ through. Continue clearing credentials and the ordinary cache on disconnect.
 
 ### Editors, Activity and the reader
 
-The owner chooses how much space to give send status in Activity. The
-recommendation is compact send rows in the existing Activity list, with actions
-on the selected row. A dedicated Outbox section in Activity would make pending
-and unresolved sends easier to find at the cost of a separate section. Both
-use the same ledger and Drafts links. Neither adds a countdown or a completion
-toast.
-
 - Place **Send** in the desktop editor and compact sheet footers, apart from
   the close control, for both new messages and replies. Keep it reachable above
   the phone keyboard. Keep the verified From, all recipients including
@@ -317,7 +313,6 @@ this proposal. Keep the send capability unavailable on those native platforms.
    Verify From, To/Cc as applicable, Unicode content, one message per attempt,
    provider Sent, recipient receipt and thread placement. Record observations
    without committing real addresses, message content or credentials.
-3. Before stage 6, choose compact Activity rows or a dedicated Outbox section.
 
 ## Dependencies
 
@@ -336,8 +331,9 @@ this proposal. Keep the send capability unavailable on those native platforms.
 
 ## Implementation plan
 
-Stages 1–6 and Android fixture build and validation can finish before track B
-merges. Stage 7 starts after B's scope-upgrade mechanism is merged.
+Start after the coordinator sends `START` for an available build slot. Stages
+1–6 and Android fixture build and validation can finish before track B merges.
+Stage 7 starts after B's scope-upgrade mechanism is merged.
 
 1. Add core send validation and MIME construction with an independent parse
    round-trip. Check focused MIME tests for Unicode, folding, body limits,
@@ -405,7 +401,7 @@ merges. Stage 7 starts after B's scope-upgrade mechanism is merged.
   evidence. Include macOS Keychain and Android credential reuse across restart
   in the live check.
 
-## Risks and open questions
+## Risks
 
 - Gmail can accept a message before the app commits the receipt. Sent lookup
   can lag or fail to match the generated Message-ID. A copy can lead to a
@@ -414,5 +410,3 @@ merges. Stage 7 starts after B's scope-upgrade mechanism is merged.
 - Separate database commits add recovery paths. Draft edits and dispatch are
   gated on successful startup repair. A failed cleanup preserves the ledger
   receipt for recovery.
-- Should Activity show compact send rows or a dedicated Outbox section?
-  Recommend compact rows.
