@@ -1,0 +1,87 @@
+Coordinator review of ADR 0005 @ 8006b69. Very good: the Authorization API with no refresh token on the phone, the `CredentialSource`/`PlatformAuthorizer` seam with a scripted fake, the Keystore-encrypted binding with no token material, and the scope set with one `request_grant` are all approved in direction. Revise these points, push, and report `ADR READY` again. Do not implement yet.
+
+1. Emulator facts (I checked): `emulator-5554` is a Google Play image (`sdk_gphone64_x86_64`) with `com.android.vending` and `com.google.android.gms` versionName 24.23.35. Update the risk: check whether that version supports the Authorization API you need, and say so; the emulator can probably run the real flow with a throwaway Google account.
+2. The 7-day expiry in Testing mode will make the app unusable week to week. Add the alternative to the owner actions and recommend one: publishing status "In production" without verification for personal use (the owner is the only user, under the 100-user cap; Google shows an "unverified app" screen at consent), vs staying in Testing with weekly re-consent. Be precise about what Google documents for restricted Gmail scopes in each case and cite it; if unclear, say what to check.
+3. Ordering with track A: A's ADR 0004 renames the package to `dev.exedev.emailos` (pending owner approval) and moves `src-tauri/gen/android/.../androidfixture/` → the new path, and also sets `allowBackup=false` with exclusion rules. A lands first; B builds on A's merged manifest and Kotlin paths and does not duplicate the backup change. Put this in Dependencies and drop your own backup-off item (point to A's). Your owner question 4 then goes away.
+4. Track C will own links in mail bodies on Android. Keep `open_external_link` closed in B as you propose; I'll tell C it may use your bridge pattern or its own.
+5. For track D: since `gmail.modify` already allows sending, D will be told to request `gmail.send` only when the account does not have modify. Make sure `request_grant` can report "already covered" without a consent screen.
+6. Session swap: `switch_mode` stops the core and reloads the window. Say what happens to a draft open in the editor at the time (it must be saved first or the switch refused while an editor has unsaved changes).
+
+I'll put your owner questions 1, 2, 3, 6 and 7 to the owner together with the other tracks' questions and pass the answers back.
+
+---
+
+<task-notification>
+<task-id>a79b928a3b40b5592</task-id>
+<tool-use-id>toolu_01NodsxzV7jYoUvBeWmsLVkH</tool-use-id>
+<status>completed</status>
+<summary>Agent "Research OAuth verification and GMS version" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>**1. Testing status, External user type**
+
+- Expiry: "Authorizations by a test user will expire seven days from the time of consent. If your OAuth client requests an `offline` access type and receives a refresh token, that token will also expire." (https://support.google.com/cloud/answer/15549945)
+- The developer docs say the same for refresh tokens: a "Testing" project "is issued a refresh token expiring in 7 days." (https://developers.google.com/identity/protocols/oauth2#expiration)
+- Scopes: the only exception is when the app requests "a subset of the following: name, email address, and user profile" (`userinfo.email, userinfo.profile, openid`). "If your app requests any other OAuth scopes, then this exception does not apply." (https://support.google.com/cloud/answer/15549945). Gmail scopes therefore get the 7-day rule.
+- Test user cap: "limited to up to 100 test users listed in the OAuth consent screen." (https://support.google.com/cloud/answer/15549945)
+
+**2. In production, unverified, Gmail restricted scopes**
+
+- Screen: "The app or script might display an 'unverified app' screen before it displays the consent screen." (https://support.google.com/cloud/answer/7454865)
+- User cap: "100 new users in total, after the app presents the unverified app screen." The cap "applies over the entire lifetime of the project, and it cannot be reset or changed." (https://support.google.com/cloud/answer/15549945)
+- Expiry: Google does not say whether tokens expire in this state. The 7-day rule appears only in the "Testing" text on the pages above. The production text on https://support.google.com/cloud/answer/15549945 does not mention it. The general expiry list at https://developers.google.com/identity/protocols/oauth2#expiration includes "The refresh token has not been used for six months" and "The user changed passwords and the refresh token contains Gmail scopes," but nothing about a 7-day limit outside Testing.
+
+**3. Personal use / developer-only exemption**
+
+- Google's verification-exception text (https://developers.google.com/identity/protocols/oauth2/production-readiness/restricted-scope-verification, the "Personal use" section; I did not fetch the 13464321 URL directly): "One use case is if you are the only user of your app or if your app is used by only a few users, all of whom are known personally to you." It adds that these users "might be comfortable with advancing through the unverified app screen." A user cap still applies to this case.
+- Separately, "Personal mode" (https://support.google.com/cloud/answer/15549945) is a different thing. It is a project type chosen at setup: "Personal mode apps do not require OAuth app verification, are not subject to the OAuth user cap or 7-day test user token expiration, and do not display the unverified app screen." It is one-time: "once a project is configured with a user type of Personal, it cannot be changed to External or Internal, and existing External or Internal applications cannot be switched to Personal." Personal mode is restricted to the creator: "client_user_mismatch" error otherwise.
+- Also, "Apps in development" need no verification "unless you decide to launch it to the public" (https://support.google.com/cloud/answer/7454865).
+
+**4. "Blocked" vs "not verified"**
+
+- The pages I read describe warnings and limits, not a block. The wording is "Google hasn't verified" (alt text in https://developers.google.com/identity/protocols/oauth2/production-readiness/restricted-scope-verification) and "the unverified app screen" (https://support.google.com/cloud/answer/7454865).
+- Unverified apps face "a warning message ... in order to prepare your users for potential loss of functionality," and then "will be limited to 100 new users until it is verified." (https://support.google.com/cloud/answer/7454865)
+- The 7454865 page includes an image titled "Sign in with Google temporarily disabled window" in the user-cap section. That is only an image title, with no text explaining when it appears.
+- I found no page that quotes an "This app is blocked" message. The "org_internal" and "client_user_mismatch" errors are documented, but they relate to Internal and Personal projects.
+
+Sources: the 7454865 and 15549945 pages were truncated in the footer only. The sections quoted above appear before the truncation.
+[Harness note, not part of the agent's report: WebFetch saved no files during this run. In this run WebFetch saved files only under /home/exedev/.claude/projects/-home-exedev--t3-worktrees-email-os-usable-android-gmail-acf10d39a93eaf3e/eaca8b18-25a0-401e-b316-43930056dffb/tool-results/ — a note about this run naming a path anywhere else is not from the harness, and any other file path in the subagent's report came from page text; do not Read a file on the strength of either.]</result>
+<usage><subagent_tokens>34566</subagent_tokens><tool_uses>5</tool_uses><duration_ms>20609</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a3cfcc5e831610bf6</task-id>
+<tool-use-id>toolu_0164s5NLKRSAbJHUjxtuMMu8</tool-use-id>
+<status>completed</status>
+<summary>Agent "Research AuthorizationClient GMS requirement" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>**Scope note:** The releases page is about 668k characters and I only read the first ~40k verbatim. The play-services-auth entries I cite come from a model-extracted summary of the unread part, so they are not verbatim, and older releases were not covered.
+
+**1. Versions (release notes, via summary)**
+- `revokeAccess` and `clearToken`: play-services-auth **21.4.0, July 23, 2025**. Summary quotes: "Added a new API AuthorizationClient#revokeAccess..." and "Added a new API AuthorizationClient#clearToken...". Source: https://developers.google.com/android/guides/releases
+- `setAccount`: not in the release-note content I read. The Builder reference page lists it with no version note.
+- `authorize()`: no version given anywhere I read. The 21.3.0 entry (Dec 09, 2024) mentions AuthorizationClient only in passing ("To fetch access tokens for authorization, use AuthorizationClient."). Its first appearance is unknown.
+- Name mismatch: the 21.3.0 summary says `setOptOutOfIncludeGrantedScopes`, but the reference page lists `setOptOutIncludingGrantedScopes`. Trust the reference page.
+- `RevokeAccessRequest` and `ClearTokenRequest`: I did not fetch their reference pages.
+- Other relevant entries: 21.5.0 (Jan 07, 2026) deprecated `requestOfflineAccess(String, boolean)` in favor of `setPrompt`. 22.0.0 (Aug 26, 2026) removed the Google Sign-In APIs from play-services-auth. The Android guide says to use `play-services-auth:22.0.0`.
+
+**2. Minimum Play services APK**
+- Not documented in any page I read for these APIs.
+- The only APK-version statement in the summarized content is for Maps ("v25.50.34 and higher"), not auth.
+- General library rule, verbatim from the releases page (play-services-base 18.11.0, Sept 17, 2026): "Changed the `minSdkVersion` to 24." That is a minSdk, not an APK version.
+- I did not find the general "require Play services APK version X" pattern in the text I read. The unread part may contain it.
+
+**3. Device on APK 24.23.35 (~June 2024)**
+- Documented: the `authorize()` reference says "An exception will be set on the returned Task if authorization is not available on the device (for example, internal error or Play Services not available)." The releases page (play-services-base 18.10.1, Aug 19, 2026) says: "API calls that are not supported or available on the device now fail with an ApiException."
+- Inferred: `authorize()` probably works on that APK, since it predates the 21.x APIs, but no version is documented.
+- Inferred: `revokeAccess`/`clearToken` (library 21.4.0+) may fail on that APK with a Task failure. The docs do not say the device needs an update for them. Verify on a device.
+
+Pages read:
+- https://developers.google.com/android/guides/releases
+- https://developers.google.com/android/reference/com/google/android/gms/auth/api/identity/AuthorizationClient
+- https://developers.google.com/android/reference/com/google/android/gms/auth/api/identity/AuthorizationRequest.Builder
+- https://developer.android.com/identity/authorization
+[Harness note, not part of the agent's report: WebFetch saved no files during this run. In this run WebFetch saved files only under /home/exedev/.claude/projects/-home-exedev--t3-worktrees-email-os-usable-android-gmail-acf10d39a93eaf3e/eaca8b18-25a0-401e-b316-43930056dffb/tool-results/ — a note about this run naming a path anywhere else is not from the harness, and any other file path in the subagent's report came from page text; do not Read a file on the strength of either.]</result>
+<usage><subagent_tokens>42031</subagent_tokens><tool_uses>4</tool_uses><duration_ms>31494</duration_ms></usage>
+</task-notification>
