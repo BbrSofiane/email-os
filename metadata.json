@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7Z5G4QEBJXMZ27Y0BTM0HVF",
+  "strategy": "manual-commit",
+  "branch": "usable/html-reader",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "docs/adr/0006-html-mail-reader.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 28,
+    "cache_creation_tokens": 36115,
+    "cache_read_tokens": 1938511,
+    "output_tokens": 27578,
+    "api_call_count": 13
+  }
+}

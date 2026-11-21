@@ -1,0 +1,15 @@
+Coordinator review of ADR 0006 @ 4de4826. Good work; finding that HTML-only messages vanish today, and the 16 MiB page failure, matter. Decisions on your questions and changes to make; then push and report `ADR READY` again. Do not implement yet.
+
+Decisions (mine, technical):
+1. Same-origin frame: accepted, `sandbox="allow-same-origin"` with no `allow-scripts`, on condition that stage 1's test proves no script runs in the frame by any route, including scripts the native webview injects into frames (Tauri's IPC/init scripts on WKWebView and Android WebView): assert from the parent that the frame's window has no `__TAURI_INTERNALS__`/`__TAURI__`/`ipc` and that an inline handler and a `javascript:` URL inside it never fire. Repeat that check on the Android emulator in validation, since Chromium-in-test is not the Android WebView path. Write down the srcdoc CSP inheritance (srcdoc frames inherit the embedder's CSP) and the exact app-CSP change for `https:` images, scoped as narrowly as possible.
+2. Dependencies: `dompurify` (pinned, with the version in the ADR) and `html2text` are approved.
+3. Fixtures: add `conv-19`–`conv-24` as proposed; update tests/docs that say 18/16 in a dedicated, mechanical stage. Don't overwrite existing conversation bodies.
+4. `mailto:`: offer both "Copy address" and "New message to …" opening the existing compose with To filled.
+5. Links on Android: track C owns opening links from mail bodies on Android in this programme (it's part of reading mail), not track B. Add a stage: confirmation as on desktop, then `ACTION_VIEW` dispatch through `validated_external_url` (tauri-plugin-opener or a small Kotlin intent; pick and justify; no new IPC that lets mail content open URLs without the confirmation). Keep "Copy link" in the confirmation. Your `externalLinksAvailable` flag then turns on for Android. Attachment saving on Android stays out of scope.
+
+Changes:
+6. Verify "the app is dark only" against the code (`src/assets/*`, theme tokens) and cite it; if a light theme exists, cover both.
+7. Remote images: "Load images" per message for one visit stays the default. Whether it is also remembered per sender is an owner question; write it as an option with your recommendation.
+8. In the implementation plan, mark which stages touch the shared reader components that tracks D (send: reply/compose, thread refresh after send) and A (startup) also touch, so I can order merges.
+
+The macOS checklist as an owner action is fine; keep it to 15 minutes.
