@@ -1442,6 +1442,14 @@ async function closeMessageLink() {
   if (linkOrigin?.isConnected && !linkOrigin.closest('[inert]')) linkOrigin.focus({ preventScroll: true });
   else (readerView.value?.$el as HTMLElement | undefined)?.focus({ preventScroll: true });
 }
+/**
+ * After a real hand-off the browser covers the app, so the dialog would only
+ * stand in the way on return (one Back to dismiss it). The preview keeps it
+ * open: its status line is the only sign of what the click did.
+ */
+function onMessageLinkOpened() {
+  if (props.mode !== 'browser-preview') void closeMessageLink();
+}
 async function composeTo(address: string) {
   await closeMessageLink();
   if (drafts.activeRef.value) {
@@ -2920,7 +2928,7 @@ const searchSyntaxEditHint = computed(() =>
     />
     <div v-if="messageLink" class="action-backdrop" @click.self="closeMessageLink">
       <section class="action-overlay link-confirm-overlay" role="dialog" aria-modal="true" aria-label="Open link">
-        <LinkConfirm :url="messageLink.url" :text="messageLink.text" :client="props.client" :preview="props.mode === 'browser-preview'" :can-open="externalLinksAvailable()" @close="closeMessageLink" @compose="composeTo" />
+        <LinkConfirm :url="messageLink.url" :text="messageLink.text" :client="props.client" :preview="props.mode === 'browser-preview'" :can-open="externalLinksAvailable()" @close="closeMessageLink" @compose="composeTo" @opened="onMessageLinkOpened" />
       </section>
     </div>
     <AttachmentChooser v-if="attachmentConversation" :client="props.client" :conversation="attachmentConversation" :preview="props.mode === 'browser-preview'" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" @close="closeAttachments" />

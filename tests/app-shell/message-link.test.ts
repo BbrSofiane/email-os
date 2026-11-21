@@ -25,3 +25,23 @@ it('closes a message link on Escape and composes to a mailto address', async () 
     w.unmount();
   }
 });
+
+it('closes the link dialog after a native hand-off and keeps it in the preview', async () => {
+  for (const mode of ['native', 'browser-preview'] as const) {
+    const fake = createBrowserFakeMailClient();
+    const w = mountApp(fake, mode, { attachTo: document.body });
+    try {
+      await flushFakeClientAndVueUpdates(fake);
+      await w.find('[data-test="conversation-row-conv-01"]').trigger('click');
+      await flushFakeClientAndVueUpdates(fake);
+      w.findComponent(ReaderView).vm.$emit('openLink', 'https://example.test/a', 'example.test');
+      await flushPromises();
+      await w.findAll('button').find((button) => button.text() === 'Open in browser')!.trigger('click');
+      await flushPromises();
+      await flushPromises();
+      expect(w.find('[aria-label="Open link"]').exists()).toBe(mode === 'browser-preview');
+    } finally {
+      w.unmount();
+    }
+  }
+});
