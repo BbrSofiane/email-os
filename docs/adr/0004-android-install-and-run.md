@@ -75,23 +75,32 @@ changing the signer. [Tauri Android signing](https://v2.tauri.app/distribute/sig
 
 Gradle's release signing config reads `ANDROID_KEYSTORE_PATH`,
 `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`
-from the process environment. The local release task uses the same config
-with values supplied from the owner's password manager for one invocation.
-Debug CI and local development keep ordinary debug signing for test devices.
-A release request with missing or invalid key inputs fails before any artifact
-is published. Do not install the debug variant over the owner app.
+from the process environment. For an emergency local owner build, supply the
+same values from the owner's password manager for one invocation, with an
+explicit version code as described below. Debug CI and local development keep
+ordinary debug signing for test devices. Release signing fails closed when
+key inputs are missing or invalid. Keep ordinary debug installs on test devices.
 
-Use a dedicated Actions release workflow for trusted main commits. Trigger it
-for an intentional version bump and allow an explicit rerun of the same version.
-Restrict the `android-release` environment to main and require owner review
-where supported.
-Keep key inputs out of PR workflows, unreviewed refs, caches, artifacts and logs.
-Decode the base64 JKS into a restricted temporary file on the hosted runner for
-the signing step, disable shell tracing and remove the file on exit, including on
-failure. The upload step sees only the APK and public metadata. Verify the APK
-certificate against an owner-configured SHA-256 fingerprint before uploading.
-Keep release signing with the owner locally if the repository cannot protect
-the environment. [GitHub deployment environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments).
+Use a dedicated Actions workflow named **Android Release** with
+`workflow_dispatch` as its sole trigger. The signing job requires the canonical
+`BbrSofiane/email-os` repository and `refs/heads/main`, checks out the dispatched
+main commit, and uses the `android-release` environment. Store signing secrets
+only in that environment. Restrict its deployment policy to the `main` branch
+and require a reviewer, a protection available on public repositories. The
+workflow builds from its own checkout and takes no PR refs, artifacts or build
+caches as inputs. Decode the base64 JKS to a restricted runner temporary file
+for signing, disable shell tracing and remove the file on exit, including on
+failure. Upload only the APK and public metadata after checking the certificate
+against the owner's configured SHA-256 fingerprint.
+[GitHub deployment environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments).
+
+PR CI uses the ordinary `pull_request` event and a separate job with no
+release environment or signing secrets. It generates an ephemeral throwaway
+key in the job, exercises the same release build and verification commands,
+and discards the APK and key. Production signing never runs through
+`pull_request_target` or a workflow triggered by a PR job. This keeps the
+owner's keystore out of all PR runs, including forks.
+[GitHub fork workflow and secret rules](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request).
 
 With the new ID, the old fixture APK and its data can stay on the phone alongside
 Email OS. The new app starts with fresh fixture data. Copy any wanted draft text
@@ -102,24 +111,38 @@ and a verified backup, and retains local drafts.
 
 ### Versions, delivery and device support
 
-Use the shared repository semver for `versionName` and set the Android
-`bundle.android.versionCode` explicitly in the committed Android Tauri config,
-starting at `1001`. In phase 2 verify the pinned CLI passes both fields into the
-APK. If the CLI ignores the explicit code, have Gradle read that same committed
-value. Bump the code on main for each owner-distributed revision, even when semver
-stays the same. A single sequence covers CI and local builds and all ABIs.
-A maintainer checks the intended code against the last owner-distributed build
-before upload. Reruns of the same commit are rebuilds of that version. A rollback
-ships a compatible fix at a higher code. Android's in-place update keeps app
-data when the ID and signer match, the version advances, and app migrations
-preserve the data. [Android versioning](https://developer.android.com/studio/publish/versioning).
+Use the shared repository semver for `versionName`. Set owner-build
+`versionCode` automatically to `1000 + github.run_number` in **Android Release**
+and pass it as `ANDROID_VERSION_CODE` to the release task. The task requires a
+valid integer in Android's supported range. Gradle uses that value for release
+and the generated Tauri version name. Check both values in the packaged APK.
+The first workflow run starts at code `1001`. Each new dispatch increases the
+code even if the commit and semver are unchanged, failed runs can leave gaps,
+and rerunning a workflow run retains its code. This avoids reliance on manual
+bumps, commit counts or clock time. Keep the same workflow sequence across
+refactors, or explicitly carry forward the last issued code if replacing it.
+[GitHub Actions context](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#github-context).
+
+For an emergency owner-local build, require an explicit `ANDROID_VERSION_CODE`
+from a fresh **Android Release** dispatch. Cancel that run before it signs,
+build its exact main commit locally, and reserve that code for the local APK.
+Never distribute two distinct APK revisions at the same code. If Actions is
+unavailable to allocate a code, wait before distributing the local build.
+Test builds use explicit test codes and throwaway signers. An owner rollback
+ships a compatible revision from main through a new dispatch. Android's
+in-place update keeps app data when the ID and signer match, the version
+advances, and app migrations preserve the data.
+[Android versioning](https://developer.android.com/studio/publish/versioning).
 
 Start with one universal signed release APK for `arm64-v8a` and `x86_64`, named
 `email-os-android-release.apk` in a versioned Actions artifact. The owner downloads
 and unzips it from the approved run, or uses `gh run download` with the run ID
 and artifact name. Record the commit, versions, file size, APK SHA-256 and
-certificate fingerprints. The owner can retain the APK after artifact expiry.
-Revisit GitHub Releases if a durable direct download becomes necessary.
+certificate fingerprints. This repository is public. Any signed-in GitHub
+user can download the Actions artifacts and any public GitHub Release assets.
+The APK contains no secrets. Track B's Android OAuth client ID is a public
+identifier. The owner can retain the APK after artifact expiry. Revisit GitHub
+Releases if a durable direct download becomes necessary.
 
 Keep R8 and start with resource shrinking off. Verify that the minified
 release's JNI, WebView and IPC work on both ABIs before considering additional
@@ -217,11 +240,11 @@ Validate TLS trust separately in the Rust HTTP client, which uses rustls
 configure that client. Retain the WebView CSP and avoid broadening it for
 native API calls. [Android network security configuration](https://developer.android.com/privacy-and-security/security-config).
 
-Verify the launcher art from the repository at phone sizes, with an adaptive
-icon and a legacy fallback where needed. Use the Email OS icon and matching
-window background for the system splash, and check handoff to the app in
-light and dark mode, including Android 12+. Keep the compact layout, safe
-insets, soft keyboard resizing and Back behavior from ADR 0003.
+Set the Email OS label and use the existing artwork for an adaptive launcher
+icon and its legacy fallback. Let the platform splash use the app icon and
+existing window background. Check the handoff in light and dark mode,
+including Android 12+. Keep the compact layout, safe insets, soft keyboard
+resizing and Back behavior from ADR 0003.
 
 ## Scope and out of scope
 
@@ -233,9 +256,11 @@ proposal. Tracks B, C and D own Google sign-in, HTML mail and sending.
 
 ## Owner actions
 
-1. After approval and before the first signed build, confirm the app ID and
-   create the key on the owner's machine. Use an interactive command so key
-   passwords are prompted and stay out of shell history.
+Phase 2 uses throwaway keys. The owner can create the key sooner to give Track B
+the certificate fingerprint, and runs the first owner-key build after merge.
+
+1. Once the app ID is approved, create the key on the owner's machine. Use an
+   interactive command so key passwords are prompted and stay out of shell history.
 
    ```sh
    umask 077
@@ -251,20 +276,29 @@ proposal. Tracks B, C and D own Google sign-in, HTML mail and sending.
    Store the encrypted backup and passwords, verify the restored certificate, and
    share only the SHA-1 and SHA-256 certificate fingerprints for verification
    and OAuth registration.
-2. Once the signing workflow is reviewed, open repository **Settings →
-   Environments → android-release** and restrict deployment branches. Add
-   environment secrets `ANDROID_KEYSTORE_BASE64` (the single-line base64 JKS),
+2. After merge, open **Settings → Environments → android-release** in
+   `BbrSofiane/email-os`. Under **Deployment branches and tags**, choose
+   **Selected branches and tags** and add only a branch rule for `main`.
+   Configure **Required reviewers** with the owner or a reviewer who can
+   approve the owner's dispatch if self-review is disabled. Add environment
+   secrets `ANDROID_KEYSTORE_BASE64` (the single-line base64 JKS),
    `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD`.
    Set the environment variable `ANDROID_RELEASE_CERT_SHA256` to the public
    certificate digest from `keytool`. Base64 is reversible. Put it directly in
    the secret field, and keep the JKS and passwords off the shared VM and out of
-   messages. For pre-merge CI validation, temporarily allow a protected candidate
-   branch only if the owner can review the exact workflow and candidate commit
-   before granting secret access. Remove that branch from the environment when
-   the test is done. Otherwise use two owner-local signed candidates before
-   merge, then compare the first trusted CI build after merge. Use main for
-   routine builds.
-3. Before starting the phone test, report device model and Android version, and
+   messages.
+3. Open **Actions → Android Release → Run workflow**, select `main`, then
+   run it. On the run page, verify the branch and commit, then select
+   **Review deployments → android-release → Approve and deploy**, or have
+   the configured reviewer do that. When the run succeeds, download the
+   versioned artifact under **Artifacts**, unzip it, and verify the reported
+   application ID with `aapt dump badging` and the SHA-256 certificate digest
+   with `apksigner verify --verbose --print-certs`. Compare the digest to the
+   owner key and the output of `sha256sum email-os-android-release.apk` to
+   the published APK checksum before installing.
+   Start a new dispatch for the second phone-test APK so it receives a higher
+   code. A rerun of the first dispatch keeps the first code.
+4. Before starting the phone test, report device model and Android version, and
    whether the old fixture app has any drafts to keep. Perform the phone steps
    below using two approved signed versions. If Android blocks direct APK
    install, record the exact message and report whether USB/ADB is available.
@@ -274,7 +308,10 @@ proposal. Tracks B, C and D own Google sign-in, HTML mail and sending.
 
 ## Dependencies
 
-- **Track B (ADR 0005)** needs the approved application ID early and the
+- **Track B (ADR 0005)** builds on Track A's package rename after A lands.
+  A moves `src-tauri/gen/android/app/src/main/java/dev/exedev/emailos/androidfixture/`
+  to `src-tauri/gen/android/app/src/main/java/dev/exedev/emailos/`. B adds its
+  Android-native code under the new path. B needs the approved ID early and the
   release signing certificate SHA-1 as soon as the owner generates the key.
   Track A verifies that SHA-1 against the signed APK with
   `apksigner verify --verbose --print-certs`. Track B owns the Android OAuth
@@ -291,18 +328,18 @@ proposal. Tracks B, C and D own Google sign-in, HTML mail and sending.
 ## Implementation plan
 
 All stages start after GREENLIGHT. Use the programme's shared Rust build settings,
-single-heavy-job rule and emulator lock.
+single-heavy-job rule and emulator lock. The merge gate uses throwaway signing.
+Owner-key distribution and phone validation follow merge.
 
 1. **Identity and release build.** Align Android IDs and label, wire signed
-   release packaging and the version source, and keep debug CI. Follow the
+   release packaging and the version-code input, and keep debug CI. Follow the
    programme's generated-source preparation for a legacy baseline build.
    Regenerate Wry/Tauri output for the new package and verify JNI names and
    ignore rules. Use a clean CI checkout to check generation if the shared
    build cache skips it. Check the finished APK with `aapt dump badging` and
    `apksigner verify --verbose --print-certs`, inspect both ABIs and alignment,
-   and verify a release request without signing inputs fails. The owner runs
-   the local production-key signing check, while development checks can use a
-   throwaway key on synthetic test installs.
+   and verify a release request without signing inputs fails. Use a locally
+   generated throwaway key for the release build.
 2. **Startup diagnosis.** Add temporary timing markers and capture baseline
    cold-start timing for empty and populated profiles on the shared emulator.
    Check for a correlated main-thread stack if the timeout recurs and document
@@ -315,11 +352,14 @@ single-heavy-job rule and emulator lock.
    release manifest, release/debug networking, and bundled offline boot. Check
    launcher, splash, Inbox and keyboard screenshots for label, clipping, insets
    and first-frame continuity.
-5. **Trusted delivery and update.** Add Actions signing and verified artifact
-   upload. Verify artifact contents and cert digest, then exercise the emulator
-   and owner's phone update flows below. Record versions and hashes, APK size,
-   and the install and persistence results. Update the development and current
-   status guides with the working path.
+5. **Trusted delivery and update.** Add the main-only owner workflow and the
+   PR release build check. Verify in PR CI that an ephemeral key signs a release
+   APK and that the package, version, signer and ABIs match expectations.
+   Discard the APK and key. Review the production trigger, secret scope and
+   artifact allowlist, then complete the throwaway-key emulator update below.
+   Record versions, hashes, APK size and persistence results. Document the
+   validated path and the post-merge owner build and phone checks in the
+   development and current status guides.
 
 ## Validation plan
 
@@ -340,10 +380,10 @@ single-heavy-job rule and emulator lock.
 ### Android emulator
 
 - Use the programme lock and T3 device tools on `local/emulator-5554`.
-  Preserve any existing test state. Install version N of the universal release,
-  then version N+1 via `adb install -r <apk>` without uninstalling N. Prefer
-  owner-local N and trusted CI N+1 signed by the same key when available.
-  Confirm both versions with APK metadata and verify both certs. Use disposable
+  Preserve any existing test state. Build universal versions N and N+1 locally
+  with explicit test codes and the same throwaway key. Install N, then apply
+  N+1 via `adb install -r <apk>` without uninstalling N. Confirm both versions
+  with APK metadata and verify both certificates. Use disposable
   synthetic builds for a wrong-signer negative check and a legacy transition
   regression. The production release need not support `run-as`.
 - Repeat at least five first launches with empty test data and five
@@ -362,7 +402,7 @@ single-heavy-job rule and emulator lock.
   `/home/exedev/email-os-usable/android-install/` for larger videos and traces.
   Release the lock and restore the emulator's original settings.
 
-### Owner's physical phone
+### Owner's physical phone after merge
 
 1. Keep any existing fixture install. In **Settings → About phone**, note the
    model and Android version. Use a device on Android 7 or later with an ABI
@@ -400,9 +440,9 @@ single-heavy-job rule and emulator lock.
 
 - Approve `dev.exedev.emailos` as the long-lived Android ID. Does an existing
   fixture install hold drafts the owner needs to keep?
-- Can the owner hold and back up the release key, and can the repository use
-  an owner-reviewed signing environment? Confirm whether access-controlled
-  Actions downloads meet the owner's delivery needs and who can access them.
+- Can the owner hold and back up the release key and configure the required
+  reviewer? Are expiring Actions artifacts suitable, or does the owner want
+  durable GitHub Release assets?
 - Which phone model and Android version will be used, and can the owner run
   the two-version update test? Sideloading support depends on device policy.
   Record installation friction even if ADB works.
