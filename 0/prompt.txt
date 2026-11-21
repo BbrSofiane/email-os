@@ -1,0 +1,12 @@
+Delegated task node:delegated-task:command%3Amcp%3A60b9dc2b-5271-462b-90eb-f39918b85e09%3Adelegate-task%3A0387fa70-2c6f-4040-a84a-306ab32321a4 (C stage 3 (code only): HTML storage and IPC) [completed]:
+The stage is **not complete**. I implemented migration 10 and the page-budget fallback, but the DTOs, storage reads and writes, inline-image retrieval, shell commands, TypeScript IPC changes, and their tests remain outstanding.
+
+Changed files:
+
+- [current-schema.sql](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/gmail/current-schema.sql) — added the fresh-schema columns.
+- [store_schema.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/gmail/store_schema.rs) and [store.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/gmail/store.rs) — added migration 10 and updated the schema version.
+- [migration_tests.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/gmail/migration_tests.rs) — added fresh-schema and interrupted-upgrade coverage.
+- [types.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/gmail/types.rs) and [sync.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/gmail/sync.rs) — added HTML and inline-part budget accounting and HTML-dropping fallback.
+- [reply_context_sync_tests.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/gmail/reply_context_sync_tests.rs) — added budget-fallback coverage.
+
+I did not run builds or tests, as requested. Compilation and the new tests are unverified. No commit or push was made.

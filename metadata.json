@@ -1,0 +1,33 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7ZAT5FR9C9X22CJT9EKENRY",
+  "strategy": "manual-commit",
+  "branch": "usable/html-reader",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "crates/mail-core/src/gmail/current-schema.sql",
+    "crates/mail-core/src/gmail/migration_tests.rs",
+    "crates/mail-core/src/gmail/reply_context_sync_tests.rs",
+    "crates/mail-core/src/gmail/store.rs",
+    "crates/mail-core/src/gmail/store_schema.rs",
+    "crates/mail-core/src/gmail/sync.rs",
+    "crates/mail-core/src/gmail/types.rs",
+    "crates/mail-core/tests/fixtures/gmail-current-schema.txt"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 14,
+    "cache_creation_tokens": 11851,
+    "cache_read_tokens": 1824552,
+    "output_tokens": 2758,
+    "api_call_count": 6
+  }
+}
