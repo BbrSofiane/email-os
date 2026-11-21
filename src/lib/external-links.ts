@@ -1,8 +1,6 @@
-import { isTauriRuntime } from './ipc';
-
-/** ADR 0006 decision 13: a later stage enables Android link dispatch. */
+/** Link dispatch is available on all platforms; retain this gate for future platform restrictions. */
 export function externalLinksAvailable(): boolean {
-  return !(isTauriRuntime() && /Android/i.test(navigator.userAgent));
+  return true;
 }
 
 /** Whether a link's visible text names a different host than its destination (ADR 0006 decision 11). */
