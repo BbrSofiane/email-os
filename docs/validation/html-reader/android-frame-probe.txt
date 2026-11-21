@@ -1,0 +1,56 @@
+# Frame probe on the Android emulator (emulator-5554, Android 15), 2026-11-21
+# App: installed debug APK dev.exedev.emailos.androidfixture (main @ 140d4e0), WebView inspected over adb forward + CDP Runtime.evaluate.
+# Probe: tests/rendered/html-frame-probe.ts @ bcc1a09 (unsanitised payloads in sandbox=allow-same-origin srcdoc frames).
+UA: Mozilla/5.0 (Linux; Android 15; sdk_gphone64_x86_64 Build/AE3A.240806.043; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/124.0.6367.219 Mobile Safari/537.36
+parent globals: ["__TAURI_INTERNALS__","ipc"]
+PASS script load - loaded
+PASS img load - loaded
+PASS body load - loaded
+PASS svg load - loaded
+PASS js load - loaded
+PASS iframe load - loaded
+PASS refresh load - loaded
+PASS object load - loaded
+PASS form load - loaded
+PASS nav load - loaded
+PASS remote-image load - loaded
+PASS parent untouched - undefined
+PASS parent title - Email OS — Slice 01 Fixture Inbox
+PASS parent IPC (informational) - true
+PASS script location - about:srcdoc
+PASS script globals - none
+PASS img location - about:srcdoc
+PASS img globals - none
+PASS body location - about:srcdoc
+PASS body globals - none
+PASS svg location - about:srcdoc
+PASS svg globals - none
+PASS js location - about:srcdoc
+PASS js globals - none
+PASS iframe location - about:srcdoc
+PASS iframe globals - none
+PASS refresh location - about:srcdoc
+PASS refresh globals - none
+PASS object location - about:srcdoc
+PASS object globals - none
+PASS form location - about:srcdoc
+PASS form globals - none
+PASS nav location (informational) - SecurityError: Failed to read a named property 'href' from 'Location': Blocked a frame with origin "http://tauri.localhost" from accessing a cross-origin frame.
+PASS remote-image location - about:srcdoc
+PASS remote-image globals - none
+PASS remote image blocked by CSP - [{"blockedURI":"https://probe-image.invalid/p.png","directive":"img-src"},{"blockedURI":"https://probe-image.invalid/p.png","directive":"img-src"}], width=0
+PASS remote image resource timing (informational) - status=0 transfer=0
+inheritance frame img width: 0
+network events: [
+ "12181.48 http://tauri.localhost/x",
+ "12181.48 FAILED  blockedReason=csp",
+ "78996556C2CD29425296331E8BAB7379 FAILED net::ERR_BLOCKED_BY_CSP blockedReason=undefined",
+ "0C8D8234FD405FA6ECCE7A96C4E237B9 FAILED net::ERR_BLOCKED_BY_CSP blockedReason=undefined",
+ "78996556C2CD29425296331E8BAB7379 FAILED net::ERR_ABORTED blockedReason=undefined",
+ "12181.59 data:image/png;base64,…",
+ "12181.59 RESPONSE 200",
+ "12181.60 https://probe-image.invalid/p.png",
+ "12181.60 FAILED  blockedReason=csp",
+ "12181.62 https://inherit-probe.invalid/a.png",
+ "12181.62 FAILED  blockedReason=csp"
+]
