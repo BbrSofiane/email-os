@@ -482,13 +482,14 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
     return true;
   }
 
-  async function openNew(source: DraftSource = { kind: 'new_message' }): Promise<boolean> {
+  /** Mailto supplies only an address; its parameters are ignored (ADR 0006 decision 12). */
+  async function openNew(source: DraftSource = { kind: 'new_message' }, initial?: Partial<DraftContent>): Promise<boolean> {
     if (transitioning.value || !(await switchEditor()) || transitioning.value) return false;
     if (!accountId.value) {
       createError.value = { kind: 'auth_required' };
       return false;
     }
-    const initialContent = source.kind === 'new_message' ? copyContent(EMPTY_CONTENT) : null;
+    const initialContent = source.kind === 'new_message' ? copyContent({ ...EMPTY_CONTENT, ...initial }) : null;
     const token = ++generation;
     activeRef.value = { accountId: accountId.value, draftId: '' };
     activeSource.value = source;
