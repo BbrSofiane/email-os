@@ -1,0 +1,32 @@
+Delegated task node:delegated-task:command%3Amcp%3A60b9dc2b-5271-462b-90eb-f39918b85e09%3Adelegate-task%3A869f1abc-01e1-4d9b-8959-0399ed70014b (C stage 10: docs for HTML mail) [completed]:
+Updated the five requested documentation files. No builds or tests were run, and no commit or push was made.
+
+- [current-status.md](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/docs/current-status.md) — Updated runtime availability and added an HTML mail feature and validation summary.
+- [development.md](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/docs/development.md) — Updated Android link dispatch and attachment-rendering boundaries; added rendered-test, screenshot, and Android frame-probe instructions.
+- [ux-02-conversation-reader.md](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/docs/ux-02-conversation-reader.md) — Updated the reader safety description for sandboxed HTML bodies.
+- [ux-12-safe-attachments.md](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/docs/ux-12-safe-attachments.md) — Documented shared link confirmation and Android dispatch while retaining attachment limits.
+- [current-architecture.md](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/docs/current-architecture.md) — Added the HTML frame, sanitiser, IPC commands, migration, and updated fixture count.
+
+---
+
+Continue
+
+---
+
+<task-notification>
+<task-id>blcge6gg5</task-id>
+<tool-use-id>toolu_01CFHJ3tswkLVHRU4rLVHeDC</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-usable-html-reader-047d71899da466ac/ee85c0c8-b2b0-43e9-b640-7729bf4a26ee/tasks/blcge6gg5.output</output-file>
+<status>completed</status>
+<summary>Background command "Run the full check:all gate" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>b9ezbhipj</task-id>
+<tool-use-id>toolu_01YC44BMmWRSEZjbfsiQot9n</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-usable-html-reader-047d71899da466ac/ee85c0c8-b2b0-43e9-b640-7729bf4a26ee/tasks/b9ezbhipj.output</output-file>
+<status>completed</status>
+<summary>Background command "Build the Android debug APK" completed (exit code 0)</summary>
+</task-notification>
