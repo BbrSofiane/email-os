@@ -1,0 +1,32 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7ZDTZCEJX3Y2W786X0JP32T",
+  "strategy": "manual-commit",
+  "branch": "usable/html-reader",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src-tauri/tauri.conf.json",
+    "src/assets/style.css",
+    "src/components/ReaderView.vue",
+    "src/lib/html-mail/frame-document.ts",
+    "tests/reader/html-frame-document.test.ts",
+    "tests/reader/reader-html.test.ts",
+    "tests/rendered/html-frame-spike.rendered.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 8,
+    "cache_creation_tokens": 7891,
+    "cache_read_tokens": 1434948,
+    "output_tokens": 2094,
+    "api_call_count": 3
+  }
+}

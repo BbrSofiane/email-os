@@ -1,0 +1,71 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7ZDTZCEJX3Y2W786X0JP32T",
+  "session_id": "ee85c0c8-b2b0-43e9-b640-7729bf4a26ee",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-21T16:08:13.323924344Z",
+  "branch": "usable/html-reader",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src-tauri/tauri.conf.json",
+    "src/assets/style.css",
+    "src/components/ReaderView.vue",
+    "src/lib/html-mail/frame-document.ts",
+    "tests/reader/html-frame-document.test.ts",
+    "tests/reader/reader-html.test.ts",
+    "tests/rendered/html-frame-spike.rendered.test.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-5-5",
+  "turn_id": "216601fec052",
+  "checkpoint_transcript_start": 1703,
+  "transcript_lines_at_start": 1703,
+  "compact_transcript_start": 229,
+  "token_usage": {
+    "input_tokens": 8,
+    "cache_creation_tokens": 7891,
+    "cache_read_tokens": 1434948,
+    "output_tokens": 2094,
+    "api_call_count": 3
+  },
+  "session_metrics": {
+    "turn_count": 19
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-21T16:08:13.178266841Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 9,
+    "total_committed": 4,
+    "total_lines_changed": 9,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 137,
+      "user_lines_removed": 9,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".impeccable/hook.cache.json": 1,
+        "src-tauri/tauri.conf.json": 1,
+        "src/assets/style.css": 6,
+        "src/components/ReaderView.vue": 59,
+        "src/lib/html-mail/frame-document.ts": 1,
+        "tests/reader/html-frame-document.test.ts": 4,
+        "tests/reader/reader-html.test.ts": 63,
+        "tests/rendered/html-frame-spike.rendered.test.ts": 2
+      },
+      "user_removed_per_file": {
+        "src-tauri/tauri.conf.json": 1,
+        "src/components/ReaderView.vue": 5,
+        "src/lib/html-mail/frame-document.ts": 1,
+        "tests/rendered/html-frame-spike.rendered.test.ts": 2
+      }
+    }
+  ]
+}

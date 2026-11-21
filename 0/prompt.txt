@@ -1,0 +1,16 @@
+Delegated task node:delegated-task:command%3Amcp%3A60b9dc2b-5271-462b-90eb-f39918b85e09%3Adelegate-task%3A34291fc8-f938-4c78-b493-4a692252a60e (C stage 7b: HTML frame in the reader) [completed]:
+Implemented formatted mail in the desktop and compact readers, including per-message image loading, quote disclosure, plain-text switching, fallbacks, and link event forwarding. The app CSP now permits HTTPS images; the frame still controls whether they load.
+
+Changed files:
+
+- [ReaderView.vue](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/src/components/ReaderView.vue)
+- [style.css](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/src/assets/style.css)
+- [frame-document.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/src/lib/html-mail/frame-document.ts)
+- [tauri.conf.json](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/src-tauri/tauri.conf.json)
+- [reader-html.test.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/tests/reader/reader-html.test.ts)
+- [html-frame-document.test.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/tests/reader/html-frame-document.test.ts)
+- [html-frame-spike.rendered.test.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/tests/rendered/html-frame-spike.rendered.test.ts)
+
+`pnpm typecheck` passed. The requested reader and mobile test command passed: 373 tests across 18 files.
+
+The existing frame-document test gained a unitless line-height case. The rendered CSP spike setup was updated to continue testing both narrow and widened image policies; that rendered test was not run. No commit or push was made.
