@@ -1,0 +1,5 @@
+ADR 0005 @ 51f2ae5 is APPROVED. Owner answers to your open questions 6–8 (record them in the Decisions section, dated 2026-11-21, and push):
+6. Emulator account: a throwaway Google account holding only synthetic mail; the owner signs it in through the Device panel when your stage needs it (stop with `BLOCKED:` at that point and say exactly what to do).
+7/8. Publishing: **External, Testing, with weekly re-consent** (owner's choice over Personal mode). So use one project: the existing desktop project (my decision: fewer steps), with both Android clients (release SHA-1 and this VM's debug SHA-1) and both the owner's account and the throwaway account as test users. Make sure the UI handles the weekly expiry cleanly: "Sign-in expired" → "Sign in again" with no data loss and queued writes kept. Drop the 8-day lasting-sign-in check; replace it with a test that an expired grant produces that state.
+
+Do NOT start implementing yet: only two tracks build at once and A (install) and C (HTML) have the slots. I'll send `START` when a slot frees (likely when A's PR merges, since you build on its package rename). Until then, stay idle.
