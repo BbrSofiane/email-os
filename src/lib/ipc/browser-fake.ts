@@ -19,6 +19,14 @@
  * starts with Gmail actions disabled and only enables them through a synthetic,
  * explicit grant flow. All data and grants remain in-memory only.
  */
+import newsletterHtml from '../../../crates/mail-core/src/synthetic/html/newsletter.html?raw';
+import newsletterText from '../../../crates/mail-core/src/synthetic/html/newsletter.txt?raw';
+import personHtml from '../../../crates/mail-core/src/synthetic/html/person.html?raw';
+import cidHtml from '../../../crates/mail-core/src/synthetic/html/cid.html?raw';
+import replyHtml from '../../../crates/mail-core/src/synthetic/html/reply-chain.html?raw';
+import replyText from '../../../crates/mail-core/src/synthetic/html/reply-chain.txt?raw';
+import hostileHtml from '../../../crates/mail-core/src/synthetic/html/hostile.html?raw';
+import logoBase64 from '../../../crates/mail-core/src/synthetic/html/logo.png.b64?raw';
 import { parseSearch, matchesSearch } from '../search';
 import { isReminderTimestamp } from '../reminder-time';
 import type {
@@ -77,7 +85,7 @@ import type {
   UndoReceipt,
   FixtureTransitionStatus,
 } from './client';
-import { FIXTURE_MAILBOX, type SavedSplit } from './generated';
+import { FIXTURE_MAILBOX, type HtmlBodyState, type SavedSplit } from './generated';
 import { normalizeSplit } from '../saved-split';
 import { OPERATION_GROUP_MAX_MEMBERS } from './client';
 
@@ -180,6 +188,8 @@ export interface BrowserFake extends MailClient {
 }
 
 const ACCOUNT_ID = 'fixture-account';
+/** Marker for conv-24: a formatted body larger than the reader keeps. */
+const OVERSIZED_HTML = 'oversized';
 const CONVERSATION_COUNT = 18;
 
 interface SeedMessage {
@@ -188,6 +198,8 @@ interface SeedMessage {
   to: Address[];
   sentAt: string;
   bodyText: string;
+  html?: string;
+  inlineImage?: { contentId: string; attachmentId: string };
   /** Per-message INBOX membership as seeded (core owns the real facts). */
   seededInInbox: boolean;
   seededRead: boolean | null;
@@ -286,6 +298,97 @@ function msg(
 
 const SAFE_SENDER = addr('Ada Fixture', 'ada@example.test');
 const HOSTILE_SENDER = addr('<script>alert("sender")</script>', 'hostile@example.test');
+/** Size of the synthetic inline logo in bytes (decoded from logo.png.b64). */
+const LOGO_BYTES = atob(logoBase64.trim()).length;
+/** Same bound as the native parser (ADR 0006 decision 3). */
+const MAX_FAKE_HTML_CHARS = 512 * 1024;
+
+interface HtmlSample {
+  id: number;
+  subject: string;
+  from: Address;
+  bodyText: string;
+  html: string;
+  inlineImage?: { contentId: string; attachmentId: string };
+}
+
+/**
+ * The six ADR 0006 HTML samples (conv-19..conv-24), mirroring the native
+ * synthetic provider and sharing its sample files. They are the newest
+ * conversations. Plain renderings are short hand-written texts that keep the
+ * links' URLs; the fake never parses HTML.
+ */
+function htmlSampleConversations(accountId: string, mailbox: string): FakeConversation[] {
+  const ME = addr('You', mailbox);
+  const ana = addr('Ana Ridpath', 'ana@ridpath.example');
+  const samples: HtmlSample[] = [
+    {
+      id: 19,
+      subject: 'Fixture Weekly: issue 12',
+      from: addr('Fixture Weekly', 'digest@newsletter.example'),
+      bodyText: newsletterText,
+      html: newsletterHtml,
+    },
+    {
+      id: 20,
+      subject: 'Plan for next week',
+      from: ana,
+      bodyText: 'Here is the plan for next week: https://docs.example.test/plan\nEmail Ana: ana@ridpath.example',
+      html: personHtml,
+    },
+    {
+      id: 21,
+      subject: 'Logo proof',
+      from: addr('Lee Fixture', 'lee@fixture.example'),
+      bodyText: 'Here is the logo proof.',
+      html: cidHtml,
+      inlineImage: { contentId: 'logo@fixture.example', attachmentId: 'fixture-logo' },
+    },
+    {
+      id: 22,
+      subject: 'Re: Venue options',
+      from: ana,
+      bodyText: replyText,
+      html: replyHtml,
+    },
+    {
+      id: 23,
+      subject: 'Hostile HTML sample',
+      from: addr('Sample Sender', 'sample@fixture.example'),
+      bodyText: 'Hostile HTML sample. Its formatted version holds unsafe markup that the reader removes.',
+      html: hostileHtml,
+    },
+    {
+      id: 24,
+      subject: 'Oversized HTML sample',
+      from: addr('Archive Fixture', 'archive@fixture.example'),
+      bodyText: "This message's formatted version is larger than the reader keeps.",
+      html: OVERSIZED_HTML,
+    },
+  ];
+  // After the generic seed (which spans a few days from 2025-01-06).
+  const newest = 60 * 24 * 7;
+  return samples.map((sample, index) => {
+    const minutes = newest + index * 30;
+    const latest: SeedMessage = {
+      ...msg(`m-${sample.id}-${sample.id === 22 ? 2 : 1}`, sample.from, [ME], minutes, sample.bodyText, true, false),
+      html: sample.html,
+      ...(sample.inlineImage ? { inlineImage: sample.inlineImage } : {}),
+    };
+    const messages = sample.id === 22
+      ? [msg('m-22-1', ana, [ME], minutes - 60, 'Here are the venue options.', true, true), latest]
+      : [latest];
+    return { ref: { accountId, conversationId: `conv-${sample.id}` }, subject: sample.subject, messages, ops: [] };
+  });
+}
+
+/** The fake's equivalent of the native html_state column. */
+function htmlBodyState(message: SeedMessage): HtmlBodyState | undefined {
+  if (!message.html) return undefined;
+  if (message.html === OVERSIZED_HTML || message.html.length > MAX_FAKE_HTML_CHARS) return 'too_large';
+  return 'available';
+}
+
 function seedConversations(accountId = ACCOUNT_ID, mailbox = FIXTURE_MAILBOX): FakeConversation[] {
   const ME = addr('You', mailbox);
   const conversations: FakeConversation[] = [];
@@ -328,8 +431,19 @@ function seedConversations(accountId = ACCOUNT_ID, mailbox = FIXTURE_MAILBOX): F
 function fixtureAttachments(conv: FakeConversation): Array<{
   messageId: string, attachmentId: string, filename: string, mimeType: string, size: number,
 }> {
-  return conv.messages.slice(0, 1).map((m) => ({ messageId: m.id, attachmentId: 'fixture-text',
+  const attachments = conv.messages.slice(0, 1).map((m) => ({ messageId: m.id, attachmentId: 'fixture-text',
     filename: 'example.txt', mimeType: 'text/plain', size: 27 }));
+  for (const m of conv.messages) {
+    if (!m.inlineImage) continue;
+    attachments.push({
+      messageId: m.id,
+      attachmentId: m.inlineImage.attachmentId,
+      filename: 'logo.png',
+      mimeType: 'image/png',
+      size: LOGO_BYTES,
+    });
+  }
+  return attachments;
 }
 
 function summarize(conv: FakeConversation, pendingOperationId: string | null): ConversationSummary {
@@ -471,6 +585,7 @@ export function createBrowserFakeMailClient(
   now: () => string = () => new Date().toISOString(),
   identity: FixtureIdentity = { accountId: ACCOUNT_ID, emailAddress: FIXTURE_MAILBOX },
   seed?: FakeMailboxSeed,
+  options: { htmlSamples?: boolean } = {},
 ): BrowserFake {
   // Capture values rather than retaining a caller-mutable identity object.
   const fixtureId = identity.accountId;
@@ -481,7 +596,13 @@ export function createBrowserFakeMailClient(
   let fixtureTransitionAcceptCount = 0;
   const ME = addr('You', fixtureMailbox);
   const seedMailbox = (): FakeConversation[] =>
-    seed ? seedFromMailbox(seed, fixtureId, fixtureMailbox) : seedConversations(fixtureId, fixtureMailbox);
+    seed
+      ? seedFromMailbox(seed, fixtureId, fixtureMailbox)
+      : [
+        ...seedConversations(fixtureId, fixtureMailbox),
+        // ADR 0006 samples: on in the browser preview, off in the default test seed.
+        ...(options.htmlSamples ? htmlSampleConversations(fixtureId, fixtureMailbox) : []),
+      ];
   const conversations = seedMailbox();
   const listeners = new Set<() => void>();
   const draftListeners = new Set<() => void>();
@@ -522,7 +643,7 @@ export function createBrowserFakeMailClient(
     syncState: 'idle',
     lastSyncedAt: null,
     syncError: null,
-    cachedConversations: CONVERSATION_COUNT,
+    cachedConversations: conversations.length,
     initialSyncComplete: true,
     coverageLimit: 0,
     mutationAccess: 'read_only',
@@ -628,6 +749,12 @@ export function createBrowserFakeMailClient(
   const byId = (conversationId: string): FakeConversation | undefined =>
     cacheCleared || !accountStatus().account ? undefined :
       conversations.find((c) => c.ref.conversationId === conversationId && c.ref.accountId === accountStatus().account?.accountId);
+  /** One cached message of the target conversation, honouring the account like every read. */
+  const sampleMessage = (target: ConversationRef, messageId: string): SeedMessage | undefined => {
+    const conv = byId(target.conversationId);
+    if (!conv || conv.ref.accountId !== target.accountId) return undefined;
+    return conv.messages.find((m) => m.id === messageId);
+  };
 
   const allOps = (): Array<{ conv: FakeConversation; op: InternalOperation }> =>
     conversations.flatMap((conv) => conv.ops.map((op) => ({ conv, op })));
@@ -1434,9 +1561,19 @@ export function createBrowserFakeMailClient(
       });
     },
 
-    // Fixture HTML arrives in ADR 0006 stage 4.
-    async getMessageHtml() { throw failNotShown(); },
-    async getInlineImage() { throw failNotShown(); },
+    async getMessageHtml(target, messageId) {
+      const message = sampleMessage(target, messageId);
+      if (!message?.html || htmlBodyState(message) !== 'available') throw failNotShown();
+      const inlineImages = message.inlineImage
+        ? [{ ...message.inlineImage, mimeType: 'image/png', size: LOGO_BYTES }]
+        : [];
+      return { html: message.html, inlineImages };
+    },
+    async getInlineImage(target, messageId, attachmentId) {
+      const message = sampleMessage(target, messageId);
+      if (!message?.inlineImage || message.inlineImage.attachmentId !== attachmentId) throw failNotShown();
+      return { mimeType: 'image/png', base64: logoBase64.trim() };
+    },
     async listAttachments(target) {
       const conv = byId(target.conversationId);
       if (!conv || conv.ref.accountId !== target.accountId) throw failNotShown();
@@ -1469,6 +1606,7 @@ export function createBrowserFakeMailClient(
         to: m.to,
         sentAt: m.sentAt,
         bodyText: m.bodyText,
+        ...(htmlBodyState(m) ? { htmlBody: htmlBodyState(m) } : {}),
         hasAttachment: attachments.some((a) => a.messageId === m.id),
       }));
       const readStates = effectiveRead(conv);
@@ -2049,5 +2187,5 @@ export function createBrowserFakeMailClient(
 
 /** Labelled export used by the preview shell so the UI can disclose memory-only mode. */
 export function createBrowserPreviewMailClient(): BrowserFake {
-  return createBrowserFakeMailClient();
+  return createBrowserFakeMailClient(undefined, undefined, undefined, { htmlSamples: true });
 }
