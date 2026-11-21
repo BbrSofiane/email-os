@@ -56,6 +56,19 @@
 [Gmail drafts lifecycle](https://developers.google.com/workspace/gmail/api/guides/drafts),
 [Gmail draft send endpoint](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.drafts/send).
 
+## Decisions
+
+### 2026-11-21
+
+- The owner chose immediate Send with a **five-second Undo window** in both
+  layouts. Keep recipients and subject visible, place Send apart from X, and
+  omit a confirmation dialog.
+- Undo cancels before dispatch and reopens the unchanged draft. An interrupted
+  Undo window returns the draft to Drafts with “Not sent” on restart. If the
+  window ends while offline, the intent stays queued until it can dispatch.
+- Show the temporary Undo action after Send. Subsequent status belongs in
+  Drafts and Activity, with no countdown or completion toast.
+
 ## Decision (proposed)
 
 Use `users.messages.send` with an immutable send intent in the operation ledger.
@@ -120,8 +133,8 @@ credentials. [Gmail scope reference](https://developers.google.com/workspace/gma
 ### Outbox, recovery and draft lifecycle
 
 Use the existing account-scoped ledger and serial worker, with a distinct send
-operation and payload. Send does not enter label preimages, group actions or
-Undo selection. Keep `local-drafts/drafts.db` separate and add a per-draft
+operation and payload. Keep send separate from label preimages, group actions
+and mailbox Undo selection. Keep `local-drafts/drafts.db` separate and add a per-draft
 lock naming the send operation and the saved revision. The ledger holds the
 authoritative outcome, draft ID and revision, and frozen MIME. A draft lock by
 itself cannot dispatch. A crash before the ledger commit leaves a lock without
@@ -143,6 +156,22 @@ even after provider confirmation. Changed arguments conflict. The worker
 checks the session generation and same-account credential at dispatch.
 Provider I/O runs outside database transactions and the draft lifecycle gate.
 
+At acceptance, persist a queued hold with a `not_before` time five seconds
+after the ledger clock's acceptance time. Return the deadline with the
+receipt. Under the ledger transaction, **Undo** cancels only the targeted
+hold with time remaining. Commit cancellation and release the draft lock
+through the existing repair path before reopening the same draft revision.
+Replayed Undo requests return the prior result. At the deadline, the running
+app commits a release to ordinary queued work, even while offline. Schedule
+release independently of provider preflight and backoff so a slow provider
+call cannot extend the window. Release and Undo are mutually exclusive. The
+worker can claim only released work and only at or after `not_before`.
+
+On startup, cancel any hold still awaiting release, even when its stored
+deadline has passed. This restores the draft if the process exited just
+after the deadline but before committing the release. Show “Not sent” in
+Drafts. A persisted release lets a queued send resume normally.
+
 Repair both stores at startup under the profile lock, before draft edits or
 send dispatch. Run the same repair after interrupted local cleanup and before
 reopening an affected draft:
@@ -163,12 +192,13 @@ reopening an affected draft:
 
 | Ledger state | Behavior |
 | --- | --- |
-| Pending, queued | The accepted draft is durable. The worker waits for connectivity and same-account access, then sends while the app is running. Preflight errors known to precede dispatch leave it queued with a status reason and backoff. **Cancel queued send** restores the editable draft and atomically wins or loses against the dispatch claim. There is no timed delay or Undo Send. |
-| Pending, applying | Commit an applying marker immediately before the first possible POST. Stop accepting cancellation of the send once this marker commits. Disable transport-level redirects and POST retries for this endpoint. Process exit before the marker leaves a queued intent. Exit after the marker, including after provider acceptance but before local confirmation commits, recovers as unknown. |
+| Pending, queued during Undo | The draft and frozen intent are durable. Undo is available for five seconds from acceptance. The provider send cannot start. Undo or startup recovery of an unreleased hold returns the unchanged draft. |
+| Pending, released and queued | The window has ended. The worker waits for connectivity and same-account access. Preflight errors known to precede dispatch leave the intent queued with a reason and backoff, including after restart. Activity retains **Cancel queued send**, which restores the editable draft if it wins against the dispatch claim. |
+| Pending, applying | Commit an applying marker immediately before the first possible POST. Stop accepting cancellation once this marker commits. Disable transport-level redirects and POST retries for this endpoint. Exit after the marker, including after provider acceptance but before local confirmation commits, recovers as unknown. |
 | Confirmed | A valid successful send response with authoritative message and thread IDs, or positive Sent evidence, confirms provider acceptance for sending. Commit those IDs and remove the frozen payload in the ledger, then delete the draft and write a tombstone through the repairable cleanup. The receipt remains queryable. “Sent” reports provider acceptance. Recipient delivery is outside the app's evidence. |
 | Failed | A documented, definitive provider refusal or an unrecoverable pre-dispatch validation failure releases the draft lock through cleanup and leaves the draft editable. For a retryable refusal, an unchanged revision can be retried explicitly from the latest failed attempt with a new request ID and a link to that attempt, reusing the frozen identity and MIME. An edited draft requires a new send action. |
 | Outcome unknown | A transport failure after dispatch becomes possible, an ambiguous response (including a 5xx or unusable success receipt), or an interrupted applying row takes this path. Keep the draft available read-only with the original intent. Neither the worker, a reconnect, nor a generic Activity Retry can POST it again. Later operations can continue. |
-| Cancelled before dispatch | Retain the receipt, release the draft and discard the frozen payload. A later send requires a new confirmation and request ID. |
+| Cancelled before dispatch | Retain the receipt, release the draft and discard the frozen payload. An explicit Undo reopens the editor. A later send starts with a fresh Send action and request ID. |
 
 Retire a failed attempt's frozen payload when an edit, discard or newer
 attempt supersedes its retry. Keep MIME, addresses, provider response bodies
@@ -202,29 +232,30 @@ through. Continue clearing credentials and the ordinary cache on disconnect.
 
 ### Editors, Activity and the reader
 
-The owner chooses the Send interaction in both layouts.
-
-| Option | Interaction and trade-off |
-| --- | --- |
-| A. Confirmation sheet on every send | Show the verified From, every To and Cc, and the saved subject. Cancel returns focus to the editor. A concurrent edit invalidates the sheet. This adds a final recipient check and a second action on every send. |
-| B. Immediate Send with visible recipients (recommended) | Keep the verified From and all To and populated Cc recipients visible in the editor, including on the phone sheet and when editing a reply. Pressing Send flushes and queues the reviewed revision without a second dialog. Send status lives in Drafts and Activity. This keeps routine sending quiet and puts recipient review where the user edits. |
-
-The owner also chooses how much space to give send status in Activity. The
+The owner chooses how much space to give send status in Activity. The
 recommendation is compact send rows in the existing Activity list, with actions
 on the selected row. A dedicated Outbox section in Activity would make pending
 and unresolved sends easier to find at the cost of a separate section. Both
 use the same ledger and Drafts links. Neither adds a countdown or a completion
 toast.
 
-- Place **Send** in the shared desktop editor footer and in the compact compose
-  sheet header beside X for both new messages and replies. Keep X and Escape
+- Place **Send** in the desktop editor and compact sheet footers, apart from
+  the close control, for both new messages and replies. Keep it reachable above
+  the phone keyboard. Keep the verified From, all recipients including
+  populated Cc, and the subject visible in the editor, including when replying.
+  Send flushes and queues the reviewed revision immediately. Keep X and Escape
   as save-and-close actions. Replace blanket “never sent” copy on send-capable
-  surfaces with “Local draft” or “Saved on this device.” Keep the Send target
-  reachable with the keyboard open. Enter in any editor field does not send.
+  surfaces with “Local draft” or “Saved on this device.” Enter in any editor
+  field does not send.
 - Disable duplicate submission and recover an interrupted IPC response by
   replaying the same request ID. Close the editor only after durable acceptance.
   Show validation and admission failures in the editor so the user can recover
   without losing the draft.
+- After the editor closes, show an accessible **Undo** action in the existing
+  notice area through the ledger deadline. Bind it to the specific send
+  operation. A successful Undo reopens the preserved draft and returns focus
+  to the editor. Expiry removes the action quietly. If a newer editor is open,
+  save it through the normal close flow before switching to the restored draft.
 - In both layouts, use persistent send rows with short status copy. Show
   “Queued to send,” “Sending…,” “Sent,” “Send failed,” or “Send outcome
   unknown,” with the relevant reason and action. A failed draft is available
@@ -248,8 +279,12 @@ existing pause and one-shot rejection controls
 Extend them with fixture-only one-shot outcomes for commit-then-lose-response
 and lose-response-without-commit, with controllable Sent visibility for tests.
 Keep scripted barriers in test support and make the fixed outcomes available
-for manual fixture validation without credentials. The browser fake models the
-same observable states and controls in memory.
+for manual fixture validation without credentials. Use the injected clock to
+verify zero send calls during the window, after Undo, and after restart with
+an unreleased hold. Verify one call after release and reconnection if the
+window expires offline. Fault controls apply only after dispatch reaches the
+synthetic provider. The browser fake models the same window, observable states
+and controls in memory.
 
 ## Scope and out of scope
 
@@ -259,7 +294,7 @@ uses the existing Reply-To or From defaults. The browser fake supports UI
 validation with synthetic data.
 
 Defer reply-all, forward, Bcc, attachments, HTML composition, alias selection,
-provider-synced drafts, scheduled send, Undo Send and sending while the app is
+provider-synced drafts, user-scheduled send and sending while the app is
 fully quit. Linux and Windows desktop send and Gmail token storage are outside
 this proposal. Keep the send capability unavailable on those native platforms.
 
@@ -282,8 +317,7 @@ this proposal. Keep the send capability unavailable on those native platforms.
    Verify From, To/Cc as applicable, Unicode content, one message per attempt,
    provider Sent, recipient receipt and thread placement. Record observations
    without committing real addresses, message content or credentials.
-3. Before stage 6, choose a confirmation sheet or immediate Send and compact
-   Activity rows or a dedicated Outbox section.
+3. Before stage 6, choose compact Activity rows or a dedicated Outbox section.
 
 ## Dependencies
 
@@ -312,20 +346,25 @@ merges. Stage 7 starts after B's scope-upgrade mechanism is merged.
    the capability disabled. Inject faults after the lock commit, after the
    ledger commit, and during terminal cleanup. Reopen and check both repair
    directions, receipt replay, and preservation of newer revisions.
-3. Add send-specific claim, cancellation, completion and retry to the ledger.
-   Check restart, concurrent claim/cancel, lost acceptance ACK, edits after
-   failure, confirmed cleanup and the disconnect/account fences with a stub
-   provider.
+3. Add the five-second hold and release, Undo, and send-specific claim,
+   cancellation, completion and retry to the ledger. With a stub provider
+   and injected clock, check Undo immediately before and at the deadline,
+   competing release and cancellation, restart before and after durable
+   release, lost acceptance ACK, edits after failure, confirmed cleanup and
+   disconnect/account fences.
 4. Implement the synthetic provider and fixed fault controls. Check native
    fixture integration through send, provider reopen, one-row thread projection,
-   both unknown paths and exactly one invocation for a lost response.
+   both unknown paths and exactly one invocation for a lost response. Verify
+   Undo and restart of an unreleased hold make zero provider calls. Release
+   while offline, then reconnect and verify one send.
 5. Wire the bridge, generated IPC contract and in-memory fake. Check
    `mise run check:contract`, native bridge tests, and fake-client parity for
    pending, failed, confirmed and unknown, including dismissal and copying
    as a separate intent. Keep live Gmail sending gated.
-6. Wire the shared editor and Activity per the owner's UI decision, and add
-   confirmed-thread refresh. Check draft flush and conflict, focus, changed
-   subject copy, failure, unknown actions and rendered behavior at both widths.
+6. Wire immediate Send, the temporary Undo action, Activity and confirmed-thread
+   refresh. Check draft flush and conflict, exact draft restoration, keyboard
+   focus, changed subject copy, failure, unknown actions and rendered behavior
+   at both widths.
    Finish Android fixture build, screenshots and recording at this stage.
 7. Wire live Gmail send, targeted reads and consent after B's merge.
    Check mock HTTP requests, scopes, account verification, response boundaries,
@@ -340,21 +379,26 @@ merges. Stage 7 starts after B's scope-upgrade mechanism is merged.
   valid and invalid grants, denied consent, offline/reconnect, crash before
   and after dispatch, a lost IPC receipt, 5xx/timeout, delayed Sent visibility,
   missing evidence, repeated status checks, and stable provider-call counts
-  when copying or dismissing an unknown send.
-  Test an archive/Undo alongside sending to check the existing ledger behavior.
+  when copying or dismissing an unknown send. Verify the Undo deadline with
+  an injected clock and zero dispatches for Undo or an interrupted window.
+  Verify a released offline send persists across restart and dispatches once
+  when online. Test mailbox Undo alongside send Undo to check their isolation.
   Run `CARGO_TARGET_DIR=/home/exedev/email-os/target CARGO_BUILD_JOBS=2 mise run check:all`
   and the rendered suites using the programme's shared build limits.
 - Capture Chromium screenshots at desktop and phone widths using the
   repository's rendered screenshot harness and the configured
-  `EMAIL_OS_RENDERED_LAYOUT_CHROME`. Capture both editors, the chosen Send
-  interaction, queued/failed/unknown Activity, and the confirmed reply in the
-  thread. Use `mise run screenshots:mobile` for phone evidence and the rendered editor
-  suite with a desktop viewport for desktop evidence.
+  `EMAIL_OS_RENDERED_LAYOUT_CHROME`. Capture both editors with recipients
+  and subject visible, the Undo action, quiet queued/failed/unknown Activity,
+  and the confirmed reply in the thread. Use `mise run screenshots:mobile`
+  for phone evidence and the rendered editor suite with a desktop viewport
+  for desktop evidence.
 - Under the emulator lock, use the T3 device session to capture Android fixture
-  screenshots including the open keyboard, the chosen Send interaction,
-  Activity status and the reader. Record a fixture send from compose to one sent
-  message in the reader (`agent-device record`, at most 60 seconds). Exercise
-  offline queue/restart and the two fault paths separately. Store small
+  screenshots including the open keyboard, Undo, Activity status and the
+  reader. In one fixture recording, press Send, tap Undo within five seconds,
+  show the unchanged draft, then press Send again and allow the window to
+  expire. Show one sent message in the reader (`agent-device record`, at most
+  60 seconds). Separately exercise a kill during the Undo window, offline
+  expiry and reconnection, and the two provider fault paths. Store small
   synthetic artifacts in `docs/validation/send/` and list larger video paths
   from `/home/exedev/email-os-usable/send/` in the PR.
 - Record owner-only live results separately from fixture and mocked HTTP
@@ -370,7 +414,5 @@ merges. Stage 7 starts after B's scope-upgrade mechanism is merged.
 - Separate database commits add recovery paths. Draft edits and dispatch are
   gated on successful startup repair. A failed cleanup preserves the ledger
   receipt for recovery.
-- Should Send open a confirmation sheet every time or act immediately with
-  all recipients visible? Recommend immediate Send.
 - Should Activity show compact send rows or a dedicated Outbox section?
   Recommend compact rows.
