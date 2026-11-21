@@ -1,0 +1,20 @@
+Delegated task node:delegated-task:command%3Amcp%3A60b9dc2b-5271-462b-90eb-f39918b85e09%3Adelegate-task%3A40dbfe23-6ef5-40f1-8709-fe69ecef87e9 (C stage 5 (code only): fixture count update) [completed]:
+Completed the expectation and documentation edits. `git diff --check` passed; no builds or tests were run, and nothing was committed or pushed.
+
+Edits, with old → new values:
+
+- [synthetic_core_lifecycle.rs:17](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/tests/synthetic_core_lifecycle.rs:17): test name 18 → 24; Inbox count 16 → 22; conversation range and cache count 18 → 24; message fact rows 26 → 33.
+- [synthetic_core_policy.rs:43](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/tests/synthetic_core_policy.rs:43): cache and bootstrap counts 18 → 24, Inbox count 16 → 22, and test name updated. Restart expectations changed from `(18, 2)` → `(24, 2)`.
+- [synthetic_core_policy.rs:373](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/tests/synthetic_core_policy.rs:373): added conv-20 and conv-22 to both Ridpath searches, and conv-23 to `script`; unread expectation 10 of 16 → 16 of 22.
+- [synthetic_core_projections.rs:88](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/tests/synthetic_core_projections.rs:88): fixture comment 18 → 24; provider Inbox count 16 → 22 and first ID conv-18 → conv-19.
+- [data.rs:61](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/synthetic/data.rs:61): unread fixture comment 10 of 16 → 16 of 22.
+- [mod.rs:3](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/synthetic/mod.rs:3): removed a duplicate comma in the existing 24-conversation comment.
+- [current-status.md:14](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/docs/current-status.md:14): current native search fixture 18 → 24, noting six HTML samples.
+- [development.md:316](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/docs/development.md:316): current native fixture 18 → 24, including 22 Inbox conversations and six HTML samples. The scenario and fixture-data descriptions now distinguish the 24 native conversations from the browser fake’s 18.
+- [0002-fixture-as-synthetic-provider.md:7](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/docs/adr/0002-fixture-as-synthetic-provider.md:7): added the requested dated ADR 0006 note.
+
+The `script` result depends on HTML-to-text retaining the hostile sample’s visible “Script” text; please verify that result when the coordinator runs checks.
+
+Other fixture assumptions found and left unchanged: [synthetic_core_groups.rs:37](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/tests/synthetic_core_groups.rs:37) uses 18 existing IDs to construct an oversized request; [draft_service.rs:4](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/tests/draft_service.rs:4) and [contract_scenarios.rs:15](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/tests/contract_scenarios.rs:15) contain stale fixture-count comments.
+
+The remaining 18s were deliberately retained: the lifecycle test’s legacy test-name reference and [fixture_transition.rs:97](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/tests/fixture_transition.rs:97) describe the historical fixture; ADR 0002 and dated status records preserve historical observations; [development.md:830](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/docs/development.md:830) refers to the browser fake. Other occurrences are unrelated versions, IDs, timestamps, hashes, limits, or fixture content.
