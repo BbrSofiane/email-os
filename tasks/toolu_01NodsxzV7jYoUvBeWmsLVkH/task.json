@@ -1,0 +1,15 @@
+{
+  "tool_use_id": "toolu_01NodsxzV7jYoUvBeWmsLVkH",
+  "agent_id": "a79b928a3b40b5592",
+  "subagent_type": "web-fetch",
+  "task_description": "Research OAuth verification and GMS version",
+  "token_usage": {
+    "input_tokens": 10,
+    "cache_creation_tokens": 40201,
+    "cache_read_tokens": 70176,
+    "output_tokens": 6475,
+    "api_call_count": 4
+  },
+  "started_at": "2026-11-21T13:38:07.416367966Z",
+  "completed_at": "2026-11-21T14:11:49.715104567Z"
+}
