@@ -1,0 +1,42 @@
+GREENLIGHT for ADR 0006 @ 780b310. Start phase 2 as described in /home/exedev/email-os-usable/RULES.md.
+
+Your two questions:
+1. Emulator no-script check: either route is fine. Chrome DevTools over `adb forward` against the debug build's WebView is allowed for this read-only inspection (it's diagnosis, not UI driving); a probe APK is also fine. Prefer whichever needs fewer Android builds. Reinstall the normal debug APK afterwards and release the emulator lock.
+2. Opener pin: noted; re-check it when you rebase.
+
+Reminders:
+- Hand each stage to a GPT-6.1 Terra sub-agent via `delegate_task` (provider instance `codex`, model `gpt-6.1-terra`, option `reasoningEffort: high`), in your worktree, one stage at a time; review each stage's diff and run its check yourself before starting the next. The sanitiser and isolation stages deserve your closest review.
+- You run in parallel with track A (install/signing; it renames the Android package to `dev.exedev.emailos` and touches startup). Follow the one-heavy-command rule and the emulator lock (A will also use the emulator). If A merges first, rebase before your Android validation.
+- Evidence: browser screenshots at desktop and phone widths for each fixture (newsletter blocked/loaded, HTML-only, cid image, reply chain, hostile sample, oversized), the link confirmation on both layouts, Android emulator screenshots, and a short recording of open → Load images → tap a link → confirmation → opens in the browser on Android.
+- When done: PR to main, end with `READY FOR REVIEW: <PR url> @ <head sha>`. The macOS checklist goes in the PR as an owner action.
+
+---
+
+Delegated task node:delegated-task:command%3Amcp%3A60b9dc2b-5271-462b-90eb-f39918b85e09%3Adelegate-task%3A4933d3a3-b68a-4b4e-a135-68ff8d47899f (C stage 1: frame safety spike) [completed]:
+Stage 1 is **incomplete and uncommitted**. The working tree contains the fail-closed guard and its unit tests, plus a standalone probe and its parsing/global-list test:
+
+- [frame-guard.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/src/lib/html-mail/frame-guard.ts)
+- [html-frame-guard.test.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/tests/reader/html-frame-guard.test.ts)
+- [html-frame-probe.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/tests/rendered/html-frame-probe.ts)
+- [html-frame-probe.test.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/tests/rendered/html-frame-probe.test.ts)
+
+`pnpm typecheck` passed, and a separate Node check confirmed the probe parses as an expression. The rendered spike test still needs to be written, so the all-frames injection outcome is unknown. The required Vitest runs were not run: another track’s Android cargo build was active when checked, and the shared machine rules require waiting for it to finish. No commit or push was made.
+
+---
+
+Delegated task node:delegated-task:command%3Amcp%3A60b9dc2b-5271-462b-90eb-f39918b85e09%3Adelegate-task%3A49f73730-c1b6-4d7a-9433-bd334e4f2060 (C stage 1 (continue): frame safety spike) [completed]:
+The stage is **uncommitted** because the rendered probe check failed. No commit was created or pushed.
+
+Chrome recorded one resource-timing entry for the probe’s blocked remote image, with `naturalWidth=0`; CDP interception recorded no image request. The separate CSP inheritance test passed in both directions. The probe currently treats any resource-timing entry as a failure, so that check needs further investigation without weakening the assertion.
+
+Checks:
+
+- Guard and probe unit tests: **9 passed**.
+- Rendered spike: **3 passed, 1 failed**.
+- `pnpm typecheck`: **passed**.
+
+The printed probe checks passed for all frame loads, parent integrity, non-nav locations and frame globals. The nav location reported a cross-origin `SecurityError` as informational. The sole failed line was `remote image blocked: entries=1, width=0`. Parent IPC was absent.
+
+For the injected-script case, Chrome reported **`present: true, guarded: true`**.
+
+The uncommitted work includes [frame-guard.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/src/lib/html-mail/frame-guard.ts), [html-frame-probe.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/tests/rendered/html-frame-probe.ts), [html-frame-spike.rendered.test.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/tests/rendered/html-frame-spike.rendered.test.ts), the guard and probe unit tests, and supporting CDP and Node type changes.
