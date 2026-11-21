@@ -85,7 +85,7 @@ fn cached_done_persists_pending_archive_and_restores_after_restart() {
 
 /// Legacy: `list_cached_done_caps_large_sqlite_result_and_pages_equal_dates_by_id`.
 /// 137 extra equal-dated conversations are served by a test overlay (the
-/// synthetic mailbox itself is fixed at 18).
+/// synthetic mailbox itself is fixed at 24).
 #[test]
 fn cached_done_caps_large_results_and_pages_equal_dates_by_id() {
     let s = Synthetic::open_wrapped("done-bounded", |synthetic| {
@@ -431,11 +431,11 @@ fn provider_inbox_lists_newest_first_and_archived_seeds_are_not_inbox() {
     let dir = temp_profile("provider-inbox");
     let provider = SyntheticGmailProvider::open(dir.path()).unwrap();
     let page = provider.list_inbox(None, &CancelToken::default()).unwrap();
-    assert_eq!(page.thread_ids.len(), 16);
+    assert_eq!(page.thread_ids.len(), 22);
     assert!(!page.thread_ids.contains(&"conv-06".to_string()));
     assert!(!page.thread_ids.contains(&"conv-15".to_string()));
     assert_eq!(page.next_page_token, None);
-    assert_eq!(page.thread_ids[0], "conv-18", "newest conversation first");
+    assert_eq!(page.thread_ids[0], "conv-19", "newest conversation first");
     // The two archived seeds exist, with no INBOX message and read facts.
     for id in ["conv-06", "conv-15"] {
         let thread = thread_of(&provider, id);

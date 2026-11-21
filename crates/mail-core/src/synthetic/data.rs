@@ -58,7 +58,7 @@ pub(crate) const SEED_VERSION: &str = "2";
 /// * a conversation whose newest message the user wrote is read (conv-02,
 ///   conv-04, conv-14, conv-16), as is a thread the user already dealt with;
 /// * a few others are read (the invoice conv-03 and the digest conv-10);
-/// * everything else in the Inbox is unread (10 of the 16 conversations), and
+/// * everything else in the Inbox is unread (16 of the 22 conversations), and
 ///   the two initially archived conversations are read.
 pub(crate) const SEEDED_READ_CONVERSATIONS: &[&str] = &[
     "conv-02", "conv-03", "conv-04", "conv-10", "conv-14", "conv-16",

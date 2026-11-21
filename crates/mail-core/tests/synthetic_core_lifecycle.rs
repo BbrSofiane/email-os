@@ -14,17 +14,17 @@ use mail_core::MailError;
 
 /// Legacy: `seeds_18_conversations_exactly_once_and_survives_restart`.
 #[test]
-fn seeds_18_conversations_exactly_once_and_survives_restart() {
+fn seeds_24_conversations_exactly_once_and_survives_restart() {
     let s = Synthetic::open("seed-restart");
     assert_eq!(
         s.core.list_conversations().unwrap().conversations.len(),
-        16,
-        "16 of 18 seeded conversations start in the inbox (2 seeded archived)"
+        22,
+        "22 of 24 seeded conversations start in the inbox (2 seeded archived)"
     );
     // Stage 1 loads the two archived seeds explicitly; stage 2's bootstrap
     // does it before the session reports ready.
     load_archived_seeds(&s.core).expect("archived seeds load");
-    for i in 1..=18 {
+    for i in 1..=24 {
         let conversation = s
             .core
             .get_conversation(&conversation(&format!("conv-{i:02}")))
@@ -33,7 +33,7 @@ fn seeds_18_conversations_exactly_once_and_survives_restart() {
     }
     assert_eq!(
         s.core.account_status().unwrap().sync.cached_conversations,
-        18
+        24
     );
     let rows = |dir: &std::path::Path| -> i64 {
         rusqlite::Connection::open(dir.join("synthetic-provider.db"))
@@ -42,15 +42,15 @@ fn seeds_18_conversations_exactly_once_and_survives_restart() {
             .unwrap()
     };
     let seeded = rows(s.dir.path());
-    assert_eq!(seeded, 26, "one fact row per seeded message");
+    assert_eq!(seeded, 33, "one fact row per seeded message");
 
     let s = s.reopen();
     assert_eq!(
         s.core.list_conversations().unwrap().conversations.len(),
-        16,
+        22,
         "no reseed after restart"
     );
-    for i in 1..=18 {
+    for i in 1..=24 {
         s.core
             .get_conversation(&conversation(&format!("conv-{i:02}")))
             .expect("seeded conversation still readable after restart");

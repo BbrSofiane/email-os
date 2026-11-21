@@ -313,7 +313,8 @@ operation ledger (acceptance, undo, groups, reminders) is the same code Gmail mo
 * its files live under `<app_data_dir>/fixture-profile`: `synthetic-provider.db` (durable provider
   facts, seeded once), `gmail.db` (the core's cache and operation ledger), `profile.lock`, and
   `local-drafts/` (local drafts, separate from the mailbox);
-* all 18 conversations are present (the two initially archived ones are cached, not Inbox, not
+* all 24 native conversations are present, including six HTML samples (ADR 0006); 22 are in Inbox
+  (the two initially archived ones are cached, not Inbox, not
   Done). Inbox mail is seeded as a realistic read/unread mix; archive, read, star, undo, groups,
   retry, saved split, search (cached only), reminders (hide locally, no provider write), the
   `fixture-text` attachment and reply headers work through the same commands as Gmail mode; cached
@@ -826,13 +827,13 @@ core is the source of truth; the fake must agree with it.
 
 A scenario names the profiles it applies to: `gmail` and `fixture`. In Rust, `fixture` is the
 synthetic session; in TypeScript it is the browser fake's fixture mode. Scenarios that need a
-mailbox the fixed 18 conversations cannot provide list `gmail` only.
+mailbox the browser fake’s fixed 18 conversations cannot provide list `gmail` only.
 
 The Rust `synthetic` profile matches the `gmail` profile except where the session policy differs,
 and every difference is a named, justified `KNOWN_DIVERGENCES` entry. Both Rust tables are empty
 today. KD-1 (the Gmail worker stopped at a definitely rejected write and left its siblings queued
 until the next retry tick) is fixed: see "Worker behaviour after a failed write" below. Scenarios whose mailbox is not a subset of the
-fixed 18 conversations get their extra threads from a test overlay on the synthetic provider. The
+fixed 24 native conversations get their extra threads from a test overlay on the synthetic provider. The
 browser fake's `fixture` mode mirrors the unified fixture: read, star, retry and the cached Starred
 list are admitted, Trash, destinations and the lifecycle commands answer `invalid_request{mode}` /
 `read_only` exactly as the synthetic policy does.
@@ -937,7 +938,7 @@ backoff; that path is unchanged.
 
 ## Fixture data
 
-Fixture mode uses only synthetic `fixture-account`, `conv-01`…`conv-18` rows,
+Fixture mode uses only synthetic `fixture-account`, `conv-01`…`conv-24` rows (22 Inbox, including six HTML samples from ADR 0006),
 seeded once; it never resets provider facts or operation history. Gmail mode has a
 separate SQLite schema/profile and bounded cache. Neither mode logs subjects,
 addresses, bodies, OAuth codes, or credentials. Gmail history catch-up does not

@@ -12,7 +12,7 @@
 //!   `SyntheticGmailProvider` under the synthetic session policy. This is also
 //!   what the files' `fixture` profile means in Rust (it is the browser fake's
 //!   fixture mode in TypeScript), so every scenario runs on it whatever profiles
-//!   the file declares. Scenarios whose mailbox is not a subset of the fixed 18
+//!   the file declares. Scenarios whose mailbox is not a subset of the fixed 24
 //!   conversations get their extra threads from a test overlay on top of the
 //!   synthetic provider.
 //!
