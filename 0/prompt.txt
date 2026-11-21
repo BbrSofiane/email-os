@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>b4zla9so1</task-id>
+<tool-use-id>toolu_01JNKKmvkBkDZnRBGRiryAjP</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-usable-html-reader-047d71899da466ac/ee85c0c8-b2b0-43e9-b640-7729bf4a26ee/tasks/b4zla9so1.output</output-file>
+<status>completed</status>
+<summary>Background command "df -h / | tail -1; cd /home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac &amp;&amp; T=$(git rev-parse --git-dir)/eos-tmp &amp;&amp; $T/wait-free.sh &amp;&amp; export CARGO_TARGET_DIR=/home/exedev/email-os/target CARGO_BUILD_JOBS=2 &amp;&amp; mise run android:build &gt; $T/android-build.log 2&gt;&amp;1; echo "exit $?"; tail -3 $T/android-build.log; df -h / | tail -1" completed (exit code 0)</summary>
+</task-notification>
