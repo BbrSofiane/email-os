@@ -157,6 +157,14 @@ pub struct InlineImage {
     pub size: u32,
 }
 
+/// Validated inline image bytes encoded for IPC.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct InlineImageData {
+    pub mime_type: String,
+    pub base64: String,
+}
+
 /// One cached plain-text message.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]

@@ -91,7 +91,7 @@ import {
 import { toMailError, type SavedSplit } from './client';
 import { GET_SAVED_SPLIT_COMMAND, SAVE_SAVED_SPLIT_COMMAND } from './generated';
 
-import { LIST_ATTACHMENTS_COMMAND, SAVE_ATTACHMENT_COMMAND, CANCEL_ATTACHMENT_COMMAND, OPEN_EXTERNAL_LINK_COMMAND } from './generated';
+import { GET_MESSAGE_HTML_COMMAND, GET_INLINE_IMAGE_COMMAND, LIST_ATTACHMENTS_COMMAND, SAVE_ATTACHMENT_COMMAND, CANCEL_ATTACHMENT_COMMAND, OPEN_EXTERNAL_LINK_COMMAND } from './generated';
 
 function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   return invoke<T>(command, args).catch((raw: unknown) => Promise.reject(toMailError(raw)));
@@ -124,6 +124,8 @@ export function createTauriMailClient(): MailClient {
       put: (command) => call(PUT_REMINDER_COMMAND, { command }),
       cancel: (command) => call(CANCEL_REMINDER_COMMAND, { command }),
     },
+    getMessageHtml: (target, messageId) => call(GET_MESSAGE_HTML_COMMAND, { target, messageId }),
+    getInlineImage: (target, messageId, attachmentId) => call(GET_INLINE_IMAGE_COMMAND, { target, messageId, attachmentId }),
     listAttachments: (target) => call(LIST_ATTACHMENTS_COMMAND, { target }),
     saveAttachment: (request) => call(SAVE_ATTACHMENT_COMMAND, { request }),
     cancelAttachment: (requestId) => call(CANCEL_ATTACHMENT_COMMAND, { requestId }),

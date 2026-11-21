@@ -17,6 +17,8 @@ fn main() {
         "list_cached_trash",
         "get_conversation",
         "list_attachments",
+        "get_message_html",
+        "get_inline_image",
         "save_attachment",
         "cancel_attachment",
         "open_external_link",

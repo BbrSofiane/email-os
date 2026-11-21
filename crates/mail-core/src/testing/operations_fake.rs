@@ -896,15 +896,25 @@ impl crate::gmail::types::GmailProvider for FakeProvider {
         &self,
         _account: &str,
         _message: &str,
-        _attachment: &str,
+        attachment: &str,
         cancel: &CancelToken,
     ) -> Result<Vec<u8>, MailError> {
         let (_hook, cancel_hook, error, _) = self.begin_reply_read(false);
         if let Some(hook) = cancel_hook {
             hook(cancel);
         }
-        let result = crate::attachments::check_cancel(cancel)
-            .and_then(|()| error.map_or(Ok(b"%PDF-1.7\n".to_vec()), Err));
+        let result = crate::attachments::check_cancel(cancel).and_then(|()| {
+            error.map_or_else(
+                || {
+                    Ok(match attachment {
+                        "inline-png" => b"\x89PNG\r\n\x1a\n".to_vec(),
+                        "inline-gif" => b"GIF89a".to_vec(),
+                        _ => b"%PDF-1.7\n".to_vec(),
+                    })
+                },
+                Err,
+            )
+        });
         self.finish_reply_read();
         result
     }

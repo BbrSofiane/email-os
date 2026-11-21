@@ -3,7 +3,7 @@ use super::run_blocking;
 use crate::diagnostics::{cause, storage_failure};
 use crate::state::AppState;
 use mail_core::attachments::{AttachmentDescriptor, AttachmentSaved, SaveAttachment};
-use mail_core::dto::ConversationRef;
+use mail_core::dto::{ConversationRef, InlineImageData, MessageHtmlBody};
 use mail_core::error::MailError;
 #[cfg(not(target_os = "android"))]
 use tauri::Manager;
@@ -16,6 +16,33 @@ pub(crate) async fn list_attachments(
 ) -> Result<Vec<AttachmentDescriptor>, MailError> {
     run_blocking(state.core.clone(), move |core| {
         core.list_attachments(&target)
+    })
+    .await
+}
+
+/// Returns the cached HTML body for a message.
+#[tauri::command]
+pub(crate) async fn get_message_html(
+    state: State<'_, AppState>,
+    target: ConversationRef,
+    message_id: String,
+) -> Result<MessageHtmlBody, MailError> {
+    run_blocking(state.core.clone(), move |core| {
+        core.get_message_html(&target, &message_id)
+    })
+    .await
+}
+
+/// Fetches and validates a listed inline image.
+#[tauri::command]
+pub(crate) async fn get_inline_image(
+    state: State<'_, AppState>,
+    target: ConversationRef,
+    message_id: String,
+    attachment_id: String,
+) -> Result<InlineImageData, MailError> {
+    run_blocking(state.core.clone(), move |core| {
+        core.get_inline_image(&target, &message_id, &attachment_id)
     })
     .await
 }

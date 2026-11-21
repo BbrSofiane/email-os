@@ -1434,6 +1434,9 @@ export function createBrowserFakeMailClient(
       });
     },
 
+    // Fixture HTML arrives in ADR 0006 stage 4.
+    async getMessageHtml() { throw failNotShown(); },
+    async getInlineImage() { throw failNotShown(); },
     async listAttachments(target) {
       const conv = byId(target.conversationId);
       if (!conv || conv.ref.accountId !== target.accountId) throw failNotShown();

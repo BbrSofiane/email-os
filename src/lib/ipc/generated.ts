@@ -333,6 +333,8 @@ export type MessageHtmlBody = { html: string, inlineImages: Array<InlineImage>, 
 
 export type InlineImage = { contentId: string, attachmentId: string, mimeType: string, size: number, };
 
+export type InlineImageData = { mimeType: string, base64: string, };
+
 export type Conversation = {
 /**
  * Effective per-message star coverage; absent on legacy/unsupported profiles.

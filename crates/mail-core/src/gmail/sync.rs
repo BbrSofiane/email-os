@@ -5,6 +5,8 @@
 //! transactional and drop any result that raced a disconnect. No mail
 //! content, addresses, or credentials are ever logged.
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -57,6 +59,35 @@ const MAX_DISCOVERY_IDS_PER_PAGE: usize = 100;
 const MAX_HISTORY_IDS_PER_PAGE: usize = 1_000;
 /// Bound the aggregate live thread DTOs retained before a page is committed.
 const MAX_RETAINED_THREAD_BYTES_PER_PAGE: usize = 16 * 1024 * 1024;
+
+const MAX_INLINE_IMAGE_BYTES: usize = 2 * 1024 * 1024;
+
+/// Checks that the image signature agrees with its declared media type.
+fn image_bytes_match(mime: &str, bytes: &[u8]) -> bool {
+    match mime {
+        "image/png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "image/jpeg" => bytes.starts_with(b"\xff\xd8\xff"),
+        "image/gif" => bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a"),
+        "image/webp" => bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP"),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod inline_image_signature_tests {
+    use super::image_bytes_match;
+
+    #[test]
+    fn signatures_match_only_the_declared_image_type() {
+        assert!(image_bytes_match("image/png", b"\x89PNG\r\n\x1a\n"));
+        assert!(image_bytes_match("image/jpeg", b"\xff\xd8\xff"));
+        assert!(image_bytes_match("image/gif", b"GIF87a"));
+        assert!(image_bytes_match("image/gif", b"GIF89a"));
+        assert!(image_bytes_match("image/webp", b"RIFF1234WEBP"));
+        assert!(!image_bytes_match("image/png", b"GIF89a"));
+        assert!(!image_bytes_match("image/webp", b"RIFF"));
+    }
+}
 
 /// Cloneable, thread-safe facade over one Gmail profile. Cheap to hold from a
 /// thin async Tauri shell; blocking store calls stay inside these methods so
@@ -1014,6 +1045,56 @@ impl GmailCore {
         message_id: &str,
     ) -> Result<crate::dto::MessageHtmlBody, MailError> {
         self.inner.store.get_message_html(target, message_id)
+    }
+
+    /// Fetches a listed inline image and validates its size and signature in memory.
+    pub fn get_inline_image(
+        &self,
+        target: &ConversationRef,
+        message_id: &str,
+        attachment_id: &str,
+    ) -> Result<crate::dto::InlineImageData, MailError> {
+        let generation = self.inner.store.generation()?;
+        let image = self
+            .inner
+            .store
+            .inline_images_for(target, message_id)?
+            .into_iter()
+            .find(|image| image.attachment_id == attachment_id)
+            .ok_or(MailError::NotFound)?;
+        if image.size as usize > MAX_INLINE_IMAGE_BYTES {
+            return Err(crate::attachments::invalid("inlineImage"));
+        }
+        let registration = self.begin_read_transfer(CancelToken::default())?;
+        if self.inner.store.generation()? != generation {
+            return Err(MailError::NotFound);
+        }
+        let bytes = self.inner.provider.fetch_attachment(
+            &target.account_id,
+            message_id,
+            attachment_id,
+            &registration.cancel,
+        )?;
+        crate::attachments::check_cancel(&registration.cancel)?;
+        let st = self.inner.ctrl.state.lock().map_err(storage_err())?;
+        if st.disconnecting
+            || st.stop
+            || self.inner.store.generation()? != generation
+            || !self
+                .inner
+                .store
+                .inline_images_for(target, message_id)?
+                .contains(&image)
+        {
+            return Err(MailError::NotFound);
+        }
+        if bytes.len() > MAX_INLINE_IMAGE_BYTES || !image_bytes_match(&image.mime_type, &bytes) {
+            return Err(crate::attachments::invalid("inlineImage"));
+        }
+        Ok(crate::dto::InlineImageData {
+            mime_type: image.mime_type,
+            base64: STANDARD.encode(bytes),
+        })
     }
 
     pub fn list_attachments(

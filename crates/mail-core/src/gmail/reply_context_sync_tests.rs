@@ -732,3 +732,49 @@ fn retained_thread_budget_drops_html_when_needed() {
         Some(MessageHtml::TooLarge)
     ));
 }
+
+#[test]
+fn inline_image_fetch_checks_listing_size_and_signature() {
+    use crate::gmail::types::InlinePart;
+    let (core, _provider, dir, target) = setup("inline-images", None, None, false, false);
+    let mut cached = thread(None, false);
+    for (id, size) in [
+        ("inline-png", 8),
+        ("inline-gif", 6),
+        ("too-large", (MAX_INLINE_IMAGE_BYTES + 1) as u32),
+    ] {
+        cached.inline_parts.push(InlinePart {
+            message_id: "m-latest".into(),
+            content_id: id.into(),
+            attachment_id: id.into(),
+            mime_type: "image/png".into(),
+            size,
+        });
+    }
+    core.inner
+        .store
+        .apply_discovery_page(
+            &[ThreadFetch::Cached(Box::new(cached))],
+            None,
+            true,
+            false,
+            0,
+        )
+        .unwrap();
+    let result = core
+        .get_inline_image(&target, "m-latest", "inline-png")
+        .unwrap();
+    assert_eq!(result.mime_type, "image/png");
+    assert_eq!(result.base64, STANDARD.encode(b"\x89PNG\r\n\x1a\n"));
+    assert_eq!(
+        core.get_inline_image(&target, "m-latest", "missing"),
+        Err(MailError::NotFound)
+    );
+    for id in ["inline-gif", "too-large"] {
+        assert_eq!(
+            core.get_inline_image(&target, "m-latest", id),
+            Err(crate::attachments::invalid("inlineImage"))
+        );
+    }
+    close(core, dir);
+}

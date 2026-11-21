@@ -17,9 +17,10 @@ use mail_core::drafts::types::{
 use mail_core::dto::{
     Address, CachedDoneCoverage, CachedDoneRequest, CachedDoneSnapshot, CachedTrashCoverage,
     CachedTrashRequest, CachedTrashSnapshot, Conversation, ConversationRef, ConversationSummary,
-    HtmlBodyState, InboxSnapshot, InlineImage, MailboxOperationKind, Message, MessageHtmlBody,
-    OperationFailure, OperationReceipt, OperationStatus, OperationSummary, RetryOperation,
-    SetArchived, SetRead, UndoOperation, UndoOutcome, UndoReceipt, UndoUnavailableReason,
+    HtmlBodyState, InboxSnapshot, InlineImage, InlineImageData, MailboxOperationKind, Message,
+    MessageHtmlBody, OperationFailure, OperationReceipt, OperationStatus, OperationSummary,
+    RetryOperation, SetArchived, SetRead, UndoOperation, UndoOutcome, UndoReceipt,
+    UndoUnavailableReason,
 };
 use mail_core::error::MailError;
 use mail_core::fixture_transition::{
@@ -111,6 +112,7 @@ fn declarations() -> Vec<String> {
         Message::decl(),
         MessageHtmlBody::decl(),
         InlineImage::decl(),
+        InlineImageData::decl(),
         Conversation::decl(),
         OperationSummary::decl(),
         InboxSnapshot::decl(),
