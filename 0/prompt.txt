@@ -1,0 +1,19 @@
+You own track C of the "usable Android app" programme: displaying HTML mail. First read /home/exedev/email-os-usable/RULES.md in full and follow it. You are in phase 1: write ADR 0005 as a proposal, push it, report `ADR READY`, and stop. Do not implement until I send GREENLIGHT.
+
+Today the reader is plain-text only on every platform (docs/current-status.md: "HTML mail rendering are not implemented"); most real mail is HTML, some with no text part. The reader must work in both the desktop layout and the phone (compact) layout, in the Tauri webview on macOS and Android, and in the browser preview.
+
+The ADR must cover at least:
+- Where the HTML comes from: what the Gmail sync stores today (bodies, MIME parts, size bounds, cache) and what must change in crates/mail-core to keep the HTML part; text/plain vs text/html choice and fallback when there is no text part.
+- Safety: sanitising (in Rust or in the frontend; which library), isolation (sandboxed iframe with srcdoc, CSP, no scripts, no forms, no same-origin), and no access to Tauri IPC from mail content.
+- Remote content: images and other remote resources blocked by default (tracking pixels), a per-message "load images" choice and whether it is remembered; `cid:` inline images from attachments.
+- Links: they must go through the app's existing explicit link confirmation (links are disabled on Android today; say what HTML links do there and coordinate with track B, which owns the Android gates).
+- Layout: fitting wide newsletters at phone width (scale vs reflow), dark mode, text size, quoted-text collapsing as today, selection/copy.
+- Performance with large messages, and printing/forwarding are out of scope unless you argue otherwise.
+- Fixture data: the synthetic provider needs HTML samples (newsletter, tracking pixel, cid image, malicious samples) so everything can be tested without real mail.
+- Validation: tests for the sanitiser with hostile inputs, browser screenshots at desktop and phone width (light and dark), Android emulator screenshots.
+
+Report back with `ADR READY: ...` and your open questions.
+
+---
+
+Correction from the coordinator: ADR 0003 already exists on main (docs/adr/0003-mobile-layout.md). Your ADR number is now 0006 (track C). The table in /home/exedev/email-os-usable/RULES.md is updated: A=0004, B=0005, C=0006, D=0007. Everything else is unchanged.
