@@ -1,0 +1,11 @@
+Delegated task node:delegated-task:command%3Amcp%3A60b9dc2b-5271-462b-90eb-f39918b85e09%3Adelegate-task%3A52bf21f1-e345-489e-be63-06f52208ec6f (C stage 6: HTML mail sanitiser) [completed]:
+The sanitiser implementation is **incomplete and should not be integrated yet**. The requested hostile corpus, fixture coverage, and real-Chrome security and timing tests still need to be written and passed. No timing number is available.
+
+Files changed:
+
+- [css-filter.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/src/lib/html-mail/css-filter.ts)
+- [sanitize.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/src/lib/html-mail/sanitize.ts)
+- [html-css-filter.test.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/tests/reader/html-css-filter.test.ts)
+- [html-sanitize.test.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/tests/reader/html-sanitize.test.ts)
+
+`pnpm typecheck` passed. The two named unit-test files passed, but contain only three preliminary tests and do not provide the requested coverage. The rendered-test command failed because `tests/reader/html-sanitize.rendered.test.ts` has not been created. No commit or push was made.
