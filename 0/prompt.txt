@@ -1,0 +1,10 @@
+Delegated task node:delegated-task:command%3Amcp%3A60b9dc2b-5271-462b-90eb-f39918b85e09%3Adelegate-task%3A66cb0321-92bf-4194-bc46-94cb05d2733c (C stage 8: link confirmation and mailto) [completed]:
+Implemented link confirmation for mail bodies and the attachment chooser, including host mismatch notices, Android availability, and `mailto:` composition with only the address prefilled.
+
+Changed:
+
+- [external-links.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/src/lib/external-links.ts) and [LinkConfirm.vue](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/src/components/LinkConfirm.vue)
+- [App.vue](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/src/App.vue), [AttachmentChooser.vue](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/src/components/AttachmentChooser.vue), and [useDrafts.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/src/composables/useDrafts.ts)
+- New tests in [external-links.test.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/tests/reader/external-links.test.ts), [link-confirm.test.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/tests/reader/link-confirm.test.ts), and [message-link.test.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/tests/app-shell/message-link.test.ts)
+
+`pnpm typecheck` passed. The requested targeted suite passed with 914 tests; the new tests and attachment tests also passed after the final changes. No existing tests were changed.

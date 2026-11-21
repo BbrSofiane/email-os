@@ -1,0 +1,33 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M7ZE5EAS3W6KF7RWGGFFEANG",
+  "strategy": "manual-commit",
+  "branch": "usable/html-reader",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/App.vue",
+    "src/components/AttachmentChooser.vue",
+    "src/components/LinkConfirm.vue",
+    "src/composables/useDrafts.ts",
+    "src/lib/external-links.ts",
+    "tests/app-shell/message-link.test.ts",
+    "tests/reader/external-links.test.ts",
+    "tests/reader/link-confirm.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 8,
+    "cache_creation_tokens": 6952,
+    "cache_read_tokens": 1483873,
+    "output_tokens": 1916,
+    "api_call_count": 3
+  }
+}
