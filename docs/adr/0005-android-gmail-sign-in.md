@@ -1,6 +1,20 @@
 # ADR 0005: Google sign-in and Gmail on Android
 
-**Status:** Proposed (revised after coordinator review) — track B of the "usable Android app" programme. Nothing here is implemented. Implementation starts only after the coordinator's GREENLIGHT.
+**Status:** Proposed (revised with the owner's decisions of 2026-11-21) — track B of the "usable Android app" programme. Nothing here is implemented. Implementation starts only after the coordinator's GREENLIGHT.
+
+## Decisions (owner, 2026-11-21)
+
+1. **Google Play services is a requirement.** The owner's phone has it. Option C, the Authorization API, is approved. There is **no** custom-scheme fallback (option B) in this programme. A phone without Play services keeps the demo mailbox.
+2. **First run shows a choice screen** (your own mail or the demo mailbox). It can be switched later from **Account**.
+3. **Disconnect is local only**, as on desktop: it clears the binding, the cached token and the Gmail cache, and keeps drafts. The app does **not** revoke access at Google. B therefore does not use `revokeAccess` at all.
+4. **App id is `dev.exedev.emailos`** (track A, ADR 0004, approved). Release builds are signed with the owner's release key, which is held by the owner and CI. Debug and local builds use the debug key. B plans **one Android OAuth client per signer** (section 1 and Owner actions):
+   - the release SHA-1, supplied by the owner;
+   - the debug SHA-1 of this machine's debug keystore, which signs the emulator builds.
+
+**Still open** (the coordinator will ask the owner):
+- which Google account is used on the emulator;
+- the same Cloud project as desktop or a new one;
+- the publishing setup: Personal mode, In production unverified, or Testing.
 
 ## Context
 
@@ -15,7 +29,7 @@ What exists today:
 - **Disconnect** clears the secret (`provider/api.rs:314-324`) and the core clears the Gmail cache. Drafts stay on the device. Google's grant is not revoked (`docs/development.md`, "Google Desktop OAuth setup").
 - **Sync** runs while the process runs. The worker repeats every 60 s (`PERIODIC_INTERVAL`, `gmail/sync.rs:37`) and backs off to at most 600 s after failures (`sync.rs:40`). Interrupted writes are never replayed automatically for Gmail. Reads are paced 100 ms apart (`provider.rs:42`). HTTP goes through `reqwest` with rustls (`crates/mail-core/Cargo.toml:20`), which compiles for Android today.
 - **Android-only gates.** `save_attachment` and `open_external_link` return `UnsupportedPlatform` on Android (`src-tauri/src/commands/attachments.rs:29-33`, `:62-66`). The reader hides **Files and links** when `androidFixture` is set (`src/App.vue:95`, `:907`; `src/components/ReaderView.vue:76-77`, `:973`).
-- **Android shell.** The application id is `dev.exedev.emailos.androidfixture` (`src-tauri/gen/android/app/build.gradle.kts`, `src-tauri/tauri.android.conf.json`). Track A's ADR 0004 proposes renaming it to `dev.exedev.emailos`, pending owner approval. It also moves the Kotlin sources out of `.../androidfixture/` and turns backups off. The manifest asks only for `INTERNET` (`src-tauri/gen/android/app/src/main/AndroidManifest.xml`). `MainActivity.kt` handles insets and Back. The shell uses no Tauri plugins. The `main-window` capability says "No plugins, no shell, no broad capability grants" (`src-tauri/capabilities/main-window.json`).
+- **Android shell.** The application id is `dev.exedev.emailos.androidfixture` (`src-tauri/gen/android/app/build.gradle.kts`, `src-tauri/tauri.android.conf.json`). Track A's ADR 0004 renames it to `dev.exedev.emailos` (approved by the owner). It also moves the Kotlin sources out of `.../androidfixture/` and turns backups off. The manifest asks only for `INTERNET` (`src-tauri/gen/android/app/src/main/AndroidManifest.xml`). `MainActivity.kt` handles insets and Back. The shell uses no Tauri plugins. The `main-window` capability says "No plugins, no shell, no broad capability grants" (`src-tauri/capabilities/main-window.json`).
 - **Emulator.** `emulator-5554` runs a Google Play image (`sdk_gphone64_x86_64`). It has the Play Store (`com.android.vending`) and Google Play services (`com.google.android.gms`) version 24.23.35, which is from about June 2024. These facts were checked by the coordinator on the running device. The `t3-pixel` AVD config on disk says `google_apis`; the running device is what counts. See the Play services risk below.
 
 [ADR 0001](0001-single-account-desktop-email-client.md) says "No custom Android surface in this build" and limits Gmail to one desktop OS. [ADR 0003](0003-mobile-layout.md) already added the compact phone layout over fixture data. This ADR supersedes the following parts of ADR 0001 for Android only:
@@ -38,7 +52,7 @@ The Rust code works almost unchanged. The phone binds `127.0.0.1`, opens Chrome,
 **B. Android OAuth client + Custom Tab + custom URI scheme redirect, with PKCE in Rust.**
 The app opens the authorization URL in a Custom Tab. Google redirects to `<applicationId>:/oauth2redirect` (the exact form is to be confirmed against Google's documentation when implemented). `MainActivity` receives the intent and passes the URL to Rust. Rust checks `state` and exchanges the code with the stored PKCE verifier. The refresh token is kept in Android Keystore-backed storage behind `Secrets`.
 - For: reuses `generate_pkce`, `exchange_code`, `refresh` and the publication fences. Only the "wait for callback" step changes, from a listener to a channel fed by `onNewIntent`. Works without Google Play services. Only the client id is needed (Android clients have no secret). It is not confidential and can be set at build time through a Gradle property, a `BuildConfig` field and the plugin.
-- Against: Google turned custom URI schemes **off by default** for Android clients in 2023. It must be switched on under the client's Advanced settings. Google says it may be removed later and recommends Google Identity Services instead ([Google Developers Blog](https://developers.googleblog.com/en/improving-user-safety-in-oauth-flows-through-new-oauth-custom-uri-scheme-restrictions/)). Any app can register the same scheme; PKCE protects the code, but the consent screen can still be impersonated. A long-lived refresh token sits on the phone. A verified App Link (https redirect) is not available for Android-type clients and would need a domain we control. **Viable fallback; not recommended as the primary path.**
+- Against: Google turned custom URI schemes **off by default** for Android clients in 2023. It must be switched on under the client's Advanced settings. Google says it may be removed later and recommends Google Identity Services instead ([Google Developers Blog](https://developers.googleblog.com/en/improving-user-safety-in-oauth-flows-through-new-oauth-custom-uri-scheme-restrictions/)). Any app can register the same scheme; PKCE protects the code, but the consent screen can still be impersonated. A long-lived refresh token sits on the phone. A verified App Link (https redirect) is not available for Android-type clients and would need a domain we control. **Not chosen; the owner ruled out a custom-scheme fallback (Decision 1).**
 
 **C. Google Identity Services Authorization API (`AuthorizationClient`, Play services) with an Android OAuth client bound to package name + SHA-1.** *(Recommended)*
 A small Kotlin bridge calls `Identity.getAuthorizationClient(context).authorize(AuthorizationRequest)` with the scopes we need. Consent is shown by Play services through a `PendingIntent` that the Activity launches. The result carries an access token and the list of granted scopes. Calling `authorize()` again with the same scopes returns a fresh token without UI while the grant stands. The app never receives a refresh token, and Google's guidance is "Don't store refresh tokens on the device". `revokeAccess()` and `clearToken()` exist. Incremental scopes mean calling `authorize()` again with more scopes ([Android Developers: Authorize access to Google user data](https://developer.android.com/identity/authorization)). Play services matches the package name and signing certificate to the registered Android client, so no client id is written into the build. `requestOfflineAccess` (server auth code plus a Web client) is **not** used: there is no backend.
@@ -61,24 +75,30 @@ A small Kotlin bridge calls `Identity.getAuthorizationClient(context).authorize(
 
 ### 1. Sign-in: option C, the Authorization API
 
-- **OAuth client:** one **Android** client in the owner's Google Cloud project for each (package name, SHA-1) pair the app is signed with. The package name and the release/debug signing keys come from track A (ADR 0004). No Web client and no client secret. The custom URI scheme toggle stays **off**.
+- **OAuth clients, one per signer.** Each client is an **Android** client for package `dev.exedev.emailos` and one signing certificate. No Web client and no client secret. The custom URI scheme toggle stays **off**.
+
+  | Signer | Signs | SHA-1 comes from | Sign-in works on |
+  |---|---|---|---|
+  | Owner release key (ADR 0004) | Release APKs from the owner's machine or the release CI job | The owner, through ADR 0004's fingerprint step | The owner's phone |
+  | This VM's debug key (`~/.android/debug.keystore`, alias `androiddebugkey`, created 2026-11-14) | Debug APKs built here with `mise run android:build` | Read from that keystore. It is public: `93:06:D5:83:0B:27:BE:95:BB:48:80:7B:52:9C:95:D5:C8:18:C6:03` | The shared emulator |
+  | CI debug or PR builds (ephemeral or per-runner keys, ADR 0004) | CI artifacts | Not registered | Nowhere. Connect shows the `not_configured` "this build is not registered" state, which is expected. |
+
+  **How the emulator gets a registered signer:** stage 3 onward installs only debug APKs built on this VM, which are signed by the registered debug key. CI debug artifacts are never used for sign-in tests.
+  - If `~/.android/debug.keystore` is deleted or regenerated, its SHA-1 changes and the debug client must be registered again. The stage 7 report records the SHA-1 used.
+  - Google is expected to refuse registering the same package + SHA-1 pair in two clients, across projects too (to confirm at registration). The debug client therefore lives in the project whose account signs in on the emulator, and the release client in the project the owner uses daily. Those can be the same project or two projects (still open).
+  - A release APK is not debuggable, so `run-as` checks run only on the emulator's debug build.
 - **No client id in the build.** Play services matches package + signature. "Configured" therefore cannot be known before the first call. A `DEVELOPER_ERROR` result (package/SHA-1 not registered) maps to `not_configured`, with a next step that says this build is not registered. "Play services missing or too old" maps to `unsupported_platform` on connect. The account status says so plainly; it is not shown as an expired sign-in.
 - **Bridge:** a Kotlin class in the Android app (`GoogleAuthBridge`), registered as an Android plugin from Rust with `tauri::plugin::Builder` and `register_android_plugin`. Rust calls it with `PluginHandle::run_mobile_plugin` from worker threads, never from the main thread. **The webview cannot call it:** no plugin permission is added to `main-window`, and tokens never cross IPC. Operations:
   - `authorize(scopes, account?, interactive)` returns `{accessToken, grantedScopes, email}`, or one of `cancelled`, `needsUserInteraction`, `developerError`, `playServicesUnavailable`, `network` or `failed`.
   - `clearToken(token)`.
-  - `revokeAccess(account, scopes)`.
   - `keystoreLoad`, `keystoreStore`, `keystoreClear` (section 2).
 
-  `clearToken` and `revokeAccess` are newer than `authorize` (library 21.4.0, July 2025; see Risks). If the device's Play services does not implement them, they fail with an `ApiException`, and the bridge reports `unsupported`:
-  - Rust then drops its in-memory token and calls `authorize` silently. If that call returns the same rejected token, the result is `AuthRequired`.
-  - Disconnect stays local, which it is anyway (section 3).
-  
-  Neither call failing ever blocks a disconnect.
+  There is no `revokeAccess`, because disconnect is local only (Decision 3). `clearToken` is newer than `authorize` (library 21.4.0, July 2025; see Risks). If the device's Play services does not implement it, the call fails with an `ApiException` and the bridge reports `unsupported`. Rust then drops its in-memory token and calls `authorize` silently. If that call returns the same rejected token, the result is `AuthRequired`. A failed `clearToken` never blocks a disconnect.
 - **When UI is needed:** with `interactive = true`, the bridge launches the `PendingIntent` from `MainActivity` and resolves when the activity result arrives. Back or dismissing the sheet resolves `cancelled`, which maps to `AuthCancelled`. The existing 180 s `AUTH_TIMEOUT` and `CancelToken` still bound the wait on the Rust side. Silent calls (`interactive = false`) never show UI. If UI would be needed, they return `needsUserInteraction`, which maps to `AuthRequired` (**Sign-in expired** → **Sign in again**).
 - **Account pinning:** when an account is already bound, the request pins it with `setAccount` so Play services does not offer a different account. The existing check still runs: `fetch_profile` must return the bound account, otherwise `AuthFailed` (`provider/api.rs:99-104`, `:250-262`).
 - **What Rust reuses:** everything above the access token. That is `LiveGmailProvider`'s HTTP client, pacing, status and quota handling, account binding and credential-publication fences, `fetch_profile`, the scope verification, the sync worker, the operation ledger and the drafts. What is **not** used on Android is `authorize`, `wait_for_code`, `exchange_code` and `refresh` (`auth.rs:192-430`). They move behind a `CredentialSource` seam in `mail-core`:
   - `LoopbackPkceSource` is today's code, unchanged in behaviour, used on desktop.
-  - `PlatformAuthorizerSource` sits over a small `PlatformAuthorizer` trait (`authorize`, `clear_token`, `revoke`). On Android its implementation is the bridge. In tests it is a scripted fake, so the whole Android path is tested on Linux.
+  - `PlatformAuthorizerSource` sits over a small `PlatformAuthorizer` trait (`authorize`, `clear_token`). On Android its implementation is the bridge. In tests it is a scripted fake, so the whole Android path is tested on Linux.
 - **Token lifetime on Android:** the access token lives only in process memory with its expiry. Before expiry, and after a 401, the source clears the cached token (`clearToken`) and calls `authorize(interactive = false)` **once**. A second failure is `AuthRequired`. No refresh token exists on the phone.
 
 ### 2. Token storage on Android
@@ -108,7 +128,7 @@ A small Kotlin bridge calls `Identity.getAuthorizationClient(context).authorize(
   
   A save that reaches the old session afterwards is rejected with a typed error and never written into the other profile. Drafts are account-scoped, so a fixture-account draft cannot be saved under the Gmail account either. After the reload the draft is in the Drafts list of the profile it was written in, and reappears when the user switches back.
 - **First run.** If `mode.json` is absent, setup opens the fixture core as today, and `StartupRoot` shows a **choice screen** before any mailbox. The screen offers connecting your own mail account or opening the demo mailbox, and says that the demo is synthetic and nothing in it is sent anywhere. It follows the existing `FixtureTransitionGate` pattern. The legacy fixture transition gate, if pending, comes first. Choosing the demo writes `mode.json`. Choosing your own mail switches to Gmail mode, which shows **Not connected** with **Connect Gmail**, and starts Connect directly. A phone upgraded from an earlier fixture-only APK has no mode file, so it sees the choice once. Its demo data is kept.
-- **Moving between modes.** The compact **Account** page shows in demo mode a **Use your own mail** row (→ `switch_mode("gmail")`), and in Gmail mode a **Switch to demo mailbox** row (→ `switch_mode("fixture")`). Switching to the demo **does not disconnect**: credentials, cache and drafts of the Gmail profile stay, and switching back resumes them. **Disconnect** keeps its desktop meaning: it is local, clears the binding and the Gmail cache, and keeps drafts. On Android it also calls `clearToken`. It does **not** revoke the Google grant unless the owner chooses that (owner question 3). After disconnect the app stays in Gmail mode on **Not connected**, where **Switch to demo mailbox** is available.
+- **Moving between modes.** The compact **Account** page shows in demo mode a **Use your own mail** row (→ `switch_mode("gmail")`), and in Gmail mode a **Switch to demo mailbox** row (→ `switch_mode("fixture")`). Switching to the demo **does not disconnect**: credentials, cache and drafts of the Gmail profile stay, and switching back resumes them. **Disconnect** keeps its desktop meaning: it is local, clears the binding and the Gmail cache, and keeps drafts. On Android it also calls `clearToken`. It does **not** revoke the Google grant (Decision 3); a user who wants that uses their Google account settings. After disconnect the app stays in Gmail mode on **Not connected**, where **Switch to demo mailbox** is available.
 - **Phone layout.** The existing compact Account page and status lines (UX-14, development guide "Account, connection and first run") carry the Gmail states. The only copy change is the sign-in wait line: "Finish sign-in in your browser" becomes a phone-appropriate sentence, because the sheet is a system screen on the phone, not a browser. No new third-party brand names are added to UI copy; existing action names (**Connect Gmail**, **Sign in again**, **Enable mailbox actions**) stay as they are on desktop.
 - **The fixture becomes the "demo mailbox".** It is the same ADR 0002 synthetic core, unchanged: first-run option, switch-back target, and the validation surface that needs no Google account. In a Gmail-capable build its account line is labelled as the demo so it is never mistaken for real mail. Desktop's default stays fixture.
 - `androidFixture` in `App.vue` is renamed to what it means (`androidShell`). The gates in section 6 remain keyed to the platform, not to the mode.
@@ -165,7 +185,8 @@ Out of scope:
 - Attachment export on Android.
 - Push notifications and background sync.
 - More than one account.
-- Phones without Play services (option B stays available as a later fallback).
+- Phones without Play services: they keep the demo mailbox, and there is no custom-scheme fallback (Decision 1).
+- Revoking access at Google from the app (Decision 3).
 - Google OAuth verification and security assessment for public distribution.
 - Desktop changes beyond the shared `mail-core` seams (desktop behaviour must not change).
 
@@ -194,10 +215,11 @@ The publishing choice decides whether the phone keeps working week to week. Goog
    - For a throwaway validation project, keep **Testing** and add the throwaway account as a **Test user**.
 4. **Google Auth Platform → Data access:** add `.../auth/gmail.readonly` and `.../auth/gmail.modify`. Track D adds `.../auth/gmail.send` only for accounts without modify. Do not submit for verification.
 5. **Google Auth Platform → Clients → Create client → Android:**
-   - Package name: the final application id from track A. ADR 0004 proposes `dev.exedev.emailos`. Register the id that is merged, not today's `dev.exedev.emailos.androidfixture`.
-   - SHA-1 certificate fingerprint: from track A's signing key (`keytool -list -v -keystore <keystore> -alias <alias>`).
+   - Package name: `dev.exedev.emailos` (Decision 4) for both clients.
+   - **Release client:** the SHA-1 of the owner's release certificate. ADR 0004's owner steps print it (`keytool -list -v -keystore <release.jks> -alias <alias>`). Register it in the project the owner uses daily.
+   - **Debug client:** `93:06:D5:83:0B:27:BE:95:BB:48:80:7B:52:9C:95:D5:C8:18:C6:03`, this VM's debug key. Register it in the project whose account signs in on the emulator.
    
-   Register **one client per signing key used**: the emulator debug key on this VM (I will post its SHA-1 fingerprint, which is public, when stage 7 starts) and the key of any APK installed on your phone. Leave **Advanced settings → custom URI scheme** off. No Web client, no secret. No client id has to be sent to me or put in the build.
+   Leave **Advanced settings → custom URI scheme** off. No Web client, no secret. No client id has to be sent to me or put in the build. If Google refuses a pair as "already in use", it is registered in another client; delete it there first.
 6. **For the emulator run:** sign a throwaway Google account into the emulator yourself through the T3 Device panel (**Settings → Passwords & accounts**, or the account chooser during Connect). I never type, see or store the password. Put a few synthetic messages in that account so the recording contains no real mail. With an account signed in, the emulator's Play Store can update Google Play services if stage 3 finds the installed version too old.
 7. **For your phone** (after track A's install path works): confirm it has Google Play services, install the APK signed with a registered key, and run the short checklist in the Validation plan.
 8. **Verification and the security assessment** for public distribution are **not** needed and are not requested here.
@@ -205,7 +227,7 @@ The publishing choice decides whether the phone keeps working week to week. Goog
 ## Dependencies
 
 - **Track A (ADR 0004, install) lands first.** B's Android work (stage 3 onward) starts from A's merged `main`. That gives B:
-  - the renamed application id (proposed `dev.exedev.emailos`, pending owner approval);
+  - the renamed application id `dev.exedev.emailos`;
   - the moved Kotlin package path (`MainActivity.kt` out of `.../androidfixture/`);
   - `allowBackup="false"` with exclusion rules.
   
@@ -214,7 +236,7 @@ The publishing choice decides whether the phone keeps working week to week. Goog
   - activity-result forwarding for the consent `PendingIntent` in `MainActivity.kt`;
   - one new Kotlin file (`GoogleAuthBridge.kt`) in A's package path.
   
-  B also needs the **signing keys**, whose SHA-1 fingerprints the owner registers, for debug (emulator), CI and phone builds. A package rename after registration means a new Android client. Stages 1 and 2 are Rust-only and do not wait for A. A's first-launch ANR fix matters too: B never runs a silent `authorize` on the main thread.
+  B also needs the owner's **release certificate SHA-1** (from ADR 0004's owner steps) for the release client. The debug client uses this VM's debug key (section 1). CI debug and PR builds are deliberately not registered. A package rename after registration means new Android clients. Stages 1 and 2 are Rust-only and do not wait for A. A's first-launch ANR fix matters too: B never runs a silent `authorize` on the main thread.
 - **Track C (ADR 0006, HTML reader)** owns links in mail bodies on Android. C may reuse this ADR's Rust-only bridge pattern for `ACTION_VIEW`, or use its own. B does not build link dispatch.
 - **Track D (ADR 0007, send)** builds on `GmailGrant`, `request_grant` and `grant_covered` (section 4). D adds `Send`, covered by `gmail.send` or `gmail.modify`, and requests `gmail.send` only when the account has no modify grant. If D lands first with its own mechanism, the coordinator decides which one rebases. B and D must not each add a separate scope-upgrade path. D also needs Android Gmail mode from B to send on Android.
 - **From B to others:** the `CredentialSource` seam, the granted-scope set, the Android mode switch, and the Kotlin bridge as the one Rust-only native bridge that no webview capability can reach.
@@ -231,14 +253,14 @@ Each stage is one sub-agent run in this worktree. Each must pass its check, then
    - a covered request (for example `Readonly` with modify stored) returns `AlreadyCovered` and the fake authorizer records zero calls.
    
    Existing `gmail::provider` tests are unchanged and pass.
-2. **Credential seam.** Extract `CredentialSource` from `LiveGmailProvider`: `access_token`, `authorize(scopes, account, interactive)`, `invalidate(token)`, `revoke`. `LoopbackPkceSource` wraps today's `auth.rs`, with identical behaviour. Add `PlatformAuthorizerSource` over the `PlatformAuthorizer` trait and a scripted fake covering granted, missing modify, cancelled, needs-interaction, developer error, Play services missing, wrong account, network, and 401 → one silent retry → `AuthRequired`. *Check:* all existing provider and auth tests pass untouched; the new fake-driven tests pass; `cargo clippy` is clean.
+2. **Credential seam.** Extract `CredentialSource` from `LiveGmailProvider`: `access_token`, `authorize(scopes, account, interactive)`, `invalidate(token)`. `LoopbackPkceSource` wraps today's `auth.rs`, with identical behaviour. Add `PlatformAuthorizerSource` over the `PlatformAuthorizer` trait and a scripted fake covering granted, missing modify, cancelled, needs-interaction, developer error, Play services missing, wrong account, network, and 401 → one silent retry → `AuthRequired`. *Check:* all existing provider and auth tests pass untouched; the new fake-driven tests pass; `cargo clippy` is clean.
 3. **Android bridge and Keystore secrets** (after track A is merged; based on A's package path and manifest). Add the Kotlin `GoogleAuthBridge`:
    - Authorization API, with the `PendingIntent` launched through `MainActivity`;
-   - `clearToken` and `revokeAccess`, reporting `unsupported` when the device's Play services lacks them;
+   - `clearToken`, reporting `unsupported` when the device's Play services lacks it;
    - Keystore AES-GCM file in `noBackupFilesDir`;
    - connectivity callback.
    
-   Add the Rust `#[cfg(target_os = "android")]` `AndroidPlatformAuthorizer` and `AndroidKeystoreSecrets` over `run_mobile_plugin`, and the `play-services-auth` dependency. No mode change yet: Android still opens fixture. **First step of the stage:** a debug-only probe records, on the emulator, whether Play services 24.23.35 accepts `authorize`, `clearToken` and `revokeAccess`. Before an Android client is registered, `authorize` is expected to reach Google and fail with `DEVELOPER_ERROR`, not "API unavailable". The probe is removed before commit. *Check:*
+   Add the Rust `#[cfg(target_os = "android")]` `AndroidPlatformAuthorizer` and `AndroidKeystoreSecrets` over `run_mobile_plugin`, and the `play-services-auth` dependency. No mode change yet: Android still opens fixture. **First step of the stage:** a debug-only probe records, on the emulator, whether Play services 24.23.35 accepts `authorize` and `clearToken`. The APK is built on this VM, so it is signed with the debug key. Before the debug client is registered, `authorize` is expected to reach Google and fail with `DEVELOPER_ERROR`, not "API unavailable". The probe is removed before commit. *Check:*
    - `mise run android:build` succeeds;
    - on the emulator the demo launches unchanged (screenshot);
    - `adb logcat` shows the bridge registered and no errors, and the probe results are written into the stage report;
@@ -292,11 +314,12 @@ Each stage is one sub-agent run in this worktree. Each must pass its check, then
 
 **Risks**
 
-- **Play services dependency.** Phones without Google Play services cannot connect. If that matters, option B (custom URI scheme) is the fallback. It relies on a setting Google has deprecated.
+- **Play services dependency.** Phones without Google Play services cannot connect; they keep the demo mailbox. The owner accepted this (Decision 1).
+- **Debug keystore drift.** If this VM's `~/.android/debug.keystore` is regenerated, emulator sign-in fails with `not_configured` until the new SHA-1 is registered.
 - **Emulator Play services version.** The emulator runs Play services 24.23.35 (about June 2024) and has the Play Store.
   - What Google documents: `authorize()` fails "if authorization is not available on the device (for example, internal error or Play Services not available)", and unsupported calls "fail with an ApiException" ([AuthorizationClient reference](https://developers.google.com/android/reference/com/google/android/gms/auth/api/identity/AuthorizationClient); [Play services release notes](https://developers.google.com/android/guides/releases)). `clearToken` and `revokeAccess` were added in play-services-auth **21.4.0 (July 2025)**. I found no documented minimum Play services APK version for any of these calls.
-  - Inferred, not documented: `authorize()` predates the 21.x library releases, so 24.23.35 very likely supports it. Then the emulator can run the real flow with a throwaway Google account. `clearToken` and `revokeAccess` may be missing from a June 2024 Play services.
-  - Handling: stage 3's probe records what the emulator supports. The bridge treats missing `clearToken`/`revokeAccess` as `unsupported` and degrades as described in section 1. With a throwaway account signed in, the Play Store can update Play services; an update changes the emulator, so it needs the coordinator's agreement. The owner's phone, with current Play services, is the final check either way.
+  - Inferred, not documented: `authorize()` predates the 21.x library releases, so 24.23.35 very likely supports it. Then the emulator can run the real flow with a throwaway Google account. `clearToken` may be missing from a June 2024 Play services (B does not use `revokeAccess`).
+  - Handling: stage 3's probe records what the emulator supports. The bridge treats a missing `clearToken` as `unsupported` and degrades as described in section 1. With a throwaway account signed in, the Play Store can update Play services; an update changes the emulator, so it needs the coordinator's agreement. The owner's phone, with current Play services, is the final check either way.
 - **Bridge mechanics.** A blocking `run_mobile_plugin` call that waits on an activity result must not deadlock with the main thread, and the `PendingIntent` result must reach the bridge after a configuration change. Stage 3 proves this before anything depends on it.
 - **Consent lifetime.** Testing expires every 7 days (documented). Personal mode documents no 7-day expiry, but its pages do not say explicitly that restricted Gmail scopes are allowed. Unverified production has no documented 7-day rule but no positive statement either. The 8-day check in the validation plan settles it for the chosen setup.
 - **Process freeze in background.** Android may freeze or kill the process during a write. This relies on the existing outcome-unknown reconciliation; no new guarantee is claimed.
@@ -304,10 +327,8 @@ Each stage is one sub-agent run in this worktree. Each must pass its check, then
 
 **Open questions for the owner**
 
-1. Is depending on **Google Play services** (option C) acceptable? Does your phone have it? If not, should B build option B instead, accepting the deprecated custom-scheme setting and a refresh token on the phone?
-2. **First run:** a choice screen (recommended), or open the demo by default with **Use your own mail** only in Account?
-3. **Disconnect:** local only, as on desktop (recommended), or also revoke the app's access at Google from the phone?
-4. *(Resolved by the coordinator: backup settings are track A's, ADR 0004.)*
-5. *(Resolved by the coordinator: links in bodies are track C's; `open_external_link` stays closed in B.)*
-6. Which **Google account** will be used on the emulator? A throwaway one is recommended, holding only synthetic mail. Will you sign it in yourself through the Device panel when stage 7 starts?
-7. **Google Cloud project setup:** a new **Personal mode** project created by the account the phone will read (recommended; see Owner actions), or an External project published **In production** without verification? A Personal project cannot be the existing desktop project, because existing projects cannot switch to Personal. Desktop can keep its current project, or add a Desktop client in the new one later.
+Questions 1–3 were decided on 2026-11-21 (see Decisions), and 4–5 were resolved by the coordinator. Still open:
+
+6. Which **Google account** will be used on the emulator? A throwaway one is recommended, holding only synthetic mail. Will you sign it in yourself through the Device panel when stage 7 starts? This also decides which project holds the debug client.
+7. **Same Cloud project as desktop, or a new one?** A Personal mode project must be new, because existing projects cannot switch to Personal. Desktop can keep its current project, or add a Desktop client in the new one later.
+8. **Publishing setup for daily use:** Personal mode (recommended), In production without verification, or Testing with weekly re-consent? See Owner actions.
