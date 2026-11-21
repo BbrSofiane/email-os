@@ -1,4 +1,4 @@
-package dev.exedev.emailos.androidfixture
+package dev.exedev.emailos
 
 import android.graphics.Color
 import android.os.Build
