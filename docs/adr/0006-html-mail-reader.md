@@ -1,6 +1,6 @@
 # ADR 0006: Displaying HTML mail
 
-- Status: Proposed (revision 2, after coordinator review of `4de4826`)
+- Status: Proposed (revision 3: coordinator review of `4de4826`, owner decision on remote images)
 - Date: 2026-11-21
 - Track: C ("usable Android app" programme), branch `usable/html-reader`
 
@@ -118,7 +118,15 @@ cover.
 - The Android manifest already has `INTERNET`
   (`src-tauri/gen/android/app/src/main/AndroidManifest.xml:3`).
 
-## Coordinator decisions (2026-11-21, review of `4de4826`)
+## Decisions
+
+### Owner decision (2026-11-21)
+
+- "Load images" applies to that message only, until the conversation is closed.
+  Nothing is remembered per sender. The per-sender option is dropped
+  (decision 10).
+
+### Coordinator decisions (2026-11-21, review of `4de4826`)
 
 1. Same-origin frame accepted (`sandbox="allow-same-origin"`, no `allow-scripts`),
    **on condition** that stage 1 proves no script runs in the frame by any route,
@@ -131,8 +139,8 @@ cover.
 5. Track C owns opening links from mail bodies on Android in this programme
    (decision 13, stage 9). Attachment saving on Android stays out of scope.
 6. The dark-only claim is verified above.
-7. Per-sender memory of "Load images" is an owner question with a recommendation
-   (decision 10).
+7. Per-sender memory of "Load images" went to the owner, who decided against it
+   (owner decision above).
 8. Stages that touch files shared with tracks A, B and D are marked in the plan.
 
 ## Options considered
@@ -202,11 +210,9 @@ the app with no browser-enforced barrier; one sanitiser miss is an app compromis
 
 ### 3. Remote content
 
-**3a. Block by default; per-message "Load images", kept for the reader visit.**
-**3b. 3a plus a remembered per-sender choice** ("Always load images from
-<address>"), persisted in the profile and cleared on Gmail disconnect with other
-cached data.
-**3c. Proxy images through Rust** (fetch bytes in the core, pass `data:` URLs).
+**3a. Block by default; per-message "Load images", kept until the conversation is
+closed.** Chosen (owner decision).
+**3b. Proxy images through Rust** (fetch bytes in the core, pass `data:` URLs).
 Still reveals the user's IP and open time to the sender, adds an arbitrary-URL HTTP
 client path to the core, and does not hide tracking. Not chosen.
 
@@ -398,21 +404,12 @@ Rust registration) doing the same `ACTION_VIEW`.
     user asks. A one-line bar above the body: "Remote images blocked." with a
     "Load images" button. Loading moves `data-eos-src` back to `src` and relaxes
     the frame CSP to `img-src data: https:`. Remote fonts, stylesheets and
-    `http:` images never load. The choice is **per message, for the reader visit**
-    (cleared when the conversation is closed), and is not persisted. Tracking
-    pixels are remote images, so they are blocked with the rest; the bar does not
-    count or name trackers.
-
-    **Owner question: also remember per sender (option 3b)?** It would add
-    "Always load images from <address>" next to "Load images", stored in the
-    profile (Rust store, cleared on Gmail disconnect; synthetic profile local),
-    with a way to forget it in Settings. Recommendation: **not in this
-    programme.** The `From` address is not authenticated by the app (no
-    DKIM/DMARC result is cached), so a spoofed sender would get images loaded and
-    learn the message was opened; it needs a new table, a settings surface and
-    disconnect handling; and real use should first show whether per-visit loading
-    is a burden. If the owner wants it, it is one extra stage after stage 8 and
-    does not change the rest of the design.
+    `http:` images never load. The choice applies **to that message only, until
+    the conversation is closed** (owner decision). It is held in the reader's
+    visit state, never written to the profile, and nothing is remembered per
+    sender or globally. Other messages in the same conversation keep their own
+    bar. Tracking pixels are remote images, so they are blocked with the rest;
+    the bar does not count or name trackers.
 
 ### Links
 
@@ -488,7 +485,7 @@ Out of scope:
 - Forwarding or replying with HTML (track D owns sending; replies keep the
   plain-text quote).
 - HTML composition.
-- Persisted image preferences (per sender or global), unless the owner asks.
+- Persisted image preferences, per sender or global (owner decision).
 - A light app theme (none exists).
 - Proxying remote images.
 - Inline SVG, video, audio, web fonts, forms, AMP for email.
@@ -686,11 +683,14 @@ cases the synthetic provider does not model (charset, depth, alternatives).
 
 ## Risks and open questions
 
-Open question for the owner:
+Open questions for the coordinator:
 
-1. **Remember "Load images" per sender?** Default stays per message, per visit.
-   Recommendation: not in this programme (decision 10 gives the reasons). If
-   wanted, it is one added stage.
+1. **Probe APK on the emulator.** The Android no-script check uses a separately
+   built probe APK (`VITE_EMAIL_OS_FRAME_PROBE=1`), replaced by the default APK
+   afterwards. The alternative, evaluating the checks over Chrome DevTools through
+   `adb forward`, is outside the `adb` uses RULES allows. Planned: the probe APK.
+2. **Opener pin.** If another track adds a Tauri plugin or moves tauri, the
+   `tauri-plugin-opener` 2.5.5 pin is re-checked.
 
 Risks:
 
