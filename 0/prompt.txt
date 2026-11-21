@@ -1,0 +1,23 @@
+You own track B of the "usable Android app" programme: Google sign-in and real Gmail on Android. First read /home/exedev/email-os-usable/RULES.md in full and follow it. You are in phase 1: write a NEW ADR 0004 as a proposal (the owner wants a new ADR, not an edit of ADR 0001; it may say which parts of 0001 it supersedes, e.g. "No custom Android surface in this build"), push it, report `ADR READY`, and stop. Do not implement until I send GREENLIGHT.
+
+Today:
+- Android is hard-wired to the synthetic fixture (src-tauri/src/setup.rs, `#[cfg(mobile)] let mode = "fixture"`). Desktop picks Gmail only through `EMAIL_OS_MODE=gmail`.
+- Tokens are stored only in the macOS Keychain (crates/mail-core/src/gmail/secrets.rs; every other platform returns SecretsUnavailable, no plaintext fallback by design).
+- OAuth is the desktop loopback flow with PKCE, a 127.0.0.1 listener and the client id from the launch environment (crates/mail-core/src/gmail/auth.rs, GoogleConfig::from_env). Read-only scope first, `gmail.modify` as an explicit upgrade.
+- Attachment export and external link dispatch are off on Android (src-tauri/src/commands/attachments.rs).
+
+The ADR must cover at least:
+- The sign-in flow on Android: system browser / Custom Tabs + redirect back to the app (custom scheme vs verified App Link), or the platform credential APIs; which Google OAuth client type (Android client bound to package + SHA-1 from track A, or another type) and how the client id gets into the build (no launch env on a phone). How the Rust core's PKCE/token code is reused.
+- Secure token storage on Android (Android Keystore-backed), how it plugs into the `Secrets` trait, behaviour on reinstall/backup, and no plaintext fallback.
+- Mode selection on Android: how the user goes from the demo mailbox to Gmail (and back / disconnect), first-run UX on the phone layout, and what the fixture becomes.
+- Scopes: read-only first and the modify upgrade as today; track D (sending) will need `gmail.send` — define the scope-upgrade mechanism so D can request it, but D owns the send consent itself.
+- Network/background behaviour on Android: sync while the app is open, app backgrounded/killed, connectivity loss, battery; what is out of scope (push notifications?).
+- Which Android-only gates stay (attachments, links) and which open with Gmail.
+- Google Cloud owner actions with exact steps (OAuth consent screen, test users vs verification for restricted Gmail scopes, Android client with package name and SHA-1).
+- Validation: emulator screenshots and a screen recording of the sign-in flow; what can be tested without the owner's Google account and what needs it.
+
+Report back with `ADR READY: ...` and your open questions.
+
+---
+
+Correction from the coordinator: ADR 0003 already exists on main (docs/adr/0003-mobile-layout.md). Your ADR number is now 0005 (track B). The table in /home/exedev/email-os-usable/RULES.md is updated: A=0004, B=0005, C=0006, D=0007. Everything else is unchanged.
