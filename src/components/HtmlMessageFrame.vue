@@ -110,8 +110,14 @@ function onLoad() {
     root.style.overflowX = width * zoom > element.clientWidth ? 'auto' : 'hidden';
     cancelAnimationFrame(raf);
     raf = requestAnimationFrame(() => {
-      // Chrome reports scrollHeight in unzoomed CSS pixels; zoom scales the rendered height.
-      if (active) element.style.height = `${Math.ceil(root.scrollHeight * zoom)}px`;
+      if (!active) return;
+      // Engines disagree on whether sizes of a zoomed root are reported zoomed.
+      // Collapsing the frame for one synchronous layout makes the scrolling
+      // element's scrollHeight equal to the content height in the frame's own
+      // pixels, whatever the engine's zoom semantics (no paint happens between).
+      element.style.height = '0px';
+      const height = (doc.scrollingElement ?? root).scrollHeight;
+      element.style.height = `${Math.ceil(height)}px`;
     });
   };
   const activate = (target: EventTarget | null) => {

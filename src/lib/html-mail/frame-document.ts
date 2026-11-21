@@ -31,6 +31,7 @@ export function buildFrameDocument(mail: SanitizedMail, options: { remoteImages:
   const base = `html { color-scheme: ${paper ? 'light' : 'dark'}; background: ${paper ? '#ffffff' : 'transparent'}; color: ${paper ? '#1f1f1f' : text}; ${paper ? 'padding: 16px;' : `font-family: ${family}; font-size: ${size}; line-height: ${leading};`} }
 body { margin: 0; overflow-wrap: anywhere; }
 img { max-width: 100%; height: auto; }
+img[data-eos-src] { outline: 1px dashed rgba(128, 128, 128, 0.45); outline-offset: -1px; }
 table { max-width: none; }
 [data-eos-href] { cursor: pointer; }
 ${paper ? '' : `[data-eos-href] { color: ${link}; text-decoration: underline; }`}

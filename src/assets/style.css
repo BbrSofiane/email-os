@@ -3207,3 +3207,5 @@ button:focus-visible {
   border-radius: 6px;
 }
 
+/* Link confirmation over the reader (ADR 0006 decision 11): padded, never wider than a readable measure. */
+.link-confirm-overlay { padding: 1rem 1.25rem; max-width: min(36rem, calc(100vw - 2rem)); overflow-wrap: anywhere; }

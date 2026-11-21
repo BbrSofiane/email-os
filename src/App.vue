@@ -2919,7 +2919,7 @@ const searchSyntaxEditHint = computed(() =>
       @choose="(id) => { if (id === 'commands') openOverlay('palette'); else if (id === 'contact-details') toggleContactDisclosure(); else if (id === 'reply') { const conversation = mailbox.conversation.value; const sourceMessage = conversation?.messages.at(-1); if (conversation && sourceMessage) void prepareReply({ kind: 'reply', conversation: conversation.ref, sourceMessageId: sourceMessage.id }); } else if (id === 'files') openAttachments(readerView?.$el as HTMLElement); else executeAction(id as ActionId); }"
     />
     <div v-if="messageLink" class="action-backdrop" @click.self="closeMessageLink">
-      <section class="action-overlay" role="dialog" aria-modal="true" aria-label="Open link">
+      <section class="action-overlay link-confirm-overlay" role="dialog" aria-modal="true" aria-label="Open link">
         <LinkConfirm :url="messageLink.url" :text="messageLink.text" :client="props.client" :preview="props.mode === 'browser-preview'" :can-open="externalLinksAvailable()" @close="closeMessageLink" @compose="composeTo" />
       </section>
     </div>
