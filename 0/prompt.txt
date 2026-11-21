@@ -1,0 +1,11 @@
+Delegated task node:delegated-task:command%3Amcp%3A60b9dc2b-5271-462b-90eb-f39918b85e09%3Adelegate-task%3A8320f5fd-4d91-4e00-ba0b-575aeb72b188 (C stage 7a: HtmlMessageFrame component) [completed]:
+Implemented the standalone HTML mail frame and document builder, with no ReaderView integration.
+
+Files changed:
+
+- [frame-document.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/src/lib/html-mail/frame-document.ts)
+- [HtmlMessageFrame.vue](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/src/components/HtmlMessageFrame.vue)
+- [html-frame-document.test.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/tests/reader/html-frame-document.test.ts)
+- [html-message-frame.test.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/tests/reader/html-message-frame.test.ts)
+
+Checks passed: `pnpm typecheck` and both requested Vitest files, with 10 tests passing. Real frame loading and fitting remain for the later Chrome test stage.
