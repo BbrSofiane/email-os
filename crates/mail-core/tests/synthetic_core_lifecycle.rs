@@ -601,3 +601,25 @@ fn requeued_write_that_the_provider_rejects_fails_once_and_is_not_replayed() {
         "one attempt, then a definite failure"
     );
 }
+
+#[test]
+fn synthetic_html_and_inline_image_through_core() {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let s = Synthetic::open("html-core");
+    let html = s
+        .core
+        .get_message_html(&conversation("conv-19"), "m-19-1")
+        .unwrap();
+    assert_eq!(
+        html.html,
+        include_str!("../src/synthetic/html/newsletter.html")
+    );
+    let image = s
+        .core
+        .get_inline_image(&conversation("conv-21"), "m-21-1", "fixture-logo")
+        .unwrap();
+    assert!(STANDARD
+        .decode(image.base64)
+        .unwrap()
+        .starts_with(b"\x89PNG\r\n\x1a\n"));
+}

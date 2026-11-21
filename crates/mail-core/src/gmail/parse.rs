@@ -17,10 +17,10 @@ pub(super) const MAX_MESSAGE_TEXT_CHARS: usize = 256 * 1024;
 pub(super) const MAX_PAYLOAD_DEPTH: usize = 10;
 /// Bound on work retained from one nested Gmail history response.
 /// Bound on one decoded HTML body, in characters (ADR 0006 decision 3).
-pub(super) const MAX_MESSAGE_HTML_CHARS: usize = 512 * 1024;
+pub(crate) const MAX_MESSAGE_HTML_CHARS: usize = 512 * 1024;
 /// Bound on all HTML bodies kept for one thread, in bytes; later bodies are
 /// recorded as too large once it is reached.
-pub(super) const MAX_THREAD_HTML_BYTES: usize = 2 * 1024 * 1024;
+pub(crate) const MAX_THREAD_HTML_BYTES: usize = 2 * 1024 * 1024;
 /// Bound on inline (`cid:`) images described per thread.
 const MAX_INLINE_PARTS: usize = 32;
 /// Bound on one inline image the reader may fetch.
@@ -811,7 +811,7 @@ fn decode_charset(bytes: &[u8], label: &str) -> Result<String, String> {
 }
 
 /// Derive unwrapped, undecorated searchable text, retaining link destinations.
-fn html_to_text(html: &str) -> Option<String> {
+pub(crate) fn html_to_text(html: &str) -> Option<String> {
     let text = html2text::config::plain_no_decorate()
         .link_footnotes(true)
         .string_from_read(html.as_bytes(), HTML_TEXT_WIDTH)

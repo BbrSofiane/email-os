@@ -1,0 +1,17 @@
+FIXTURE WEEKLY
+Issue 12 · Synthetic sample newsletter
+
+This week: a calmer inbox, three small habits that stick, and a reader question about archiving old threads.
+
+Read the full issue: https://news.example.test/issue-12
+
+Three habits that stick
+Short, repeatable steps beat big resolutions. We tried each one for a month.
+https://news.example.test/a1
+
+Reader question: archive or delete?
+Archiving keeps the record; deleting keeps the count down. Here is how we decide.
+https://news.example.test/a2
+
+You receive this synthetic newsletter because it is part of the Email OS fixture mailbox.
+Unsubscribe: https://news.example.test/unsubscribe

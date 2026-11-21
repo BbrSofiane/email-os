@@ -444,3 +444,45 @@ fn provider_inbox_lists_newest_first_and_archived_seeds_are_not_inbox() {
     }
     let _ = OperationStatus::Queued;
 }
+
+#[test]
+fn synthetic_html_and_inline_image_fixtures() {
+    use mail_core::gmail::types::MessageHtml;
+    let dir = temp_profile("provider-html");
+    let provider = SyntheticGmailProvider::open(dir.path()).unwrap();
+    let cancel = CancelToken::default();
+    let thread = |id| provider.get_thread(id, &cancel).unwrap().unwrap();
+    let newsletter = thread("conv-19");
+    assert!(matches!(
+        newsletter.message_html.get("m-19-1"),
+        Some(MessageHtml::Present(_))
+    ));
+    assert_eq!(
+        newsletter.conversation.messages[0].body_text,
+        include_str!("../src/synthetic/html/newsletter.txt")
+    );
+    let person = thread("conv-20");
+    assert!(matches!(
+        person.message_html.get("m-20-1"),
+        Some(MessageHtml::Present(_))
+    ));
+    assert!(person.conversation.messages[0]
+        .body_text
+        .contains("https://docs.example.test/plan"));
+    let logo = thread("conv-21");
+    assert_eq!(logo.inline_parts.len(), 1);
+    assert_eq!(logo.inline_parts[0].content_id, "logo@fixture.example");
+    assert_eq!(logo.inline_parts[0].mime_type, "image/png");
+    assert!(provider
+        .fetch_attachment(mail_core::ACCOUNT_ID, "m-21-1", "fixture-logo", &cancel)
+        .unwrap()
+        .starts_with(b"\x89PNG\r\n\x1a\n"));
+    assert!(matches!(
+        thread("conv-23").message_html.get("m-23-1"),
+        Some(MessageHtml::Present(_))
+    ));
+    assert!(matches!(
+        thread("conv-24").message_html.get("m-24-1"),
+        Some(MessageHtml::TooLarge)
+    ));
+}

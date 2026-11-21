@@ -2,7 +2,7 @@
 pub mod auth;
 pub mod browsing;
 pub mod operations;
-mod parse;
+pub(crate) mod parse;
 #[cfg(test)]
 mod profile_lock_tests;
 pub mod provider;
