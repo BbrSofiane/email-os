@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-inline-image"
+description = "Enables the get_inline_image command without any pre-configured scope."
+commands.allow = ["get_inline_image"]
+
+[[permission]]
+identifier = "deny-get-inline-image"
+description = "Denies the get_inline_image command without any pre-configured scope."
+commands.deny = ["get_inline_image"]

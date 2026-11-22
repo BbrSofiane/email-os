@@ -1233,10 +1233,11 @@ fn list_inbox_maps_threads_and_pagination() {
 #[test]
 fn stars_include_unsupported_bodies_and_preserve_missing_label_unknowns() {
     let payload = || {
+        // A body type the reader does not render (HTML is rendered since ADR 0006).
         text_payload(
-            "text/html",
+            "text/calendar",
             &[("From", "s@example.test")],
-            Some(b"<b>not rendered</b>"),
+            Some(b"BEGIN:VCALENDAR"),
         )
     };
     let known_star = gmail_message("star", &["STARRED"], payload());
@@ -1610,10 +1611,11 @@ fn get_thread_parses_plain_text_and_discloses_unsupported() {
     let html_only = gmail_message(
         "m2",
         &["INBOX", "UNREAD"],
+        // A body type the reader does not render (HTML is rendered since ADR 0006).
         text_payload(
-            "text/html",
-            &[("From", "h@example.test"), ("Subject", "html only")],
-            Some(b"<html><body>no plain text here</body></html>"),
+            "text/calendar",
+            &[("From", "h@example.test"), ("Subject", "calendar only")],
+            Some(b"BEGIN:VCALENDAR"),
         ),
     );
     let body = thread_response("t1", "99", vec![plain, html_only]);
@@ -1666,11 +1668,11 @@ fn get_thread_parses_plain_text_and_discloses_unsupported() {
     assert_eq!(
         conversation.context_complete,
         Some(false),
-        "the html-only message discloses incompleteness"
+        "the calendar-only message discloses incompleteness"
     );
     assert_eq!(
         conversation.unsupported_reason.as_deref(),
-        Some("1 of 2 messages had no safe plain-text body")
+        Some("1 of 2 messages had no displayable body")
     );
     assert!(api.requests().iter().any(|r| r.contains("format=full")));
 }
@@ -2343,10 +2345,11 @@ fn unsupported_inbox_membership_survives_provider_to_store() {
         gmail_message(
             id,
             &["INBOX"],
+            // A body type the reader does not render (HTML is rendered since ADR 0006).
             text_payload(
-                "text/html",
+                "text/calendar",
                 &[("From", "sender@example.test"), ("Subject", subject)],
-                Some(b"<p>HTML only</p>"),
+                Some(b"BEGIN:VCALENDAR"),
             ),
         )
     };
@@ -2603,7 +2606,7 @@ fn oversized_and_malformed_payloads_disclose_unsupported_without_panicking() {
     assert_eq!(thread.conversation.context_complete, Some(false));
     assert_eq!(
         thread.conversation.unsupported_reason.as_deref(),
-        Some("3 of 4 messages had no safe plain-text body")
+        Some("3 of 4 messages had no displayable body")
     );
 }
 

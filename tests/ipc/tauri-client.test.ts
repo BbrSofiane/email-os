@@ -178,6 +178,10 @@ describe('Tauri draft and close protocol adapter', () => {
     const target = { accountId: 'a', conversationId: 'c' };
     const request = { conversation: target, messageId: 'm', attachmentId: 'f', requestId: 'r' };
     mocks.invoke.mockResolvedValue([]);
+    await client.getMessageHtml(target, 'm');
+    expect(mocks.invoke).toHaveBeenLastCalledWith('get_message_html', { target, messageId: 'm' });
+    await client.getInlineImage(target, 'm', 'f');
+    expect(mocks.invoke).toHaveBeenLastCalledWith('get_inline_image', { target, messageId: 'm', attachmentId: 'f' });
     await client.listAttachments(target);
     expect(mocks.invoke).toHaveBeenLastCalledWith('list_attachments', { target });
     mocks.invoke.mockResolvedValue({ filename: 'unique.download' });

@@ -50,6 +50,7 @@ fn conversation(reply_context: Option<ReplyContext>) -> Conversation {
             sent_at: "2025-01-01T00:00:00Z".into(),
             body_text: "text".into(),
             has_attachment: None,
+            html_body: None,
         }],
         is_in_inbox: true,
         is_read: Some(true),

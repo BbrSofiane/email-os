@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import LinkConfirm from './LinkConfirm.vue';
+import { externalLinksAvailable } from '../lib/external-links';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { Conversation, MailClient } from '../lib/ipc/client';
 import type { AttachmentDescriptor } from '../lib/ipc/generated';
@@ -58,13 +60,6 @@ async function load() {
   } catch { if (live && generation === loadGeneration) error.value = 'Could not load cached file descriptors. Reading remains available.'; }
   finally { if (live && generation === loadGeneration) loading.value = false; }
 }
-async function openLink() {
-  if (!confirmUrl.value) return;
-  try {
-    await props.client.openExternalLink(confirmUrl.value);
-    if (live) { status.value = props.preview ? 'Modelled external open only; no browser was launched.' : 'Handed link to the system browser.'; confirmUrl.value = null; }
-  } catch { if (live) error.value = 'External browser unavailable or protocol rejected. You can copy the link instead.'; }
-}
 async function copyLink(url: string) {
   try { await navigator.clipboard.writeText(url); if (live) status.value = 'Link copied.'; }
   catch { if (live) error.value = 'Clipboard unavailable. The link is shown as plain text.'; }
@@ -103,11 +98,7 @@ onBeforeUnmount(() => { live = false; });
       <button v-if="pending" type="button" data-test="chooser-cancel" @click="cancel">Cancel transfer</button>
       <ul aria-label="Links"><li v-for="url in links" :key="url"><span>{{ url }}</span> <button type="button" @click="copyLink(url)">Copy link</button> <button type="button" @click="confirmUrl = url">Open link…</button></li></ul>
       <p v-if="!links.length">No HTTP(S) links found in cached plain text. Email addresses are not browser links.</p>
-      <div v-if="confirmUrl" role="group" aria-label="Confirm external browser">
-        <p>Leave Email OS and open this link in your system browser? {{ confirmUrl }}</p>
-        <button type="button" @click="openLink">Open in browser</button>
-        <button type="button" @click="confirmUrl = null">Keep reading</button>
-      </div>
+      <LinkConfirm v-if="confirmUrl" :url="confirmUrl" :client="client" :preview="preview" :can-open="externalLinksAvailable()" @close="confirmUrl = null" @opened="(message) => { status = message; confirmUrl = null; }" />
     </section>
   </div>
 </template>

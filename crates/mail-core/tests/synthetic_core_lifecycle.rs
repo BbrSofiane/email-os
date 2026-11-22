@@ -14,17 +14,17 @@ use mail_core::MailError;
 
 /// Legacy: `seeds_18_conversations_exactly_once_and_survives_restart`.
 #[test]
-fn seeds_18_conversations_exactly_once_and_survives_restart() {
+fn seeds_24_conversations_exactly_once_and_survives_restart() {
     let s = Synthetic::open("seed-restart");
     assert_eq!(
         s.core.list_conversations().unwrap().conversations.len(),
-        16,
-        "16 of 18 seeded conversations start in the inbox (2 seeded archived)"
+        22,
+        "22 of 24 seeded conversations start in the inbox (2 seeded archived)"
     );
     // Stage 1 loads the two archived seeds explicitly; stage 2's bootstrap
     // does it before the session reports ready.
     load_archived_seeds(&s.core).expect("archived seeds load");
-    for i in 1..=18 {
+    for i in 1..=24 {
         let conversation = s
             .core
             .get_conversation(&conversation(&format!("conv-{i:02}")))
@@ -33,7 +33,7 @@ fn seeds_18_conversations_exactly_once_and_survives_restart() {
     }
     assert_eq!(
         s.core.account_status().unwrap().sync.cached_conversations,
-        18
+        24
     );
     let rows = |dir: &std::path::Path| -> i64 {
         rusqlite::Connection::open(dir.join("synthetic-provider.db"))
@@ -42,15 +42,15 @@ fn seeds_18_conversations_exactly_once_and_survives_restart() {
             .unwrap()
     };
     let seeded = rows(s.dir.path());
-    assert_eq!(seeded, 26, "one fact row per seeded message");
+    assert_eq!(seeded, 33, "one fact row per seeded message");
 
     let s = s.reopen();
     assert_eq!(
         s.core.list_conversations().unwrap().conversations.len(),
-        16,
+        22,
         "no reseed after restart"
     );
-    for i in 1..=18 {
+    for i in 1..=24 {
         s.core
             .get_conversation(&conversation(&format!("conv-{i:02}")))
             .expect("seeded conversation still readable after restart");
@@ -600,4 +600,26 @@ fn requeued_write_that_the_provider_rejects_fails_once_and_is_not_replayed() {
         1,
         "one attempt, then a definite failure"
     );
+}
+
+#[test]
+fn synthetic_html_and_inline_image_through_core() {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let s = Synthetic::open("html-core");
+    let html = s
+        .core
+        .get_message_html(&conversation("conv-19"), "m-19-1")
+        .unwrap();
+    assert_eq!(
+        html.html,
+        include_str!("../src/synthetic/html/newsletter.html")
+    );
+    let image = s
+        .core
+        .get_inline_image(&conversation("conv-21"), "m-21-1", "fixture-logo")
+        .unwrap();
+    assert!(STANDARD
+        .decode(image.base64)
+        .unwrap()
+        .starts_with(b"\x89PNG\r\n\x1a\n"));
 }

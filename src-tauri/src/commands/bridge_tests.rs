@@ -35,7 +35,7 @@ fn status_is_explicit_and_mutations_need_no_google_grant() {
     assert_eq!(status.connection, ConnectionState::Connected);
     assert_eq!(status.mutation_access, None);
     assert_eq!(status.sync.coverage_limit, 0);
-    assert_eq!(status.sync.cached_conversations, 18);
+    assert_eq!(status.sync.cached_conversations, 24);
     let account = core.active_account().unwrap();
     assert_eq!(account.account_id, ACCOUNT_ID);
     assert_eq!(account.email_address, mail_core::FIXTURE_MAILBOX);
@@ -73,7 +73,7 @@ fn rejects_lifecycle_trash_and_destinations_with_todays_variants_and_admits_read
         Err(MailError::ReadOnly)
     );
     // Nothing local was erased by the rejected lifecycle commands.
-    assert_eq!(core.account_status().unwrap().sync.cached_conversations, 18);
+    assert_eq!(core.account_status().unwrap().sync.cached_conversations, 24);
     // Decision 2: read, star and retry are admitted.
     let read = core
         .set_read(&SetRead {

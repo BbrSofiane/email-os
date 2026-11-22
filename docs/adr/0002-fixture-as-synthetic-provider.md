@@ -4,6 +4,8 @@
 
 ## Decisions
 
+2026-11-21 (ADR 0006): seed version 2 adds six HTML sample conversations (conv-19..conv-24); version-1 profiles are upgraded additively.
+
 Taken on 2026-11-14 on the coordinating thread's recommendation, after the project owner asked for the remaining maintenance tickets to run. They authorise **stages 1 to 3** only. The owner can still redirect before stage 4 (switching the default and deleting the legacy backend); nothing below is a user-facing change until then.
 
 1. **Staged unification**, as recommended above. The legacy `MailCore` backend stays the default and is not touched until stage 4.

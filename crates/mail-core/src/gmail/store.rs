@@ -20,21 +20,31 @@ use rusqlite::{params, Connection, OptionalExtension};
 use crate::clock::Clock;
 use crate::drafts::types::ReplyContext;
 use crate::dto::{
-    Address, Conversation, ConversationRef, ConversationSummary, InboxSnapshot,
-    MailboxOperationKind, Message, OperationFailure, OperationReceipt, OperationStatus,
-    OperationSummary, RetryOperation, SetArchived, SetRead, UndoOperation, UndoOutcome,
-    UndoReceipt, UndoUnavailableReason,
+    Address, Conversation, ConversationRef, ConversationSummary, HtmlBodyState, InboxSnapshot,
+    InlineImage, MailboxOperationKind, Message, MessageHtmlBody, OperationFailure,
+    OperationReceipt, OperationStatus, OperationSummary, RetryOperation, SetArchived, SetRead,
+    UndoOperation, UndoOutcome, UndoReceipt, UndoUnavailableReason,
 };
 use crate::error::MailError;
-use crate::gmail::types::{AccountInfo, GmailProfile, GmailThread, HistoryPage};
+use crate::gmail::types::{AccountInfo, GmailProfile, GmailThread, HistoryPage, MessageHtml};
 use crate::groups::{GroupMemberRejection, OperationGroupReceipt, OperationGroupStatus};
 use crate::storage_log::{storage_err, storage_fault};
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredInlinePart {
+    message_id: String,
+    content_id: String,
+    attachment_id: String,
+    mime_type: String,
+    size: u32,
+}
 
 /// Cache cap: at most this many conversations are retained after a completed
 /// discovery/history pass. Disclosed to the wire through `SyncInfo.coverageLimit`.
 pub(crate) const DISCOVERY_CAP: usize = 100;
 
-const SCHEMA_VERSION: &str = "gmail-migrations-9";
+const SCHEMA_VERSION: &str = "gmail-migrations-10";
 
 #[path = "store/acceptance.rs"]
 mod acceptance;
