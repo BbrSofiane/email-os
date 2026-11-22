@@ -44,3 +44,28 @@ it('renders a cached message again after the reader remounts', async () => {
   expect(second.get('iframe').attributes('srcdoc')).toContain('Cached body');
   second.unmount();
 });
+
+it('keeps links working when a refresh replaces the conversation object', async () => {
+  const client = { getMessageHtml: vi.fn().mockResolvedValue({ html: '<a href="https://example.test/">Link</a>', inlineImages: [] }) } as unknown as MailClient;
+  const props = { client, conversation, messageId: 'refreshed', title: 'Message', remoteImages: false, quoteOpen: false, theme };
+  const wrapper = mount(HtmlMessageFrame, { props, attachTo: document.body });
+  await flushPromises();
+  const clickLink = (): void => {
+    const doc = (wrapper.get('iframe').element as HTMLIFrameElement).contentDocument!;
+    if (!doc.querySelector('a')) {
+      doc.body.innerHTML = '<a data-eos-href="https://example.test/">Link</a>';
+    }
+    doc.querySelector('a')!.click();
+  };
+  await wrapper.get('iframe').trigger('load');
+  clickLink();
+  expect(wrapper.emitted('link')).toHaveLength(1);
+
+  const before = wrapper.get('iframe').element;
+  await wrapper.setProps({ conversation: { ...conversation } });
+  await flushPromises();
+  expect(wrapper.get('iframe').element).toBe(before);
+  clickLink();
+  expect(wrapper.emitted('link')).toHaveLength(2);
+  wrapper.unmount();
+});

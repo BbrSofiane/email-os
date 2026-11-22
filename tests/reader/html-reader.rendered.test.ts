@@ -116,6 +116,14 @@ describe.skipIf(!enabled).each([
     expect(await h.cdp.js(`getComputedStyle(${doc}.documentElement).backgroundColor`)).toBe('rgba(0, 0, 0, 0)');
     await link('https://docs.example.test/plan');
     expect(await h.cdp.js(`document.querySelector(${JSON.stringify(dialog)}).textContent`)).toContain('https://docs.example.test/plan');
+    await dialogButton('Keep reading');
+    await wait(`!document.querySelector(${JSON.stringify(dialog)})`, 'dialog closed');
+    // Returning to the window refreshes the mailbox under the open message.
+    for (let i = 0; i < 2; i += 1) {
+      await h.cdp.js(`window.dispatchEvent(new Event('focus'))`);
+      await pause(600);
+    }
+    await link('https://docs.example.test/plan');
     await shot('link-confirm'); await dialogButton('Keep reading');
     await wait(`!document.querySelector(${JSON.stringify(dialog)})`, 'dialog closed');
     expect(await h.cdp.js(`${doc}.location.href`)).toBe('about:srcdoc');

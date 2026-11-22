@@ -177,6 +177,12 @@ implementation and recorded here instead of rewriting the proposal:
 10. **Sanitised mail in memory** (a cache of 20 messages) is cleared when the
     account changes or disconnects and when its mailbox closes, and reads in
     flight at that moment are not stored.
+11. **Refresh under an open message.** A mailbox refresh replaces the
+    conversation object. The frame took that for a new message, removed its
+    listeners and, with the message cached, set the same document again, so no
+    load followed and links, keys and fitting stopped working (found on the
+    emulator after returning from the browser). The frame now watches the ids
+    themselves and is recreated for each document.
 
 ### Validation (2026-11-21)
 

@@ -28,7 +28,17 @@ let cleanup = () => {};
 let fetchedKey = '';
 let fetched: Promise<MessageHtmlBody> | null = null;
 
-watch(() => [props.conversation.accountId, props.conversation.conversationId, props.messageId, props.remoteImages] as const, async ([account, conversation, message, remote]) => {
+/** A new frame per document: removed listeners are always followed by a load. */
+const frameKey = ref(0);
+
+// Separate sources, so a refresh that only replaces the conversation object
+// with equal ids does not tear down a message that stays on screen.
+watch([
+  () => props.conversation.accountId,
+  () => props.conversation.conversationId,
+  () => props.messageId,
+  () => props.remoteImages,
+] as const, async ([account, conversation, message, remote]) => {
   const current = ++generation;
   cleanup();
   result.value = null;
@@ -47,7 +57,10 @@ watch(() => [props.conversation.accountId, props.conversation.conversationId, pr
       entry = { body, mail: sanitizeMailHtml(body.html, { remoteImages: remote }) };
       cacheMail(key, entry, epoch);
     }
-    if (current === generation) result.value = entry;
+    if (current === generation) {
+      frameKey.value += 1;
+      result.value = entry;
+    }
   } catch {
     if (current === generation) emit('fallback', 'error');
   }
@@ -160,7 +173,7 @@ onBeforeUnmount(() => { generation++; cleanup(); });
 </script>
 
 <template>
-  <iframe v-if="result && !unavailable" ref="frame" :sandbox="FRAME_SANDBOX" :srcdoc="srcdoc" :title="title" class="html-message-frame" :class="{ paper }" referrerpolicy="no-referrer" @load="onLoad" />
+  <iframe v-if="result && !unavailable" :key="frameKey" ref="frame" :sandbox="FRAME_SANDBOX" :srcdoc="srcdoc" :title="title" class="html-message-frame" :class="{ paper }" referrerpolicy="no-referrer" @load="onLoad" />
 </template>
 
 <style scoped>
