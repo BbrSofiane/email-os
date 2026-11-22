@@ -499,6 +499,10 @@ and are checks for any future target change.
 
 ## Risks and open questions
 
+- The release gate for first-launch ANRs remains open. The Android 15 emulator
+  reproduced it after the storage startup change. The available main-thread
+  stacks are in WebView construction, before the profile worker begins.
+  [Cold-start measurements](../validation/android-install/cold-start.md).
 - Can the owner run the two-version update test on the Nothing Phone (3a) Pro?
   Sideloading support depends on device policy.
   Record installation friction even if ADB works.
