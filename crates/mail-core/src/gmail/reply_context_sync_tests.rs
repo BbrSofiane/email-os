@@ -713,24 +713,51 @@ mod enrichment_lifecycle_tests {
 }
 
 #[test]
-fn retained_thread_budget_drops_html_when_needed() {
+fn page_budget_drops_html_before_it_takes_room_from_text() {
     use crate::gmail::types::MessageHtml;
-    let mut observed = thread(None, true);
-    let before = retained_thread_bytes(&observed);
-    observed
-        .message_html
-        .insert("message".into(), MessageHtml::Present("x".repeat(4096)));
-    let with_html = retained_thread_bytes(&observed);
-    assert!(with_html >= before + 4096);
-    let mut without_html = observed.clone();
-    without_html.drop_html();
-    let budget = retained_thread_bytes(&without_html);
-    let mut retained = 0;
-    assert!(admit_thread(&mut retained, &mut observed, budget));
-    assert!(matches!(
-        observed.message_html.get("message"),
-        Some(MessageHtml::TooLarge)
-    ));
+    let with_html = |bytes: usize| {
+        let mut thread = thread(None, true);
+        thread
+            .message_html
+            .insert("message".into(), MessageHtml::Present("x".repeat(bytes)));
+        thread
+    };
+    let mut budget = PageBudget::default();
+    let mut kept = 0;
+    // Far more HTML than one page may hold: every thread is still admitted.
+    for _ in 0..64 {
+        let mut observed = with_html(2 * 1024 * 1024);
+        assert!(budget.admit(&mut observed));
+        if matches!(
+            observed.message_html.get("message"),
+            Some(MessageHtml::Present(_))
+        ) {
+            kept += 1;
+        }
+    }
+    assert_eq!(kept, 4);
+    let mut plain = thread(None, true);
+    let text = 10 * 1024 * 1024;
+    plain.conversation.messages[0].body_text = "x".repeat(text);
+    assert!(budget.admit(&mut plain), "text keeps its whole budget");
+    assert!(!budget.admit(&mut plain), "the text bound still holds");
+}
+
+#[test]
+fn page_budget_keeps_an_excerpt_of_derived_text() {
+    let mut budget = PageBudget {
+        html: MAX_RETAINED_HTML_BYTES_PER_PAGE,
+        other: 0,
+    };
+    for _ in 0..100 {
+        let mut observed = thread(None, true);
+        let id = observed.conversation.messages[0].id.clone();
+        observed.derived_text_ids.insert(id);
+        observed.conversation.messages[0].body_text = "é".repeat(256 * 1024);
+        assert!(budget.admit(&mut observed));
+        let text = &observed.conversation.messages[0].body_text;
+        assert_eq!(text.chars().count(), 2_000);
+    }
 }
 
 #[test]

@@ -290,6 +290,7 @@ impl SyntheticGmailProvider {
         };
         Ok(GmailThread {
             message_html,
+            derived_text_ids: Default::default(),
             inline_parts,
             star_facts: Some(
                 ordered

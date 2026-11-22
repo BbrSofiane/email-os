@@ -15,7 +15,6 @@ pub(super) const MAX_PART_BODY_BYTES: usize = 1024 * 1024;
 pub(super) const MAX_MESSAGE_TEXT_CHARS: usize = 256 * 1024;
 /// Recursion bound on Gmail payload trees (hostile/deep structures).
 pub(super) const MAX_PAYLOAD_DEPTH: usize = 10;
-/// Bound on work retained from one nested Gmail history response.
 /// Bound on one decoded HTML body, in characters (ADR 0006 decision 3).
 pub(crate) const MAX_MESSAGE_HTML_CHARS: usize = 512 * 1024;
 /// Bound on all HTML bodies kept for one thread, in bytes; later bodies are
@@ -25,8 +24,7 @@ pub(crate) const MAX_THREAD_HTML_BYTES: usize = 2 * 1024 * 1024;
 const MAX_INLINE_PARTS: usize = 32;
 /// Bound on one inline image the reader may fetch.
 const MAX_INLINE_PART_BYTES: u64 = 2 * 1024 * 1024;
-/// Width passed to html2text: wide enough that derived text is never hard-wrapped.
-const HTML_TEXT_WIDTH: usize = 10_000;
+/// Bound on work retained from one nested Gmail history response.
 const MAX_HISTORY_RECORDS: usize = 10_000;
 const MAX_CHANGED_THREAD_IDS: usize = 1_000;
 const MAX_DELETED_MESSAGE_IDS: usize = 5_000;
@@ -120,6 +118,7 @@ pub(super) fn parse_thread(
     let mut attachment_descriptors = Vec::new();
     let mut omitted_inline_content = false;
     let mut message_html = std::collections::HashMap::new();
+    let mut derived_text_ids = std::collections::HashSet::new();
     let mut inline_parts = Vec::new();
     let mut html_bytes = 0usize;
     let mut html_budget_exhausted = false;
@@ -186,6 +185,9 @@ pub(super) fn parse_thread(
         if let Some(selected) = selection.plain.or(selection.html) {
             omitted_inline_content |= has_omitted_inline_content(payload, selected, 0);
         }
+        if plain.is_none() && html.is_some() {
+            derived_text_ids.insert(id.clone());
+        }
         match parse_message(&id, message, plain, html.as_deref()) {
             Ok(pair) => parsed.push(pair),
             Err(_) => no_plain_text += 1,
@@ -248,6 +250,7 @@ pub(super) fn parse_thread(
         });
     Ok(GmailThread {
         message_html,
+        derived_text_ids,
         inline_parts,
         star_facts: Some(star_facts),
         attachments: attachment_descriptors,
@@ -317,7 +320,7 @@ fn parse_message(
     let body_text = match plain {
         Some(text) => text,
         None => html
-            .and_then(html_to_text)
+            .map(html_to_text)
             .ok_or_else(|| "no displayable body".to_string())?,
     };
     Ok((
@@ -810,19 +813,10 @@ fn decode_charset(bytes: &[u8], label: &str) -> Result<String, String> {
     Ok(decoded.replace("\r\n", "\n").replace('\r', "\n"))
 }
 
-/// Derive unwrapped, undecorated searchable text, retaining link destinations.
-pub(crate) fn html_to_text(html: &str) -> Option<String> {
-    let text = html2text::config::plain_no_decorate()
-        .link_footnotes(true)
-        .string_from_read(html.as_bytes(), HTML_TEXT_WIDTH)
-        .ok()?;
-    Some(
-        text.replace("\r\n", "\n")
-            .replace('\r', "\n")
-            .chars()
-            .take(MAX_MESSAGE_TEXT_CHARS)
-            .collect(),
-    )
+/// Plain text for a message with no usable plain part, bounded like a plain one.
+/// Empty when the HTML has no visible text, such as an image-only message.
+pub(crate) fn html_to_text(html: &str) -> String {
+    super::html_text::extract(html, MAX_MESSAGE_TEXT_CHARS)
 }
 
 /// Whether a MIME tree contains inline content that the single-body reader

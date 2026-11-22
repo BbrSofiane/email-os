@@ -467,3 +467,51 @@ fn alternative_with_related_html_keeps_both_and_the_inline_image() {
     assert_eq!(thread.inline_parts.len(), 1);
     assert_eq!(thread.conversation.unsupported_reason, None);
 }
+
+#[test]
+fn hostile_html_only_messages_keep_the_thread_and_stay_bounded() {
+    let mib = 1024 * 1024;
+    let shapes = [
+        format!("<table><tr>{}</tr></table>", "<td>a</td>".repeat(100_000)),
+        format!("{}visible", "<div>".repeat(200_000)),
+        format!("{}visible", "<blockquote>".repeat(80_000)),
+        format!("{}visible", "<ul><li>".repeat(120_000)),
+        format!("{}visible", "<table><tr><td>".repeat(60_000)),
+        format!("<p {}>visible</p>", "a b c d ".repeat(120_000)),
+        "&".repeat(mib),
+        "<a href='https://x.test/'>x</a>".repeat(mib / 32),
+    ];
+    let messages = shapes
+        .iter()
+        .enumerate()
+        .map(|(i, html)| {
+            assert!(html.len() <= mib, "shape {i} is parsed, not rejected");
+            gmail_message(
+                &format!("m{i}"),
+                &[],
+                html_root(html.as_bytes(), "text/html; charset=utf-8"),
+            )
+        })
+        .collect();
+    let body = thread_response("t", "1", messages);
+    let started = std::time::Instant::now();
+    let thread = parse_thread("account", "t", &body).unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    assert_eq!(thread.conversation.messages.len(), shapes.len());
+    assert_eq!(thread.conversation.unsupported_reason, None);
+    for (i, message) in thread.conversation.messages.iter().enumerate() {
+        assert!(message.body_text.chars().count() <= MAX_MESSAGE_TEXT_CHARS);
+        assert!((1..=5).contains(&i) == message.body_text.ends_with("visible"));
+        assert!(thread.derived_text_ids.contains(&message.id));
+    }
+}
+
+#[test]
+fn image_only_html_is_displayable_without_text() {
+    let thread = html_test_thread(html_root(
+        b"<a href='https://x.test/'><img src='https://x.test/a.png'></a>",
+        "text/html",
+    ));
+    assert_eq!(thread.conversation.messages[0].body_text, "");
+    assert_eq!(thread.conversation.unsupported_reason, None);
+}

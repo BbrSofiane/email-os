@@ -719,7 +719,7 @@ dependencies = [
  "bit-set",
  "cssparser",
  "foldhash 0.2.0",
- "html5ever 0.38.0",
+ "html5ever",
  "precomputed-hash",
  "selectors",
  "tendril",
@@ -1376,18 +1376,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
-name = "html2text"
-version = "0.17.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7475d5c5606bb86be8d7986962ba34b233490985cfa76a20d6a23e1eb9563b1c"
-dependencies = [
- "html5ever 0.40.1",
- "tendril",
- "thiserror 2.0.21",
- "unicode-width",
-]
-
-[[package]]
 name = "html5ever"
 version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1395,17 +1383,6 @@ checksum = "1054432bae2f14e0061e33d23402fbaa67a921d319d56adc6bcf887ddad1cbc2"
 dependencies = [
  "log",
  "markup5ever 0.38.0",
-]
-
-[[package]]
-name = "html5ever"
-version = "0.40.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "456a1a377e608e555d22ddab27ac0114bc7a7b4199078108e34c2aeae6c9b130"
-dependencies = [
- "log",
- "markup5ever 0.40.0",
- "memchr",
 ]
 
 [[package]]
@@ -2011,12 +1988,12 @@ dependencies = [
  "base64 0.22.1",
  "charset",
  "chrono",
- "html2text",
  "keyring",
  "libc",
  "log",
  "mail-core",
  "mailparse",
+ "markup5ever 0.40.0",
  "rand 0.8.8",
  "reqwest 0.12.28",
  "rusqlite",
@@ -4407,12 +4384,6 @@ name = "unicode-segmentation"
 version = "1.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c6f5d3c3b1bf09027a88a6bc961fc00497d651009560b5463668dc81b0fa87a8"
-
-[[package]]
-name = "unicode-width"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca718471876992059f251e33aafc334346ada08042b7661dd1fe313a9bced557"
 
 [[package]]
 name = "untrusted"

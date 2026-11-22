@@ -59,6 +59,8 @@ const MAX_DISCOVERY_IDS_PER_PAGE: usize = 100;
 const MAX_HISTORY_IDS_PER_PAGE: usize = 1_000;
 /// Bound the aggregate live thread DTOs retained before a page is committed.
 const MAX_RETAINED_THREAD_BYTES_PER_PAGE: usize = 16 * 1024 * 1024;
+/// HTML bodies and text derived from them kept per page, besides the bound above.
+const MAX_RETAINED_HTML_BYTES_PER_PAGE: usize = 8 * 1024 * 1024;
 
 const MAX_INLINE_IMAGE_BYTES: usize = 2 * 1024 * 1024;
 
@@ -987,11 +989,12 @@ impl GmailCore {
         let mut conversations = vec![];
         let mut seen = HashSet::new();
         let mut bytes = 0usize;
+        let mut budget = PageBudget::default();
         for id in page.thread_ids {
             if !valid_id(&id) || !seen.insert(id.clone()) {
                 return Err(MailError::InvalidProviderResponse);
             }
-            if let Some(thread) =
+            if let Some(mut thread) =
                 self.inner
                     .provider
                     .get_thread_for_account(&request.account_id, &id, &job.cancel)?
@@ -1001,6 +1004,9 @@ impl GmailCore {
                 {
                     return Err(MailError::InvalidProviderResponse);
                 }
+                // The page carries text only; what was derived from HTML stays small.
+                thread.message_html.clear();
+                budget.fit_html(&mut thread, MAX_RETAINED_HTML_BYTES_PER_PAGE / 4);
                 bytes = bytes.saturating_add(
                     serde_json::to_vec(&thread.conversation)
                         .map_err(|_| MailError::InvalidProviderResponse)?
@@ -2724,7 +2730,7 @@ fn run_discovery(
         };
         let seen_set: HashSet<&String> = seen.iter().collect();
         let mut fetched: Vec<ThreadFetch> = Vec::new();
-        let mut retained_bytes = 0usize;
+        let mut budget = PageBudget::default();
         let mut page_dedup: HashSet<&String> = HashSet::new();
         let mut discovered = 0usize;
         let mut capped = false;
@@ -2741,11 +2747,7 @@ fn run_discovery(
                     if thread.conversation.conversation_ref.conversation_id != *id {
                         return StageOutcome::SyncError(MailError::InvalidProviderResponse);
                     }
-                    if !admit_thread(
-                        &mut retained_bytes,
-                        &mut thread,
-                        MAX_RETAINED_THREAD_BYTES_PER_PAGE,
-                    ) {
+                    if !budget.admit(&mut thread) {
                         return StageOutcome::SyncError(MailError::InvalidProviderResponse);
                     }
                     fetched.push(ThreadFetch::Cached(Box::new(thread)));
@@ -2753,7 +2755,7 @@ fn run_discovery(
                 }
                 Ok(None) => {
                     let missing_bytes = std::mem::size_of::<ThreadFetch>() + id.capacity();
-                    if !include_retained_bytes(&mut retained_bytes, missing_bytes) {
+                    if !budget.include(missing_bytes) {
                         return StageOutcome::SyncError(MailError::InvalidProviderResponse);
                     }
                     fetched.push(ThreadFetch::Missing(id.clone()));
@@ -2883,7 +2885,7 @@ fn fetch_changed_threads(
     cancel: &CancelToken,
 ) -> Result<Vec<ThreadFetch>, MailError> {
     let mut fetched = Vec::new();
-    let mut retained_bytes = 0usize;
+    let mut budget = PageBudget::default();
     let mut page_dedup: HashSet<&String> = HashSet::new();
     for id in changed_thread_ids {
         if !page_dedup.insert(id) {
@@ -2894,18 +2896,14 @@ fn fetch_changed_threads(
                 if thread.conversation.conversation_ref.conversation_id != *id {
                     return Err(MailError::InvalidProviderResponse);
                 }
-                if !admit_thread(
-                    &mut retained_bytes,
-                    &mut thread,
-                    MAX_RETAINED_THREAD_BYTES_PER_PAGE,
-                ) {
+                if !budget.admit(&mut thread) {
                     return Err(MailError::InvalidProviderResponse);
                 }
                 fetched.push(ThreadFetch::Cached(Box::new(thread)));
             }
             None => {
                 let missing_bytes = std::mem::size_of::<ThreadFetch>() + id.capacity();
-                if !include_retained_bytes(&mut retained_bytes, missing_bytes) {
+                if !budget.include(missing_bytes) {
                     return Err(MailError::InvalidProviderResponse);
                 }
                 fetched.push(ThreadFetch::Missing(id.clone()));
@@ -2915,38 +2913,50 @@ fn fetch_changed_threads(
     Ok(fetched)
 }
 
-/// Admits one fetched thread into the page's retained-byte budget. A thread
-/// that only fits without its HTML keeps its text and records the HTML as too
-/// large (ADR 0006 decision 3) instead of failing the whole page.
-fn admit_thread(total: &mut usize, thread: &mut GmailThread, budget: usize) -> bool {
-    let fits = |total: usize, bytes: usize| total.checked_add(bytes).filter(|next| *next <= budget);
-    if let Some(next) = fits(*total, retained_thread_bytes(thread)) {
-        *total = next;
-        return true;
-    }
-    if thread
-        .message_html
-        .values()
-        .any(|html| matches!(html, super::types::MessageHtml::Present(_)))
-    {
-        thread.drop_html();
-        if let Some(next) = fits(*total, retained_thread_bytes(thread)) {
-            *total = next;
-            return true;
-        }
-    }
-    false
+/// Retained bytes of one fetched page. HTML and the text derived from it have
+/// their own smaller budget, so however large they are they never take room
+/// from the rest and never fail the page (ADR 0006 decision 3).
+#[derive(Default)]
+struct PageBudget {
+    html: usize,
+    other: usize,
 }
 
-fn include_retained_bytes(total: &mut usize, additional: usize) -> bool {
-    let Some(next) = total.checked_add(additional) else {
-        return false;
-    };
-    if next > MAX_RETAINED_THREAD_BYTES_PER_PAGE {
-        return false;
+impl PageBudget {
+    /// Admits one fetched thread; false when the page is over its bound even
+    /// without HTML.
+    fn admit(&mut self, thread: &mut GmailThread) -> bool {
+        self.fit_html(thread, MAX_RETAINED_HTML_BYTES_PER_PAGE);
+        let other = retained_thread_bytes(thread).saturating_sub(thread.html_bytes());
+        self.include(other)
     }
-    *total = next;
-    true
+
+    /// Keeps the thread's HTML within the HTML budget, or records it as too
+    /// large and keeps an excerpt of the derived text, counted as other bytes.
+    fn fit_html(&mut self, thread: &mut GmailThread, budget: usize) {
+        let html = thread.html_bytes();
+        match self.html.checked_add(html).filter(|next| *next <= budget) {
+            Some(next) => self.html = next,
+            None => {
+                thread.drop_html();
+                thread.derived_text_ids.clear();
+            }
+        }
+    }
+
+    fn include(&mut self, additional: usize) -> bool {
+        match self
+            .other
+            .checked_add(additional)
+            .filter(|next| *next <= MAX_RETAINED_THREAD_BYTES_PER_PAGE)
+        {
+            Some(next) => {
+                self.other = next;
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 /// Conservative estimate of heap retained by one DTO, including collection

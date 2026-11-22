@@ -392,11 +392,7 @@ pub(crate) fn fixtures() -> Vec<SeedConversation> {
     let extra_fixtures = EXTRA.get_or_init(|| {
         let mut result = Vec::new();
         fn derived(html: &'static str) -> &'static str {
-            Box::leak(
-                crate::gmail::parse::html_to_text(html)
-                    .unwrap_or_default()
-                    .into_boxed_str(),
-            )
+            Box::leak(crate::gmail::parse::html_to_text(html).into_boxed_str())
         }
         fn extra(
             id: &'static str,
