@@ -415,6 +415,25 @@ impl GmailCore {
         self.inner.store.insert_send_intent(intent)
     }
 
+    pub(crate) fn cancel_queued_send(
+        &self,
+        account: &str,
+        operation: &str,
+        generation: u64,
+    ) -> Result<bool, MailError> {
+        self.inner
+            .store
+            .cancel_queued_send_for_generation(account, operation, generation)
+    }
+
+    pub(crate) fn insert_retry_send(
+        &self,
+        intent: &super::store::send::SendIntent,
+        generation: u64,
+    ) -> Result<(), MailError> {
+        self.inner.store.insert_retry_send(intent, generation)
+    }
+
     /// Opens (or creates) the Gmail profile storage under `profile_dir`,
     /// acquires the profile lock for the full core lifetime, detects startup
     /// credentials, and starts the serial background worker (independent of

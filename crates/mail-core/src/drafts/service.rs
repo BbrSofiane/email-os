@@ -151,7 +151,9 @@ impl DraftService {
             generation,
             &result,
         )?;
-        Ok(true)
+        // A provably pre-dispatch pause leaves this operation queued. Let the
+        // next worker beat re-arm it so offline state cannot spin the worker.
+        Ok(!matches!(result, crate::gmail::types::SendResult::Paused))
     }
 
     pub fn new(core: GmailCore, drafts: DraftCore) -> Self {
@@ -312,6 +314,90 @@ impl DraftService {
         Ok(Some(draft_ref))
     }
 
+    pub(crate) fn cancel_queued_send(&self, operation: &str) -> Result<bool, MailError> {
+        let _lifecycle = self.lock()?;
+        let account = self.core.active_account()?;
+        let generation = self.core.send_generation()?;
+        let cancelled = self
+            .core
+            .cancel_queued_send(&account.account_id, operation, generation)?;
+        if cancelled {
+            self.repair_send_locks(&account.account_id)?;
+        }
+        Ok(cancelled)
+    }
+
+    pub(crate) fn retry_send(
+        &self,
+        operation: &str,
+        request: &str,
+    ) -> Result<crate::gmail::store::send::SendIntent, MailError> {
+        let _lifecycle = self.lock()?;
+        let account = self.core.active_account()?;
+        if request.trim().is_empty() || request.len() > 128 {
+            return Err(MailError::InvalidRequest {
+                field: "requestId".into(),
+            });
+        }
+        if let Some(receipt) = self.core.send_receipt(&account.account_id, request)? {
+            return if receipt.retry_of.as_deref() == Some(operation) {
+                Ok(receipt)
+            } else {
+                Err(MailError::RequestIdConflict)
+            };
+        }
+        let generation = self.core.send_generation()?;
+        self.repair_send_locks(&account.account_id)?;
+        let previous = self
+            .core
+            .list_send_intents(&account.account_id)?
+            .into_iter()
+            .find(|row| row.operation_id == operation)
+            .ok_or(MailError::NotFound)?;
+        if previous.state != "failed" || previous.frozen_mime.is_empty() {
+            return Err(MailError::InvalidRequest {
+                field: "operationId".into(),
+            });
+        }
+        let draft_ref = DraftRef {
+            account_id: account.account_id.clone(),
+            draft_id: previous.draft_id.clone(),
+        };
+        let draft = self.drafts.get_draft(&account, &draft_ref)?;
+        if draft.revision != previous.draft_revision {
+            return Err(MailError::DraftConflict {
+                current_revision: draft.revision,
+            });
+        }
+        let intent = crate::gmail::store::send::SendIntent {
+            account_id: account.account_id,
+            operation_id: uuid::Uuid::new_v4().to_string(),
+            draft_id: previous.draft_id,
+            draft_revision: previous.draft_revision,
+            request_id: request.to_owned(),
+            frozen_mime: previous.frozen_mime,
+            not_before: (self.core.send_now()? + chrono::Duration::seconds(5)).to_rfc3339(),
+            state: "hold".into(),
+            retry_of: Some(operation.to_owned()),
+        };
+        self.drafts
+            .acquire_send_lock(&draft_ref, intent.draft_revision, &intent.operation_id)?;
+        if let Err(error) = self.core.insert_retry_send(&intent, generation) {
+            match self.core.send_receipt(&intent.account_id, request) {
+                Ok(Some(receipt)) if receipt.operation_id == intent.operation_id => {
+                    return Ok(receipt)
+                }
+                Ok(_) => self
+                    .drafts
+                    .release_send_lock(&draft_ref, &intent.operation_id)?,
+                Err(_) => return Err(error),
+            }
+            return Err(error);
+        }
+        self.core.wake_send_worker();
+        Ok(intent)
+    }
+
     /// Admit a saved revision to the durable send ledger.
     pub(crate) fn admit_send(
         &self,
@@ -329,7 +415,10 @@ impl DraftService {
             });
         }
         if let Some(receipt) = self.core.send_receipt(&account.account_id, request)? {
-            return if receipt.draft_id == draft_ref.draft_id && receipt.draft_revision == revision {
+            return if receipt.retry_of.is_none()
+                && receipt.draft_id == draft_ref.draft_id
+                && receipt.draft_revision == revision
+            {
                 Ok(receipt)
             } else {
                 Err(MailError::RequestIdConflict)
@@ -374,7 +463,10 @@ impl DraftService {
             return Err(MailError::AuthRequired);
         }
         if let Some(receipt) = self.core.send_receipt(&account.account_id, request)? {
-            return if receipt.draft_id == draft_ref.draft_id && receipt.draft_revision == revision {
+            return if receipt.retry_of.is_none()
+                && receipt.draft_id == draft_ref.draft_id
+                && receipt.draft_revision == revision
+            {
                 Ok(receipt)
             } else {
                 Err(MailError::RequestIdConflict)
@@ -430,6 +522,7 @@ impl DraftService {
             frozen_mime,
             not_before: (now + chrono::Duration::seconds(5)).to_rfc3339(),
             state: "hold".into(),
+            retry_of: None,
         };
         self.drafts
             .acquire_send_lock(draft_ref, revision, &intent.operation_id)?;
@@ -654,6 +747,7 @@ mod tests {
                 frozen_mime: Vec::new(),
                 not_before: chrono::Utc::now().to_rfc3339(),
                 state: "confirmed".into(),
+                retry_of: None,
             })
             .unwrap();
         assert!(matches!(

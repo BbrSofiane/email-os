@@ -3379,6 +3379,7 @@ fn send_hold_deadline_and_restart_recovery_are_atomic() {
         frozen_mime: vec![1],
         not_before: "2026-01-01T00:00:05Z".into(),
         state: "hold".into(),
+        retry_of: None,
     };
     store.insert_send_intent(&intent("undo")).unwrap();
     store.insert_send_intent(&intent("release")).unwrap();
@@ -3391,6 +3392,16 @@ fn send_hold_deadline_and_restart_recovery_are_atomic() {
     assert_eq!(store.release_due_sends("acct").unwrap(), 2);
     assert!(store.claim_send("acct", "release").unwrap());
     assert!(!store.claim_send("acct", "release").unwrap());
+    assert!(!store
+        .cancel_queued_send_for_generation("acct", "release", 0)
+        .unwrap());
+    assert!(!store
+        .cancel_queued_send_for_generation("acct", "restart", 1)
+        .unwrap());
+    assert!(store
+        .cancel_queued_send_for_generation("acct", "restart", 0)
+        .unwrap());
+    assert!(!store.claim_send("acct", "restart").unwrap());
     store.insert_send_intent(&intent("new-hold")).unwrap();
     store.recover_send_intents().unwrap();
     assert_eq!(
@@ -3410,4 +3421,24 @@ fn send_hold_deadline_and_restart_recovery_are_atomic() {
         "cancelled"
     );
     assert!(!store.claim_send("acct", "release").unwrap());
+
+    let mut failed = intent("failed");
+    failed.state = "failed".into();
+    store.insert_send_intent(&failed).unwrap();
+    let mut retry = failed.clone();
+    retry.operation_id = "retry".into();
+    retry.request_id = "retry".into();
+    retry.state = "hold".into();
+    retry.retry_of = Some("failed".into());
+    assert!(store.insert_retry_send(&retry, 1).is_err());
+    store.insert_retry_send(&retry, 0).unwrap();
+    let persisted = store.send_receipt("acct", "retry").unwrap().unwrap();
+    assert_eq!(persisted.retry_of, retry.retry_of);
+    assert_eq!(persisted.frozen_mime, failed.frozen_mime);
+    retry.operation_id = "stale".into();
+    retry.request_id = "stale".into();
+    assert!(store.insert_retry_send(&retry, 0).is_err());
+    retry.draft_id = "release".into();
+    retry.retry_of = Some("release".into());
+    assert!(store.insert_retry_send(&retry, 0).is_err());
 }
