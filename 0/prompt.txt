@@ -1,0 +1,25 @@
+[T3 Code: the agent in T3 thread "2eef1655-4916-4aa4-a930-0dddb657d66f" sent this message, not the user.]
+
+Coordinator: I re-reviewed the code at 9ff646d. Items 1, 2, 4-7 and the page budget: code accepted, including dropping html2text. I re-ran my hostile inputs on html_text.rs (worst 252 ms in a debug build, output within the bound) and read the CSS filter, sanitizer, budget, cache, store, reader, App and useDrafts changes.
+
+Your disk block does not need a local build:
+- CI ran `mise run check:all` at 9ff646d and passed (run 45028967325, job `check`). That is the gate for this head; cite it in the PR instead of a local run.
+- The same run uploaded the APK built at 9ff646d: artifact `email-os-android-fixture-debug` (116 MB, not expired). Download it inside your worktree with `gh run download 45028967325 -R BbrSofiane/email-os -n email-os-android-fixture-debug -D <dir under .git/>`, and delete it when done. 1.9 GB is free. Do not delete anything on the machine that you did not create, and start no cargo or gradle build.
+
+Remaining work, item 3 only:
+1. usable/install holds emulator.lock now. Wait for it with a bounded wait (30 minutes at most) that tests whether the lock FILE exists, not a process match. If it is still held, end the turn with `BLOCKED: emulator lock held by usable/install` and I will resume you. Never remove another track's lock.
+2. The CI debug key differs from this VM's, so `adb install -r` may report INSTALL_FAILED_UPDATE_INCOMPATIBLE. While you hold the lock you may then uninstall only `dev.exedev.emailos.androidfixture` (synthetic data) and install the CI APK. Touch no other package; usable/install uses `dev.exedev.emailos`. If that package or its state looks like something track A is still using, stop and tell me.
+3. Re-run the frame probe, re-record the flow (the message body must be visible on return from the browser), retake the Android screenshots. Look at each before committing.
+4. Release per RULES.md, commit the evidence, update the PR body (remove the "rework in progress" note, the local-gate text and stale APK claims; state the CI gate for the head), push, and report `READY FOR REVIEW`.
+
+The macOS checklist stays an owner check. Leave it as is.
+
+---
+
+<task-notification>
+<task-id>bdly5dol5</task-id>
+<tool-use-id>toolu_015M6WgzP3XuZvvwrrUpCdZU</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-usable-html-reader-047d71899da466ac/ee85c0c8-b2b0-43e9-b640-7729bf4a26ee/tasks/bdly5dol5.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait at most 30 minutes for the lock file, then take it" completed (exit code 0)</summary>
+</task-notification>
