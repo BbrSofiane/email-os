@@ -110,6 +110,60 @@ impl DraftService {
         self.core.release_due_sends(&account.account_id)
     }
 
+    /// Check unknown sends using positive provider evidence only.
+    pub fn check_unknown_sends(&self, cancel: &crate::CancelToken) -> Result<(), MailError> {
+        self.check_unknown_sends_batch(cancel, 0, usize::MAX)
+    }
+
+    fn check_unknown_sends_batch(
+        &self,
+        cancel: &crate::CancelToken,
+        offset: usize,
+        limit: usize,
+    ) -> Result<(), MailError> {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+        use mailparse::MailHeaderMap;
+        let lifecycle = self.lock()?;
+        let account = self.core.active_account()?;
+        let generation = self.core.send_generation()?;
+        let intents = self.core.list_send_intents(&account.account_id)?;
+        drop(lifecycle);
+        let unknown: Vec<_> = intents
+            .into_iter()
+            .filter(|intent| intent.state == "unknown")
+            .collect();
+        let count = unknown.len();
+        for intent in unknown
+            .into_iter()
+            .cycle()
+            .skip(if count == 0 { 0 } else { offset % count })
+            .take(limit.min(count))
+        {
+            let Some(id) = (|| {
+                let value: serde_json::Value = serde_json::from_slice(&intent.frozen_mime).ok()?;
+                let raw = URL_SAFE_NO_PAD.decode(value.get("raw")?.as_str()?).ok()?;
+                let parsed = mailparse::parse_mail(&raw).ok()?;
+                let ids = parsed.headers.get_all_values("Message-ID");
+                (ids.len() == 1 && !ids[0].is_empty()).then(|| ids[0].clone())
+            })() else {
+                continue;
+            };
+            if let Some((message, thread)) = self.core.find_sent(&account.account_id, &id, cancel) {
+                let _lifecycle = self.lock()?;
+                if self.core.confirm_unknown_send(
+                    &account.account_id,
+                    &intent.operation_id,
+                    generation,
+                    &message,
+                    &thread,
+                )? {
+                    self.repair_send_locks(&account.account_id)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Dispatch at most one released intent. The lifecycle gate protects the
     /// exact lock through the durable claim, but never spans provider I/O.
     pub(crate) fn dispatch_send_pass(
@@ -160,16 +214,31 @@ impl DraftService {
         let lifecycle = Arc::new(Mutex::new(DraftLifecycle::default()));
         let weak_lifecycle = Arc::downgrade(&lifecycle);
         let worker_drafts = drafts.clone();
+        let next_check = Mutex::new((std::time::Instant::now(), 0usize));
         core.register_send_pass(move |core, cancel| {
             let Some(lifecycle) = weak_lifecycle.upgrade() else {
                 return Ok(false);
             };
-            DraftService {
+            let service = DraftService {
                 core,
                 drafts: worker_drafts.clone(),
                 lifecycle,
+            };
+            let due = {
+                let mut next = next_check.lock().expect("send check clock poisoned");
+                if std::time::Instant::now() >= next.0 {
+                    next.0 = std::time::Instant::now() + std::time::Duration::from_secs(60);
+                    let offset = next.1;
+                    next.1 = next.1.wrapping_add(10);
+                    Some(offset)
+                } else {
+                    None
+                }
+            };
+            if let Some(offset) = due {
+                service.check_unknown_sends_batch(cancel, offset, 10)?;
             }
-            .dispatch_send_pass(cancel)
+            service.dispatch_send_pass(cancel)
         });
         Self {
             core,
@@ -587,6 +656,75 @@ mod tests {
     use crate::testing::synthetic::Synthetic;
 
     #[test]
+    fn released_send_survives_pause_and_restart_then_sends_once() {
+        use crate::drafts::types::DraftContent;
+        use crate::testing::synthetic::{open_core_wrapping, Overlay};
+        use crate::testing::{until, TIMEOUT};
+
+        let s = Synthetic::open_wrapped("send-worker-paused", Overlay::wrap);
+        s.provider.forward_sends();
+        s.core.pause_test_operations(TIMEOUT).unwrap();
+        let drafts = DraftCore::open(s.dir.path().join("local-drafts")).unwrap();
+        let service = DraftService::new(s.core.clone(), drafts.clone());
+        let draft = service
+            .create_draft(&CreateDraft {
+                request_id: "draft".into(),
+                source: DraftSource::NewMessage,
+                initial_content: Some(DraftContent {
+                    to: "recipient@example.com".into(),
+                    cc: String::new(),
+                    subject: "Subject".into(),
+                    body_text: "Body".into(),
+                }),
+            })
+            .unwrap();
+        let intent = service
+            .admit_send(&draft.draft_ref, draft.revision, "send")
+            .unwrap();
+        s.clock.advance_seconds(5);
+        s.core.wake_send_worker();
+        assert!(until(|| s
+            .core
+            .send_receipt(&intent.account_id, "send")
+            .unwrap()
+            .is_some_and(|row| row.state == "queued")));
+        assert_eq!(s.provider.send_calls(), 0);
+        s.core.stop();
+        drop(service);
+        drop(drafts);
+        drop(s.core);
+
+        let reopened = open_core_wrapping(
+            s.dir.path(),
+            s.provider.clone(),
+            &s.synthetic,
+            &s.clock,
+            true,
+        );
+        let drafts = DraftCore::open(s.dir.path().join("local-drafts")).unwrap();
+        let _service = DraftService::new(reopened.clone(), drafts);
+        assert_eq!(
+            reopened
+                .send_receipt(&intent.account_id, "send")
+                .unwrap()
+                .unwrap()
+                .state,
+            "queued"
+        );
+        assert_eq!(s.provider.send_calls(), 0);
+        reopened.release_test_operations();
+        reopened.wake_send_worker();
+        assert!(until(|| reopened
+            .send_receipt(&intent.account_id, "send")
+            .unwrap()
+            .is_some_and(|row| row.state == "confirmed")));
+        reopened.wake_send_worker();
+        reopened.wait_for_test_idle(TIMEOUT).unwrap();
+        assert_eq!(s.provider.send_calls(), 1);
+        reopened.stop();
+    }
+
+    #[test]
     fn worker_sends_once_at_deadline_and_never_replays_unknown() {
         use crate::drafts::types::DraftContent;
         use crate::testing::synthetic::{open_core_wrapping, Overlay};
@@ -651,6 +789,62 @@ mod tests {
             "unknown"
         );
         reopened.stop();
+    }
+
+    #[test]
+    fn unknown_send_checks_require_positive_sent_evidence() {
+        use crate::drafts::types::DraftContent;
+        use crate::testing::synthetic::Overlay;
+        use crate::testing::until;
+
+        for (fault, expected) in [
+            ("commit-then-lose", "confirmed"),
+            ("lose-without-commit", "unknown"),
+        ] {
+            let s = Synthetic::open_wrapped(fault, Overlay::wrap);
+            s.provider.forward_sends();
+            s.synthetic.set_next_send_outcome(fault);
+            let drafts = DraftCore::open(s.dir.path().join("local-drafts")).unwrap();
+            let service = DraftService::new(s.core.clone(), drafts);
+            let draft = service
+                .create_draft(&CreateDraft {
+                    request_id: "draft".into(),
+                    source: DraftSource::NewMessage,
+                    initial_content: Some(DraftContent {
+                        to: "recipient@example.com".into(),
+                        cc: String::new(),
+                        subject: "Subject".into(),
+                        body_text: "Body".into(),
+                    }),
+                })
+                .unwrap();
+            let intent = service
+                .admit_send(&draft.draft_ref, draft.revision, "send")
+                .unwrap();
+            s.clock.advance_seconds(5);
+            s.core.wake_send_worker();
+            assert!(until(|| s
+                .core
+                .send_receipt(&intent.account_id, "send")
+                .unwrap()
+                .is_some_and(|row| row.state == "unknown")));
+            service
+                .check_unknown_sends(&crate::CancelToken::default())
+                .unwrap();
+            service
+                .check_unknown_sends(&crate::CancelToken::default())
+                .unwrap();
+            assert_eq!(
+                s.core
+                    .send_receipt(&intent.account_id, "send")
+                    .unwrap()
+                    .unwrap()
+                    .state,
+                expected
+            );
+            assert_eq!(s.provider.send_calls(), 1);
+            s.core.stop();
+        }
     }
 
     #[test]

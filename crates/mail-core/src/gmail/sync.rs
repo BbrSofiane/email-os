@@ -125,7 +125,7 @@ struct GmailInner {
 struct Ctrl {
     state: Mutex<CtrlState>,
     wake: Condvar,
-    send_pass: Mutex<Option<Box<dyn Fn(&CancelToken) -> Result<bool, MailError> + Send>>>,
+    send_pass: Mutex<Option<Arc<dyn Fn(&CancelToken) -> Result<bool, MailError> + Send + Sync>>>,
     #[cfg(test)]
     after_mutation_count: Mutex<Option<MutationCountHook>>,
 }
@@ -318,7 +318,7 @@ enum StageOutcome {
 impl GmailCore {
     pub(crate) fn register_send_pass(
         &self,
-        pass: impl Fn(GmailCore, &CancelToken) -> Result<bool, MailError> + Send + 'static,
+        pass: impl Fn(GmailCore, &CancelToken) -> Result<bool, MailError> + Send + Sync + 'static,
     ) {
         if !self.inner.policy.is_synthetic() {
             return;
@@ -329,7 +329,7 @@ impl GmailCore {
             .ctrl
             .send_pass
             .lock()
-            .expect("send pass poisoned") = Some(Box::new(move |cancel| match core.upgrade() {
+            .expect("send pass poisoned") = Some(Arc::new(move |cancel| match core.upgrade() {
             Some(inner) => pass(GmailCore { inner }, cancel),
             None => Ok(false),
         }));
@@ -366,6 +366,30 @@ impl GmailCore {
         self.inner
             .store
             .claim_send_for_generation(account, operation, generation)
+    }
+
+    pub(crate) fn find_sent(
+        &self,
+        account: &str,
+        message_id: &str,
+        cancel: &CancelToken,
+    ) -> Option<(String, String)> {
+        self.inner
+            .provider
+            .find_sent_for_account(account, message_id, cancel)
+    }
+
+    pub(crate) fn confirm_unknown_send(
+        &self,
+        account: &str,
+        operation: &str,
+        generation: u64,
+        message: &str,
+        thread: &str,
+    ) -> Result<bool, MailError> {
+        self.inner
+            .store
+            .confirm_unknown_send_for_generation(account, operation, generation, message, thread)
     }
 
     pub(crate) fn dispatch_send(
@@ -2516,7 +2540,8 @@ fn run(
         if action == PassAction::Mutations
             && matches!(&outcome, PassOutcome::Complete | PassOutcome::Idle)
         {
-            if let Some(pass) = ctrl.send_pass.lock().expect("send pass poisoned").as_ref() {
+            let pass = ctrl.send_pass.lock().expect("send pass poisoned").clone();
+            if let Some(pass) = pass {
                 match pass(&pass_cancel) {
                     Ok(sent) => more_sends = sent,
                     Err(error) => outcome = PassOutcome::Halt(error),

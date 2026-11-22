@@ -224,6 +224,17 @@ pub enum SendResult {
 ///
 /// Synchronous calls run exclusively on background/blocking threads, outside DB locks.
 pub trait GmailProvider: Send + Sync {
+    /// Read-only lookup of unambiguous Sent evidence. Unsupported providers
+    /// return no evidence; absence must never be interpreted as a refusal.
+    fn find_sent_for_account(
+        &self,
+        _account_id: &str,
+        _rfc_message_id: &str,
+        _cancel: &CancelToken,
+    ) -> Option<(String, String)> {
+        None
+    }
+
     /// Send once using credentials bound to the expected account. A provider
     /// must return Unknown whenever it cannot prove the request was refused.
     /// The default does no I/O, keeping unsupported providers disabled.

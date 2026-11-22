@@ -15,11 +15,14 @@ use crate::error::MailError;
 use crate::gmail::parse::{MAX_MESSAGE_HTML_CHARS, MAX_THREAD_HTML_BYTES};
 use crate::gmail::types::{
     GmailHistoryError, GmailProfile, GmailProvider, GmailThread, HistoryPage, InboxPage,
-    InlinePart, MessageHtml,
+    InlinePart, MessageHtml, SendResult,
 };
 use crate::storage_log::{storage_err, storage_fault};
 use crate::{CancelToken, ACCOUNT_ID, FIXTURE_MAILBOX};
-use base64::{engine::general_purpose::STANDARD, Engine as _};
+use base64::{
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+    Engine as _,
+};
 
 /// File (inside the profile directory) that holds the durable synthetic
 /// provider facts. It is distinct from the legacy fixture's `mail.db` and from
@@ -78,6 +81,15 @@ struct ControlState {
     calls: usize,
     #[cfg_attr(not(any(test, feature = "test-support")), allow(dead_code))]
     inflight: usize,
+    send_fault: Option<SendFault>,
+    send_paused: bool,
+}
+
+#[derive(Clone, Copy)]
+enum SendFault {
+    Refuse,
+    CommitThenLose,
+    LoseWithoutCommit,
 }
 
 pub struct SyntheticGmailProvider {
@@ -114,6 +126,14 @@ impl SyntheticGmailProvider {
                 state: Mutex::new(ControlState {
                     paused: controls.paused,
                     fail_next: controls.reject_next,
+                    send_fault: match std::env::var("EMAIL_OS_FAKE_SEND").ok().as_deref() {
+                        Some("reject") => Some(SendFault::Refuse),
+                        Some("commit-then-lose") => Some(SendFault::CommitThenLose),
+                        Some("lose-without-commit") => Some(SendFault::LoseWithoutCommit),
+                        _ => None,
+                    },
+                    send_paused: std::env::var("EMAIL_OS_FAKE_SEND").ok().as_deref()
+                        == Some("paused"),
                     ..ControlState::default()
                 }),
                 gate: Condvar::new(),
@@ -138,6 +158,23 @@ impl SyntheticGmailProvider {
     #[cfg(any(test, feature = "test-support"))]
     pub fn fail_next(&self) {
         self.controls.state.lock().expect("controls").fail_next = true;
+    }
+
+    /// Configure the next send independently of mailbox writes.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_next_send_outcome(&self, outcome: &str) {
+        self.controls.state.lock().expect("controls").send_fault = match outcome {
+            "reject" => Some(SendFault::Refuse),
+            "commit-then-lose" => Some(SendFault::CommitThenLose),
+            "lose-without-commit" => Some(SendFault::LoseWithoutCommit),
+            _ => None,
+        };
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_send_paused(&self, paused: bool) {
+        self.controls.state.lock().expect("controls").send_paused = paused;
+        self.controls.gate.notify_all();
     }
 
     /// Writes that have arrived, including ones still paused.
@@ -185,6 +222,48 @@ impl SyntheticGmailProvider {
         self.conversations.iter().find(|c| c.id == id)
     }
 
+    fn sent_messages(&self, thread_id: &str) -> Result<Vec<Message>, MailError> {
+        use mailparse::MailHeaderMap;
+        self.facts
+            .sent_in_conversation(thread_id)?
+            .into_iter()
+            .map(|(id, raw)| {
+                let parsed = mailparse::parse_mail(&raw)
+                    .map_err(|_| storage_fault("synthetic_sent_invalid"))?;
+                let header = |name: &str| parsed.headers.get_first_value(name).unwrap_or_default();
+                let addresses = |name: &str| -> Vec<Address> {
+                    mailparse::addrparse(&header(name))
+                        .map(|list| {
+                            list.iter()
+                                .filter_map(|item| match item {
+                                    mailparse::MailAddr::Single(single) => Some(Address {
+                                        display_name: single.display_name.clone(),
+                                        mailbox: single.addr.clone(),
+                                    }),
+                                    _ => None,
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                };
+                Ok(Message {
+                    id,
+                    from: addresses("From")
+                        .into_iter()
+                        .next()
+                        .ok_or_else(|| storage_fault("synthetic_sent_invalid"))?,
+                    to: addresses("To"),
+                    sent_at: header("Date"),
+                    body_text: parsed
+                        .get_body()
+                        .map_err(|_| storage_fault("synthetic_sent_invalid"))?,
+                    has_attachment: None,
+                    html_body: None,
+                })
+            })
+            .collect()
+    }
+
     fn build_thread(&self, seed: &SeedConversation) -> Result<GmailThread, MailError> {
         let (facts, history) = self.facts.conversation_facts(seed.id)?;
         let reference = ConversationRef {
@@ -201,7 +280,7 @@ impl SyntheticGmailProvider {
                 })
                 .collect::<Result<_, _>>()?;
         ordered.sort_by(|a, b| (a.0.sent_at, a.0.id).cmp(&(b.0.sent_at, b.0.id)));
-        let messages: Vec<Message> = ordered
+        let mut messages: Vec<Message> = ordered
             .iter()
             .enumerate()
             .map(|(index, (message, _))| Message {
@@ -273,6 +352,7 @@ impl SyntheticGmailProvider {
                 });
             }
         }
+        messages.extend(self.sent_messages(seed.id)?);
         let newest_sender = messages.last().map(|m| m.from.clone());
         let reply_context = fixture_reply_context(&reference, &messages);
         let conversation = Conversation {
@@ -288,6 +368,7 @@ impl SyntheticGmailProvider {
             reply_context,
             pending_operation_id: None,
         };
+        let all_message_ids = messages_ids(&conversation);
         Ok(GmailThread {
             message_html,
             derived_text_ids: Default::default(),
@@ -302,7 +383,7 @@ impl SyntheticGmailProvider {
             conversation,
             newest_sender,
             inbox_message_ids,
-            message_ids: Some(ordered.iter().map(|(m, _)| m.id.to_string()).collect()),
+            message_ids: Some(all_message_ids),
             unread_message_ids: Some(unread_message_ids),
             trash_message_ids: Some(Vec::new()),
             spam_message_ids: Some(Vec::new()),
@@ -363,6 +444,115 @@ fn address((display, mailbox): (&str, &str)) -> Address {
 /// synthetic session policy (stage 2) reads local readiness itself; these
 /// answers only make direct provider use coherent.
 impl GmailProvider for SyntheticGmailProvider {
+    fn find_sent_for_account(
+        &self,
+        account_id: &str,
+        rfc_message_id: &str,
+        cancel: &CancelToken,
+    ) -> Option<(String, String)> {
+        use mailparse::MailHeaderMap;
+        if account_id != ACCOUNT_ID || cancel.is_cancelled() || rfc_message_id.is_empty() {
+            return None;
+        }
+        let mut found = None;
+        for (message_id, thread_id, raw) in self.facts.all_sent().ok()? {
+            if cancel.is_cancelled() {
+                return None;
+            }
+            let parsed = mailparse::parse_mail(&raw).ok()?;
+            let ids = parsed.headers.get_all_values("Message-ID");
+            let from = parsed.headers.get_all_values("From");
+            if ids.len() != 1 || from.len() != 1 || ids[0] != rfc_message_id {
+                continue;
+            }
+            let addresses = mailparse::addrparse(&from[0]).ok()?;
+            if addresses.len() != 1
+                || !matches!(&addresses[0], mailparse::MailAddr::Single(a) if a.addr.eq_ignore_ascii_case(FIXTURE_MAILBOX))
+            {
+                continue;
+            }
+            if found.is_some() {
+                return None;
+            }
+            found = Some((message_id, thread_id));
+        }
+        found
+    }
+
+    fn send_for_account(&self, account: &str, frozen: &[u8], cancel: &CancelToken) -> SendResult {
+        if account != ACCOUNT_ID || cancel.is_cancelled() {
+            return SendResult::Paused;
+        }
+        let value: serde_json::Value = match serde_json::from_slice(frozen) {
+            Ok(v) => v,
+            Err(_) => return SendResult::Refused,
+        };
+        let raw = match value
+            .get("raw")
+            .and_then(|v| v.as_str())
+            .and_then(|v| URL_SAFE_NO_PAD.decode(v).ok())
+        {
+            Some(v) => v,
+            None => return SendResult::Refused,
+        };
+        if mailparse::parse_mail(&raw).is_err() {
+            return SendResult::Refused;
+        }
+        let thread_id = value
+            .get("threadId")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("sent-thread-{}", uuid::Uuid::new_v4()));
+        if self.conversation(&thread_id).is_none()
+            && self
+                .facts
+                .sent_in_conversation(&thread_id)
+                .map_or(true, |v| v.is_empty())
+            && value.get("threadId").is_some_and(|v| !v.is_null())
+        {
+            return SendResult::Refused;
+        }
+        let mut state = match self.controls.state.lock() {
+            Ok(s) => s,
+            Err(_) => return SendResult::Paused,
+        };
+        state.calls += 1;
+        state.inflight += 1;
+        self.controls.gate.notify_all();
+        while (state.paused || state.send_paused) && !cancel.is_cancelled() {
+            state = match self.controls.gate.wait_timeout(state, PAUSE_POLL) {
+                Ok((s, _)) => s,
+                Err(_) => return SendResult::Paused,
+            };
+        }
+        state.inflight -= 1;
+        self.controls.gate.notify_all();
+        if cancel.is_cancelled() {
+            return SendResult::Paused;
+        }
+        if state.fail_next {
+            state.fail_next = false;
+            return SendResult::Refused;
+        }
+        let fault = state.send_fault.take();
+        drop(state);
+        if matches!(fault, Some(SendFault::Refuse)) {
+            return SendResult::Refused;
+        }
+        if matches!(fault, Some(SendFault::LoseWithoutCommit)) {
+            return SendResult::Unknown;
+        }
+        let message_id = format!("sent-{}", uuid::Uuid::new_v4());
+        match self.facts.insert_sent(&message_id, &thread_id, &raw) {
+            Ok(()) if matches!(fault, Some(SendFault::CommitThenLose)) => SendResult::Unknown,
+            Ok(()) => SendResult::Confirmed {
+                message_id,
+                thread_id,
+            },
+            Err(_) => SendResult::Unknown,
+        }
+    }
+
     fn message_subject_for_account(
         &self,
         account_id: &str,
@@ -521,7 +711,52 @@ impl GmailProvider for SyntheticGmailProvider {
         check_cancel(cancel)?;
         match self.conversation(thread_id) {
             Some(seed) => self.build_thread(seed).map(Some),
-            None => Ok(None),
+            None => {
+                let messages = self.sent_messages(thread_id)?;
+                if messages.is_empty() {
+                    return Ok(None);
+                }
+                let parsed = self.facts.sent_in_conversation(thread_id)?;
+                use mailparse::MailHeaderMap;
+                let subject = mailparse::parse_mail(&parsed[0].1)
+                    .ok()
+                    .and_then(|m| m.headers.get_first_value("Subject"))
+                    .unwrap_or_default();
+                let reference = ConversationRef {
+                    account_id: ACCOUNT_ID.into(),
+                    conversation_id: thread_id.into(),
+                };
+                let ids = messages.iter().map(|m| m.id.clone()).collect();
+                let newest_sender = messages.last().map(|m| m.from.clone());
+                let conversation = Conversation {
+                    stars: None,
+                    conversation_ref: reference,
+                    subject,
+                    messages,
+                    is_in_inbox: false,
+                    is_read: Some(true),
+                    context_complete: Some(true),
+                    unsupported_reason: None,
+                    retained_snapshot_at: None,
+                    reply_context: None,
+                    pending_operation_id: None,
+                };
+                Ok(Some(GmailThread {
+                    conversation,
+                    newest_sender,
+                    message_ids: Some(ids),
+                    inbox_message_ids: vec![],
+                    unread_message_ids: Some(vec![]),
+                    trash_message_ids: Some(vec![]),
+                    spam_message_ids: Some(vec![]),
+                    history_id: self.facts.history_id()?.to_string(),
+                    message_html: HashMap::new(),
+                    derived_text_ids: Default::default(),
+                    inline_parts: vec![],
+                    star_facts: None,
+                    attachments: vec![],
+                }))
+            }
         }
     }
 
@@ -545,6 +780,10 @@ impl GmailProvider for SyntheticGmailProvider {
             None => Err(GmailHistoryError::Expired),
         }
     }
+}
+
+fn messages_ids(conversation: &Conversation) -> Vec<String> {
+    conversation.messages.iter().map(|m| m.id.clone()).collect()
 }
 
 fn first_message_id(conversation: &SeedConversation) -> Option<&'static str> {

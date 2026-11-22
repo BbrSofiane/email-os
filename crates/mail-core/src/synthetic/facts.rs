@@ -27,7 +27,7 @@ use crate::dto::MailboxOperationKind;
 use crate::error::MailError;
 use crate::storage_log::storage_err;
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 /// The mutable facts of one message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +80,13 @@ impl FactStore {
                      ) WITHOUT ROWID;
                      CREATE INDEX synthetic_messages_by_conversation
                          ON synthetic_messages (conversation_id);
+                     CREATE TABLE synthetic_sent (
+                         message_id TEXT PRIMARY KEY,
+                         conversation_id TEXT NOT NULL,
+                         raw_mime BLOB NOT NULL
+                     ) WITHOUT ROWID;
+                     CREATE INDEX synthetic_sent_by_conversation
+                         ON synthetic_sent (conversation_id);
                      CREATE TABLE synthetic_changes (
                          history_id      INTEGER NOT NULL,
                          conversation_id TEXT NOT NULL,
@@ -91,7 +98,21 @@ impl FactStore {
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)
                     .map_err(storage_err())?;
             }
-            SCHEMA_VERSION => {
+            1 | SCHEMA_VERSION => {
+                if version == 1 {
+                    tx.execute_batch(
+                        "CREATE TABLE synthetic_sent (
+                             message_id TEXT PRIMARY KEY,
+                             conversation_id TEXT NOT NULL,
+                             raw_mime BLOB NOT NULL
+                         ) WITHOUT ROWID;
+                         CREATE INDEX synthetic_sent_by_conversation
+                             ON synthetic_sent (conversation_id);",
+                    )
+                    .map_err(storage_err())?;
+                    tx.pragma_update(None, "user_version", SCHEMA_VERSION)
+                        .map_err(storage_err())?;
+                }
                 // Seeded earlier. Never re-seed or reset facts; a different
                 // seed would need an explicit migration, so fail closed.
                 let seeded = meta_get(&tx, "seed_version")?;
@@ -168,6 +189,66 @@ impl FactStore {
             .collect::<Result<Vec<_>, _>>()
             .map_err(storage_err())?;
         Ok(ids)
+    }
+
+    /// Persist a sent message and its mailbox facts in the same transaction.
+    pub(super) fn insert_sent(
+        &self,
+        message_id: &str,
+        conversation_id: &str,
+        raw_mime: &[u8],
+    ) -> Result<(), MailError> {
+        let mut conn = self.lock()?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage_err())?;
+        tx.execute(
+            "INSERT INTO synthetic_sent (message_id, conversation_id, raw_mime) VALUES (?1, ?2, ?3)",
+            params![message_id, conversation_id, raw_mime],
+        ).map_err(storage_err())?;
+        tx.execute(
+            "INSERT INTO synthetic_messages (message_id, conversation_id, in_inbox, unread, starred) VALUES (?1, ?2, 0, 0, 0)",
+            params![message_id, conversation_id],
+        ).map_err(storage_err())?;
+        let next = current_history_id(&tx)?
+            .checked_add(1)
+            .ok_or_else(|| crate::storage_log::storage_fault("synthetic_history_id_overflow"))?;
+        meta_set(&tx, "history_id", &next.to_string())?;
+        tx.execute(
+            "INSERT INTO synthetic_changes (history_id, conversation_id) VALUES (?1, ?2)",
+            params![next as i64, conversation_id],
+        )
+        .map_err(storage_err())?;
+        tx.commit().map_err(storage_err())
+    }
+
+    /// Read all persisted Sent evidence for exact header verification.
+    pub(super) fn all_sent(&self) -> Result<Vec<(String, String, Vec<u8>)>, MailError> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare("SELECT message_id, conversation_id, raw_mime FROM synthetic_sent")
+            .map_err(storage_err())?;
+        let rows = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .map_err(storage_err())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(storage_err())
+    }
+
+    /// Read persisted sent messages for an exact conversation after reopening.
+    pub(super) fn sent_in_conversation(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Vec<(String, Vec<u8>)>, MailError> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT message_id, raw_mime FROM synthetic_sent WHERE conversation_id = ?1 ORDER BY message_id",
+        ).map_err(storage_err())?;
+        let rows = stmt
+            .query_map(params![conversation_id], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .map_err(storage_err())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(storage_err())
     }
 
     /// Applies one mailbox write atomically. Every id must be a known
@@ -351,6 +432,26 @@ fn current_history_id(conn: &Connection) -> Result<u64, MailError> {
 #[cfg(test)]
 mod upgrade_tests {
     use super::*;
+
+    #[test]
+    fn sent_facts_are_atomic_and_readable() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        FactStore::migrate_and_seed(&mut conn).unwrap();
+        let store = FactStore {
+            conn: Mutex::new(conn),
+        };
+        let before = store.history_id().unwrap();
+        store.insert_sent("sent-1", "conv-01", b"message").unwrap();
+        assert_eq!(
+            store.sent_in_conversation("conv-01").unwrap(),
+            vec![("sent-1".into(), b"message".to_vec())]
+        );
+        assert!(store
+            .insert_sent("sent-1", "conv-01", b"duplicate")
+            .is_err());
+        assert_eq!(store.history_id().unwrap(), before + 1);
+        assert!(!store.conversation_facts("conv-01").unwrap().0["sent-1"].in_inbox);
+    }
 
     #[test]
     fn upgrades_v1_additively_once() {

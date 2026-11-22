@@ -93,6 +93,32 @@ impl GmailStore {
         Ok(changed == 1)
     }
 
+    /// Confirm only an unknown intent belonging to the current session.
+    pub(crate) fn confirm_unknown_send_for_generation(
+        &self,
+        account: &str,
+        operation: &str,
+        generation: u64,
+        message_id: &str,
+        thread_id: &str,
+    ) -> Result<bool, MailError> {
+        if message_id.is_empty() || thread_id.is_empty() {
+            return Ok(false);
+        }
+        self.persistence_gate()?;
+        let mut conn = self.lock_conn()?;
+        let tx = conn.transaction().map_err(storage_err())?;
+        if generation_of(&tx)? != generation || account_id_of(&tx)? != account {
+            return Ok(false);
+        }
+        let changed = tx.execute(
+            "UPDATE gmail_send_intents SET state='confirmed', provider_message_id=?3, provider_thread_id=?4, frozen_mime=X'' WHERE account_id=?1 AND operation_id=?2 AND state='unknown'",
+            params![account, operation, message_id, thread_id],
+        ).map_err(storage_err())?;
+        tx.commit().map_err(storage_err())?;
+        Ok(changed == 1)
+    }
+
     pub(crate) fn send_now(&self) -> Result<chrono::DateTime<chrono::FixedOffset>, MailError> {
         chrono::DateTime::parse_from_rfc3339(&self.clock.now_iso()).map_err(storage_err())
     }
