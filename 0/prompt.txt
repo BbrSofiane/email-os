@@ -1,0 +1,8 @@
+<task-notification>
+<task-id>bx8mmvnq6</task-id>
+<tool-use-id>toolu_01Mmed2geA32Tshhj86F9kiR</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-usable-html-reader-047d71899da466ac/ee85c0c8-b2b0-43e9-b640-7729bf4a26ee/tasks/bx8mmvnq6.output</output-file>
+<status>killed</status>
+<summary>Background command "Wait for track A, then run the reader tests" was stopped after reaching its background time limit</summary>
+<note>If the work in progress still needs it, start it again with `run_in_background` and a longer `timeout`. If it already had the longest `timeout` allowed, do not restart it. Either way, report that it was stopped.</note>
+</task-notification>
