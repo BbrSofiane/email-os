@@ -5,7 +5,7 @@ use super::{has_column, meta_get, meta_set, MailError, SCHEMA_VERSION};
 use crate::storage_log::{storage_err, storage_fault};
 use rusqlite::Connection;
 
-const CURRENT: u32 = 10;
+const CURRENT: u32 = 11;
 
 pub(super) fn migrate(conn: &mut Connection) -> Result<(), MailError> {
     migrate_with_hook(conn, |_| Ok(()))
@@ -148,6 +148,15 @@ fn apply(conn: &Connection, version: u32) -> Result<(), MailError> {
             add_legacy_column(conn, "gmail_messages", "body_html", "ALTER TABLE gmail_messages ADD COLUMN body_html TEXT")?;
             add_legacy_column(conn, "gmail_messages", "html_state", "ALTER TABLE gmail_messages ADD COLUMN html_state TEXT CHECK (html_state IN ('available', 'too_large'))")?;
             add_legacy_column(conn, "gmail_conversations", "inline_parts_json", "ALTER TABLE gmail_conversations ADD COLUMN inline_parts_json TEXT")?;
+        }
+        11 => {
+            conn.execute_batch("CREATE TABLE gmail_send_intents (
+                account_id TEXT NOT NULL, operation_id TEXT NOT NULL,
+                draft_id TEXT NOT NULL, draft_revision INTEGER NOT NULL CHECK (draft_revision > 0),
+                request_id TEXT NOT NULL, frozen_mime BLOB NOT NULL,
+                not_before TEXT NOT NULL, state TEXT NOT NULL,
+                PRIMARY KEY (account_id, operation_id), UNIQUE (account_id, request_id)
+            );").map_err(storage_err())?;
         }
         _ => unreachable!("only ordered known migration numbers are dispatched"),
     }

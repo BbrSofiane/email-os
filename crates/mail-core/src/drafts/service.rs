@@ -117,15 +117,61 @@ impl DraftService {
         self.lifecycle.lock().map_err(storage_err())
     }
 
+    // Called only while the lifecycle gate is held. The ledger is authoritative.
+    fn repair_send_locks(&self, account: &str) -> Result<(), MailError> {
+        let intents = self.core.list_send_intents(account)?;
+        let locks = self.drafts.send_locks(account)?;
+        for (draft_ref, operation, revision) in &locks {
+            match intents.iter().find(|intent| {
+                intent.operation_id == *operation
+                    && intent.draft_id == draft_ref.draft_id
+                    && intent.draft_revision == *revision
+            }) {
+                None => self.drafts.release_send_lock(draft_ref, operation)?,
+                Some(intent) if intent.state == "confirmed" => self
+                    .drafts
+                    .tombstone_confirmed_send(draft_ref, *revision, operation)?,
+                Some(intent) if intent.state == "failed" || intent.state == "cancelled" => {
+                    self.drafts.release_send_lock(draft_ref, operation)?
+                }
+                Some(_) => {}
+            }
+        }
+        for intent in &intents {
+            if !matches!(
+                intent.state.as_str(),
+                "hold" | "queued" | "applying" | "unknown"
+            ) {
+                continue;
+            }
+            let draft_ref = DraftRef {
+                account_id: account.to_owned(),
+                draft_id: intent.draft_id.clone(),
+            };
+            if !locks.iter().any(|(r, op, rev)| {
+                *r == draft_ref && *op == intent.operation_id && *rev == intent.draft_revision
+            }) {
+                self.drafts.acquire_send_lock(
+                    &draft_ref,
+                    intent.draft_revision,
+                    &intent.operation_id,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn list_drafts(&self) -> Result<Vec<DraftSummary>, MailError> {
         let _lifecycle = self.lock()?;
         let account = self.core.active_account()?;
+        self.repair_send_locks(&account.account_id)?;
         self.drafts.list_drafts(&account)
     }
 
     pub fn get_draft(&self, r#ref: &DraftRef) -> Result<Draft, MailError> {
         let _lifecycle = self.lock()?;
         let account = self.core.active_account()?;
+        self.repair_send_locks(&account.account_id)?;
         require_draft_account(&account, r#ref)?;
         self.drafts.get_draft(&account, r#ref)
     }
@@ -133,6 +179,7 @@ impl DraftService {
     pub fn create_draft(&self, command: &CreateDraft) -> Result<DraftReceipt, MailError> {
         let lifecycle_guard = self.lock()?;
         let account = self.core.active_account()?;
+        self.repair_send_locks(&account.account_id)?;
         if let Some(receipt) = self.drafts.lookup_create_receipt(&account, command)? {
             return Ok(receipt);
         }
@@ -172,9 +219,151 @@ impl DraftService {
         }
     }
 
+    /// Admit a saved revision to the durable send ledger.
+    pub(crate) fn admit_send(
+        &self,
+        draft_ref: &DraftRef,
+        revision: u32,
+        request: &str,
+    ) -> Result<crate::gmail::store::send::SendIntent, MailError> {
+        let lifecycle = self.lock()?;
+        let account = self.core.active_account()?;
+        self.repair_send_locks(&account.account_id)?;
+        require_draft_account(&account, draft_ref)?;
+        if request.trim().is_empty() || request.len() > 128 {
+            return Err(MailError::InvalidRequest {
+                field: "requestId".into(),
+            });
+        }
+        if let Some(receipt) = self.core.send_receipt(&account.account_id, request)? {
+            return if receipt.draft_id == draft_ref.draft_id && receipt.draft_revision == revision {
+                Ok(receipt)
+            } else {
+                Err(MailError::RequestIdConflict)
+            };
+        }
+        let draft = self.drafts.get_draft(&account, draft_ref)?;
+        if draft.revision != revision {
+            return Err(MailError::DraftConflict {
+                current_revision: draft.revision,
+            });
+        }
+        let epoch = lifecycle.session_epoch();
+        drop(lifecycle);
+        let exact_subject = match (&draft.source, &draft.reply_link) {
+            (DraftSource::NewMessage, None) => None,
+            (
+                DraftSource::Reply {
+                    conversation,
+                    source_message_id,
+                },
+                Some(link),
+            ) if conversation.account_id == account.account_id
+                && link.conversation == *conversation
+                && link.source_message_id == *source_message_id
+                && !source_message_id.is_empty() =>
+            {
+                Some(match &link.source_subject {
+                    Some(subject) => subject.clone(),
+                    None => self.core.exact_message_subject(
+                        &account.account_id,
+                        &conversation.conversation_id,
+                        source_message_id,
+                    )?,
+                })
+            }
+            _ => return Err(MailError::ReplyUnavailable),
+        };
+        let lifecycle = self.lock()?;
+        if !lifecycle.is_current(epoch)
+            || self.core.active_account()?.account_id != account.account_id
+        {
+            return Err(MailError::AuthRequired);
+        }
+        if let Some(receipt) = self.core.send_receipt(&account.account_id, request)? {
+            return if receipt.draft_id == draft_ref.draft_id && receipt.draft_revision == revision {
+                Ok(receipt)
+            } else {
+                Err(MailError::RequestIdConflict)
+            };
+        }
+        let current = self.drafts.get_draft(&account, draft_ref)?;
+        if current.revision != revision {
+            return Err(MailError::DraftConflict {
+                current_revision: current.revision,
+            });
+        }
+        let reply = match (&draft.source, &draft.reply_link) {
+            (DraftSource::NewMessage, None) => None,
+            (
+                DraftSource::Reply {
+                    conversation,
+                    source_message_id,
+                },
+                Some(link),
+            ) if conversation.account_id == account.account_id
+                && link.conversation == *conversation
+                && link.source_message_id == *source_message_id
+                && !source_message_id.is_empty() =>
+            {
+                Some((
+                    link,
+                    exact_subject
+                        .as_deref()
+                        .ok_or(MailError::ReplyUnavailable)?,
+                ))
+            }
+            _ => return Err(MailError::ReplyUnavailable),
+        };
+        let now = chrono::Utc::now();
+        let operation_id = uuid::Uuid::new_v4().to_string();
+        let message_id = format!("<{}@email-os.local>", uuid::Uuid::new_v4());
+        let mime = crate::send_mime::build_send_mime(
+            &draft.content,
+            &account.email_address,
+            reply,
+            &message_id,
+            &now.to_rfc2822(),
+        )?;
+        let frozen_mime =
+            serde_json::to_vec(&serde_json::json!({"raw": mime.raw, "threadId": mime.thread_id}))
+                .map_err(storage_err())?;
+        let intent = crate::gmail::store::send::SendIntent {
+            account_id: account.account_id,
+            operation_id,
+            draft_id: draft_ref.draft_id.clone(),
+            draft_revision: revision,
+            request_id: request.to_owned(),
+            frozen_mime,
+            not_before: (now + chrono::Duration::seconds(5)).to_rfc3339(),
+            state: "hold".into(),
+        };
+        self.drafts
+            .acquire_send_lock(draft_ref, revision, &intent.operation_id)?;
+        if let Err(error) = self.core.insert_send_intent(&intent) {
+            match self.core.send_receipt(&intent.account_id, request) {
+                Ok(Some(receipt)) if receipt.operation_id == intent.operation_id => {
+                    return Ok(receipt)
+                }
+                Ok(None) => self
+                    .drafts
+                    .release_send_lock(draft_ref, &intent.operation_id)?,
+                Ok(Some(_)) => {
+                    self.drafts
+                        .release_send_lock(draft_ref, &intent.operation_id)?;
+                    return Err(MailError::RequestIdConflict);
+                }
+                Err(_) => return Err(error),
+            }
+            return Err(error);
+        }
+        Ok(intent)
+    }
+
     pub fn save_draft(&self, command: &SaveDraft) -> Result<DraftReceipt, MailError> {
         let _lifecycle = self.lock()?;
         let account = self.core.active_account()?;
+        self.repair_send_locks(&account.account_id)?;
         require_draft_account(&account, &command.draft_ref)?;
         self.drafts.save_draft(&account, command)
     }
@@ -182,6 +371,7 @@ impl DraftService {
     pub fn delete_draft(&self, command: &DeleteDraft) -> Result<DraftDeleteReceipt, MailError> {
         let _lifecycle = self.lock()?;
         let account = self.core.active_account()?;
+        self.repair_send_locks(&account.account_id)?;
         require_draft_account(&account, &command.draft_ref)?;
         self.drafts.delete_draft(&account, command)
     }
@@ -208,6 +398,129 @@ impl DraftService {
 mod tests {
     use super::*;
     use crate::testing::synthetic::Synthetic;
+
+    #[test]
+    fn confirmed_send_cleanup_is_repaired_on_draft_access() {
+        use crate::drafts::types::DraftContent;
+        let s = Synthetic::open("draft-confirmed-repair");
+        let store = DraftCore::open(s.dir.path().join("local-drafts")).unwrap();
+        let service = DraftService::new(s.core.clone(), store.clone());
+        let created = service
+            .create_draft(&CreateDraft {
+                request_id: "create".into(),
+                source: DraftSource::NewMessage,
+                initial_content: Some(DraftContent {
+                    to: "recipient@example.com".into(),
+                    cc: String::new(),
+                    subject: "Subject".into(),
+                    body_text: "Body".into(),
+                }),
+            })
+            .unwrap();
+        store
+            .acquire_send_lock(&created.draft_ref, created.revision, "confirmed")
+            .unwrap();
+        s.core
+            .insert_send_intent(&crate::gmail::store::send::SendIntent {
+                account_id: created.draft_ref.account_id.clone(),
+                operation_id: "confirmed".into(),
+                draft_id: created.draft_ref.draft_id.clone(),
+                draft_revision: created.revision,
+                request_id: "send".into(),
+                frozen_mime: Vec::new(),
+                not_before: chrono::Utc::now().to_rfc3339(),
+                state: "confirmed".into(),
+            })
+            .unwrap();
+        assert!(matches!(
+            service.get_draft(&created.draft_ref),
+            Err(MailError::NotFound)
+        ));
+        assert!(store
+            .send_locks(&created.draft_ref.account_id)
+            .unwrap()
+            .is_empty());
+        assert!(service.list_drafts().unwrap().is_empty());
+        assert!(s
+            .core
+            .send_receipt(&created.draft_ref.account_id, "send")
+            .unwrap()
+            .is_some());
+        s.core.stop();
+    }
+
+    #[test]
+    fn send_admission_replays_and_repairs_locks() {
+        use crate::drafts::types::DraftContent;
+        let s = Synthetic::open("draft-send-repair");
+        let store = DraftCore::open(s.dir.path().join("local-drafts")).unwrap();
+        let service = DraftService::new(s.core.clone(), store.clone());
+        let created = service
+            .create_draft(&CreateDraft {
+                request_id: "create".into(),
+                source: DraftSource::NewMessage,
+                initial_content: Some(DraftContent {
+                    to: "recipient@example.com".into(),
+                    cc: String::new(),
+                    subject: "Subject".into(),
+                    body_text: "Body".into(),
+                }),
+            })
+            .unwrap();
+        store
+            .acquire_send_lock(&created.draft_ref, created.revision, "orphan")
+            .unwrap();
+        let intent = service
+            .admit_send(&created.draft_ref, created.revision, "send")
+            .unwrap();
+        let replay = service
+            .admit_send(&created.draft_ref, created.revision, "send")
+            .unwrap();
+        assert_eq!(intent.operation_id, replay.operation_id);
+        assert!(matches!(
+            service.admit_send(&created.draft_ref, created.revision + 1, "send"),
+            Err(MailError::RequestIdConflict)
+        ));
+        store
+            .release_send_lock(&created.draft_ref, &intent.operation_id)
+            .unwrap();
+        service.get_draft(&created.draft_ref).unwrap();
+        assert_eq!(
+            store.send_locks(&created.draft_ref.account_id).unwrap()[0].1,
+            intent.operation_id
+        );
+        store
+            .release_send_lock(&created.draft_ref, &intent.operation_id)
+            .unwrap();
+        let account = s.core.active_account().unwrap();
+        let saved = store
+            .save_draft(
+                &account,
+                &SaveDraft {
+                    draft_ref: created.draft_ref.clone(),
+                    expected_revision: created.revision,
+                    request_id: "edit".into(),
+                    content: DraftContent {
+                        to: "recipient@example.com".into(),
+                        cc: String::new(),
+                        subject: "New".into(),
+                        body_text: "Body".into(),
+                    },
+                },
+            )
+            .unwrap();
+        store
+            .tombstone_confirmed_send(&created.draft_ref, created.revision, &intent.operation_id)
+            .unwrap();
+        assert_eq!(
+            store
+                .get_draft(&account, &created.draft_ref)
+                .unwrap()
+                .revision,
+            saved.revision
+        );
+        s.core.stop();
+    }
 
     #[test]
     fn a_session_change_makes_an_earlier_epoch_stale() {

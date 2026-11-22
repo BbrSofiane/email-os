@@ -1181,7 +1181,7 @@ fn triage_fact_migration_keeps_legacy_membership_unknown() {
     {
         let conn = store.lock_conn().unwrap();
         conn.execute("INSERT INTO gmail_message_facts (account_id, conversation_id, message_id, in_inbox, is_unread) VALUES ('a', 'c', 'm', 0, 1)", []).unwrap();
-        conn.execute_batch("ALTER TABLE gmail_message_facts DROP COLUMN in_trash; ALTER TABLE gmail_message_facts DROP COLUMN in_spam; UPDATE meta SET value = 'gmail-2' WHERE key = 'schema_version';").unwrap();
+        conn.execute_batch("ALTER TABLE gmail_message_facts DROP COLUMN in_trash; ALTER TABLE gmail_message_facts DROP COLUMN in_spam; DROP TABLE gmail_send_intents; UPDATE meta SET value = 'gmail-2' WHERE key = 'schema_version';").unwrap();
     }
     drop(store);
     let reopened = GmailStore::open(dir.path(), Arc::new(SystemClock)).unwrap();
@@ -1333,9 +1333,8 @@ fn reply_context_cache_is_additive_persistent_and_metadata_only() {
         )
         .expect("simulate legacy schema");
     legacy
-        .execute(
-            "UPDATE meta SET value = 'gmail-2' WHERE key = 'schema_version'",
-            [],
+        .execute_batch(
+            "DROP TABLE gmail_send_intents; UPDATE meta SET value = 'gmail-2' WHERE key = 'schema_version';",
         )
         .unwrap();
     drop(legacy);
@@ -1618,7 +1617,7 @@ fn migration_backfills_inbox_membership_from_existing_message_rows() {
     // backfills the table from its existing message rows.
     let legacy = Connection::open(dir.path().join("gmail.db")).expect("open legacy db");
     legacy
-            .execute_batch("DROP TABLE gmail_inbox_membership; UPDATE meta SET value = 'gmail-1' WHERE key = 'schema_version';")
+            .execute_batch("DROP TABLE gmail_inbox_membership; DROP TABLE gmail_send_intents; UPDATE meta SET value = 'gmail-1' WHERE key = 'schema_version';")
             .expect("remove newly introduced table");
     drop(legacy);
     let migrated = GmailStore::open(dir.path(), Arc::new(SystemClock)).expect("migrated store");
@@ -2377,9 +2376,8 @@ fn list_cached_done_membership_scoping_ordering_bounds_and_recovery() {
         )
         .unwrap();
         // Simulate a pre-UX03 profile: reopen must backfill lightweight sort metadata.
-        conn.execute(
-            "UPDATE meta SET value = 'gmail-2' WHERE key = 'schema_version'",
-            [],
+        conn.execute_batch(
+            "DROP TABLE gmail_send_intents; UPDATE meta SET value = 'gmail-2' WHERE key = 'schema_version';",
         )
         .unwrap();
         conn.execute(

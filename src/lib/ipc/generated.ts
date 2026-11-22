@@ -473,7 +473,7 @@ export type DraftContent = { to: string, cc: string, subject: string, bodyText: 
 
 export type DraftSource = { "kind": "new_message" } | { "kind": "reply", conversation: ConversationRef, sourceMessageId: string, };
 
-export type DraftReplyLink = { conversation: ConversationRef, sourceMessageId: string, messageId: string, references: Array<string>, };
+export type DraftReplyLink = { conversation: ConversationRef, sourceMessageId: string, messageId: string, references: Array<string>, sourceSubject: string | null, };
 
 export type Draft = { ref: DraftRef, revision: number, createdAt: string, updatedAt: string, content: DraftContent, source: DraftSource, replyLink: DraftReplyLink | null, };
 

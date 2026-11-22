@@ -211,6 +211,18 @@ impl From<MailError> for GmailHistoryError {
 ///
 /// Synchronous calls run exclusively on background/blocking threads, outside DB locks.
 pub trait GmailProvider: Send + Sync {
+    /// Read the subject of this exact account, thread and message. Missing
+    /// metadata must fail closed; a thread subject is not a substitute.
+    fn message_subject_for_account(
+        &self,
+        _account_id: &str,
+        _thread_id: &str,
+        _message_id: &str,
+        _cancel: &CancelToken,
+    ) -> Result<String, MailError> {
+        Err(MailError::ReplyUnavailable)
+    }
+
     /// Account-bound live destination catalog read. Implementations must
     /// admit the network read only from a coherent credential snapshot whose
     /// published identity is `expected_account_id`, dispatch with that

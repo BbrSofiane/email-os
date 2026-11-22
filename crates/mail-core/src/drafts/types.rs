@@ -68,6 +68,8 @@ pub struct DraftReplyLink {
     pub source_message_id: String,
     pub message_id: String,
     pub references: Vec<String>,
+    #[serde(default)]
+    pub source_subject: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

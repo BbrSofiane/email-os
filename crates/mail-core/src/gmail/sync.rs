@@ -315,6 +315,28 @@ enum StageOutcome {
 }
 
 impl GmailCore {
+    pub(crate) fn send_receipt(
+        &self,
+        account: &str,
+        request: &str,
+    ) -> Result<Option<super::store::send::SendIntent>, MailError> {
+        self.inner.store.send_receipt(account, request)
+    }
+
+    pub(crate) fn list_send_intents(
+        &self,
+        account: &str,
+    ) -> Result<Vec<super::store::send::SendIntent>, MailError> {
+        self.inner.store.list_send_intents(account)
+    }
+
+    pub(crate) fn insert_send_intent(
+        &self,
+        intent: &super::store::send::SendIntent,
+    ) -> Result<(), MailError> {
+        self.inner.store.insert_send_intent(intent)
+    }
+
     /// Opens (or creates) the Gmail profile storage under `profile_dir`,
     /// acquires the profile lock for the full core lifetime, detects startup
     /// credentials, and starts the serial background worker (independent of
@@ -1182,6 +1204,29 @@ impl GmailCore {
             id,
             cancel,
         })
+    }
+
+    pub(crate) fn exact_message_subject(
+        &self,
+        account_id: &str,
+        thread_id: &str,
+        message_id: &str,
+    ) -> Result<String, MailError> {
+        let generation = self.inner.store.generation()?;
+        let work = self.begin_reply_enrichment()?;
+        if self.inner.store.generation()? != generation {
+            return Err(MailError::ReplyUnavailable);
+        }
+        let subject = self.inner.provider.message_subject_for_account(
+            account_id,
+            thread_id,
+            message_id,
+            &work.cancel,
+        )?;
+        if self.inner.store.generation()? != generation {
+            return Err(MailError::ReplyUnavailable);
+        }
+        Ok(subject)
     }
 
     /// Loads reply headers for the explicitly displayed latest cached message.

@@ -236,6 +236,7 @@ mod tests {
             source_message_id: "source".into(),
             message_id: "<source@example.org>".into(),
             references: vec!["<source@example.org>".into()],
+            source_subject: None,
         };
         let mut c = content();
         c.subject = "Re: Hello".into();

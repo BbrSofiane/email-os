@@ -363,6 +363,22 @@ fn address((display, mailbox): (&str, &str)) -> Address {
 /// synthetic session policy (stage 2) reads local readiness itself; these
 /// answers only make direct provider use coherent.
 impl GmailProvider for SyntheticGmailProvider {
+    fn message_subject_for_account(
+        &self,
+        account_id: &str,
+        thread_id: &str,
+        message_id: &str,
+        cancel: &CancelToken,
+    ) -> Result<String, MailError> {
+        check_cancel(cancel)?;
+        // This is explicit per-message fixture data, independent of the
+        // conversation title displayed by the client.
+        match (account_id, thread_id, message_id) {
+            (ACCOUNT_ID, "conv-01", "m-01-3") => Ok("Standup notes for Monday".into()),
+            _ => Err(MailError::ReplyUnavailable),
+        }
+    }
+
     fn fetch_attachment(
         &self,
         account_id: &str,
