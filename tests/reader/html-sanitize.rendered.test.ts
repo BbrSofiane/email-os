@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { startRenderedHarness, type RenderedHarness } from '../rendered/chromium';
-import { fixture, hostileCorpus } from './html-corpus';
+import { cssBypasses, fixture, hostileCorpus } from './html-corpus';
 
 const chrome = process.env.EMAIL_OS_RENDERED_LAYOUT_CHROME ?? '';
 const enabled = process.env.EMAIL_OS_RUN_RENDERED === '1' && Boolean(chrome);
@@ -16,7 +16,7 @@ describe.skipIf(!enabled)('sanitised mail in Chrome', () => {
     harness.cdp.on('Network.requestWillBeSent', params => {
       requests.push(params.request.url);
     });
-    await harness.cdp.js("(async () => { window.sanitizeMailHtml = (await import('/src/lib/html-mail/sanitize.ts')).sanitizeMailHtml; })()");
+    await harness.cdp.js("(async () => { window.sanitizeMailHtml = (await import('/src/lib/html-mail/sanitize.ts')).sanitizeMailHtml; Object.assign(window, await import('/src/lib/html-mail/css-filter.ts')); })()");
   }, 120_000);
 
   afterAll(async () => {
@@ -48,6 +48,61 @@ describe.skipIf(!enabled)('sanitised mail in Chrome', () => {
     expect(result.locations.every(location => location === 'about:srcdoc')).toBe(true);
     expect(requests.filter(url => url.includes('.invalid'))).toEqual([]);
   }, 30_000);
+
+  it('gives filtered CSS the meaning the filter checked, without any CSP', async () => {
+    const before = requests.length;
+    const findings = await harness.cdp.js<{ raw: number; filtered: string[] }>(`(async () => {
+      const inputs = ${JSON.stringify(cssBypasses)};
+      const load = async (style, attribute) => {
+        const frame = document.createElement('iframe');
+        frame.sandbox = 'allow-same-origin';
+        frame.srcdoc = '<!doctype html><body><a>x</a><b>y</b></body>';
+        await new Promise(resolve => { frame.onload = resolve; document.body.append(frame); });
+        const doc = frame.contentDocument;
+        const sheet = doc.createElement('style');
+        sheet.textContent = style;
+        doc.head.append(sheet);
+        for (const element of doc.querySelectorAll('a, b')) element.setAttribute('style', attribute);
+        return frame;
+      };
+      const problems = frame => {
+        const found = [];
+        const doc = frame.contentDocument;
+        const checkRules = rules => {
+          for (const rule of rules) {
+            if (!/^CSS(Style|Media|Supports)Rule$/.test(rule.constructor.name)) found.push(rule.constructor.name);
+            if (rule.style && /https?:/i.test(rule.style.cssText)) found.push(rule.style.cssText);
+            if (rule.cssRules) checkRules(rule.cssRules);
+          }
+        };
+        for (const sheet of doc.styleSheets) checkRules(sheet.cssRules);
+        for (const element of doc.querySelectorAll('a, b')) {
+          const style = frame.contentWindow.getComputedStyle(element);
+          if (/fixed|sticky/.test(style.position)) found.push(style.position);
+          if (/https?:/i.test(style.backgroundImage)) found.push(style.backgroundImage);
+        }
+        return found;
+      };
+      const off = { remoteImages: false };
+      const filtered = [];
+      let raw = 0;
+      for (const css of inputs) {
+        const inner = css.slice(css.indexOf('{') + 1, css.lastIndexOf('}'));
+        const frame = await load(filterCss(css, off).css, filterStyleAttribute(inner, off).css);
+        for (const problem of problems(frame)) filtered.push(css + ' => ' + problem);
+        frame.remove();
+        // Parsed but never loaded: proves the payloads are live when unfiltered.
+        const sheet = new CSSStyleSheet();
+        sheet.replaceSync(css);
+        if ([...sheet.cssRules].some(rule => /https?:|fixed|sticky/i.test(rule.cssText))) raw += 1;
+      }
+      await new Promise(resolve => setTimeout(resolve, 500));
+      return { raw, filtered };
+    })()`);
+    expect(findings.filtered).toEqual([]);
+    expect(findings.raw).toBeGreaterThan(20);
+    expect(requests.slice(before).filter(url => url.includes('.invalid'))).toEqual([]);
+  }, 60_000);
 
   it('sanitises a 512 Ki-character newsletter within the budget', async () => {
     const newsletter = fixture('newsletter');

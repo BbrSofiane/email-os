@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { filterCss, filterStyleAttribute } from '../../src/lib/html-mail/css-filter';
+import { tokenizeCss } from '../../src/lib/html-mail/css-tokenizer';
+import { cssBypasses } from './html-corpus';
 
 describe('mail CSS filtering', () => {
   it('filters remote images and dangerous declarations', () => {
@@ -19,10 +21,11 @@ describe('CSS filter rules', () => {
   const on = { remoteImages: true };
   it('removes comments before filtering URLs', () => {
     expect(filterStyleAttribute('color: red /* comment */', off).css).toBe('color: red');
-    expect(filterStyleAttribute('background: u/**/rl(https://x.invalid/a.png)', off)).toEqual({ css: '', blockedRemote: 1 });
+    expect(filterStyleAttribute('background: u/**/rl(https://x.invalid/a.png)', off).css).toBe('');
+    expect(filterStyleAttribute('border: 1px/**/solid', off).css).toBe('border: 1px solid');
   });
   it('drops escapes and backslashes', () => {
-    expect(filterStyleAttribute('background: u\\72l(https://x.invalid/a.png); color: red', off).css).toBe('color: red');
+    expect(filterStyleAttribute('background: u\\72l(https://x.invalid/a.png); color: red', off).css).toBe('');
     expect(filterCss('p { color: r\\ed }', off).css).toBe('');
   });
   it('drops unsupported at-rules', () => {
@@ -60,5 +63,71 @@ describe('CSS filter rules', () => {
   });
   it('keeps child combinators', () => {
     expect(filterCss('td > table { color: red }', off).css).toBe('td > table { color: red }');
+  });
+});
+
+describe('CSS filter against the browser tokenizer', () => {
+  const off = { remoteImages: false };
+  const body = (css: string) => css.slice(css.indexOf('{') + 1, css.lastIndexOf('}'));
+
+  it.each(cssBypasses.map(css => [css]))('lets nothing through: %j', css => {
+    for (const result of [filterCss(css, off), filterStyleAttribute(css, off), filterStyleAttribute(body(css), off)]) {
+      expect(result.css).not.toMatch(/invalid|fixed|sticky|@import|@font-face|\\|<|[\r\f\n"']\s*;/i);
+      expect(tokenizeCss(result.css)).not.toBeNull();
+    }
+  });
+
+  it.each(cssBypasses.map(css => [css]))('gives stable output: %j', css => {
+    for (const options of [off, { remoteImages: true }]) {
+      const sheet = filterCss(css, options).css;
+      expect(filterCss(sheet, options).css).toBe(sheet);
+      const style = filterStyleAttribute(body(css), options).css;
+      expect(filterStyleAttribute(style, options).css).toBe(style);
+    }
+  });
+
+  it('keeps ordinary mail styles', () => {
+    const css = `<!--
+      /* Font definitions */
+      @font-face { font-family: Calibri; }
+      p.MsoNormal, li.MsoNormal { margin: 0cm; font: 11.0pt/1.4 "Calibri", sans-serif; color: #1F3A5F }
+      a:link { color: rgb(5 99 193 / 80%); background: linear-gradient(90deg, #fff 0%, #eee 100%) }
+      td:not(.x)[align="left"] > b { width: calc(100% - 2px) !important; position: relative !important }
+    -->`;
+    expect(filterCss(css, off).css.split('\n')).toEqual([
+      'p.MsoNormal, li.MsoNormal { margin: 0cm; font: 11.0pt/1.4 "Calibri", sans-serif; color: #1F3A5F }',
+      'a:link { color: rgb(5 99 193 / 80%); background: linear-gradient(90deg, #fff 0%, #eee 100%) }',
+      'td:not(.x)[align="left"] > b { width: calc(100% - 2px) !important; position: relative !important }',
+    ]);
+  });
+
+  it('tokenizes numbers, names and urls as a browser does', () => {
+    const kinds = (css: string) => tokenizeCss(css)?.map(token => `${token.kind} ${token.text}`);
+    expect(kinds('-.5em')).toEqual(['number -.5em']);
+    expect(kinds('--x')).toEqual(['ident --x']);
+    expect(kinds('5url(')).toBeUndefined();
+    expect(kinds('#12-->')).toEqual(['hash #12--', 'delim >']);
+    expect(kinds('url( a )')).toEqual(['url url( a )']);
+    expect(kinds('a\u00a0b')).toEqual(['ident a\u00a0b']);
+    expect(kinds('@-5')).toEqual(['delim @', 'number -5']);
+  });
+
+  it.each([
+    ['a long value', `a { color: ${'"x" '.repeat(125_000)} }`],
+    ['many urls', `a { background: ${'url(""),'.repeat(62_500)} red }`],
+    ['many allowed urls', `a { background: ${'url("cid:a"),'.repeat(40_000)} red }`],
+    ['many rules', 'a{b:c}'.repeat(85_000)],
+    ['many at-rules', '@media{'.repeat(70_000)],
+    ['deep brackets', `a { b: ${'('.repeat(250_000)}${')'.repeat(250_000)} }`],
+    ['many comments', `a { b: ${'/**/'.repeat(125_000)} c }`],
+    ['unclosed comments', '/*'.repeat(250_000)],
+    ['many quotes', `a { b: ${'"'.repeat(500_001)} }`],
+    ['one long name', 'a'.repeat(500_000)],
+    ['one long number', `a { b: ${'1'.repeat(500_000)} }`],
+  ])('filters %s in linear time', (_name, css) => {
+    const start = performance.now();
+    filterCss(css, off);
+    filterStyleAttribute(css, off);
+    expect(performance.now() - start).toBeLessThan(2000);
   });
 });

@@ -84,3 +84,31 @@ describe('mail fidelity', () => {
     expect(result.styles).toBe('p { color: red }');
   });
 });
+
+describe('hostile sizes', () => {
+  const timed = (html: string) => {
+    const start = performance.now();
+    const result = sanitizeMailHtml(html, { remoteImages: false });
+    return { result, ms: performance.now() - start };
+  };
+
+  it('marks quotes in linear time', () => {
+    const { result, ms } = timed(`${'<p class="gmail_quote"></p>'.repeat(5_000)}<p>end</p>`);
+    expect(result.hasTrailingQuote).toBe(false);
+    expect(ms).toBeLessThan(5_000);
+  });
+
+  it('collects content ids once each, in order', () => {
+    const { result } = timed('<img src="cid:b"><img src="cid:a"><img src="cid:b">');
+    expect(result.cidReferences).toEqual(['b', 'a']);
+  });
+
+  it('keeps quote semantics', () => {
+    const trailing = (html: string) => timed(html).result.hasTrailingQuote;
+    expect(trailing('<div><div class="gmail_quote">q</div></div> <br>')).toBe(true);
+    expect(trailing('<div><div class="gmail_quote">q</div></div>after')).toBe(false);
+    expect(trailing('<div class="gmail_quote">q</div><p><b><img src="cid:a"></b></p>')).toBe(false);
+    expect(trailing('<div><div id="appendonsend"></div><p>q</p></div>')).toBe(true);
+    expect(trailing('<div><div id="appendonsend"></div><p>q</p></div>after')).toBe(false);
+  });
+});

@@ -101,9 +101,11 @@ export function sanitizeMailHtml(html: string, options: SanitizeOptions): Saniti
 
   collectStyles(root, options, result);
   markTrailingQuote(body, result);
+  const contentIds = new Set<string>();
   for (const element of [body, ...body.querySelectorAll('*')]) {
-    cleanElement(element, options, result);
+    cleanElement(element, options, result, contentIds);
   }
+  result.cidReferences = [...contentIds];
 
   // Built in the inert document by moving nodes: never re-parsed here.
   const inert = body.ownerDocument;
@@ -136,12 +138,18 @@ function collectStyles(root: Element, options: SanitizeOptions, result: Sanitize
 /**
  * Marks the first quote container that ends the message: nothing with text or
  * an image follows it in document order outside it. For Outlook's separators
- * the quote is the separator and every sibling after it.
+ * the quote is the separator and every sibling after it. Linear in the tree:
+ * what follows each node is computed once, from the end.
  */
 function markTrailingQuote(body: HTMLElement, result: SanitizedMail): void {
-  for (const candidate of body.querySelectorAll(QUOTE_SELECTOR)) {
+  const candidates = body.querySelectorAll(QUOTE_SELECTOR);
+  if (candidates.length === 0) return;
+  const followed = nodesFollowedByContent(body);
+  for (const candidate of candidates) {
     const separator = candidate.id === 'divRplyFwdMsg' || candidate.id === 'appendonsend';
-    if (contentFollows(body, candidate, separator)) continue;
+    // A separator's own following siblings are part of the quote.
+    const outer = separator ? candidate.parentNode : candidate;
+    if (outer && followed.has(outer)) continue;
     candidate.setAttribute('data-eos-quote', 'trailing');
     if (separator) {
       for (let next = candidate.nextElementSibling; next; next = next.nextElementSibling) {
@@ -153,21 +161,41 @@ function markTrailingQuote(body: HTMLElement, result: SanitizedMail): void {
   }
 }
 
-/** Whether visible content follows `candidate` outside it, up to `body`. */
-function contentFollows(body: HTMLElement, candidate: Element, separator: boolean): boolean {
-  for (let node: Node | null = candidate; node && node !== body; node = node.parentNode) {
-    // A separator's own following siblings are part of the quote.
-    if (separator && node === candidate) continue;
-    for (let next = node.nextSibling; next; next = next.nextSibling) {
-      if ((next.textContent ?? '').trim()) return true;
-      if (next instanceof Element && (next.matches('img') || next.querySelector('img'))) return true;
-    }
+/** The nodes of `body` after which, outside them, text or an image follows. */
+function nodesFollowedByContent(body: HTMLElement): Set<Node> {
+  const nodes: Node[] = [];
+  const walker = body.ownerDocument.createTreeWalker(body, NodeFilter.SHOW_ALL);
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+
+  // From the end, so siblings after a node and its children are known first.
+  const beforeContent = new Set<Node>();
+  const withContent = new Set<Node>();
+  const holdsOrPrecedes = (node: Node | null): boolean =>
+    node !== null && (withContent.has(node) || beforeContent.has(node));
+  for (const node of nodes.reverse()) {
+    if (holdsOrPrecedes(node.nextSibling)) beforeContent.add(node);
+    const isContent = node.nodeType === Node.TEXT_NODE
+      ? (node.nodeValue ?? '').trim() !== ''
+      : node instanceof Element && node.matches('img');
+    if (isContent || holdsOrPrecedes(node.firstChild)) withContent.add(node);
   }
-  return false;
+
+  // Parents before children: content after an ancestor also follows the node.
+  const followed = new Set<Node>();
+  for (const node of nodes.reverse()) {
+    const parent = node.parentNode;
+    if (beforeContent.has(node) || (parent && followed.has(parent))) followed.add(node);
+  }
+  return followed;
 }
 
 /** Applies the attribute, link, image and style rules to one element. */
-function cleanElement(element: Element, options: SanitizeOptions, result: SanitizedMail): void {
+function cleanElement(
+  element: Element,
+  options: SanitizeOptions,
+  result: SanitizedMail,
+  contentIds: Set<string>,
+): void {
   for (const attribute of [...element.attributes]) {
     const name = attribute.name.toLowerCase();
     if (name.startsWith('on') || FORBIDDEN_ATTRIBUTES.has(name)) {
@@ -177,12 +205,12 @@ function cleanElement(element: Element, options: SanitizeOptions, result: Saniti
   cleanLink(element);
 
   if (element.tagName === 'IMG') {
-    cleanImageAttribute(element, 'src', options, result);
+    cleanImageAttribute(element, 'src', options, result, contentIds);
   } else {
     element.removeAttribute('src');
   }
   if (BACKGROUND_TAGS.has(element.tagName)) {
-    cleanImageAttribute(element, 'background', options, result);
+    cleanImageAttribute(element, 'background', options, result, contentIds);
   } else {
     element.removeAttribute('background');
   }
@@ -226,6 +254,7 @@ function cleanImageAttribute(
   attribute: 'src' | 'background',
   options: SanitizeOptions,
   result: SanitizedMail,
+  contentIds: Set<string>,
 ): void {
   const value = element.getAttribute(attribute)?.trim();
   element.removeAttribute(attribute);
@@ -240,7 +269,7 @@ function cleanImageAttribute(
     }
     if (!cid) return;
     element.setAttribute('data-eos-cid', cid);
-    if (!result.cidReferences.includes(cid)) result.cidReferences.push(cid);
+    contentIds.add(cid);
     return;
   }
   if (DATA_IMAGE.test(value)) {
