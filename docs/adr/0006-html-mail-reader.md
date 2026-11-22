@@ -153,7 +153,30 @@ implementation and recorded here instead of rewriting the proposal:
 6. **Process.** Stages were written by sub-agents and reviewed by the track
    owner, but because of the one-heavy-command rule, the sub-agents only wrote
    code. The owner ran every cargo, gradle and vitest check and made every
-   commit.
+   commit. Two of the review-fix stages came back incomplete; the owner
+   finished them.
+7. **No `html2text`** (review of `bc5d5bf`; replaces the approval in decision 2).
+   It builds its whole output before any bound applies and can be made to use
+   hundreds of megabytes or tens of seconds, or to fail and lose the body.
+   Derived text now comes from one linear, output-bounded pass
+   (`crates/mail-core/src/gmail/html_text.rs`) used for all input. It never
+   fails; an image-only message has empty text and is shown through its HTML.
+   The named character references come from `markup5ever` 0.40.0, which
+   `html2text` already brought in.
+8. **HTML has its own page budget.** Sharing the 16 MiB page bound let a sender
+   fill it with HTML so that a later ordinary thread failed the page even
+   without its HTML. HTML bodies and text derived from them now count toward a
+   separate 8 MiB per page; past it a thread's HTML is recorded as too large
+   and its derived text is cut to 2,000 characters. Everything else keeps the
+   16 MiB bound it had.
+9. **CSS filter on tokens** (review of `bc5d5bf`). The first filter kept reading
+   a string past a raw newline, where a browser ends it, so later declarations
+   passed unchecked (the frame CSP still blocked the request). The filter now
+   works on tokens split as CSS Syntax does, refuses malformed input whole,
+   allows listed functions only, and serialises kept tokens.
+10. **Sanitised mail in memory** (a cache of 20 messages) is cleared when the
+    account changes or disconnects and when its mailbox closes, and reads in
+    flight at that moment are not stored.
 
 ### Validation (2026-11-21)
 
@@ -193,10 +216,11 @@ implementation and recorded here instead of rewriting the proposal:
 - **Risk seen.** Three times, at the first or second launch right after
   installing a new APK, the app hit an input-dispatch ANR ("Input dispatching
   timed out … Waited 5001ms for FocusEvent(hasFocus=true)"); twice at load
-  average 4–10, once at about 2.7. Choosing "Wait" recovered each time, and later
-  launches were clean. Nothing in this ADR runs at startup (the frame only exists
-  in the reader), but this was not compared with a `main` build, so the cause is
-  not established. Startup belongs to track A's first-launch work.
+  average 4–10, once at about 2.7. Choosing "Wait" recovered each time. This ADR
+  adds startup work once per profile (schema migration 10 and the synthetic
+  seed upgrade); both were already done at the third ANR. It was not compared
+  with a `main` build, so the cause is not established. Startup belongs to
+  track A's first-launch work.
 
 ## Decisions
 

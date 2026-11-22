@@ -15,6 +15,8 @@ describe('frame document', () => {
     const doc = buildFrameDocument(mail, { remoteImages: false, theme, quoteOpen: true });
     expect(doc.indexOf('Content-Security-Policy')).toBeLessThan(doc.indexOf('<style>'));
     expect(doc.indexOf('<style>')).toBeLessThan(doc.indexOf('<body>'));
+    expect(doc.indexOf('<meta name="referrer" content="no-referrer">')).toBeGreaterThan(0);
+    expect(doc.indexOf('name="referrer"')).toBeLessThan(doc.indexOf('<style>'));
     expect(doc).toContain('eos-quote-open');
     expect(doc).toContain('color-scheme: dark');
     const paper = buildFrameDocument(mail, { remoteImages: false, theme: { ...theme, mode: 'paper' }, quoteOpen: false });

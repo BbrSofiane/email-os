@@ -36,7 +36,7 @@ table { max-width: none; }
 [data-eos-href] { cursor: pointer; }
 ${paper ? '' : `[data-eos-href] { color: ${link}; text-decoration: underline; }`}
 html:not(.eos-quote-open) [data-eos-quote="trailing"] { display: none !important; }`;
-  return `<!doctype html><html class="${options.quoteOpen ? 'eos-quote-open' : ''}"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${frameCsp(options.remoteImages)}"><style>${base}</style><style>${mail.styles}</style></head><body>${mail.body}</body></html>`;
+  return `<!doctype html><html class="${options.quoteOpen ? 'eos-quote-open' : ''}"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="${frameCsp(options.remoteImages)}"><style>${base}</style><style>${mail.styles}</style></head><body>${mail.body}</body></html>`;
 }
 
 /** Scales wide content to fit, retaining a minimum readable zoom. */

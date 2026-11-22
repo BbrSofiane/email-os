@@ -103,6 +103,11 @@ describe('hostile sizes', () => {
     expect(result.cidReferences).toEqual(['b', 'a']);
   });
 
+  it('drops referrer policies set by the mail', () => {
+    const html = '<meta name="referrer" content="unsafe-url"><img referrerpolicy="unsafe-url" src="https://x.invalid/a.png">';
+    expect(sanitizeMailHtml(html, { remoteImages: true }).body).not.toMatch(/referrer|meta/i);
+  });
+
   it('keeps quote semantics', () => {
     const trailing = (html: string) => timed(html).result.hasTrailingQuote;
     expect(trailing('<div><div class="gmail_quote">q</div></div> <br>')).toBe(true);

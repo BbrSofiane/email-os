@@ -16,6 +16,8 @@ describe.skipIf(!enabled).each([
 ])('HTML reader (%s)', (name, viewport) => {
   let h: RenderedHarness;
   const requests: string[] = [];
+  /** Referrer policy and header of every remote image the mail loaded. */
+  const referrers: string[] = [];
   const app = `document.querySelector(${JSON.stringify(active)})`;
   const frame = `${app}.querySelector('iframe.html-message-frame:last-of-type')`;
   const doc = `${frame}.contentDocument`;
@@ -23,7 +25,12 @@ describe.skipIf(!enabled).each([
   beforeAll(async () => {
     if (output) mkdirSync(output, { recursive: true });
     h = await startRenderedHarness(chrome, 'email-os-html-reader-', root, viewport);
-    h.cdp.on('Network.requestWillBeSent', (event) => requests.push(event.request.url));
+    h.cdp.on('Network.requestWillBeSent', (event) => {
+      requests.push(event.request.url);
+      if (event.request.url.includes('newsletter.invalid')) {
+        referrers.push(`${event.request.referrerPolicy}:${event.request.headers.Referer ?? ''}`);
+      }
+    });
     await h.cdp.cmd('Network.enable');
   }, 120_000);
   afterAll(async () => { await h?.close(); });
@@ -50,12 +57,13 @@ describe.skipIf(!enabled).each([
     await h.cdp.js(`${app}.querySelector(${JSON.stringify(selector)}).click()`);
   }
   async function readyFrame(): Promise<void> {
-    await wait(`${frame}?.contentDocument?.body && ${frame}.contentDocument.location.href === 'about:srcdoc'`, 'HTML frame');
+    await wait(`${frame}?.contentDocument?.querySelector('.eos-mail-body')?.childNodes.length > 0 && ${frame}.contentDocument.location.href === 'about:srcdoc'`, 'HTML frame');
     await pause();
   }
   async function shot(label: string): Promise<void> {
     if (!output) return;
-    await h.cdp.js(`${frame}?.closest('.message-html-body')?.scrollIntoView({block:'center'})`);
+    // Tall mail stays at the top, where its header and the images bar show.
+    await h.cdp.js(`(() => { const body = ${frame}?.closest('.message-html-body'); if (body && body.clientHeight < innerHeight / 2) body.scrollIntoView({block:'center'}); })()`);
     await pause();
     await h.saveScreenshot(`${output}/${name}-${label}.png`);
   }
@@ -81,12 +89,17 @@ describe.skipIf(!enabled).each([
       expect(size.zoom).toBeLessThan(1);
       expect(size.scrollWidth * size.zoom <= size.width + 2 || size.zoom === 0.5).toBe(true);
     }
+    const gaps = await h.cdp.js<{ left: number; right: number }>(`(() => { const d = ${doc}, root = d.documentElement.getBoundingClientRect(), table = d.querySelector('table table').getBoundingClientRect(); return { left: table.left - root.left, right: root.right - table.right }; })()`);
+    expect(gaps.right).toBeGreaterThan(0);
+    expect(Math.abs(gaps.left - gaps.right)).toBeLessThanOrEqual(2);
     await shot('newsletter-blocked');
     await click('[data-test="load-images"]');
     await wait(`${app}.querySelector('[data-test="remote-images-bar"]') === null`, 'images bar removed');
     for (let i = 0; i < 50 && !requests.some(u => u.includes('track.newsletter.invalid')); i++) await pause(100);
     expect(requests.some(u => u.includes('images.newsletter.invalid'))).toBe(true);
     expect(requests.some(u => u.includes('track.newsletter.invalid'))).toBe(true);
+    expect(referrers.length).toBeGreaterThan(0);
+    expect([...new Set(referrers)]).toEqual(['no-referrer:']);
     await shot('newsletter-loaded');
     await click('[data-test="message-format-toggle-m-19-1"]');
     expect(await h.cdp.js(`${app}.querySelector('.message-body')?.textContent.length > 0`)).toBe(true);
