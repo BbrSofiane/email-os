@@ -1,6 +1,6 @@
 //! Built-in synthetic mail provider (ADR 0002).
 //!
-//! The 18-conversation mailbox of fixture mode, served through the same
+//! The 24-conversation mailbox of fixture mode, including HTML samples (ADR 0006), served through the same
 //! [`GmailProvider`](crate::gmail::types::GmailProvider) seam the live Gmail
 //! provider implements, so the operation ledger (acceptance, undo, groups,
 //! reminders) lives once, in `GmailCore`. This is production code: it holds no

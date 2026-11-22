@@ -1,6 +1,78 @@
 use super::*;
 
 impl GmailStore {
+    /// Returns the cached HTML body and its inline image metadata.
+    pub(crate) fn get_message_html(
+        &self,
+        target: &ConversationRef,
+        message_id: &str,
+    ) -> Result<MessageHtmlBody, MailError> {
+        self.persistence_gate()?;
+        let conn = self.lock_conn()?;
+        if meta_get(&conn, "account_id")?.as_deref() != Some(target.account_id.as_str()) {
+            return Err(MailError::NotFound);
+        }
+        let html: Option<String> = conn
+            .query_row(
+                "SELECT m.body_html FROM gmail_messages m JOIN gmail_conversations c
+             ON c.account_id = m.account_id AND c.conversation_id = m.conversation_id
+             WHERE m.account_id = ?1 AND m.conversation_id = ?2 AND m.message_id = ?3
+               AND m.html_state = 'available' AND m.body_html IS NOT NULL",
+                params![target.account_id, target.conversation_id, message_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(storage_err())?;
+        let html = html.ok_or(MailError::NotFound)?;
+        drop(conn);
+        Ok(MessageHtmlBody {
+            html,
+            inline_images: self.inline_images_for(target, message_id)?,
+        })
+    }
+
+    /// Returns inline image metadata for a cached message.
+    pub(crate) fn inline_images_for(
+        &self,
+        target: &ConversationRef,
+        message_id: &str,
+    ) -> Result<Vec<InlineImage>, MailError> {
+        self.persistence_gate()?;
+        let conn = self.lock_conn()?;
+        if meta_get(&conn, "account_id")?.as_deref() != Some(target.account_id.as_str()) {
+            return Err(MailError::NotFound);
+        }
+        let json: Option<Option<String>> = conn
+            .query_row(
+                "SELECT c.inline_parts_json FROM gmail_conversations c JOIN gmail_messages m
+             ON c.account_id = m.account_id AND c.conversation_id = m.conversation_id
+             WHERE c.account_id = ?1 AND c.conversation_id = ?2 AND m.message_id = ?3",
+                params![target.account_id, target.conversation_id, message_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(storage_err())?;
+        let parts: Vec<StoredInlinePart> = json
+            .ok_or(MailError::NotFound)?
+            .map(|s| serde_json::from_str(&s))
+            .transpose()
+            .map_err(storage_err())?
+            .unwrap_or_default();
+        if parts.len() > 32 {
+            return Err(storage_fault("invalid_persisted_state"));
+        }
+        Ok(parts
+            .into_iter()
+            .filter(|part| part.message_id == message_id)
+            .map(|part| InlineImage {
+                content_id: part.content_id,
+                attachment_id: part.attachment_id,
+                mime_type: part.mime_type,
+                size: part.size,
+            })
+            .collect())
+    }
+
     pub(crate) fn list_attachments(
         &self,
         target: &ConversationRef,
@@ -161,6 +233,9 @@ impl GmailStore {
             let (json, saved_at) = recovered.ok_or(MailError::NotFound)?;
             let mut snapshot: Conversation = serde_json::from_str(&json).map_err(storage_err())?;
             snapshot.retained_snapshot_at = Some(saved_at);
+            for message in &mut snapshot.messages {
+                message.html_body = None;
+            }
             let (is_in_inbox, is_read, pending_operation_id) =
                 effective_conversation_state(&conn, &account_id, &r#ref.conversation_id)?;
             snapshot.is_in_inbox = is_in_inbox;

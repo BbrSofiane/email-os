@@ -14,9 +14,10 @@
  * Gmail-supplied plain-text limitations are disclosed explicitly (`unsupportedReason`,
  * `contextComplete === false`) instead of silently dropping content.
  *
- * Safety: message content is rendered exclusively through text interpolation
- * ({{ }}). No v-html, no markdown/HTML processing, no remote assets anywhere in
- * this slice — hostile markup stays literal text. Reply preparation always
+ * Safety: plain-text bodies render exclusively through text interpolation ({{ }}).
+ * HTML bodies render only inside the sandboxed HtmlMessageFrame (ADR 0006:
+ * sanitised, no scripts, own CSP, remote images withheld until asked); the app
+ * document never uses v-html or parses mail HTML. Reply preparation always
  * targets the explicitly displayed latest message, never the focused message.
  *
  * Message commands (N/P/O/Shift+O, details dismissal) are exposed as narrow
@@ -31,6 +32,7 @@ import { replyBlockedReason as replyBlockedReasonOf } from '../lib/reply-context
 import { bodyNeedsMonospace, splitMessageBody, type MessageBodyParts } from '../lib/message-body-format';
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, useId, watch } from 'vue';
 import HeaderGlyph from './HeaderGlyph.vue';
+import HtmlMessageFrame from './HtmlMessageFrame.vue';
 import MessageAttachments from './MessageAttachments.vue';
 import MobileActionSheet from './mobile/MobileActionSheet.vue';
 import { useAttachmentTransfer } from '../composables/useAttachmentTransfer';
@@ -84,6 +86,8 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
+  /** Request confirmation before opening a link in a message. */
+  openLink: [url: string, text: string];
   close: [];
   /** Previous (-1) / next (+1) conversation, same path as K / J. */
   move: [delta: number];
@@ -291,12 +295,38 @@ interface VisitState {
   detailsOpenId: string | null;
   /** Messages whose trailing quoted text is shown. */
   quoteOpenIds: Set<string>;
+  plainIds: Set<string>;
+  htmlFallbacks: Map<string, 'unavailable' | 'error'>;
+  htmlStates: Map<string, { remoteBlocked: number; hasTrailingQuote: boolean }>;
   anchor: MessageAnchor | null;
   /** Message ordering this state was built against (for removed-ID resolution). */
   order: string[];
 }
 
 const visits = new Map<string, VisitState>();
+const remoteImageIds = reactive(new Set<string>());
+watch(() => props.conversation ? visitKey(props.conversation.ref) : null, () => remoteImageIds.clear(), { flush: 'sync' });
+onBeforeUnmount(() => remoteImageIds.clear());
+const frameTheme = (() => {
+  const styles = getComputedStyle(document.documentElement);
+  return {
+    fontFamily: styles.getPropertyValue('--font-ui').trim(),
+    fontSize: styles.getPropertyValue('--type-reading').trim(),
+    lineHeight: styles.getPropertyValue('--leading-reading').trim(),
+    textColour: styles.getPropertyValue('--text-primary').trim(),
+    linkColour: styles.getPropertyValue('--focus-accent').trim(),
+  };
+})();
+function formatted(message: Message): boolean {
+  return message.htmlBody === 'available' && !!props.client && !props.conversation?.retainedSnapshotAt
+    && !visitRef.value?.plainIds.has(message.id) && !visitRef.value?.htmlFallbacks.has(message.id);
+}
+function toggleFormat(message: Message): void {
+  const ids = visitRef.value?.plainIds;
+  if (!ids) return;
+  if (ids.has(message.id)) ids.delete(message.id);
+  else ids.add(message.id);
+}
 /** Reactive holder for the currently displayed visit. */
 const visitRef = ref<VisitState | null>(null);
 let lastDataKey: string | null = null;
@@ -558,6 +588,9 @@ watch(
         expandedIds: new Set(newest === null ? [] : [newest]),
         detailsOpenId: null,
         quoteOpenIds: new Set<string>(),
+        plainIds: new Set<string>(),
+        htmlFallbacks: new Map(),
+        htmlStates: new Map(),
         anchor: null,
         order: [...ids],
       });
@@ -1224,6 +1257,29 @@ defineExpose({
                 </div>
               </div>
             </details>
+            <template v-if="formatted(message)">
+              <div :id="bodyId(message)" :hidden="!isExpanded(message)" class="message-html-body">
+                <div v-if="(visitRef?.htmlStates.get(message.id)?.remoteBlocked ?? 0) > 0 && !remoteImageIds.has(message.id)" class="message-html-note" data-test="remote-images-bar">
+                  Remote images blocked. <button type="button" data-test="load-images" @click="remoteImageIds.add(message.id)">Load images</button>
+                </div>
+                <HtmlMessageFrame
+                  v-if="isExpanded(message) && props.client"
+                  data-test="message-html"
+                  :client="props.client"
+                  :conversation="props.conversation.ref"
+                  :message-id="message.id"
+                  :title="`Message from ${message.from.displayName ?? message.from.mailbox}`"
+                  :remote-images="remoteImageIds.has(message.id)"
+                  :quote-open="isQuoteOpen(message)"
+                  :theme="frameTheme"
+                  @state="visitRef?.htmlStates.set(message.id, $event)"
+                  @fallback="visitRef?.htmlFallbacks.set(message.id, $event)"
+                  @link="(url, text) => emit('openLink', url, text)"
+                />
+              </div>
+              <button v-if="visitRef?.htmlStates.get(message.id)?.hasTrailingQuote" type="button" class="message-quote-toggle" :hidden="!isExpanded(message)" :aria-expanded="isQuoteOpen(message) ? 'true' : 'false'" :aria-disabled="actionable ? undefined : 'true'" :data-test="`message-quote-toggle-${message.id}`" @click="toggleQuote(message)">{{ isQuoteOpen(message) ? 'Hide quoted text' : 'Show quoted text' }}</button>
+            </template>
+            <template v-else>
             <div class="message-body" :class="{ 'message-body-mono': bodyNeedsMonospace(partsOf(message).main) }" :id="bodyId(message)" :hidden="!isExpanded(message)" data-test="message-body">{{ partsOf(message).signature !== null || partsOf(message).quoted !== null ? shown(partsOf(message).main) : partsOf(message).main }}</div>
             <!-- Signature: the same reading face in Ash, always visible with the message. -->
             <div v-if="partsOf(message).signature !== null" class="message-trail message-signature" :hidden="!isExpanded(message)" data-test="message-signature">{{ partsOf(message).quoted !== null ? shown(partsOf(message).signature!) : partsOf(message).signature }}</div>
@@ -1241,6 +1297,10 @@ defineExpose({
               >{{ isQuoteOpen(message) ? 'Hide quoted text' : 'Show quoted text' }}</button>
               <div v-if="isQuoteOpen(message) && isExpanded(message)" :id="quoteId(message)" class="message-trail message-quoted" data-test="message-quoted">{{ shown(partsOf(message).quoted!) }}</div>
             </template>
+            </template>
+            <div v-if="isExpanded(message) && message.htmlBody === 'too_large'" class="message-html-note" data-test="html-too-large">Formatted version too large to show.</div>
+            <div v-if="isExpanded(message) && visitRef?.htmlFallbacks.has(message.id)" class="message-html-note" data-test="html-fallback">{{ visitRef.htmlFallbacks.get(message.id) === 'unavailable' ? 'Formatted view unavailable on this device.' : 'Formatted version could not be loaded.' }}</div>
+            <button v-if="isExpanded(message) && message.htmlBody === 'available' && !props.conversation.retainedSnapshotAt && !visitRef?.htmlFallbacks.has(message.id) && props.client" type="button" class="message-format-toggle" :data-test="`message-format-toggle-${message.id}`" @click="toggleFormat(message)">{{ formatted(message) ? 'Show plain text' : 'Show formatted' }}</button>
             <MessageAttachments
               v-if="isExpanded(message) && attachmentRow(message)"
               :message-id="message.id"

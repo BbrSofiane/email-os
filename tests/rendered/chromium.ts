@@ -7,6 +7,7 @@ import { createServer, type ViteDevServer } from 'vite';
 export interface CdpSession {
   cmd(method: string, params?: Record<string, unknown>): Promise<any>;
   js<T>(expression: string): Promise<T>;
+  on(method: string, listener: (params: any) => void): void;
   close(): void;
 }
 
@@ -88,10 +89,12 @@ async function connectCdp(profile: string, signal: AbortSignal): Promise<CdpSess
     ws.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
     ws.addEventListener('error', () => { clearTimeout(timer); ws.close(); reject(new Error('Could not connect to Chrome DevTools')); }, { once: true });
   });
+  const listeners = new Map<string, Array<(params: any) => void>>();
   let nextId = 0;
   const waiting = new Map<number, { resolve(value: any): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>();
   ws.addEventListener('message', (event) => {
-    const message = JSON.parse(String(event.data)) as { id?: number; result?: any; error?: unknown };
+    const message = JSON.parse(String(event.data)) as { id?: number; method?: string; params?: any; result?: any; error?: unknown };
+    if (message.method) for (const listener of listeners.get(message.method) ?? []) listener(message.params);
     if (message.id === undefined) return;
     const pending = waiting.get(message.id);
     if (!pending) return;
@@ -109,7 +112,7 @@ async function connectCdp(profile: string, signal: AbortSignal): Promise<CdpSess
     waiting.set(id, { resolve, reject, timer });
     ws.send(JSON.stringify({ id, method, params }));
   });
-  return { cmd, async js<T>(expression: string): Promise<T> {
+  return { cmd, on(method, listener) { listeners.set(method, [...(listeners.get(method) ?? []), listener]); }, async js<T>(expression: string): Promise<T> {
     const result = await cmd('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
     if (result?.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
     return result.result.value as T;

@@ -85,7 +85,7 @@ fn cached_done_persists_pending_archive_and_restores_after_restart() {
 
 /// Legacy: `list_cached_done_caps_large_sqlite_result_and_pages_equal_dates_by_id`.
 /// 137 extra equal-dated conversations are served by a test overlay (the
-/// synthetic mailbox itself is fixed at 18).
+/// synthetic mailbox itself is fixed at 24).
 #[test]
 fn cached_done_caps_large_results_and_pages_equal_dates_by_id() {
     let s = Synthetic::open_wrapped("done-bounded", |synthetic| {
@@ -431,11 +431,11 @@ fn provider_inbox_lists_newest_first_and_archived_seeds_are_not_inbox() {
     let dir = temp_profile("provider-inbox");
     let provider = SyntheticGmailProvider::open(dir.path()).unwrap();
     let page = provider.list_inbox(None, &CancelToken::default()).unwrap();
-    assert_eq!(page.thread_ids.len(), 16);
+    assert_eq!(page.thread_ids.len(), 22);
     assert!(!page.thread_ids.contains(&"conv-06".to_string()));
     assert!(!page.thread_ids.contains(&"conv-15".to_string()));
     assert_eq!(page.next_page_token, None);
-    assert_eq!(page.thread_ids[0], "conv-18", "newest conversation first");
+    assert_eq!(page.thread_ids[0], "conv-19", "newest conversation first");
     // The two archived seeds exist, with no INBOX message and read facts.
     for id in ["conv-06", "conv-15"] {
         let thread = thread_of(&provider, id);
@@ -443,4 +443,46 @@ fn provider_inbox_lists_newest_first_and_archived_seeds_are_not_inbox() {
         assert!(thread.unread_message_ids.unwrap().is_empty());
     }
     let _ = OperationStatus::Queued;
+}
+
+#[test]
+fn synthetic_html_and_inline_image_fixtures() {
+    use mail_core::gmail::types::MessageHtml;
+    let dir = temp_profile("provider-html");
+    let provider = SyntheticGmailProvider::open(dir.path()).unwrap();
+    let cancel = CancelToken::default();
+    let thread = |id| provider.get_thread(id, &cancel).unwrap().unwrap();
+    let newsletter = thread("conv-19");
+    assert!(matches!(
+        newsletter.message_html.get("m-19-1"),
+        Some(MessageHtml::Present(_))
+    ));
+    assert_eq!(
+        newsletter.conversation.messages[0].body_text,
+        include_str!("../src/synthetic/html/newsletter.txt")
+    );
+    let person = thread("conv-20");
+    assert!(matches!(
+        person.message_html.get("m-20-1"),
+        Some(MessageHtml::Present(_))
+    ));
+    assert!(person.conversation.messages[0]
+        .body_text
+        .contains("https://docs.example.test/plan"));
+    let logo = thread("conv-21");
+    assert_eq!(logo.inline_parts.len(), 1);
+    assert_eq!(logo.inline_parts[0].content_id, "logo@fixture.example");
+    assert_eq!(logo.inline_parts[0].mime_type, "image/png");
+    assert!(provider
+        .fetch_attachment(mail_core::ACCOUNT_ID, "m-21-1", "fixture-logo", &cancel)
+        .unwrap()
+        .starts_with(b"\x89PNG\r\n\x1a\n"));
+    assert!(matches!(
+        thread("conv-23").message_html.get("m-23-1"),
+        Some(MessageHtml::Present(_))
+    ));
+    assert!(matches!(
+        thread("conv-24").message_html.get("m-24-1"),
+        Some(MessageHtml::TooLarge)
+    ));
 }

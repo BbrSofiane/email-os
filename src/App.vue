@@ -59,6 +59,8 @@ import { quotedPreview } from './lib/message-snippet';
 import type { SavedSplit } from './lib/ipc/client';
 import ReaderView from './components/ReaderView.vue';
 import AttachmentChooser from './components/AttachmentChooser.vue';
+import LinkConfirm from './components/LinkConfirm.vue';
+import { externalLinksAvailable } from './lib/external-links';
 import ActivityPanel from './components/ActivityPanel.vue';
 import AccountPanel from './components/AccountPanel.vue';
 import DraftsList from './components/DraftsList.vue';
@@ -1425,6 +1427,38 @@ watch(emptyLineOwnsAction, async (owns) => {
   emptyAction.value?.focus({ preventScroll: true });
 });
 
+const messageLink = ref<{ url: string; text: string } | null>(null);
+let linkOrigin: HTMLElement | null = null;
+function openMessageLink(url: string, text: string) {
+  if (!readerOpen.value || drawer.value || overlay.value || attachmentConversation.value || messageLink.value) return;
+  linkOrigin = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  cancelGo();
+  messageLink.value = { url, text };
+  void nextTick(() => appRoot.value?.querySelector<HTMLElement>('[aria-label="Open link"] button')?.focus());
+}
+async function closeMessageLink() {
+  messageLink.value = null;
+  await nextTick();
+  if (linkOrigin?.isConnected && !linkOrigin.closest('[inert]')) linkOrigin.focus({ preventScroll: true });
+  else (readerView.value?.$el as HTMLElement | undefined)?.focus({ preventScroll: true });
+}
+/**
+ * After a real hand-off the browser covers the app, so the dialog would only
+ * stand in the way on return (one Back to dismiss it). The preview keeps it
+ * open: its status line is the only sign of what the click did.
+ */
+function onMessageLinkOpened() {
+  if (props.mode !== 'browser-preview') void closeMessageLink();
+}
+async function composeTo(address: string) {
+  await closeMessageLink();
+  if (drafts.activeRef.value) {
+    if (!composeCardOpen.value && !replyComposerOpen.value && !drafts.isVisible.value) await navigateContext('drafts');
+    return;
+  }
+  await drafts.openNew({ kind: 'new_message' }, { to: address });
+}
+
 async function prepareReply(source: DraftSource): Promise<void> {
   if (trashReader.value) return;
   // The reader stays open after a successful preparation: the drafts watcher
@@ -1772,6 +1806,19 @@ function modalSurfaceOwns(event: KeyboardEvent): boolean {
       event.preventDefault(); remindersPane.value?.retainPickerFocus();
     } else if (event.key === 'Tab' && event.target === document.body) {
       event.preventDefault(); remindersPane.value?.retainPickerFocus();
+    }
+    return true;
+  }
+  if (messageLink.value) {
+    if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229) {
+      event.preventDefault(); void closeMessageLink();
+    }
+    if (event.key === 'Tab') {
+      const controls = [...(appRoot.value?.querySelectorAll<HTMLElement>('[aria-label="Open link"] button') ?? [])];
+      const first = controls[0];
+      const last = controls.at(-1);
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
     }
     return true;
   }
@@ -2607,6 +2654,7 @@ const searchSyntaxEditHint = computed(() =>
               @remind="executeAction('remind')"
               @unarchive="executeAction('unarchive')"
               @set-read="executeAction($event ? 'read' : 'unread')"
+              @open-link="openMessageLink"
               @prepare-reply="prepareReply"
               @star="executeAction(mailbox.conversation.value?.stars?.starredMessages ? 'unstar' : 'star')"
               @more="readerSheetOpen = true"
@@ -2878,6 +2926,11 @@ const searchSyntaxEditHint = computed(() =>
       @close="readerSheetOpen = false"
       @choose="(id) => { if (id === 'commands') openOverlay('palette'); else if (id === 'contact-details') toggleContactDisclosure(); else if (id === 'reply') { const conversation = mailbox.conversation.value; const sourceMessage = conversation?.messages.at(-1); if (conversation && sourceMessage) void prepareReply({ kind: 'reply', conversation: conversation.ref, sourceMessageId: sourceMessage.id }); } else if (id === 'files') openAttachments(readerView?.$el as HTMLElement); else executeAction(id as ActionId); }"
     />
+    <div v-if="messageLink" class="action-backdrop" @click.self="closeMessageLink">
+      <section class="action-overlay link-confirm-overlay" role="dialog" aria-modal="true" aria-label="Open link">
+        <LinkConfirm :url="messageLink.url" :text="messageLink.text" :client="props.client" :preview="props.mode === 'browser-preview'" :can-open="externalLinksAvailable()" @close="closeMessageLink" @compose="composeTo" @opened="onMessageLinkOpened" />
+      </section>
+    </div>
     <AttachmentChooser v-if="attachmentConversation" :client="props.client" :conversation="attachmentConversation" :preview="props.mode === 'browser-preview'" :id-prefix="switchAccountLabel ? accountId ?? '' : ''" @close="closeAttachments" />
     <MobileBottomBar
       v-if="layoutMode === 'compact'"

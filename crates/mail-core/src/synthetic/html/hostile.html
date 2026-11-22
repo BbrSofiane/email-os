@@ -1,0 +1,24 @@
+<p>Script <script>parent.document.title='PWNED';alert(1)</script></p>
+<p>Image handler <img src=x onerror=alert(1)></p>
+<p>SVG handler <svg onload=alert(1)></svg></p>
+<p>Details handler <details open ontoggle=alert(1)>Details</details></p>
+<p>Script link <a href="javascript:alert(1)">link</a></p>
+<p>Mixed link <a href="JaVaScRiPt:alert(1)">link</a></p>
+<p>Encoded link <a href="&#106;avascript:alert(1)">link</a></p>
+<p>Data link <a href="data:text/html,<script>alert(1)</script>">link</a></p>
+<p>Form <form action="https://collect.invalid/"><input name=p type=password><button>Sign in</button></form></p>
+<p>Refresh <meta http-equiv="refresh" content="0;url=https://redirect.invalid/"></p>
+<p>Base <base href="https://base.invalid/"></p>
+<p>Frame <iframe src="https://frame.invalid/"></iframe></p>
+<p>Object <object data="https://object.invalid/x.swf"></object></p>
+<p>Embed <embed src="https://embed.invalid/"></p>
+<p>Stylesheet <link rel=stylesheet href="https://css.invalid/x.css"></p>
+<p>Overlay <style>@import url(https://css.invalid/i.css); .x{background:url(https://bg.invalid/b.png)} .overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:#fff}</style><div class=overlay>Fake overlay</div></p>
+<p>Background <div style="background-image:url(https://bg.invalid/inline.png)">bg</div></p>
+<p>Srcset <img srcset="https://srcset.invalid/a.png 2x" src="data:image/png;base64,iVBORw0KGgo="></p>
+<p>Ping <a href="https://ping.example.test/" ping="https://ping.invalid/">ping</a></p>
+<p>Mismatch <a href="https://login.bank.invalid/">https://www.example.test/account</a></p>
+<p>Mail <a href="mailto:attacker@example.test?subject=Urgent&body=Send%20the%20code&cc=boss@example.test">mail me</a></p>
+<p>Noscript <noscript><p title="</noscript><img src=x onerror=alert(1)>"></p>
+<p>SVG style <svg><style><img src=x onerror=alert(1)></style></svg></p>
+<p>Math style <math><mtext><table><mglyph><style><img src=x onerror=alert(1)></p>

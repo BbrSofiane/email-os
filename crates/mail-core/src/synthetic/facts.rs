@@ -9,6 +9,12 @@
 //! `synchronous = FULL`, so a crash leaves either the whole write or none of
 //! it. Seeding is one `IMMEDIATE` transaction guarded by a meta marker:
 //! reopening never overwrites facts that have changed since.
+//!
+//! Seed version 2 (ADR 0006) added six HTML sample conversations. A profile
+//! seeded at version 1 is upgraded additively in the same transaction: facts
+//! are inserted only for messages that have none, existing facts are never
+//! touched, and the new conversations are recorded as one history change so a
+//! history pass picks them up. Any other seed mismatch still fails closed.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -89,7 +95,9 @@ impl FactStore {
                 // Seeded earlier. Never re-seed or reset facts; a different
                 // seed would need an explicit migration, so fail closed.
                 let seeded = meta_get(&tx, "seed_version")?;
-                if seeded.as_deref() != Some(SEED_VERSION) {
+                if seeded.as_deref() == Some("1") && SEED_VERSION == "2" {
+                    upgrade_v1(&tx)?;
+                } else if seeded.as_deref() != Some(SEED_VERSION) {
                     return Err(crate::storage_log::storage_fault(
                         "synthetic_seed_version_mismatch",
                     ));
@@ -255,6 +263,42 @@ impl FactStore {
     }
 }
 
+/// Additive seed upgrade from version 1 to 2 (see the module documentation).
+fn upgrade_v1(tx: &rusqlite::Transaction<'_>) -> Result<(), MailError> {
+    let history = current_history_id(tx)?
+        .checked_add(1)
+        .ok_or_else(|| crate::storage_log::storage_fault("synthetic_history_id_overflow"))?;
+    for conversation in fixtures() {
+        let mut added = false;
+        for message in conversation.messages {
+            let count = tx
+                .execute(
+                    "INSERT OR IGNORE INTO synthetic_messages
+                        (message_id, conversation_id, in_inbox, unread, starred)
+                     VALUES (?1, ?2, ?3, ?4, 0)",
+                    params![
+                        message.id,
+                        conversation.id,
+                        conversation.in_inbox as i64,
+                        seeded_unread(&conversation, message) as i64
+                    ],
+                )
+                .map_err(storage_err())?;
+            added |= count > 0;
+        }
+        if added {
+            tx.execute(
+                "INSERT OR IGNORE INTO synthetic_changes (history_id, conversation_id)
+                 VALUES (?1, ?2)",
+                params![history as i64, conversation.id],
+            )
+            .map_err(storage_err())?;
+        }
+    }
+    meta_set(tx, "history_id", &history.to_string())?;
+    meta_set(tx, "seed_version", SEED_VERSION)
+}
+
 fn seed(tx: &rusqlite::Transaction<'_>) -> Result<(), MailError> {
     for conversation in fixtures() {
         for message in conversation.messages {
@@ -302,4 +346,50 @@ fn current_history_id(conn: &Connection) -> Result<u64, MailError> {
     meta_get(conn, "history_id")?
         .and_then(|value| value.parse().ok())
         .ok_or_else(|| crate::storage_log::storage_fault("synthetic_history_id_missing"))
+}
+
+#[cfg(test)]
+mod upgrade_tests {
+    use super::*;
+
+    #[test]
+    fn upgrades_v1_additively_once() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        FactStore::migrate_and_seed(&mut conn).unwrap();
+        conn.execute("DELETE FROM synthetic_messages WHERE conversation_id IN ('conv-19','conv-20','conv-21','conv-22','conv-23','conv-24')", []).unwrap();
+        conn.execute(
+            "UPDATE synthetic_messages SET in_inbox = 0, starred = 1 WHERE message_id = 'm-01-1'",
+            [],
+        )
+        .unwrap();
+        meta_set(&conn, "seed_version", "1").unwrap();
+        let old = current_history_id(&conn).unwrap();
+        FactStore::migrate_and_seed(&mut conn).unwrap();
+        assert_eq!(
+            meta_get(&conn, "seed_version").unwrap().as_deref(),
+            Some("2")
+        );
+        let facts: (i64, i64) = conn
+            .query_row(
+                "SELECT in_inbox, starred FROM synthetic_messages WHERE message_id = 'm-01-1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(facts, (0, 1));
+        let store = FactStore {
+            conn: Mutex::new(conn),
+        };
+        let (ids, history) = store.changes_since(&old.to_string()).unwrap().unwrap();
+        assert_eq!(
+            ids,
+            (19..=24).map(|n| format!("conv-{n}")).collect::<Vec<_>>()
+        );
+        for id in &ids {
+            assert!(!store.conversation_facts(id).unwrap().0.is_empty());
+        }
+        let mut conn = store.conn.into_inner().unwrap();
+        FactStore::migrate_and_seed(&mut conn).unwrap();
+        assert_eq!(current_history_id(&conn).unwrap(), history);
+    }
 }
