@@ -1,4 +1,5 @@
 import java.util.Properties
+import java.io.FileInputStream
 import groovy.json.JsonSlurper
 
 plugins {
@@ -47,6 +48,14 @@ android {
         create("release") {
             releaseInputs["ANDROID_KEYSTORE_PATH"]?.let { storeFile = file(it) }
             storePassword = releaseInputs["ANDROID_KEYSTORE_PASSWORD"]
+            if (storeFile?.isFile == true && storePassword != null) {
+                // Probe the container itself, not its filename. Java supports both formats.
+                storeType = FileInputStream(storeFile).use { input ->
+                    val magic = ByteArray(4)
+                    require(input.read(magic) == 4) { "Invalid keystore" }
+                    if (magic.contentEquals(byteArrayOf(0xfe.toByte(), 0xed.toByte(), 0xfe.toByte(), 0xed.toByte()))) "JKS" else "PKCS12"
+                }
+            }
             keyAlias = releaseInputs["ANDROID_KEY_ALIAS"]
             keyPassword = releaseInputs["ANDROID_KEY_PASSWORD"]
         }

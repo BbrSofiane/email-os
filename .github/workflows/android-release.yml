@@ -1,0 +1,54 @@
+name: Android Release
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: android-release
+  cancel-in-progress: false
+jobs:
+  release:
+    if: github.repository == 'BbrSofiane/email-os' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: android-release
+    permissions:
+      contents: write
+    env:
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_RELEASE_CERT_SHA256: ${{ vars.ANDROID_RELEASE_CERT_SHA256 }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
+        with:
+          version: "2026.11.3"
+          cache: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+      - run: rustup target add aarch64-linux-android x86_64-linux-android
+      - run: mise run install:ui
+      - name: Prepare signing
+        env:
+          ENCODED_KEY: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          mkdir -p src-tauri/gen/android/app/build/signing
+          key="$GITHUB_WORKSPACE/src-tauri/gen/android/app/build/signing/release.keystore"
+          umask 077
+          printf '%s' "$ENCODED_KEY" | base64 --decode > "$key"
+          echo "ANDROID_KEYSTORE_PATH=$key" >> "$GITHUB_ENV"
+          echo "ANDROID_VERSION_CODE=$((1000 + RUN_NUMBER))" >> "$GITHUB_ENV"
+      - run: mise run android:release
+      - name: Verify and publish
+        run: scripts/android/publish-release.sh
