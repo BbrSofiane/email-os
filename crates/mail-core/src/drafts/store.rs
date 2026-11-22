@@ -397,7 +397,7 @@ fn validate_create_shape(command: &CreateDraft) -> Result<(), MailError> {
     }
     Ok(())
 }
-fn validate_content(content: &DraftContent) -> Result<(), MailError> {
+pub(crate) fn validate_content(content: &DraftContent) -> Result<(), MailError> {
     if content.to.len() > MAX_RECIPIENT_BYTES {
         return invalid("to");
     }
@@ -651,7 +651,7 @@ fn prepare_reply(
     ))
 }
 
-fn validate_mailbox(value: &str) -> Option<String> {
+pub(crate) fn validate_mailbox(value: &str) -> Option<String> {
     if value.is_empty()
         || value.len() > 254
         || !value.is_ascii()
@@ -722,7 +722,7 @@ fn valid_dot_atom(value: &str) -> bool {
         .bytes()
         .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-/=?^_`{|}~.".contains(&b))
 }
-fn validate_message_id(value: &str) -> Option<String> {
+pub(crate) fn validate_message_id(value: &str) -> Option<String> {
     if value.len() < 5 || value.len() > 998 || !value.starts_with('<') || !value.ends_with('>') {
         return None;
     }
