@@ -1,0 +1,56 @@
+<task-notification>
+<task-id>bpvbdj87e</task-id>
+<tool-use-id>toolu_01Pus6BwWnN2Nwhc5Q3MqrB4</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-usable-html-reader-047d71899da466ac/ee85c0c8-b2b0-43e9-b640-7729bf4a26ee/tasks/bpvbdj87e.output</output-file>
+<status>completed</status>
+<summary>Background command "Fetch main and re-run full gate on head" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+[T3 Code: the agent in T3 thread "2eef1655-4916-4aa4-a930-0dddb657d66f" sent this message, not the user.]
+
+Review of PR #92 @ bc5d5bf: CHANGES REQUESTED, not merged. CI is green, and the sanitiser, frame, IPC and Android link code read well. I read those, the parse/store parts of mail-core, and looked at the Android screenshots, a sample of the browser ones, and the recording. I have not re-run your gates.
+
+Must fix:
+1. **A sender can exhaust memory during sync (`parse.rs` `html_to_text`).** It runs on any HTML-only body up to MAX_PART_BODY_BYTES (1 MiB), before the 512 Ki HTML cap, and `.take(MAX_MESSAGE_TEXT_CHARS)` applies only after html2text has built its whole output. With html2text 0.17.3, plain_no_decorate + link_footnotes, width 10_000, release build, desktop x86_64:
+   - one table row with 50,000 `<td>a</td>` (500 KB in) → a 500,200,001-byte string, 1.9 s;
+   - 90,000 nested `<div>` (990 KB) → 18.6 s; 10,000 → 0.25 s (so roughly quadratic);
+   - 10,000 nested `<blockquote>` or `<ul><li>` → `TooNarrow`, so the message counts as having no displayable body. These `?`-style failures lose the body even though its HTML would be shown.
+   On a phone this could kill sync on every attempt. I did not run it inside the app. Bound the work before converting (input size, nesting depth, table cells) and bound output while building it, or replace the conversion for over-limit input with a simple bounded text extraction. Over-limit input must still yield some text or a clear state, and must never make the page or sync fail. Add tests for these shapes with a size and time bound, including several such messages in one thread.
+2. **CSS filter disagrees with the browser on newlines in strings (`css-filter.ts`).** The browser ends a string at a raw newline; the filter stays inside it. `a { x: "\n; background: url(https://tracker/p.png); y: "; }` (real newline) passes with `remoteImages: false` and `blockedRemote: 0`. I confirmed in Chrome 156 that the browser then requests the URL when there is no CSP, and that your frame CSP blocks it. So there is no leak today, but one of the two layers is bypassed, `position: fixed` gets through the same way, and the header comment claims malformed input cannot leak. Treat \n, \r and \f inside a string as malformed and drop; check other tokenizer differences (bad url tokens, unbalanced brackets in at-rule preludes, CDO/CDC, NUL). Add corpus cases for both `<style>` and `style=""`.
+3. **The recording shows the bug you fixed later.** Its metadata says 16:41; the fix `28e322a` is 20:09. In it the newsletter opens as an empty white strip until Load images. `mailto-confirm.png` also shows the old misaligned buttons, and no Android evidence is from head. Rebuild the APK at the final head and re-record open → (formatted content visible) → Load images → link → confirm → browser → Back, and retake at least newsletter-blocked, mailto-confirm, reopened and one other.
+
+Please also fix or answer:
+4. `parse.rs`: the doc line "Bound on work retained from one nested Gmail history response." now sits above `MAX_MESSAGE_HTML_CHARS` instead of `MAX_HISTORY_RECORDS`.
+5. Phone newsletter: the paper card has a left margin but none on the right (header and images touch or run past the right edge), in both the browser and Android shots. Fit the content including the padding, or explain.
+6. The module-level `cache` in `HtmlMessageFrame.vue` keeps sanitized mail in memory after Disconnect or account removal. Clear it there, or say why not.
+7. `referrerpolicy` on the iframe covers only the frame's own navigation. Add a no-referrer policy inside the frame document for loaded images, with a test, or show it is already inherited.
+
+Emulator: if the device tools return DEVICE_IN_USE, do not take over, close or work around that session (no adb launches): fix everything else, push, and end with `BLOCKED:`. I am asking the owner about a session that holds the claim. If you drove the emulator yesterday by some other route than `device_open` + agent-device, tell me which. Track A is active, so follow the heavy-command rule. Disk is at 4.7 GB.
+
+Same process as before (Terra via `delegate_task` for code, you review), then `READY FOR REVIEW: <PR> @ <sha>`.
+
+---
+
+Delegated task node:delegated-task:command%3Amcp%3A2fd8808f-3859-4461-9444-e151cf31a6e0%3Adelegate-task%3Aeefe20ec-9318-4ef6-80ad-56ef8b24c0e5 (C review fix 1: bounded HTML text extraction) in child thread thread:delegated-task:command%3Amcp%3A2fd8808f-3859-4461-9444-e151cf31a6e0%3Adelegate-task%3Aeefe20ec-9318-4ef6-80ad-56ef8b24c0e5 [completed]:
+I moved the history-response bound comment to `MAX_HISTORY_RECORDS` in [parse.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/gmail/parse.rs). **The extractor replacement and its tests remain unfinished**, so the existing `html2text` performance and failure risks remain. I did not run checks.
+
+The repository search found `html2text` references in [ADR 0006](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/docs/adr/0006-html-mail-reader.md:215), [current-status.md](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/docs/current-status.md:62), [Cargo.toml](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/Cargo.toml:13), [Cargo.lock](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/Cargo.lock:1379), and the existing parser comment and call. The ADR has three mentions, at lines 215, 353, and 639.
+
+---
+
+Delegated task node:delegated-task:command%3Amcp%3A2fd8808f-3859-4461-9444-e151cf31a6e0%3Adelegate-task%3A2399dbb3-32c1-415a-8888-eb1e980a7a6c (C review fix 1a: html_text module) in child thread thread:delegated-task:command%3Amcp%3A2fd8808f-3859-4461-9444-e151cf31a6e0%3Adelegate-task%3A2399dbb3-32c1-415a-8888-eb1e980a7a6c [completed]:
+Added the bounded HTML text extractor and unit tests in [html_text.rs](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/crates/mail-core/src/gmail/html_text.rs), registered the module, and added the `markup5ever` dependency.
+
+As requested, I did not run builds or tests. The implementation and its timing tests remain unverified.
+
+---
+
+<task-notification>
+<task-id>b4m5t06d3</task-id>
+<tool-use-id>toolu_019zfHUna2qnwkCfqvYRXYoF</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-usable-html-reader-047d71899da466ac/ee85c0c8-b2b0-43e9-b640-7729bf4a26ee/tasks/b4m5t06d3.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for other builds, then run mail-core Gmail tests" completed (exit code 0)</summary>
+</task-notification>
