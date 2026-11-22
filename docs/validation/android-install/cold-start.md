@@ -29,9 +29,10 @@ delivered the input event before its deadline.
 | Populated 4 | 5.12 | 189 | 5628 | 6102 | 4133 | 4143 |
 | Populated 5 | 4.78 | 448 | 4899 | 5274 | 3382 | 3385 |
 
-Android reported an ANR for **populated 2** on PID 866, with the report
-logged during a later run. The reason was input dispatch waiting 5003 ms
-for a focus event. At the report, guest CPU pressure was
+Android reported ANRs for **fresh 1** on PID 31309 and **populated 2** on
+PID 866. Both reports arrived after the original sample capture. Android
+reported input dispatch waiting 5029 ms and 5003 ms, respectively, for focus.
+At the populated report, guest CPU pressure was
 `some avg10=88.04`. Android attempted a thread dump, and logcat reported
 a timeout and failure to collect the Java and native stacks. This leaves
 the direct ANR cause unconfirmed. Focus was recorded before setup
@@ -54,3 +55,51 @@ snapshot. Capture timestamped logcat for `EmailOsStartup`,
 `RustStdoutStderr`, `ActivityTaskManager` and `ActivityManager`, and match
 ANRs to the app PID even if the result arrives after another launch.
 The Inbox was confirmed on fresh 1 and after the populated batch.
+
+## After moving Android storage startup off the event loop, 2026-11-22
+
+Same emulator, WebView version and sample method. The diagnostic build used
+the production startup changes from `4bb80f5` and `b91f70c`, with local timing
+markers and a throwaway signature. No heavy build was active during the
+timing runs. The worker columns measure time from entry to the worker.
+
+| Launch | Host load (1 min) | Frame callback (ms) | WebView callback (ms) | Focus (ms) | Rust setup (ms) | Data-path lookup (ms) | Worker total (ms) | ANR |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Fresh 1 | 0.32 | 274 | 9407 | 10420 | 0 | 41 | 430 | Yes |
+| Fresh 2 | 2.22 | 270 | 8378 | 9364 | 0 | 2 | 347 | Yes |
+| Fresh 3 | 2.70 | 212 | 6176 | 6515 | 1 | 1 | 151 | No |
+| Fresh 4 | 3.53 | 186 | 7315 | 7655 | 0 | 1 | 85 | No |
+| Fresh 5 | 2.73 | 200 | 6629 | 7087 | 9 | 0 | 143 | No |
+| Populated 1 | 3.17 | 134 | 6540 | 6950 | 6 | 0 | 65 | No |
+| Populated 2 | 3.90 | 70 | 7630 | 8501 | 1 | 1 | 176 | Yes |
+| Populated 3 | 4.09 | 186 | 7080 | 7470 | 20 | 2 | 320 | Yes |
+| Populated 4 | 4.78 | 417 | 6425 | 6957 | 0 | 2 | 144 | No |
+| Populated 5 | 5.19 | 342 | 5767 | 6277 | 0 | 4 | 204 | No |
+
+An intermediate run with only database opening deferred still spent
+2.44–6.88 seconds in synchronous Tauri setup across ten samples.
+The data path API makes a synchronous Android plugin request, so the final
+change resolves it on the worker too. Final Rust setup took 0–20 ms and
+the Inbox was confirmed on eight of ten launches. Fresh 1 exposed
+the Inbox loading surface at snapshot time. Fresh 2 exposed the Android
+**Wait** / **Close app** dialog.
+
+Android DropBox main-thread stacks for fresh 1 (PID 29209) and fresh 2
+(PID 29625) both show Android WebView construction, with the former in
+`AwContents` calling the input-device Binder service and the latter in
+`AwSettings` reading system settings. Guest CPU pressure
+`some avg10` was 73.20 and 81.55, respectively. Both app profiles began opening
+after the WebView callbacks and focus markers. The captured stacks place
+these ANRs in the Android WebView startup path. The samples do not isolate
+whether the provider, emulator scheduling or both account for the delay.
+The storage fix removed a synchronous dependency. It did not clear the
+ANR acceptance gate.
+
+The current app uses AndroidX WebKit 1.6.1 and the emulator has WebView
+124. Android's documented asynchronous startup API needs a newer WebKit
+library and must complete before the app constructs a WebView to avoid
+blocking on pending initialization. These stacks are inside per-instance
+construction and do not establish that preinitializing the provider would
+remove the stall. Test on a comparable emulator with a newer WebView and
+on the physical phone before selecting a provider or lifecycle change.
+[Android WebView startup guidance](https://developer.android.com/develop/ui/views/layout/webapps/optimize-webview-startup).
