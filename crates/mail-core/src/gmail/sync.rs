@@ -125,6 +125,7 @@ struct GmailInner {
 struct Ctrl {
     state: Mutex<CtrlState>,
     wake: Condvar,
+    send_pass: Mutex<Option<Box<dyn Fn(&CancelToken) -> Result<bool, MailError> + Send>>>,
     #[cfg(test)]
     after_mutation_count: Mutex<Option<MutationCountHook>>,
 }
@@ -315,6 +316,79 @@ enum StageOutcome {
 }
 
 impl GmailCore {
+    pub(crate) fn register_send_pass(
+        &self,
+        pass: impl Fn(GmailCore, &CancelToken) -> Result<bool, MailError> + Send + 'static,
+    ) {
+        if !self.inner.policy.is_synthetic() {
+            return;
+        }
+        let core = Arc::downgrade(&self.inner);
+        *self
+            .inner
+            .ctrl
+            .send_pass
+            .lock()
+            .expect("send pass poisoned") = Some(Box::new(move |cancel| match core.upgrade() {
+            Some(inner) => pass(GmailCore { inner }, cancel),
+            None => Ok(false),
+        }));
+        let mut state = self.inner.ctrl.state.lock().expect("gmail ctrl poisoned");
+        state.operations_requested = true;
+        self.inner.ctrl.wake.notify_all();
+    }
+
+    /// Reconsider local deadlines after a send is durably admitted.
+    pub(crate) fn wake_send_worker(&self) {
+        let mut state = self.inner.ctrl.state.lock().expect("gmail ctrl poisoned");
+        state.reminder_work = true;
+        self.inner.ctrl.wake.notify_all();
+    }
+
+    pub(crate) fn send_now(&self) -> Result<chrono::DateTime<chrono::FixedOffset>, MailError> {
+        self.inner.store.send_now()
+    }
+
+    pub(crate) fn release_due_sends(&self, account: &str) -> Result<usize, MailError> {
+        self.inner.store.release_due_sends(account)
+    }
+
+    pub(crate) fn send_generation(&self) -> Result<u64, MailError> {
+        self.inner.store.generation()
+    }
+
+    pub(crate) fn claim_send(
+        &self,
+        account: &str,
+        operation: &str,
+        generation: u64,
+    ) -> Result<bool, MailError> {
+        self.inner
+            .store
+            .claim_send_for_generation(account, operation, generation)
+    }
+
+    pub(crate) fn dispatch_send(
+        &self,
+        account: &str,
+        mime: &[u8],
+        cancel: &CancelToken,
+    ) -> super::types::SendResult {
+        self.inner.provider.send_for_account(account, mime, cancel)
+    }
+
+    pub(crate) fn finish_send(
+        &self,
+        account: &str,
+        operation: &str,
+        generation: u64,
+        result: &super::types::SendResult,
+    ) -> Result<bool, MailError> {
+        self.inner
+            .store
+            .finish_send_for_generation(account, operation, generation, result)
+    }
+
     pub(crate) fn send_receipt(
         &self,
         account: &str,
@@ -328,6 +402,10 @@ impl GmailCore {
         account: &str,
     ) -> Result<Vec<super::store::send::SendIntent>, MailError> {
         self.inner.store.list_send_intents(account)
+    }
+
+    pub(crate) fn undo_send(&self, account: &str, operation: &str) -> Result<bool, MailError> {
+        self.inner.store.undo_send(account, operation)
     }
 
     pub(crate) fn insert_send_intent(
@@ -551,9 +629,11 @@ impl GmailCore {
                 operations_paused,
             }),
             wake: Condvar::new(),
+            send_pass: Mutex::new(None),
             #[cfg(test)]
             after_mutation_count: Mutex::new(None),
         });
+        spawn_send_deadline_timer(Arc::downgrade(&store), Arc::downgrade(&ctrl))?;
         let handle = spawn_worker(
             Arc::clone(&store),
             Arc::clone(&provider),
@@ -2176,6 +2256,41 @@ fn worker_wait(_state: &CtrlState, wait: Duration) -> Duration {
 
 // ------------------------------------------------------------------- worker
 
+// Deadline release must continue even when the serial worker is in provider I/O.
+// Weak references ensure this timer never owns the profile or its shutdown.
+fn spawn_send_deadline_timer(
+    store: std::sync::Weak<GmailStore>,
+    ctrl: std::sync::Weak<Ctrl>,
+) -> Result<(), MailError> {
+    std::thread::Builder::new()
+        .name("send-deadline".to_string())
+        .spawn(move || loop {
+            let Some(ctrl) = ctrl.upgrade() else { return };
+            let state = ctrl.state.lock().expect("gmail ctrl poisoned");
+            if state.stop {
+                return;
+            }
+            let (state, _) = ctrl
+                .wake
+                .wait_timeout(state, Duration::from_millis(100))
+                .expect("gmail ctrl poisoned");
+            if state.stop {
+                return;
+            }
+            drop(state);
+            let Some(store) = store.upgrade() else { return };
+            if let Ok(Some(account)) = store.account() {
+                if matches!(store.release_due_sends(&account.account_id), Ok(count) if count > 0) {
+                    let mut state = ctrl.state.lock().expect("gmail ctrl poisoned");
+                    state.operations_requested = true;
+                    ctrl.wake.notify_all();
+                }
+            }
+        })
+        .map_err(storage_err())?;
+    Ok(())
+}
+
 fn spawn_worker(
     store: Arc<GmailStore>,
     provider: Arc<dyn GmailProvider>,
@@ -2378,10 +2493,24 @@ fn run(
             &hub,
             policy,
         );
-        let mut more_claimable_mutations = false;
+        let mut more_sends = false;
+        if action == PassAction::Mutations
+            && matches!(&outcome, PassOutcome::Complete | PassOutcome::Idle)
+        {
+            if let Some(pass) = ctrl.send_pass.lock().expect("send pass poisoned").as_ref() {
+                match pass(&pass_cancel) {
+                    Ok(sent) => more_sends = sent,
+                    Err(error) => outcome = PassOutcome::Halt(error),
+                }
+            }
+            if more_sends {
+                outcome = PassOutcome::Complete;
+            }
+        }
+        let mut more_claimable_mutations = more_sends;
         if action == PassAction::Mutations && matches!(&outcome, PassOutcome::Complete) {
             match store.claimable_operation_count() {
-                Ok(count) => more_claimable_mutations = count > 0,
+                Ok(count) => more_claimable_mutations |= count > 0,
                 Err(error) => outcome = PassOutcome::Halt(error),
             }
             #[cfg(test)]
@@ -3366,6 +3495,7 @@ mod worker_halt_tests {
                 operations_paused: false,
             }),
             wake: Condvar::new(),
+            send_pass: Mutex::new(None),
             #[cfg(test)]
             after_mutation_count: Mutex::new(None),
         });

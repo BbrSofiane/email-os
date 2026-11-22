@@ -19,6 +19,7 @@ impl GmailStore {
         };
         store.migrate()?;
         store.recover_interrupted_operations_on_startup()?;
+        store.recover_send_intents()?;
         Ok(store)
     }
 

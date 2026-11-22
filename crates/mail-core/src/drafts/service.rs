@@ -104,11 +104,75 @@ pub struct DraftService {
 }
 
 impl DraftService {
+    /// Release deadlines independently from provider I/O.
+    pub(crate) fn release_due_sends(&self) -> Result<usize, MailError> {
+        let account = self.core.active_account()?;
+        self.core.release_due_sends(&account.account_id)
+    }
+
+    /// Dispatch at most one released intent. The lifecycle gate protects the
+    /// exact lock through the durable claim, but never spans provider I/O.
+    pub(crate) fn dispatch_send_pass(
+        &self,
+        cancel: &crate::CancelToken,
+    ) -> Result<bool, MailError> {
+        let lifecycle = self.lock()?;
+        let account = self.core.active_account()?;
+        let generation = self.core.send_generation()?;
+        let locks = self.drafts.send_locks(&account.account_id)?;
+        let intent = self
+            .core
+            .list_send_intents(&account.account_id)?
+            .into_iter()
+            .find(|intent| {
+                intent.state == "queued"
+                    && locks.iter().any(|(draft, operation, revision)| {
+                        draft.draft_id == intent.draft_id
+                            && *operation == intent.operation_id
+                            && *revision == intent.draft_revision
+                    })
+            });
+        let Some(intent) = intent else {
+            return Ok(false);
+        };
+        if !self
+            .core
+            .claim_send(&account.account_id, &intent.operation_id, generation)?
+        {
+            return Ok(false);
+        }
+        drop(lifecycle);
+        let result = self
+            .core
+            .dispatch_send(&account.account_id, &intent.frozen_mime, cancel);
+        self.core.finish_send(
+            &account.account_id,
+            &intent.operation_id,
+            generation,
+            &result,
+        )?;
+        Ok(true)
+    }
+
     pub fn new(core: GmailCore, drafts: DraftCore) -> Self {
+        let lifecycle = Arc::new(Mutex::new(DraftLifecycle::default()));
+        let weak_lifecycle = Arc::downgrade(&lifecycle);
+        let worker_drafts = drafts.clone();
+        core.register_send_pass(move |core, cancel| {
+            let Some(lifecycle) = weak_lifecycle.upgrade() else {
+                return Ok(false);
+            };
+            DraftService {
+                core,
+                drafts: worker_drafts.clone(),
+                lifecycle,
+            }
+            .dispatch_send_pass(cancel)
+        });
         Self {
             core,
             drafts,
-            lifecycle: Arc::new(Mutex::new(DraftLifecycle::default())),
+            lifecycle,
         }
     }
 
@@ -131,7 +195,9 @@ impl DraftService {
                 Some(intent) if intent.state == "confirmed" => self
                     .drafts
                     .tombstone_confirmed_send(draft_ref, *revision, operation)?,
-                Some(intent) if intent.state == "failed" || intent.state == "cancelled" => {
+                Some(intent)
+                    if matches!(intent.state.as_str(), "failed" | "cancelled" | "undone") =>
+                {
                     self.drafts.release_send_lock(draft_ref, operation)?
                 }
                 Some(_) => {}
@@ -217,6 +283,33 @@ impl DraftService {
                     .create_draft(&account, command, Some(&reply_conversation))
             }
         }
+    }
+
+    /// Undo a held send and return its restored draft after lock repair.
+    pub(crate) fn undo_send(&self, operation: &str) -> Result<Option<DraftRef>, MailError> {
+        let _lifecycle = self.lock()?;
+        let account = self.core.active_account()?;
+        if !self.core.undo_send(&account.account_id, operation)? {
+            return Ok(None);
+        }
+        let intent = self
+            .core
+            .list_send_intents(&account.account_id)?
+            .into_iter()
+            .find(|intent| intent.operation_id == operation)
+            .ok_or(MailError::NotFound)?;
+        self.repair_send_locks(&account.account_id)?;
+        let draft_ref = DraftRef {
+            account_id: account.account_id.clone(),
+            draft_id: intent.draft_id,
+        };
+        let draft = self.drafts.get_draft(&account, &draft_ref)?;
+        if draft.revision != intent.draft_revision {
+            return Err(MailError::DraftConflict {
+                current_revision: draft.revision,
+            });
+        }
+        Ok(Some(draft_ref))
     }
 
     /// Admit a saved revision to the durable send ledger.
@@ -315,7 +408,7 @@ impl DraftService {
             }
             _ => return Err(MailError::ReplyUnavailable),
         };
-        let now = chrono::Utc::now();
+        let now = self.core.send_now()?;
         let operation_id = uuid::Uuid::new_v4().to_string();
         let message_id = format!("<{}@email-os.local>", uuid::Uuid::new_v4());
         let mime = crate::send_mime::build_send_mime(
@@ -357,6 +450,7 @@ impl DraftService {
             }
             return Err(error);
         }
+        self.core.wake_send_worker();
         Ok(intent)
     }
 
@@ -398,6 +492,136 @@ impl DraftService {
 mod tests {
     use super::*;
     use crate::testing::synthetic::Synthetic;
+
+    #[test]
+    fn worker_sends_once_at_deadline_and_never_replays_unknown() {
+        use crate::drafts::types::DraftContent;
+        use crate::testing::synthetic::{open_core_wrapping, Overlay};
+        use crate::testing::{until, TIMEOUT};
+
+        let s = Synthetic::open_wrapped("send-worker-unknown", Overlay::wrap);
+        let drafts = DraftCore::open(s.dir.path().join("local-drafts")).unwrap();
+        let service = DraftService::new(s.core.clone(), drafts.clone());
+        let draft = service
+            .create_draft(&CreateDraft {
+                request_id: "draft".into(),
+                source: DraftSource::NewMessage,
+                initial_content: Some(DraftContent {
+                    to: "recipient@example.com".into(),
+                    cc: String::new(),
+                    subject: "Subject".into(),
+                    body_text: "Body".into(),
+                }),
+            })
+            .unwrap();
+        let intent = service
+            .admit_send(&draft.draft_ref, draft.revision, "send")
+            .unwrap();
+        s.clock.advance_seconds(4);
+        s.core.wake_send_worker();
+        s.core.wait_for_test_idle(TIMEOUT).unwrap();
+        assert_eq!(s.provider.send_calls(), 0);
+        s.clock.advance_seconds(1);
+        s.core.wake_send_worker();
+        assert!(until(|| s
+            .core
+            .send_receipt(&intent.account_id, "send")
+            .unwrap()
+            .is_some_and(|row| row.state == "unknown")));
+        assert_eq!(s.provider.send_calls(), 1);
+        s.core.wake_send_worker();
+        s.core.wait_for_test_idle(TIMEOUT).unwrap();
+        assert_eq!(s.provider.send_calls(), 1);
+
+        s.core.stop();
+        drop(service);
+        drop(drafts);
+        drop(s.core);
+        let reopened = open_core_wrapping(
+            s.dir.path(),
+            s.provider.clone(),
+            &s.synthetic,
+            &s.clock,
+            false,
+        );
+        let drafts = DraftCore::open(s.dir.path().join("local-drafts")).unwrap();
+        let _service = DraftService::new(reopened.clone(), drafts);
+        reopened.wake_send_worker();
+        reopened.wait_for_test_idle(TIMEOUT).unwrap();
+        assert_eq!(s.provider.send_calls(), 1);
+        assert_eq!(
+            reopened
+                .send_receipt(&intent.account_id, "send")
+                .unwrap()
+                .unwrap()
+                .state,
+            "unknown"
+        );
+        reopened.stop();
+    }
+
+    #[test]
+    fn undo_send_replays_before_deadline_and_distinguishes_restart() {
+        use crate::drafts::types::DraftContent;
+        let s = Synthetic::open("draft-undo-send");
+        let store = DraftCore::open(s.dir.path().join("local-drafts")).unwrap();
+        let service = DraftService::new(s.core.clone(), store.clone());
+        let create = |id: &str| {
+            service
+                .create_draft(&CreateDraft {
+                    request_id: id.into(),
+                    source: DraftSource::NewMessage,
+                    initial_content: Some(DraftContent {
+                        to: "recipient@example.com".into(),
+                        cc: String::new(),
+                        subject: "Subject".into(),
+                        body_text: "Body".into(),
+                    }),
+                })
+                .unwrap()
+        };
+        let first = create("first");
+        let deadline = create("deadline");
+        let restart = create("restart");
+        let a = service
+            .admit_send(&first.draft_ref, first.revision, "send-first")
+            .unwrap();
+        let b = service
+            .admit_send(&deadline.draft_ref, deadline.revision, "send-deadline")
+            .unwrap();
+        let c = service
+            .admit_send(&restart.draft_ref, restart.revision, "send-restart")
+            .unwrap();
+        assert_eq!(
+            service.undo_send(&a.operation_id).unwrap(),
+            Some(first.draft_ref.clone())
+        );
+        assert_eq!(
+            service.undo_send(&a.operation_id).unwrap(),
+            Some(first.draft_ref.clone())
+        );
+        assert_eq!(
+            service.get_draft(&first.draft_ref).unwrap().revision,
+            first.revision
+        );
+        s.clock.advance_seconds(5);
+        assert_eq!(service.undo_send(&b.operation_id).unwrap(), None);
+        drop(service);
+        drop(store);
+        let s = s.reopen();
+        let store = DraftCore::open(s.dir.path().join("local-drafts")).unwrap();
+        let service = DraftService::new(s.core.clone(), store);
+        assert_eq!(service.undo_send(&c.operation_id).unwrap(), None);
+        assert_eq!(
+            service.get_draft(&restart.draft_ref).unwrap().revision,
+            restart.revision
+        );
+        assert_eq!(
+            service.undo_send(&a.operation_id).unwrap(),
+            Some(first.draft_ref)
+        );
+        s.core.stop();
+    }
 
     #[test]
     fn confirmed_send_cleanup_is_repaired_on_draft_access() {

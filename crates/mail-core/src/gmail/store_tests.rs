@@ -3360,3 +3360,54 @@ fn message_html_state_serde() {
     msg.html_body = Some(HtmlBodyState::TooLarge);
     assert_eq!(serde_json::to_value(&msg).unwrap()["htmlBody"], "too_large");
 }
+
+#[test]
+fn send_hold_deadline_and_restart_recovery_are_atomic() {
+    let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+        "2026-01-01T00:00:00Z",
+    )));
+    let (store, _dir) = open_store_with_clock("send-hold-transitions", clock.clone());
+    store
+        .begin_account(&profile("acct", "acct@example.test", "hist-1"), 0)
+        .unwrap();
+    let intent = |id: &str| crate::gmail::store::send::SendIntent {
+        account_id: "acct".into(),
+        operation_id: id.into(),
+        draft_id: id.into(),
+        draft_revision: 1,
+        request_id: id.into(),
+        frozen_mime: vec![1],
+        not_before: "2026-01-01T00:00:05Z".into(),
+        state: "hold".into(),
+    };
+    store.insert_send_intent(&intent("undo")).unwrap();
+    store.insert_send_intent(&intent("release")).unwrap();
+    store.insert_send_intent(&intent("restart")).unwrap();
+    assert!(!store.claim_send("acct", "release").unwrap());
+    assert!(store.undo_send("acct", "undo").unwrap());
+    assert!(store.undo_send("acct", "undo").unwrap());
+    clock.advance_seconds(5);
+    assert!(!store.undo_send("acct", "release").unwrap());
+    assert_eq!(store.release_due_sends("acct").unwrap(), 2);
+    assert!(store.claim_send("acct", "release").unwrap());
+    assert!(!store.claim_send("acct", "release").unwrap());
+    store.insert_send_intent(&intent("new-hold")).unwrap();
+    store.recover_send_intents().unwrap();
+    assert_eq!(
+        store
+            .send_receipt("acct", "release")
+            .unwrap()
+            .unwrap()
+            .state,
+        "unknown"
+    );
+    assert_eq!(
+        store
+            .send_receipt("acct", "new-hold")
+            .unwrap()
+            .unwrap()
+            .state,
+        "cancelled"
+    );
+    assert!(!store.claim_send("acct", "release").unwrap());
+}
