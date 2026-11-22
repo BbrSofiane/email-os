@@ -31,7 +31,7 @@
   [crates/mail-core/src/gmail/store/profile.rs:30](../../crates/mail-core/src/gmail/store/profile.rs#L30)).
   The current worker executes label setters. Its synthetic policy can requeue an
   interrupted setter whose intended state is absent
-  ([crates/mail-core/src/gmail/operations.rs:160](../../crates/mail-core/src/gmail/operations.rs#L160)).
+  ([crates/mail-core/src/gmail/operations.rs:162](../../crates/mail-core/src/gmail/operations.rs#L162)).
 - The shared editor footer has Save and close on desktop and the compact sheets
   use a header X. The editor describes drafts as “never sent”
   ([src/components/DraftEditorCore.vue:101](../../src/components/DraftEditorCore.vue#L101),
@@ -334,6 +334,14 @@ this proposal. Keep the send capability unavailable on those native platforms.
 Start after the coordinator sends `START` for an available build slot. Stages
 1–6 and Android fixture build and validation can finish before track B merges.
 Stage 7 starts after B's scope-upgrade mechanism is merged.
+
+Track C merged in `7f5b95d`. Its cache schema ends at
+[`gmail-migrations-10`](../../crates/mail-core/src/gmail/store.rs#L47), so
+send ledger storage starts at `gmail-migrations-11`. Preserve the HTML and
+inline-image IPC paths and use the existing
+[`openNew(source, initial)` editor path](../../src/composables/useDrafts.ts#L486)
+when opening a newly copied draft. Android fixture validation uses
+`dev.exedev.emailos.androidfixture` until Track A's package change merges.
 
 1. Add core send validation and MIME construction with an independent parse
    round-trip. Check focused MIME tests for Unicode, folding, body limits,
