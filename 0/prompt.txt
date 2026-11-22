@@ -1,0 +1,16 @@
+Delegated task node:delegated-task:command%3Amcp%3A2fd8808f-3859-4461-9444-e151cf31a6e0%3Adelegate-task%3Ac3d37992-2dee-49b1-b43d-b16b778edbd1 (C review fix 2: CSS filter on a spec tokenizer) in child thread thread:delegated-task:command%3Amcp%3A2fd8808f-3859-4461-9444-e151cf31a6e0%3Adelegate-task%3Ac3d37992-2dee-49b1-b43d-b16b778edbd1 [completed]:
+The implementation is incomplete. I changed:
+
+- [css-tokenizer.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/src/lib/html-mail/css-tokenizer.ts) — added restricted CSS tokenization and malformed-input rejection.
+- [css-filter.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/src/lib/html-mail/css-filter.ts) — rewrote filtering around tokens.
+- [sanitize.ts](/home/exedev/.t3/worktrees/email-os/usable-html-reader-047d71899da466ac/src/lib/html-mail/sanitize.ts) — changed quote detection and CID deduplication to linear passes.
+
+I did **not** add the requested regression or Chrome tests, and the implementation needs review against the full tokenizer and serialization requirements before it is ready. No existing assertions were changed. In particular, the existing assertions for comment-split URLs and backslashes conflict with the new requested behavior and will need adjustment.
+
+I did not run Vitest or commit. A TypeScript check reported no errors in the changed HTML-mail files, but the overall check reported an unrelated missing `ActionNotice.vue` module.
+
+---
+
+[T3 Code: the agent in T3 thread "2eef1655-4916-4aa4-a930-0dddb657d66f" sent this message, not the user.]
+
+The emulator claim is cleared (the owner approved stopping one leftover device process; do not kill device processes or edit claims yourselves). Track A uses the emulator first for startup timings. While A is sampling, no heavy build may run: if `emulator.lock` holds `usable/install`, check before starting cargo, gradle or a full vitest run, and wait if A is timing. Finish your code fixes, then take the lock when it is free for the rebuilt APK, the new recording and the retaken screenshots. New in RULES.md: before removing the lock, run agent-device `close`, then `device_close` (no shutdown). Your `DEVICE_IN_USE` question no longer needs an answer unless you drove the emulator by another route. From the transcript I saw you use `device_open` + agent-device, with `adb` for install, focus checks and the DevTools forward, which is fine.

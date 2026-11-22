@@ -1,0 +1,32 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M81GP7TSFGFG9DBSVYKK75ZA",
+  "strategy": "manual-commit",
+  "branch": "usable/html-reader",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/lib/html-mail/css-filter.ts",
+    "src/lib/html-mail/css-tokenizer.ts",
+    "src/lib/html-mail/sanitize.ts",
+    "tests/reader/html-corpus.ts",
+    "tests/reader/html-css-filter.test.ts",
+    "tests/reader/html-sanitize.rendered.test.ts",
+    "tests/reader/html-sanitize.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 14,
+    "cache_creation_tokens": 34136,
+    "cache_read_tokens": 1899433,
+    "output_tokens": 24039,
+    "api_call_count": 6
+  }
+}

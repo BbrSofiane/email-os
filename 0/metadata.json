@@ -1,0 +1,65 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M81GP7TSFGFG9DBSVYKK75ZA",
+  "session_id": "ee85c0c8-b2b0-43e9-b640-7729bf4a26ee",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-22T11:36:36.097353731Z",
+  "branch": "usable/html-reader",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/lib/html-mail/css-filter.ts",
+    "src/lib/html-mail/css-tokenizer.ts",
+    "src/lib/html-mail/sanitize.ts",
+    "tests/reader/html-corpus.ts",
+    "tests/reader/html-css-filter.test.ts",
+    "tests/reader/html-sanitize.rendered.test.ts",
+    "tests/reader/html-sanitize.test.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-5-5",
+  "turn_id": "5952314e079b",
+  "checkpoint_transcript_start": 3647,
+  "transcript_lines_at_start": 3647,
+  "compact_transcript_start": 516,
+  "token_usage": {
+    "input_tokens": 14,
+    "cache_creation_tokens": 34136,
+    "cache_read_tokens": 1899433,
+    "output_tokens": 24039,
+    "api_call_count": 6
+  },
+  "session_metrics": {
+    "turn_count": 5
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-22T11:36:34.303906771Z",
+    "agent_lines": 0,
+    "agent_removed": 4,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 218,
+    "total_committed": 211,
+    "total_lines_changed": 222,
+    "agent_percentage": 1.8018018018018018,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 387,
+      "user_lines_removed": 218,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".impeccable/hook.cache.json": 1,
+        "src/lib/html-mail/css-filter.ts": 191,
+        "src/lib/html-mail/css-tokenizer.ts": 148,
+        "src/lib/html-mail/sanitize.ts": 47
+      },
+      "user_removed_per_file": {
+        "src/lib/html-mail/css-filter.ts": 200,
+        "src/lib/html-mail/sanitize.ts": 18
+      }
+    }
+  ]
+}
