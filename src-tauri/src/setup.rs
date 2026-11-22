@@ -45,9 +45,9 @@ fn open_fixture_state(
 }
 
 #[cfg(target_os = "android")]
+#[derive(Default)]
 pub(crate) struct StartupCoordinator {
-    app_data_dir: std::path::PathBuf,
-    lock: Mutex<()>,
+    transition: Mutex<Option<Arc<FixtureTransition>>>,
 }
 
 #[cfg(target_os = "android")]
@@ -55,22 +55,30 @@ impl StartupCoordinator {
     pub(crate) fn ensure_ready(
         &self,
         app: &tauri::AppHandle,
-    ) -> Result<(), mail_core::error::MailError> {
+    ) -> Result<Arc<FixtureTransition>, mail_core::error::MailError> {
         use crate::diagnostics::{cause, storage_failure};
-        let _guard = self
-            .lock
+        let mut transition = self
+            .transition
             .lock()
             .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
-        if app.try_state::<AppState>().is_some() {
-            return Ok(());
+        if let Some(ready) = transition.as_ref() {
+            return Ok(Arc::clone(ready));
         }
+        // Android resolves this path through a synchronous mobile plugin call.
+        // Resolve it on the same worker that opens the databases.
+        let app_data_dir = app
+            .path()
+            .app_data_dir()
+            .map_err(|_| storage_failure(cause::PATH_UNAVAILABLE))?;
         let (core, drafts) =
-            open_fixture_state(&self.app_data_dir).map_err(|_| storage_failure(cause::STARTUP))?;
+            open_fixture_state(&app_data_dir).map_err(|_| storage_failure(cause::STARTUP))?;
+        let ready = Arc::new(FixtureTransition::new(app_data_dir.join("fixture-profile")));
         let handle = app.clone();
         app.manage(AppState::new(core, drafts, move || {
             let _ = handle.emit("mailbox_changed", ());
         }));
-        Ok(())
+        *transition = Some(Arc::clone(&ready));
+        Ok(ready)
     }
 }
 
@@ -88,14 +96,7 @@ pub(crate) fn run(builder: tauri::Builder<tauri::Wry>) {
         .setup(|app| {
             #[cfg(target_os = "android")]
             {
-                let app_data_dir = app.path().app_data_dir()?;
-                app.manage(Arc::new(FixtureTransition::new(
-                    app_data_dir.join("fixture-profile"),
-                )));
-                app.manage(StartupCoordinator {
-                    app_data_dir,
-                    lock: Mutex::new(()),
-                });
+                app.manage(StartupCoordinator::default());
                 Ok(())
             }
             #[cfg(not(target_os = "android"))]
