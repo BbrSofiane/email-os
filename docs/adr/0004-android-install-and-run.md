@@ -59,11 +59,20 @@ and [GitHub artifact downloads](https://docs.github.com/en/actions/how-tos/manag
 - The owner approved `dev.exedev.emailos` and the launcher label **Email OS**.
 - The owner will generate the release key on their own computer, back it up
   in their password manager, and add the signing inputs to a protected GitHub
-  environment. CI signs the owner APK. The key stays off the shared VM.
+  environment. CI signs the owner APK.
 - The owner chose public GitHub Releases with one directly downloadable APK per
   version.
 - On 2026-11-22 the owner identified the target phone as a **Nothing Phone
   (3a) Pro** running **Android 17** with Google Play services.
+- On 2026-11-22 the owner reported the certificate fingerprints below.
+  Track A has not verified them against an owner-signed APK.
+  - SHA-1 for Track B's OAuth registration:
+    `56:4F:A2:63:7A:0E:B0:33:6E:7B:63:0E:50:37:0D:F4:28:F4:21:E8`
+  - SHA-256 for `ANDROID_RELEASE_CERT_SHA256`:
+    `D1:8F:BA:26:93:85:B9:DC:FC:51:EB:87:41:52:EE:E7:D9:DD:64:52:BF:42:68:D1:E5:59:C6:E2:63:0F:83:31`
+- The owner permits their existing keystore copy to remain on the shared VM.
+  Track A does not access that copy. All local and PR validation uses throwaway
+  keys.
 - The coordinator assumes the old fixture app has no data worth keeping
   because it held the synthetic demo mailbox. The app will have no automatic
   migration. The owner can copy any wanted draft text before uninstalling it.
@@ -318,8 +327,9 @@ the certificate fingerprint, and runs the first owner-key build after merge.
    `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD`.
    Set the environment variable `ANDROID_RELEASE_CERT_SHA256` to the public
    certificate digest from `keytool`. Base64 is reversible. Put it directly in
-   the secret field, and keep the keystore and passwords off the shared VM and out of
-   messages.
+   the secret field using the owner-managed copy. Keep passwords and encoded
+   keystores out of messages. The workflow compares the public digest
+   independently of letter case and colon separators.
 3. Open **Actions → Android Release → Run workflow**, select `main`, then
    run it. On the run page, verify the branch and commit, then select
    **Review deployments → android-release → Approve and deploy**, or have

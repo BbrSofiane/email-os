@@ -38,8 +38,8 @@ git merge-base --is-ancestor "$previous" "$GITHUB_SHA"
 if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
   [[ $(git rev-list -n 1 "$tag") == "$GITHUB_SHA" ]]
 else
-  git tag "$tag" "$GITHUB_SHA"
-  git push origin "refs/tags/$tag"
+  gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+    -f "ref=refs/tags/$tag" -f "sha=$GITHUB_SHA" >/dev/null
 fi
 notes=src-tauri/gen/android/app/build/release-notes.md
 {
@@ -49,14 +49,8 @@ notes=src-tauri/gen/android/app/build/release-notes.md
   git log --format='- %s (%h)' "$previous..$GITHUB_SHA"
 } > "$notes"
 if gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null | grep -qx true; then
-  # A draft can be resumed only if its existing asset is identical.
-  if gh release view "$tag" --json assets --jq '.assets[].name' | grep -Fxq email-os-android-release.apk; then
-    mkdir -p src-tauri/gen/android/app/build/existing
-    gh release download "$tag" -p email-os-android-release.apk -D src-tauri/gen/android/app/build/existing
-    cmp "$apk" src-tauri/gen/android/app/build/existing/email-os-android-release.apk
-  else
-    gh release upload "$tag" "$apk"
-  fi
+  # The checked tag and current draft allow retrying a partially uploaded build.
+  gh release upload "$tag" "$apk" --clobber
   gh release edit "$tag" --notes-file "$notes"
 else
   gh release create "$tag" "$apk" --draft --title "$tag" --notes-file "$notes" --verify-tag

@@ -15,18 +15,25 @@ expected=$(tr -d ':' <<< "$expected_cert" | tr '[:lower:]' '[:upper:]')
 [[ "$actual" == "$expected" && $(grep -c '^Signer #[0-9]* certificate SHA-256 digest:' <<< "$certs") == 1 ]]
 "$build_tools/zipalign" -c -P 16 4 "$apk"
 python3 - "$apk" "${ANDROID_HOME}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" <<'PY'
-import subprocess, sys, tempfile, zipfile
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import zipfile
+
 with zipfile.ZipFile(sys.argv[1]) as apk:
     libs = [n for n in apk.namelist() if n.startswith('lib/') and n.endswith('.so')]
     if not libs:
         raise SystemExit('No native libraries')
     for name in libs:
-        with tempfile.TemporaryFile() as f:
-            f.write(apk.read(name)); f.flush()
-            result = subprocess.check_output([sys.argv[2], '-lW', f'/proc/{__import__("os").getpid()}/fd/{f.fileno()}'], text=True)
-        for line in result.splitlines():
-            fields = line.split()
-            if fields and fields[0] == 'LOAD' and int(fields[-1], 16) < 16384:
-                raise SystemExit(f'{name}: unaligned LOAD segment')
+        with tempfile.TemporaryFile(dir=Path(sys.argv[1]).parent) as f:
+            f.write(apk.read(name))
+            f.flush()
+            path = f'/proc/{os.getpid()}/fd/{f.fileno()}'
+            result = subprocess.check_output([sys.argv[2], '-lW', path], text=True)
+        load_segments = [line.split() for line in result.splitlines() if line.lstrip().startswith('LOAD ')]
+        if not load_segments or any(int(segment[-1], 16) < 16384 for segment in load_segments):
+            raise SystemExit(f'{name}: missing or unaligned LOAD segments')
 print('APK metadata, signer, ABIs and alignment verified')
 PY

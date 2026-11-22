@@ -13,16 +13,11 @@ jobs:
     environment: android-release
     permissions:
       contents: write
-    env:
-      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-      ANDROID_RELEASE_CERT_SHA256: ${{ vars.ANDROID_RELEASE_CERT_SHA256 }}
-      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
         with:
           version: "2026.11.3"
@@ -37,18 +32,27 @@ jobs:
       - run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
       - run: rustup target add aarch64-linux-android x86_64-linux-android
       - run: mise run install:ui
-      - name: Prepare signing
+      - name: Set release version code
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+        run: echo "ANDROID_VERSION_CODE=$((1000 + RUN_NUMBER))" >> "$GITHUB_ENV"
+      - name: Build and sign APK
         env:
           ENCODED_KEY: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          RUN_NUMBER: ${{ github.run_number }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           set -euo pipefail
-          mkdir -p src-tauri/gen/android/app/build/signing
-          key="$GITHUB_WORKSPACE/src-tauri/gen/android/app/build/signing/release.keystore"
           umask 077
-          printf '%s' "$ENCODED_KEY" | base64 --decode > "$key"
-          echo "ANDROID_KEYSTORE_PATH=$key" >> "$GITHUB_ENV"
-          echo "ANDROID_VERSION_CODE=$((1000 + RUN_NUMBER))" >> "$GITHUB_ENV"
-      - run: mise run android:release
+          export ANDROID_KEYSTORE_PATH
+          ANDROID_KEYSTORE_PATH=$(mktemp "$RUNNER_TEMP/email-os-signing.XXXXXX")
+          trap 'rm -f -- "$ANDROID_KEYSTORE_PATH"' EXIT
+          printf '%s' "$ENCODED_KEY" | base64 --decode > "$ANDROID_KEYSTORE_PATH"
+          unset ENCODED_KEY
+          mise run android:release
       - name: Verify and publish
+        env:
+          ANDROID_RELEASE_CERT_SHA256: ${{ vars.ANDROID_RELEASE_CERT_SHA256 }}
+          GH_TOKEN: ${{ github.token }}
         run: scripts/android/publish-release.sh
