@@ -118,7 +118,7 @@ cover.
 - The Android manifest already has `INTERNET`
   (`src-tauri/gen/android/app/src/main/AndroidManifest.xml:3`).
 
-## Implementation record (2026-11-21)
+## Implementation record (2026-11-21, 2026-11-22)
 
 Implemented as decided below, with these departures, each taken during the
 implementation and recorded here instead of rewriting the proposal:
@@ -184,7 +184,7 @@ implementation and recorded here instead of rewriting the proposal:
     emulator after returning from the browser). The frame now watches the ids
     themselves and is recreated for each document.
 
-### Validation (2026-11-21)
+### Validation (2026-11-21, 2026-11-22)
 
 - **No-script proof (condition of decision 1).** `FRAME_PROBE_SOURCE` loads
   unsanitised payloads (script, handlers, SVG, `javascript:` URLs, nested
@@ -194,39 +194,45 @@ implementation and recorded here instead of rewriting the proposal:
   - headless Chrome: `tests/rendered/html-frame-spike.rendered.test.ts`, which
     also injects a script into every frame over CDP to prove the guard catches
     native injection;
-  - Android 15 emulator WebView (Chrome 124) on the debug APK: 37 of 37 checks
-    pass, in [android-frame-probe.txt](../validation/html-reader/android-frame-probe.txt).
+  - Android 15 emulator WebView (Chrome 124) on the APK CI built at `db9f07e`:
+    all 34 checks pass (the file's three lines marked informational always
+    pass), in
+    [android-frame-probe.txt](../validation/html-reader/android-frame-probe.txt).
   The parent exposes `__TAURI_INTERNALS__` and `ipc`; no frame does.
 - **Browser screenshots** at desktop and phone widths, produced by
   `tests/reader/html-reader.rendered.test.ts` (newsletter blocked and loaded,
   HTML-only, cid image, reply chain collapsed and expanded, hostile sample,
   oversized, link and mailto confirmation):
   [validation/html-reader/browser](../validation/html-reader/browser/).
-- **Android emulator** screenshots (inbox, newsletter blocked, link
-  confirmation, link opened in the system browser, HTML-only, cid, reply chain,
-  hostile, oversized, a reopened conversation, the `mailto:` confirmation, New
-  message with only To filled, long-press selection inside the frame, and font
-  scale 1.35, the nearest step to 1.3, where frame text follows the system
-  scale), and a 31-second recording: open the newsletter, Load images, tap a
-  link, confirm, the system browser opens, Back returns to the reader
+- **Android emulator** (2026-11-22, the APK CI built at `db9f07e`; later commits
+  change only docs and evidence): inbox, newsletter blocked and loaded, link
+  confirmation, the system browser, the message after returning from it,
+  HTML-only, a reopened conversation, `mailto:` confirmation, New message with
+  only To filled, long-press selection inside the frame, cid image, reply chain,
+  hostile, oversized; and a 30-second recording: open the newsletter, Load
+  images, tap a link, confirm, the system browser opens (at its first-run
+  screen), Back returns to the message, and a second link tap asks again
   ([validation/html-reader/android](../validation/html-reader/android/)).
-  The probe ran over DevTools instead of a probe APK (departure 1).
-- **Found by the emulator pass and fixed:** reopening a conversation whose
-  message was already sanitised showed an empty frame (the cached result was
-  set before the frame-document watch existed); a regression test covers it.
-  The link dialog's actions were indented when they wrapped on a phone; they
-  are now a wrapping row. The `mailto:` screenshot predates that layout fix.
+  The recording also shows an empty box for about 0.6 s on a first open and
+  about 0.3 s after Load images while the frame loads, and Android's saved
+  snapshot of the dialog during the back animation. The probe ran over DevTools
+  instead of a probe APK (departure 1). Font scale (1.35) was checked on
+  `28e322a` only: frame text follows the system scale.
+- **Found by the emulator passes and fixed:** a reopened message showed an empty
+  frame; the link dialog's actions were indented when they wrapped; links
+  stopped working after a refresh (departure 11). Regression tests cover the
+  two frame bugs.
 - **macOS WKWebView** is not verified here; it is the owner's checklist in the
   pull request (run the probe in Safari Web Inspector, check the samples and one
   confirmed link).
-- **Risk seen.** Three times, at the first or second launch right after
-  installing a new APK, the app hit an input-dispatch ANR ("Input dispatching
-  timed out … Waited 5001ms for FocusEvent(hasFocus=true)"); twice at load
-  average 4–10, once at about 2.7. Choosing "Wait" recovered each time. This ADR
-  adds startup work once per profile (schema migration 10 and the synthetic
-  seed upgrade); both were already done at the third ANR. It was not compared
-  with a `main` build, so the cause is not established. Startup belongs to
-  track A's first-launch work.
+- **Risk seen: launch ANR.** On this emulator the app often hits an
+  input-dispatch ANR at launch ("Input dispatching timed out … Waited 5001ms for
+  FocusEvent(hasFocus=true)"). Seen on 2026-11-21 three times after installing,
+  and on 2026-11-22 with the `db9f07e` APK on the first launch after installing
+  and again on a later launch, at load averages of about 1 to 3; other launches
+  were clean. This ADR adds startup work once per profile (schema migration 10
+  and the synthetic seed upgrade). It was not compared with a `main` build, so
+  the cause is not established. Startup belongs to track A's first-launch work.
 
 ## Decisions
 
