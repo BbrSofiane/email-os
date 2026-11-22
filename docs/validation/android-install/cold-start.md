@@ -103,3 +103,46 @@ construction and do not establish that preinitializing the provider would
 remove the stall. Test on a comparable emulator with a newer WebView and
 on the physical phone before selecting a provider or lifecycle change.
 [Android WebView startup guidance](https://developer.android.com/develop/ui/views/layout/webapps/optimize-webview-startup).
+
+## After merging the HTML reader, 2026-11-22
+
+Same Android 15 emulator, WebView 124.0.6367.219, and sample method. The
+throwaway-signed diagnostic APK was 0.1.0 (1006), built at `f31c729` with
+local timing markers. That head includes the HTML reader merge at `7f5b95d`.
+The batch started at a one-minute host load of 1.98. No heavy build or test
+ran during the samples. The measured load varied across launches, and the
+batch paused between populated 4 and 5 for another track's Cargo test.
+
+| Launch | Host load (1 min) | Frame callback (ms) | WebView callback (ms) | Focus (ms) | Rust setup (ms) | Data-path lookup (ms) | Worker total (ms) | Focus ANR |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Fresh 1 | 1.98 | 426 | 9947 | 10844 | 0 | 175 | 1018 | Yes |
+| Fresh 2 | 3.37 | 215 | 7750 | 8446 | 30 | 5 | 497 | Yes |
+| Fresh 3 | 3.54 | 467 | 5769 | 6086 | 2 | 4 | 80 | No |
+| Fresh 4 | 3.48 | 107 | 5868 | 6238 | 0 | 4 | 143 | No |
+| Fresh 5 | 3.52 | 176 | 5884 | 6154 | 5 | 4 | 129 | No |
+| Populated 1 | 3.66 | 122 | 6103 | 1654 | 0 | 2 | 123 | No |
+| Populated 2 | 4.48 | 203 | 5644 | 6063 | 0 | 1 | 69 | No |
+| Populated 3 | 4.49 | 307 | 5196 | 5723 | 1 | 3 | 289 | No |
+| Populated 4 | 4.26 | 601 | 5386 | 5786 | 0 | 1 | 96 | No |
+| Populated 5 | 1.91 | 434 | 5549 | 5816 | 0 | 1 | 67 | No |
+
+The Inbox appeared in all ten accessibility snapshots. Android reported
+late focus ANRs for fresh 1 (PID 21226, 5005 ms waiting for `FocusEvent`) and
+fresh 2 (PID 21638, 5011 ms). Rust setup stayed within 0–30 ms. On both ANR
+launches, the profile worker started after the WebView callback and the
+focus marker. Populated 1 recorded focus before the WebView callback, which
+is why the focus time is lower in that row. The ANR release gate remains open.
+
+The ten samples used fresh or already upgraded databases. To exercise the
+migration separately, the pre-merge throwaway-signed APK (1005) was installed
+and launched to Inbox. The merged APK (1006) was then installed over it with
+the same signer. The first launch exercised schema migration 10 and the
+fixture upgrade.
+
+| Launch | Host load (1 min) | Frame callback (ms) | WebView callback (ms) | Focus (ms) | Rust setup (ms) | Data-path lookup (ms) | Worker total (ms) | Focus ANR |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| First launch after 1005 → 1006 update | 2.58 | 468 | 5463 | 6258 | 1 | 29 | 169 | No |
+
+The upgraded Inbox showed the HTML fixture messages. The migration and
+fixture upgrade completed within the 169 ms worker interval, after focus.
+One upgrade sample cannot isolate their individual costs.
