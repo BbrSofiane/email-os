@@ -3,10 +3,14 @@ use crate::commands::begin_native_close;
 use crate::state::AppState;
 use mail_core::drafts::DraftCore;
 use mail_core::fixture_transition::FixtureTransition;
+#[cfg(not(target_os = "android"))]
 use mail_core::gmail::provider::LiveGmailProvider;
+#[cfg(not(target_os = "android"))]
 use mail_core::gmail::secrets::KeychainSecrets;
 use mail_core::gmail::sync::GmailCore;
 use std::sync::Arc;
+#[cfg(target_os = "android")]
+use std::sync::Mutex;
 use tauri::{Emitter, Manager, RunEvent};
 
 /// Opens the fixture profile under `app_data_dir`: the synthetic core on its
@@ -26,6 +30,50 @@ pub(crate) fn open_fixture_core(
     Ok((core, profile_dir))
 }
 
+#[cfg(any(target_os = "android", test))]
+fn open_fixture_state(
+    app_data_dir: &std::path::Path,
+) -> Result<(GmailCore, DraftCore), Box<dyn std::error::Error>> {
+    let (core, profile_dir) = open_fixture_core(app_data_dir)?;
+    match DraftCore::open(profile_dir.join("local-drafts")) {
+        Ok(drafts) => Ok((core, drafts)),
+        Err(error) => {
+            core.stop();
+            Err(error.into())
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+pub(crate) struct StartupCoordinator {
+    app_data_dir: std::path::PathBuf,
+    lock: Mutex<()>,
+}
+
+#[cfg(target_os = "android")]
+impl StartupCoordinator {
+    pub(crate) fn ensure_ready(
+        &self,
+        app: &tauri::AppHandle,
+    ) -> Result<(), mail_core::error::MailError> {
+        use crate::diagnostics::{cause, storage_failure};
+        let _guard = self
+            .lock
+            .lock()
+            .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
+        if app.try_state::<AppState>().is_some() {
+            return Ok(());
+        }
+        let (core, drafts) =
+            open_fixture_state(&self.app_data_dir).map_err(|_| storage_failure(cause::STARTUP))?;
+        let handle = app.clone();
+        app.manage(AppState::new(core, drafts, move || {
+            let _ = handle.emit("mailbox_changed", ());
+        }));
+        Ok(())
+    }
+}
+
 pub(crate) fn run(builder: tauri::Builder<tauri::Wry>) {
     let app = builder
         .on_window_event(|window, event| {
@@ -38,50 +86,66 @@ pub(crate) fn run(builder: tauri::Builder<tauri::Wry>) {
             let _ = (window, event);
         })
         .setup(|app| {
-            #[cfg(mobile)]
-            let mode = "fixture".to_owned();
-            #[cfg(not(mobile))]
-            let mode = match std::env::var_os("EMAIL_OS_MODE") {
-                Some(value) => value
-                    .into_string()
-                    .map_err(|_| "EMAIL_OS_MODE must be valid UTF-8")?,
-                None => "fixture".to_owned(),
-            };
-            let app_data_dir = app.path().app_data_dir()?;
-            let (core, profile_dir) = match mode.as_str() {
-                "fixture" => open_fixture_core(&app_data_dir)?,
-                "gmail" => {
-                    let profile_dir = app_data_dir.join("gmail-profile");
-                    let provider = LiveGmailProvider::from_env(Arc::new(KeychainSecrets::new()))?;
-                    let provider: Arc<dyn mail_core::gmail::types::GmailProvider> =
-                        Arc::new(provider);
-                    (GmailCore::open(&profile_dir, provider)?, profile_dir)
-                }
-                _ => return Err("EMAIL_OS_MODE must be fixture or gmail".into()),
-            };
-            let drafts = DraftCore::open(profile_dir.join("local-drafts"))?;
-            // The one-time retirement of a legacy fixture database; a no-op in
-            // Gmail mode and on a fresh fixture profile.
-            app.manage(Arc::new(if mode == "fixture" {
-                FixtureTransition::new(&profile_dir)
-            } else {
-                FixtureTransition::inactive()
-            }));
+            #[cfg(target_os = "android")]
+            {
+                let app_data_dir = app.path().app_data_dir()?;
+                app.manage(Arc::new(FixtureTransition::new(
+                    app_data_dir.join("fixture-profile"),
+                )));
+                app.manage(StartupCoordinator {
+                    app_data_dir,
+                    lock: Mutex::new(()),
+                });
+                Ok(())
+            }
+            #[cfg(not(target_os = "android"))]
+            {
+                #[cfg(mobile)]
+                let mode = "fixture".to_owned();
+                #[cfg(not(mobile))]
+                let mode = match std::env::var_os("EMAIL_OS_MODE") {
+                    Some(value) => value
+                        .into_string()
+                        .map_err(|_| "EMAIL_OS_MODE must be valid UTF-8")?,
+                    None => "fixture".to_owned(),
+                };
+                let app_data_dir = app.path().app_data_dir()?;
+                let (core, profile_dir) = match mode.as_str() {
+                    "fixture" => open_fixture_core(&app_data_dir)?,
+                    "gmail" => {
+                        let profile_dir = app_data_dir.join("gmail-profile");
+                        let provider =
+                            LiveGmailProvider::from_env(Arc::new(KeychainSecrets::new()))?;
+                        let provider: Arc<dyn mail_core::gmail::types::GmailProvider> =
+                            Arc::new(provider);
+                        (GmailCore::open(&profile_dir, provider)?, profile_dir)
+                    }
+                    _ => return Err("EMAIL_OS_MODE must be fixture or gmail".into()),
+                };
+                let drafts = DraftCore::open(profile_dir.join("local-drafts"))?;
+                // The one-time retirement of a legacy fixture database; a no-op in
+                // Gmail mode and on a fresh fixture profile.
+                app.manage(Arc::new(if mode == "fixture" {
+                    FixtureTransition::new(&profile_dir)
+                } else {
+                    FixtureTransition::inactive()
+                }));
 
-            let handle = app.handle().clone();
-            app.manage(AppState::new(core, drafts, move || {
-                // Notifications are best-effort hints; the frontend refetches persisted state.
-                let _ = handle.emit("mailbox_changed", ());
-            }));
-            Ok(())
+                let handle = app.handle().clone();
+                app.manage(AppState::new(core, drafts, move || {
+                    // Notifications are best-effort hints; the frontend refetches persisted state.
+                    let _ = handle.emit("mailbox_changed", ());
+                }));
+                Ok(())
+            }
         })
         .build(tauri::generate_context!())
         .expect("failed to build the email-os shell");
 
-    app.run(|app_handle, event| match event {
+    app.run(|_app_handle, event| match event {
         #[cfg(not(mobile))]
         RunEvent::ExitRequested { api, .. } => {
-            let authorized = app_handle
+            let authorized = _app_handle
                 .try_state::<AppState>()
                 .and_then(|state| {
                     state
@@ -93,12 +157,12 @@ pub(crate) fn run(builder: tauri::Builder<tauri::Wry>) {
                 .unwrap_or(false);
             if !authorized {
                 api.prevent_exit();
-                begin_native_close(app_handle);
+                begin_native_close(_app_handle);
             }
         }
         #[cfg(not(mobile))]
         RunEvent::Exit => {
-            if let Some(state) = app_handle.try_state::<AppState>() {
+            if let Some(state) = _app_handle.try_state::<AppState>() {
                 state.core.stop();
             }
         }
@@ -116,6 +180,18 @@ mod tests {
     use mail_core::fixture_transition::FixtureTransition;
     use mail_core::gmail::types::MailMode;
     use mail_core::testing::temp_profile;
+
+    #[test]
+    fn draft_open_failure_releases_core_for_retry() {
+        let dir = temp_profile("startup-draft-retry");
+        let profile = dir.path().join("fixture-profile");
+        std::fs::create_dir_all(&profile).unwrap();
+        std::fs::write(profile.join("local-drafts"), b"obstruction").unwrap();
+        assert!(super::open_fixture_state(dir.path()).is_err());
+        std::fs::remove_file(profile.join("local-drafts")).unwrap();
+        let (core, _drafts) = super::open_fixture_state(dir.path()).unwrap();
+        core.stop();
+    }
 
     #[test]
     fn the_default_is_the_synthetic_core_and_a_legacy_mail_db_is_never_opened() {
