@@ -62,8 +62,8 @@ and [GitHub artifact downloads](https://docs.github.com/en/actions/how-tos/manag
   environment. CI signs the owner APK. The key stays off the shared VM.
 - The owner chose public GitHub Releases with one directly downloadable APK per
   version.
-- The owner's phone has Google Play services. The model and Android version
-  are pending.
+- On 2026-11-22 the owner identified the target phone as a **Nothing Phone
+  (3a) Pro** running **Android 17** with Google Play services.
 - The coordinator assumes the old fixture app has no data worth keeping
   because it held the synthetic demo mailbox. The app will have no automatic
   migration. The owner can copy any wanted draft text before uninstalling it.
@@ -78,7 +78,9 @@ package and path, generated JNI/Kotlin paths and ignore rules. The FileProvider
 authority follows the application ID. The desktop identifier stays as it is.
 
 Use a non-debuggable release APK, signed by an owner-generated, long-lived
-RSA app-signing key in a password-protected JKS. The primary copy lives outside
+RSA app-signing key in a password-protected JKS or PKCS12 keystore. The
+file extension alone does not identify its format. For PKCS12 use the store
+password as the key password. The primary copy lives outside
 the repository on the owner's machine. Keep an encrypted offline copy and
 the passwords in the owner's password manager. Restore the backup once and
 compare its certificate fingerprints before distributing the first APK. Losing
@@ -102,7 +104,7 @@ main commit, and uses the `android-release` environment. Store signing secrets
 only in that environment. Restrict its deployment policy to the `main` branch
 and require a reviewer, a protection available on public repositories. The
 workflow builds from its own checkout and takes no PR refs, artifacts or build
-caches as inputs. Decode the base64 JKS to a restricted runner temporary file
+caches as inputs. Decode the base64 keystore to a restricted runner temporary file
 for signing, disable shell tracing and remove the file on exit, including on
 failure. Publish only the APK and public metadata after checking the certificate
 against the owner's configured SHA-256 fingerprint.
@@ -111,7 +113,8 @@ against the owner's configured SHA-256 fingerprint.
 PR CI uses the ordinary `pull_request` event and a separate job with no
 release environment or signing secrets. It generates an ephemeral throwaway
 key in the job, exercises the same release build and verification commands,
-and discards the APK and key. Production signing never runs through
+and discards the APK and key. Verify both JKS and PKCS12 with throwaway keys
+before owner signing. Production signing never runs through
 `pull_request_target` or a workflow triggered by a PR job. This keeps the
 owner's keystore out of all PR runs, including forks.
 [GitHub fork workflow and secret rules](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request).
@@ -215,6 +218,10 @@ that SQLite blocked the Android UI thread. A platform WebView stall or emulator
 scheduling starvation could also explain it. The legacy backup path is a low
 priority suspect on empty installs.
 
+Track C separately reported three first-launch input timeouts after APK
+installs, twice with heavy host load and once with moderate load. The
+reports establish recurrence. The blocked thread and root cause remain unknown.
+
 After approval, time Activity creation (including `super.onCreate`), WebView
 creation, first frame and focus callback, Rust setup and each profile-open
 phase, transition IPC and Vue first paint and Inbox ready. Log only stage,
@@ -289,15 +296,17 @@ the certificate fingerprint, and runs the first owner-key build after merge.
    ```sh
    umask 077
    mkdir -p "$HOME/.local/share/email-os/signing"
-   keytool -genkeypair -storetype JKS -keyalg RSA -keysize 2048 -validity 10000 \
-     -keystore "$HOME/.local/share/email-os/signing/email-os-release.jks" \
+   keytool -genkeypair -storetype PKCS12 -keyalg RSA -keysize 2048 -validity 10000 \
+     -keystore "$HOME/.local/share/email-os/signing/email-os-release.p12" \
      -alias email-os-release
-   keytool -list -v -storetype JKS \
-     -keystore "$HOME/.local/share/email-os/signing/email-os-release.jks" \
+   keytool -list -v \
+     -keystore "$HOME/.local/share/email-os/signing/email-os-release.p12" \
      -alias email-os-release
    ```
 
-   Store the encrypted backup and passwords, verify the restored certificate, and
+   Use an existing owner-generated keystore if the intended key already
+   exists. Preserve its actual format, alias and passwords. Store the encrypted
+   backup and passwords, verify the restored certificate, and
    share only the SHA-1 and SHA-256 certificate fingerprints for verification
    and OAuth registration.
 2. After merge, open **Settings → Environments → android-release** in
@@ -305,11 +314,11 @@ the certificate fingerprint, and runs the first owner-key build after merge.
    **Selected branches and tags** and add only a branch rule for `main`.
    Configure **Required reviewers** with the owner or a reviewer who can
    approve the owner's dispatch if self-review is disabled. Add environment
-   secrets `ANDROID_KEYSTORE_BASE64` (the single-line base64 JKS),
+   secrets `ANDROID_KEYSTORE_BASE64` (the single-line base64 keystore),
    `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD`.
    Set the environment variable `ANDROID_RELEASE_CERT_SHA256` to the public
    certificate digest from `keytool`. Base64 is reversible. Put it directly in
-   the secret field, and keep the JKS and passwords off the shared VM and out of
+   the secret field, and keep the keystore and passwords off the shared VM and out of
    messages.
 3. Open **Actions → Android Release → Run workflow**, select `main`, then
    run it. On the run page, verify the branch and commit, then select
@@ -365,10 +374,11 @@ Owner-key distribution and phone validation follow merge.
    `apksigner verify --verbose --print-certs`, inspect both ABIs and alignment,
    and verify a release request without signing inputs fails. Use a locally
    generated throwaway key for the release build.
-2. **Startup diagnosis.** Add temporary timing markers and capture baseline
+2. **Startup diagnosis.** Use local-only timing markers and capture baseline
    cold-start timing for empty and populated profiles on the shared emulator.
    Check for a correlated main-thread stack if the timeout recurs and document
-   where time was spent.
+   where time was spent. Remove the temporary markers from the shipping diff
+   after collecting the before/after evidence.
 3. **Startup repair.** Change the path identified in stage 2. If moving profile
    open, check delayed readiness, typed failure and retry, single-writer
    exclusion and the ADR 0002 disclosure, cancel and recovery cases. Compare the
@@ -430,6 +440,20 @@ Owner-key distribution and phone validation follow merge.
 
 ### Owner's physical phone after merge
 
+The shared emulator is Android 15 on x86_64. The Nothing Phone (3a) Pro on
+Android 17 remains a separate validation target. Keep compileSdk and targetSdk
+at 35. Check the phone's actual ABI and page size, installer and Play Protect or
+developer-verification prompts, first-launch splash, focus and offline WebView
+startup, and IME visibility after rotation. Record the WebView version if
+startup stalls. Android 17 adds app memory limits and blocks cross-profile
+loopback by default. Check first launch and resume for unexpected process exits
+and check bundled IPC on the phone. Use the same Android profile for later auth
+handoff. The new LAN permission
+and safer dynamic native loading requirements apply to apps targeting API 37
+and are checks for any future target change.
+[Android 17 changes for all apps](https://developer.android.com/about/versions/17/behavior-changes-all),
+[Android 17 target-specific changes](https://developer.android.com/about/versions/17/behavior-changes-17).
+
 1. In **Settings → About phone**, note the model and Android version. The
    old fixture app can stay installed alongside Email OS. Copy any draft text
    you want before uninstalling the old app. Use a device on Android 7 or later
@@ -465,8 +489,8 @@ Owner-key distribution and phone validation follow merge.
 
 ## Risks and open questions
 
-- Which phone model and Android version will be used, and can the owner run
-  the two-version update test? Sideloading support depends on device policy.
+- Can the owner run the two-version update test on the Nothing Phone (3a) Pro?
+  Sideloading support depends on device policy.
   Record installation friction even if ADB works.
 - The ANR mechanism, signed APK size and 16 KB runtime coverage remain to be
   measured. Report the observed results and the device coverage before
