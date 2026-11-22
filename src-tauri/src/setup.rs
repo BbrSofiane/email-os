@@ -270,7 +270,7 @@ mod tests {
         );
 
         // The core never noticed; drafts and their references are intact.
-        assert_eq!(core.account_status().unwrap().sync.cached_conversations, 18);
+        assert_eq!(core.account_status().unwrap().sync.cached_conversations, 24);
         let again: Vec<_> = std::fs::read_dir(profile.join("local-drafts"))
             .unwrap()
             .map(|e| e.unwrap().file_name())

@@ -111,15 +111,16 @@ pub(super) fn upsert_thread(
     conn.execute(
         "INSERT INTO gmail_conversations
             (account_id, conversation_id, subject, context_complete, unsupported_reason,
-             reply_context_json, newest_sender_json, attachments_json)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             reply_context_json, newest_sender_json, attachments_json, inline_parts_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
          ON CONFLICT(account_id, conversation_id) DO UPDATE SET
             subject = excluded.subject,
             context_complete = excluded.context_complete,
             unsupported_reason = excluded.unsupported_reason,
             reply_context_json = excluded.reply_context_json,
             newest_sender_json = excluded.newest_sender_json,
-            attachments_json = excluded.attachments_json",
+            attachments_json = excluded.attachments_json,
+            inline_parts_json = excluded.inline_parts_json",
         params![
             account_id,
             conversation_id,
@@ -140,6 +141,26 @@ pub(super) fn upsert_thread(
                 .transpose()
                 .map_err(storage_err())?,
             serde_json::to_string(&thread.attachments).map_err(storage_err())?,
+            if thread.inline_parts.is_empty() {
+                None
+            } else {
+                Some(
+                    serde_json::to_string(
+                        &thread
+                            .inline_parts
+                            .iter()
+                            .map(|part| StoredInlinePart {
+                                message_id: part.message_id.clone(),
+                                content_id: part.content_id.clone(),
+                                attachment_id: part.attachment_id.clone(),
+                                mime_type: part.mime_type.clone(),
+                                size: part.size,
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                    .map_err(storage_err())?,
+                )
+            },
         ],
     )
     .map_err(storage_err())?;
@@ -165,11 +186,16 @@ pub(super) fn upsert_thread(
     for message in &thread.conversation.messages {
         let in_inbox = thread.inbox_message_ids.iter().any(|id| id == &message.id);
         let to_json = serde_json::to_string(&message.to).map_err(storage_err())?;
+        let (body_html, html_state) = match thread.message_html.get(&message.id) {
+            Some(MessageHtml::Present(html)) => (Some(html.as_str()), Some("available")),
+            Some(MessageHtml::TooLarge) => (None, Some("too_large")),
+            None => (None, None),
+        };
         conn.execute(
             "INSERT OR REPLACE INTO gmail_messages
                 (account_id, conversation_id, message_id, from_display, from_mailbox,
-                 to_json, sent_at, body_text, in_inbox, has_attachment)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                 to_json, sent_at, body_text, in_inbox, has_attachment, body_html, html_state)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 account_id,
                 conversation_id,
@@ -181,6 +207,8 @@ pub(super) fn upsert_thread(
                 message.body_text,
                 in_inbox as i64,
                 message.has_attachment.map(|present| present as i64),
+                body_html,
+                html_state,
             ],
         )
         .map_err(storage_err())?;
@@ -389,7 +417,7 @@ pub(super) fn build_conversation(
     let mut stmt = conn
         .prepare(
             "SELECT message_id, from_display, from_mailbox, to_json, sent_at, body_text, in_inbox,
-                    has_attachment
+                    has_attachment, html_state
              FROM gmail_messages
              WHERE account_id = ?1 AND conversation_id = ?2
              ORDER BY sent_at ASC, message_id ASC",
@@ -401,6 +429,18 @@ pub(super) fn build_conversation(
             let to_json: String = row.get(3)?;
             // NULL (legacy cache rows) stays unknown; 0/1 are observed facts.
             let has_attachment = row.get::<_, Option<i64>>(7)?.map(|value| value != 0);
+            let html_body = match row.get::<_, Option<String>>(8)?.as_deref() {
+                Some("available") => Some(HtmlBodyState::Available),
+                Some("too_large") => Some(HtmlBodyState::TooLarge),
+                None => None,
+                Some(_) => {
+                    return Err(rusqlite::Error::FromSqlConversionFailure(
+                        8,
+                        rusqlite::types::Type::Text,
+                        "invalid HTML state".into(),
+                    ))
+                }
+            };
             Ok((
                 Message {
                     id: row.get(0)?,
@@ -418,6 +458,7 @@ pub(super) fn build_conversation(
                     sent_at: row.get(4)?,
                     body_text: row.get(5)?,
                     has_attachment,
+                    html_body,
                 },
                 row.get::<_, i64>(6)? != 0,
             ))

@@ -1,4 +1,4 @@
-//! Seed-once synthetic inbox: 18 conversations with fixed IDs, timestamps and
+//! Seed-once synthetic inbox: 24 conversations with HTML samples (ADR 0006) with fixed IDs, timestamps and
 //! literal text. Hostile markup is ordinary data — never interpreted, never
 //! logged. Seeding is guarded by a meta marker so restarts never re-seed,
 //! reset provider facts, or reset operation history.
@@ -8,7 +8,21 @@ use crate::dto::{ConversationRef, Message};
 
 pub(crate) type Participant = (&'static str, &'static str);
 
+/// Source of a synthetic HTML body.
+#[derive(Clone)]
+pub(crate) enum HtmlSource {
+    Static(&'static str),
+    Oversized,
+}
+/// Metadata for the fixture PNG.
+#[derive(Clone)]
+pub(crate) struct SeedInlineImage {
+    pub content_id: &'static str,
+    pub attachment_id: &'static str,
+}
 pub(crate) struct SeedMessage {
+    pub html: Option<HtmlSource>,
+    pub inline_image: Option<SeedInlineImage>,
     pub id: &'static str,
     pub from: Participant,
     pub to: &'static [Participant],
@@ -16,6 +30,7 @@ pub(crate) struct SeedMessage {
     pub body: &'static str,
 }
 
+#[derive(Clone)]
 pub(crate) struct SeedConversation {
     pub id: &'static str,
     pub subject: &'static str,
@@ -35,7 +50,7 @@ const TO_ME: &[Participant] = &[ME];
 const TO_ANA: &[Participant] = &[INBOX_ANA];
 const TO_BORIS: &[Participant] = &[INBOX_BORIS];
 
-pub(crate) const SEED_VERSION: &str = "1";
+pub(crate) const SEED_VERSION: &str = "2";
 
 /// Seeded read state (ADR 0002 decision 2). The Inbox arrives as a realistic
 /// mix rather than uniformly unread:
@@ -43,7 +58,7 @@ pub(crate) const SEED_VERSION: &str = "1";
 /// * a conversation whose newest message the user wrote is read (conv-02,
 ///   conv-04, conv-14, conv-16), as is a thread the user already dealt with;
 /// * a few others are read (the invoice conv-03 and the digest conv-10);
-/// * everything else in the Inbox is unread (10 of the 16 conversations), and
+/// * everything else in the Inbox is unread (16 of the 22 conversations), and
 ///   the two initially archived conversations are read.
 pub(crate) const SEEDED_READ_CONVERSATIONS: &[&str] = &[
     "conv-02", "conv-03", "conv-04", "conv-10", "conv-14", "conv-16",
@@ -56,13 +71,14 @@ pub(crate) fn seeded_unread(conversation: &SeedConversation, message: &SeedMessa
         && message.from.1 != crate::FIXTURE_MAILBOX
 }
 pub(crate) fn fixtures() -> Vec<SeedConversation> {
-    vec![
+    let mut result = vec![
         SeedConversation {
             id: "conv-01",
             subject: "Standup notes for Monday",
             in_inbox: true,
             messages: &[
                 SeedMessage {
+                    html: None, inline_image: None,
                     id: "m-01-1",
                     from: INBOX_ANA,
                     to: TO_ME,
@@ -70,6 +86,7 @@ pub(crate) fn fixtures() -> Vec<SeedConversation> {
                     body: "Morning! Standing agenda: release checklist, then the fixture inbox demo.\nI attached nothing, everything is inline below.",
                 },
                 SeedMessage {
+                    html: None, inline_image: None,
                     id: "m-01-2",
                     from: ME,
                     to: TO_ANA,
@@ -77,6 +94,7 @@ pub(crate) fn fixtures() -> Vec<SeedConversation> {
                     body: "Works for me. I'll bring the archive/unarchive walkthrough.",
                 },
                 SeedMessage {
+                    html: None, inline_image: None,
                     id: "m-01-3",
                     from: INBOX_ANA,
                     to: TO_ME,
@@ -91,6 +109,7 @@ pub(crate) fn fixtures() -> Vec<SeedConversation> {
             in_inbox: true,
             messages: &[
                 SeedMessage {
+                    html: None, inline_image: None,
                     id: "m-02-1",
                     from: INBOX_BORIS,
                     to: TO_ME,
@@ -98,6 +117,7 @@ pub(crate) fn fixtures() -> Vec<SeedConversation> {
                     body: "Reminder: numbers are due Thursday.\n\n<div style=\"display:none\">hidden template junk stays literal</div>\n&amp; should render as &amp; — a literal ampersand, not an entity.",
                 },
                 SeedMessage {
+                    html: None, inline_image: None,
                     id: "m-02-2",
                     from: ME,
                     to: TO_BORIS,
@@ -111,6 +131,7 @@ pub(crate) fn fixtures() -> Vec<SeedConversation> {
             subject: "Invoice 4471 — due 2026-02-01",
             in_inbox: true,
             messages: &[SeedMessage {
+                html: None, inline_image: None,
                 id: "m-03-1",
                 from: NOREPLY,
                 to: TO_ME,
@@ -124,6 +145,7 @@ pub(crate) fn fixtures() -> Vec<SeedConversation> {
             in_inbox: true,
             messages: &[
                 SeedMessage {
+                    html: None, inline_image: None,
                     id: "m-04-1",
                     from: INBOX_ANA,
                     to: TO_ME,
@@ -131,6 +153,7 @@ pub(crate) fn fixtures() -> Vec<SeedConversation> {
                     body: "j/k navigation feels right. Enter opens, Escape returns. 🚀",
                 },
                 SeedMessage {
+                    html: None, inline_image: None,
                     id: "m-04-2",
                     from: ME,
                     to: TO_ANA,
@@ -144,6 +167,7 @@ pub(crate) fn fixtures() -> Vec<SeedConversation> {
             subject: "Long thread: offsite logistics",
             in_inbox: true,
             messages: &[SeedMessage {
+                html: None, inline_image: None,
                 id: "m-05-1",
                 from: INBOX_BORIS,
                 to: TO_ME,
@@ -156,6 +180,7 @@ pub(crate) fn fixtures() -> Vec<SeedConversation> {
             subject: "Old announcement: office move",
             in_inbox: false,
             messages: &[SeedMessage {
+                html: None, inline_image: None,
                 id: "m-06-1",
                 from: NOREPLY,
                 to: TO_ME,
@@ -169,6 +194,7 @@ pub(crate) fn fixtures() -> Vec<SeedConversation> {
             in_inbox: true,
             messages: &[
                 SeedMessage {
+                    html: None, inline_image: None,
                     id: "m-07-1",
                     from: INBOX_ANA,
                     to: TO_ME,
@@ -176,6 +202,7 @@ pub(crate) fn fixtures() -> Vec<SeedConversation> {
                     body: "Plain text only for the slice. No remote fonts, no automatic loading.",
                 },
                 SeedMessage {
+                    html: None, inline_image: None,
                     id: "m-07-2",
                     from: ME,
                     to: TO_ANA,
@@ -183,6 +210,7 @@ pub(crate) fn fixtures() -> Vec<SeedConversation> {
                     body: "Monospace for hostile markup previews, regular face for ordinary bodies.",
                 },
                 SeedMessage {
+                    html: None, inline_image: None,
                     id: "m-07-3",
                     from: INBOX_ANA,
                     to: TO_ME,
@@ -196,6 +224,7 @@ pub(crate) fn fixtures() -> Vec<SeedConversation> {
             subject: "Plumbing: valve replacement quote",
             in_inbox: true,
             messages: &[SeedMessage {
+                html: None, inline_image: None,
                 id: "m-08-1",
                 from: INBOX_BORIS,
                 to: TO_ME,
@@ -209,6 +238,7 @@ pub(crate) fn fixtures() -> Vec<SeedConversation> {
             in_inbox: true,
             messages: &[
                 SeedMessage {
+                    html: None, inline_image: None,
                     id: "m-09-1",
                     from: NO_NAME,
                     to: TO_ME,
@@ -222,6 +252,7 @@ pub(crate) fn fixtures() -> Vec<SeedConversation> {
             subject: "Weekly digest #14",
             in_inbox: true,
             messages: &[SeedMessage {
+                html: None, inline_image: None,
                 id: "m-10-1",
                 from: NOREPLY,
                 to: TO_ME,
@@ -234,6 +265,7 @@ pub(crate) fn fixtures() -> Vec<SeedConversation> {
             subject: "Terminal escape \\u001b[31m in subject? No. In body yes:",
             in_inbox: true,
             messages: &[SeedMessage {
+                html: None, inline_image: None,
                 id: "m-11-1",
                 from: INBOX_ANA,
                 to: TO_ME,
@@ -247,6 +279,7 @@ pub(crate) fn fixtures() -> Vec<SeedConversation> {
             in_inbox: true,
             messages: &[
                 SeedMessage {
+                    html: None, inline_image: None,
                     id: "m-12-1",
                     from: INBOX_BORIS,
                     to: TO_ME,
@@ -260,6 +293,7 @@ pub(crate) fn fixtures() -> Vec<SeedConversation> {
             subject: "Quote with \"double\" and 'single' quotes \u{202E}reversed\u{202C}",
             in_inbox: true,
             messages: &[SeedMessage {
+                html: None, inline_image: None,
                 id: "m-13-1",
                 from: INBOX_ANA,
                 to: TO_ME,
@@ -272,6 +306,7 @@ pub(crate) fn fixtures() -> Vec<SeedConversation> {
             subject: "Perf notes: serial worker, no locks during provider calls",
             in_inbox: true,
             messages: &[SeedMessage {
+                html: None, inline_image: None,
                 id: "m-14-1",
                 from: ME,
                 to: TO_ANA,
@@ -284,6 +319,7 @@ pub(crate) fn fixtures() -> Vec<SeedConversation> {
             subject: "Receipt template v2",
             in_inbox: false,
             messages: &[SeedMessage {
+                html: None, inline_image: None,
                 id: "m-15-1",
                 from: NOREPLY,
                 to: TO_ME,
@@ -297,6 +333,7 @@ pub(crate) fn fixtures() -> Vec<SeedConversation> {
             in_inbox: true,
             messages: &[
                 SeedMessage {
+                    html: None, inline_image: None,
                     id: "m-16-1",
                     from: INBOX_BORIS,
                     to: TO_ME,
@@ -304,6 +341,7 @@ pub(crate) fn fixtures() -> Vec<SeedConversation> {
                     body: "Ramen place near the office, 12:30?",
                 },
                 SeedMessage {
+                    html: None, inline_image: None,
                     id: "m-16-2",
                     from: ME,
                     to: TO_BORIS,
@@ -317,6 +355,7 @@ pub(crate) fn fixtures() -> Vec<SeedConversation> {
             subject: "HTML entity storm &lt;b&gt;bold&lt;/b&gt; &#65; &copy;",
             in_inbox: true,
             messages: &[SeedMessage {
+                html: None, inline_image: None,
                 id: "m-17-1",
                 from: INBOX_ANA,
                 to: TO_ME,
@@ -330,6 +369,7 @@ pub(crate) fn fixtures() -> Vec<SeedConversation> {
             in_inbox: true,
             messages: &[
                 SeedMessage {
+                    html: None, inline_image: None,
                     id: "m-18-1",
                     from: ME,
                     to: TO_ANA,
@@ -337,6 +377,7 @@ pub(crate) fn fixtures() -> Vec<SeedConversation> {
                     body: "Pending archive operations survive restart and resume in acceptance order.",
                 },
                 SeedMessage {
+                    html: None, inline_image: None,
                     id: "m-18-2",
                     from: INBOX_ANA,
                     to: TO_ME,
@@ -345,7 +386,123 @@ pub(crate) fn fixtures() -> Vec<SeedConversation> {
                 },
             ],
         },
-    ]
+    ];
+    use std::sync::OnceLock;
+    static EXTRA: OnceLock<Vec<SeedConversation>> = OnceLock::new();
+    let extra_fixtures = EXTRA.get_or_init(|| {
+        let mut result = Vec::new();
+        fn derived(html: &'static str) -> &'static str {
+            Box::leak(crate::gmail::parse::html_to_text(html).into_boxed_str())
+        }
+        fn extra(
+            id: &'static str,
+            subject: &'static str,
+            sender: Participant,
+            body: &'static str,
+            html: HtmlSource,
+            image: Option<SeedInlineImage>,
+            older: bool,
+        ) -> SeedConversation {
+            let mut messages = Vec::new();
+            if older {
+                messages.push(SeedMessage {
+                    id: "m-22-1",
+                    from: INBOX_ANA,
+                    to: TO_ME,
+                    sent_at: "2026-01-14T09:00:00Z",
+                    body: "Here are the venue options.",
+                    html: None,
+                    inline_image: None,
+                });
+            }
+            let message_id = match id {
+                "conv-19" => "m-19-1",
+                "conv-20" => "m-20-1",
+                "conv-21" => "m-21-1",
+                "conv-22" => "m-22-2",
+                "conv-23" => "m-23-1",
+                _ => "m-24-1",
+            };
+            messages.push(SeedMessage {
+                id: message_id,
+                from: sender,
+                to: TO_ME,
+                sent_at: "2026-01-15T09:00:00Z",
+                body,
+                html: Some(html),
+                inline_image: image,
+            });
+            SeedConversation {
+                id,
+                subject,
+                in_inbox: true,
+                messages: Box::leak(messages.into_boxed_slice()),
+            }
+        }
+        const PERSON: &str = include_str!("html/person.html");
+        const CID: &str = include_str!("html/cid.html");
+        const HOSTILE: &str = include_str!("html/hostile.html");
+        result.push(extra(
+            "conv-19",
+            "Fixture Weekly: issue 12",
+            ("Fixture Weekly", "digest@newsletter.example"),
+            include_str!("html/newsletter.txt"),
+            HtmlSource::Static(include_str!("html/newsletter.html")),
+            None,
+            false,
+        ));
+        result.push(extra(
+            "conv-20",
+            "Plan for next week",
+            INBOX_ANA,
+            derived(PERSON),
+            HtmlSource::Static(PERSON),
+            None,
+            false,
+        ));
+        result.push(extra(
+            "conv-21",
+            "Logo proof",
+            ("Lee", "lee@fixture.example"),
+            derived(CID),
+            HtmlSource::Static(CID),
+            Some(SeedInlineImage {
+                content_id: "logo@fixture.example",
+                attachment_id: "fixture-logo",
+            }),
+            false,
+        ));
+        result.push(extra(
+            "conv-22",
+            "Re: Venue options",
+            INBOX_ANA,
+            include_str!("html/reply-chain.txt"),
+            HtmlSource::Static(include_str!("html/reply-chain.html")),
+            None,
+            true,
+        ));
+        result.push(extra(
+            "conv-23",
+            "Hostile HTML sample",
+            ("Sample", "sample@fixture.example"),
+            derived(HOSTILE),
+            HtmlSource::Static(HOSTILE),
+            None,
+            false,
+        ));
+        result.push(extra(
+            "conv-24",
+            "Oversized HTML sample",
+            ("Archive", "archive@fixture.example"),
+            derived("<p>This message's formatted version is larger than the reader keeps.</p>"),
+            HtmlSource::Oversized,
+            None,
+            false,
+        ));
+        result
+    });
+    result.extend(extra_fixtures.iter().cloned());
+    result
 }
 
 // Deterministic reply headers for the synthetic mailbox. Shared by the legacy

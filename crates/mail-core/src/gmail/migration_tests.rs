@@ -96,6 +96,7 @@ fn seeded_conversation() -> crate::dto::Conversation {
             sent_at: "2024-04-05T10:00:00Z".to_string(),
             body_text: "durable historical body".to_string(),
             has_attachment: None,
+            html_body: None,
         }],
         is_in_inbox: true,
         is_read: None,
@@ -1064,4 +1065,50 @@ fn opening_a_current_profile_again_does_not_change_its_schema_or_rows() {
             .expect("count messages after reopen"),
         before_messages
     );
+}
+
+#[test]
+fn migration_10_preserves_rows_and_rolls_back_on_interruption() {
+    let dir = temp_profile("migration-10");
+    load_fixture(
+        dir.path(),
+        include_str!("../../tests/fixtures/gmail-2-operations.sql"),
+    );
+    let mut conn = Connection::open(dir.path().join("gmail.db")).expect("open fixture");
+    let result = schema::migrate_with_hook(&mut conn, |version| {
+        if version == 10 {
+            Err(MailError::StorageUnavailable)
+        } else {
+            Ok(())
+        }
+    });
+    assert!(result.is_err());
+    assert_eq!(read_meta(&conn, "schema_version"), "gmail-migrations-9");
+    assert!(!has_column(&conn, "gmail_messages", "body_html").expect("check column"));
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM gmail_messages", [], |row| row.get(0))
+        .expect("count rows");
+    schema::migrate(&mut conn).expect("resume migration");
+    let (after, populated): (i64, i64) = conn
+        .query_row(
+            "SELECT COUNT(*), COUNT(body_html) + COUNT(html_state) FROM gmail_messages",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("check upgraded rows");
+    assert_eq!((after, populated), (count, 0));
+    assert!(has_column(&conn, "gmail_conversations", "inline_parts_json").expect("check column"));
+}
+
+#[test]
+fn fresh_schema_has_html_columns() {
+    let mut conn = Connection::open_in_memory().expect("open database");
+    schema::migrate(&mut conn).expect("create schema");
+    for (table, column) in [
+        ("gmail_messages", "body_html"),
+        ("gmail_messages", "html_state"),
+        ("gmail_conversations", "inline_parts_json"),
+    ] {
+        assert!(has_column(&conn, table, column).expect("check column"));
+    }
 }

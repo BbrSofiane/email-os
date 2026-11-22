@@ -346,6 +346,8 @@ export function createReaderFixtureClient(): ReaderFixture {
     saveSavedSplit: async () => { throw { kind: 'storage_unavailable' }; },
     listProviderDestinations: () => Promise.reject({ kind: 'read_only' }),
     browseProviderDestination: () => Promise.reject({ kind: 'read_only' }),
+    getMessageHtml: async () => { throw { kind: 'not_found' }; },
+    getInlineImage: async () => { throw { kind: 'not_found' }; },
     listAttachments: async () => [],
     saveAttachment: async () => { throw { kind: 'not_found' }; },
     cancelAttachment: async () => {},

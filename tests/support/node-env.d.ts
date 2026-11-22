@@ -27,9 +27,19 @@ declare module 'node:path' {
   export function join(...segments: string[]): string;
 }
 
-declare const process: { env: Record<string, string | undefined> };
+declare const process: { env: Record<string, string | undefined>; cwd(): string };
 
 declare module 'node:fs' {
   export function writeFileSync(path: string, data: Uint8Array): void;
   export function mkdirSync(path: string, options?: { recursive?: boolean }): void;
+}
+
+
+declare module 'node:http' {
+  export interface Server {
+    listen(port: number, host: string, callback: () => void): void;
+    address(): { port: number } | string | null;
+    close(callback: () => void): void;
+  }
+  export function createServer(handler: (request: { url?: string }, response: { setHeader(name: string, value: string): void; end(body: string): void }) => void): Server;
 }

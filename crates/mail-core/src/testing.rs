@@ -56,6 +56,7 @@ pub fn message(id: &str, from: &str, sent_at: &str, body_text: &str) -> Message 
         sent_at: sent_at.to_string(),
         body_text: body_text.to_string(),
         has_attachment: None,
+        html_body: None,
     }
 }
 
@@ -88,6 +89,9 @@ pub fn thread(
     };
     let message_ids = conversation.messages.iter().map(|m| m.id.clone()).collect();
     GmailThread {
+        message_html: Default::default(),
+        derived_text_ids: Default::default(),
+        inline_parts: Vec::new(),
         star_facts: None,
         newest_sender: None,
         attachments: Vec::new(),

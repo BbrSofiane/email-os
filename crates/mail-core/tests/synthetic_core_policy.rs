@@ -40,7 +40,7 @@ fn status_is_the_fixture_presentation_from_the_first_call() {
     assert_eq!(status.sync.state, SyncState::Idle);
     assert_eq!(status.sync.last_synced_at, None);
     assert_eq!(status.sync.error, None);
-    assert_eq!(status.sync.cached_conversations, 18);
+    assert_eq!(status.sync.cached_conversations, 24);
     assert!(status.sync.initial_sync_complete);
     assert_eq!(status.sync.coverage_limit, 0);
     // The serialized wire value has no mutationAccess key at all.
@@ -73,10 +73,10 @@ fn status_stays_idle_while_a_write_is_in_flight_and_after_a_rejected_one() {
 }
 
 #[test]
-fn bootstrap_loads_all_18_without_pretending_archived_seeds_are_inbox_or_done() {
+fn bootstrap_loads_all_24_without_pretending_archived_seeds_are_inbox_or_done() {
     let s = Synthetic::open("policy-bootstrap");
     // No explicit load: every seeded conversation is readable immediately.
-    for i in 1..=18 {
+    for i in 1..=24 {
         s.core
             .get_conversation(&conversation(&format!("conv-{i:02}")))
             .unwrap_or_else(|e| panic!("conv-{i:02}: {e:?}"));
@@ -89,7 +89,7 @@ fn bootstrap_loads_all_18_without_pretending_archived_seeds_are_inbox_or_done() 
         .iter()
         .map(|c| c.conversation_ref.conversation_id.clone())
         .collect();
-    assert_eq!(inbox.len(), 16);
+    assert_eq!(inbox.len(), 22);
     assert!(!inbox.contains(&"conv-06".to_string()));
     assert!(!inbox.contains(&"conv-15".to_string()));
     assert!(
@@ -134,7 +134,7 @@ fn reopening_bootstraps_again_without_changing_cache_or_facts() {
         )
     };
     let before = count(s.dir.path());
-    assert_eq!(before, (18, 2));
+    assert_eq!(before, (24, 2));
     let s = s.reopen();
     let s = s.reopen();
     assert_eq!(count(s.dir.path()), before);
@@ -144,7 +144,7 @@ fn reopening_bootstraps_again_without_changing_cache_or_facts() {
     );
     assert_eq!(
         s.core.account_status().unwrap().sync.cached_conversations,
-        18
+        24
     );
 }
 
@@ -372,8 +372,8 @@ fn cached_search_results_are_the_recorded_fixture_results() {
         (
             "ridpath",
             &[
-                "conv-18", "conv-17", "conv-14", "conv-13", "conv-11", "conv-07", "conv-04",
-                "conv-01",
+                "conv-20", "conv-22", "conv-18", "conv-17", "conv-14", "conv-13", "conv-11",
+                "conv-07", "conv-04", "conv-01",
             ],
         ),
         ("invoice", &["conv-03"]),
@@ -381,11 +381,12 @@ fn cached_search_results_are_the_recorded_fixture_results() {
         (
             "from:ana@ridpath.example",
             &[
-                "conv-18", "conv-17", "conv-13", "conv-11", "conv-07", "conv-04", "conv-01",
+                "conv-20", "conv-22", "conv-18", "conv-17", "conv-13", "conv-11", "conv-07",
+                "conv-04", "conv-01",
             ],
         ),
         ("ramen", &["conv-16"]),
-        ("script", &["conv-02"]),
+        ("script", &["conv-23", "conv-02"]),
         ("xss", &["conv-02"]),
         ("restart", &["conv-18", "conv-15"]),
         ("nomatchatall", &[]),
@@ -435,7 +436,7 @@ fn status_states_the_triage_capability_explicitly() {
     assert_eq!(json["capabilities"]["triageSurfaces"], true);
 }
 
-/// ADR 0002 decision 2: a realistic read/unread mix, not 16 unread rows.
+/// ADR 0002 decision 2: a realistic read/unread mix, not all unread rows.
 #[test]
 fn seeded_inbox_is_a_realistic_read_unread_mix() {
     let s = Synthetic::open("policy-seed-mix");
@@ -457,7 +458,7 @@ fn seeded_inbox_is_a_realistic_read_unread_mix() {
         .iter()
         .filter(|c| c.is_read == Some(false))
         .count();
-    assert_eq!(unread, 10, "most of the 16 Inbox conversations are unread");
+    assert_eq!(unread, 16, "most of the 22 Inbox conversations are unread");
     // Threads the user wrote last are read; the user's own messages inside an
     // unread thread are read too.
     let conv01 = s.core.get_conversation(&conversation("conv-01")).unwrap();

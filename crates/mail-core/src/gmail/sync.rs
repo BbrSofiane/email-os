@@ -5,6 +5,8 @@
 //! transactional and drop any result that raced a disconnect. No mail
 //! content, addresses, or credentials are ever logged.
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -57,6 +59,37 @@ const MAX_DISCOVERY_IDS_PER_PAGE: usize = 100;
 const MAX_HISTORY_IDS_PER_PAGE: usize = 1_000;
 /// Bound the aggregate live thread DTOs retained before a page is committed.
 const MAX_RETAINED_THREAD_BYTES_PER_PAGE: usize = 16 * 1024 * 1024;
+/// HTML bodies and text derived from them kept per page, besides the bound above.
+const MAX_RETAINED_HTML_BYTES_PER_PAGE: usize = 8 * 1024 * 1024;
+
+const MAX_INLINE_IMAGE_BYTES: usize = 2 * 1024 * 1024;
+
+/// Checks that the image signature agrees with its declared media type.
+fn image_bytes_match(mime: &str, bytes: &[u8]) -> bool {
+    match mime {
+        "image/png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "image/jpeg" => bytes.starts_with(b"\xff\xd8\xff"),
+        "image/gif" => bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a"),
+        "image/webp" => bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP"),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod inline_image_signature_tests {
+    use super::image_bytes_match;
+
+    #[test]
+    fn signatures_match_only_the_declared_image_type() {
+        assert!(image_bytes_match("image/png", b"\x89PNG\r\n\x1a\n"));
+        assert!(image_bytes_match("image/jpeg", b"\xff\xd8\xff"));
+        assert!(image_bytes_match("image/gif", b"GIF87a"));
+        assert!(image_bytes_match("image/gif", b"GIF89a"));
+        assert!(image_bytes_match("image/webp", b"RIFF1234WEBP"));
+        assert!(!image_bytes_match("image/png", b"GIF89a"));
+        assert!(!image_bytes_match("image/webp", b"RIFF"));
+    }
+}
 
 /// Cloneable, thread-safe facade over one Gmail profile. Cheap to hold from a
 /// thin async Tauri shell; blocking store calls stay inside these methods so
@@ -956,11 +989,12 @@ impl GmailCore {
         let mut conversations = vec![];
         let mut seen = HashSet::new();
         let mut bytes = 0usize;
+        let mut budget = PageBudget::default();
         for id in page.thread_ids {
             if !valid_id(&id) || !seen.insert(id.clone()) {
                 return Err(MailError::InvalidProviderResponse);
             }
-            if let Some(thread) =
+            if let Some(mut thread) =
                 self.inner
                     .provider
                     .get_thread_for_account(&request.account_id, &id, &job.cancel)?
@@ -970,6 +1004,9 @@ impl GmailCore {
                 {
                     return Err(MailError::InvalidProviderResponse);
                 }
+                // The page carries text only; what was derived from HTML stays small.
+                thread.message_html.clear();
+                budget.fit_html(&mut thread, MAX_RETAINED_HTML_BYTES_PER_PAGE / 4);
                 bytes = bytes.saturating_add(
                     serde_json::to_vec(&thread.conversation)
                         .map_err(|_| MailError::InvalidProviderResponse)?
@@ -1005,6 +1042,65 @@ impl GmailCore {
             generation,
         )?;
         Ok(result)
+    }
+
+    /// Returns a cached HTML body and inline image metadata.
+    pub fn get_message_html(
+        &self,
+        target: &ConversationRef,
+        message_id: &str,
+    ) -> Result<crate::dto::MessageHtmlBody, MailError> {
+        self.inner.store.get_message_html(target, message_id)
+    }
+
+    /// Fetches a listed inline image and validates its size and signature in memory.
+    pub fn get_inline_image(
+        &self,
+        target: &ConversationRef,
+        message_id: &str,
+        attachment_id: &str,
+    ) -> Result<crate::dto::InlineImageData, MailError> {
+        let generation = self.inner.store.generation()?;
+        let image = self
+            .inner
+            .store
+            .inline_images_for(target, message_id)?
+            .into_iter()
+            .find(|image| image.attachment_id == attachment_id)
+            .ok_or(MailError::NotFound)?;
+        if image.size as usize > MAX_INLINE_IMAGE_BYTES {
+            return Err(crate::attachments::invalid("inlineImage"));
+        }
+        let registration = self.begin_read_transfer(CancelToken::default())?;
+        if self.inner.store.generation()? != generation {
+            return Err(MailError::NotFound);
+        }
+        let bytes = self.inner.provider.fetch_attachment(
+            &target.account_id,
+            message_id,
+            attachment_id,
+            &registration.cancel,
+        )?;
+        crate::attachments::check_cancel(&registration.cancel)?;
+        let st = self.inner.ctrl.state.lock().map_err(storage_err())?;
+        if st.disconnecting
+            || st.stop
+            || self.inner.store.generation()? != generation
+            || !self
+                .inner
+                .store
+                .inline_images_for(target, message_id)?
+                .contains(&image)
+        {
+            return Err(MailError::NotFound);
+        }
+        if bytes.len() > MAX_INLINE_IMAGE_BYTES || !image_bytes_match(&image.mime_type, &bytes) {
+            return Err(crate::attachments::invalid("inlineImage"));
+        }
+        Ok(crate::dto::InlineImageData {
+            mime_type: image.mime_type,
+            base64: STANDARD.encode(bytes),
+        })
     }
 
     pub fn list_attachments(
@@ -2634,7 +2730,7 @@ fn run_discovery(
         };
         let seen_set: HashSet<&String> = seen.iter().collect();
         let mut fetched: Vec<ThreadFetch> = Vec::new();
-        let mut retained_bytes = 0usize;
+        let mut budget = PageBudget::default();
         let mut page_dedup: HashSet<&String> = HashSet::new();
         let mut discovered = 0usize;
         let mut capped = false;
@@ -2647,12 +2743,11 @@ fn run_discovery(
                 break;
             }
             match provider.get_thread(id, cancel) {
-                Ok(Some(thread)) => {
+                Ok(Some(mut thread)) => {
                     if thread.conversation.conversation_ref.conversation_id != *id {
                         return StageOutcome::SyncError(MailError::InvalidProviderResponse);
                     }
-                    if !include_retained_bytes(&mut retained_bytes, retained_thread_bytes(&thread))
-                    {
+                    if !budget.admit(&mut thread) {
                         return StageOutcome::SyncError(MailError::InvalidProviderResponse);
                     }
                     fetched.push(ThreadFetch::Cached(Box::new(thread)));
@@ -2660,7 +2755,7 @@ fn run_discovery(
                 }
                 Ok(None) => {
                     let missing_bytes = std::mem::size_of::<ThreadFetch>() + id.capacity();
-                    if !include_retained_bytes(&mut retained_bytes, missing_bytes) {
+                    if !budget.include(missing_bytes) {
                         return StageOutcome::SyncError(MailError::InvalidProviderResponse);
                     }
                     fetched.push(ThreadFetch::Missing(id.clone()));
@@ -2790,25 +2885,25 @@ fn fetch_changed_threads(
     cancel: &CancelToken,
 ) -> Result<Vec<ThreadFetch>, MailError> {
     let mut fetched = Vec::new();
-    let mut retained_bytes = 0usize;
+    let mut budget = PageBudget::default();
     let mut page_dedup: HashSet<&String> = HashSet::new();
     for id in changed_thread_ids {
         if !page_dedup.insert(id) {
             continue;
         }
         match provider.get_thread(id, cancel)? {
-            Some(thread) => {
+            Some(mut thread) => {
                 if thread.conversation.conversation_ref.conversation_id != *id {
                     return Err(MailError::InvalidProviderResponse);
                 }
-                if !include_retained_bytes(&mut retained_bytes, retained_thread_bytes(&thread)) {
+                if !budget.admit(&mut thread) {
                     return Err(MailError::InvalidProviderResponse);
                 }
                 fetched.push(ThreadFetch::Cached(Box::new(thread)));
             }
             None => {
                 let missing_bytes = std::mem::size_of::<ThreadFetch>() + id.capacity();
-                if !include_retained_bytes(&mut retained_bytes, missing_bytes) {
+                if !budget.include(missing_bytes) {
                     return Err(MailError::InvalidProviderResponse);
                 }
                 fetched.push(ThreadFetch::Missing(id.clone()));
@@ -2818,15 +2913,50 @@ fn fetch_changed_threads(
     Ok(fetched)
 }
 
-fn include_retained_bytes(total: &mut usize, additional: usize) -> bool {
-    let Some(next) = total.checked_add(additional) else {
-        return false;
-    };
-    if next > MAX_RETAINED_THREAD_BYTES_PER_PAGE {
-        return false;
+/// Retained bytes of one fetched page. HTML and the text derived from it have
+/// their own smaller budget, so however large they are they never take room
+/// from the rest and never fail the page (ADR 0006 decision 3).
+#[derive(Default)]
+struct PageBudget {
+    html: usize,
+    other: usize,
+}
+
+impl PageBudget {
+    /// Admits one fetched thread; false when the page is over its bound even
+    /// without HTML.
+    fn admit(&mut self, thread: &mut GmailThread) -> bool {
+        self.fit_html(thread, MAX_RETAINED_HTML_BYTES_PER_PAGE);
+        let other = retained_thread_bytes(thread).saturating_sub(thread.html_bytes());
+        self.include(other)
     }
-    *total = next;
-    true
+
+    /// Keeps the thread's HTML within the HTML budget, or records it as too
+    /// large and keeps an excerpt of the derived text, counted as other bytes.
+    fn fit_html(&mut self, thread: &mut GmailThread, budget: usize) {
+        let html = thread.html_bytes();
+        match self.html.checked_add(html).filter(|next| *next <= budget) {
+            Some(next) => self.html = next,
+            None => {
+                thread.drop_html();
+                thread.derived_text_ids.clear();
+            }
+        }
+    }
+
+    fn include(&mut self, additional: usize) -> bool {
+        match self
+            .other
+            .checked_add(additional)
+            .filter(|next| *next <= MAX_RETAINED_THREAD_BYTES_PER_PAGE)
+        {
+            Some(next) => {
+                self.other = next;
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 /// Conservative estimate of heap retained by one DTO, including collection
@@ -2864,6 +2994,31 @@ fn retained_thread_bytes(thread: &GmailThread) -> usize {
                 .saturating_mul(std::mem::size_of::<String>()),
         )
         .saturating_add(thread.history_id.capacity());
+    bytes = bytes.saturating_add(
+        thread
+            .message_html
+            .capacity()
+            .saturating_mul(std::mem::size_of::<(String, super::types::MessageHtml)>()),
+    );
+    for (id, html) in &thread.message_html {
+        bytes = bytes.saturating_add(id.capacity());
+        if let super::types::MessageHtml::Present(body) = html {
+            bytes = bytes.saturating_add(body.capacity());
+        }
+    }
+    bytes = bytes.saturating_add(
+        thread
+            .inline_parts
+            .capacity()
+            .saturating_mul(std::mem::size_of::<super::types::InlinePart>()),
+    );
+    for part in &thread.inline_parts {
+        bytes = bytes
+            .saturating_add(part.message_id.capacity())
+            .saturating_add(part.content_id.capacity())
+            .saturating_add(part.attachment_id.capacity())
+            .saturating_add(part.mime_type.capacity());
+    }
     if let Some(sender) = &thread.newest_sender {
         bytes = bytes
             .saturating_add(sender.mailbox.capacity())

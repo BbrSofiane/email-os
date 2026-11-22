@@ -1,7 +1,7 @@
 //! `DraftService`: draft operations scoped to the active account, with reply
 //! revalidation (moved out of the native shell, which now only adapts IPC).
 //!
-//! The synthetic core supplies the fixture account and its 18 conversations;
+//! The synthetic core supplies the fixture account and its 24 conversations;
 //! a Gmail core without credentials supplies "no active account".
 
 use mail_core::drafts::{
