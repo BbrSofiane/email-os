@@ -116,16 +116,13 @@ impl GmailProvider for LiveGmailProvider {
         {
             requested_scopes.push(requested.requested_scope().to_string());
         }
-        let grant = auth::authorize(
-            &self.config,
-            &self.endpoints,
-            &self.opener,
-            &requested_scopes.join(" "),
+        let tokens = self.obtain_tokens(
+            requested_scopes,
+            Some(bound_account.clone()),
+            true,
+            None,
             cancel,
-            auth::AUTH_TIMEOUT,
         )?;
-        let tokens =
-            auth::exchange_code(&self.config, &self.endpoints, &self.http, &grant, cancel)?;
         if !tokens
             .scope
             .as_deref()
@@ -133,10 +130,12 @@ impl GmailProvider for LiveGmailProvider {
         {
             return Err(MailError::PermissionRequired);
         }
-        let granted_scopes = merge_scopes(
-            previous.effective_scopes(),
-            &parse_scopes(tokens.scope.as_deref().unwrap_or("")),
-        );
+        let returned_scopes = parse_scopes(tokens.scope.as_deref().unwrap_or(""));
+        let granted_scopes = if self.platform() {
+            returned_scopes
+        } else {
+            merge_scopes(previous.effective_scopes(), &returned_scopes)
+        };
         let profile = self.fetch_profile(&tokens.access_token, cancel)?;
         if profile.account_id != bound_account {
             return Err(MailError::AuthFailed);
@@ -155,10 +154,14 @@ impl GmailProvider for LiveGmailProvider {
             let bundle = TokenBundle {
                 access_token: tokens.access_token,
                 expires_at_epoch_ms: tokens.expires_at_epoch_ms,
-                refresh_token: tokens.refresh_token.or(previous.refresh_token),
+                refresh_token: if self.platform() {
+                    None
+                } else {
+                    tokens.refresh_token.or(previous.refresh_token)
+                },
                 account_id: Some(profile.account_id.clone()),
                 email: Some(profile.email_address.clone()),
-                platform_authorized: false,
+                platform_authorized: self.platform(),
                 gmail_modify_granted: GmailGrant::Modify.covered_by(&granted_scopes),
                 granted_scopes: granted_scopes.clone(),
             };
@@ -195,10 +198,14 @@ impl GmailProvider for LiveGmailProvider {
         let bundle = TokenBundle {
             access_token: tokens.access_token,
             expires_at_epoch_ms: tokens.expires_at_epoch_ms,
-            refresh_token: tokens.refresh_token.or(current.refresh_token),
+            refresh_token: if self.platform() {
+                None
+            } else {
+                tokens.refresh_token.or(current.refresh_token)
+            },
             account_id: Some(profile.account_id.clone()),
             email: Some(profile.email_address.clone()),
-            platform_authorized: false,
+            platform_authorized: self.platform(),
             gmail_modify_granted: GmailGrant::Modify.covered_by(&granted_scopes),
             granted_scopes,
         };
@@ -238,7 +245,12 @@ impl GmailProvider for LiveGmailProvider {
     }
 
     fn is_configured(&self) -> bool {
-        !self.config.client_id.trim().is_empty()
+        match &self.source {
+            CredentialSource::Loopback { config, .. } => !config.client_id.trim().is_empty(),
+            CredentialSource::Platform { not_configured, .. } => {
+                !not_configured.load(Ordering::SeqCst)
+            }
+        }
     }
 
     fn has_credentials(&self) -> Result<bool, MailError> {
@@ -259,16 +271,27 @@ impl GmailProvider for LiveGmailProvider {
         } else {
             auth::GMAIL_READONLY_SCOPE
         };
-        let grant = auth::authorize(
-            &self.config,
-            &self.endpoints,
-            &self.opener,
-            requested_scope,
+        let scopes = if self.platform() {
+            merge_scopes(
+                previous
+                    .as_ref()
+                    .map(TokenBundle::effective_scopes)
+                    .unwrap_or_default(),
+                &[auth::GMAIL_READONLY_SCOPE.to_string()],
+            )
+        } else {
+            vec![requested_scope.to_string()]
+        };
+        let tokens = self.obtain_tokens(
+            scopes,
+            previous
+                .as_ref()
+                .and_then(bundle_account_id)
+                .map(str::to_string),
+            true,
+            None,
             cancel,
-            auth::AUTH_TIMEOUT,
         )?;
-        let tokens =
-            auth::exchange_code(&self.config, &self.endpoints, &self.http, &grant, cancel)?;
         let returned_scope = tokens.scope.clone();
         let returned_refresh_token = tokens.refresh_token.clone();
         let granted_scopes = returned_scope
@@ -284,13 +307,17 @@ impl GmailProvider for LiveGmailProvider {
         let bundle = TokenBundle {
             access_token: tokens.access_token,
             expires_at_epoch_ms: tokens.expires_at_epoch_ms,
-            refresh_token: tokens
-                .refresh_token
-                .or_else(|| previous.as_ref().and_then(|p| p.refresh_token.clone())),
+            refresh_token: if self.platform() {
+                None
+            } else {
+                tokens
+                    .refresh_token
+                    .or_else(|| previous.as_ref().and_then(|p| p.refresh_token.clone()))
+            },
             account_id: previous.as_ref().and_then(|p| p.account_id.clone()),
             email: previous.as_ref().and_then(|p| p.email.clone()),
             granted_scopes: granted_scopes.clone(),
-            platform_authorized: false,
+            platform_authorized: self.platform(),
             gmail_modify_granted: GmailGrant::Modify.covered_by(&granted_scopes),
         };
         let profile = self.fetch_profile(&bundle.access_token, cancel)?;
@@ -342,10 +369,14 @@ impl GmailProvider for LiveGmailProvider {
         let rebased = TokenBundle {
             access_token: bundle.access_token,
             expires_at_epoch_ms: bundle.expires_at_epoch_ms,
-            refresh_token: returned_refresh_token.or(current.refresh_token.clone()),
+            refresh_token: if self.platform() {
+                None
+            } else {
+                returned_refresh_token.or(current.refresh_token.clone())
+            },
             account_id: Some(profile.account_id.clone()),
             email: Some(profile.email_address.clone()),
-            platform_authorized: false,
+            platform_authorized: self.platform(),
             gmail_modify_granted: GmailGrant::Modify.covered_by(&rebased_scopes),
             granted_scopes: rebased_scopes,
         };
@@ -363,6 +394,13 @@ impl GmailProvider for LiveGmailProvider {
             .revision
             .checked_add(1)
             .ok_or_else(|| storage_fault("missing_persisted_row"))?;
+        if let CredentialSource::Platform { authorizer, .. } = &self.source {
+            if let Some(bundle) = self.secrets.load()? {
+                if !bundle.access_token.is_empty() {
+                    let _ = authorizer.clear_token(&bundle.access_token);
+                }
+            }
+        }
         self.secrets.clear()?;
         publication.revision = next_revision;
         publication.last_non_refresh_revision = next_revision;

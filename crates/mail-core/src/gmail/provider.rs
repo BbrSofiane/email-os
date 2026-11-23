@@ -12,7 +12,9 @@
 //! Access-token refresh is serialized and preserves the stored refresh token
 //! when Google omits it.
 
+use crate::gmail::platform_auth::{PlatformAuthError, PlatformAuthRequest, PlatformAuthorizer};
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -73,12 +75,22 @@ enum CredentialPublicationKind {
     AccountChange,
 }
 
+enum CredentialSource {
+    Loopback {
+        config: GoogleConfig,
+        opener: UrlOpener,
+    },
+    Platform {
+        authorizer: Arc<dyn PlatformAuthorizer>,
+        not_configured: AtomicBool,
+    },
+}
+
 pub struct LiveGmailProvider {
-    config: GoogleConfig,
+    source: CredentialSource,
     secrets: Arc<dyn Secrets>,
     http: Client,
     endpoints: Endpoints,
-    opener: UrlOpener,
     /// Serializes token refresh so concurrent calls never race the store.
     refresh_lock: Mutex<()>,
     /// Fences every credential publisher and invalidates work started against
@@ -97,7 +109,13 @@ impl LiveGmailProvider {
         if config.client_id.trim().is_empty() {
             return Err(MailError::NotConfigured);
         }
-        Self::build(config, secrets)
+        Self::build(
+            CredentialSource::Loopback {
+                config,
+                opener: auth::system_url_opener(),
+            },
+            secrets,
+        )
     }
 
     /// Builds a provider from launch configuration while preserving a usable
@@ -113,10 +131,30 @@ impl LiveGmailProvider {
             },
             Err(error) => return Err(error),
         };
-        Self::build(config, secrets)
+        Self::build(
+            CredentialSource::Loopback {
+                config,
+                opener: auth::system_url_opener(),
+            },
+            secrets,
+        )
     }
 
-    fn build(config: GoogleConfig, secrets: Arc<dyn Secrets>) -> Result<Self, MailError> {
+    /// Builds a provider using platform authorization.
+    pub fn with_platform_authorizer(
+        authorizer: Arc<dyn PlatformAuthorizer>,
+        secrets: Arc<dyn Secrets>,
+    ) -> Result<Self, MailError> {
+        Self::build(
+            CredentialSource::Platform {
+                authorizer,
+                not_configured: AtomicBool::new(false),
+            },
+            secrets,
+        )
+    }
+
+    fn build(source: CredentialSource, secrets: Arc<dyn Secrets>) -> Result<Self, MailError> {
         let http = Client::builder()
             .use_rustls_tls()
             .redirect(reqwest::redirect::Policy::none())
@@ -125,16 +163,81 @@ impl LiveGmailProvider {
             .build()
             .map_err(|_| MailError::ProviderUnavailable)?;
         Ok(Self {
-            config,
+            source,
             secrets,
             http,
             endpoints: Endpoints::google(),
-            opener: auth::system_url_opener(),
             refresh_lock: Mutex::new(()),
             credential_publication: Mutex::new(CredentialPublicationState::default()),
             min_request_interval: MIN_REQUEST_INTERVAL,
             last_request_slot: Mutex::new(None),
         })
+    }
+
+    fn platform(&self) -> bool {
+        matches!(self.source, CredentialSource::Platform { .. })
+    }
+
+    fn obtain_tokens(
+        &self,
+        scopes: Vec<String>,
+        account: Option<String>,
+        interactive: bool,
+        refresh_token: Option<&str>,
+        cancel: &CancelToken,
+    ) -> Result<auth::TokenResponse, MailError> {
+        match &self.source {
+            CredentialSource::Loopback { config, opener } => {
+                if let Some(refresh_token) = refresh_token {
+                    auth::refresh(config, &self.endpoints, &self.http, refresh_token, cancel)
+                } else {
+                    let grant = auth::authorize(
+                        config,
+                        &self.endpoints,
+                        opener,
+                        &scopes.join(" "),
+                        cancel,
+                        auth::AUTH_TIMEOUT,
+                    )?;
+                    auth::exchange_code(config, &self.endpoints, &self.http, &grant, cancel)
+                }
+            }
+            CredentialSource::Platform {
+                authorizer,
+                not_configured,
+            } => {
+                let grant = authorizer
+                    .authorize(
+                        &PlatformAuthRequest {
+                            scopes,
+                            account,
+                            interactive,
+                        },
+                        cancel,
+                    )
+                    .map_err(|error| {
+                        if error == PlatformAuthError::DeveloperError {
+                            not_configured.store(true, Ordering::SeqCst);
+                        }
+                        MailError::from(error)
+                    })?;
+                Ok(auth::TokenResponse {
+                    access_token: grant.access_token,
+                    refresh_token: None,
+                    scope: Some(grant.granted_scopes.join(" ")),
+                    expires_at_epoch_ms: grant
+                        .expires_at_epoch_ms
+                        .unwrap_or_else(|| now_ms() + 50 * 60 * 1000),
+                })
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn set_opener(&mut self, new_opener: UrlOpener) {
+        if let CredentialSource::Loopback { opener, .. } = &mut self.source {
+            *opener = new_opener;
+        }
     }
 
     /// Waits until the minimum interval since the previous API request has
@@ -255,15 +358,21 @@ impl LiveGmailProvider {
                 let account = bundle_account_id(&latest).map(str::to_string);
                 return Ok((latest.access_token, account));
             }
-            let refresh_token = latest
-                .refresh_token
-                .clone()
-                .ok_or(MailError::AuthRequired)?;
-            let tokens = match auth::refresh(
-                &self.config,
-                &self.endpoints,
-                &self.http,
-                &refresh_token,
+            let refresh_token = if self.platform() {
+                None
+            } else {
+                Some(
+                    latest
+                        .refresh_token
+                        .as_deref()
+                        .ok_or(MailError::AuthRequired)?,
+                )
+            };
+            let tokens = match self.obtain_tokens(
+                latest.effective_scopes(),
+                bundle_account_id(&latest).map(str::to_string),
+                false,
+                refresh_token,
                 cancel,
             ) {
                 Ok(tokens) => tokens,
@@ -303,10 +412,14 @@ impl LiveGmailProvider {
             let updated = TokenBundle {
                 access_token: tokens.access_token,
                 expires_at_epoch_ms: tokens.expires_at_epoch_ms,
-                refresh_token: tokens.refresh_token.or(latest.refresh_token.clone()),
+                refresh_token: if self.platform() {
+                    None
+                } else {
+                    tokens.refresh_token.or(latest.refresh_token.clone())
+                },
                 account_id: latest.account_id.clone(),
                 email: latest.email.clone(),
-                platform_authorized: false,
+                platform_authorized: self.platform(),
                 gmail_modify_granted: super::grants::GmailGrant::Modify.covered_by(&granted_scopes),
                 granted_scopes,
             };

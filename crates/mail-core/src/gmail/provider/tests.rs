@@ -165,7 +165,7 @@ fn test_provider(api_base: &str, secrets: Arc<dyn Secrets>) -> LiveGmailProvider
         token: format!("{api_base}/synthetic-token"),
         api: api_base.to_string(),
     };
-    provider.opener = Arc::new(|_| Ok(()));
+    provider.set_opener(Arc::new(|_| Ok(())));
     provider
 }
 
@@ -261,7 +261,7 @@ fn connect_runs_oauth_stores_credentials_and_returns_profile() {
     // authorization URL and completes the loopback callback round trip.
     let opener_url: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let opener_url_for_opener = Arc::clone(&opener_url);
-    provider.opener = Arc::new(move |url| {
+    provider.set_opener(Arc::new(move |url| {
         *opener_url_for_opener.lock().unwrap() = Some(url.to_string());
         let parsed = url::Url::parse(url).unwrap();
         let redirect_uri = parsed
@@ -291,7 +291,7 @@ fn connect_runs_oauth_stores_credentials_and_returns_profile() {
             let _ = stream.read_to_end(&mut buf);
         });
         Ok(())
-    });
+    }));
 
     let profile = provider.connect(&CancelToken::default()).unwrap();
     assert_eq!(profile.email_address, "synthetic@example.test");
@@ -361,7 +361,7 @@ fn connect_rejects_account_switch_before_storing_tokens() {
     secrets.store(&previous).unwrap();
     let mut provider = test_provider(&api_base, secrets.clone());
     provider.endpoints.token = format!("{token_base}/synthetic-token");
-    provider.opener = Arc::new(|url| {
+    provider.set_opener(Arc::new(|url| {
         let parsed = url::Url::parse(url).unwrap();
         let redirect_uri = parsed
             .query_pairs()
@@ -390,7 +390,7 @@ fn connect_rejects_account_switch_before_storing_tokens() {
             let _ = stream.read_to_end(&mut response);
         });
         Ok(())
-    });
+    }));
 
     assert!(matches!(
         provider.connect(&CancelToken::default()),
@@ -417,7 +417,7 @@ fn explicit_upgrade_requests_and_verifies_modify_scope_for_bound_account() {
     let mut provider = test_provider(&api_base, secrets.clone());
     provider.endpoints.token = format!("{token_base}/synthetic-token");
     let auth_url = Arc::new(Mutex::new(None));
-    provider.opener = completing_oauth_opener(auth_url.clone());
+    provider.set_opener(completing_oauth_opener(auth_url.clone()));
 
     let profile = provider.enable_mutations(&CancelToken::default()).unwrap();
     assert_eq!(profile.account_id, "synthetic@example.test");
@@ -463,7 +463,7 @@ fn upgrade_without_returned_modify_scope_preserves_old_bundle() {
     secrets.store(&previous).unwrap();
     let mut provider = test_provider("http://127.0.0.1:9", secrets.clone());
     provider.endpoints.token = format!("{token_base}/synthetic-token");
-    provider.opener = completing_oauth_opener(Arc::new(Mutex::new(None)));
+    provider.set_opener(completing_oauth_opener(Arc::new(Mutex::new(None))));
 
     assert!(matches!(
         provider.enable_mutations(&CancelToken::default()),
@@ -489,7 +489,7 @@ fn upgrade_with_omitted_scope_is_denied_without_replacing_credentials() {
     secrets.store(&previous).unwrap();
     let mut provider = test_provider("http://127.0.0.1:9", secrets.clone());
     provider.endpoints.token = format!("{token_base}/synthetic-token");
-    provider.opener = completing_oauth_opener(Arc::new(Mutex::new(None)));
+    provider.set_opener(completing_oauth_opener(Arc::new(Mutex::new(None))));
 
     assert!(matches!(
         provider.enable_mutations(&CancelToken::default()),
@@ -516,7 +516,7 @@ fn upgrade_account_swap_preserves_old_credentials() {
     secrets.store(&previous).unwrap();
     let mut provider = test_provider(&api_base, secrets.clone());
     provider.endpoints.token = format!("{token_base}/synthetic-token");
-    provider.opener = completing_oauth_opener(Arc::new(Mutex::new(None)));
+    provider.set_opener(completing_oauth_opener(Arc::new(Mutex::new(None))));
 
     assert!(matches!(
         provider.enable_mutations(&CancelToken::default()),
@@ -552,7 +552,7 @@ fn cancelled_upgrade_after_profile_keeps_old_bundle_before_store() {
     secrets.store(&previous).unwrap();
     let mut provider = test_provider(&api_base, secrets.clone());
     provider.endpoints.token = format!("{token_base}/synthetic-token");
-    provider.opener = completing_oauth_opener(Arc::new(Mutex::new(None)));
+    provider.set_opener(completing_oauth_opener(Arc::new(Mutex::new(None))));
 
     assert!(matches!(
         provider.enable_mutations(&cancel),
@@ -2790,7 +2790,7 @@ fn credential_publication_old_refresh_cannot_overwrite_verified_upgrade() {
     secrets.store(&expired_bundle()).unwrap();
     let mut provider = test_provider(&api_base, secrets.clone());
     provider.endpoints.token = format!("{}/synthetic-token", endpoint.base);
-    provider.opener = completing_oauth_opener(Arc::new(Mutex::new(None)));
+    provider.set_opener(completing_oauth_opener(Arc::new(Mutex::new(None))));
     let provider = Arc::new(provider);
 
     let refresh_provider = Arc::clone(&provider);
@@ -2847,11 +2847,11 @@ fn credential_publication_connect_rebases_after_refresh_and_applies_readonly_sco
     let entered_opener = Arc::clone(&oauth_entered);
     let release_opener = Arc::clone(&release_oauth);
     let finish_oauth = completing_oauth_opener(Arc::new(Mutex::new(None)));
-    provider.opener = Arc::new(move |url| {
+    provider.set_opener(Arc::new(move |url| {
         entered_opener.wait();
         release_opener.wait();
         finish_oauth(url)
-    });
+    }));
     let provider = Arc::new(provider);
 
     let reauth_provider = Arc::clone(&provider);
@@ -2926,13 +2926,13 @@ fn credential_publication_connect_rejects_superseded_same_account_oauth() {
     let release_opener = Arc::clone(&release_oauth);
     let opener_calls_for_callback = Arc::clone(&opener_calls);
     let finish_oauth = completing_oauth_opener(Arc::new(Mutex::new(None)));
-    provider.opener = Arc::new(move |url| {
+    provider.set_opener(Arc::new(move |url| {
         if opener_calls_for_callback.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
             entered_opener.wait();
             release_opener.wait();
         }
         finish_oauth(url)
-    });
+    }));
     let provider = Arc::new(provider);
 
     let stale_provider = Arc::clone(&provider);
@@ -2975,11 +2975,11 @@ fn credential_publication_connect_cannot_resurrect_after_disconnect() {
     let entered_opener = Arc::clone(&oauth_entered);
     let release_opener = Arc::clone(&release_oauth);
     let finish_oauth = completing_oauth_opener(Arc::new(Mutex::new(None)));
-    provider.opener = Arc::new(move |url| {
+    provider.set_opener(Arc::new(move |url| {
         entered_opener.wait();
         release_opener.wait();
         finish_oauth(url)
-    });
+    }));
     let provider = Arc::new(provider);
 
     let reauth_provider = Arc::clone(&provider);
@@ -3033,10 +3033,10 @@ fn legacy_modify_bundle_covers_both_grants_without_io() {
     let mut provider = test_provider(&base, secrets);
     let calls = Arc::new(Mutex::new(0));
     let opener_calls = calls.clone();
-    provider.opener = Arc::new(move |_| {
+    provider.set_opener(Arc::new(move |_| {
         *opener_calls.lock().unwrap() += 1;
         Ok(())
-    });
+    }));
     for grant in [GmailGrant::Readonly, GmailGrant::Modify] {
         assert!(provider.grant_covered(grant).unwrap());
         assert!(matches!(
@@ -3065,7 +3065,7 @@ fn uncovered_readonly_runs_connect() {
     let mut provider = test_provider(&base, secrets);
     provider.endpoints.token = format!("{token_base}/synthetic-token");
     let url = Arc::new(Mutex::new(None));
-    provider.opener = completing_oauth_opener(url.clone());
+    provider.set_opener(completing_oauth_opener(url.clone()));
     assert!(matches!(
         provider.request_grant(GmailGrant::Readonly, &CancelToken::default()),
         Ok(GrantOutcome::Granted(_))
@@ -3095,9 +3095,12 @@ fn connect_omitted_scope_preserves_existing_grants() {
     secrets.store(&previous).unwrap();
     let mut provider = test_provider(&base, secrets.clone());
     provider.endpoints.token = format!("{token_base}/synthetic-token");
-    provider.opener = completing_oauth_opener(Arc::new(Mutex::new(None)));
+    provider.set_opener(completing_oauth_opener(Arc::new(Mutex::new(None))));
     provider.connect(&CancelToken::default()).unwrap();
     let stored = secrets.load().unwrap().unwrap();
     assert_eq!(stored.granted_scopes, previous.granted_scopes);
     assert!(stored.gmail_modify_granted);
 }
+
+#[path = "platform_tests.rs"]
+mod platform_tests;

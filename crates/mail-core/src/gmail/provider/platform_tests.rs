@@ -1,0 +1,155 @@
+use super::*;
+use crate::gmail::grants::{GmailGrant, GrantOutcome};
+use crate::gmail::platform_auth::{PlatformAuthError, PlatformGrant, TokenlessSecrets};
+use crate::gmail::secrets::MemorySecrets;
+use crate::testing::platform_auth_fake::ScriptedAuthorizer;
+
+fn grant(scopes: &[&str]) -> PlatformGrant {
+    PlatformGrant {
+        access_token: "token".into(),
+        granted_scopes: scopes.iter().map(|s| s.to_string()).collect(),
+        email: None,
+        expires_at_epoch_ms: None,
+    }
+}
+fn setup(
+    secrets: Arc<dyn Secrets>,
+    authorizer: Arc<ScriptedAuthorizer>,
+    script: Vec<(&str, u16, &str)>,
+) -> (LiveGmailProvider, FakeApi) {
+    let (base, api) = FakeApi::start(script);
+    let mut provider = LiveGmailProvider::with_platform_authorizer(authorizer, secrets).unwrap();
+    provider.endpoints.api = base;
+    provider.min_request_interval = Duration::ZERO;
+    (provider, api)
+}
+const PROFILE: &str = r#"{"emailAddress":"synthetic@example.test","historyId":"1"}"#;
+const PATH: &str = "/gmail/v1/users/me/profile";
+
+#[test]
+fn connect_upgrade_reconnect_and_disconnect() {
+    let store = Arc::new(MemorySecrets::new());
+    let auth = Arc::new(ScriptedAuthorizer::default());
+    let (provider, _api) = setup(
+        store.clone(),
+        auth.clone(),
+        vec![
+            (PATH, 200, PROFILE),
+            (PATH, 200, PROFILE),
+            (
+                PATH,
+                200,
+                r#"{"emailAddress":"other@example.test","historyId":"1"}"#,
+            ),
+        ],
+    );
+    auth.push_authorize(Ok(grant(&[auth::GMAIL_READONLY_SCOPE])));
+    let profile = provider.connect(&CancelToken::default()).unwrap();
+    assert_eq!(profile.email_address, "synthetic@example.test");
+    let request = &auth.requests()[0];
+    assert!(request.interactive && request.account.is_none());
+    assert_eq!(request.scopes, vec![auth::GMAIL_READONLY_SCOPE]);
+    let bundle = store.load().unwrap().unwrap();
+    assert!(bundle.platform_authorized && bundle.refresh_token.is_none());
+    auth.push_authorize(Ok(grant(&[auth::GMAIL_READONLY_SCOPE])));
+    assert!(matches!(
+        provider.request_grant(GmailGrant::Modify, &CancelToken::default()),
+        Err(MailError::PermissionRequired)
+    ));
+    assert_eq!(store.load().unwrap(), Some(bundle));
+    auth.push_authorize(Ok(grant(&[
+        auth::GMAIL_READONLY_SCOPE,
+        auth::GMAIL_MODIFY_SCOPE,
+    ])));
+    assert!(matches!(
+        provider.request_grant(GmailGrant::Modify, &CancelToken::default()),
+        Ok(GrantOutcome::Granted(_))
+    ));
+    let bundle = store.load().unwrap().unwrap();
+    let count = auth.requests().len();
+    assert!(matches!(
+        provider.request_grant(GmailGrant::Modify, &CancelToken::default()),
+        Ok(GrantOutcome::AlreadyCovered)
+    ));
+    assert_eq!(auth.requests().len(), count);
+    auth.push_authorize(Ok(grant(&[
+        auth::GMAIL_READONLY_SCOPE,
+        auth::GMAIL_MODIFY_SCOPE,
+    ])));
+    assert_eq!(
+        provider.connect(&CancelToken::default()).err(),
+        Some(MailError::AuthFailed)
+    );
+    let requests = auth.requests();
+    let last = requests.last().unwrap();
+    assert_eq!(last.account.as_deref(), Some("synthetic@example.test"));
+    assert!(last.scopes.contains(&auth::GMAIL_MODIFY_SCOPE.to_string()));
+    assert_eq!(store.load().unwrap(), Some(bundle));
+    provider.disconnect().unwrap();
+    assert_eq!(auth.cleared_tokens(), vec!["token"]);
+    assert!(store.load().unwrap().is_none());
+}
+
+#[test]
+fn errors_and_silent_refresh_preserve_binding() {
+    let store = Arc::new(MemorySecrets::new());
+    let auth = Arc::new(ScriptedAuthorizer::default());
+    let (provider, _api) = setup(store.clone(), auth.clone(), vec![(PATH, 200, PROFILE)]);
+    for (error, expected) in [
+        (PlatformAuthError::Cancelled, MailError::AuthCancelled),
+        (
+            PlatformAuthError::PlayServicesUnavailable,
+            MailError::UnsupportedPlatform,
+        ),
+        (PlatformAuthError::Network, MailError::NetworkUnavailable),
+    ] {
+        auth.push_authorize(Err(error));
+        assert_eq!(
+            provider.connect(&CancelToken::default()).err(),
+            Some(expected)
+        );
+    }
+    let mut bundle = future_token();
+    bundle.platform_authorized = true;
+    bundle.refresh_token = None;
+    bundle.expires_at_epoch_ms = 0;
+    bundle.gmail_modify_granted = true;
+    bundle.granted_scopes = vec![
+        auth::GMAIL_READONLY_SCOPE.into(),
+        auth::GMAIL_MODIFY_SCOPE.into(),
+    ];
+    store.store(&bundle).unwrap();
+    auth.push_authorize(Err(PlatformAuthError::NeedsUserInteraction));
+    assert_eq!(
+        provider.profile(&CancelToken::default()).err(),
+        Some(MailError::AuthRequired)
+    );
+    assert_eq!(store.load().unwrap(), Some(bundle));
+    let request = auth.requests().last().unwrap().clone();
+    assert!(!request.interactive);
+    assert_eq!(request.account.as_deref(), Some("synthetic@example.test"));
+    auth.push_authorize(Ok(grant(&[auth::GMAIL_READONLY_SCOPE, "extra"])));
+    provider.profile(&CancelToken::default()).unwrap();
+    assert!(!provider.grant_covered(GmailGrant::Modify).unwrap());
+    assert_eq!(
+        store.load().unwrap().unwrap().granted_scopes,
+        vec![auth::GMAIL_READONLY_SCOPE]
+    );
+    auth.push_authorize(Err(PlatformAuthError::DeveloperError));
+    assert_eq!(
+        provider.connect(&CancelToken::default()).err(),
+        Some(MailError::NotConfigured)
+    );
+    assert!(!provider.is_configured());
+}
+
+#[test]
+fn tokenless_connect_persists_no_access_token() {
+    let inner = Arc::new(MemorySecrets::new());
+    let secrets = Arc::new(TokenlessSecrets::new(inner.clone()));
+    let auth = Arc::new(ScriptedAuthorizer::default());
+    let (provider, _api) = setup(secrets, auth.clone(), vec![(PATH, 200, PROFILE)]);
+    auth.push_authorize(Ok(grant(&[auth::GMAIL_READONLY_SCOPE])));
+    provider.connect(&CancelToken::default()).unwrap();
+    assert!(inner.load().unwrap().unwrap().access_token.is_empty());
+}
