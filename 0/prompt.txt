@@ -1,0 +1,22 @@
+Delegated task node:delegated-task:command%3Amcp%3Ae6212a3c-d59d-46cf-a02c-cb79323b4191%3Adelegate-task%3Aa3efa75e-4b18-4c31-98c6-6e1a1a7a08b3 (B stage 1 (finish): grants tests and checks) in child thread thread:delegated-task:command%3Amcp%3Ae6212a3c-d59d-46cf-a02c-cb79323b4191%3Adelegate-task%3Aa3efa75e-4b18-4c31-98c6-6e1a1a7a08b3 [completed]:
+Completed and committed stage 1 as `ad60a0e658e065b1f6aee07df23619ba82ee26a9`. The working tree is clean; nothing was pushed.
+
+The change adds stored Gmail scope sets with legacy read-through, grant coverage and request APIs, the readonly connect path, and account-bound modify upgrades. It also updates refresh handling and the core mutation-upgrade worker. Changes are confined to `crates/mail-core`.
+
+Tests added:
+
+- `scope_coverage_and_merge`
+- `legacy_bundle_effective_scopes`
+- `legacy_modify_bundle_covers_both_grants_without_io`
+- `uncovered_readonly_runs_connect`
+- `connect_omitted_scope_preserves_existing_grants`
+- `covered_mutation_upgrade_does_not_request_consent`
+
+The existing upgrade tests now check the requested scope union, `include_granted_scopes`, stored scopes, and denial when an unknown scope is returned without modify.
+
+Both requested checks passed:
+
+- `CARGO_TARGET_DIR=/home/exedev/email-os/target CARGO_BUILD_JOBS=2 cargo test -p mail-core` — 406 passed.
+- `CARGO_TARGET_DIR=/home/exedev/email-os/target CARGO_BUILD_JOBS=2 mise run check` — passed, including 2,298 frontend tests, contract validation, Clippy, formatting and typecheck.
+
+The first full check found missing frontend dependencies. I installed them with `pnpm install --frozen-lockfile` and reran the check successfully.

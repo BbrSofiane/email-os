@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M858FYGAF7W3W4JBT810WWXX",
+  "strategy": "manual-commit",
+  "branch": "usable/android-gmail",
+  "checkpoints_count": 3,
+  "files_touched": [
+    "crates/mail-core/src/gmail/provider.rs"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 10,
+    "cache_creation_tokens": 9636,
+    "cache_read_tokens": 1219377,
+    "output_tokens": 1413,
+    "api_call_count": 4
+  }
+}
