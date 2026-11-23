@@ -7,16 +7,19 @@ use std::time::Duration;
 #[cfg(any(test, feature = "test-support"))]
 use std::time::Instant;
 
-use super::data::{fixture_reply_context, fixtures, SeedConversation};
+use super::data::{fixture_reply_context, fixtures, HtmlSource, SeedConversation};
 use super::facts::{FactStore, MessageFacts};
 use crate::attachments::{check_cancel, AttachmentDescriptor};
 use crate::dto::{Address, Conversation, ConversationRef, MailboxOperationKind, Message};
 use crate::error::MailError;
+use crate::gmail::parse::{MAX_MESSAGE_HTML_CHARS, MAX_THREAD_HTML_BYTES};
 use crate::gmail::types::{
     GmailHistoryError, GmailProfile, GmailProvider, GmailThread, HistoryPage, InboxPage,
+    InlinePart, MessageHtml,
 };
 use crate::storage_log::{storage_err, storage_fault};
 use crate::{CancelToken, ACCOUNT_ID, FIXTURE_MAILBOX};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 
 /// File (inside the profile directory) that holds the durable synthetic
 /// provider facts. It is distinct from the legacy fixture's `mail.db` and from
@@ -209,7 +212,8 @@ impl SyntheticGmailProvider {
                 body_text: message.body.to_string(),
                 // Exactly one synthetic attachment on the first message; no
                 // other message carries an attachment fact.
-                has_attachment: (index == 0).then_some(true),
+                has_attachment: (index == 0 || message.inline_image.is_some()).then_some(true),
+                html_body: None,
             })
             .collect();
         let ids_where = |predicate: fn(&MessageFacts) -> bool| -> Vec<String> {
@@ -221,7 +225,7 @@ impl SyntheticGmailProvider {
         };
         let inbox_message_ids = ids_where(|f| f.in_inbox);
         let unread_message_ids = ids_where(|f| f.unread);
-        let attachments = messages
+        let mut attachments: Vec<AttachmentDescriptor> = messages
             .first()
             .map(|first| AttachmentDescriptor {
                 message_id: first.id.clone(),
@@ -232,6 +236,43 @@ impl SyntheticGmailProvider {
             })
             .into_iter()
             .collect();
+        let logo = STANDARD
+            .decode(include_str!("html/logo.png.b64").trim())
+            .map_err(|_| storage_fault("synthetic_logo_invalid"))?;
+        let mut message_html = HashMap::new();
+        let mut inline_parts = Vec::new();
+        let mut html_bytes = 0usize;
+        for (message, _) in &ordered {
+            if let Some(source) = &message.html {
+                let value = match source {
+                    HtmlSource::Static(html)
+                        if html.chars().count() <= MAX_MESSAGE_HTML_CHARS
+                            && html_bytes.saturating_add(html.len()) <= MAX_THREAD_HTML_BYTES =>
+                    {
+                        html_bytes += html.len();
+                        MessageHtml::Present((*html).to_string())
+                    }
+                    _ => MessageHtml::TooLarge,
+                };
+                message_html.insert(message.id.to_string(), value);
+            }
+            if let Some(image) = &message.inline_image {
+                inline_parts.push(InlinePart {
+                    message_id: message.id.to_string(),
+                    content_id: image.content_id.to_string(),
+                    attachment_id: image.attachment_id.to_string(),
+                    mime_type: "image/png".to_string(),
+                    size: logo.len() as u32,
+                });
+                attachments.push(AttachmentDescriptor {
+                    message_id: message.id.to_string(),
+                    attachment_id: image.attachment_id.to_string(),
+                    filename: "logo.png".to_string(),
+                    mime_type: "image/png".to_string(),
+                    size: logo.len() as u32,
+                });
+            }
+        }
         let newest_sender = messages.last().map(|m| m.from.clone());
         let reply_context = fixture_reply_context(&reference, &messages);
         let conversation = Conversation {
@@ -248,6 +289,9 @@ impl SyntheticGmailProvider {
             pending_operation_id: None,
         };
         Ok(GmailThread {
+            message_html,
+            derived_text_ids: Default::default(),
+            inline_parts,
             star_facts: Some(
                 ordered
                     .iter()
@@ -327,6 +371,18 @@ impl GmailProvider for SyntheticGmailProvider {
         cancel: &CancelToken,
     ) -> Result<Vec<u8>, MailError> {
         check_cancel(cancel)?;
+        if account_id == ACCOUNT_ID
+            && self.conversations.iter().flat_map(|c| c.messages).any(|m| {
+                m.id == message_id
+                    && m.inline_image
+                        .as_ref()
+                        .is_some_and(|image| image.attachment_id == attachment_id)
+            })
+        {
+            return STANDARD
+                .decode(include_str!("html/logo.png.b64").trim())
+                .map_err(|_| storage_fault("synthetic_logo_invalid"));
+        }
         if account_id != ACCOUNT_ID || attachment_id != ATTACHMENT_ID {
             return Err(MailError::NotFound);
         }

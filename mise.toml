@@ -112,6 +112,16 @@ export NDK_HOME="${NDK_HOME:-$ANDROID_HOME/ndk/27.2.12479018}"
 pnpm tauri android build --debug --apk --target aarch64 x86_64 --config src-tauri/tauri.android.conf.json --ci
 '''
 
+[tasks."android:release"]
+description = "Build a signed release APK for ARM64 and x86_64"
+depends = ["android:doctor"]
+run = '''
+export ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}"
+export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+export NDK_HOME="${NDK_HOME:-$ANDROID_HOME/ndk/27.2.12479018}"
+pnpm tauri android build --apk --target aarch64 x86_64 --config src-tauri/tauri.android.conf.json --ci
+'''
+
 [tasks."android:dev"]
 description = "Run the Android fixture app on an attached device or emulator"
 depends = ["android:doctor"]

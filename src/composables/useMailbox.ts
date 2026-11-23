@@ -24,6 +24,7 @@ import type { CommandFence, MailboxSession } from './mailbox-session';
 import { SELECTION_MAX, useMailboxSelection } from './useMailboxSelection';
 import { useMailboxAccount, type AccountAction, type AccountState } from './useMailboxAccount';
 import { useMailboxGroups, type GroupNotice } from './useMailboxGroups';
+import { clearMailCache } from '../lib/html-mail/mail-cache';
 import {
   DETAIL_CACHE_MAX, DETAIL_CACHE_TTL_MS, READER_LOADING_DELAY_MS, useMailboxDetailCache,
 } from './useMailboxDetailCache';
@@ -706,6 +707,7 @@ export function useMailbox(client: MailClient): Mailbox {
     exactTotal.value = null;
     lastSyncedAt.value = null;
     closeReader();
+    clearMailCache();
     conversations.value = [];
     activity.value = [];
     focusedRef.value = null;
@@ -746,6 +748,7 @@ export function useMailbox(client: MailClient): Mailbox {
     // Drop every cached surface immediately and invalidate in-flight reads so stale
     // responses cannot repopulate the UI after a disconnect.
     closeReader();
+    clearMailCache();
     listToken += 1;
     activityToken += 1;
     activityError.value = null;
@@ -1196,6 +1199,7 @@ export function useMailbox(client: MailClient): Mailbox {
     activityToken += 1;
     detailToken += 1;
     invalidateDetailCache();
+    clearMailCache();
     clearHold();
     unsubscribe?.();
     unsubscribe = null;

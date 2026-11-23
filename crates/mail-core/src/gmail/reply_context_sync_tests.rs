@@ -31,6 +31,7 @@ fn thread(context: Option<ReplyContext>, complete: bool) -> GmailThread {
             sent_at: "2026-01-01T00:00:00Z".to_string(),
             body_text: "earlier body".to_string(),
             has_attachment: None,
+            html_body: None,
         },
         Message {
             id: "m-latest".to_string(),
@@ -42,6 +43,7 @@ fn thread(context: Option<ReplyContext>, complete: bool) -> GmailThread {
             sent_at: "2026-01-02T00:00:00Z".to_string(),
             body_text: "latest plain body".to_string(),
             has_attachment: None,
+            html_body: None,
         },
     ];
     let newest_sender = messages
@@ -417,6 +419,7 @@ fn provider_error_and_generation_source_account_races_leave_no_metadata_write() 
             sent_at: "2026-01-03T00:00:00Z".to_string(),
             body_text: "new body".to_string(),
             has_attachment: None,
+            html_body: None,
         });
         newer_thread.inbox_message_ids.push("m-newer".to_string());
         newer_thread.message_ids = Some(vec![
@@ -707,4 +710,98 @@ mod enrichment_lifecycle_tests {
         stop.join().expect("stop thread completes");
         close(core, dir);
     }
+}
+
+#[test]
+fn page_budget_drops_html_before_it_takes_room_from_text() {
+    use crate::gmail::types::MessageHtml;
+    let with_html = |bytes: usize| {
+        let mut thread = thread(None, true);
+        thread
+            .message_html
+            .insert("message".into(), MessageHtml::Present("x".repeat(bytes)));
+        thread
+    };
+    let mut budget = PageBudget::default();
+    let mut kept = 0;
+    // Far more HTML than one page may hold: every thread is still admitted.
+    for _ in 0..64 {
+        let mut observed = with_html(2 * 1024 * 1024);
+        assert!(budget.admit(&mut observed));
+        if matches!(
+            observed.message_html.get("message"),
+            Some(MessageHtml::Present(_))
+        ) {
+            kept += 1;
+        }
+    }
+    assert_eq!(kept, 4);
+    let mut plain = thread(None, true);
+    let text = 10 * 1024 * 1024;
+    plain.conversation.messages[0].body_text = "x".repeat(text);
+    assert!(budget.admit(&mut plain), "text keeps its whole budget");
+    assert!(!budget.admit(&mut plain), "the text bound still holds");
+}
+
+#[test]
+fn page_budget_keeps_an_excerpt_of_derived_text() {
+    let mut budget = PageBudget {
+        html: MAX_RETAINED_HTML_BYTES_PER_PAGE,
+        other: 0,
+    };
+    for _ in 0..100 {
+        let mut observed = thread(None, true);
+        let id = observed.conversation.messages[0].id.clone();
+        observed.derived_text_ids.insert(id);
+        observed.conversation.messages[0].body_text = "é".repeat(256 * 1024);
+        assert!(budget.admit(&mut observed));
+        let text = &observed.conversation.messages[0].body_text;
+        assert_eq!(text.chars().count(), 2_000);
+    }
+}
+
+#[test]
+fn inline_image_fetch_checks_listing_size_and_signature() {
+    use crate::gmail::types::InlinePart;
+    let (core, _provider, dir, target) = setup("inline-images", None, None, false, false);
+    let mut cached = thread(None, false);
+    for (id, size) in [
+        ("inline-png", 8),
+        ("inline-gif", 6),
+        ("too-large", (MAX_INLINE_IMAGE_BYTES + 1) as u32),
+    ] {
+        cached.inline_parts.push(InlinePart {
+            message_id: "m-latest".into(),
+            content_id: id.into(),
+            attachment_id: id.into(),
+            mime_type: "image/png".into(),
+            size,
+        });
+    }
+    core.inner
+        .store
+        .apply_discovery_page(
+            &[ThreadFetch::Cached(Box::new(cached))],
+            None,
+            true,
+            false,
+            0,
+        )
+        .unwrap();
+    let result = core
+        .get_inline_image(&target, "m-latest", "inline-png")
+        .unwrap();
+    assert_eq!(result.mime_type, "image/png");
+    assert_eq!(result.base64, STANDARD.encode(b"\x89PNG\r\n\x1a\n"));
+    assert_eq!(
+        core.get_inline_image(&target, "m-latest", "missing"),
+        Err(MailError::NotFound)
+    );
+    for id in ["inline-gif", "too-large"] {
+        assert_eq!(
+            core.get_inline_image(&target, "m-latest", id),
+            Err(crate::attachments::invalid("inlineImage"))
+        );
+    }
+    close(core, dir);
 }

@@ -246,7 +246,7 @@ fn unsupported_and_lossy_charsets_are_disclosed_as_incomplete() {
     assert_eq!(thread.conversation.context_complete, Some(false));
     assert_eq!(
         thread.conversation.unsupported_reason.as_deref(),
-        Some("2 of 2 messages had no safe plain-text body")
+        Some("2 of 2 messages had no displayable body")
     );
 }
 
@@ -262,4 +262,256 @@ fn triage_membership_includes_ids_without_safe_bodies() {
     assert_eq!(parsed.spam_message_ids, Some(vec!["spam-id".into()]));
     assert_eq!(parsed.message_ids.unwrap().len(), 3);
     assert_eq!(parsed.inbox_message_ids, vec!["independent"]);
+}
+
+/// Build a message around a MIME payload for HTML reader cases.
+fn html_test_thread(payload: Value) -> GmailThread {
+    let body = thread_response("t-html", "1", vec![gmail_message("m-html", &[], payload)]);
+    parse_thread("account", "t-html", &body).unwrap()
+}
+
+fn html_root(bytes: &[u8], content_type: &str) -> Value {
+    text_payload(
+        "text/html",
+        &[("From", "s@example.test"), ("Content-Type", content_type)],
+        Some(bytes),
+    )
+}
+
+#[test]
+fn html_only_is_retained_and_supplies_text() {
+    let thread = html_test_thread(html_root(b"<p>a</p><script>x()</script><style>p{}</style><a href=\"https://example.test/y\">link</a>", "text/html; charset=utf-8"));
+    let text = &thread.conversation.messages[0].body_text;
+    assert!(text.contains("https://example.test/y"));
+    assert!(!text.contains("x()") && !text.contains("p{}") && !text.contains("<p>"));
+    assert!(matches!(
+        thread.message_html.get("m-html"),
+        Some(MessageHtml::Present(_))
+    ));
+}
+
+#[test]
+fn alternative_retains_plain_and_html() {
+    let thread = html_test_thread(
+        json!({"mimeType":"multipart/alternative", "headers":payload_headers(&[("From", "s@example.test")]), "parts":[
+            text_payload("text/plain", &[], Some(b"plain")),
+            text_payload("text/html", &[("Content-Type", "text/html; charset=utf-8")], Some(b"<p>html</p>"))
+        ]}),
+    );
+    assert_eq!(thread.conversation.messages[0].body_text, "plain");
+    assert!(matches!(
+        thread.message_html.get("m-html"),
+        Some(MessageHtml::Present(_))
+    ));
+}
+
+#[test]
+fn related_image_is_fetchable_and_not_an_omission() {
+    let thread = html_test_thread(
+        json!({"mimeType":"multipart/related", "headers":payload_headers(&[("From", "s@example.test")]), "parts":[
+            text_payload("text/html", &[], Some(b"<img src=\"cid:logo@x\">")),
+            {"mimeType":"image/png", "headers":payload_headers(&[("Content-ID", "<logo@x>")]), "body":{"attachmentId":"image1", "size":12}}
+        ]}),
+    );
+    assert_eq!(thread.inline_parts[0].content_id, "logo@x");
+    assert_eq!(thread.attachments.len(), 1);
+    assert_eq!(thread.conversation.unsupported_reason, None);
+}
+
+#[test]
+fn html_charset_and_size_limits() {
+    let utf8 = html_test_thread(html_root("<p>é</p>".as_bytes(), "text/html"));
+    assert!(
+        matches!(utf8.message_html.get("m-html"), Some(MessageHtml::Present(s)) if s.contains('é'))
+    );
+    let latin = html_test_thread(html_root(
+        b"<meta charset=iso-8859-1><p>\xe9</p>",
+        "text/html",
+    ));
+    assert!(
+        matches!(latin.message_html.get("m-html"), Some(MessageHtml::Present(s)) if s.contains('é'))
+    );
+    let large = html_test_thread(html_root(&vec![b'a'; 512 * 1024 + 1], "text/html"));
+    assert!(matches!(
+        large.message_html.get("m-html"),
+        Some(MessageHtml::TooLarge)
+    ));
+    assert!(!large.conversation.messages.is_empty());
+}
+
+#[test]
+fn invalid_inline_resources_are_not_retained() {
+    for image in [
+        json!({"mimeType":"image/png", "headers":payload_headers(&[("Content-ID", "<logo@x>")]), "body":{"data":"YWJj", "size":3}}),
+        json!({"mimeType":"image/svg+xml", "headers":payload_headers(&[("Content-ID", "<logo@x>")]), "body":{"attachmentId":"image1", "size":3}}),
+    ] {
+        let thread = html_test_thread(
+            json!({"mimeType":"multipart/related", "headers":payload_headers(&[("From", "s@example.test")]), "parts":[text_payload("text/html", &[], Some(b"<p>hello</p>")), image]}),
+        );
+        assert!(thread.inline_parts.is_empty());
+    }
+}
+
+#[test]
+fn undecodable_html_leaves_plain_body() {
+    let thread = html_test_thread(
+        json!({"mimeType":"multipart/alternative", "headers":payload_headers(&[("From", "s@example.test")]), "parts":[
+            text_payload("text/plain", &[], Some(b"plain")),
+            text_payload("text/html", &[("Content-Type", "text/html; charset=utf-8")], Some(b"\xff"))
+        ]}),
+    );
+    assert_eq!(thread.conversation.messages[0].body_text, "plain");
+    assert!(thread.message_html.is_empty());
+}
+
+#[test]
+fn html_beyond_depth_is_not_selected() {
+    let mut payload = text_payload("text/html", &[], Some(b"deep"));
+    for _ in 0..=MAX_PAYLOAD_DEPTH {
+        payload = json!({"mimeType":"multipart/mixed", "parts":[payload]});
+    }
+    payload["headers"] = Value::Array(payload_headers(&[("From", "s@example.test")]));
+    let thread = html_test_thread(payload);
+    assert!(thread.message_html.is_empty());
+    assert!(thread
+        .conversation
+        .unsupported_reason
+        .unwrap()
+        .contains("had no displayable body"));
+}
+
+#[test]
+fn thread_html_budget_marks_later_messages() {
+    let messages = (0..5)
+        .map(|i| {
+            gmail_message(
+                &format!("m{i}"),
+                &[],
+                html_root(&vec![b'a'; 512 * 1024], "text/html"),
+            )
+        })
+        .collect();
+    let body = thread_response("t", "1", messages);
+    let thread = parse_thread("account", "t", &body).unwrap();
+    assert!(matches!(
+        thread.message_html.get("m4"),
+        Some(MessageHtml::TooLarge)
+    ));
+}
+
+#[test]
+fn thread_html_budget_keeps_earlier_messages() {
+    let messages = (0..5)
+        .map(|i| {
+            gmail_message(
+                &format!("m{i}"),
+                &[],
+                html_root(&vec![b'a'; 512 * 1024], "text/html"),
+            )
+        })
+        .collect();
+    let body = thread_response("t", "1", messages);
+    let thread = parse_thread("account", "t", &body).unwrap();
+    for id in ["m0", "m1", "m2", "m3"] {
+        assert!(matches!(
+            thread.message_html.get(id),
+            Some(MessageHtml::Present(_))
+        ));
+    }
+    assert_eq!(thread.conversation.messages.len(), 5);
+}
+
+#[test]
+fn html_outside_the_chosen_body_is_additional_content() {
+    let thread = html_test_thread(json!({
+        "mimeType": "multipart/mixed",
+        "headers": payload_headers(&[("From", "s@example.test")]),
+        "parts": [
+            text_payload("text/plain", &[], Some(b"Main body")),
+            text_payload("text/html", &[], Some(b"<p>Something else</p>")),
+        ],
+    }));
+    assert_eq!(thread.conversation.messages[0].body_text, "Main body");
+    assert!(thread.message_html.is_empty());
+    assert_eq!(
+        thread.conversation.unsupported_reason.as_deref(),
+        Some("additional inline MIME content is not displayed")
+    );
+}
+
+#[test]
+fn alternative_with_related_html_keeps_both_and_the_inline_image() {
+    let thread = html_test_thread(json!({
+        "mimeType": "multipart/alternative",
+        "headers": payload_headers(&[("From", "s@example.test")]),
+        "parts": [
+            text_payload("text/plain", &[], Some(b"plain")),
+            {
+                "mimeType": "multipart/related",
+                "parts": [
+                    text_payload("text/html", &[], Some(b"<img src=\"cid:logo@x\">")),
+                    {
+                        "mimeType": "image/png",
+                        "headers": payload_headers(&[("Content-ID", "<logo@x>")]),
+                        "body": {"attachmentId": "image1", "size": 12},
+                    },
+                ],
+            },
+        ],
+    }));
+    assert_eq!(thread.conversation.messages[0].body_text, "plain");
+    assert!(matches!(
+        thread.message_html.get("m-html"),
+        Some(MessageHtml::Present(_))
+    ));
+    assert_eq!(thread.inline_parts.len(), 1);
+    assert_eq!(thread.conversation.unsupported_reason, None);
+}
+
+#[test]
+fn hostile_html_only_messages_keep_the_thread_and_stay_bounded() {
+    let mib = 1024 * 1024;
+    let shapes = [
+        format!("<table><tr>{}</tr></table>", "<td>a</td>".repeat(100_000)),
+        format!("{}visible", "<div>".repeat(200_000)),
+        format!("{}visible", "<blockquote>".repeat(80_000)),
+        format!("{}visible", "<ul><li>".repeat(120_000)),
+        format!("{}visible", "<table><tr><td>".repeat(60_000)),
+        format!("<p {}>visible</p>", "a b c d ".repeat(120_000)),
+        "&".repeat(mib),
+        "<a href='https://x.test/'>x</a>".repeat(mib / 32),
+    ];
+    let messages = shapes
+        .iter()
+        .enumerate()
+        .map(|(i, html)| {
+            assert!(html.len() <= mib, "shape {i} is parsed, not rejected");
+            gmail_message(
+                &format!("m{i}"),
+                &[],
+                html_root(html.as_bytes(), "text/html; charset=utf-8"),
+            )
+        })
+        .collect();
+    let body = thread_response("t", "1", messages);
+    let started = std::time::Instant::now();
+    let thread = parse_thread("account", "t", &body).unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    assert_eq!(thread.conversation.messages.len(), shapes.len());
+    assert_eq!(thread.conversation.unsupported_reason, None);
+    for (i, message) in thread.conversation.messages.iter().enumerate() {
+        assert!(message.body_text.chars().count() <= MAX_MESSAGE_TEXT_CHARS);
+        assert!((1..=5).contains(&i) == message.body_text.ends_with("visible"));
+        assert!(thread.derived_text_ids.contains(&message.id));
+    }
+}
+
+#[test]
+fn image_only_html_is_displayable_without_text() {
+    let thread = html_test_thread(html_root(
+        b"<a href='https://x.test/'><img src='https://x.test/a.png'></a>",
+        "text/html",
+    ));
+    assert_eq!(thread.conversation.messages[0].body_text, "");
+    assert_eq!(thread.conversation.unsupported_reason, None);
 }

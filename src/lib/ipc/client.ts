@@ -202,6 +202,10 @@ export interface MailClient {
     cancel(command: CancelReminder): Promise<Reminder>;
   };
   /** Cached bounded metadata only; retained/legacy cache may have no files. */
+  /** Returns cached HTML and inline image metadata for a message. */
+  getMessageHtml(target: ConversationRef, messageId: string): Promise<import('./generated').MessageHtmlBody>;
+  /** Fetches a validated inline image for a message. */
+  getInlineImage(target: ConversationRef, messageId: string, attachmentId: string): Promise<import('./generated').InlineImageData>;
   listAttachments(target: ConversationRef): Promise<import('./generated').AttachmentDescriptor[]>;
   /** Rust-only readonly fetch to a new inert file in OS Downloads; no caller path. */
   saveAttachment(request: import('./generated').SaveAttachment): Promise<import('./generated').AttachmentSaved>;

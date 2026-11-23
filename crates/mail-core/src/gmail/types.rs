@@ -96,8 +96,33 @@ pub struct InboxPage {
     pub next_page_token: Option<String>,
 }
 
+/// Bounded HTML retained for a message.
+#[derive(Clone, PartialEq, Eq)]
+pub enum MessageHtml {
+    /// The decoded HTML body.
+    Present(String),
+    /// The body exceeds the per-message or thread retention limit.
+    TooLarge,
+}
+
+/// Fetchable inline image metadata. Parts with only body data are ignored.
+#[derive(Clone, PartialEq, Eq)]
+pub struct InlinePart {
+    pub message_id: String,
+    pub content_id: String,
+    pub attachment_id: String,
+    pub mime_type: String,
+    pub size: u32,
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct GmailThread {
+    /// HTML bodies by message ID; absence means no decodable HTML part.
+    pub message_html: std::collections::HashMap<String, MessageHtml>,
+    /// Messages whose `body_text` was derived from their HTML.
+    pub derived_text_ids: std::collections::HashSet<String>,
+    /// Bounded metadata for fetchable inline images.
+    pub inline_parts: Vec<InlinePart>,
     /// Observed STARRED values keyed by message ID, including unsupported bodies.
     /// Absent map/entries are unknown, not false (legacy/partial label coverage).
     pub star_facts: Option<std::collections::HashMap<String, bool>>,
@@ -115,6 +140,45 @@ pub struct GmailThread {
     pub trash_message_ids: Option<Vec<String>>,
     pub spam_message_ids: Option<Vec<String>>,
     pub history_id: String,
+}
+
+/// Text kept for an HTML-only message whose HTML did not fit its page.
+const DERIVED_TEXT_EXCERPT_CHARS: usize = 2_000;
+
+impl GmailThread {
+    /// Discard retained HTML while preserving its unavailable state, and keep
+    /// only an excerpt of the text derived from it.
+    pub fn drop_html(&mut self) {
+        for html in self.message_html.values_mut() {
+            if matches!(html, MessageHtml::Present(_)) {
+                *html = MessageHtml::TooLarge;
+            }
+        }
+        for message in &mut self.conversation.messages {
+            if self.derived_text_ids.contains(&message.id) {
+                message.body_text = message
+                    .body_text
+                    .chars()
+                    .take(DERIVED_TEXT_EXCERPT_CHARS)
+                    .collect();
+            }
+        }
+    }
+
+    /// Bytes held by HTML bodies and by the text derived from them.
+    pub(crate) fn html_bytes(&self) -> usize {
+        let html = self.message_html.values().map(|html| match html {
+            MessageHtml::Present(body) => body.capacity(),
+            MessageHtml::TooLarge => 0,
+        });
+        let derived = self
+            .conversation
+            .messages
+            .iter()
+            .filter(|message| self.derived_text_ids.contains(&message.id))
+            .map(|message| message.body_text.capacity());
+        html.chain(derived).fold(0, usize::saturating_add)
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]

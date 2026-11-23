@@ -10,6 +10,7 @@ license = "UNLICENSED"
 test-support = ["dep:tempfile"]
 
 [dependencies]
+markup5ever = "=0.40.0"
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

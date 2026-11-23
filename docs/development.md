@@ -93,9 +93,8 @@ The Android target is a fixture-only Tauri app with a viewport-driven compact ph
 (up to 719 CSS px); browser preview uses the same layout mode. It uses the same synthetic fixture core
 and SQLite profile as native fixture mode (ADR 0002). Android always selects fixture mode,
 even if `EMAIL_OS_MODE=gmail` is present. A pre-existing legacy fixture database is retired
-once behind the startup screen (closing the app is the cancel path). Gmail account controls, attachment
-export, and external link dispatch are unavailable on Android. The shell returns
-the typed `unsupported_platform` error for attachment export and external links. The WebView
+once behind the startup screen (closing the app is the cancel path). Gmail account controls and attachment export are unavailable on Android. The shell returns
+the typed `unsupported_platform` error for attachment export. Confirmed external links dispatch through an Android ACTION_VIEW intent via JNI. The WebView
 content remains padded for safe system insets; native status and navigation bars use the app
 surface color and light icons. Compact layout keeps the existing capabilities and adds no mail
 engine or IPC behavior. See [ADR 0003](adr/0003-mobile-layout.md) and [UX-14](ux-14-mobile-shell.md).
@@ -131,6 +130,33 @@ the Tauri Android template, install the pinned SDK/NDK first and run
 diff and restore the pinned application ID, SDK, and NDK settings if the CLI
 template changes them.
 
+### Signed Android releases
+
+Android release builds use application ID `dev.exedev.emailos` and label
+**Email OS**. The old `dev.exedev.emailos.androidfixture` app can remain
+installed alongside it. Copy any draft text you want before uninstalling the
+old app. In-place updates of Email OS use the same release certificate and a
+higher version code.
+
+After merge, configure the protected `android-release` environment and
+dispatch **Android Release** from `main`. The workflow sets the version code
+to `1000 + github.run_number`, builds and verifies the universal ARM64 and
+x86_64 APK, then publishes it under
+`android-v<versionName>-<versionCode>`. Open that entry under **Releases** on
+the phone and tap `email-os-android-release.apk` under **Assets**. The notes
+include the APK checksum. [Owner setup and phone validation](adr/0004-android-install-and-run.md#owner-actions).
+
+For local validation, generate a throwaway JKS or PKCS12 keystore under the
+ignored Android build directory. Supply its path, alias, store password and key
+password through `ANDROID_KEYSTORE_PATH`, `ANDROID_KEY_ALIAS`,
+`ANDROID_KEYSTORE_PASSWORD` and `ANDROID_KEY_PASSWORD`. With PKCS12, use the
+same password for the store and key. Set an explicit test
+`ANDROID_VERSION_CODE` and run `mise run android:release`. The release APK
+is under `src-tauri/gen/android/app/build/outputs/apk/universal/release/`.
+Run `scripts/android/verify-release.sh` with the APK path, version name,
+version code and expected signing certificate SHA-256. Keep the owner key on
+the owner's machine and in the protected Actions environment.
+
 For the device smoke check, build the APK and install it on an attached Android
 device or emulator. Use device interaction tools to launch the app and verify:
 
@@ -155,9 +181,10 @@ They were re-run on 2026-11-15 with the unified-fixture CI APK
 open findings are in [current-status.md](current-status.md). The keyboard stayed
 hidden during draft entry, so IME layout remains unverified.
 
-Legacy reset check (when changing the transition): install an APK from before ADR
-0002, archive a conversation and save a draft, then run the new APK over the same
-profile. `adb install -r` is refused when the two APKs are signed with different
+Legacy reset check (for historical debuggable builds under the old
+`dev.exedev.emailos.androidfixture` ID): install an APK from before ADR
+0002, archive a conversation and save a draft, then run a later debug APK over
+the same profile. `adb install -r` is refused when the two APKs are signed with different
 debug keys (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`, as between the CI runs used on
 2026-11-15). In that case tar `fixture-profile/` out with `adb exec-out run-as
 dev.exedev.emailos.androidfixture tar -cf - fixture-profile`, uninstall, install the
@@ -289,6 +316,14 @@ rendered suites; some use `EMAIL_OS_DISCLOSURE_FOCUS_CHROME`. A passing rendered
 suite is browser interaction evidence only. It does not validate native IPC,
 WKWebView, real mail, or provider behavior.
 
+For the HTML reader suites, run:
+
+```sh
+EMAIL_OS_RUN_RENDERED=1 mise exec -- pnpm exec vitest run tests/reader/html-reader.rendered.test.ts tests/reader/html-sanitize.rendered.test.ts tests/rendered/html-frame-spike.rendered.test.ts
+```
+
+Set `EMAIL_OS_SCREENSHOT_DIR` when running `html-reader.rendered.test.ts` to produce screenshots. To probe a debug Android WebView over DevTools, use `adb forward tcp:<port> localabstract:webview_devtools_remote_<pid>` and evaluate `FRAME_PROBE_SOURCE` from `tests/rendered/html-frame-probe.ts`.
+
 ## Running the app
 
 **Browser preview (in-memory, not durable):** `mise run dev:web`, then open the
@@ -313,7 +348,8 @@ operation ledger (acceptance, undo, groups, reminders) is the same code Gmail mo
 * its files live under `<app_data_dir>/fixture-profile`: `synthetic-provider.db` (durable provider
   facts, seeded once), `gmail.db` (the core's cache and operation ledger), `profile.lock`, and
   `local-drafts/` (local drafts, separate from the mailbox);
-* all 18 conversations are present (the two initially archived ones are cached, not Inbox, not
+* all 24 native conversations are present, including six HTML samples (ADR 0006); 22 are in Inbox
+  (the two initially archived ones are cached, not Inbox, not
   Done). Inbox mail is seeded as a realistic read/unread mix; archive, read, star, undo, groups,
   retry, saved split, search (cached only), reminders (hide locally, no provider write), the
   `fixture-text` attachment and reply headers work through the same commands as Gmail mode; cached
@@ -637,11 +673,10 @@ transfer (a blocked HTTP call can take its existing 30-second timeout to return)
 a completed save or process crash may leave an inert file. A lost save response
 may leave a completed download; retries can create another unique file. Browser
 preview only models a memory-only save and external handoff, not filesystem or
-provider effects. External HTTP(S) dispatch currently targets macOS only.
+provider effects. External HTTP(S) dispatch supports macOS and Android.
 
 PDF preview is **not implemented**: the restricted macOS platform sandbox and
-compatibility spike has not passed. No PDF/HTML/Office document enters a webview,
-trusted DOM or third-party viewer. Native build/bridge tests do not satisfy
+compatibility spike has not passed. No PDF/HTML/Office attachment enters a webview, trusted DOM or third-party viewer. HTML mail bodies render in a sandboxed frame (ADR 0006). Native build/bridge tests do not satisfy
 WKWebView key handling, VoiceOver, Downloads permissions, OS browser dispatch,
 or the PDF security spike. Disposable provider validation remains separately
 operator-gated, not authorized by implementation work.
@@ -826,13 +861,13 @@ core is the source of truth; the fake must agree with it.
 
 A scenario names the profiles it applies to: `gmail` and `fixture`. In Rust, `fixture` is the
 synthetic session; in TypeScript it is the browser fake's fixture mode. Scenarios that need a
-mailbox the fixed 18 conversations cannot provide list `gmail` only.
+mailbox the browser fake’s fixed 18 conversations cannot provide list `gmail` only.
 
 The Rust `synthetic` profile matches the `gmail` profile except where the session policy differs,
 and every difference is a named, justified `KNOWN_DIVERGENCES` entry. Both Rust tables are empty
 today. KD-1 (the Gmail worker stopped at a definitely rejected write and left its siblings queued
 until the next retry tick) is fixed: see "Worker behaviour after a failed write" below. Scenarios whose mailbox is not a subset of the
-fixed 18 conversations get their extra threads from a test overlay on the synthetic provider. The
+fixed 24 native conversations get their extra threads from a test overlay on the synthetic provider. The
 browser fake's `fixture` mode mirrors the unified fixture: read, star, retry and the cached Starred
 list are admitted, Trash, destinations and the lifecycle commands answer `invalid_request{mode}` /
 `read_only` exactly as the synthetic policy does.
@@ -937,7 +972,7 @@ backoff; that path is unchanged.
 
 ## Fixture data
 
-Fixture mode uses only synthetic `fixture-account`, `conv-01`…`conv-18` rows,
+Fixture mode uses only synthetic `fixture-account`, `conv-01`…`conv-24` rows (22 Inbox, including six HTML samples from ADR 0006),
 seeded once; it never resets provider facts or operation history. Gmail mode has a
 separate SQLite schema/profile and bounded cache. Neither mode logs subjects,
 addresses, bodies, OAuth codes, or credentials. Gmail history catch-up does not

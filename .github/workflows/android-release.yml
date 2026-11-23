@@ -1,0 +1,58 @@
+name: Android Release
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: android-release
+  cancel-in-progress: false
+jobs:
+  release:
+    if: github.repository == 'BbrSofiane/email-os' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: android-release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
+        with:
+          version: "2026.11.3"
+          cache: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+        with:
+          packages: platform-tools
+      - run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+      - run: rustup target add aarch64-linux-android x86_64-linux-android
+      - run: mise run install:ui
+      - name: Set release version code
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+        run: echo "ANDROID_VERSION_CODE=$((1000 + RUN_NUMBER))" >> "$GITHUB_ENV"
+      - name: Build and sign APK
+        env:
+          ENCODED_KEY: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          export ANDROID_KEYSTORE_PATH
+          ANDROID_KEYSTORE_PATH=$(mktemp "$RUNNER_TEMP/email-os-signing.XXXXXX")
+          trap 'rm -f -- "$ANDROID_KEYSTORE_PATH"' EXIT
+          printf '%s' "$ENCODED_KEY" | base64 --decode > "$ANDROID_KEYSTORE_PATH"
+          unset ENCODED_KEY
+          mise run android:release
+      - name: Verify and publish
+        env:
+          ANDROID_RELEASE_CERT_SHA256: ${{ vars.ANDROID_RELEASE_CERT_SHA256 }}
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/android/publish-release.sh

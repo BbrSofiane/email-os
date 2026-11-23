@@ -120,9 +120,7 @@ Implemented behavior:
   only for the matching identity/context and newest activation, so reversed
   completions cannot replace the newer result. Copying never triggers a draft,
   navigation, or any mailbox write, and adds no native permission.
-- **Safety unchanged:** bodies render exclusively through text interpolation —
-  no `v-html`, no HTML/Markdown processing, no remote assets; hostile markup
-  stays literal text (asserted in real Chrome). Retained/incomplete/header
+- **Safety unchanged:** plain-text bodies render by interpolation; HTML bodies render only inside the sandboxed frame ([ADR 0006](adr/0006-html-mail-reader.md)); no `v-html` in the app document. Retained/incomplete/header
   checks, `unsupportedReason`/`contextComplete` disclosures, draft lifecycle and
   close protection, permission gates, no-auto-read, and overlay inertness are
   preserved.

@@ -8,28 +8,29 @@ research and architecture proposals are not feature inventories.
 
 | Feature | Native fixture (default) | Explicit Gmail profile | Browser preview |
 |---|---|---|---|
-| Mailbox and reader | Durable synthetic inbox (the Gmail core on the built-in synthetic provider, [ADR 0002](adr/0002-fixture-as-synthetic-provider.md)), plain-text reader, read/unread mix, operation recovery. | Separate profile; bounded Gmail cache and plain-text reader. Read-only until the user enables mailbox actions. | Synthetic fixtures and in-memory state only; no Gmail, SQLite durability, or native IPC. |
+| Mailbox and reader | Durable synthetic inbox (the Gmail core on the built-in synthetic provider, [ADR 0002](adr/0002-fixture-as-synthetic-provider.md)), plain-text and HTML reader, read/unread mix, operation recovery. | Separate profile; bounded Gmail cache and plain-text and HTML reader. Read-only until the user enables mailbox actions. | Synthetic fixtures and HTML reader in memory; no Gmail, SQLite durability, or native IPC. |
 | Mailbox writes | Archive/unarchive, read/unread and star/unstar (single and group), retry and undo, through the same operation ledger as Gmail; no permission grant. Interrupted writes are requeued at the next launch. | Explicit archive/unarchive, read/unread, and star/unstar setters only, after opt-in `gmail.modify` upgrade. No automatic read on open. | Fake-provider simulation only; does not prove provider writes or convergence. |
 | Composition | Plain-text new message and reply; durable local drafts in the selected native profile. No send path. | Same local-only drafts; they do not sync to Gmail. No send path. | Synthetic drafts in memory; saves are not durable. |
-| Search | Cached search over the 18 fixture conversations. | Read-only cached search or progressive provider scan, with bounded/incomplete coverage disclosures. | Synthetic fake search only. |
+| Search | Cached search over the 24 native fixture conversations, including six HTML samples (ADR 0006). | Read-only cached search or progressive provider scan, with bounded/incomplete coverage disclosures. | Synthetic fake search only. |
 | Saved split | One local, account-scoped saved split. | One local split, removed on Gmail disconnect with cached account data. | Synthetic in-memory split. |
 | Stars | Star/unstar setters and the cached Starred view, shown by the backend's `triageSurfaces` capability. | Starred cache browsing is read-only; explicit star/unstar setters require enabled Gmail modify capability. Cache coverage is incomplete. | Fake simulated-Gmail star state; not fixture-native or provider validation. |
 | Reminders | Device-local reminders; schedule/reschedule/cancel/return do not write the provider. | Device-local reminders; schedule/reschedule/cancel/return do not write Gmail or require modify permission. | Synthetic in-memory reminder state. |
-| Attachments and links | Synthetic fixture-text attachment listing/downloads. | Bounded cached descriptors and authenticated read-only Gmail fetch; explicit downloads create inert `.download` files. Links need explicit browser confirmation. No automatic opening or restricted document host. | Synthetic attachment surfaces only; no native download or Gmail fetch. |
+| Attachments and links | Synthetic fixture attachment listing/downloads; confirmed links open in the system browser. | Bounded cached descriptors and authenticated read-only Gmail fetch; explicit downloads create inert `.download` files. Links need explicit browser confirmation. No automatic opening or restricted document host. | Synthetic attachment surfaces only; no native download or Gmail fetch. |
 | Multiple workspaces | One native session; native tabs are not implemented or certified. | One active Gmail profile/session. This is not real multi-account activation. | Two isolated synthetic in-app workspaces are supported by the preview. |
 
-The Android fixture target builds a debug APK for ARM64 and x86_64 from the
-shared Rust shell. It uses SQLite and the same synthetic fixture core as desktop
-(ADR 0002); Gmail, attachment export, and external link dispatch are
-unavailable. APK build passed on 2026-11-14. A pre-existing legacy fixture
+The Android fixture target builds debug and signed release APKs for ARM64 and
+x86_64 from the shared Rust shell. The new Android package is
+`dev.exedev.emailos`, with launcher label **Email OS**. It uses SQLite and the
+same synthetic fixture core as desktop (ADR 0002). Gmail and attachment export
+are unavailable. Confirmed external links open in the system browser. The
+original APK build passed on 2026-11-14. A pre-existing legacy fixture
 database is retired once behind a startup screen. The unified-fixture APK was
 smoke-tested on an Android 15 x86_64 emulator on 2026-11-15 (see below). Compact
 phone layout is now in scope at widths ≤719px for Android fixture and browser preview.
 The compact shell covers lists, reader, compose, search, reminders, utility pages,
 contact details, command overlays and device-local swipe settings. Sending, reply-all,
-forwarding, HTML bodies, label chips, multiple splits and destructive Trash/Spam/move
-actions are not supported. Android uses fixture data; compact layout adds no mail IPC
-or engine capabilities. See the
+forwarding, label chips, multiple splits and destructive Trash/Spam/move
+actions are not supported. HTML bodies are shown in the compact reader ([ADR 0006](adr/0006-html-mail-reader.md)). Android uses fixture data. See the
 [Android smoke steps](development.md#android-fixture-apk).
 
 The compact layout was checked on the same emulator on 2026-11-16 with a locally
@@ -50,15 +51,33 @@ Known from that pass: the first launch right after a fresh install can still hit
 the Android "isn't responding" dialog recorded for the original APK (a relaunch
 is fine), and no physical device was used.
 
+The Android install work moved profile-path resolution and database opening off
+the Tauri event loop. Android 15 emulator testing still found focus-dispatch
+ANRs in WebView construction before the profile worker began. On the owner's
+Nothing Phone (3a) Pro on Android 17 the debug build reached the Inbox in about
+2 seconds with no ANR, which met the first-launch gate on 2026-11-23. The
+owner-key release workflow and the in-place update on the phone are pending.
+[Cold-start evidence](validation/android-install/cold-start.md) ·
+[Android install proposal](adr/0004-android-install-and-run.md)
+
 Mode selection is deliberate: native defaults to fixture; `EMAIL_OS_MODE=gmail`
 selects a separate Gmail profile. Browser preview remains synthetic. See the
 [development guide](development.md) for launch and validation commands.
 
-Sending, provider-synced drafts, reply-all, Bcc, delete/Trash mutations, arbitrary
-label editing, and HTML mail rendering are not implemented. Attachment saving
-does not provide inline PDF/Office preview or malware scanning. External HTTP(S)
-link dispatch is macOS-only; other platforms report it unavailable. See the
+Sending, provider-synced drafts, reply-all, Bcc, delete/Trash mutations and arbitrary
+label editing are not implemented. Attachment saving
+does not provide inline PDF/Office preview or malware scanning. Confirmed external HTTP(S) links dispatch on macOS and Android. See the
 linked contracts for exact bounds and pending platform security gates.
+
+### HTML mail (ADR 0006)
+
+The desktop and compact reader show formatted HTML mail in the native app and in browser preview; Android was checked on the emulator, macOS WKWebView is an owner check. Gmail keeps plain and HTML parts; HTML-only mail gets text from a bounded linear extractor for previews, search, reply quotes and copying. HTML is bounded to 512 Ki characters per message and 2 MiB per thread. Oversized HTML, including HTML over the separate 8 MiB sync-page budget for HTML, shows text and “Formatted version too large to show.” Migration `gmail-migrations-10` adds HTML state and inline-part storage; cached mail stays plain until refreshed.
+
+Pinned DOMPurify 3.4.17 and a CSS filter clean mail in an inert document. The result is parsed in a sandboxed `srcdoc` frame, without scripts, forms, popups or top navigation. SVG, MathML and navigable `href` attributes are removed; HTTP(S) and mailto links use `data-eos-href`. Remote images are withheld as `data-eos-src` until “Load images” is chosen for that message; the choice lasts until the conversation closes. Listed, signature-checked PNG, JPEG, GIF and WebP `cid:` images up to 2 MiB load as base64 without disk writes. The frame uses `sandbox="allow-same-origin"` and a CSP of `default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; form-action 'none'`, adding `https:` to `img-src` after loading images. It inherits the app CSP, whose only change is adding `https:` to `img-src`. A guard checks `__TAURI_INTERNALS__`, `__TAURI__`, `__TAURI_IPC__`, `__TAURI_POST_MESSAGE__`, `__TAURI_METADATA__` and `ipc`; if visible, it falls back to text with “Formatted view unavailable on this device.”
+
+Frames fit their content; wide mail scales to a 0.5 floor then scrolls sideways. Mail with its own colours uses a white card; other mail uses app colours. Quotes collapse, plain and formatted views can be switched per message, and reader shortcuts are forwarded except selection and copy keys. Links share a confirmation with Files and links, showing the full URL and a warning for mismatched link text. Mailto offers copying the address or starting a message to it. Android dispatches confirmed HTTP(S) links through JNI; Files and links remains hidden there and attachment saving remains unsupported.
+
+The native fixture has 24 conversations, including six HTML samples; seed version 2 upgrades version-1 profiles additively. The preview's primary workspace shares those samples; the browser fake's default test seed remains 18. CSS and sanitiser corpus tests, Chrome frame and rendered reader tests cover the feature. The frame probe passed on Android 15 WebView; macOS WKWebView remains an owner check. See [ADR 0006](adr/0006-html-mail-reader.md) and [validation](validation/html-reader/).
 
 ## Validation status
 

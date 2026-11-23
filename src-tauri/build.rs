@@ -1,4 +1,8 @@
 fn main() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
+        println!("cargo:rustc-link-arg-cdylib=-Wl,-z,max-page-size=16384");
+    }
+
     let manifest = tauri_build::AppManifest::new().commands(&[
         "list_provider_destinations",
         "browse_provider_destination",
@@ -17,6 +21,8 @@ fn main() {
         "list_cached_trash",
         "get_conversation",
         "list_attachments",
+        "get_message_html",
+        "get_inline_image",
         "save_attachment",
         "cancel_attachment",
         "open_external_link",

@@ -59,15 +59,14 @@ document prefixes are rejected. Unsupported MIME is saved inert, never rendered.
 observable corruption; this is not structural PDF/Office validation or a malware
 scanner. No raw bytes/base64/credentials reach Vue.
 External links allow only bounded HTTP(S), host required, no credentials or
-controls; Rust revalidates before system browser dispatch on macOS. Other OS
-external dispatch is unavailable, not a simulated success.
+controls; Rust revalidates before system browser dispatch on macOS and Android. The confirmation is shared with links in formatted mail ([ADR 0006](adr/0006-html-mail-reader.md)). Attachment behavior is unchanged; saving remains unsupported on Android.
 
 ## PDF preview security gate: BLOCKED — spike not run
 
 No restricted macOS platform sandbox spike evidence is available. This checkout
 has no implemented restricted document host or evidence of its sandbox policy;
 compiling the Tauri app on macOS does not supply that evidence. Do NOT create
-a preview webview, use app DOM PDF/HTML, iframe/object/embed or third-party viewer.
+an attachment preview webview, use app DOM PDF/HTML, iframe/object/embed or third-party viewer.
 PDF is download-only. BROWSE-14 preview acceptance is NOT complete.
 Required spike: macOS/OS renderer compatibility, corrupt/encrypted/large PDFs,
 no privileged app IPC, no navigation/remote requests (HTTP, file, scripts,
