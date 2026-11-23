@@ -106,7 +106,7 @@ const isReply = computed(() => props.variant === 'reply');
 const LOCAL_DETAIL = 'Local plain-text draft. Nothing is sent. Recipients are stored as typed and are not validated. Bcc, reply-all and rich text are not supported.';
 /** Settled states that read "<state> · never sent"; the first two stay calm (Ash). */
 const draftDetail = computed(() => props.sendAvailable
-  ? 'Local plain-text draft. Send checks the recipients before queueing.'
+  ? 'Local plain-text draft. Recipients are stored as typed and are not validated until you send.'
   : LOCAL_DETAIL);
 const SETTLED_CALM = new Set(['Saved locally', 'Draft loaded from this device']);
 const SETTLED_NON_DURABLE = new Set(['Saved in preview memory (non-durable)', 'Loaded from preview memory (non-durable)']);

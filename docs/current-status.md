@@ -66,6 +66,14 @@ failed and unknown outcomes. A send with an unknown outcome can be checked,
 copied or dismissed. The app never replays it. Linux and Windows desktop keep
 the local-draft workflow. See [ADR 0007](adr/0007-send-mail.md).
 
+The Chromium fixture flow covers sending, undoing, reopening the unchanged
+draft, and then opening the sent conversation from Activity. See the
+[phone editor](validation/send/browser/phone-send-editor.png),
+[phone Undo](validation/send/browser/phone-send-undo.png),
+[phone Activity](validation/send/browser/phone-send-activity.png),
+[desktop editor](validation/send/browser/desktop-send-editor.png), and
+[desktop confirmed conversation](validation/send/browser/desktop-send-confirmed.png).
+
 ### HTML mail (ADR 0006)
 
 The desktop and compact reader show formatted HTML mail in the native app and in browser preview; Android was checked on the emulator, macOS WKWebView is an owner check. Gmail keeps plain and HTML parts; HTML-only mail gets text from a bounded linear extractor for previews, search, reply quotes and copying. HTML is bounded to 512 Ki characters per message and 2 MiB per thread. Oversized HTML, including HTML over the separate 8 MiB sync-page budget for HTML, shows text and “Formatted version too large to show.” Migration `gmail-migrations-10` adds HTML state and inline-part storage; cached mail stays plain until refreshed.
