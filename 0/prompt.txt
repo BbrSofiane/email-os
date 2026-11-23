@@ -1,0 +1,6 @@
+Delegated task node:delegated-task:command%3Amcp%3Ae6212a3c-d59d-46cf-a02c-cb79323b4191%3Adelegate-task%3A41553358-c923-45fd-96a1-342eba3322e4 (B stage 4b2: mode IPC commands and Android startup) in child thread thread:delegated-task:command%3Amcp%3Ae6212a3c-d59d-46cf-a02c-cb79323b4191%3Adelegate-task%3A41553358-c923-45fd-96a1-342eba3322e4 [failed]:
+You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 24th, 2026 2:19 AM.
+
+Last assistant message before the run failed:
+
+The UI suite passed all 2,299 tests. Typecheck exposed a missing local `MailMode` type import; I fixed it and am rerunning the full check.
