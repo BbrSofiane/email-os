@@ -103,6 +103,7 @@ rust {
 }
 
 dependencies {
+    implementation("com.google.android.gms:play-services-auth:21.4.0")
     implementation("androidx.webkit:webkit:1.6.1")
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("com.google.android.material:material:1.8.0")

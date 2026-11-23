@@ -7,6 +7,8 @@
 //! pre-existing legacy fixture database is retired once, with disclosure and a
 //! verified backup (ADR 0002).
 
+#[cfg(target_os = "android")]
+mod android_auth;
 mod close_gate;
 mod commands;
 mod diagnostics;
@@ -72,5 +74,7 @@ pub fn run() {
         complete_app_close,
         cancel_app_close
     ]);
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(android_auth::plugin());
     setup::run(builder);
 }
