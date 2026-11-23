@@ -7,7 +7,6 @@
 //! pre-existing legacy fixture database is retired once, with disclosure and a
 //! verified backup (ADR 0002).
 
-#[cfg(target_os = "android")]
 mod android_auth;
 mod close_gate;
 mod commands;
