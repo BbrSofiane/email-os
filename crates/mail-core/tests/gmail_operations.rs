@@ -994,6 +994,8 @@ fn expired_grant_preserves_draft_and_queued_archive_until_reconnect() {
     assert!(until(|| core.list_conversations().unwrap().activity[0]
         .status
         == OperationStatus::Confirmed));
+    // Two attempts reached the provider: the rejected one (expired grant,
+    // nothing applied) and the one after reconnect, which confirmed.
     assert_eq!(provider.writes().len(), 2);
     assert_eq!(
         core.account_status().unwrap().mutation_access,
