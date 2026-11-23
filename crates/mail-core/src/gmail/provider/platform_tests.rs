@@ -153,3 +153,89 @@ fn tokenless_connect_persists_no_access_token() {
     provider.connect(&CancelToken::default()).unwrap();
     assert!(inner.load().unwrap().unwrap().access_token.is_empty());
 }
+
+#[test]
+fn rejected_platform_read_refreshes_once() {
+    let store = Arc::new(MemorySecrets::new());
+    let auth = Arc::new(ScriptedAuthorizer::default());
+    let mut bundle = future_token();
+    bundle.platform_authorized = true;
+    bundle.refresh_token = None;
+    store.store(&bundle).unwrap();
+    let (provider, api) = setup(
+        store.clone(),
+        auth.clone(),
+        vec![(PATH, 401, ""), (PATH, 200, PROFILE)],
+    );
+    let mut fresh = grant(&[auth::GMAIL_READONLY_SCOPE]);
+    fresh.access_token = "fresh".into();
+    auth.push_authorize(Ok(fresh));
+    provider.profile(&CancelToken::default()).unwrap();
+    assert_eq!(auth.cleared_tokens(), vec![bundle.access_token]);
+    let requests = auth.requests();
+    assert_eq!(requests.len(), 1);
+    assert!(!requests[0].interactive);
+    assert_eq!(
+        requests[0].account.as_deref(),
+        Some("synthetic@example.test")
+    );
+    assert_eq!(api.requests().len(), 2);
+    assert_eq!(store.load().unwrap().unwrap().access_token, "fresh");
+}
+
+#[test]
+fn rejected_platform_read_stops_after_retry_or_interaction_required() {
+    for interaction in [false, true] {
+        let store = Arc::new(MemorySecrets::new());
+        let auth = Arc::new(ScriptedAuthorizer::default());
+        let mut bundle = future_token();
+        bundle.platform_authorized = true;
+        bundle.refresh_token = None;
+        bundle.granted_scopes = vec![auth::GMAIL_READONLY_SCOPE.into()];
+        store.store(&bundle).unwrap();
+        let (provider, api) = setup(
+            store.clone(),
+            auth.clone(),
+            vec![(PATH, 401, ""), (PATH, 401, "")],
+        );
+        if interaction {
+            auth.push_authorize(Err(PlatformAuthError::NeedsUserInteraction));
+        } else {
+            auth.push_authorize(Ok(grant(&[auth::GMAIL_READONLY_SCOPE])));
+        }
+        assert_eq!(
+            provider.profile(&CancelToken::default()).err(),
+            Some(MailError::AuthRequired)
+        );
+        assert_eq!(api.requests().len(), if interaction { 1 } else { 2 });
+        let current = store.load().unwrap().unwrap();
+        assert_eq!(current.account_id, bundle.account_id);
+        assert_eq!(current.granted_scopes, bundle.granted_scopes);
+    }
+}
+
+#[test]
+fn rejected_platform_setter_invalidates_without_retry() {
+    let store = Arc::new(MemorySecrets::new());
+    let auth = Arc::new(ScriptedAuthorizer::default());
+    let mut bundle = future_token();
+    bundle.platform_authorized = true;
+    bundle.refresh_token = None;
+    bundle.gmail_modify_granted = true;
+    bundle.granted_scopes = vec![auth::GMAIL_MODIFY_SCOPE.into()];
+    store.store(&bundle).unwrap();
+    let (provider, api) = setup(
+        store.clone(),
+        auth.clone(),
+        vec![("/gmail/v1/users/me/messages/batchModify", 401, "")],
+    );
+    assert_eq!(
+        provider
+            .apply_archive(&["message".into()], true, &CancelToken::default())
+            .err(),
+        Some(MailError::AuthRequired)
+    );
+    assert_eq!(api.requests().len(), 1);
+    assert_eq!(auth.cleared_tokens(), vec![bundle.access_token]);
+    assert_eq!(store.load().unwrap().unwrap().expires_at_epoch_ms, 0);
+}

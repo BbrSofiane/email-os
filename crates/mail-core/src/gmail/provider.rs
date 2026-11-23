@@ -452,10 +452,47 @@ impl LiveGmailProvider {
         })
     }
 
+    /// Invalidates only the platform token that received an unauthorized response.
+    fn invalidate_platform_token(&self, token: &str) -> Result<(), MailError> {
+        let CredentialSource::Platform { authorizer, .. } = &self.source else {
+            return Ok(());
+        };
+        let _ = authorizer.clear_token(token);
+        let mut publication = self.credential_publication.lock().map_err(storage_err())?;
+        if let Some(mut bundle) = self.secrets.load()? {
+            if bundle.access_token == token {
+                bundle.expires_at_epoch_ms = 0;
+                self.publish_bundle_locked(
+                    &mut publication,
+                    &bundle,
+                    CredentialPublicationKind::Refresh,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     /// GET one API path with the bearer token. `Ok(None)` maps to HTTP 404
     /// (used for deleted thread/history-expiry semantics by callers). Body
     /// sizes are bounded; every other non-success is a typed error.
     fn api_get(
+        &self,
+        path: &str,
+        query: &str,
+        token: &str,
+        cancel: &CancelToken,
+    ) -> Result<Option<String>, MailError> {
+        match self.api_get_once(path, query, token, cancel) {
+            Err(MailError::AuthRequired) if self.platform() => {
+                self.invalidate_platform_token(token)?;
+                let (fresh, _) = self.access_token_with_account(cancel)?;
+                self.api_get_once(path, query, &fresh, cancel)
+            }
+            result => result,
+        }
+    }
+
+    fn api_get_once(
         &self,
         path: &str,
         query: &str,
@@ -668,7 +705,7 @@ impl LiveGmailProvider {
         let response = self
             .http
             .post(&url)
-            .bearer_auth(token)
+            .bearer_auth(&token)
             .json(&body)
             .send()
             .map_err(|error| {
@@ -693,6 +730,7 @@ impl LiveGmailProvider {
             return Err(result.unwrap_or(MailError::ProviderRejected));
         }
         if status == StatusCode::UNAUTHORIZED {
+            self.invalidate_platform_token(&token)?;
             return Err(MailError::AuthRequired);
         }
         if status == StatusCode::TOO_MANY_REQUESTS {
