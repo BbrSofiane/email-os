@@ -1,0 +1,57 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M856ZWWVKW8FK695WXEEG45V",
+  "session_id": "68b8a7bc-eb32-4666-93b1-9426c22459f4",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-23T22:04:02.996847474Z",
+  "branch": "usable/install",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "docs/current-status.md",
+    "docs/validation/android-install/cold-start.md",
+    "docs/validation/android-install/install-update.md"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-5-5",
+  "turn_id": "52303fd39643",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 330,
+    "cache_creation_tokens": 822001,
+    "cache_read_tokens": 19279850,
+    "output_tokens": 122927,
+    "api_call_count": 148,
+    "subagent_tokens": {
+      "input_tokens": 8,
+      "cache_creation_tokens": 61657,
+      "cache_read_tokens": 145053,
+      "output_tokens": 5125,
+      "api_call_count": 4
+    }
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-23T22:04:02.552785664Z",
+    "agent_lines": 271,
+    "agent_removed": 15,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 271,
+    "total_lines_changed": 286,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 95,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".codex/hooks.json": 23,
+        "pi-scheduled-tasks": 72
+      }
+    }
+  ]
+}
