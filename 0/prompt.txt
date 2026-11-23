@@ -1,0 +1,67 @@
+Delegated task node:delegated-task:command%3Amcp%3Ae6212a3c-d59d-46cf-a02c-cb79323b4191%3Adelegate-task%3A20e64860-6239-460e-8345-68d8b47f71da (B stage 3: Android auth bridge and Keystore secrets) in child thread thread:delegated-task:command%3Amcp%3Ae6212a3c-d59d-46cf-a02c-cb79323b4191%3Adelegate-task%3A20e64860-6239-460e-8345-68d8b47f71da [completed]:
+Stage 3 remains incomplete. I read the shared rules and inspected the bridge contracts, but did not implement the Kotlin or Rust bridge. The checkout remains clean; no commit was created.
+
+The disk check showed 19 GB available, and no matching Cargo, Gradle, or Vitest process was running at that point. No tests or Android build were run, so there is no APK to report.
+
+---
+
+Delegated task node:delegated-task:command%3Amcp%3Ae6212a3c-d59d-46cf-a02c-cb79323b4191%3Adelegate-task%3Ac606403c-ea7b-489c-91d0-b5e6cd870df8 (B stage 3a: Kotlin GoogleAuthBridge and plugin registration) in child thread thread:delegated-task:command%3Amcp%3Ae6212a3c-d59d-46cf-a02c-cb79323b4191%3Adelegate-task%3Ac606403c-ea7b-489c-91d0-b5e6cd870df8 [completed]:
+Implemented and committed the Android Google authorization bridge as `94618dd933619adc4870d58bfe8abb78ca72b975`. The working tree is clean; nothing was pushed.
+
+Changed [GoogleAuthBridge.kt](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/src-tauri/gen/android/app/src/main/java/dev/exedev/emailos/GoogleAuthBridge.kt), [build.gradle.kts](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/src-tauri/gen/android/app/build.gradle.kts), [android_auth.rs](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/src-tauri/src/android_auth.rs), and [lib.rs](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/src-tauri/src/lib.rs). No API name adaptations were needed.
+
+- Linux: `cargo test -p email-os` passed, with 19 tests.
+- Android: `mise run android:build` passed. The build emitted warnings, including an unused bridge handle that the next stage will consume.
+- APK: [app-universal-debug.apk](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk), 395,256,753 bytes.
+
+The bridge has been compiled but has not been exercised on a device, as requested.
+
+---
+
+Delegated task node:delegated-task:command%3Amcp%3Ae6212a3c-d59d-46cf-a02c-cb79323b4191%3Adelegate-task%3Adc7ba153-e662-491e-9bda-686c7206a33e (B stage 3b: Rust Android authorizer and Keystore secrets) in child thread thread:delegated-task:command%3Amcp%3Ae6212a3c-d59d-46cf-a02c-cb79323b4191%3Adelegate-task%3Adc7ba153-e662-491e-9bda-686c7206a33e [completed]:
+Implemented and committed the Android platform credential adapters in commit `0379851`. The changes cover [android_auth.rs](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/src-tauri/src/android_auth.rs), [lib.rs](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/src-tauri/src/lib.rs), and [GoogleAuthBridge.kt](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/src-tauri/gen/android/app/src/main/java/dev/exedev/emailos/GoogleAuthBridge.kt). The credential factory is ready for setup wiring in the next stage.
+
+Checks passed:
+
+- `cargo test -p email-os`, including `parse_bridge_results` and `bridge_wait_result_cancel_timeout`
+- `mise run check` and `mise run lint:native`
+- `mise run android:build`, with no Rust warnings from `android_auth.rs`
+
+The Android build reported existing warnings in other Rust files and two unnecessary Kotlin casts. The working tree is clean, and the commit was not pushed.
+
+---
+
+Delegated task node:delegated-task:command%3Amcp%3Ae6212a3c-d59d-46cf-a02c-cb79323b4191%3Adelegate-task%3A18618e58-aba0-41a6-b285-07d17687ae93 (B stage 4a: swappable session and DraftService::retire) in child thread thread:delegated-task:command%3Amcp%3Ae6212a3c-d59d-46cf-a02c-cb79323b4191%3Adelegate-task%3A18618e58-aba0-41a6-b285-07d17687ae93 [completed]:
+Implemented and committed the swappable session and draft retirement changes as `d7ce181`. The working tree is clean; nothing was pushed.
+
+Changed files: [draft service](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/crates/mail-core/src/drafts/service.rs), [state](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/src-tauri/src/state.rs), [setup](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/src-tauri/src/setup.rs), and the account, attachments, drafts, and mailbox command modules.
+
+Added tests `retirement_invalidates_epoch_and_rejects_operations` and `replacing_session_retires_old_drafts_and_releases_profile`.
+
+All requested checks passed:
+
+- `cargo test -p mail-core`
+- `cargo test -p email-os`
+- `mise run check`
+- `mise run lint:native`
+- `mise run android:build`
+
+Rust checks and the Android build used the requested shared target directory and two build jobs. The Android build emitted an unused `RunEvent` import warning.
+
+---
+
+Delegated task node:delegated-task:command%3Amcp%3Ae6212a3c-d59d-46cf-a02c-cb79323b4191%3Adelegate-task%3A6204576f-5033-4dff-873d-24bdf2ea6e37 (B stage 4b: mode file, switch_mode, Android Gmail startup) in child thread thread:delegated-task:command%3Amcp%3Ae6212a3c-d59d-46cf-a02c-cb79323b4191%3Adelegate-task%3A6204576f-5033-4dff-873d-24bdf2ea6e37 [completed]:
+I did not implement or commit part 4b. The checkout remains unchanged, and none of the requested checks ran. No commit SHA is available.
+
+I read the machine rules and inspected the startup, session and transition wiring. The process check showed Gradle and Kotlin daemon processes, but I did not establish whether another build was active. The mode file, commands, Android startup changes, generated client, and tests all remain outstanding.
+
+---
+
+Delegated task node:delegated-task:command%3Amcp%3Ae6212a3c-d59d-46cf-a02c-cb79323b4191%3Adelegate-task%3A484105c4-82b1-4a7a-93b4-baca82a8e22e (B stage 4b1: mode file and switch_session helper) in child thread thread:delegated-task:command%3Amcp%3Ae6212a3c-d59d-46cf-a02c-cb79323b4191%3Adelegate-task%3A484105c4-82b1-4a7a-93b4-baca82a8e22e [completed]:
+Implemented and committed mode persistence and session switching in commit `fc89b66`.
+
+The new tests cover mode-file round trips and invalid data, a failed opener preserving the existing session, and switching between fixture profiles. The round-trip and failed-opener tests pass. **The switch test fails** when reopening profile A with `ProfileInUse`; the existing session retirement test fails at the same point. The requested test gate therefore remains unresolved.
+
+- `cargo test -p email-os`: 23 passed, 2 failed, including both profile reopen tests.
+- `mise run lint:native`: passed.
+- `cargo fmt --all -- --check`: passed.
