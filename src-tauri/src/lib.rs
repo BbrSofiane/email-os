@@ -13,6 +13,7 @@ mod commands;
 mod diagnostics;
 #[cfg(test)]
 mod manifest_tests;
+mod mode;
 mod setup;
 mod state;
 #[cfg(test)]

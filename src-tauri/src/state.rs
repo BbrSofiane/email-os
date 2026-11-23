@@ -55,7 +55,6 @@ impl AppState {
             })
     }
 
-    #[allow(dead_code)] // Used by the mode switch in the next implementation stage.
     pub(crate) fn replace_session(
         &self,
         next: Session,
@@ -68,7 +67,6 @@ impl AppState {
 }
 
 /// Retire drafts before releasing the profile's core.
-#[allow(dead_code)] // Used by the mode switch in the next implementation stage.
 pub(crate) fn retire_session(old: &Session) {
     let _ = old.drafts.retire();
     old.core.stop();
