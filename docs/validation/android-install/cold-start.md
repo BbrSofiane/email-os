@@ -146,3 +146,17 @@ fixture upgrade.
 The upgraded Inbox showed the HTML fixture messages. The migration and
 fixture upgrade completed within the 169 ms worker interval, after focus.
 One upgrade sample cannot isolate their individual costs.
+
+## Owner's phone, 2026-11-23
+
+The owner installed the CI debug APK built at `f6abadf` (run 45077584648,
+artifact `email-os-android-fixture-debug`) on the Nothing Phone (3a) Pro on
+Android 17 and launched it repeatedly. Each launch reached the Inbox in about
+2 seconds. No "isn't responding" dialog appeared.
+
+**Gate decision (coordinator, 2026-11-23).** The ANR acceptance gate is met on
+the target device. The focus ANRs above are treated as an artefact of the
+loaded x86_64 Android 15 emulator with WebView 124, not as a release blocker.
+If an ANR is ever observed on the phone, the gate reopens and the WebView
+startup options above are the starting point. The phone's in-place update test
+with the owner's signing key still follows the first owner-signed release.

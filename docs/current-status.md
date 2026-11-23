@@ -53,9 +53,10 @@ is fine), and no physical device was used.
 
 The Android install work moved profile-path resolution and database opening off
 the Tauri event loop. Android 15 emulator testing still found focus-dispatch
-ANRs in WebView construction before the profile worker began. The first-launch
-gate remains open. The owner's Nothing Phone (3a) Pro on Android 17 and the
-owner-key release workflow are pending validation.
+ANRs in WebView construction before the profile worker began. On the owner's
+Nothing Phone (3a) Pro on Android 17 the debug build reached the Inbox in about
+2 seconds with no ANR, which met the first-launch gate on 2026-11-23. The
+owner-key release workflow and the in-place update on the phone are pending.
 [Cold-start evidence](validation/android-install/cold-start.md) ·
 [Android install proposal](adr/0004-android-install-and-run.md)
 

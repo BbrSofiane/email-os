@@ -48,5 +48,6 @@ Chromium captures of the shared compact layout:
 [Inbox](browser-inbox.png) and [compose](browser-compose.png).
 
 The in-place update and persistence checks passed with a throwaway signer.
-The [cold-start gate](cold-start.md) remains open. Owner signing,
-publication on GitHub Releases, and the Android 17 phone test remain pending.
+The [cold-start gate](cold-start.md) was met on the owner's Android 17 phone
+on 2026-11-23. Owner signing, publication on GitHub Releases, and the in-place
+update on the phone remain pending.
