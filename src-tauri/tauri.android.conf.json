@@ -1,4 +1,4 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "identifier": "dev.exedev.emailos.androidfixture"
+  "identifier": "dev.exedev.emailos"
 }

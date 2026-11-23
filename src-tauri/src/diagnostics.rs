@@ -33,6 +33,8 @@ pub(crate) fn storage_failure(cause: &'static str) -> MailError {
 /// Cause tags for the three failure shapes the shell maps.
 pub(crate) mod cause {
     pub(crate) const LOCK_POISONED: &str = "lock_poisoned";
+    #[cfg(target_os = "android")]
+    pub(crate) const STARTUP: &str = "startup";
     pub(crate) const TASK_JOIN: &str = "thread_join";
     pub(crate) const PATH_UNAVAILABLE: &str = "path_unavailable";
 }

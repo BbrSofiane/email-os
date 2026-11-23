@@ -18,9 +18,12 @@ research and architecture proposals are not feature inventories.
 | Attachments and links | Synthetic fixture attachment listing/downloads; confirmed links open in the system browser. | Bounded cached descriptors and authenticated read-only Gmail fetch; explicit downloads create inert `.download` files. Links need explicit browser confirmation. No automatic opening or restricted document host. | Synthetic attachment surfaces only; no native download or Gmail fetch. |
 | Multiple workspaces | One native session; native tabs are not implemented or certified. | One active Gmail profile/session. This is not real multi-account activation. | Two isolated synthetic in-app workspaces are supported by the preview. |
 
-The Android fixture target builds a debug APK for ARM64 and x86_64 from the
-shared Rust shell. It uses SQLite and the same synthetic fixture core as desktop
-(ADR 0002); Gmail and attachment export are unavailable; confirmed links dispatch on Android. APK build passed on 2026-11-14. A pre-existing legacy fixture
+The Android fixture target builds debug and signed release APKs for ARM64 and
+x86_64 from the shared Rust shell. The new Android package is
+`dev.exedev.emailos`, with launcher label **Email OS**. It uses SQLite and the
+same synthetic fixture core as desktop (ADR 0002). Gmail and attachment export
+are unavailable. Confirmed external links open in the system browser. The
+original APK build passed on 2026-11-14. A pre-existing legacy fixture
 database is retired once behind a startup screen. The unified-fixture APK was
 smoke-tested on an Android 15 x86_64 emulator on 2026-11-15 (see below). Compact
 phone layout is now in scope at widths ≤719px for Android fixture and browser preview.
@@ -47,6 +50,15 @@ the saved draft in Drafts. Screenshots:
 Known from that pass: the first launch right after a fresh install can still hit
 the Android "isn't responding" dialog recorded for the original APK (a relaunch
 is fine), and no physical device was used.
+
+The Android install work moved profile-path resolution and database opening off
+the Tauri event loop. Android 15 emulator testing still found focus-dispatch
+ANRs in WebView construction before the profile worker began. On the owner's
+Nothing Phone (3a) Pro on Android 17 the debug build reached the Inbox in about
+2 seconds with no ANR, which met the first-launch gate on 2026-11-23. The
+owner-key release workflow and the in-place update on the phone are pending.
+[Cold-start evidence](validation/android-install/cold-start.md) ·
+[Android install proposal](adr/0004-android-install-and-run.md)
 
 Mode selection is deliberate: native defaults to fixture; `EMAIL_OS_MODE=gmail`
 selects a separate Gmail profile. Browser preview remains synthetic. See the

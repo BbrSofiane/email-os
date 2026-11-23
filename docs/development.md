@@ -130,6 +130,33 @@ the Tauri Android template, install the pinned SDK/NDK first and run
 diff and restore the pinned application ID, SDK, and NDK settings if the CLI
 template changes them.
 
+### Signed Android releases
+
+Android release builds use application ID `dev.exedev.emailos` and label
+**Email OS**. The old `dev.exedev.emailos.androidfixture` app can remain
+installed alongside it. Copy any draft text you want before uninstalling the
+old app. In-place updates of Email OS use the same release certificate and a
+higher version code.
+
+After merge, configure the protected `android-release` environment and
+dispatch **Android Release** from `main`. The workflow sets the version code
+to `1000 + github.run_number`, builds and verifies the universal ARM64 and
+x86_64 APK, then publishes it under
+`android-v<versionName>-<versionCode>`. Open that entry under **Releases** on
+the phone and tap `email-os-android-release.apk` under **Assets**. The notes
+include the APK checksum. [Owner setup and phone validation](adr/0004-android-install-and-run.md#owner-actions).
+
+For local validation, generate a throwaway JKS or PKCS12 keystore under the
+ignored Android build directory. Supply its path, alias, store password and key
+password through `ANDROID_KEYSTORE_PATH`, `ANDROID_KEY_ALIAS`,
+`ANDROID_KEYSTORE_PASSWORD` and `ANDROID_KEY_PASSWORD`. With PKCS12, use the
+same password for the store and key. Set an explicit test
+`ANDROID_VERSION_CODE` and run `mise run android:release`. The release APK
+is under `src-tauri/gen/android/app/build/outputs/apk/universal/release/`.
+Run `scripts/android/verify-release.sh` with the APK path, version name,
+version code and expected signing certificate SHA-256. Keep the owner key on
+the owner's machine and in the protected Actions environment.
+
 For the device smoke check, build the APK and install it on an attached Android
 device or emulator. Use device interaction tools to launch the app and verify:
 
@@ -154,9 +181,10 @@ They were re-run on 2026-11-15 with the unified-fixture CI APK
 open findings are in [current-status.md](current-status.md). The keyboard stayed
 hidden during draft entry, so IME layout remains unverified.
 
-Legacy reset check (when changing the transition): install an APK from before ADR
-0002, archive a conversation and save a draft, then run the new APK over the same
-profile. `adb install -r` is refused when the two APKs are signed with different
+Legacy reset check (for historical debuggable builds under the old
+`dev.exedev.emailos.androidfixture` ID): install an APK from before ADR
+0002, archive a conversation and save a draft, then run a later debug APK over
+the same profile. `adb install -r` is refused when the two APKs are signed with different
 debug keys (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`, as between the CI runs used on
 2026-11-15). In that case tar `fixture-profile/` out with `adb exec-out run-as
 dev.exedev.emailos.androidfixture tar -cf - fixture-profile`, uninstall, install the

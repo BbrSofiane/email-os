@@ -1,4 +1,4 @@
-/src/main/java/dev/exedev/emailos/androidfixture/generated
+/src/main/java/dev/exedev/emailos/generated
 /src/main/jniLibs/**/*.so
 /src/main/assets/tauri.conf.json
 /tauri.build.gradle.kts
