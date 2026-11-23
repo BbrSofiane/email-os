@@ -1,0 +1,10 @@
+Delegated task node:delegated-task:command%3Amcp%3Ae6212a3c-d59d-46cf-a02c-cb79323b4191%3Adelegate-task%3A2d93fec2-1f6d-4c39-aa1c-d44ce4b75356 (B stage 2c: platform 401 handling and weekly-expiry test) in child thread thread:delegated-task:command%3Amcp%3Ae6212a3c-d59d-46cf-a02c-cb79323b4191%3Adelegate-task%3A2d93fec2-1f6d-4c39-aa1c-d44ce4b75356 [completed]:
+Committed the platform 401 handling as `79721d5`. Rejected platform tokens are cleared and marked expired through the publication fence. GETs refresh silently and retry once; setters return `AuthRequired` without retrying.
+
+Changed [provider.rs](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/crates/mail-core/src/gmail/provider.rs), [platform_tests.rs](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/crates/mail-core/src/gmail/provider/platform_tests.rs), and [gmail_operations.rs](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/crates/mail-core/tests/gmail_operations.rs).
+
+The new tests are `rejected_platform_read_refreshes_once`, `rejected_platform_read_stops_after_retry_or_interaction_required`, `rejected_platform_setter_invalidates_without_retry`, and `expired_grant_preserves_draft_and_queued_archive_until_reconnect`.
+
+Both requested checks passed: `cargo test -p mail-core` with 416 tests, and `mise run check` with 2,298 UI tests, formatting, Clippy, contract and type checks.
+
+The expiry test verifies the queued write, cached conversation detail, draft, mutation access, and reconnect. The optimistic archive hides the inbox row immediately, so the inbox count falls even though the cached detail remains. The test does **not** also force provider reads to return `AuthRequired`, and I did not identify a specific existing Loopback 401 regression test; those requested coverage points remain open. No core behavior was changed for the inbox-count observation.
