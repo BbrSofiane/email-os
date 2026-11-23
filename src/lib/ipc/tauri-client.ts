@@ -6,6 +6,8 @@
  * MailError object; rejections are normalized through `toMailError` so the UI can
  * never mistake a transport fault for success.
  */
+import { GET_MODE_CHOICE_COMMAND, SWITCH_MODE_COMMAND } from './generated';
+import type { ModeChoice, MailMode } from './client';
 import { LIST_REMINDERS_COMMAND, PUT_REMINDER_COMMAND, CANCEL_REMINDER_COMMAND } from './generated';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -182,6 +184,8 @@ export function createTauriMailClient(): MailClient {
     getAccountStatus(): Promise<AccountStatus> {
       return call<AccountStatus>(GET_ACCOUNT_STATUS_COMMAND);
     },
+    getModeChoice(): Promise<ModeChoice> { return call(GET_MODE_CHOICE_COMMAND); },
+    switchMode(mode: MailMode): Promise<ModeChoice> { return call(SWITCH_MODE_COMMAND, { mode }); },
     getFixtureTransitionStatus(): Promise<FixtureTransitionStatus> {
       return call<FixtureTransitionStatus>(GET_FIXTURE_TRANSITION_STATUS_COMMAND);
     },

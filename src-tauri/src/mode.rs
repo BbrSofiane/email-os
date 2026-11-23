@@ -19,8 +19,7 @@ struct ModeFile {
 }
 
 /// None when the file is absent, unreadable, corrupt or names an unknown mode.
-// Wired by the mode commands (next part).
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(not(any(test, target_os = "android")), allow(dead_code))]
 pub(crate) fn read_mode(app_data_dir: &Path) -> Option<MailMode> {
     let data = fs::read(app_data_dir.join(MODE_FILE)).ok()?;
     match serde_json::from_slice::<ModeFile>(&data) {
@@ -33,8 +32,7 @@ pub(crate) fn read_mode(app_data_dir: &Path) -> Option<MailMode> {
 }
 
 /// Atomically writes the mode and best-effort syncs the directory.
-// Wired by the mode commands (next part).
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(not(any(test, target_os = "android")), allow(dead_code))]
 pub(crate) fn write_mode(app_data_dir: &Path, mode: MailMode) -> Result<(), MailError> {
     let write = || -> std::io::Result<()> {
         fs::create_dir_all(app_data_dir)?;
@@ -65,8 +63,7 @@ pub(crate) fn write_mode(app_data_dir: &Path, mode: MailMode) -> Result<(), Mail
 }
 
 /// Opens the target before replacing and retiring the current session.
-// Wired by the mode commands (next part).
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(not(any(test, target_os = "android")), allow(dead_code))]
 pub(crate) fn switch_session(
     state: &AppState,
     open_target: impl FnOnce() -> Result<Session, MailError>,

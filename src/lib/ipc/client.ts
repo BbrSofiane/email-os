@@ -26,6 +26,8 @@ import type {
   AccountStatus,
   AppCloseRequest,
   FixtureTransitionStatus,
+  ModeChoice,
+  MailMode,
   Conversation,
   ConversationRef,
   CreateDraft,
@@ -75,6 +77,7 @@ export type {
   FixtureTransitionFailure,
   FixtureTransitionState,
   FixtureTransitionStatus,
+  ModeChoice,
   AppCloseRequest,
   GetOperationGroupRequest,
   GroupMemberReceipt,
@@ -263,6 +266,8 @@ export interface MailClient {
    * One-time retirement of a legacy fixture database (ADR 0002 stage 4): where
    * the startup gate stands. `not_needed` and `done` clear the gate.
    */
+  getModeChoice(): Promise<ModeChoice>;
+  switchMode(mode: MailMode): Promise<ModeChoice>;
   getFixtureTransitionStatus(): Promise<FixtureTransitionStatus>;
   /**
    * The user accepted the disclosed reset: back up, verify, retire. Resolves

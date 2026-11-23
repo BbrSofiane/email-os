@@ -69,6 +69,8 @@ pub fn run() {
         save_draft,
         delete_draft,
         get_app_close_request,
+        get_mode_choice,
+        switch_mode,
         get_fixture_transition_status,
         accept_fixture_transition,
         complete_app_close,

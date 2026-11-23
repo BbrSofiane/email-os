@@ -152,7 +152,6 @@ mod android {
         }
     }
     /// Construct credentials from the registered plugin; setup wiring follows in the next stage.
-    #[allow(dead_code)]
     pub(crate) fn platform_credentials(
         app: &tauri::AppHandle,
     ) -> Option<(Arc<dyn PlatformAuthorizer>, Arc<dyn Secrets>)> {

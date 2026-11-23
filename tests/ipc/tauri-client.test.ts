@@ -73,6 +73,16 @@ describe('Tauri draft and close protocol adapter', () => {
     await expect(client.listCachedStarred(request)).rejects.toEqual({kind:'storage_unavailable'});
   });
 
+  it('transports mode choice commands and arguments', async () => {
+    const client = createTauriMailClient();
+    const choice = { chosen: true, mode: 'gmail' };
+    mocks.invoke.mockResolvedValue(choice);
+    expect(await client.getModeChoice()).toBe(choice);
+    expect(mocks.invoke).toHaveBeenLastCalledWith('get_mode_choice', undefined);
+    expect(await client.switchMode('gmail')).toBe(choice);
+    expect(mocks.invoke).toHaveBeenLastCalledWith('switch_mode', { mode: 'gmail' });
+  });
+
   it('transports the one-time fixture transition with exact named commands and no arguments', async () => {
     const client = createTauriMailClient();
     const needs = { state: 'needs_disclosure', legacyMegabytes: 3 };

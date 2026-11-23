@@ -93,6 +93,13 @@ pub enum FixtureTransitionFailure {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+pub struct ModeChoice {
+    pub chosen: bool,
+    pub mode: crate::gmail::types::MailMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct FixtureTransitionStatus {
     pub state: FixtureTransitionState,
     /// Size of the existing synthetic data in whole megabytes (at least 1),

@@ -2061,6 +2061,8 @@ export function createBrowserFakeMailClient(
       pendingClose = null;
     },
 
+    async getModeChoice() { return { chosen: true, mode: account.mode }; },
+    async switchMode(mode: MailMode) { account.mode = mode; return { chosen: true, mode }; },
     async getFixtureTransitionStatus(): Promise<FixtureTransitionStatus> {
       return snapshotCopy(fixtureTransition);
     },

@@ -48,6 +48,8 @@ export const DELETE_DRAFT_COMMAND = 'delete_draft';
 export const DRAFTS_CHANGED_EVENT = 'drafts_changed';
 export const APP_CLOSE_REQUESTED_EVENT = 'app_close_requested';
 export const GET_APP_CLOSE_REQUEST_COMMAND = 'get_app_close_request';
+export const GET_MODE_CHOICE_COMMAND = 'get_mode_choice';
+export const SWITCH_MODE_COMMAND = 'switch_mode';
 export const GET_FIXTURE_TRANSITION_STATUS_COMMAND = 'get_fixture_transition_status';
 export const ACCEPT_FIXTURE_TRANSITION_COMMAND = 'accept_fixture_transition';
 export const COMPLETE_APP_CLOSE_COMMAND = 'complete_app_close';
@@ -453,6 +455,8 @@ export type FixtureTransitionStatus = { state: FixtureTransitionState,
  * present while `needsDisclosure`.
  */
 legacyMegabytes?: number, failure?: FixtureTransitionFailure, };
+
+export type ModeChoice = { chosen: boolean, mode: MailMode, };
 
 export type AccountStatus = { mode: MailMode, connection: ConnectionState, account: AccountInfo | null, sync: SyncInfo, mutationAccess?: MutationAccess,
 /**

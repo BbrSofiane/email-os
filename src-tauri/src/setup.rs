@@ -3,7 +3,6 @@ use crate::commands::begin_native_close;
 use crate::state::AppState;
 use mail_core::drafts::DraftCore;
 use mail_core::fixture_transition::FixtureTransition;
-#[cfg(not(target_os = "android"))]
 use mail_core::gmail::provider::LiveGmailProvider;
 #[cfg(not(target_os = "android"))]
 use mail_core::gmail::secrets::KeychainSecrets;
@@ -31,7 +30,7 @@ pub(crate) fn open_fixture_core(
 }
 
 #[cfg(any(target_os = "android", test))]
-fn open_fixture_state(
+pub(crate) fn open_fixture_state(
     app_data_dir: &std::path::Path,
 ) -> Result<(GmailCore, DraftCore), Box<dyn std::error::Error>> {
     let (core, profile_dir) = open_fixture_core(app_data_dir)?;
@@ -45,13 +44,49 @@ fn open_fixture_state(
 }
 
 #[cfg(target_os = "android")]
+pub(crate) fn open_gmail_state(
+    app: &tauri::AppHandle,
+    dir: &std::path::Path,
+) -> Result<(GmailCore, DraftCore), Box<dyn std::error::Error>> {
+    let (authorizer, secrets) = crate::android_auth::platform_credentials(app)
+        .ok_or(mail_core::error::MailError::UnsupportedPlatform)?;
+    let provider = LiveGmailProvider::with_platform_authorizer(authorizer, secrets)?;
+    let profile = dir.join("gmail-profile");
+    let core = GmailCore::open(&profile, Arc::new(provider))?;
+    match DraftCore::open(profile.join("local-drafts")) {
+        Ok(drafts) => Ok((core, drafts)),
+        Err(error) => {
+            core.stop();
+            Err(error.into())
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
 #[derive(Default)]
 pub(crate) struct StartupCoordinator {
-    transition: Mutex<Option<Arc<FixtureTransition>>>,
+    transition: Mutex<Option<(Arc<FixtureTransition>, bool)>>,
 }
 
 #[cfg(target_os = "android")]
 impl StartupCoordinator {
+    pub(crate) fn chosen(&self) -> Result<bool, mail_core::error::MailError> {
+        self.transition
+            .lock()
+            .map(|state| state.as_ref().map(|(_, chosen)| *chosen).unwrap_or(false))
+            .map_err(|_| {
+                crate::diagnostics::storage_failure(crate::diagnostics::cause::LOCK_POISONED)
+            })
+    }
+    pub(crate) fn update(
+        &self,
+        transition: Arc<FixtureTransition>,
+    ) -> Result<(), mail_core::error::MailError> {
+        *self.transition.lock().map_err(|_| {
+            crate::diagnostics::storage_failure(crate::diagnostics::cause::LOCK_POISONED)
+        })? = Some((transition, true));
+        Ok(())
+    }
     pub(crate) fn ensure_ready(
         &self,
         app: &tauri::AppHandle,
@@ -61,7 +96,7 @@ impl StartupCoordinator {
             .transition
             .lock()
             .map_err(|_| storage_failure(cause::LOCK_POISONED))?;
-        if let Some(ready) = transition.as_ref() {
+        if let Some((ready, _)) = transition.as_ref() {
             return Ok(Arc::clone(ready));
         }
         // Android resolves this path through a synchronous mobile plugin call.
@@ -70,14 +105,31 @@ impl StartupCoordinator {
             .path()
             .app_data_dir()
             .map_err(|_| storage_failure(cause::PATH_UNAVAILABLE))?;
-        let (core, drafts) =
-            open_fixture_state(&app_data_dir).map_err(|_| storage_failure(cause::STARTUP))?;
-        let ready = Arc::new(FixtureTransition::new(app_data_dir.join("fixture-profile")));
+        let saved = crate::mode::read_mode(&app_data_dir);
+        let gmail = saved == Some(mail_core::gmail::types::MailMode::Gmail);
+        let opened = if gmail {
+            open_gmail_state(app, &app_data_dir).ok()
+        } else {
+            None
+        };
+        let is_gmail = opened.is_some();
+        let (core, drafts) = match opened {
+            Some(value) => value,
+            None => {
+                open_fixture_state(&app_data_dir).map_err(|_| storage_failure(cause::STARTUP))?
+            }
+        };
+        let chosen = saved.is_some() && (!gmail || is_gmail);
+        let ready = Arc::new(if is_gmail {
+            FixtureTransition::inactive()
+        } else {
+            FixtureTransition::new(app_data_dir.join("fixture-profile"))
+        });
         let handle = app.clone();
         app.manage(AppState::new(core, drafts, move || {
             let _ = handle.emit("mailbox_changed", ());
         }));
-        *transition = Some(Arc::clone(&ready));
+        *transition = Some((Arc::clone(&ready), chosen));
         Ok(ready)
     }
 }

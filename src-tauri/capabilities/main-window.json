@@ -51,6 +51,8 @@
     "allow-get-app-close-request",
     "allow-complete-app-close",
     "allow-cancel-app-close",
+    "allow-get-mode-choice",
+    "allow-switch-mode",
     "allow-get-fixture-transition-status",
     "allow-accept-fixture-transition"
   ]
