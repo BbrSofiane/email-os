@@ -1,0 +1,21 @@
+[T3 Code: the agent in T3 thread "2eef1655-4916-4aa4-a930-0dddb657d66f" sent this message, not the user.]
+
+START. ADR 0005 @ 448aaac is approved; implement it now. You have one of the two build slots; Track D (sending, branch usable/send) holds the other.
+
+1. First `git fetch origin && git merge origin/main` (main = 59e5dfb: PR #93 install merged, PR #92 HTML reader merged). No force-push, no rebase of pushed history. Your work builds on #93's package `dev.exedev.emailos` (no more `androidfixture`), its `StartupCoordinator::ensure_ready` (Android profile opening on a worker, src-tauri/src/setup.rs) and release signing via environment variables. HTML added migration 10; Track D will take the next migration numbers too, so before adding a migration check `git fetch && git log origin/usable/send -- crates/mail-core` and say in your PR which number you used; whoever merges second renumbers.
+2. Re-read /home/exedev/email-os-usable/RULES.md: the Android-build line changed today (generated Kotlin now copies from /home/exedev/email-os-usable/android-generated into `dev/exedev/emailos/generated`). Emulator lock and agent-device rules unchanged. Disk: about 20 GB free now.
+3. Android OAuth client fingerprints:
+   - Release (owner's upload key, package dev.exedev.emailos): SHA-1 `56:4F:A2:63:7A:0E:B0:33:6E:7B:63:0E:50:37:0D:F4:28:F4:21:E8`, SHA-256 `D1:8F:BA:26:93:85:B9:DC:FC:51:EB:87:41:52:EE:E7:D9:DD:64:52:BF:42:68:D1:E5:59:C6:E2:63:0F:83:31`.
+   - Debug: compute it yourself from `~/.android/debug.keystore` with keytool (standard debug alias and password) and confirm debug builds on main still sign with it.
+   The keystore `~/upload-keystore.jks` is off limits: never open, copy, move or read it. Never commit client secrets or tokens.
+4. Owner actions: when you need the Google Cloud Android clients/test users created, or the throwaway account signed in on the emulator, stop with `BLOCKED:` and give the exact numbered steps. The throwaway account is ready. Put everything you can before that point first (fake-provider tests, UI states, expiry handling) so the block is as late as possible.
+5. Implement with GPT-6.1-Terra High subagents as agreed, review their work yourself, open a PR to main, and finish with `READY FOR REVIEW` plus the PR link, CI state, screenshots and a short recording of sign-in on the emulator (and the Sign-in expired → Sign in again flow).
+
+---
+
+Delegated task node:delegated-task:command%3Amcp%3Ae6212a3c-d59d-46cf-a02c-cb79323b4191%3Adelegate-task%3A771cc68c-424d-46df-b900-c4a6c00cacbf (B stage 1: granted-scope set and request_grant) in child thread thread:delegated-task:command%3Amcp%3Ae6212a3c-d59d-46cf-a02c-cb79323b4191%3Adelegate-task%3A771cc68c-424d-46df-b900-c4a6c00cacbf [completed]:
+Stage 1 is **incomplete and uncommitted**. The checkout contains partial changes to the grant model, provider, authorization URL and worker.
+
+`CARGO_TARGET_DIR=/home/exedev/email-os/target CARGO_BUILD_JOBS=2 cargo test -p mail-core` **failed**: 224 unit tests passed and one failed because the existing upgrade test expects the requested scope to contain only `gmail.modify`, while the implementation now requests the union of scopes. The requested new grant tests and `mise run check` have not been run.
+
+The partial implementation still needs review for scope persistence and publication behavior, the test update and new coverage, and both required checks before it is safe to commit. No commit SHA is available.
