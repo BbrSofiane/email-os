@@ -1,0 +1,35 @@
+Delegated task node:delegated-task:command%3Amcp%3Ae6212a3c-d59d-46cf-a02c-cb79323b4191%3Adelegate-task%3A6c9b6046-8e9f-45e4-a8eb-1440a40a03f7 (B stage 2: platform authorizer credential seam) in child thread thread:delegated-task:command%3Amcp%3Ae6212a3c-d59d-46cf-a02c-cb79323b4191%3Adelegate-task%3A6c9b6046-8e9f-45e4-a8eb-1440a40a03f7 [completed]:
+I could not complete stage 2 in this run. The credential seam, tests, required checks, and commit remain undone; no files were changed.
+
+I inspected the repository rules, ADR, stage 1 summary, and credential storage code. The stage requires coordinated changes across provider authorization, refresh and 401 handling, credential storage, and the core-level weekly-expiry test. I could not implement and validate that full scope within this run, so there is no commit SHA or passing-check result to report.
+
+---
+
+Delegated task node:delegated-task:command%3Amcp%3Ae6212a3c-d59d-46cf-a02c-cb79323b4191%3Adelegate-task%3Ae8e21e94-5f66-4776-a804-2e5cf09d6425 (B stage 2a: platform auth types, fake, tokenless secrets) in child thread thread:delegated-task:command%3Amcp%3Ae6212a3c-d59d-46cf-a02c-cb79323b4191%3Adelegate-task%3Ae8e21e94-5f66-4776-a804-2e5cf09d6425 [completed]:
+Implemented and committed as `f441ff4`. No push was made.
+
+The change adds platform authorization types, tokenless storage, and the scripted authorizer fake. It updates `TokenBundle` and credential admission checks to recognize platform authorization, along with affected crate tests.
+
+Validation passed:
+
+- `cargo test -p mail-core`: 409 tests passed, including the new `mappings_and_wire_format_are_stable_and_redacted`, `tokenless_store_preserves_binding_and_handles_failure`, and `legacy_bundle_defaults_platform_authorized_to_false` tests.
+- `mise run check`: passed, including 2,298 frontend tests across 134 files, Rust linting, contract checks, and type checking.
+
+The working tree is clean.
+
+---
+
+Delegated task node:delegated-task:command%3Amcp%3Ae6212a3c-d59d-46cf-a02c-cb79323b4191%3Adelegate-task%3A422e07e5-3ce4-4bd6-a799-bc86a2e82b22 (B stage 2b: LiveGmailProvider platform token path) in child thread thread:delegated-task:command%3Amcp%3Ae6212a3c-d59d-46cf-a02c-cb79323b4191%3Adelegate-task%3A422e07e5-3ce4-4bd6-a799-bc86a2e82b22 [completed]:
+Implemented and committed platform authorization for `LiveGmailProvider` at **`e51ff4d`**. The working tree is clean; the commit was not pushed.
+
+The provider now supports interactive and silent platform grants, account pinning, scope-limited refresh, configuration error tracking, and token clearing on disconnect. Desktop loopback authorization remains supported.
+
+Changed files: [provider.rs](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/crates/mail-core/src/gmail/provider.rs), [api.rs](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/crates/mail-core/src/gmail/provider/api.rs), [tests.rs](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/crates/mail-core/src/gmail/provider/tests.rs), and [platform_tests.rs](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/crates/mail-core/src/gmail/provider/platform_tests.rs).
+
+Validation passed:
+
+- `cargo test -p mail-core`: 412 tests passed.
+- `mise run check`: passed, including Rust lint, contract check, typecheck, and 2,298 UI tests.
+- New tests: `connect_upgrade_reconnect_and_disconnect`, `errors_and_silent_refresh_preserve_binding`, and `tokenless_connect_persists_no_access_token`.
+
+The first test attempt failed to compile because the new tests used `CancelToken::new()`; I corrected it to `CancelToken::default()` and reran the checks successfully.
