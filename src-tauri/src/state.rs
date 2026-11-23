@@ -4,16 +4,14 @@ use mail_core::drafts::{DraftCore, DraftService};
 use mail_core::gmail::sync::{GmailCore, GmailUnsubscribe};
 use std::sync::{Arc, Mutex};
 
-/// Managed app state retains its change-listener guard for the full app life.
-pub(crate) struct AppState {
+/// Profile-specific state and its change listener.
+pub(crate) struct Session {
     pub(crate) core: GmailCore,
     pub(crate) drafts: DraftService,
-    pub(crate) attachment_transfers: AttachmentTransfers,
-    pub(crate) close_gate: Arc<Mutex<CloseGate>>,
     _subscription: GmailUnsubscribe,
 }
 
-impl AppState {
+impl Session {
     pub(crate) fn new(
         core: GmailCore,
         drafts: DraftCore,
@@ -23,11 +21,57 @@ impl AppState {
         Self {
             drafts: DraftService::new(core.clone(), drafts),
             core,
-            attachment_transfers: AttachmentTransfers::default(),
-            close_gate: Arc::new(Mutex::new(CloseGate::default())),
             _subscription: subscription,
         }
     }
+}
+
+/// Managed state shared by all profile sessions.
+pub(crate) struct AppState {
+    session: std::sync::RwLock<Arc<Session>>,
+    pub(crate) attachment_transfers: AttachmentTransfers,
+    pub(crate) close_gate: Arc<Mutex<CloseGate>>,
+}
+
+impl AppState {
+    pub(crate) fn new(
+        core: GmailCore,
+        drafts: DraftCore,
+        on_change: impl Fn() + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            session: std::sync::RwLock::new(Arc::new(Session::new(core, drafts, on_change))),
+            attachment_transfers: AttachmentTransfers::default(),
+            close_gate: Arc::new(Mutex::new(CloseGate::default())),
+        }
+    }
+
+    pub(crate) fn session(&self) -> Result<Arc<Session>, mail_core::error::MailError> {
+        self.session
+            .read()
+            .map(|session| Arc::clone(&session))
+            .map_err(|_| {
+                crate::diagnostics::storage_failure(crate::diagnostics::cause::LOCK_POISONED)
+            })
+    }
+
+    #[allow(dead_code)] // Used by the mode switch in the next implementation stage.
+    pub(crate) fn replace_session(
+        &self,
+        next: Session,
+    ) -> Result<Arc<Session>, mail_core::error::MailError> {
+        let mut session = self.session.write().map_err(|_| {
+            crate::diagnostics::storage_failure(crate::diagnostics::cause::LOCK_POISONED)
+        })?;
+        Ok(std::mem::replace(&mut *session, Arc::new(next)))
+    }
+}
+
+/// Retire drafts before releasing the profile's core.
+#[allow(dead_code)] // Used by the mode switch in the next implementation stage.
+pub(crate) fn retire_session(old: &Session) {
+    let _ = old.drafts.retire();
+    old.core.stop();
 }
 
 #[cfg(test)]
@@ -44,6 +88,67 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    fn replacing_session_retires_old_drafts_and_releases_profile() {
+        use super::{retire_session, Session};
+        use mail_core::drafts::{CreateDraft, DraftContent, DraftSource, SaveDraft};
+        let a = temp_profile("session-a");
+        let b = temp_profile("session-b");
+        let (core_a, profile_a) = crate::setup::open_fixture_core(a.path()).unwrap();
+        let state = AppState::new(
+            core_a,
+            DraftCore::open(profile_a.join("local-drafts")).unwrap(),
+            || {},
+        );
+        let old_drafts = state.session().unwrap().drafts.clone();
+        let create = CreateDraft {
+            request_id: "create".into(),
+            source: DraftSource::NewMessage,
+            initial_content: None,
+        };
+        let receipt = old_drafts.create_draft(&create).unwrap();
+        let (core_b, profile_b) = crate::setup::open_fixture_core(b.path()).unwrap();
+        let next = Session::new(
+            core_b,
+            DraftCore::open(profile_b.join("local-drafts")).unwrap(),
+            || {},
+        );
+        let old = state.replace_session(next).unwrap();
+        retire_session(&old);
+        assert!(state.session().unwrap().core.list_conversations().is_ok());
+        let error = MailError::InvalidRequest {
+            field: "mode".into(),
+        };
+        assert_eq!(old_drafts.create_draft(&create), Err(error.clone()));
+        let save = SaveDraft {
+            draft_ref: receipt.draft_ref,
+            expected_revision: receipt.revision,
+            request_id: "save".into(),
+            content: DraftContent {
+                to: String::new(),
+                cc: String::new(),
+                subject: String::new(),
+                body_text: String::new(),
+            },
+        };
+        assert_eq!(old_drafts.save_draft(&save), Err(error));
+        let (reopened, _) = crate::setup::open_fixture_core(a.path()).unwrap();
+        let reopened_drafts = mail_core::drafts::DraftService::new(
+            reopened.clone(),
+            DraftCore::open(profile_a.join("local-drafts")).unwrap(),
+        );
+        assert_eq!(reopened_drafts.list_drafts().unwrap().len(), 1);
+        assert!(state
+            .session()
+            .unwrap()
+            .drafts
+            .list_drafts()
+            .unwrap()
+            .is_empty());
+        reopened.stop();
+        state.session().unwrap().core.stop();
+    }
+
+    #[test]
     fn state_keeps_forwarding_after_command_acceptance() {
         let dir = temp_profile("synthetic-events");
         let core = open(dir.path(), WriteControls::default());
@@ -53,6 +158,8 @@ mod tests {
             let _ = tx.send(());
         });
         let receipt = state
+            .session()
+            .unwrap()
             .core
             .set_archived(&SetArchived {
                 conversation: conv("conv-01"),
@@ -64,6 +171,8 @@ mod tests {
             .expect("acceptance event");
         assert!(until(|| {
             state
+                .session()
+                .unwrap()
                 .core
                 .list_conversations()
                 .unwrap()
@@ -77,6 +186,8 @@ mod tests {
         // Completion also notified (drain until quiet, never sleeping).
         assert!(rx.try_iter().count() >= 1 || rx.recv_timeout(Duration::from_secs(2)).is_ok());
         let done = state
+            .session()
+            .unwrap()
             .core
             .list_cached_done(&CachedDoneRequest {
                 account_id: ACCOUNT_ID.into(),
@@ -90,13 +201,17 @@ mod tests {
             .any(|row| row.conversation_ref.conversation_id == "conv-01"));
         assert_eq!(done.exact_total, None);
         assert_eq!(
-            state.core.list_cached_done(&CachedDoneRequest {
-                account_id: "foreign".into(),
-                limit: 10,
-                cursor: None,
-            }),
+            state
+                .session()
+                .unwrap()
+                .core
+                .list_cached_done(&CachedDoneRequest {
+                    account_id: "foreign".into(),
+                    limit: 10,
+                    cursor: None,
+                }),
             Err(MailError::NotFound)
         );
-        state.core.stop();
+        state.session().unwrap().core.stop();
     }
 }

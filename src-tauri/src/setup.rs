@@ -164,7 +164,9 @@ pub(crate) fn run(builder: tauri::Builder<tauri::Wry>) {
         #[cfg(not(mobile))]
         RunEvent::Exit => {
             if let Some(state) = _app_handle.try_state::<AppState>() {
-                state.core.stop();
+                if let Ok(session) = state.session() {
+                    session.core.stop();
+                }
             }
         }
         _ => {}
