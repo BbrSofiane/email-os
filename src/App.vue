@@ -339,6 +339,7 @@ watch(accountId, async (id, _old, onCleanup) => {
   onCleanup(() => { current = false; });
   sendAvailable.value = false;
   sendNotice.value = null;
+  sendError.value = '';
   if (!id || !props.client.sendAvailable || !props.client.send) return;
   try {
     const available = await props.client.sendAvailable();
@@ -434,10 +435,12 @@ async function sendActivityAction(action: string, operationId: string): Promise<
 }
 async function sendDraft(): Promise<void> {
   if (sendBusy.value || !sendAvailable.value) return;
+  const account = accountId.value;
   sendBusy.value = true;
   sendError.value = '';
   try {
     const receipt = await drafts.admitSend();
+    if (account !== accountId.value) return;
     if (!receipt) { sendError.value = drafts.transitioning.value ? 'Send was not confirmed. Retry to resolve this request.' : 'The draft could not be sent. Review the draft and try again.'; return; }
     sendNotice.value = receipt;
     void refreshSendActivity();
@@ -2409,7 +2412,7 @@ const searchSyntaxEditHint = computed(() =>
            only): context coverage and draft recovery. Lines that come and go
            with triage keys live in the bottom dock instead (.list-dock). -->
       <div class="list-notices">
-        <p v-if="sendNotice" role="status" data-test="send-notice">Sending… <button type="button" :disabled="sendBusy" @click="undoSend">Undo</button></p>
+        <p v-if="sendNotice" role="status" data-test="send-notice">Queued to send <button type="button" :disabled="sendBusy" @click="undoSend">Undo</button></p>
         <p v-if="sendError" role="alert">{{ sendError }} <button v-if="drafts.transitioning.value" type="button" :disabled="sendBusy" @click="sendDraft">Retry send</button></p>
         <p v-if="reminderConfirmation" class="reminder-confirmation" role="status" data-test="reminder-confirmation">{{ reminderConfirmation }}</p>
         <!-- Close recovery is global: the Drafts list shows the same lines in

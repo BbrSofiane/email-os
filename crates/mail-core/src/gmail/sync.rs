@@ -119,13 +119,15 @@ struct GmailInner {
     next_enrichment_id: AtomicU64,
 }
 
+type SendPass = dyn Fn(&CancelToken) -> Result<bool, MailError> + Send + Sync;
+
 /// Worker/control state. The worker thread is the only writer of `connection`
 /// and `error` besides the disconnect path, which owns them while a
 /// disconnect completes.
 struct Ctrl {
     state: Mutex<CtrlState>,
     wake: Condvar,
-    send_pass: Mutex<Option<Arc<dyn Fn(&CancelToken) -> Result<bool, MailError> + Send + Sync>>>,
+    send_pass: Mutex<Option<Arc<SendPass>>>,
     #[cfg(test)]
     after_mutation_count: Mutex<Option<MutationCountHook>>,
 }

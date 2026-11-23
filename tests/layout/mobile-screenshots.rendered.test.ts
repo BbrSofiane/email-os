@@ -123,6 +123,38 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await harness!.saveScreenshot(`${outputDir}/${name}.png`);
   }
 
+  it('captures send editors and Undo at phone and desktop widths', async () => {
+    for (const compact of [true, false]) {
+      const name = compact ? 'phone' : 'desktop';
+      await viewport(
+        compact ? PHONE_VIEWPORT.width : 1360,
+        compact ? PHONE_VIEWPORT.height : 900,
+        compact,
+      );
+      await freshInbox();
+      await click(compact ? '[data-test="mobile-compose"]' : '[data-test="compose-trigger"]');
+      await waitFor(`app.querySelector('[data-test="send-draft"]:not([disabled])')`, 'Send');
+      await harness!.cdp.js(`(() => {
+        const app = document.querySelector(${JSON.stringify(activeApp)});
+        for (const [field, value] of Object.entries({
+          to: 'team@example.test', subject: 'Fixture send', body: 'The weekly notes are ready.',
+        })) {
+          const input = app.querySelector('[data-test="draft-' + field + '"]');
+          input.value = value;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      })()`);
+      await pause();
+      await shot(`${name}-send-editor`);
+      await click('[data-test="send-draft"]');
+      await waitFor(`app.querySelector('[data-test="send-notice"] button')`, 'send Undo');
+      await shot(`${name}-send-undo`);
+      await click('[data-test="send-notice"] button');
+      await waitFor(`app.querySelector('[data-test="draft-subject"]')?.value === 'Fixture send'`, 'restored draft');
+    }
+    await viewport(PHONE_VIEWPORT.width, PHONE_VIEWPORT.height, true);
+  }, 40_000);
+
   it('captures the list surfaces', async () => {
     await viewport(PHONE_VIEWPORT.width, PHONE_VIEWPORT.height, true);
     await freshInbox();

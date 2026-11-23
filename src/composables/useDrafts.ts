@@ -476,13 +476,20 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
       sendEnvelope = { draftRef: target, revision: revision.value, requestId: requestId() };
     }
     transitioning.value = true;
+    const envelope = sendEnvelope;
+    const editorGeneration = generation;
+    const stillCurrent = () => sendEnvelope === envelope
+      && accountId.value === envelope.draftRef.accountId && generation === editorGeneration;
     try {
-      const receipt = await client.send.admit(sendEnvelope);
+      const receipt = await client.send.admit(envelope);
+      if (!stillCurrent()) return null;
       sendEnvelope = null;
+      transitioning.value = false;
       clearEditor();
       void refresh();
       return receipt;
     } catch (raw) {
+      if (!stillCurrent()) return null;
       error.value = normalizeError(raw);
       if (['invalid_request', 'draft_conflict', 'request_id_conflict', 'not_found'].includes(error.value.kind)) {
         sendEnvelope = null;
@@ -490,9 +497,6 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
         if (error.value.kind === 'draft_conflict') conflict.value = true;
       }
       return null;
-    } finally {
-      // An uncertain admission stays frozen until the same request is retried.
-      if (!sendEnvelope) transitioning.value = false;
     }
   }
 
@@ -1027,6 +1031,10 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
   }
 
   watch(accountId, () => {
+    if (sendEnvelope) {
+      sendEnvelope = null;
+      transitioning.value = false;
+    }
     cancelDiscard();
     listToken += 1;
     summaries.value = [];
