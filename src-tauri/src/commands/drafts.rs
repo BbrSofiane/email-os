@@ -64,3 +64,113 @@ pub(crate) async fn delete_draft(
     let _ = app.emit("drafts_changed", ());
     Ok(receipt)
 }
+
+fn require_send_platform() -> Result<(), MailError> {
+    if cfg!(any(target_os = "android", target_os = "macos")) {
+        Ok(())
+    } else {
+        Err(MailError::UnsupportedPlatform)
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn send_available(state: State<'_, AppState>) -> Result<bool, MailError> {
+    if require_send_platform().is_err() {
+        return Ok(false);
+    }
+    run_blocking(state.drafts.clone(), |drafts| Ok(drafts.send_available())).await
+}
+
+#[tauri::command]
+pub(crate) async fn send_draft(
+    state: State<'_, AppState>,
+    command: mail_core::drafts::types::AdmitSend,
+) -> Result<mail_core::drafts::types::SendStatus, MailError> {
+    require_send_platform()?;
+    run_blocking(state.drafts.clone(), move |drafts| {
+        drafts.send_draft(&command)
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn list_send_activity(
+    state: State<'_, AppState>,
+) -> Result<Vec<mail_core::drafts::types::SendStatus>, MailError> {
+    require_send_platform()?;
+    run_blocking(state.drafts.clone(), DraftService::send_activity).await
+}
+
+#[tauri::command]
+pub(crate) async fn undo_send(
+    state: State<'_, AppState>,
+    operation_id: String,
+) -> Result<Option<DraftRef>, MailError> {
+    require_send_platform()?;
+    run_blocking(state.drafts.clone(), move |drafts| {
+        drafts.undo_fixture_send(&operation_id)
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn cancel_send(
+    state: State<'_, AppState>,
+    operation_id: String,
+) -> Result<bool, MailError> {
+    require_send_platform()?;
+    run_blocking(state.drafts.clone(), move |drafts| {
+        drafts.cancel_fixture_send(&operation_id)
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn retry_send(
+    state: State<'_, AppState>,
+    operation_id: String,
+    request_id: String,
+) -> Result<mail_core::drafts::types::SendStatus, MailError> {
+    require_send_platform()?;
+    run_blocking(state.drafts.clone(), move |drafts| {
+        drafts.retry_fixture_send(&operation_id, &request_id)
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn check_sends(state: State<'_, AppState>) -> Result<(), MailError> {
+    require_send_platform()?;
+    run_blocking(state.drafts.clone(), |drafts| {
+        drafts.check_fixture_sends(&mail_core::CancelToken::default())
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn dismiss_send(
+    state: State<'_, AppState>,
+    operation_id: String,
+) -> Result<bool, MailError> {
+    require_send_platform()?;
+    run_blocking(state.drafts.clone(), move |drafts| {
+        drafts.dismiss_fixture_send(&operation_id)
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn copy_unknown_send(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    operation_id: String,
+    request_id: String,
+) -> Result<DraftReceipt, MailError> {
+    require_send_platform()?;
+    let receipt = run_blocking(state.drafts.clone(), move |drafts| {
+        drafts.copy_unknown_send(&operation_id, &request_id)
+    })
+    .await?;
+    let _ = app.emit("drafts_changed", ());
+    Ok(receipt)
+}

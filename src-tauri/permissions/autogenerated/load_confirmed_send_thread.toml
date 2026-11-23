@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-load-confirmed-send-thread"
+description = "Enables the load_confirmed_send_thread command without any pre-configured scope."
+commands.allow = ["load_confirmed_send_thread"]
+
+[[permission]]
+identifier = "deny-load-confirmed-send-thread"
+description = "Denies the load_confirmed_send_thread command without any pre-configured scope."
+commands.deny = ["load_confirmed_send_thread"]

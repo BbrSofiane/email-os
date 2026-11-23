@@ -23,6 +23,34 @@ use crate::gmail::sync::GmailCore;
 use crate::gmail::types::AccountInfo;
 use crate::storage_log::storage_err;
 
+fn send_status(
+    intent: crate::gmail::store::send::SendIntent,
+) -> Result<crate::drafts::types::SendStatus, MailError> {
+    use crate::drafts::types::{SendState, SendStatus};
+    let state = match intent.state.as_str() {
+        "hold" => SendState::Hold,
+        "queued" => SendState::Queued,
+        "applying" => SendState::Applying,
+        "confirmed" => SendState::Confirmed,
+        "failed" => SendState::Failed,
+        "unknown" => SendState::Unknown,
+        "cancelled" => SendState::Cancelled,
+        "undone" => SendState::Undone,
+        _ => return Err(MailError::StorageUnavailable),
+    };
+    Ok(SendStatus {
+        operation_id: intent.operation_id,
+        draft_ref: DraftRef {
+            account_id: intent.account_id,
+            draft_id: intent.draft_id,
+        },
+        draft_revision: intent.draft_revision,
+        not_before: intent.not_before,
+        state,
+        retry_of: intent.retry_of,
+    })
+}
+
 /// Counts account-session changes so a reply prepared before one cannot be
 /// written after it.
 #[derive(Debug, Default)]
@@ -104,10 +132,90 @@ pub struct DraftService {
 }
 
 impl DraftService {
-    /// Release deadlines independently from provider I/O.
-    pub(crate) fn release_due_sends(&self) -> Result<usize, MailError> {
+    /// Whether the active session can use the fixture send transport.
+    pub fn send_available(&self) -> bool {
+        self.core.require_synthetic_send().is_ok() && self.core.active_account().is_ok()
+    }
+
+    /// Admit a saved draft through the fixture-only public send API.
+    pub fn send_draft(
+        &self,
+        command: &crate::drafts::types::AdmitSend,
+    ) -> Result<crate::drafts::types::SendStatus, MailError> {
+        self.core.require_synthetic_send()?;
+        send_status(self.admit_send(&command.draft_ref, command.revision, &command.request_id)?)
+    }
+
+    pub fn send_activity(&self) -> Result<Vec<crate::drafts::types::SendStatus>, MailError> {
+        self.core.require_synthetic_send()?;
+        let _lifecycle = self.lock()?;
         let account = self.core.active_account()?;
-        self.core.release_due_sends(&account.account_id)
+        self.core
+            .list_send_intents(&account.account_id)?
+            .into_iter()
+            .filter(|intent| !intent.dismissed)
+            .map(send_status)
+            .collect()
+    }
+
+    pub fn dismiss_fixture_send(&self, operation: &str) -> Result<bool, MailError> {
+        self.core.require_synthetic_send()?;
+        let _lifecycle = self.lock()?;
+        let account = self.core.active_account()?;
+        self.core.dismiss_send(&account.account_id, operation)
+    }
+
+    /// Copy an unknown send into a new, independently editable draft.
+    pub fn copy_unknown_send(
+        &self,
+        operation: &str,
+        request: &str,
+    ) -> Result<DraftReceipt, MailError> {
+        self.core.require_synthetic_send()?;
+        let _lifecycle = self.lock()?;
+        let account = self.core.active_account()?;
+        if let Some(receipt) = self
+            .drafts
+            .lookup_copy_receipt(&account, operation, request)?
+        {
+            return Ok(receipt);
+        }
+        let intent = self
+            .core
+            .list_send_intents(&account.account_id)?
+            .into_iter()
+            .find(|intent| intent.operation_id == operation && intent.state == "unknown")
+            .ok_or(MailError::NotFound)?;
+        let source = DraftRef {
+            account_id: account.account_id.clone(),
+            draft_id: intent.draft_id,
+        };
+        self.drafts
+            .copy_draft(&account, &source, operation, request)
+    }
+
+    pub fn undo_fixture_send(&self, operation: &str) -> Result<Option<DraftRef>, MailError> {
+        self.core.require_synthetic_send()?;
+        self.undo_send(operation)
+    }
+
+    pub fn cancel_fixture_send(&self, operation: &str) -> Result<bool, MailError> {
+        self.core.require_synthetic_send()?;
+        self.cancel_queued_send(operation)
+    }
+
+    pub fn retry_fixture_send(
+        &self,
+        operation: &str,
+        request: &str,
+    ) -> Result<crate::drafts::types::SendStatus, MailError> {
+        self.core.require_synthetic_send()?;
+        send_status(self.retry_send(operation, request)?)
+    }
+
+    pub fn check_fixture_sends(&self, cancel: &crate::CancelToken) -> Result<(), MailError> {
+        self.core.require_synthetic_send()?;
+        self.check_unknown_sends(cancel)
     }
 
     /// Check unknown sends using positive provider evidence only.
@@ -302,7 +410,16 @@ impl DraftService {
         let _lifecycle = self.lock()?;
         let account = self.core.active_account()?;
         self.repair_send_locks(&account.account_id)?;
-        self.drafts.list_drafts(&account)
+        let intents = self.core.list_send_intents(&account.account_id)?;
+        let mut drafts = self.drafts.list_drafts(&account)?;
+        drafts.retain(|draft| {
+            !intents.iter().any(|intent| {
+                intent.dismissed
+                    && intent.state == "unknown"
+                    && intent.draft_id == draft.draft_ref.draft_id
+            })
+        });
+        Ok(drafts)
     }
 
     pub fn get_draft(&self, r#ref: &DraftRef) -> Result<Draft, MailError> {
@@ -448,6 +565,7 @@ impl DraftService {
             not_before: (self.core.send_now()? + chrono::Duration::seconds(5)).to_rfc3339(),
             state: "hold".into(),
             retry_of: Some(operation.to_owned()),
+            dismissed: false,
         };
         self.drafts
             .acquire_send_lock(&draft_ref, intent.draft_revision, &intent.operation_id)?;
@@ -592,6 +710,7 @@ impl DraftService {
             not_before: (now + chrono::Duration::seconds(5)).to_rfc3339(),
             state: "hold".into(),
             retry_of: None,
+            dismissed: false,
         };
         self.drafts
             .acquire_send_lock(draft_ref, revision, &intent.operation_id)?;
@@ -721,6 +840,17 @@ mod tests {
         reopened.wake_send_worker();
         reopened.wait_for_test_idle(TIMEOUT).unwrap();
         assert_eq!(s.provider.send_calls(), 1);
+        let sent = reopened
+            .load_confirmed_send_thread(&intent.operation_id)
+            .unwrap();
+        assert_eq!(sent.subject, "Subject");
+        assert!(!sent.is_in_inbox);
+        assert_eq!(sent.messages.len(), 1);
+        let again = reopened
+            .load_confirmed_send_thread(&intent.operation_id)
+            .unwrap();
+        assert_eq!(again.messages.len(), 1);
+        assert_eq!(again.messages[0].id, sent.messages[0].id);
         reopened.stop();
     }
 
@@ -942,6 +1072,7 @@ mod tests {
                 not_before: chrono::Utc::now().to_rfc3339(),
                 state: "confirmed".into(),
                 retry_of: None,
+                dismissed: false,
             })
             .unwrap();
         assert!(matches!(

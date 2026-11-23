@@ -239,6 +239,70 @@ impl DraftCore {
         Ok(receipt)
     }
 
+    pub(crate) fn lookup_copy_receipt(
+        &self,
+        account: &AccountInfo,
+        operation: &str,
+        request_id: &str,
+    ) -> Result<Option<DraftReceipt>, MailError> {
+        validate_account(account)?;
+        validate_request_id(request_id)?;
+        let conn = self.lock_conn()?;
+        lookup_receipt(
+            &conn,
+            &account.account_id,
+            request_id,
+            "copy",
+            &fingerprint(&operation)?,
+        )
+    }
+
+    /// Create a separate draft from a locked source, with a durable receipt.
+    pub(crate) fn copy_draft(
+        &self,
+        account: &AccountInfo,
+        source: &DraftRef,
+        operation: &str,
+        request_id: &str,
+    ) -> Result<DraftReceipt, MailError> {
+        validate_ref(account, source)?;
+        validate_request_id(request_id)?;
+        let fingerprint = fingerprint(&operation)?;
+        let mut conn = self.lock_conn()?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage_err())?;
+        if let Some(receipt) =
+            lookup_receipt_tx(&tx, &account.account_id, request_id, "copy", &fingerprint)?
+        {
+            tx.commit().map_err(storage_err())?;
+            return Ok(receipt);
+        }
+        let draft = read_draft(&tx, source)?.ok_or(MailError::NotFound)?;
+        let now = now_iso();
+        let draft_ref = DraftRef {
+            account_id: account.account_id.clone(),
+            draft_id: Uuid::new_v4().to_string(),
+        };
+        let content = serde_json::to_string(&draft.content).map_err(storage_err())?;
+        let source_json = serde_json::to_string(&draft.source).map_err(storage_err())?;
+        let reply = draft
+            .reply_link
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(storage_err())?;
+        tx.execute("INSERT INTO drafts(account_id,draft_id,revision,created_at,updated_at,content_json,source_json,reply_link_json) VALUES (?1,?2,1,?3,?3,?4,?5,?6)", params![draft_ref.account_id, draft_ref.draft_id, now, content, source_json, reply]).map_err(storage_err())?;
+        let receipt = DraftReceipt {
+            draft_ref,
+            revision: 1,
+            saved_at: now,
+        };
+        insert_receipt(&tx, account, request_id, "copy", &fingerprint, &receipt)?;
+        tx.commit().map_err(storage_err())?;
+        Ok(receipt)
+    }
+
     pub fn save_draft(
         &self,
         account: &AccountInfo,

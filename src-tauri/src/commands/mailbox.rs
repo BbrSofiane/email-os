@@ -145,6 +145,17 @@ pub(crate) async fn list_conversations(
 }
 
 #[tauri::command]
+pub(crate) async fn load_confirmed_send_thread(
+    state: State<'_, AppState>,
+    operation_id: String,
+) -> Result<Conversation, MailError> {
+    run_blocking(state.core.clone(), move |core| {
+        core.load_confirmed_send_thread(&operation_id)
+    })
+    .await
+}
+
+#[tauri::command]
 pub(crate) async fn get_conversation(
     state: State<'_, AppState>,
     r#ref: ConversationRef,

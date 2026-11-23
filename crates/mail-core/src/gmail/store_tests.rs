@@ -3380,6 +3380,7 @@ fn send_hold_deadline_and_restart_recovery_are_atomic() {
         not_before: "2026-01-01T00:00:05Z".into(),
         state: "hold".into(),
         retry_of: None,
+        dismissed: false,
     };
     store.insert_send_intent(&intent("undo")).unwrap();
     store.insert_send_intent(&intent("release")).unwrap();

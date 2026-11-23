@@ -12,6 +12,7 @@ pub(crate) struct SendIntent {
     pub not_before: String,
     pub state: String,
     pub retry_of: Option<String>,
+    pub dismissed: bool,
 }
 
 fn read_intent(row: &rusqlite::Row<'_>) -> rusqlite::Result<SendIntent> {
@@ -25,39 +26,23 @@ fn read_intent(row: &rusqlite::Row<'_>) -> rusqlite::Result<SendIntent> {
         not_before: row.get(6)?,
         state: row.get(7)?,
         retry_of: row.get(8)?,
+        dismissed: row.get(9)?,
     })
 }
 
 impl GmailStore {
-    /// Persist only the outcome of the exact operation that crossed the barrier.
-    pub(crate) fn finish_send(
+    pub(crate) fn confirmed_send_thread(
         &self,
         account: &str,
         operation: &str,
-        result: &crate::gmail::types::SendResult,
-    ) -> Result<bool, MailError> {
-        use crate::gmail::types::SendResult;
+    ) -> Result<String, MailError> {
         self.persistence_gate()?;
-        let (state, message, thread, clear_payload) = match result {
-            SendResult::Confirmed {
-                message_id,
-                thread_id,
-            } if !message_id.is_empty() && !thread_id.is_empty() => (
-                "confirmed",
-                Some(message_id.as_str()),
-                Some(thread_id.as_str()),
-                true,
-            ),
-            SendResult::Confirmed { .. } | SendResult::Unknown => ("unknown", None, None, false),
-            SendResult::Refused => ("failed", None, None, false),
-            SendResult::Paused => ("queued", None, None, false),
-        };
         let conn = self.lock_conn()?;
-        let changed = conn.execute(
-            "UPDATE gmail_send_intents SET state=?3, provider_message_id=?4, provider_thread_id=?5, frozen_mime=CASE WHEN ?6 THEN X'' ELSE frozen_mime END WHERE account_id=?1 AND operation_id=?2 AND state='applying'",
-            params![account, operation, state, message, thread, clear_payload],
-        ).map_err(storage_err())?;
-        Ok(changed == 1)
+        conn.query_row(
+            "SELECT provider_thread_id FROM gmail_send_intents WHERE account_id=?1 AND operation_id=?2 AND state='confirmed' AND dismissed=0 AND provider_thread_id IS NOT NULL",
+            params![account, operation],
+            |row| row.get(0),
+        ).optional().map_err(storage_err())?.ok_or(MailError::NotFound)
     }
 
     pub(crate) fn finish_send_for_generation(
@@ -130,7 +115,7 @@ impl GmailStore {
     ) -> Result<Option<SendIntent>, MailError> {
         self.persistence_gate()?;
         let conn = self.lock_conn()?;
-        conn.query_row("SELECT account_id, operation_id, draft_id, draft_revision, request_id, frozen_mime, not_before, state, retry_of FROM gmail_send_intents WHERE account_id=?1 AND request_id=?2", params![account, request], read_intent)
+        conn.query_row("SELECT account_id, operation_id, draft_id, draft_revision, request_id, frozen_mime, not_before, state, retry_of, dismissed FROM gmail_send_intents WHERE account_id=?1 AND request_id=?2", params![account, request], read_intent)
             .optional().map_err(storage_err())
     }
 
@@ -172,12 +157,22 @@ impl GmailStore {
     pub(crate) fn list_send_intents(&self, account: &str) -> Result<Vec<SendIntent>, MailError> {
         self.persistence_gate()?;
         let conn = self.lock_conn()?;
-        let mut stmt = conn.prepare("SELECT account_id, operation_id, draft_id, draft_revision, request_id, frozen_mime, not_before, state, retry_of FROM gmail_send_intents WHERE account_id=?1 ORDER BY rowid").map_err(storage_err())?;
+        let mut stmt = conn.prepare("SELECT account_id, operation_id, draft_id, draft_revision, request_id, frozen_mime, not_before, state, retry_of, dismissed FROM gmail_send_intents WHERE account_id=?1 ORDER BY rowid").map_err(storage_err())?;
         let rows = stmt
             .query_map(params![account], read_intent)
             .map_err(storage_err())?;
         rows.collect::<Result<Vec<_>, _>>().map_err(storage_err())
     }
+    pub(crate) fn dismiss_send(&self, account: &str, operation: &str) -> Result<bool, MailError> {
+        self.persistence_gate()?;
+        let conn = self.lock_conn()?;
+        let changed = conn.execute(
+            "UPDATE gmail_send_intents SET dismissed=1 WHERE account_id=?1 AND operation_id=?2 AND state IN ('unknown', 'failed', 'confirmed')",
+            params![account, operation],
+        ).map_err(storage_err())?;
+        Ok(changed == 1)
+    }
+
     /// Cancel only a still-held intent before its deadline. Replays remain cancelled.
     pub(crate) fn undo_send(&self, account: &str, operation: &str) -> Result<bool, MailError> {
         self.persistence_gate()?;
@@ -216,6 +211,7 @@ impl GmailStore {
     }
 
     /// The applying marker is the dispatch barrier; unknown work is never reclaimed.
+    #[cfg(test)]
     pub(crate) fn claim_send(&self, account: &str, operation: &str) -> Result<bool, MailError> {
         self.persistence_gate()?;
         let conn = self.lock_conn()?;

@@ -1181,8 +1181,131 @@ export function createBrowserFakeMailClient(
     }
   }
 
+  type SendStatus = import('./generated').SendStatus;
+  const sends: Array<{ status: SendStatus; requestId: string; draft: Draft; threadId?: string; dismissed?: boolean }> = [];
+  let sendCounter = 0;
+  const draftKey = (ref: DraftRef): string => `${ref.accountId}:${ref.draftId}`;
+  const locked = (ref: DraftRef): boolean => sends.some((entry) =>
+    draftKey(entry.status.draftRef) === draftKey(ref) &&
+    ['hold', 'queued', 'applying', 'unknown'].includes(entry.status.state));
+  function advanceSends(): void {
+    for (const entry of sends) {
+      if (entry.status.state === 'hold' && now() >= entry.status.notBefore) entry.status.state = 'queued';
+      if (entry.status.state !== 'queued') continue;
+      if (behavior.holdQueued) continue;
+      if (behavior.failNext > 0) {
+        behavior.failNext -= 1;
+        entry.status.state = behavior.failureKind === 'outcome_unknown' ? 'unknown' : 'failed';
+      } else {
+        entry.status.state = 'confirmed';
+        const draft = entry.draft;
+        let conv = draft.source.kind === 'reply' ? byId(draft.source.conversation.conversationId) : undefined;
+        if (!conv) {
+          conv = { ref: { accountId: draft.ref.accountId, conversationId: `sent-${entry.status.operationId}` }, subject: draft.content.subject, messages: [], ops: [] };
+          conversations.unshift(conv);
+        }
+        entry.threadId = conv.ref.conversationId;
+        conv.messages.push({ id: `sent-${entry.status.operationId}`, from: ME,
+          to: draft.content.to.split(',').map((value) => addr(null, value.trim())),
+          sentAt: now(), bodyText: draft.content.bodyText, seededInInbox: false, seededRead: true });
+        drafts.delete(draftKey(draft.ref));
+      }
+      notifyDrafts();
+      notify();
+    }
+  }
+  const sendTransport: NonNullable<MailClient['send']> = {
+    async admit(command) {
+      if (account.mode !== 'fixture' || command.draftRef.accountId !== activeDraftAccountId()) throw failNotShown();
+      validateDraftRequestId(command.requestId);
+      const previous = sends.find((entry) => entry.requestId === command.requestId && entry.status.draftRef.accountId === command.draftRef.accountId);
+      if (previous) {
+        if (draftKey(previous.status.draftRef) !== draftKey(command.draftRef) || previous.status.draftRevision !== command.revision || previous.status.retryOf !== null) throw { kind: 'request_id_conflict' } satisfies MailError;
+        return snapshotCopy(previous.status);
+      }
+      advanceSends();
+      const draft = drafts.get(draftKey(command.draftRef));
+      if (!draft) throw failNotShown();
+      if (draft.revision !== command.revision) throw { kind: 'draft_conflict', currentRevision: draft.revision } satisfies MailError;
+      if (locked(draft.ref)) throw { kind: 'busy' } satisfies MailError;
+      const recipients = [draft.content.to, draft.content.cc].flatMap((value) => value.split(',').map((v) => v.trim()).filter(Boolean));
+      if (!draft.content.to.trim() || recipients.length > 20 || recipients.some((v) => !/^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/.test(v))) throw { kind: 'invalid_request', field: 'to' } satisfies MailError;
+      const status: SendStatus = { operationId: `send-${++sendCounter}`, draftRef: snapshotCopy(draft.ref), draftRevision: draft.revision, notBefore: new Date(Date.parse(now()) + 5000).toISOString(), state: 'hold', retryOf: null };
+      sends.push({ status, requestId: command.requestId, draft: snapshotCopy(draft) });
+      setTimeout(advanceSends, 5000);
+      notify();
+      return snapshotCopy(status);
+    },
+    async listActivity() { advanceSends(); return snapshotCopy(sends.filter((entry) => entry.status.draftRef.accountId === activeDraftAccountId() && !entry.dismissed).map((entry) => entry.status)); },
+    async loadConfirmedThread(operationId) {
+      advanceSends();
+      const entry = sends.find((item) => item.status.operationId === operationId && item.status.draftRef.accountId === activeDraftAccountId() && item.status.state === 'confirmed' && !item.dismissed);
+      if (!entry?.threadId) throw failNotShown();
+      return client.getConversation({ accountId: entry.status.draftRef.accountId, conversationId: entry.threadId });
+    },
+    async undo(operationId) {
+      advanceSends();
+      const entry = sends.find((item) => item.status.operationId === operationId && item.status.draftRef.accountId === activeDraftAccountId());
+      if (!entry) throw failNotShown();
+      if (entry.status.state === 'undone') return snapshotCopy(entry.status.draftRef);
+      if (entry.status.state !== 'hold') return null;
+      entry.status.state = 'undone'; notify(); notifyDrafts(); return snapshotCopy(entry.status.draftRef);
+    },
+    async cancel(operationId) {
+      advanceSends();
+      const entry = sends.find((item) => item.status.operationId === operationId && item.status.draftRef.accountId === activeDraftAccountId());
+      if (!entry) throw failNotShown();
+      if (entry.status.state !== 'queued') return false;
+      entry.status.state = 'cancelled'; notify(); notifyDrafts(); return true;
+    },
+    async retry(operationId, requestId) {
+      validateDraftRequestId(requestId);
+      const previous = sends.find((entry) => entry.requestId === requestId && entry.status.draftRef.accountId === activeDraftAccountId());
+      if (previous) {
+        if (previous.status.retryOf !== operationId) throw { kind: 'request_id_conflict' } satisfies MailError;
+        return snapshotCopy(previous.status);
+      }
+      const entry = sends.find((item) => item.status.operationId === operationId && item.status.draftRef.accountId === activeDraftAccountId());
+      if (!entry) throw failNotShown();
+      if (entry.status.state !== 'failed') throw { kind: 'invalid_request', field: 'operationId' } satisfies MailError;
+      const draft = drafts.get(draftKey(entry.status.draftRef));
+      if (!draft) throw failNotShown();
+      if (draft.revision !== entry.status.draftRevision) throw { kind: 'draft_conflict', currentRevision: draft.revision } satisfies MailError;
+      const status: SendStatus = { ...entry.status, operationId: `send-${++sendCounter}`, state: 'hold', retryOf: operationId, notBefore: new Date(Date.parse(now()) + 5000).toISOString() };
+      sends.push({ status, requestId, draft: snapshotCopy(draft) });
+      setTimeout(advanceSends, 5000); notify(); return snapshotCopy(status);
+    },
+    async check() { advanceSends(); },
+    async dismiss(operationId) {
+      const entry = sends.find((item) => item.status.operationId === operationId && item.status.draftRef.accountId === activeDraftAccountId());
+      if (!entry || !['unknown', 'failed', 'confirmed'].includes(entry.status.state)) return false;
+      entry.dismissed = true;
+      notify(); notifyDrafts();
+      return true;
+    },
+    async copyUnknown(operationId, requestId) {
+      const accountId = activeDraftAccountId();
+      if (!accountId) throw failNotShown();
+      const fingerprint = draftCommandFingerprint('copy_unknown_send', { operationId });
+      const existing = existingDraftReceipt<DraftReceipt>(accountId, requestId, fingerprint);
+      if (existing) return existing;
+      const entry = sends.find((item) => item.status.operationId === operationId && item.status.draftRef.accountId === accountId && item.status.state === 'unknown');
+      if (!entry) throw failNotShown();
+      const timestamp = now();
+      const ref = { accountId, draftId: `draft-${String(++draftCounter).padStart(4, '0')}` };
+      const draft = { ...snapshotCopy(entry.draft), ref, revision: 1, createdAt: timestamp, updatedAt: timestamp };
+      drafts.set(draftKey(ref), draft);
+      const receipt: DraftReceipt = { ref: snapshotCopy(ref), revision: 1, savedAt: timestamp };
+      draftReceipts.set(`${accountId}:${requestId}`, { fingerprint, receipt });
+      notifyDrafts();
+      return snapshotCopy(receipt);
+    },
+  };
+
   const client: BrowserFake = {
     memoryOnly: true,
+    async sendAvailable() { return account.mode === 'fixture'; },
+    get send() { return account.mode === 'fixture' ? sendTransport : undefined; },
     controls: {
       behavior,
       async flush(): Promise<void> {
@@ -1934,7 +2057,7 @@ export function createBrowserFakeMailClient(
       const accountId = activeDraftAccountId();
       if (!accountId) return [];
       return [...drafts.values()]
-        .filter((draft) => draft.ref.accountId === accountId)
+        .filter((draft) => draft.ref.accountId === accountId && !sends.some((entry) => entry.dismissed && entry.status.state === 'unknown' && draftKey(entry.status.draftRef) === draftKey(draft.ref)))
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
         .map(draftSummary);
     },
@@ -1982,6 +2105,7 @@ export function createBrowserFakeMailClient(
         replyLink = {
           conversation: snapshotCopy(command.source.conversation),
           sourceMessageId: command.source.sourceMessageId,
+          sourceSubject: conv.subject,
           messageId: `<${latest.id}@fixture.emailos>`,
           references: [...conv.messages.slice(0, -1).map((message) => `<${message.id}@fixture.emailos>`), `<${latest.id}@fixture.emailos>`],
         };
@@ -2007,6 +2131,7 @@ export function createBrowserFakeMailClient(
       if (!activeAccountId || command.ref.accountId !== activeAccountId) throw failNotShown();
       const draft = drafts.get(`${command.ref.accountId}:${command.ref.draftId}`);
       if (!draft) throw failNotShown();
+      if (locked(command.ref)) throw { kind: 'busy' } satisfies MailError;
       if (command.expectedRevision !== draft.revision) throw { kind: 'draft_conflict', currentRevision: draft.revision } satisfies MailError;
       if (draft.revision >= 0xffffffff) throw { kind: 'storage_unavailable' } satisfies MailError;
       draft.content = snapshotCopy(command.content);
@@ -2027,6 +2152,7 @@ export function createBrowserFakeMailClient(
       const key = `${command.ref.accountId}:${command.ref.draftId}`;
       const draft = drafts.get(key);
       if (!draft) throw failNotShown();
+      if (locked(command.ref)) throw { kind: 'busy' } satisfies MailError;
       if (command.expectedRevision !== draft.revision) throw { kind: 'draft_conflict', currentRevision: draft.revision } satisfies MailError;
       drafts.delete(key);
       const receipt: DraftDeleteReceipt = { ref: snapshotCopy(command.ref), deletedAt: now() };

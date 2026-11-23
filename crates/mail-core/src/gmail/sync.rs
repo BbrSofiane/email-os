@@ -316,6 +316,14 @@ enum StageOutcome {
 }
 
 impl GmailCore {
+    pub(crate) fn require_synthetic_send(&self) -> Result<(), MailError> {
+        if self.inner.policy.is_synthetic() {
+            Ok(())
+        } else {
+            Err(MailError::ReadOnly)
+        }
+    }
+
     pub(crate) fn register_send_pass(
         &self,
         pass: impl Fn(GmailCore, &CancelToken) -> Result<bool, MailError> + Send + Sync + 'static,
@@ -347,10 +355,6 @@ impl GmailCore {
 
     pub(crate) fn send_now(&self) -> Result<chrono::DateTime<chrono::FixedOffset>, MailError> {
         self.inner.store.send_now()
-    }
-
-    pub(crate) fn release_due_sends(&self, account: &str) -> Result<usize, MailError> {
-        self.inner.store.release_due_sends(account)
     }
 
     pub(crate) fn send_generation(&self) -> Result<u64, MailError> {
@@ -426,6 +430,10 @@ impl GmailCore {
         account: &str,
     ) -> Result<Vec<super::store::send::SendIntent>, MailError> {
         self.inner.store.list_send_intents(account)
+    }
+
+    pub(crate) fn dismiss_send(&self, account: &str, operation: &str) -> Result<bool, MailError> {
+        self.inner.store.dismiss_send(account, operation)
     }
 
     pub(crate) fn undo_send(&self, account: &str, operation: &str) -> Result<bool, MailError> {
@@ -965,6 +973,34 @@ impl GmailCore {
     /// Cached reader view of one conversation, scoped by the connected account.
     pub fn get_conversation(&self, r#ref: &ConversationRef) -> Result<Conversation, MailError> {
         self.inner.store.get_conversation(r#ref)
+    }
+
+    /// Refresh the provider thread recorded for a visible confirmed send.
+    pub fn load_confirmed_send_thread(&self, operation: &str) -> Result<Conversation, MailError> {
+        let account = self.active_account()?;
+        let generation = self.inner.store.generation()?;
+        let id = self
+            .inner
+            .store
+            .confirmed_send_thread(&account.account_id, operation)?;
+        let work = self.begin_reply_enrichment()?;
+        let revision = self.inner.store.observation_revision()?;
+        let thread = self
+            .inner
+            .provider
+            .get_thread_for_account(&account.account_id, &id, &work.cancel)?
+            .ok_or(MailError::NotFound)?;
+        let target = ConversationRef {
+            account_id: account.account_id.clone(),
+            conversation_id: id,
+        };
+        if thread.conversation.conversation_ref != target || work.cancel.is_cancelled() {
+            return Err(MailError::NotFound);
+        }
+        self.inner
+            .store
+            .save_search(&[thread], generation, revision, &account.account_id)?;
+        self.inner.store.get_conversation(&target)
     }
 
     /// Explicit search-result load only. Ordinary cached reads never import

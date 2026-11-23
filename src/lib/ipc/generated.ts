@@ -24,6 +24,7 @@ export const SEARCH_MAIL_COMMAND = 'search_mail';
 export const CANCEL_SEARCH_MAIL_COMMAND = 'cancel_search_mail';
 export const LIST_CACHED_TRASH_COMMAND = 'list_cached_trash';
 export const GET_CONVERSATION_COMMAND = 'get_conversation';
+export const LOAD_CONFIRMED_SEND_THREAD_COMMAND = 'load_confirmed_send_thread';
 export const SET_ARCHIVED_COMMAND = 'set_archived';
 export const MAILBOX_CHANGED_EVENT = 'mailbox_changed';
 export const GET_ACCOUNT_STATUS_COMMAND = 'get_account_status';
@@ -45,6 +46,15 @@ export const GET_DRAFT_COMMAND = 'get_draft';
 export const CREATE_DRAFT_COMMAND = 'create_draft';
 export const SAVE_DRAFT_COMMAND = 'save_draft';
 export const DELETE_DRAFT_COMMAND = 'delete_draft';
+export const SEND_AVAILABLE_COMMAND = 'send_available';
+export const SEND_DRAFT_COMMAND = 'send_draft';
+export const LIST_SEND_ACTIVITY_COMMAND = 'list_send_activity';
+export const UNDO_SEND_COMMAND = 'undo_send';
+export const CANCEL_SEND_COMMAND = 'cancel_send';
+export const RETRY_SEND_COMMAND = 'retry_send';
+export const CHECK_SENDS_COMMAND = 'check_sends';
+export const DISMISS_SEND_COMMAND = 'dismiss_send';
+export const COPY_UNKNOWN_SEND_COMMAND = 'copy_unknown_send';
 export const DRAFTS_CHANGED_EVENT = 'drafts_changed';
 export const APP_CLOSE_REQUESTED_EVENT = 'app_close_requested';
 export const GET_APP_CLOSE_REQUEST_COMMAND = 'get_app_close_request';
@@ -478,6 +488,12 @@ export type DraftReplyLink = { conversation: ConversationRef, sourceMessageId: s
 export type Draft = { ref: DraftRef, revision: number, createdAt: string, updatedAt: string, content: DraftContent, source: DraftSource, replyLink: DraftReplyLink | null, };
 
 export type DraftSummary = { ref: DraftRef, revision: number, updatedAt: string, subject: string, to: string, source: DraftSource, };
+
+export type AdmitSend = { draftRef: DraftRef, revision: number, requestId: string, };
+
+export type SendState = "hold" | "queued" | "applying" | "confirmed" | "failed" | "unknown" | "cancelled" | "undone";
+
+export type SendStatus = { operationId: string, draftRef: DraftRef, draftRevision: number, notBefore: string, state: SendState, retryOf: string | null, };
 
 export type DraftReceipt = { ref: DraftRef, revision: number, savedAt: string, };
 
