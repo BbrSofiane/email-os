@@ -409,7 +409,7 @@ describe('a reply draft whose source cannot host it', () => {
     expect(w.get('[data-test="reply-source"]').attributes('data-source-conversation')).toBe('conv-01');
     expect(w.get('[data-test="draft-to"]').attributes('disabled')).toBeUndefined();
     expect(w.get('[data-test="draft-body"]').attributes('disabled')).toBeUndefined();
-    expect(w.findAll('button').every((button) => !/send/i.test(button.text()))).toBe(true);
+    expect(w.find('[data-test="send-draft"]').exists()).toBe(true);
   }
 
   it('opens in the card with the reason when the conversation fails to load, keeping and saving every edit', async () => {

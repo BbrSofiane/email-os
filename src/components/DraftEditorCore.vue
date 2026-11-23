@@ -44,6 +44,9 @@ const props = defineProps<{
   canCancelReplyPreparation: boolean;
   closeError: string | null;
   compact?: boolean;
+  sender?: string | null;
+  sendAvailable?: boolean;
+  sendBusy?: boolean;
   /** Which field receives focus when the editor appears (keyboard-first). */
   autofocus?: 'to' | 'body';
   /** Id of a note that explains why the To field is the first thing the user lands in. */
@@ -58,6 +61,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   closeEditor: [];
+  send: [];
   setField: [field: keyof DraftContent, value: string];
   retry: [];
   askDiscard: [];
@@ -168,8 +172,8 @@ const extrasOpen = ref(false);
 const extrasForced = computed(() => props.content.cc !== ''
   || (isReply.value && props.content.subject !== '' && !/^re:/i.test(props.content.subject)));
 const extrasShown = computed(() => extrasOpen.value || extrasForced.value);
-const ccShown = computed(() => extrasShown.value);
-const subjectShown = computed(() => !isReply.value || extrasShown.value);
+const ccShown = computed(() => props.sendAvailable || extrasShown.value);
+const subjectShown = computed(() => props.sendAvailable || !isReply.value || extrasShown.value);
 
 async function toggleExtras(): Promise<void> {
   if (extrasForced.value) return;
@@ -291,6 +295,7 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
       </button>
     </div>
     <div class="composer-fields" :aria-busy="props.saving || props.creating">
+      <div v-if="props.sendAvailable && props.sender" class="field-row" data-field="from"><span class="field-label">From</span><span class="field-input">{{ props.sender }}</span></div>
       <div class="field-row" data-field="to">
         <label class="field-label" :for="ids.to">To</label>
         <button
@@ -305,6 +310,7 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
         ><template v-if="toAddress === ''">No recipient</template><template v-else><template v-if="toName"><span data-test="draft-to-name">{{ toName }}</span> <span class="field-summary-address" data-test="draft-to-address">&lt;{{ toAddress }}&gt;</span></template><template v-else>{{ toAddress }}</template></template></button>
         <input v-else :id="ids.to" ref="toInput" class="field-input" data-test="draft-to" type="text" inputmode="email" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="next" :aria-describedby="props.toDescribedBy" autocomplete="off" :value="props.content.to" :disabled="fieldsDisabled()" @input="emit('setField', 'to', ($event.target as HTMLInputElement).value)" @keydown.enter="onFieldEnter($event, 'to')">
         <button
+          v-if="!props.sendAvailable"
           type="button"
           class="field-toggle"
           data-test="draft-fields-toggle"
@@ -367,6 +373,7 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
          still waits for the protected flush and stays open with the error if the
          flush fails. Esc does the same. There is no Send. -->
     <footer class="composer-footer">
+      <button v-if="props.sendAvailable && props.sender" type="button" class="composer-primary" data-test="send-draft" :disabled="props.sendBusy || fieldsDisabled() || props.creating || !props.activeRef?.draftId" @click="emit('send')">{{ props.sendBusy ? 'Sending…' : 'Send' }}</button>
       <button v-if="!props.compact" type="button" class="composer-primary" data-test="close-composer" aria-keyshortcuts="Escape" :disabled="closeDisabled" @click="emit('closeEditor')">Save and close</button>
       <kbd v-if="!props.compact" class="composer-kbd" aria-hidden="true">Esc</kbd>
       <button v-if="props.canCancelReplyPreparation" type="button" class="composer-quiet" data-test="cancel-reply-preparation" :disabled="props.closing || props.transitioning" @click="emit('cancelReplyPreparation')">Cancel reply preparation</button>

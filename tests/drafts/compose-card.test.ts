@@ -266,8 +266,7 @@ describe("compose entry points in App (inline card in the central pane)", () => 
     expect(card.find('[data-test="draft-body"]').exists()).toBe(true);
     expect(card.find('[data-test="draft-status"]').exists()).toBe(true);
     const footer = card.find('.composer-footer');
-    expect(footer.findAll('button').map((button) => button.text().trim())).toEqual(['Save and close', 'Discard…']);
-    expect(card.findAll('button').every((button) => !/send/i.test(button.text()))).toBe(true);
+    expect(footer.findAll('button').map((button) => button.text().trim())).toEqual(['Send', 'Save and close', 'Discard…']);
   }
 
   it('has a split-header compose glyph with the C aria-label', async () => {

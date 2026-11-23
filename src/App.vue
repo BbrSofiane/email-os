@@ -329,6 +329,136 @@ const accountReady = computed(() => mailbox.accountState.value === 'ready');
 const accountStatus = computed(() => mailbox.accountStatus.value);
 const accountId = computed(() => accountStatus.value?.account?.accountId ?? null);
 const drafts = useDrafts(props.client, accountId, props.mode);
+const sendAvailable = ref(false);
+const sendBusy = ref(false);
+const sendNotice = ref<import('./lib/ipc/generated').SendStatus | null>(null);
+const sendError = ref('');
+let sendNoticeTimer: ReturnType<typeof setTimeout> | undefined;
+watch(accountId, async (id, _old, onCleanup) => {
+  let current = true;
+  onCleanup(() => { current = false; });
+  sendAvailable.value = false;
+  sendNotice.value = null;
+  if (!id || !props.client.sendAvailable || !props.client.send) return;
+  try {
+    const available = await props.client.sendAvailable();
+    if (current) sendAvailable.value = available;
+  } catch { if (current) sendAvailable.value = false; }
+}, { immediate: true });
+const sendActivity = ref<import('./lib/ipc/generated').SendStatus[]>([]);
+const sendActivityError = ref('');
+let sendActivityGeneration = 0;
+const refreshedConfirmedSends = new Set<string>();
+const refreshingConfirmedSends = new Set<string>();
+const sendActionRequests = new Map<string, string>();
+watch(accountId, () => {
+  refreshedConfirmedSends.clear();
+  refreshingConfirmedSends.clear();
+  sendActionRequests.clear();
+});
+
+async function refreshConfirmedReader(operationId: string, account: string): Promise<void> {
+  const target = mailbox.openRef.value && { ...mailbox.openRef.value };
+  if (!target || target.accountId !== account || !props.client.send
+    || refreshedConfirmedSends.has(operationId) || refreshingConfirmedSends.has(operationId)) return;
+  refreshingConfirmedSends.add(operationId);
+  try {
+    const conversation = await props.client.send.loadConfirmedThread(operationId);
+    if (account !== accountId.value || !sameConversation(mailbox.openRef.value, target)) return;
+    refreshedConfirmedSends.add(operationId);
+    if (sameConversation(conversation.ref, target)) await mailbox.refresh();
+  } catch {
+    // The send remains confirmed; a later activity refresh can retry the read.
+  } finally {
+    refreshingConfirmedSends.delete(operationId);
+  }
+}
+async function refreshSendActivity(): Promise<void> {
+  const generation = ++sendActivityGeneration;
+  const account = accountId.value;
+  if (!account || !props.client.send || !sendAvailable.value) { sendActivity.value = []; return; }
+  try {
+    const result = await props.client.send.listActivity();
+    if (generation === sendActivityGeneration && account === accountId.value) {
+      sendActivity.value = result;
+      sendActivityError.value = '';
+      for (const entry of result) {
+        if (entry.state === 'confirmed') void refreshConfirmedReader(entry.operationId, account);
+      }
+    }
+  } catch {
+    if (generation === sendActivityGeneration) sendActivityError.value = 'Could not refresh send activity.';
+  }
+}
+watch([accountId, sendAvailable], () => { void refreshSendActivity(); }, { immediate: true });
+let unsubscribeSend: (() => void) | undefined;
+let sendDisposed = false;
+void props.client.subscribe(() => { void refreshSendActivity(); }).then((unsubscribe) => {
+  if (sendDisposed) unsubscribe(); else unsubscribeSend = unsubscribe;
+}).catch(() => { sendActivityError.value = 'Could not watch send activity.'; });
+onBeforeUnmount(() => { sendDisposed = true; unsubscribeSend?.(); });
+async function sendActivityAction(action: string, operationId: string): Promise<void> {
+  const transport = props.client.send;
+  const entry = sendActivity.value.find((item) => item.operationId === operationId);
+  if (!transport || !entry || sendBusy.value) return;
+  sendBusy.value = true;
+  sendActivityError.value = '';
+  const requestKey = `${action}:${operationId}`;
+  const requestId = sendActionRequests.get(requestKey) ?? crypto.randomUUID();
+  if (action === 'retry' || action === 'copy') sendActionRequests.set(requestKey, requestId);
+  try {
+    if (action === 'cancel' && !await transport.cancel(operationId)) throw new Error('Send already started');
+    if (action === 'retry') {
+      const receipt = await transport.retry(operationId, requestId);
+      sendActionRequests.delete(requestKey);
+      sendNotice.value = receipt;
+      clearTimeout(sendNoticeTimer);
+      sendNoticeTimer = setTimeout(() => { sendNotice.value = null; }, Math.max(0, Date.parse(receipt.notBefore) - Date.now()));
+    }
+    if (action === 'check') await transport.check();
+    if (action === 'dismiss' && !await transport.dismiss(operationId)) throw new Error('Dismiss failed');
+    if (action === 'copy') {
+      const receipt = await transport.copyUnknown(operationId, requestId);
+      sendActionRequests.delete(requestKey);
+      await drafts.openDraft(receipt.ref);
+    }
+    if (action === 'openDraft') await drafts.openDraft(entry.draftRef);
+    if (action === 'open') {
+      const conversation = await transport.loadConfirmedThread(operationId);
+      if (entry.draftRef.accountId === accountId.value) await openFromActivity(conversation.ref);
+    }
+    await Promise.all([refreshSendActivity(), drafts.refresh(), mailbox.refresh()]);
+  } catch {
+    sendActivityError.value = 'Could not complete the send action. Refresh Activity and try again.';
+  } finally { sendBusy.value = false; }
+}
+async function sendDraft(): Promise<void> {
+  if (sendBusy.value || !sendAvailable.value) return;
+  sendBusy.value = true;
+  sendError.value = '';
+  try {
+    const receipt = await drafts.admitSend();
+    if (!receipt) { sendError.value = drafts.transitioning.value ? 'Send was not confirmed. Retry to resolve this request.' : 'The draft could not be sent. Review the draft and try again.'; return; }
+    sendNotice.value = receipt;
+    void refreshSendActivity();
+    clearTimeout(sendNoticeTimer);
+    sendNoticeTimer = setTimeout(() => { sendNotice.value = null; }, Math.max(0, Date.parse(receipt.notBefore) - Date.now()));
+  } finally { sendBusy.value = false; }
+}
+async function undoSend(): Promise<void> {
+  const receipt = sendNotice.value;
+  if (!receipt || !props.client.send || sendBusy.value) return;
+  sendBusy.value = true;
+  try {
+    const restored = await props.client.send.undo(receipt.operationId);
+    sendNotice.value = null;
+    if (restored) await drafts.openDraft(restored);
+    else sendError.value = 'The Undo window has closed.';
+  } catch { sendError.value = 'Undo was not confirmed. Try again.'; }
+  finally { sendBusy.value = false; }
+}
+onBeforeUnmount(() => clearTimeout(sendNoticeTimer));
+
 
 const emptyAction = ref<HTMLButtonElement | null>(null);
 
@@ -2279,6 +2409,8 @@ const searchSyntaxEditHint = computed(() =>
            only): context coverage and draft recovery. Lines that come and go
            with triage keys live in the bottom dock instead (.list-dock). -->
       <div class="list-notices">
+        <p v-if="sendNotice" role="status" data-test="send-notice">Sending… <button type="button" :disabled="sendBusy" @click="undoSend">Undo</button></p>
+        <p v-if="sendError" role="alert">{{ sendError }} <button v-if="drafts.transitioning.value" type="button" :disabled="sendBusy" @click="sendDraft">Retry send</button></p>
         <p v-if="reminderConfirmation" class="reminder-confirmation" role="status" data-test="reminder-confirmation">{{ reminderConfirmation }}</p>
         <!-- Close recovery is global: the Drafts list shows the same lines in
              flow above its rows, so the banner shows everywhere else. -->
@@ -2484,6 +2616,7 @@ const searchSyntaxEditHint = computed(() =>
                non-inert while composing. -->
           <Teleport v-if="composeCardOpen && !readerOpen" :to="appRoot ?? undefined" :disabled="layoutMode !== 'compact'">
           <ComposeCard
+            :send-available="sendAvailable" :send-busy="sendBusy" :sender="accountStatus?.account?.emailAddress" @send="sendDraft"
             :compact="layoutMode === 'compact'"
             :recipient-label="composeRecipientLabel"
             :notice="cardNotice"
@@ -2669,6 +2802,7 @@ const searchSyntaxEditHint = computed(() =>
             <Teleport :to="appRoot ?? undefined" :disabled="layoutMode !== 'compact'">
             <ReplyComposer
               v-if="replyComposerOpen && readerOpen"
+              :send-available="sendAvailable" :send-busy="sendBusy" :sender="accountStatus?.account?.emailAddress" @send="sendDraft"
               :compact="layoutMode === 'compact'"
               :recipient-label="replyRecipientLabel"
               :recipient-mailbox="replyRecipientMailbox"
@@ -2712,6 +2846,7 @@ const searchSyntaxEditHint = computed(() =>
                  like the reply composer above it. -->
             <Teleport v-if="composeCardOpen && readerOpen" :to="appRoot ?? undefined" :disabled="layoutMode !== 'compact'">
             <ComposeCard
+              :send-available="sendAvailable" :send-busy="sendBusy" :sender="accountStatus?.account?.emailAddress" @send="sendDraft"
               :compact="layoutMode === 'compact'"
               :recipient-label="composeRecipientLabel"
               :notice="cardNotice"
@@ -2817,9 +2952,13 @@ const searchSyntaxEditHint = computed(() =>
             @cancel-upgrade="mailbox.cancelMailboxActionUpgrade()"
           />
           <p v-if="drawer === 'activity' && mailbox.activityError.value" role="alert">Could not refresh Activity. <button type="button" @click="mailbox.refresh()">Retry</button></p>
+          <p v-if="drawer === 'activity' && sendActivityError" role="alert">{{ sendActivityError }} <button type="button" @click="refreshSendActivity">Retry</button></p>
           <ActivityPanel
             v-if="drawer === 'activity'"
             :activity="mailbox.activity.value"
+            :sends="sendActivity"
+            :send-busy="sendBusy"
+            @send-action="sendActivityAction"
             :actions-enabled="mailboxActionsEnabled && !mailbox.commandInFlight.value && !mailbox.bulkUnresolved.value"
             :gmail-mode="triageSurfaces"
             :local-session="!gmailMode"

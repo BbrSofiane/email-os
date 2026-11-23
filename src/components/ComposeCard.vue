@@ -44,6 +44,9 @@ const props = defineProps<{
   canCancelReplyPreparation: boolean;
   closeError: string | null;
   compact?: boolean;
+  sender?: string | null;
+  sendAvailable?: boolean;
+  sendBusy?: boolean;
 }>();
 
 /** The card's accessible name: "New Message", or the reply draft's own title. */
@@ -60,6 +63,7 @@ const noticeId = useId();
 
 const emit = defineEmits<{
   closeEditor: [];
+  send: [];
   setField: [field: keyof DraftContent, value: string];
   retry: [];
   askDiscard: [];
@@ -83,6 +87,10 @@ function onSetField(field: keyof DraftContent, value: string): void {
       data-test="composer"
       autofocus="to"
       variant="new"
+      :sender="props.sender"
+      :send-available="props.sendAvailable"
+      :send-busy="props.sendBusy"
+      @send="emit('send')"
       :compact="props.compact"
       :to-described-by="notice ? noticeId : undefined"
       :active-ref="activeRef"

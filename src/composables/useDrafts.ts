@@ -461,6 +461,41 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
     }
   }
 
+  // Freeze the admission envelope until the server acknowledges it. A lost
+  // response must never turn a second click into a second send intent.
+  let sendEnvelope: import('../lib/ipc/generated').AdmitSend | null = null;
+  async function admitSend(): Promise<import('../lib/ipc/generated').SendStatus | null> {
+    if (!client.send || !activeRef.value || (transitioning.value && !sendEnvelope)) return null;
+    if (!sendEnvelope) {
+      transitioning.value = true;
+      const target = { ...activeRef.value };
+      // flush itself needs the normal editor lane.
+      transitioning.value = false;
+      if (!(await flush()) || !activeRef.value || activeRef.value.draftId !== target.draftId
+        || activeRef.value.accountId !== target.accountId) return null;
+      sendEnvelope = { draftRef: target, revision: revision.value, requestId: requestId() };
+    }
+    transitioning.value = true;
+    try {
+      const receipt = await client.send.admit(sendEnvelope);
+      sendEnvelope = null;
+      clearEditor();
+      void refresh();
+      return receipt;
+    } catch (raw) {
+      error.value = normalizeError(raw);
+      if (['invalid_request', 'draft_conflict', 'request_id_conflict', 'not_found'].includes(error.value.kind)) {
+        sendEnvelope = null;
+        transitioning.value = false;
+        if (error.value.kind === 'draft_conflict') conflict.value = true;
+      }
+      return null;
+    } finally {
+      // An uncertain admission stays frozen until the same request is retried.
+      if (!sendEnvelope) transitioning.value = false;
+    }
+  }
+
   async function flushAndClose(): Promise<boolean> {
     cancelDiscard();
     if (!activeRef.value) return true;
@@ -1036,6 +1071,6 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
     isVisible, canCancelReplyPreparation, recoveryRequired,
     openingRefs, discardingRefs, transitioning, deletePending, dirty, hasUnsavedWork, statusLabel, refresh, openNew, openDraft, flush, flushAndClose,
     retrySave, reloadSaved, cancelReload, saveAsNew, askDiscard, discard, discardListed, cancelDiscard, cancelReplyPreparation, setContent, scheduleSave, setTransitioning,
-    retryDraftSubscription, retryClose, retryCloseSetup,
+    retryDraftSubscription, retryClose, retryCloseSetup, admitSend,
   };
 }
