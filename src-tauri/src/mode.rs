@@ -151,6 +151,9 @@ mod tests {
             .list_drafts()
             .unwrap()
             .is_empty());
+        // The profile lock belongs to the core and is released when the last
+        // handle to the retired session goes; here that is the test's clone.
+        drop(drafts);
         let reopened = session(a.path());
         reopened.core.stop();
         state.session().unwrap().core.stop();

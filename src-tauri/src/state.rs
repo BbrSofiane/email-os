@@ -129,6 +129,10 @@ mod tests {
             },
         };
         assert_eq!(old_drafts.save_draft(&save), Err(error));
+        // The profile lock belongs to the core and is released when the last
+        // handle to the retired session goes: drop the test's handles first.
+        drop(old_drafts);
+        drop(old);
         let (reopened, _) = crate::setup::open_fixture_core(a.path()).unwrap();
         let reopened_drafts = mail_core::drafts::DraftService::new(
             reopened.clone(),
