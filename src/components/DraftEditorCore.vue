@@ -45,6 +45,7 @@ const props = defineProps<{
   closeError: string | null;
   compact?: boolean;
   sender?: string | null;
+  replySubjectChanged?: boolean;
   sendAvailable?: boolean;
   sendBusy?: boolean;
   /** Which field receives focus when the editor appears (keyboard-first). */
@@ -104,11 +105,17 @@ const isReply = computed(() => props.variant === 'reply');
 /** Plain-language detail for the title and the body's hidden description. */
 const LOCAL_DETAIL = 'Local plain-text draft. Nothing is sent. Recipients are stored as typed and are not validated. Bcc, reply-all and rich text are not supported.';
 /** Settled states that read "<state> · never sent"; the first two stay calm (Ash). */
+const draftDetail = computed(() => props.sendAvailable
+  ? 'Local plain-text draft. Send checks the recipients before queueing.'
+  : LOCAL_DETAIL);
 const SETTLED_CALM = new Set(['Saved locally', 'Draft loaded from this device']);
 const SETTLED_NON_DURABLE = new Set(['Saved in preview memory (non-durable)', 'Loaded from preview memory (non-durable)']);
 
 const statusLine = computed(() => {
   const status = props.status;
+  if (props.sendAvailable) {
+    return { text: status || 'Local draft', calm: !status || SETTLED_CALM.has(status) };
+  }
   if (!status) return { text: 'Local draft · never sent', calm: true };
   if (SETTLED_CALM.has(status)) return { text: `${status} · never sent`, calm: true };
   if (SETTLED_NON_DURABLE.has(status)) return { text: `${status} · never sent`, calm: false };
@@ -271,7 +278,7 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
           class="draft-status"
           :class="{ 'draft-status-calm': statusLine.calm }"
           data-test="draft-status"
-          :title="LOCAL_DETAIL"
+          :title="draftDetail"
         >{{ statusLine.text }}</p>
         <button
           type="button"
@@ -285,7 +292,7 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
         <span class="visually-hidden" role="status" data-test="draft-status-announce">{{ announcement }}</span>
       </div>
     </div>
-    <p v-if="caveatOpen" :id="ids.caveat" class="composer-caveat" data-test="draft-caveat">{{ LOCAL_DETAIL }}</p>
+    <p v-if="caveatOpen" :id="ids.caveat" class="composer-caveat" data-test="draft-caveat">{{ draftDetail }}</p>
     <p v-if="props.error" role="alert" data-test="draft-error">{{ describe(props.error) }}</p>
     <p v-if="props.createError" role="alert" data-test="draft-create-error">{{ describe(props.createError) }}</p>
     <p v-if="props.closeError" role="alert" data-test="draft-close-error">{{ props.closeError }}</p>
@@ -343,7 +350,7 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
           :disabled="fieldsDisabled()"
           @input="emit('setField', 'bodyText', ($event.target as HTMLTextAreaElement).value); fitBody()"
         ></textarea>
-        <span :id="ids.detail" class="visually-hidden" data-test="draft-local-detail">{{ LOCAL_DETAIL }}</span>
+        <span :id="ids.detail" class="visually-hidden" data-test="draft-local-detail">{{ draftDetail }}</span>
       </div>
     </div>
     <slot name="context" />
@@ -372,6 +379,7 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
     <!-- Footer: one primary action. "Save and close" is the old Close editor: it
          still waits for the protected flush and stays open with the error if the
          flush fails. Esc does the same. There is no Send. -->
+    <p v-if="props.sendAvailable && props.replySubjectChanged" class="composer-caveat" role="note">This reply will start a new conversation.</p>
     <footer class="composer-footer">
       <button v-if="props.sendAvailable && props.sender" type="button" class="composer-primary" data-test="send-draft" :disabled="props.sendBusy || fieldsDisabled() || props.creating || !props.activeRef?.draftId" @click="emit('send')">{{ props.sendBusy ? 'Sending…' : 'Send' }}</button>
       <button v-if="!props.compact" type="button" class="composer-primary" data-test="close-composer" aria-keyshortcuts="Escape" :disabled="closeDisabled" @click="emit('closeEditor')">Save and close</button>

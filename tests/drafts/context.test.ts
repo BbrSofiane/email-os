@@ -52,7 +52,7 @@ describe('entering and leaving the Drafts context', () => {
     expect(rail(w).attributes('aria-current')).toBe('page');
     expect(rail(w).attributes('aria-expanded')).toBeUndefined();
     expect(w.get('[data-test="central-surface"]').attributes('aria-label')).toBe('Drafts');
-    expect(w.get('[data-test="drafts-coverage"]').text()).toContain('Local to this device · never sent');
+    expect(w.get('[data-test="drafts-coverage"]').text()).toBe('Local to this device');
     expect(rows(w)).toHaveLength(2);
     expect(w.find('[data-test="draft-list"] li[aria-current="true"]').exists()).toBe(true);
     expect(document.activeElement).toBe(rows(w)[0]!.element);

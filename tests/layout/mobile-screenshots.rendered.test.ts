@@ -151,6 +151,20 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
       await shot(`${name}-send-undo`);
       await click('[data-test="send-notice"] button');
       await waitFor(`app.querySelector('[data-test="draft-subject"]')?.value === 'Fixture send'`, 'restored draft');
+      await click('[data-test="send-draft"]');
+      await waitFor(`app.querySelector('[data-test="send-notice"] button')`, 'second send hold');
+      await waitFor(`!app.querySelector('[data-test="send-notice"] button')`, 'window expiry');
+      if (compact) {
+        await click('[data-test="mobile-menu"]');
+        await chooseDrawerRow('Activity');
+      } else {
+        await click('[data-test="rail-activity"]');
+      }
+      await waitFor(`app.querySelector('[data-test="send-confirmed"] button')`, 'confirmed send');
+      await shot(`${name}-send-activity`);
+      await click('[data-test="send-confirmed"] button');
+      await waitFor(`app.querySelector('.reader')?.textContent?.includes('The weekly notes are ready.')`, 'sent conversation');
+      await shot(`${name}-send-confirmed`);
     }
     await viewport(PHONE_VIEWPORT.width, PHONE_VIEWPORT.height, true);
   }, 40_000);

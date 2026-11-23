@@ -2625,7 +2625,7 @@ const searchSyntaxEditHint = computed(() =>
                non-inert while composing. -->
           <Teleport v-if="composeCardOpen && !readerOpen" :to="appRoot ?? undefined" :disabled="layoutMode !== 'compact'">
           <ComposeCard
-            :send-available="sendAvailable" :send-busy="sendBusy" :sender="accountStatus?.account?.emailAddress" @send="sendDraft"
+            :send-available="sendAvailable" :reply-subject-changed="drafts.replySubjectChanged.value" :send-busy="sendBusy" :sender="accountStatus?.account?.emailAddress" @send="sendDraft"
             :compact="layoutMode === 'compact'"
             :recipient-label="composeRecipientLabel"
             :notice="cardNotice"
@@ -2814,7 +2814,7 @@ const searchSyntaxEditHint = computed(() =>
             <Teleport :to="appRoot ?? undefined" :disabled="layoutMode !== 'compact'">
             <ReplyComposer
               v-if="replyComposerOpen && readerOpen"
-              :send-available="sendAvailable" :send-busy="sendBusy" :sender="accountStatus?.account?.emailAddress" @send="sendDraft"
+              :send-available="sendAvailable" :reply-subject-changed="drafts.replySubjectChanged.value" :send-busy="sendBusy" :sender="accountStatus?.account?.emailAddress" @send="sendDraft"
               :compact="layoutMode === 'compact'"
               :recipient-label="replyRecipientLabel"
               :recipient-mailbox="replyRecipientMailbox"
@@ -2858,7 +2858,7 @@ const searchSyntaxEditHint = computed(() =>
                  like the reply composer above it. -->
             <Teleport v-if="composeCardOpen && readerOpen" :to="appRoot ?? undefined" :disabled="layoutMode !== 'compact'">
             <ComposeCard
-              :send-available="sendAvailable" :send-busy="sendBusy" :sender="accountStatus?.account?.emailAddress" @send="sendDraft"
+              :send-available="sendAvailable" :reply-subject-changed="drafts.replySubjectChanged.value" :send-busy="sendBusy" :sender="accountStatus?.account?.emailAddress" @send="sendDraft"
               :compact="layoutMode === 'compact'"
               :recipient-label="composeRecipientLabel"
               :notice="cardNotice"

@@ -56,6 +56,11 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
   const draftSubscriptionError = ref<MailError | null>(null);
   const activeRef = ref<DraftRef | null>(null);
   const activeSource = ref<DraftSource | null>(null);
+  const sourceSubject = ref<string | null>(null);
+  const replySubjectChanged = computed(() => {
+    const normalize = (subject: string) => subject.trim().replace(/^re:/i, '').trim();
+    return sourceSubject.value !== null && normalize(sourceSubject.value) !== normalize(content.value.subject);
+  });
   const content = ref<DraftContent>(copyContent(EMPTY_CONTENT));
   const revision = ref(0);
   const acknowledged = ref<DraftContent>(copyContent(EMPTY_CONTENT));
@@ -145,6 +150,7 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
     clearTimer();
     activeRef.value = null;
     activeSource.value = null;
+    sourceSubject.value = null;
     content.value = copyContent(EMPTY_CONTENT);
     acknowledged.value = copyContent(EMPTY_CONTENT);
     revision.value = 0;
@@ -253,6 +259,7 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
         const hasLocalEdits = !sameContent(beforeLoad, initialContent);
         acknowledged.value = copyContent(initialContent);
         activeSource.value = saved.source;
+        sourceSubject.value = saved.replyLink?.sourceSubject ?? null;
         createEnvelope = null;
         createError.value = null;
         creating.value = false;
@@ -532,6 +539,7 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
     const token = ++generation;
     activeRef.value = { accountId: accountId.value, draftId: '' };
     activeSource.value = source;
+    sourceSubject.value = null;
     content.value = copyContent(initialContent ?? EMPTY_CONTENT);
     acknowledged.value = copyContent(initialContent ?? EMPTY_CONTENT);
     revision.value = 0;
@@ -574,6 +582,7 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
         if (token !== generation || ref.accountId !== accountId.value || !stillWanted()) return false;
         activeRef.value = { ...draft.ref };
         activeSource.value = draft.source;
+        sourceSubject.value = draft.replyLink?.sourceSubject ?? null;
         content.value = copyContent(draft.content);
         acknowledged.value = copyContent(draft.content);
         revision.value = draft.revision;
@@ -619,6 +628,7 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
       content.value = copyContent(draft.content);
       acknowledged.value = copyContent(draft.content);
       activeSource.value = draft.source;
+      sourceSubject.value = draft.replyLink?.sourceSubject ?? null;
       conflict.value = false;
       error.value = null;
       hasReceipt.value = false;
@@ -715,6 +725,7 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
       retireSaveLane();
       activeRef.value = { ...receipt.ref };
       activeSource.value = saved.source;
+      sourceSubject.value = saved.replyLink?.sourceSubject ?? null;
       revision.value = saved.revision;
       acknowledged.value = copyContent(saved.content);
       hasReceipt.value = true;
@@ -1079,6 +1090,6 @@ export function useDrafts(client: MailClient, accountId: ComputedRef<string | nu
     isVisible, canCancelReplyPreparation, recoveryRequired,
     openingRefs, discardingRefs, transitioning, deletePending, dirty, hasUnsavedWork, statusLabel, refresh, openNew, openDraft, flush, flushAndClose,
     retrySave, reloadSaved, cancelReload, saveAsNew, askDiscard, discard, discardListed, cancelDiscard, cancelReplyPreparation, setContent, scheduleSave, setTransitioning,
-    retryDraftSubscription, retryClose, retryCloseSetup, admitSend,
+    retryDraftSubscription, retryClose, retryCloseSetup, admitSend, replySubjectChanged,
   };
 }

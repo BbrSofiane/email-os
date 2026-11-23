@@ -49,6 +49,7 @@ const props = defineProps<{
   closeError: string | null;
   compact?: boolean;
   sender?: string | null;
+  replySubjectChanged?: boolean;
   sendAvailable?: boolean;
   sendBusy?: boolean;
 }>();
@@ -100,6 +101,7 @@ const headingTarget = computed<{ text: string } | null>(() => {
         variant="reply"
         :sender="props.sender"
       :send-available="props.sendAvailable"
+      :reply-subject-changed="props.replySubjectChanged"
       :send-busy="props.sendBusy"
       @send="emit('send')"
       :compact="props.compact"

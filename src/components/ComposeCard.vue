@@ -45,6 +45,7 @@ const props = defineProps<{
   closeError: string | null;
   compact?: boolean;
   sender?: string | null;
+  replySubjectChanged?: boolean;
   sendAvailable?: boolean;
   sendBusy?: boolean;
 }>();
@@ -89,6 +90,7 @@ function onSetField(field: keyof DraftContent, value: string): void {
       variant="new"
       :sender="props.sender"
       :send-available="props.sendAvailable"
+      :reply-subject-changed="props.replySubjectChanged"
       :send-busy="props.sendBusy"
       @send="emit('send')"
       :compact="props.compact"
