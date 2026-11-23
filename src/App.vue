@@ -114,7 +114,7 @@ interface ReaderOrigin {
   anchor: ListAnchor | null;
 }
 
-const mailbox = useMailbox(props.client);
+const mailbox = useMailbox(props.client, () => { void refreshSendActivity(); });
 // Activity rows name mail by its cached subject. Operations carry only a ref, so
 // the UI remembers subjects it has already seen (list rows, including Cached
 // Trash rows,
@@ -347,6 +347,13 @@ watch(accountId, async (id, _old, onCleanup) => {
   } catch { if (current) sendAvailable.value = false; }
 }, { immediate: true });
 const sendActivity = ref<import('./lib/ipc/generated').SendStatus[]>([]);
+const draftSendStates = computed(() => {
+  const states = new Map<string, import('./lib/ipc/generated').SendStatus>();
+  for (const entry of sendActivity.value) {
+    states.set(`${entry.draftRef.accountId}:${entry.draftRef.draftId}`, entry);
+  }
+  return states;
+});
 const sendActivityError = ref('');
 let sendActivityGeneration = 0;
 const refreshedConfirmedSends = new Set<string>();
@@ -381,8 +388,13 @@ async function refreshSendActivity(): Promise<void> {
   try {
     const result = await props.client.send.listActivity();
     if (generation === sendActivityGeneration && account === accountId.value) {
+      const before = sendActivity.value;
       sendActivity.value = result;
       sendActivityError.value = '';
+      if (before.length !== result.length || result.some((entry, index) =>
+        before[index]?.operationId !== entry.operationId || before[index]?.state !== entry.state)) {
+        void drafts.refresh();
+      }
       for (const entry of result) {
         if (entry.state === 'confirmed') void refreshConfirmedReader(entry.operationId, account);
       }
@@ -392,12 +404,6 @@ async function refreshSendActivity(): Promise<void> {
   }
 }
 watch([accountId, sendAvailable], () => { void refreshSendActivity(); }, { immediate: true });
-let unsubscribeSend: (() => void) | undefined;
-let sendDisposed = false;
-void props.client.subscribe(() => { void refreshSendActivity(); }).then((unsubscribe) => {
-  if (sendDisposed) unsubscribe(); else unsubscribeSend = unsubscribe;
-}).catch(() => { sendActivityError.value = 'Could not watch send activity.'; });
-onBeforeUnmount(() => { sendDisposed = true; unsubscribeSend?.(); });
 async function sendActivityAction(action: string, operationId: string): Promise<void> {
   const transport = props.client.send;
   const entry = sendActivity.value.find((item) => item.operationId === operationId);
@@ -2662,6 +2668,8 @@ const searchSyntaxEditHint = computed(() =>
             ref="draftsPane"
             v-model:active-key="draftsActiveKey"
             :summaries="drafts.summaries.value"
+            :send-available="sendAvailable"
+            :send-states="draftSendStates"
             :active-ref="drafts.activeRef.value"
             :conflict="drafts.conflict.value"
             :suspended-editor="!!drafts.activeRef.value && !drafts.isVisible.value"
@@ -2678,6 +2686,7 @@ const searchSyntaxEditHint = computed(() =>
             :discard-draft="drafts.discardListed"
             @new-draft="executeAction('compose')"
             @open="openDraftFromList"
+            @open-send-activity="openDrawer('activity')"
             @retry-draft-subscription="drafts.retryDraftSubscription()"
             @retry-close="drafts.retryClose()"
             @retry-close-setup="drafts.retryCloseSetup()"

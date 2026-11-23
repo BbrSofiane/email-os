@@ -10,7 +10,7 @@ research and architecture proposals are not feature inventories.
 |---|---|---|---|
 | Mailbox and reader | Durable synthetic inbox (the Gmail core on the built-in synthetic provider, [ADR 0002](adr/0002-fixture-as-synthetic-provider.md)), plain-text and HTML reader, read/unread mix, operation recovery. | Separate profile; bounded Gmail cache and plain-text and HTML reader. Read-only until the user enables mailbox actions. | Synthetic fixtures and HTML reader in memory; no Gmail, SQLite durability, or native IPC. |
 | Mailbox writes | Archive/unarchive, read/unread and star/unstar (single and group), retry and undo, through the same operation ledger as Gmail; no permission grant. Interrupted writes are requeued at the next launch. | Explicit archive/unarchive, read/unread, and star/unstar setters only, after opt-in `gmail.modify` upgrade. No automatic read on open. | Fake-provider simulation only; does not prove provider writes or convergence. |
-| Composition | Plain-text new message and reply; durable local drafts in the selected native profile. No send path. | Same local-only drafts; they do not sync to Gmail. No send path. | Synthetic drafts in memory; saves are not durable. |
+| Composition | Plain-text new messages and replies with local drafts. On macOS and Android, fixture Send uses a durable outbox and five-second Undo window. | Local-only drafts. Gmail sending awaits Track B's scope upgrade and stage 7. | Synthetic drafts and sends in memory. |
 | Search | Cached search over the 24 native fixture conversations, including six HTML samples (ADR 0006). | Read-only cached search or progressive provider scan, with bounded/incomplete coverage disclosures. | Synthetic fake search only. |
 | Saved split | One local, account-scoped saved split. | One local split, removed on Gmail disconnect with cached account data. | Synthetic in-memory split. |
 | Stars | Star/unstar setters and the cached Starred view, shown by the backend's `triageSurfaces` capability. | Starred cache browsing is read-only; explicit star/unstar setters require enabled Gmail modify capability. Cache coverage is incomplete. | Fake simulated-Gmail star state; not fixture-native or provider validation. |
@@ -25,7 +25,7 @@ database is retired once behind a startup screen. The unified-fixture APK was
 smoke-tested on an Android 15 x86_64 emulator on 2026-11-15 (see below). Compact
 phone layout is now in scope at widths ≤719px for Android fixture and browser preview.
 The compact shell covers lists, reader, compose, search, reminders, utility pages,
-contact details, command overlays and device-local swipe settings. Sending, reply-all,
+contact details, command overlays and device-local swipe settings. Fixture sending is supported. Reply-all,
 forwarding, label chips, multiple splits and destructive Trash/Spam/move
 actions are not supported. HTML bodies are shown in the compact reader ([ADR 0006](adr/0006-html-mail-reader.md)). Android uses fixture data. See the
 [Android smoke steps](development.md#android-fixture-apk).
@@ -52,10 +52,19 @@ Mode selection is deliberate: native defaults to fixture; `EMAIL_OS_MODE=gmail`
 selects a separate Gmail profile. Browser preview remains synthetic. See the
 [development guide](development.md) for launch and validation commands.
 
-Sending, provider-synced drafts, reply-all, Bcc, delete/Trash mutations and arbitrary
+Provider-synced drafts, reply-all, Bcc, delete/Trash mutations and arbitrary
 label editing are not implemented. Attachment saving
 does not provide inline PDF/Office preview or malware scanning. Confirmed external HTTP(S) links dispatch on macOS and Android. See the
 linked contracts for exact bounds and pending platform security gates.
+
+### Fixture sending (ADR 0007)
+
+Send saves the current draft revision, queues it for five seconds, and closes
+the editor. Undo restores that revision. A restart during an interrupted hold
+returns the draft to Drafts. Activity distinguishes queued, sending, sent,
+failed and unknown outcomes. A send with an unknown outcome can be checked,
+copied or dismissed. The app never replays it. Linux and Windows desktop keep
+the local-draft workflow. See [ADR 0007](adr/0007-send-mail.md).
 
 ### HTML mail (ADR 0006)
 

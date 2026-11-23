@@ -226,7 +226,7 @@ export interface Mailbox {
 /** How many successively newer refreshes a superseded `refresh()` waits for. */
 const MAX_REFRESH_FOLLOWS = 3;
 
-export function useMailbox(client: MailClient): Mailbox {
+export function useMailbox(client: MailClient, onMailboxChanged?: () => void): Mailbox {
   const context = ref<BrowseContext>('inbox');
   const starredOnly = ref(false);
   const savedSplit = ref<SavedSplit | null>(null);
@@ -326,7 +326,10 @@ export function useMailbox(client: MailClient): Mailbox {
     if (!subscriptionAttempt) {
       // Share an in-flight attempt; a failed attempt is retried on Retry/focus/online.
       subscriptionAttempt = Promise.resolve()
-        .then(() => client.subscribe(() => { void refresh(); }))
+        .then(() => client.subscribe(() => {
+          void refresh();
+          onMailboxChanged?.();
+        }))
         .then((unsub) => {
           if (detached) unsub();
           else unsubscribe = unsub;
