@@ -285,20 +285,25 @@ impl LiveGmailProvider {
                     continue;
                 }
             };
+            let granted_scopes = match tokens.scope.as_deref() {
+                Some(scope) => {
+                    let returned = super::grants::parse_scopes(scope);
+                    latest
+                        .effective_scopes()
+                        .into_iter()
+                        .filter(|scope| returned.contains(scope))
+                        .collect()
+                }
+                None => latest.effective_scopes(),
+            };
             let updated = TokenBundle {
                 access_token: tokens.access_token,
                 expires_at_epoch_ms: tokens.expires_at_epoch_ms,
                 refresh_token: tokens.refresh_token.or(latest.refresh_token.clone()),
                 account_id: latest.account_id.clone(),
                 email: latest.email.clone(),
-                // Refresh can preserve or revoke a verified grant, never create
-                // one: only the explicit account-bound OAuth upgrade enables it.
-                gmail_modify_granted: latest.gmail_modify_granted
-                    && tokens
-                        .scope
-                        .as_deref()
-                        .map(scope_grants_modify)
-                        .unwrap_or(true),
+                gmail_modify_granted: super::grants::GmailGrant::Modify.covered_by(&granted_scopes),
+                granted_scopes,
             };
             if self.publish_bundle_if_current(
                 &Some(latest),
@@ -580,12 +585,6 @@ impl LiveGmailProvider {
         }
         Err(MailError::ProviderRejected)
     }
-}
-
-fn scope_grants_modify(scope: &str) -> bool {
-    scope
-        .split_ascii_whitespace()
-        .any(|granted| granted == auth::GMAIL_MODIFY_SCOPE)
 }
 
 fn bundle_account_id(bundle: &TokenBundle) -> Option<&str> {

@@ -28,6 +28,27 @@ pub struct TokenBundle {
     /// bound account. Missing in legacy bundles and therefore denied.
     #[serde(default)]
     pub gmail_modify_granted: bool,
+    #[serde(default)]
+    pub granted_scopes: Vec<String>,
+}
+
+impl TokenBundle {
+    pub(crate) fn effective_scopes(&self) -> Vec<String> {
+        if !self.granted_scopes.is_empty() {
+            return self.granted_scopes.clone();
+        }
+        if !self.gmail_modify_granted
+            && self.access_token.is_empty()
+            && self.refresh_token.as_deref().unwrap_or("").is_empty()
+        {
+            return Vec::new();
+        }
+        let mut scopes = vec![super::auth::GMAIL_READONLY_SCOPE.to_string()];
+        if self.gmail_modify_granted {
+            scopes.push(super::auth::GMAIL_MODIFY_SCOPE.to_string());
+        }
+        scopes
+    }
 }
 
 impl std::fmt::Debug for TokenBundle {
@@ -45,6 +66,7 @@ impl std::fmt::Debug for TokenBundle {
             )
             .field("email", &self.email.as_ref().map(|_| "<redacted>"))
             .field("gmail_modify_granted", &self.gmail_modify_granted)
+            .field("granted_scopes", &self.granted_scopes)
             .finish()
     }
 }
@@ -217,6 +239,7 @@ mod tests {
             account_id: None,
             email: None,
             gmail_modify_granted: false,
+            granted_scopes: vec![],
         }
     }
 
@@ -229,6 +252,7 @@ mod tests {
             account_id: Some("synthetic-account-id".to_string()),
             email: Some("synthetic@example.test".to_string()),
             gmail_modify_granted: true,
+            granted_scopes: vec![],
         };
         let rendered = format!("{bundle:?}");
         assert!(rendered.contains("<redacted>"), "{rendered}");

@@ -214,6 +214,8 @@ pub(crate) fn authorize(
         query.append_pair("redirect_uri", &redirect_uri);
         query.append_pair("response_type", "code");
         query.append_pair("scope", scope);
+        // Incremental authorization also safely preserves grants on connect.
+        query.append_pair("include_granted_scopes", "true");
         query.append_pair("access_type", "offline");
         query.append_pair("prompt", "consent");
         query.append_pair("code_challenge", &pkce.challenge);

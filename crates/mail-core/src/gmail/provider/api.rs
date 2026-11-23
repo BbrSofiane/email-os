@@ -1,4 +1,5 @@
 use super::*;
+use crate::gmail::grants::{merge_scopes, parse_scopes, GmailGrant, GrantOutcome};
 use crate::gmail::types::GmailProvider;
 use crate::storage_log::{storage_err, storage_fault};
 
@@ -56,20 +57,46 @@ impl GmailProvider for LiveGmailProvider {
     }
 
     fn mutation_access(&self) -> Result<bool, MailError> {
+        self.grant_covered(GmailGrant::Modify)
+    }
+
+    fn grant_covered(&self, grant: GmailGrant) -> Result<bool, MailError> {
         let Some(bundle) = self.secrets.load()? else {
             return Ok(false);
         };
         let bound = bundle
             .account_id
-            .as_ref()
-            .or(bundle.email.as_ref())
-            .is_some_and(|account| !account.is_empty());
-        Ok(bundle.gmail_modify_granted
-            && bound
-            && (!bundle.access_token.is_empty() || bundle.refresh_token.is_some()))
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .or_else(|| bundle.email.as_deref().filter(|s| !s.is_empty()))
+            .is_some();
+        let usable = !bundle.access_token.is_empty()
+            || bundle
+                .refresh_token
+                .as_deref()
+                .is_some_and(|s| !s.is_empty());
+        Ok(bound && usable && grant.covered_by(&bundle.effective_scopes()))
     }
 
     fn enable_mutations(&self, cancel: &CancelToken) -> Result<GmailProfile, MailError> {
+        match self.request_grant(GmailGrant::Modify, cancel)? {
+            GrantOutcome::Granted(profile) => Ok(profile),
+            // The core handles AlreadyCovered without fetching the profile.
+            GrantOutcome::AlreadyCovered => self.profile(cancel),
+        }
+    }
+
+    fn request_grant(
+        &self,
+        requested: GmailGrant,
+        cancel: &CancelToken,
+    ) -> Result<GrantOutcome, MailError> {
+        if self.grant_covered(requested)? {
+            return Ok(GrantOutcome::AlreadyCovered);
+        }
+        if requested == GmailGrant::Readonly {
+            return self.connect(cancel).map(GrantOutcome::Granted);
+        }
         if !self.is_configured() {
             return Err(MailError::NotConfigured);
         }
@@ -86,19 +113,34 @@ impl GmailProvider for LiveGmailProvider {
         if previous.access_token.is_empty() && previous.refresh_token.is_none() {
             return Err(MailError::AuthRequired);
         }
+        let mut requested_scopes = previous.effective_scopes();
+        if !requested_scopes
+            .iter()
+            .any(|s| s == requested.requested_scope())
+        {
+            requested_scopes.push(requested.requested_scope().to_string());
+        }
         let grant = auth::authorize(
             &self.config,
             &self.endpoints,
             &self.opener,
-            auth::GMAIL_MODIFY_SCOPE,
+            &requested_scopes.join(" "),
             cancel,
             auth::AUTH_TIMEOUT,
         )?;
         let tokens =
             auth::exchange_code(&self.config, &self.endpoints, &self.http, &grant, cancel)?;
-        if !tokens.scope.as_deref().is_some_and(scope_grants_modify) {
+        if !tokens
+            .scope
+            .as_deref()
+            .is_some_and(|scope| requested.covered_by(&parse_scopes(scope)))
+        {
             return Err(MailError::PermissionRequired);
         }
+        let granted_scopes = merge_scopes(
+            previous.effective_scopes(),
+            &parse_scopes(tokens.scope.as_deref().unwrap_or("")),
+        );
         let profile = self.fetch_profile(&tokens.access_token, cancel)?;
         if profile.account_id != bound_account {
             return Err(MailError::AuthFailed);
@@ -120,14 +162,15 @@ impl GmailProvider for LiveGmailProvider {
                 refresh_token: tokens.refresh_token.or(previous.refresh_token),
                 account_id: Some(profile.account_id.clone()),
                 email: Some(profile.email_address.clone()),
-                gmail_modify_granted: true,
+                gmail_modify_granted: GmailGrant::Modify.covered_by(&granted_scopes),
+                granted_scopes: granted_scopes.clone(),
             };
             self.publish_bundle_locked(
                 &mut publication,
                 &bundle,
                 CredentialPublicationKind::AccountChange,
             )?;
-            return Ok(profile);
+            return Ok(GrantOutcome::Granted(profile));
         }
 
         // Rebase across refreshes only. A concurrent connect, upgrade, or
@@ -139,7 +182,7 @@ impl GmailProvider for LiveGmailProvider {
         }
         if publication.last_non_refresh_revision != previous_non_refresh_revision {
             if current.gmail_modify_granted {
-                return Ok(profile);
+                return Ok(GrantOutcome::Granted(profile));
             }
             if previous.gmail_modify_granted {
                 return Err(MailError::PermissionRequired);
@@ -147,7 +190,7 @@ impl GmailProvider for LiveGmailProvider {
             return Err(MailError::Busy);
         }
         if current.gmail_modify_granted {
-            return Ok(profile);
+            return Ok(GrantOutcome::Granted(profile));
         }
         if previous.gmail_modify_granted {
             return Err(MailError::PermissionRequired);
@@ -158,14 +201,15 @@ impl GmailProvider for LiveGmailProvider {
             refresh_token: tokens.refresh_token.or(current.refresh_token),
             account_id: Some(profile.account_id.clone()),
             email: Some(profile.email_address.clone()),
-            gmail_modify_granted: true,
+            gmail_modify_granted: GmailGrant::Modify.covered_by(&granted_scopes),
+            granted_scopes,
         };
         self.publish_bundle_locked(
             &mut publication,
             &bundle,
             CredentialPublicationKind::AccountChange,
         )?;
-        Ok(profile)
+        Ok(GrantOutcome::Granted(profile))
     }
 
     fn apply_archive(
@@ -229,6 +273,15 @@ impl GmailProvider for LiveGmailProvider {
             auth::exchange_code(&self.config, &self.endpoints, &self.http, &grant, cancel)?;
         let returned_scope = tokens.scope.clone();
         let returned_refresh_token = tokens.refresh_token.clone();
+        let granted_scopes = returned_scope
+            .as_deref()
+            .map(parse_scopes)
+            .unwrap_or_else(|| {
+                previous
+                    .as_ref()
+                    .map(TokenBundle::effective_scopes)
+                    .unwrap_or_default()
+            });
         // Preserve a stored refresh token when the grant response omits it.
         let bundle = TokenBundle {
             access_token: tokens.access_token,
@@ -238,14 +291,8 @@ impl GmailProvider for LiveGmailProvider {
                 .or_else(|| previous.as_ref().and_then(|p| p.refresh_token.clone())),
             account_id: previous.as_ref().and_then(|p| p.account_id.clone()),
             email: previous.as_ref().and_then(|p| p.email.clone()),
-            // Requested scope alone is never evidence of a grant. Existing
-            // explicit access survives an omitted scope response; a present
-            // response is authoritative and can revoke it.
-            gmail_modify_granted: prior_modify_grant
-                && returned_scope
-                    .as_deref()
-                    .map(scope_grants_modify)
-                    .unwrap_or(true),
+            granted_scopes: granted_scopes.clone(),
+            gmail_modify_granted: GmailGrant::Modify.covered_by(&granted_scopes),
         };
         let profile = self.fetch_profile(&bundle.access_token, cancel)?;
         // Account binding: credentials are single-profile. Re-authenticating
@@ -289,19 +336,18 @@ impl GmailProvider for LiveGmailProvider {
         if publication.last_non_refresh_revision != previous_non_refresh_revision {
             return Err(MailError::Busy);
         }
+        let rebased_scopes = returned_scope
+            .as_deref()
+            .map(parse_scopes)
+            .unwrap_or_else(|| current.effective_scopes());
         let rebased = TokenBundle {
             access_token: bundle.access_token,
             expires_at_epoch_ms: bundle.expires_at_epoch_ms,
-            refresh_token: returned_refresh_token.or(current.refresh_token),
+            refresh_token: returned_refresh_token.or(current.refresh_token.clone()),
             account_id: Some(profile.account_id.clone()),
             email: Some(profile.email_address.clone()),
-            // An omitted scope cannot restore a grant revoked by an
-            // intervening refresh; a present scope remains authoritative.
-            gmail_modify_granted: prior_modify_grant
-                && returned_scope
-                    .as_deref()
-                    .map(scope_grants_modify)
-                    .unwrap_or(current.gmail_modify_granted),
+            gmail_modify_granted: GmailGrant::Modify.covered_by(&rebased_scopes),
+            granted_scopes: rebased_scopes,
         };
         self.publish_bundle_locked(
             &mut publication,

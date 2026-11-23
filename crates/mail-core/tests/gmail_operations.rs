@@ -917,3 +917,19 @@ fn account_wide_credential_failure_requeues_instead_of_failing_the_write() {
     drop(core);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn covered_mutation_upgrade_does_not_request_consent() {
+    let dir = temp_profile("covered-upgrade");
+    let provider = FakeProvider::new(true);
+    provider.set_grant_blocked(true);
+    let core = open_core(&dir, &provider);
+    wait_ready(&core);
+    core.enable_mutations().unwrap();
+    core.wait_for_test_idle(mail_core::testing::TIMEOUT)
+        .unwrap();
+    assert!(provider.wait_for(|state| !state.grant_started));
+    core.stop();
+    drop(core);
+    let _ = std::fs::remove_dir_all(dir);
+}

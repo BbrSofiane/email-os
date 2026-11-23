@@ -70,6 +70,7 @@ fn synthetic_bundle() -> TokenBundle {
         account_id: Some("synthetic@example.test".to_string()),
         email: Some("synthetic@example.test".to_string()),
         gmail_modify_granted: false,
+        granted_scopes: vec![],
     }
 }
 

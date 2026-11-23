@@ -20,6 +20,7 @@ use crate::dto::{
     RetryOperation, SetArchived, SetRead, UndoOperation, UndoReceipt,
 };
 use crate::error::MailError;
+use crate::gmail::grants::{GmailGrant, GrantOutcome};
 use crate::gmail::session::SessionPolicy;
 use crate::gmail::store::{
     Commit, DiscoveryProgress, GmailStore, HistoryProgress, ThreadFetch, DISCOVERY_CAP,
@@ -2596,13 +2597,14 @@ fn run_pass(
             Ok(None) => return PassOutcome::SyncError(MailError::AuthRequired),
             Err(error) => return PassOutcome::Halt(error),
         };
-        return match provider.enable_mutations(cancel) {
-            Ok(profile) if profile.account_id != account.account_id => {
+        return match provider.request_grant(GmailGrant::Modify, cancel) {
+            Ok(GrantOutcome::AlreadyCovered) => PassOutcome::Complete,
+            Ok(GrantOutcome::Granted(profile)) if profile.account_id != account.account_id => {
                 PassOutcome::SyncError(MailError::InvalidRequest {
                     field: "accountId".to_string(),
                 })
             }
-            Ok(_) => match provider.mutation_access() {
+            Ok(GrantOutcome::Granted(_)) => match provider.mutation_access() {
                 Ok(true) => PassOutcome::Complete,
                 Ok(false) => PassOutcome::SyncError(MailError::PermissionRequired),
                 Err(error) => PassOutcome::SyncError(error),
