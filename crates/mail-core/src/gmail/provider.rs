@@ -285,6 +285,10 @@ impl LiveGmailProvider {
                     continue;
                 }
             };
+            // Refresh can preserve or revoke a verified grant, never create
+            // one: a present scope list is intersected with what was granted,
+            // and an omitted one keeps it. Only an explicit account-bound
+            // consent adds scopes.
             let granted_scopes = match tokens.scope.as_deref() {
                 Some(scope) => {
                     let returned = super::grants::parse_scopes(scope);
