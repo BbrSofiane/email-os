@@ -13,3 +13,5 @@ pub(crate) mod session;
 pub mod store;
 pub mod sync;
 pub mod types;
+
+pub mod platform_auth;

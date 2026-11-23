@@ -70,11 +70,7 @@ impl GmailProvider for LiveGmailProvider {
             .filter(|s| !s.is_empty())
             .or_else(|| bundle.email.as_deref().filter(|s| !s.is_empty()))
             .is_some();
-        let usable = !bundle.access_token.is_empty()
-            || bundle
-                .refresh_token
-                .as_deref()
-                .is_some_and(|s| !s.is_empty());
+        let usable = bundle.has_token_source();
         Ok(bound && usable && grant.covered_by(&bundle.effective_scopes()))
     }
 
@@ -110,7 +106,7 @@ impl GmailProvider for LiveGmailProvider {
             .filter(|account| !account.is_empty())
             .ok_or(MailError::AuthRequired)?
             .clone();
-        if previous.access_token.is_empty() && previous.refresh_token.is_none() {
+        if !previous.has_token_source() {
             return Err(MailError::AuthRequired);
         }
         let mut requested_scopes = previous.effective_scopes();
@@ -162,6 +158,7 @@ impl GmailProvider for LiveGmailProvider {
                 refresh_token: tokens.refresh_token.or(previous.refresh_token),
                 account_id: Some(profile.account_id.clone()),
                 email: Some(profile.email_address.clone()),
+                platform_authorized: false,
                 gmail_modify_granted: GmailGrant::Modify.covered_by(&granted_scopes),
                 granted_scopes: granted_scopes.clone(),
             };
@@ -201,6 +198,7 @@ impl GmailProvider for LiveGmailProvider {
             refresh_token: tokens.refresh_token.or(current.refresh_token),
             account_id: Some(profile.account_id.clone()),
             email: Some(profile.email_address.clone()),
+            platform_authorized: false,
             gmail_modify_granted: GmailGrant::Modify.covered_by(&granted_scopes),
             granted_scopes,
         };
@@ -292,6 +290,7 @@ impl GmailProvider for LiveGmailProvider {
             account_id: previous.as_ref().and_then(|p| p.account_id.clone()),
             email: previous.as_ref().and_then(|p| p.email.clone()),
             granted_scopes: granted_scopes.clone(),
+            platform_authorized: false,
             gmail_modify_granted: GmailGrant::Modify.covered_by(&granted_scopes),
         };
         let profile = self.fetch_profile(&bundle.access_token, cancel)?;
@@ -346,6 +345,7 @@ impl GmailProvider for LiveGmailProvider {
             refresh_token: returned_refresh_token.or(current.refresh_token.clone()),
             account_id: Some(profile.account_id.clone()),
             email: Some(profile.email_address.clone()),
+            platform_authorized: false,
             gmail_modify_granted: GmailGrant::Modify.covered_by(&rebased_scopes),
             granted_scopes: rebased_scopes,
         };

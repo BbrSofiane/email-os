@@ -22,6 +22,7 @@ fn future_token() -> TokenBundle {
         expires_at_epoch_ms: now_ms() + 3_600_000,
         account_id: Some("synthetic@example.test".to_string()),
         email: Some("synthetic@example.test".to_string()),
+        platform_authorized: false,
         gmail_modify_granted: false,
         granted_scopes: vec![],
     }
@@ -639,6 +640,7 @@ fn refresh_failures_after_preliminary_profile_never_dispatch_setter() {
         let (token_base, token) = FakeApi::start(vec![("/synthetic-token", status, body)]);
         let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
         let granted = TokenBundle {
+            platform_authorized: false,
             gmail_modify_granted: true,
             granted_scopes: vec![],
             expires_at_epoch_ms: now_ms() + EXPIRY_SKEW_MS + 1_000,
@@ -678,6 +680,7 @@ fn paced_setter_rechecks_grant_after_concurrent_refresh_downgrade() {
     let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
     let expiry = now_ms() + EXPIRY_SKEW_MS + 150;
     let granted = TokenBundle {
+        platform_authorized: false,
         gmail_modify_granted: true,
         granted_scopes: vec![],
         expires_at_epoch_ms: expiry,
@@ -763,6 +766,7 @@ fn paced_setter_uses_current_same_account_credential_after_replacement() {
         FakeApi::start(vec![("/gmail/v1/users/me/messages/batchModify", 200, "")]);
     let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
     let original = TokenBundle {
+        platform_authorized: false,
         gmail_modify_granted: true,
         granted_scopes: vec![],
         ..future_token()
@@ -821,6 +825,7 @@ fn paced_setter_cancellation_prevents_dispatch() {
     let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
     secrets
         .store(&TokenBundle {
+            platform_authorized: false,
             gmail_modify_granted: true,
             granted_scopes: vec![],
             ..future_token()
@@ -862,6 +867,7 @@ fn refresh_scope_downgrade_disables_write_before_setter_dispatch() {
     )]);
     let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
     let granted = TokenBundle {
+        platform_authorized: false,
         gmail_modify_granted: true,
         granted_scopes: vec![],
         expires_at_epoch_ms: now_ms() - 1_000,
@@ -918,6 +924,7 @@ fn refresh_without_scope_preserves_verified_write_grant() {
     )]);
     let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
     let granted = TokenBundle {
+        platform_authorized: false,
         gmail_modify_granted: true,
         granted_scopes: vec![],
         expires_at_epoch_ms: now_ms() - 1_000,
@@ -1784,6 +1791,7 @@ fn paced_setter_rejects_a_replacement_for_a_different_account() {
     let (api_base, api) = FakeApi::start(vec![]);
     let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
     let original = TokenBundle {
+        platform_authorized: false,
         gmail_modify_granted: true,
         granted_scopes: vec![],
         ..future_token()
@@ -1847,6 +1855,7 @@ fn mailbox_setters_post_only_exact_snapshot_ids_and_closed_label_changes() {
     ]);
     let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
     let granted = TokenBundle {
+        platform_authorized: false,
         gmail_modify_granted: true,
         granted_scopes: vec![],
         ..future_token()
@@ -1914,6 +1923,7 @@ fn setter_rejects_empty_duplicate_and_oversized_target_sets_without_dispatch() {
     let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
     secrets
         .store(&TokenBundle {
+            platform_authorized: false,
             gmail_modify_granted: true,
             granted_scopes: vec![],
             ..future_token()
@@ -1948,6 +1958,7 @@ fn setter_distinguishes_quota_permission_rejection_and_unknown_outcome() {
         let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
         secrets
             .store(&TokenBundle {
+                platform_authorized: false,
                 gmail_modify_granted: true,
                 granted_scopes: vec![],
                 ..future_token()
@@ -1990,6 +2001,7 @@ fn setter_does_not_follow_redirects_and_cancelled_pre_dispatch_is_definite() {
     let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
     secrets
         .store(&TokenBundle {
+            platform_authorized: false,
             gmail_modify_granted: true,
             granted_scopes: vec![],
             ..future_token()
@@ -2010,6 +2022,7 @@ fn setter_does_not_follow_redirects_and_cancelled_pre_dispatch_is_definite() {
     let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
     secrets
         .store(&TokenBundle {
+            platform_authorized: false,
             gmail_modify_granted: true,
             granted_scopes: vec![],
             ..future_token()
@@ -2027,6 +2040,7 @@ fn setter_does_not_follow_redirects_and_cancelled_pre_dispatch_is_definite() {
     let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
     secrets
         .store(&TokenBundle {
+            platform_authorized: false,
             gmail_modify_granted: true,
             granted_scopes: vec![],
             ..future_token()

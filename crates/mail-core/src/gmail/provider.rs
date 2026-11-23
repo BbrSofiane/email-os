@@ -306,6 +306,7 @@ impl LiveGmailProvider {
                 refresh_token: tokens.refresh_token.or(latest.refresh_token.clone()),
                 account_id: latest.account_id.clone(),
                 email: latest.email.clone(),
+                platform_authorized: false,
                 gmail_modify_granted: super::grants::GmailGrant::Modify.covered_by(&granted_scopes),
                 granted_scopes,
             };
@@ -422,7 +423,7 @@ impl LiveGmailProvider {
             let bundle = bundle.ok_or(MailError::PermissionRequired)?;
             if !bundle.gmail_modify_granted
                 || bundle_account_id(&bundle).is_none()
-                || (bundle.access_token.is_empty() && bundle.refresh_token.is_none())
+                || !bundle.has_token_source()
             {
                 return Err(MailError::PermissionRequired);
             }
@@ -432,7 +433,7 @@ impl LiveGmailProvider {
             let current = current.ok_or(MailError::PermissionRequired)?;
             if !current.gmail_modify_granted
                 || bundle_account_id(&current).is_none()
-                || (current.access_token.is_empty() && current.refresh_token.is_none())
+                || !current.has_token_source()
             {
                 return Err(MailError::PermissionRequired);
             }

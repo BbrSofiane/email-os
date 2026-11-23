@@ -30,17 +30,23 @@ pub struct TokenBundle {
     pub gmail_modify_granted: bool,
     #[serde(default)]
     pub granted_scopes: Vec<String>,
+    /// Tokens come from the platform authorizer; there is no refresh token.
+    #[serde(default)]
+    pub platform_authorized: bool,
 }
 
 impl TokenBundle {
+    pub(crate) fn has_token_source(&self) -> bool {
+        !self.access_token.is_empty()
+            || self.refresh_token.as_deref().is_some_and(|t| !t.is_empty())
+            || self.platform_authorized
+    }
+
     pub(crate) fn effective_scopes(&self) -> Vec<String> {
         if !self.granted_scopes.is_empty() {
             return self.granted_scopes.clone();
         }
-        if !self.gmail_modify_granted
-            && self.access_token.is_empty()
-            && self.refresh_token.as_deref().unwrap_or("").is_empty()
-        {
+        if !self.gmail_modify_granted && !self.has_token_source() {
             return Vec::new();
         }
         let mut scopes = vec![super::auth::GMAIL_READONLY_SCOPE.to_string()];
@@ -66,6 +72,7 @@ impl std::fmt::Debug for TokenBundle {
             )
             .field("email", &self.email.as_ref().map(|_| "<redacted>"))
             .field("gmail_modify_granted", &self.gmail_modify_granted)
+            .field("platform_authorized", &self.platform_authorized)
             .field("granted_scopes", &self.granted_scopes)
             .finish()
     }
@@ -238,6 +245,7 @@ mod tests {
             expires_at_epoch_ms: 1,
             account_id: None,
             email: None,
+            platform_authorized: false,
             gmail_modify_granted: false,
             granted_scopes: vec![],
         }
@@ -251,6 +259,7 @@ mod tests {
             expires_at_epoch_ms: 123,
             account_id: Some("synthetic-account-id".to_string()),
             email: Some("synthetic@example.test".to_string()),
+            platform_authorized: false,
             gmail_modify_granted: true,
             granted_scopes: vec![],
         };
