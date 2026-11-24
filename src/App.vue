@@ -810,9 +810,16 @@ async function enterMobileSelection(): Promise<void> {
   await focusFocusedRow(true);
 }
 
+function onOnline(): void {
+  if (accountStatus.value?.mode === 'gmail' && accountStatus.value.connection === 'connected') {
+    void mailbox.requestSync();
+  }
+}
+
 let removeAndroidBack: () => void = () => undefined;
 onMounted(() => {
   removeAndroidBack = installAndroidBackBridge(androidShell, () => { const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }); window.dispatchEvent(event); return event.defaultPrevented; });
+  window.addEventListener('online', onOnline);
   window.addEventListener('keydown', onKeydown);
   window.addEventListener('blur', cancelGo);
   window.addEventListener('compositionstart', cancelGo);
@@ -823,6 +830,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   removeAndroidBack();
   reminderViewAlive = false;
+  window.removeEventListener('online', onOnline);
   window.removeEventListener('keydown', onKeydown);
   window.removeEventListener('blur', cancelGo);
   window.removeEventListener('compositionstart', cancelGo);

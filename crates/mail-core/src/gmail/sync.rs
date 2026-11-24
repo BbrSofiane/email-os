@@ -157,6 +157,7 @@ impl PassAction {
 
 struct CtrlState {
     stop: bool,
+    background: bool,
     /// Persistence failure halted the worker thread; commands report typed
     /// errors until the app restarts.
     halted: bool,
@@ -497,6 +498,7 @@ impl GmailCore {
         let ctrl = Arc::new(Ctrl {
             state: Mutex::new(CtrlState {
                 stop: false,
+                background: false,
                 halted: false,
                 auth_requested: restore,
                 auth_kind: AuthKind::Restore,
@@ -1826,6 +1828,21 @@ impl GmailCore {
         cleanup
     }
 
+    /// Android calls this on window Suspended and Resumed events. It never cancels a pass in flight.
+    pub fn set_foreground(&self, foreground: bool) {
+        let mut st = self.inner.ctrl.state.lock().unwrap();
+        let was_background = st.background;
+        st.background = !foreground;
+        if was_background
+            && foreground
+            && self.inner.policy.periodic_sync()
+            && st.connection == ConnectionState::Connected
+        {
+            st.sync_requested = true;
+        }
+        self.inner.ctrl.wake.notify_all();
+    }
+
     /// Enqueues one catch-up pass. Repeated requests coalesce; a request
     /// while a pass is in flight is rejected typed as `busy` so there is
     /// never a concurrent cursor writer.
@@ -2274,6 +2291,7 @@ fn run(
                 PassAction::Auth(st.auth_kind)
             } else if st.connection == ConnectionState::Authenticating
                 && st.auth_auto_retry
+                && !st.background
                 && tick_due
             {
                 PassAction::Auth(AuthKind::Restore)
@@ -2292,6 +2310,7 @@ fn run(
                 PassAction::Mutations
             } else if st.connection == ConnectionState::Connected
                 && tick_due
+                && !st.background
                 && policy.periodic_sync()
             {
                 PassAction::Sync
@@ -3290,6 +3309,7 @@ mod worker_halt_tests {
         let ctrl = Arc::new(Ctrl {
             state: Mutex::new(CtrlState {
                 stop: false,
+                background: false,
                 halted: false,
                 auth_requested: false,
                 auth_kind: AuthKind::Restore,
@@ -4066,5 +4086,45 @@ mod synthetic_session_tests {
         let history = overlay.read_calls("history");
         fire_periodic_tick(&core);
         assert!(until(|| overlay.read_calls("history") > history));
+    }
+    #[test]
+    fn background_suppresses_ticks_but_allows_requests_and_resumes() {
+        let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(CLOCK_START)));
+        let dir = temp_profile("gmail-background");
+        let overlay = Overlay::wrap(new_provider(dir.path()));
+        let core = GmailCore::open_with_clock(dir.path(), overlay.clone(), clock).unwrap();
+        assert!(until(|| core
+            .account_status()
+            .is_ok_and(|s| s.sync.initial_sync_complete)));
+        core.inner
+            .ctrl
+            .wait_until_idle(Duration::from_secs(5))
+            .unwrap();
+        core.set_foreground(false);
+        assert!(!core
+            .inner
+            .ctrl
+            .state
+            .lock()
+            .unwrap()
+            .pass_cancel
+            .is_cancelled());
+        let history = overlay.read_calls("history");
+        fire_periodic_tick(&core);
+        assert_eq!(overlay.read_calls("history"), history);
+        core.request_sync().unwrap();
+        assert!(until(|| overlay.read_calls("history") > history));
+        core.inner
+            .ctrl
+            .wait_until_idle(Duration::from_secs(5))
+            .unwrap();
+        let history = overlay.read_calls("history");
+        core.set_foreground(true);
+        assert!(until(|| overlay.read_calls("history") > history));
+        core.inner
+            .ctrl
+            .wait_until_idle(Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(overlay.read_calls("history"), history + 1);
     }
 }

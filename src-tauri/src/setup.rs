@@ -143,7 +143,15 @@ pub(crate) fn run(builder: tauri::Builder<tauri::Wry>) {
                 begin_native_close(window.app_handle());
             }
             #[cfg(mobile)]
-            let _ = (window, event);
+            if let Some(state) = window.app_handle().try_state::<AppState>() {
+                if let Ok(session) = state.session() {
+                    match event {
+                        tauri::WindowEvent::Suspended => session.core.set_foreground(false),
+                        tauri::WindowEvent::Resumed => session.core.set_foreground(true),
+                        _ => {}
+                    }
+                }
+            }
         })
         .setup(|app| {
             #[cfg(target_os = "android")]
