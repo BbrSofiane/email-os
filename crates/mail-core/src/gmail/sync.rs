@@ -1830,7 +1830,11 @@ impl GmailCore {
 
     /// Android calls this on window Suspended and Resumed events. It never cancels a pass in flight.
     pub fn set_foreground(&self, foreground: bool) {
-        let mut st = self.inner.ctrl.state.lock().unwrap();
+        // Called from the window event handler: a poisoned control state
+        // means the worker already halted, so there is nothing to pause.
+        let Ok(mut st) = self.inner.ctrl.state.lock() else {
+            return;
+        };
         let was_background = st.background;
         st.background = !foreground;
         if was_background
