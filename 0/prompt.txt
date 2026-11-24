@@ -1,0 +1,24 @@
+Delegated task node:delegated-task:command%3Amcp%3A95c0d950-e58a-42d4-a8ec-79ef2167c274%3Adelegate-task%3A27573244-1584-4edc-a608-0e9c338a4786 (B stage 5b: Account switch rows and phone copy) in child thread thread:delegated-task:command%3Amcp%3A95c0d950-e58a-42d4-a8ec-79ef2167c274%3Adelegate-task%3A27573244-1584-4edc-a608-0e9c338a4786 [completed]:
+Implemented and committed the Android account-switching UI in commit `b1c6b8b`. The changes cover the switch action, connect-after-switch handling, phone copy, demo labels, and ModeChoiceGate formatting. The working tree is clean.
+
+`mise run check` passed: 136 test files and 2,306 tests, including the new AccountPanel switch test. The requested rendered layout run **did not meet its pass criterion**: it had 136 passes, six skips, the seven known failures, and one additional failure:
+
+- `mobile-compose.rendered.test.ts` — “fits compose and reply at 412 × 915, including a short viewport”: `TypeError: Cannot read properties of null (reading 'querySelector')`.
+
+The seven known failures were:
+
+- `mobile-list.rendered.test.ts`: swipe and scrolling; notice and selection stacking; opaque row swipe; long-press selection at 412 × 915; long-press selection at 360 × 800.
+- `mobile-reader.rendered.test.ts`: reader geometry at 412 × 915 and 360 × 800.
+
+The requested App-level switch, flush, rejection and connect-after-switch tests, and the Android account-status copy tests, remain to be added. The rendered compose failure also remains unresolved.
+
+Changed files: [App.vue](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/src/App.vue), [AccountPanel.vue](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/src/components/AccountPanel.vue), [ModeChoiceGate.vue](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/src/components/ModeChoiceGate.vue), [account-status.ts](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/src/lib/account-status.ts), and [account-switch.component.test.ts](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/tests/account-switch.component.test.ts).
+
+---
+
+Delegated task node:delegated-task:command%3Amcp%3A95c0d950-e58a-42d4-a8ec-79ef2167c274%3Adelegate-task%3Ac734e437-3913-44a7-b0b7-8470159ba667 (B stage 5c: switch and phone-copy tests) in child thread thread:delegated-task:command%3Amcp%3A95c0d950-e58a-42d4-a8ec-79ef2167c274%3Adelegate-task%3Ac734e437-3913-44a7-b0b7-8470159ba667 [completed]:
+Committed partial track B coverage as `af6fc3f`.
+
+The phone copy fix is in place. The new tests cover Android and desktop wording, the Gmail-mode switch button, switch errors, and connect-after-switch behavior. The focused tests passed (7 tests), and `mise run check` passed, including 2,313 UI tests.
+
+The requested fixture-mode and dirty-draft switch tests remain incomplete. The Account rail button in [App.vue](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/src/App.vue:2381) is rendered only in Gmail mode, so fixture users cannot open the drawer to reach the switch button. Fixing that requires a production change outside the requested scope.

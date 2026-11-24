@@ -1,0 +1,53 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M87PJ9G41DGCQ8SS6FK08A6W",
+  "session_id": "eaca8b18-25a0-401e-b316-43930056dffb",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-24T21:14:40.430610802Z",
+  "branch": "usable/android-gmail",
+  "checkpoints_count": 2,
+  "save_step_count": 1,
+  "files_touched": [],
+  "agent": "Claude Code",
+  "model": "claude-opus-5-5",
+  "turn_id": "8b656a96d41c",
+  "checkpoint_transcript_start": 1340,
+  "transcript_lines_at_start": 1340,
+  "compact_transcript_start": 228,
+  "token_usage": {
+    "input_tokens": 40,
+    "cache_creation_tokens": 33132,
+    "cache_read_tokens": 8815750,
+    "output_tokens": 13563,
+    "api_call_count": 18,
+    "subagent_tokens": {
+      "input_tokens": 0,
+      "cache_creation_tokens": 0,
+      "cache_read_tokens": 0,
+      "output_tokens": 0,
+      "api_call_count": 0
+    }
+  },
+  "session_metrics": {
+    "turn_count": 18
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 1,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".impeccable/hook.cache.json": 1
+      }
+    }
+  ]
+}
