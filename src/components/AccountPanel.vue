@@ -298,7 +298,7 @@ watch(connection, (next) => { if (next === 'authenticating') confirming.value = 
       </div>
     </div>
     <div v-if="props.switchTarget" class="account-section" data-test="account-switch-mode">
-      <p class="account-note">{{ props.switchTarget === 'gmail' ? 'Sign in on this phone. The demo mailbox stays on this device.' : 'Your mail account stays signed in on this phone.' }}</p>
+      <p class="account-note">{{ props.switchTarget === 'gmail' ? 'Sign in on this phone. The demo mailbox stays on this device.' : 'Your mail account and its local data stay on this phone.' }}</p>
       <div class="account-actions">
         <button type="button" data-test="account-switch-mode-button" :disabled="props.transitioning || props.busy !== null" @click="emit('switchMode', props.switchTarget)">
           {{ props.switchTarget === 'gmail' ? 'Use your own mail' : 'Switch to demo mailbox' }}

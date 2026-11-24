@@ -16,7 +16,7 @@ describe('account mode switch', () => {
     expect(wrapper.emitted('switchMode')).toEqual([['gmail']]);
     await wrapper.setProps({ switchTarget: 'fixture', transitioning: true });
     expect(button.text()).toBe('Switch to demo mailbox');
-    expect(wrapper.text()).toContain('Your mail account stays signed in on this phone.');
+    expect(wrapper.text()).toContain('Your mail account and its local data stay on this phone.');
     expect(button.attributes('disabled')).toBeDefined();
     await wrapper.setProps({ transitioning: false, busy: 'connect' });
     expect(button.attributes('disabled')).toBeDefined();
