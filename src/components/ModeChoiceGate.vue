@@ -9,9 +9,14 @@ const { phase, error } = gate;
 const heading = ref<HTMLElement | null>(null);
 watch(phase, async (next) => {
   if (next === 'clear') emit('cleared');
-  else if (next === 'choose') { await nextTick(); heading.value?.focus(); }
+  else if (next === 'choose') {
+    await nextTick();
+    heading.value?.focus();
+  }
 });
-onMounted(() => { void gate.load(); });
+onMounted(() => {
+  void gate.load();
+});
 </script>
 
 <template>
@@ -29,14 +34,62 @@ onMounted(() => { void gate.load(); });
   </main>
 </template>
 <style scoped>
-.transition-gate { display: grid; place-items: center; min-height: 100vh; padding: 24px 16px; background: var(--surface-contact); color: var(--text-primary); font-family: var(--font-ui); }
-.transition-card { width: min(34rem, 100%); display: grid; gap: 12px; padding: 20px; background: var(--surface); border-radius: 8px; font-size: var(--type-reading); line-height: var(--leading-reading); }
-h1 { margin: 0; font-size: var(--type-headline); font-weight: var(--weight-strong); line-height: var(--leading-headline); }
-h1:focus { outline: none; }
-p { margin: 0; color: var(--text-secondary); }
-.note { font-size: var(--type-body); color: var(--text-tertiary); }
-button { justify-self: start; font: inherit; font-weight: var(--weight-strong); color: var(--text-primary); background: var(--surface); border: 1px solid var(--focus-accent); border-radius: 6px; padding: 8px 14px; cursor: pointer; }
-button.primary { background: var(--focus-fill); }
-button:focus-visible { outline: 2px solid var(--focus-accent); outline-offset: 2px; }
-button:disabled { opacity: .6; cursor: default; }
+.transition-gate {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 24px 16px;
+  background: var(--surface-contact);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+}
+.transition-card {
+  width: min(34rem, 100%);
+  display: grid;
+  gap: 12px;
+  padding: 20px;
+  background: var(--surface);
+  border-radius: 8px;
+  font-size: var(--type-reading);
+  line-height: var(--leading-reading);
+}
+h1 {
+  margin: 0;
+  font-size: var(--type-headline);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-headline);
+}
+h1:focus {
+  outline: none;
+}
+p {
+  margin: 0;
+  color: var(--text-secondary);
+}
+.note {
+  font-size: var(--type-body);
+  color: var(--text-tertiary);
+}
+button {
+  justify-self: start;
+  font: inherit;
+  font-weight: var(--weight-strong);
+  color: var(--text-primary);
+  background: var(--surface);
+  border: 1px solid var(--focus-accent);
+  border-radius: 6px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+button.primary {
+  background: var(--focus-fill);
+}
+button:focus-visible {
+  outline: 2px solid var(--focus-accent);
+  outline-offset: 2px;
+}
+button:disabled {
+  opacity: .6;
+  cursor: default;
+}
 </style>

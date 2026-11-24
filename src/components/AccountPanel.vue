@@ -23,7 +23,7 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import type { AccountStatus, ConnectionState, MailError } from '../lib/ipc/client';
 import type { AccountAction } from '../composables/useMailbox';
-import { NOT_CONFIGURED_HINT, describeMailError, describeSyncFailure } from '../lib/account-status';
+import { authenticatingText, notConfiguredHint, describeMailError, describeSyncFailure } from '../lib/account-status';
 import FullDate from './FullDate.vue';
 
 const props = defineProps<{
@@ -32,9 +32,12 @@ const props = defineProps<{
   busy: AccountAction | null;
   transitioning?: boolean;
   actionError?: MailError | null;
+  switchTarget?: 'gmail' | 'fixture' | null;
+  demoLabel?: boolean;
 }>();
 
 const emit = defineEmits<{
+  switchMode: [target: 'gmail' | 'fixture'];
   connect: [];
   disconnect: [];
   sync: [];
@@ -45,7 +48,7 @@ const emit = defineEmits<{
 const CONNECTION_LABELS: Record<ConnectionState, string> = {
   not_configured: 'Not configured',
   disconnected: 'Not connected',
-  authenticating: 'Finish sign-in in your browser',
+  authenticating: authenticatingText(),
   connected: 'Connected',
   auth_required: 'Sign-in expired',
 };
@@ -141,14 +144,14 @@ watch(connection, (next) => { if (next === 'authenticating') confirming.value = 
     <div class="account-section">
       <h3 class="account-label">Connection</h3>
       <p class="account-line account-connection-line">
-        <template v-if="props.status.account"><span data-test="account-email">{{ props.status.account.emailAddress }}</span> · </template><span data-test="account-connection">{{ CONNECTION_LABELS[connection] }}</span>
+        <template v-if="props.status.account"><span data-test="account-email">{{ props.demoLabel ? 'Demo mailbox' : props.status.account.emailAddress }}</span> · </template><span data-test="account-connection">{{ CONNECTION_LABELS[connection] }}</span>
       </p>
       <p v-if="modeShown" class="account-line account-mode" data-test="account-mode" :title="MODE_TITLE">{{ modeLabel }}</p>
       <p v-if="props.actionError" class="account-action-error" data-test="account-action-error" role="alert">
         Mailbox-action request: {{ describeMailError(props.actionError) }}
       </p>
       <p v-if="connection === 'not_configured'" class="account-notice" data-test="account-not-configured" role="note">
-        Gmail is not configured on this device. {{ NOT_CONFIGURED_HINT }}
+        Gmail is not configured on this device. {{ notConfiguredHint() }}
       </p>
       <p v-if="connection === 'auth_required'" class="account-notice" data-test="account-auth-required" role="note">
         Cached mail stays readable. Sign in again to sync.
@@ -227,7 +230,7 @@ watch(connection, (next) => { if (next === 'authenticating') confirming.value = 
       </template>
       <template v-else-if="access === 'upgrading'">
         <p class="account-line" data-test="action-upgrading" role="status">
-          Finish sign-in in your browser. Cached mail stays readable.
+          {{ authenticatingText() }}. Cached mail stays readable.
         </p>
         <div class="account-actions">
           <button
@@ -292,6 +295,14 @@ watch(connection, (next) => { if (next === 'authenticating') confirming.value = 
             Keep account
           </button>
         </div>
+      </div>
+    </div>
+    <div v-if="props.switchTarget" class="account-section" data-test="account-switch-mode">
+      <p class="account-note">{{ props.switchTarget === 'gmail' ? 'Sign in on this phone. The demo mailbox stays on this device.' : 'Your mail account stays signed in on this phone.' }}</p>
+      <div class="account-actions">
+        <button type="button" data-test="account-switch-mode-button" :disabled="props.transitioning || props.busy !== null" @click="emit('switchMode', props.switchTarget)">
+          {{ props.switchTarget === 'gmail' ? 'Use your own mail' : 'Switch to demo mailbox' }}
+        </button>
       </div>
     </div>
   </section>

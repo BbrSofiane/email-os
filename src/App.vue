@@ -49,7 +49,9 @@ import SelectionBar from './components/SelectionBar.vue';
 import HeaderGlyph from './components/HeaderGlyph.vue';
 import PaneGlyph from './components/PaneGlyph.vue';
 import { actionLabel, actionRegistry, findKeyBinding, type ActionHandlers, type ActionId, type KeyFocus, type KeyOnlyId, type KeyResolverId } from './lib/action-registry';
-import type { AccountNoticeAction, InboxEmptyAction } from './lib/account-status';
+import { authenticatingText, type AccountNoticeAction, type InboxEmptyAction } from './lib/account-status';
+import { setConnectAfterSwitch, clearConnectAfterSwitch, takeConnectAfterSwitch } from './composables/useModeChoice';
+import { reloadPage } from './lib/reload';
 import { groupRowsBySender, isSingleFromQuery, senderGroupKey } from './lib/search';
 import { errorText } from './lib/error-text';
 import InboxList from './components/InboxList.vue';
@@ -72,7 +74,7 @@ import ContactPane from './components/ContactPane.vue';
 import FullDate from './components/FullDate.vue';
 import { BROWSER_PREVIEW_DISCLOSURE } from './lib/ipc/browser-fake';
 import { isAndroidShell, type ClientMode } from './lib/ipc';
-import type { ConversationRef, DraftSource, DraftSummary, MailClient, Reminder } from './lib/ipc/client';
+import type { ConversationRef, DraftSource, DraftSummary, MailClient, MailError, MailMode, Reminder } from './lib/ipc/client';
 import { REPLY_REASONS, replyBlockedReason, sourceLoadErrorReason } from './lib/reply-context';
 import { sameConversation, useMailbox, type BrowseContext, type ConversationSummaryLike, type DoneBoundary, type SearchVisit } from './composables/useMailbox';
 import { useDrafts } from './composables/useDrafts';
@@ -1378,6 +1380,33 @@ async function connectAccount(): Promise<void> {
     drafts.setTransitioning(false);
   }
 }
+
+const switchError = ref<MailError | null>(null);
+
+async function switchMode(target: MailMode): Promise<void> {
+  if (drafts.transitioning.value) return;
+  drafts.setTransitioning(true);
+  switchError.value = null;
+  try {
+    if (!(await drafts.flushAndClose())) return;
+    if (target === 'gmail') setConnectAfterSwitch();
+    await props.client.switchMode(target);
+    reloadPage();
+  } catch (error) {
+    clearConnectAfterSwitch();
+    switchError.value = error as MailError;
+  } finally {
+    drafts.setTransitioning(false);
+  }
+}
+
+const stopFirstStatus = watch(accountStatus, (status) => {
+  if (!status) return;
+  if (status.mode === 'gmail' && status.connection === 'disconnected' && takeConnectAfterSwitch()) {
+    void connectAccount();
+  }
+  nextTick(() => stopFirstStatus());
+}, { immediate: true });
 
 /** Connect, sync and sign-in cancel buttons share the Account buttons' rule: never while one runs. */
 const accountActionsIdle = computed(() => mailbox.accountBusy.value === null && !drafts.transitioning.value);
@@ -2797,7 +2826,7 @@ const searchSyntaxEditHint = computed(() =>
                surface was open): the capability needs an account identity, so
                render an explicit account-required state instead of an empty drawer. -->
           <p v-else-if="drawer === 'destinations'" role="note" data-test="destinations-account-required">
-            Provider mail needs a connected Gmail account.<template v-if="providerAccountAction"> <button v-if="providerAccountAction.action === 'account' || accountActionsIdle" type="button" class="inline-action" data-test="destinations-account-action" @click="accountNoticeAction(providerAccountAction.action, 'drawer')">{{ providerAccountAction.label }}</button></template><template v-else-if="accountStatus?.connection === 'authenticating'"> Finish sign-in in your browser.</template><template v-else> Connect one from Account first.</template>
+            Provider mail needs a connected Gmail account.<template v-if="providerAccountAction"> <button v-if="providerAccountAction.action === 'account' || accountActionsIdle" type="button" class="inline-action" data-test="destinations-account-action" @click="accountNoticeAction(providerAccountAction.action, 'drawer')">{{ providerAccountAction.label }}</button></template><template v-else-if="accountStatus?.connection === 'authenticating'">{{ ' ' + authenticatingText() }}.</template><template v-else> Connect one from Account first.</template>
           </p>
           <section v-if="drawer === 'reminder-settings' && remindersSupported" class="utility-panel" data-test="reminder-settings-dialog">
             <h3 class="drawer-section-title compact-settings-heading">Reminders</h3>
@@ -2809,7 +2838,10 @@ const searchSyntaxEditHint = computed(() =>
             :status="accountStatus"
             :busy="mailbox.accountBusy.value"
             :transitioning="drafts.transitioning.value"
-            :action-error="mailbox.lastCommandError.value"
+            :action-error="switchError ?? mailbox.lastCommandError.value"
+            :switch-target="androidShell ? (accountStatus.mode === 'gmail' ? 'fixture' : 'gmail') : null"
+            :demo-label="androidShell && accountStatus.mode === 'fixture'"
+            @switch-mode="switchMode($event)"
             @connect="connectAccount()"
             @disconnect="disconnectAccount()"
             @sync="mailbox.requestSync()"
@@ -2947,7 +2979,7 @@ const searchSyntaxEditHint = computed(() =>
       v-if="layoutMode === 'compact'"
       :open="mobileNavOpen"
       :compact="layoutMode === 'compact'"
-      :email="accountStatus?.account?.emailAddress ?? ''"
+      :email="androidShell && accountStatus?.mode === 'fixture' ? 'Demo mailbox' : (accountStatus?.account?.emailAddress ?? '')"
       :current="mailbox.context.value === 'saved' ? 'saved' : mailbox.context.value === 'inbox' ? 'inbox' : mailbox.context.value === 'drafts' ? 'drafts' : mailbox.context.value === 'done' ? 'done' : mailbox.context.value === 'starred' ? 'starred' : mailbox.context.value === 'trash' ? 'trash' : mailbox.context.value === 'reminders' ? 'reminders' : null"
       :actions="availableActions"
       @close="closeMobileDrawer"
