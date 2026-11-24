@@ -1,4 +1,3 @@
-import { isAndroidShell } from './ipc';
 /**
  * Pure account-state wording shared by the Account drawer, the header status
  * note and the empty inbox line. Everything derives from `AccountStatus`
@@ -10,6 +9,7 @@ import { isAndroidShell } from './ipc';
  * are off. The one standing fact worth saying is about reading: cached mail
  * stays readable.
  */
+import { isAndroidShell } from './ipc';
 import type { AccountStatus, MailError } from './ipc/client';
 
 /** One plain sentence per typed error. */
@@ -161,7 +161,7 @@ export function accountNotice(status: AccountStatus | null): AccountNotice | nul
     case 'authenticating':
       return {
         kind: 'authenticating', text: authenticatingText(), action: 'cancel', actionLabel: 'Cancel sign-in', tone: 'neutral',
-        title: 'Gmail sign-in is waiting for your browser. Cancel stops it.',
+        title: isAndroidShell() ? 'Sign-in is waiting on the next screen. Cancel stops it.' : 'Gmail sign-in is waiting for your browser. Cancel stops it.',
       };
     case 'connected':
       break;
@@ -208,7 +208,6 @@ export function firstRunHint(): string {
 export function notConfiguredHint(): string {
   return isAndroidShell() ? 'This build is not registered for sign-in.' : NOT_CONFIGURED_HINT;
 }
-
 
 export interface InboxEmpty {
   kind: InboxEmptyKind;
