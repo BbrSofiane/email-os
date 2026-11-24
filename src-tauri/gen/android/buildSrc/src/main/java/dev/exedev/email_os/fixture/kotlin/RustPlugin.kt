@@ -58,6 +58,8 @@ open class RustPlugin : Plugin<Project> {
                 }
 
                 tasks["mergeUniversal${profileCapitalized}JniLibFolders"].dependsOn(buildTask)
+                // Rust build scripts generate the Kotlin bridge on a clean checkout.
+                tasks["compileUniversal${profileCapitalized}Kotlin"].dependsOn(buildTask)
 
                 for (targetPair in targetsList.withIndex()) {
                     val targetName = targetPair.value
@@ -78,6 +80,8 @@ open class RustPlugin : Plugin<Project> {
                     tasks["merge$targetArchCapitalized${profileCapitalized}JniLibFolders"].dependsOn(
                         targetBuildTask
                     )
+                    tasks["compile$targetArchCapitalized${profileCapitalized}Kotlin"]
+                        .dependsOn(targetBuildTask)
                 }
             }
         }

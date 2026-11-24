@@ -49,6 +49,47 @@ jobs:
           path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
           if-no-files-found: error
 
+
+  android-release-proof:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      ANDROID_VERSION_CODE: "1001"
+      ANDROID_KEYSTORE_PASSWORD: throwaway-password
+      ANDROID_KEY_PASSWORD: throwaway-password
+      ANDROID_KEY_ALIAS: proof
+      ANDROID_KEYSTORE_PATH: ${{ github.workspace }}/src-tauri/gen/android/app/build/proof.p12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
+        with:
+          version: "2026.11.3"
+          cache: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+      - run: rustup target add aarch64-linux-android x86_64-linux-android
+      - run: mise run install:ui
+      - name: Generate throwaway signer
+        run: |
+          mkdir -p "$(dirname "$ANDROID_KEYSTORE_PATH")"
+          keytool -genkeypair -storetype PKCS12 -keystore "$ANDROID_KEYSTORE_PATH" -storepass "$ANDROID_KEYSTORE_PASSWORD" -keypass "$ANDROID_KEY_PASSWORD" -alias "$ANDROID_KEY_ALIAS" -dname 'CN=CI proof' -keyalg RSA -validity 1
+      - run: mise run android:release
+      - name: Verify release
+        run: |
+          cert=$(keytool -list -v -keystore "$ANDROID_KEYSTORE_PATH" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" | sed -n 's/.*SHA256: //p')
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          mapfile -t apks < <(find src-tauri/gen/android/app/build/outputs/apk -name '*universal*release*.apk')
+          test "${#apks[@]}" -eq 1
+          scripts/android/verify-release.sh "${apks[0]}" "$version" "$ANDROID_VERSION_CODE" "$cert"
+
   check:
     runs-on: ubuntu-24.04
     env:
