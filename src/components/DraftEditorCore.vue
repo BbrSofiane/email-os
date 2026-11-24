@@ -267,7 +267,7 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
 </script>
 
 <template>
-  <div ref="editorRoot" class="composer-body" :class="`composer-body-${props.variant ?? 'new'}`">
+  <div ref="editorRoot" class="composer-body" :class="[`composer-body-${props.variant ?? 'new'}`, { 'composer-can-send': props.sendAvailable }]">
     <div class="composer-top">
       <div class="composer-top-main"><slot name="header" :close-disabled="closeDisabled" /></div>
       <!-- The local-only guarantee is one terse status line. The caveats are

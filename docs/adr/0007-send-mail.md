@@ -1,6 +1,6 @@
 # ADR 0007: Send plain-text mail on macOS and Android
 
-**Status:** Approved for implementation. Start awaits a programme build slot.
+**Status:** Accepted for stages 1–6. Stage 7 awaits Track B and coordinator approval.
 
 ## Context
 
@@ -337,11 +337,12 @@ Stage 7 starts after B's scope-upgrade mechanism is merged.
 
 Track C merged in `7f5b95d`. Its cache schema ends at
 [`gmail-migrations-10`](../../crates/mail-core/src/gmail/store.rs#L47), so
-send ledger storage starts at `gmail-migrations-11`. Preserve the HTML and
+send ledger storage uses `gmail-migrations-11` through
+`gmail-migrations-14`. Preserve the HTML and
 inline-image IPC paths and use the existing
 [`openNew(source, initial)` editor path](../../src/composables/useDrafts.ts#L486)
 when opening a newly copied draft. Android fixture validation uses
-`dev.exedev.emailos.androidfixture` until Track A's package change merges.
+`dev.exedev.emailos` after Track A's package change.
 
 1. Add core send validation and MIME construction with an independent parse
    round-trip. Check focused MIME tests for Unicode, folding, body limits,

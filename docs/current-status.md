@@ -88,6 +88,17 @@ draft, and then opening the sent conversation from Activity. See the
 [desktop editor](validation/send/browser/desktop-send-editor.png), and
 [desktop confirmed conversation](validation/send/browser/desktop-send-confirmed.png).
 
+The Android 15 x86_64 emulator ran the locally built `dev.exedev.emailos`
+debug APK from `ddd81de`. The recorded flow undoes the first send, restores
+the exact recipient, subject, and body, then sends the restored draft after
+the five-second window. Activity confirmed the send and the reader showed one
+message. The installed app had a different signer, so this check used an
+authorized clean reinstall. Android showed “Email OS isn't responding” on
+the first launch. Relaunch recovered. See the
+[recording](validation/send/android/undo-then-send.mp4),
+[Activity](validation/send/android/activity.png), and
+[confirmed conversation](validation/send/android/confirmed.png).
+
 ### HTML mail (ADR 0006)
 
 The desktop and compact reader show formatted HTML mail in the native app and in browser preview; Android was checked on the emulator, macOS WKWebView is an owner check. Gmail keeps plain and HTML parts; HTML-only mail gets text from a bounded linear extractor for previews, search, reply quotes and copying. HTML is bounded to 512 Ki characters per message and 2 MiB per thread. Oversized HTML, including HTML over the separate 8 MiB sync-page budget for HTML, shows text and “Formatted version too large to show.” Migration `gmail-migrations-10` adds HTML state and inline-part storage; cached mail stays plain until refreshed.
