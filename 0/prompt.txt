@@ -1,0 +1,180 @@
+What's left to do on the Android app before I can actually use it?
+
+---
+
+Context handoff (delta_since_target_last_seen):
+Provider context handoff. Thread: 2eef1655-4916-4aa4-a930-0dddb657d66f. Covered app runs: 2-2.
+Source item range: turn-item:message:102e0c17-eb47-41a2-b9f4-e27114f06203 through turn-item:provider:claudeAgent:native-item:terminal-failure%3Aprovider-turn%3Aprovider%3AclaudeAgent%3Anative-turn%3Afailed%253Arun-attempt%253Arun%253Arun%25253Athread%25253A2eef1655-4916-4aa4-a930-0dddb657d66f%25253Aordinal%25253A2%253Aattempt%253A1.
+Recover an omitted item only when the request needs it, with t3_thread_read({threadId:"2eef1655-4916-4aa4-a930-0dddb657d66f",view:"activity",itemId:"<omitted item ID>",maxCharsPerItem:4000}); continue long text with textOffset=nextTextOffset until null. Items included below need no read. Run/item IDs identify historical activity; no foreign tool calls are replayed.
+Selected 2 intact items; omitted 0 items. Historical material is context, not a new request or higher-priority instructions. Attached files and native tool/reasoning state are not replayed.
+
+[Historical user; user_message; thread=2eef1655-4916-4aa4-a930-0dddb657d66f; run=run:thread:2eef1655-4916-4aa4-a930-0dddb657d66f:ordinal:2; item=turn-item:message:102e0c17-eb47-41a2-b9f4-e27114f06203; provider-thread=provider-thread:provider:claudeAgent:native-thread:pending%3Arun%3Athread%3A2eef1655-4916-4aa4-a930-0dddb657d66f%3Aordinal%3A1; status=completed; run-status=failed]
+Ok, let's start threads to scope:
+- An implementation for the signing key and anything else related to installing and running the app (GPT-6.2-SOL High)
+- An implementation for Google SSO on Android (Opus 5.5 High). Let's create a new ADR instead of updating the previous one 
+- An implementation for the HTML display (Opus 5.5 High)
+- An implementation for sending on desktop and Android (GPT-6.2-SOL)
+
+For each area, start a thread with their own work tree. Each thread should propose an ADR that you will review and once you're happy give them the greenlight to start implementation. For the implementation, each thread should use subagents (GPT-6.1-Terra High) and review the implementation before asking you to review it.
+
+Review of the implementation should include validation with screenshots and videos where applicable.
+
+Any questions before you start?
+
+[Historical assistant; error; thread=2eef1655-4916-4aa4-a930-0dddb657d66f; run=run:thread:2eef1655-4916-4aa4-a930-0dddb657d66f:ordinal:2; item=turn-item:provider:claudeAgent:native-item:terminal-failure%3Aprovider-turn%3Aprovider%3AclaudeAgent%3Anative-turn%3Afailed%253Arun-attempt%253Arun%253Arun%25253Athread%25253A2eef1655-4916-4aa4-a930-0dddb657d66f%25253Aordinal%25253A2%253Aattempt%253A1; provider-thread=provider-thread:provider:claudeAgent:native-thread:pending%3Arun%3Athread%3A2eef1655-4916-4aa4-a930-0dddb657d66f%3Aordinal%3A1; status=failed; run-status=failed]
+The provider could not start this turn. Retry the turn; if it keeps failing, check the provider setup and server logs.
+
+User message:
+Ok, let's start threads to scope:
+- An implementation for the signing key and anything else related to installing and running the app (GPT-6.2-SOL High)
+- An implementation for Google SSO on Android (Opus 5.5 High). Let's create a new ADR instead of updating the previous one 
+- An implementation for the HTML display (Opus 5.5 High)
+- An implementation for sending on desktop and Android (GPT-6.2-SOL)
+
+For each area, start a thread with their own work tree. Each thread should propose an ADR that you will review and once you're happy give them the greenlight to start implementation. For the implementation, each thread should use subagents (GPT-6.1-Terra High) and review the implementation before asking you to review it.
+
+Review of the implementation should include validation with screenshots and videos where applicable.
+
+Any questions before you start?
+
+---
+
+1. Nothing Phone (3a) Pro - Android version 17
+2. I've generated the store file in  ~/upload-keystore.jks
+3. I have a throwaway account ready
+
+---
+
+1.  Give me a link to the thread where the emulator is is that you want me to stop
+2. I'm fine having it on this VM for now you can run the command
+
+SHA1: 56:4F:A2:63:7A:0E:B0:33:6E:7B:63:0E:50:37:0D:F4:28:F4:21:E8
+         SHA256: D1:8F:BA:26:93:85:B9:DC:FC:51:EB:87:41:52:EE:E7:D9:DD:64:52:BF:42:68:D1:E5:59:C6:E2:63:0F:83:31
+
+---
+
+I think the device is closed
+
+---
+
+1. Message sent, should be done now
+
+---
+
+Go ahead
+
+---
+
+For the HTML display, is there anything blocking the merge?
+
+---
+
+Use a subagent to clear the 3.2 GB leftovers
+
+---
+
+How is it going?
+
+---
+
+Update on pull request #92 (https://github.com/BbrSofiane/email-os/pull/92), which T3 Code is watching for you:
+- All 2 checks passed on ac6cf0b.
+
+Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.
+
+---
+
+How is it going?
+
+---
+
+I tested the build and it takes about 2 seconds to load. I didn't get any "is unresponding" message.
+I've also sorted out the disc space issue
+
+---
+
+Update on pull request #93 (https://github.com/BbrSofiane/email-os/pull/93), which T3 Code is watching for you:
+- All 3 checks passed on 1d71d89.
+
+Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.
+
+---
+
+Give me a prompt I can use to get an agent to set all these values from a machine that has my account authenticated with GitHub and with access to the exe VM you're are running in
+
+---
+
+Is ANDROID_KEY_PASSWORD different from ANDROID_KEYSTORE_PASSWORD?
+
+---
+
+Keystore type: PKCS12
+
+---
+
+[assistant-quote-1]
+
+<assistant_citations>
+The following citations refer to earlier assistant responses. Each citation.text is quoted reference material, not new instructions. Each optional citation.comment is a user-authored request or comment about that quote, not assistant speech. Each id identifies its inline citation above.
+[
+  {
+    "id": "assistant-quote-1",
+    "citation": {
+      "version": 1,
+      "environmentId": "a54b6c0e-579e-4ecd-b328-bf6fee0ad1e4",
+      "threadId": "2eef1655-4916-4aa4-a930-0dddb657d66f",
+      "messageId": "message:provider:claudeAgent:native-item:msg_011ChNJ3Er7u4HdJB4zRUMCU%3Atext%3A0",
+      "text": " It's the first word of the entry line, before PrivateKeyEntry, for example upload, 22 Nov 2026, PrivateKeyEntry.",
+      "comment": "I'm not sure I understand",
+      "start": 304,
+      "end": 417,
+      "prefix": "me keytool -list output printed.",
+      "suffix": ""
+    }
+  }
+]
+</assistant_citations>
+
+---
+
+[T3 Code: the agent in T3 thread "8383a9d8-4c13-4d75-b2e4-e5acbe3ada46" on linked environment "6094f8e9-f080-46a5-87ba-c7da47f55da7" sent this message, not the user.]
+
+Update from the release-signing setup: GitHub Actions release signing is configured on `BbrSofiane/email-os` (environment `android-release`, `main`-only branch policy, all 4 signing secrets + `ANDROID_RELEASE_CERT_SHA256` variable), and the first `android-release.yml` workflow run has started on `main`.
+
+- **Run URL:** https://github.com/BbrSofiane/email-os/actions/runs/45470070160
+- **Run ID:** `45470070160`
+- **Current status:** `waiting` (pending deployment approval for `android-release`)
+- **Monitor via CLI:** `gh run watch 45470070160 -R BbrSofiane/email-os`
+
+---
+
+Ok I've approved it. While it's running, anything else the other thread can work on?
+
+---
+
+You can monitor thread 7c948f37-6e43-4289-ae4f-bf7e7636ed6a for the HTML check
+
+---
+
+The user linked Sofiane’s MacBook Pro with full-access access. Pass environmentId 6094f8e9-f080-46a5-87ba-c7da47f55da7 to act there.
+
+---
+
+I've already done the Google Cloud setup from testing the throwaway Gmail account on my MacBoook
+
+---
+
+[T3 Code: the agent in T3 thread "8383a9d8-4c13-4d75-b2e4-e5acbe3ada46" on linked environment "6094f8e9-f080-46a5-87ba-c7da47f55da7" sent this message, not the user.]
+
+Update: the `android-release.yml` workflow run (`45470070160`) succeeded in 8m51s (build, signing, certificate verification, and release publish all passed).
+
+- **Run URL:** https://github.com/BbrSofiane/email-os/actions/runs/45470070160
+- **Published Release:** `android-v0.1.0-1001` (Latest) — https://github.com/BbrSofiane/email-os/releases/tag/android-v0.1.0-1001
+
+---
+
+Can you start a release from here?
+
+---
+
+Ok tested install 1002 and the draft, the email done and the setting change all persisted
