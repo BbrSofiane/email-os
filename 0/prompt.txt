@@ -1,0 +1,36 @@
+[T3 Code: this message came through T3 Code's tools, not from the user typing in this chat.]
+
+Fix the HTML mail reader's failures on macOS WKWebView, found in the owner's macOS check for PR #92 (HTML mail reader, ADR 0006, merged to main; see the "Owner action: macOS check" section via `gh pr view 92`). The check ran on main at 59e5dfb with `pnpm tauri dev` and the default fixture profile. Results: steps 1, 3, 4 pass; 2, 5, 6, 7 fail.
+
+## Main bug (steps 5, 6, 7): parent-attached listeners never run inside the mail frame on WebKit
+
+`src/components/HtmlMessageFrame.vue` renders mail in a `srcdoc` iframe with `sandbox="allow-same-origin"` (no `allow-scripts`), then the parent attaches listeners to the frame's document (around lines 148-152): `doc.addEventListener('click', …, true)`, `doc.addEventListener('keydown', …, true)` and `img.addEventListener('load', fit)`.
+
+WebKit refuses to run any event listener whose target document is in a sandboxed frame without `allow-scripts`, even when the listener function belongs to the parent realm. Chromium (and so the Android WebView) runs them. That's why Android passed and macOS fails. Evidence from the Web Inspector console on macOS:
+- A test listener added from the parent with `frame.contentDocument.addEventListener('click', …, true)` ran 0 times after a dispatched click. The same listener on the parent `document` ran once.
+- Each blocked call logs "Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set."
+- Parent-side DOM APIs on the frame still work (`contentDocument.querySelector`, setting `img.src`, reading layout). Only listeners are blocked.
+
+User-visible effects on macOS:
+- Step 5: clicking an https link or a `mailto:` link in conv-20 does nothing. There's no confirmation dialog and no New message.
+- Step 6: after clicking inside a message, the frame has focus and `j`/`k` do nothing, because the keydown forwarder never runs. With focus outside the frame, `j`/`k` work.
+- Image `load` → `fit` never fires, so height fitting relies only on the ResizeObserver path.
+- Step 7: `FRAME_PROBE_SOURCE` in `tests/rendered/html-frame-probe.ts` gives 36 PASS and 1 FAIL. The FAIL is "remote image blocked by CSP — [], width=0". Its `securitypolicyviolation` listener is attached to the frame document from the parent, so it never runs on WebKit. WebKit's own console report shows the CSP did block the image ("Refused to load https://probe-image.invalid/p.png because it does not appear in the img-src directive"). Every no-script check passed.
+
+Constraints:
+- Do NOT add `allow-scripts` or any other sandbox token. ADR 0006 decision 9 forbids it, and the no-script guarantee and fail-closed Tauri-global guard must keep holding.
+- Keep text selection and copy inside the message working, along with keyboard link activation (Enter/Space on a link) and the per-link confirmation flow.
+- Behaviour on Chromium/Android must not regress.
+
+Design the fix (record it in the ADR's implementation record if it changes the approach), implement it with focused tests, and make the probe's CSP check work on WebKit without weakening it, e.g. a signal that doesn't depend on a listener inside the frame.
+
+## Secondary issues
+
+1. Step 2 (conv-21 inline logo is invisible on macOS): `crates/mail-core/src/synthetic/html/logo.png.b64` is a corrupt PNG, because its IDAT chunk CRC is wrong. The stored CRC is `ef bf 6b db` and the correct one is `ef a2 a7 5b`. The `ef bf` looks like a UTF-8 replacement-character mangling, so check how the file was produced. The corrected base64 is `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=`. Chromium ignores chunk CRCs, but Apple ImageIO decodes the file as fully transparent. Swapping in the corrected bytes in the live DOM made the white 64×64 logo show, so the cid pipeline itself works. Fix the fixture and check that nothing else (the same bytes are decoded in `crates/mail-core/src/synthetic/provider.rs` around lines 240 and 383, plus any TS fixture copies, tests or golden sizes such as "68 B") depends on the old bytes. A small test that validates fixture PNG CRCs would stop this coming back.
+2. Step 1 cosmetic: after Load images, failed remote images in conv-19 render square on WebKit (the 600×220 header became 600×600), because `img { max-width: 100%; height: auto; }` in `src/lib/html-mail/frame-document.ts` loses the width/height aspect ratio for broken images. It's low priority; fix it only if it's cheap and safe.
+
+## Notes
+
+- This sandbox can't run WKWebView, so you can't reproduce the WebKit behaviour here. Reason from the evidence above, and test with the rendered suites in Chrome plus unit tests. Where you can't verify on WebKit, write down exactly what the owner must recheck on the Mac.
+- Follow the repo's AGENTS/CLAUDE conventions and run the relevant checks.
+- Commit to this branch. Before you push or open a PR, report back with a summary of the design, the diff and the test results.
