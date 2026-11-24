@@ -68,19 +68,28 @@ function matches(element: Element, selector: string): boolean {
   }
 }
 
+/** Heights this module set, so a later fit may replace them (and never the mail's own). */
+const fittedHeights = new WeakSet<HTMLImageElement>();
+
 /**
- * A broken image keeps the shape its width and height attributes give it. With
- * `height: auto`, WebKit draws a failed image square (Chromium already uses the
- * attributes' ratio). Loaded images and images with no source (withheld
- * remote images, cid images not yet fetched) are left alone.
+ * A broken image keeps the shape its width and height attributes give it.
+ * With `height: auto`, WebKit draws a failed image square and ignores
+ * `aspect-ratio` on it, so the height is set in pixels from the rendered width.
+ * Call it with the frame at zoom 1. Loaded images, images with no source
+ * (withheld remote images, cid images not yet fetched) and images whose inline
+ * style sets a height are left alone.
  */
-export function keepBrokenImageRatio(img: HTMLImageElement): void {
-  if (!img.getAttribute('src') || !img.complete || img.naturalWidth !== 0 || img.style.aspectRatio) return;
+export function keepBrokenImageHeight(img: HTMLImageElement): void {
+  if (!img.getAttribute('src') || !img.complete || img.naturalWidth !== 0) return;
+  if (img.style.height && !fittedHeights.has(img)) return;
   const width = Number(img.getAttribute('width'));
   const height = Number(img.getAttribute('height'));
-  if (Number.isInteger(width) && Number.isInteger(height) && width > 0 && height > 0) {
-    img.style.aspectRatio = `${width} / ${height}`;
-  }
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) return;
+  img.style.height = '';
+  const rendered = img.offsetWidth;
+  if (rendered <= 0) return;
+  img.style.height = `${(rendered * height) / width}px`;
+  fittedHeights.add(img);
 }
 
 export interface FrameSignalOptions {

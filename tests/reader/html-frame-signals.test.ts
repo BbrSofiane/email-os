@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { attachFrameSignals, frameKeepsFocus, frameListenersRun, keepBrokenImageRatio, resetFrameListenerProbe } from '../../src/lib/html-mail/frame-signals';
+import { attachFrameSignals, frameKeepsFocus, frameListenersRun, keepBrokenImageHeight, resetFrameListenerProbe } from '../../src/lib/html-mail/frame-signals';
 
 function makeFrame(body: string): { frame: HTMLIFrameElement; doc: Document } {
   const frame = document.createElement('iframe');
@@ -111,28 +111,39 @@ describe('frame signals', () => {
   });
 });
 
-describe('broken image ratio', () => {
-  it('sets the attribute ratio on a failed image only', () => {
-    const doc = document.implementation.createHTMLDocument('');
-    const make = (attributes: string) => {
-      const holder = doc.createElement('div');
-      holder.innerHTML = `<img ${attributes}>`;
-      const img = holder.querySelector('img')!;
-      Object.defineProperty(img, 'complete', { value: true });
-      return img;
-    };
+describe('broken image height', () => {
+  let rendered = 600;
+  function make(attributes: string): HTMLImageElement {
+    const holder = document.createElement('div');
+    holder.innerHTML = `<img ${attributes}>`;
+    const img = holder.querySelector('img')!;
+    Object.defineProperty(img, 'complete', { value: true });
+    Object.defineProperty(img, 'offsetWidth', { get: () => rendered });
+    return img;
+  }
+
+  it('sets a pixel height from the attribute ratio on a failed image', () => {
     const broken = make('src="https://x.invalid/a.png" width="600" height="220"');
-    keepBrokenImageRatio(broken);
-    expect(broken.style.aspectRatio).toBe('600 / 220');
+    keepBrokenImageHeight(broken);
+    expect(broken.style.height).toBe('220px');
+    // A later fit at another width replaces its own height.
+    rendered = 300;
+    keepBrokenImageHeight(broken);
+    expect(broken.style.height).toBe('110px');
+    rendered = 600;
+  });
+
+  it('leaves loaded, withheld, unsized and mail-sized images alone', () => {
     const withheld = make('data-eos-src="https://x.invalid/a.png" width="600" height="220"');
-    keepBrokenImageRatio(withheld);
-    expect(withheld.style.aspectRatio).toBe('');
     const loaded = make('src="data:image/png;base64,AA==" width="600" height="220"');
     Object.defineProperty(loaded, 'naturalWidth', { value: 1 });
-    keepBrokenImageRatio(loaded);
-    expect(loaded.style.aspectRatio).toBe('');
     const unsized = make('src="https://x.invalid/a.png" width="100%"');
-    keepBrokenImageRatio(unsized);
-    expect(unsized.style.aspectRatio).toBe('');
+    const styled = make('src="https://x.invalid/a.png" width="600" height="220" style="height: 40px"');
+    for (const img of [withheld, loaded, unsized]) {
+      keepBrokenImageHeight(img);
+      expect(img.style.height).toBe('');
+    }
+    keepBrokenImageHeight(styled);
+    expect(styled.style.height).toBe('40px');
   });
 });

@@ -209,8 +209,13 @@ implementation and recorded here instead of rewriting the proposal:
         confirmation. The sanitiser drops custom elements, so mail cannot add
         targets or signals; mail CSS can at most stop its own links from
         signalling, and cannot fake an activation because the app reads the
-        link from the fragment. `-webkit-user-drag: none` keeps a drag that
-        starts on a link selecting text.
+        link from the fragment. The signal rules are `!important` inside a
+        cascade layer with `all: initial`: layered important declarations beat
+        every unlayered one whatever its specificity, and the CSS filter keeps
+        no `@layer`, so mail CSS cannot fix the signal's size or show a target.
+        `-webkit-user-drag: none` keeps a drag that starts on a link selecting
+        text, and a zero-specificity `:where(a[data-eos-href][href])` rule
+        undoes the UA link colour and underline, so links look as on Chromium.
       - **Keys.** A click focuses the frame, where the app cannot see key
         presses. When focus enters the frame (the app window blurs) or the
         pointer is pressed or released in it (`html:active` gives the signal a
@@ -221,7 +226,10 @@ implementation and recorded here instead of rewriting the proposal:
         through links). So `j`/`k`/Escape work after a click; after selecting
         text they work again after the next click.
       - **Fit.** The app's `ResizeObserver` also watches the frame's images
-        instead of `load` listeners.
+        instead of `load` listeners. A fit resizes those images (zoom, broken
+        image heights), so on this path the observer fits on the next animation
+        frame instead of in its callback, which otherwise logs "ResizeObserver
+        loop completed with undelivered notifications".
     - Each activation adds one same-document history entry to the frame
       (WebKit only). The app does not use history and macOS has no back
       gesture in the webview.
@@ -232,13 +240,21 @@ implementation and recorded here instead of rewriting the proposal:
     - Also from the check: the conv-21 logo fixture had a wrong IDAT CRC
       (hand-written base64; Chromium ignores chunk CRCs, ImageIO drew it
       transparent). It is corrected and a core test checks every fixture PNG's
-      chunk CRCs. A failed image with `width` and `height` attributes now keeps
-      their ratio (WebKit drew it square under `height: auto`); loaded and
-      withheld images are untouched.
+      chunk CRCs. A failed image with integer `width` and `height` attributes
+      now gets a pixel height from their ratio at each fit: WebKit draws it
+      square under `height: auto` and ignores `aspect-ratio` on a broken image
+      (Mac recheck). Loaded, withheld and mail-sized images are untouched.
     - **Probe.** Its remote-image CSP check needed the violation event, a
-      listener in the frame. It now also accepts a `csp-violation` report from a
-      `ReportingObserver` of the frame's realm; either signal still has to
-      name the image and `img-src`. It also checks the link signal (seen by a
+      listener in the frame. Where parent listeners run (Chromium) it still
+      requires that event. WebKit runs none, and the Mac recheck showed it
+      gives no `csp-violation` report to a `ReportingObserver` either. There the
+      check is structural (`via=structural`): the frame carries the exact
+      policy meta, a same-origin control image (`/src-tauri/icons/icon.png`,
+      served by the dev server and allowed by the app CSP's `'self'`) loads in
+      the same kind of frame without the meta and is blocked with it, and the
+      remote image did not load. Without the dev server there is no control
+      image, and the line is labelled MANUAL: the console's "Refused to load"
+      line is the proof. The probe also checks the link signal (seen by a
       parent `ResizeObserver`, same document, no scroll) and reports whether
       parent listeners run.
 
@@ -290,10 +306,14 @@ implementation and recorded here instead of rewriting the proposal:
   `html-reader.rendered.test.ts` runs the reader that way: real mouse clicks on
   a web and a `mailto:` link (twice each, frame URL and scroll unchanged), Tab to
   a link then Enter, a click in the text then `j`/`k`, a drag selection that
-  keeps focus, and image fitting after Load images. The spike test runs the
-  probe both ways. The model assumes, as the owner's check suggests, that
-  WebKit runs observer callbacks (ResizeObserver, ReportingObserver) for frame
-  nodes; the probe's link-signal and CSP checks verify that on the Mac.
+  keeps focus, image fitting after Load images, link styles equal with and
+  without the fragment `href`, and no ResizeObserver loop error while the
+  column width changes. The spike test runs the probe both ways and checks the
+  signal under hostile, unfiltered mail CSS. The Mac recheck of `bb3ae28`
+  (2026-11-24) confirmed that WebKit runs a parent `ResizeObserver` for frame
+  nodes (link signal widths 0,1,0) and that links, keys and Copy work; it found
+  the four issues fixed after it (CSP probe signal, square broken images, UA
+  link style, a ResizeObserver loop message).
 - **Risk seen: launch ANR.** On this emulator the app often hits an
   input-dispatch ANR at launch ("Input dispatching timed out … Waited 5001ms for
   FocusEvent(hasFocus=true)"). Seen on 2026-11-21 three times after installing,

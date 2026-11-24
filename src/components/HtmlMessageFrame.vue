@@ -5,7 +5,7 @@ import type { MessageHtmlBody } from '../lib/ipc/generated';
 import { cachedMail, cacheMail, mailCacheEpoch, type CachedMail } from '../lib/html-mail/mail-cache';
 import { sanitizeMailHtml } from '../lib/html-mail/sanitize';
 import { frameHasNativeGlobals } from '../lib/html-mail/frame-guard';
-import { attachFrameSignals, frameListenersRun, keepBrokenImageRatio } from '../lib/html-mail/frame-signals';
+import { attachFrameSignals, frameListenersRun, keepBrokenImageHeight } from '../lib/html-mail/frame-signals';
 import { buildFrameDocument, fitZoom, FRAME_SANDBOX, type FrameTheme } from '../lib/html-mail/frame-document';
 
 const props = defineProps<{
@@ -105,10 +105,11 @@ function onLoad() {
   const images = [...doc.querySelectorAll('img')];
   let active = true;
   let raf = 0;
+  let scheduled = 0;
   fit = () => {
     if (!active || !element.clientWidth) return;
-    for (const img of images) keepBrokenImageRatio(img);
     root.style.zoom = '1';
+    for (const img of images) keepBrokenImageHeight(img);
     root.style.overflowX = 'hidden';
     // The frame always takes its content height, so it never scrolls vertically.
     root.style.overflowY = 'hidden';
@@ -136,10 +137,22 @@ function onLoad() {
     const url = link?.getAttribute('data-eos-href');
     if (url) emit('link', url, (link?.textContent ?? '').trim().slice(0, 200));
   };
-  const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(fit);
+  const listenersRun = frameListenersRun(doc);
+  // On WebKit the observer also watches the frame's images, which a fit resizes
+  // (zoom, broken-image heights). Fitting inside the callback would feed the
+  // observer from itself ("ResizeObserver loop completed with undelivered
+  // notifications"), so fit on the next frame instead.
+  const scheduleFit = () => {
+    if (scheduled) return;
+    scheduled = requestAnimationFrame(() => {
+      scheduled = 0;
+      fit();
+    });
+  };
+  const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(listenersRun ? fit : scheduleFit);
   if (element.parentElement) observer?.observe(element.parentElement);
   let detach: () => void;
-  if (frameListenersRun(doc)) {
+  if (listenersRun) {
     // Chromium (Android WebView, browser preview): the app's listeners run on frame nodes.
     const click = (event: MouseEvent) => { event.preventDefault(); activate(event.target); };
     const keydown = (event: KeyboardEvent) => {
@@ -184,6 +197,7 @@ function onLoad() {
   cleanup = () => {
     active = false;
     cancelAnimationFrame(raf);
+    cancelAnimationFrame(scheduled);
     observer?.disconnect();
     detach();
     fit = () => {};

@@ -210,6 +210,7 @@ describe.skipIf(!enabled)('HTML reader without frame listeners (WebKit model)', 
     await h.cdp.cmd('Network.enable');
     await h.cdp.cmd('Emulation.setFocusEmulationEnabled', { enabled: true });
     await h.cdp.cmd('Page.addScriptToEvaluateOnNewDocument', { source: WEBKIT_LISTENER_MODEL });
+    await h.cdp.cmd('Page.addScriptToEvaluateOnNewDocument', { source: `window.__eosErrors = []; addEventListener('error', (event) => window.__eosErrors.push(String(event.message)));` });
   }, 120_000);
   afterAll(async () => { await h?.close(); });
 
@@ -314,18 +315,50 @@ describe.skipIf(!enabled)('HTML reader without frame listeners (WebKit model)', 
     expect(await h.cdp.js(`document.activeElement === ${frame}`)).toBe(true);
   }, 60_000);
 
+  it('draws links as the listener path does, with or without the fragment href', async () => {
+    for (const name of ['Fixture Weekly: issue 12', 'Hostile HTML sample', 'Plan for next week']) {
+      await open(name);
+      const differences = await h.cdp.js<string[]>(`(() => {
+        const out = [];
+        for (const a of ${doc}.querySelectorAll('a[data-eos-href]')) {
+          const look = () => { const c = getComputedStyle(a); return [c.color, c.textDecorationLine, c.cursor].join(' | '); };
+          const href = a.getAttribute('href');
+          const withHref = look(); a.removeAttribute('href'); const without = look(); a.setAttribute('href', href);
+          if (withHref !== without) out.push(a.textContent.trim() + ': ' + withHref + ' vs ' + without);
+        }
+        return out;
+      })()`);
+      expect(differences, name).toEqual([]);
+    }
+  }, 60_000);
+
+  it('fits without a ResizeObserver loop while the column and images change', async () => {
+    await open('Fixture Weekly: issue 12');
+    await h.cdp.js(`${app}.querySelector('[data-test="load-images"]').click()`);
+    await wait(`${frame}?.contentDocument?.querySelector('img[width="600"]')?.complete && ${frame}.contentDocument.querySelector('eos-signal')`, 'images settled');
+    // Narrow and widen the column: fits change the zoom and so the observed images.
+    for (const width of [700, 420, 1100, 520, 1100]) {
+      await h.cdp.cmd('Emulation.setDeviceMetricsOverride', { width, height: 800, deviceScaleFactor: 1, mobile: false });
+      await pause(250);
+    }
+    await click(await point('p', ''));
+    await pressRenderedKey(h.cdp, 'j');
+    await pause(600);
+    expect(await h.cdp.js<string[]>('window.__eosErrors')).toEqual([]);
+  }, 60_000);
+
   it('fits images that load or fail and keeps the size of a failed image', async () => {
     await open('Fixture Weekly: issue 12');
     await h.cdp.js(`${app}.querySelector('[data-test="load-images"]').click()`);
     await wait(`${frame}?.contentDocument?.querySelector('img[width="600"]')?.getAttribute('src') && ${frame}.contentDocument.querySelector('eos-signal')`, 'images requested');
     await wait(`${doc}.querySelector('img[width="600"]').complete`, 'header image settled');
     await pause(600);
-    const result = await h.cdp.js<{ ratio: string; width: number; height: number; frame: number; content: number }>(`(() => {
-      const f = ${frame}, img = f.contentDocument.querySelector('img[width="600"]'), r = img.getBoundingClientRect();
-      return { ratio: img.style.aspectRatio, width: r.width, height: r.height, frame: f.clientHeight, content: f.contentDocument.scrollingElement.scrollHeight };
+    const result = await h.cdp.js<{ height: string; width: number; boxHeight: number; frame: number; content: number }>(`(() => {
+      const f = ${frame}, img = f.contentDocument.querySelector('img[width="600"]');
+      return { height: img.style.height, width: img.offsetWidth, boxHeight: img.offsetHeight, frame: f.clientHeight, content: f.contentDocument.scrollingElement.scrollHeight };
     })()`);
-    expect(result.ratio).toBe('600 / 220');
-    expect(Math.abs(result.height - (result.width * 220) / 600)).toBeLessThanOrEqual(2);
+    expect(result.height).toMatch(/px$/);
+    expect(Math.abs(result.boxHeight - (result.width * 220) / 600)).toBeLessThanOrEqual(2);
     expect(result.content).toBeLessThanOrEqual(result.frame + 2);
   }, 60_000);
 });

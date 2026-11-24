@@ -20,11 +20,19 @@ export const FRAME_SIGNAL = 'eos-signal';
  * State the user agent changes without script, turned into a size the parent's
  * ResizeObserver sees: width while a link's fragment target is the document's
  * target, height while the pointer is pressed in the frame.
+ *
+ * Mail CSS must not be able to fix the signal's size or show a target. Important
+ * declarations in a cascade layer beat every unlayered important declaration,
+ * whatever its specificity, and the CSS filter keeps no `@layer` (only `@media`
+ * and `@supports`), so mail cannot reach these declarations. `all: initial`
+ * resets anything else mail might set (min-width, padding, ...).
  */
-export const FRAME_SIGNAL_CSS = `${FRAME_SIGNAL_TARGET} { display: none !important; }
-${FRAME_SIGNAL} { display: block !important; position: fixed !important; top: 0 !important; left: 0 !important; width: 0 !important; height: 0 !important; overflow: hidden !important; visibility: hidden !important; pointer-events: none !important; }
+export const FRAME_SIGNAL_CSS = `@layer eos-signal {
+${FRAME_SIGNAL_TARGET} { all: initial !important; display: none !important; }
+${FRAME_SIGNAL} { all: initial !important; display: block !important; position: fixed !important; top: 0 !important; left: 0 !important; width: 0 !important; height: 0 !important; overflow: hidden !important; visibility: hidden !important; pointer-events: none !important; }
 ${FRAME_SIGNAL_TARGET}:target ~ ${FRAME_SIGNAL} { width: 1px !important; }
-html:active > ${FRAME_SIGNAL} { height: 1px !important; }`;
+html:active > ${FRAME_SIGNAL} { height: 1px !important; }
+}`;
 
 export interface FrameTheme {
   mode: 'paper' | 'adaptive';
@@ -52,6 +60,8 @@ img { max-width: 100%; height: auto; }
 img[data-eos-src] { outline: 1px dashed rgba(128, 128, 128, 0.45); outline-offset: -1px; }
 table { max-width: none; }
 [data-eos-href] { cursor: pointer; -webkit-user-drag: none; }
+/* WebKit path: links carry a fragment href (frame-signals.ts). Undo the UA link style so they look as on Chromium; zero specificity, so mail rules still win. */
+:where(a[data-eos-href][href]) { color: inherit; text-decoration: none; }
 ${paper ? '' : `[data-eos-href] { color: ${link}; text-decoration: underline; }`}
 html:not(.eos-quote-open) [data-eos-quote="trailing"] { display: none !important; }
 ${FRAME_SIGNAL_CSS}`;

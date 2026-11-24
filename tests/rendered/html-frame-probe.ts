@@ -9,8 +9,9 @@ export const FRAME_PROBE_SOURCE = String.raw`(async () => {
   const frames = [];
   const add = (name, pass, detail) => checks.push({ name, pass: Boolean(pass), detail: String(detail) });
   // The app's FRAME_SIGNAL_CSS (a unit test keeps the two equal).
-  const signalCss = "eos-target { display: none !important; }\neos-signal { display: block !important; position: fixed !important; top: 0 !important; left: 0 !important; width: 0 !important; height: 0 !important; overflow: hidden !important; visibility: hidden !important; pointer-events: none !important; }\neos-target:target ~ eos-signal { width: 1px !important; }\nhtml:active > eos-signal { height: 1px !important; }";
-  const csp = "<meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; form-action 'none'\">";
+  const signalCss = "@layer eos-signal {\neos-target { all: initial !important; display: none !important; }\neos-signal { all: initial !important; display: block !important; position: fixed !important; top: 0 !important; left: 0 !important; width: 0 !important; height: 0 !important; overflow: hidden !important; visibility: hidden !important; pointer-events: none !important; }\neos-target:target ~ eos-signal { width: 1px !important; }\nhtml:active > eos-signal { height: 1px !important; }\n}";
+  const policy = "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; form-action 'none'";
+  const csp = "<meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"" + policy + "\">";
   const payloads = [
     ['script', '<script>parent.__eosPwned="script";parent.document.title="PWNED"<\/script>'],
     ['img', '<img src=x onerror="parent.__eosPwned=\'img\';parent.document.title=\'PWNED\'">'],
@@ -23,19 +24,23 @@ export const FRAME_PROBE_SOURCE = String.raw`(async () => {
     ['form', '<form action="javascript:parent.__eosPwned=\'form\';parent.document.title=\'PWNED\'"><button id=submit>go</button></form>'],
     ['nav', '<a id=nav href="https://nav.invalid/">go</a>'],
     ['remote-image', '<p>remote image is inserted by the parent after load</p>'],
+    // A same-origin image (served by the dev server) in the same kind of frame,
+    // without and with the frame policy: tells a CSP block from a failed load.
+    ['image-control', '<img id=probe>'],
+    ['image-policy', '<img id=probe>'],
     // How the app sees link activation where no parent listener runs in the frame.
     ['link-signal', '<style>' + signalCss + '</style><div style="height:3000px"></div><a id=go href="about:srcdoc#eos-probe-0">go</a><eos-target id=eos-probe-0></eos-target><eos-signal></eos-signal>']
   ];
   const remoteImage = 'https://probe-image.invalid/p.png';
+  const controlImage = new URL('/src-tauri/icons/icon.png', location.href).href;
   const violations = [];
   let listenersRun = false;
-  let reporter = null;
   const title = document.title;
   try {
     for (const [name, html] of payloads) {
       const frame = document.createElement('iframe');
       frame.setAttribute('sandbox', 'allow-same-origin');
-      frame.srcdoc = csp + html;
+      frame.srcdoc = (name === 'image-control' ? '<meta charset="utf-8">' : csp) + html.replace('<img id=probe>', '<img id=probe src="' + controlImage + '">');
       frames.push([name, frame]);
       const loaded = await new Promise(resolve => {
         const timer = setTimeout(() => resolve(false), 3000);
@@ -75,16 +80,12 @@ export const FRAME_PROBE_SOURCE = String.raw`(async () => {
       if (name === 'remote-image') {
         // A violation in the srcdoc parse can fire before the parent can listen, and
         // Chrome may still list a CSP-blocked load in resource timing. Listen first,
-        // then insert the image, and require a CSP violation for it. Two signals:
-        // the violation event, which needs a parent listener in the frame (WebKit
-        // runs none), and a ReportingObserver of the frame's realm, an observer
-        // like the app's link channel, read by callback or takeRecords().
-        const record = (via, blockedURI, directive) => violations.push({ via, blockedURI: blockedURI || '', directive: directive || '' });
-        frame.contentDocument.addEventListener('securitypolicyviolation', event => record('event', event.blockedURI, event.effectiveDirective || event.violatedDirective));
-        if (frame.contentWindow.ReportingObserver) {
-          reporter = new frame.contentWindow.ReportingObserver(reports => { for (const report of reports) record('report', report.body.blockedURL, report.body.effectiveDirective); }, { types: ['csp-violation'], buffered: true });
-          reporter.observe();
-        }
+        // then insert the image, and require a CSP violation for it. The listener
+        // runs only where parent listeners run in the frame (Chromium); WebKit
+        // runs none and gives no csp-violation report to a ReportingObserver.
+        frame.contentDocument.addEventListener('securitypolicyviolation', event => {
+          violations.push({ blockedURI: event.blockedURI, directive: event.effectiveDirective || event.violatedDirective });
+        });
         const img = frame.contentDocument.createElement('img');
         img.src = remoteImage;
         frame.contentDocument.body.append(img);
@@ -111,15 +112,32 @@ export const FRAME_PROBE_SOURCE = String.raw`(async () => {
         add(name + ' location', win.location.href === 'about:srcdoc', win.location.href);
         const found = globals.filter(key => key in win || win[key] !== undefined);
         add(name + ' globals', found.length === 0, found.join(', ') || 'none');
+        if (name === 'image-control' || name === 'image-policy') continue;
         if (name === 'remote-image') {
           const img = frame.contentDocument.querySelector('img');
-          for (const report of reporter ? reporter.takeRecords() : []) {
-            violations.push({ via: 'report', blockedURI: report.body.blockedURL || '', directive: report.body.effectiveDirective || '' });
+          const probeImage = key => frames.find(([other]) => other === key)?.[1].contentDocument?.querySelector('#probe');
+          const control = probeImage('image-control');
+          const policed = probeImage('image-policy');
+          const controlLoads = Boolean(control && control.complete && control.naturalWidth > 0);
+          const policyBlocks = Boolean(policed && policed.complete && policed.naturalWidth === 0);
+          const meta = frame.contentDocument.head.children[1];
+          const metaExact = meta?.getAttribute('http-equiv') === 'Content-Security-Policy' && meta.getAttribute('content') === policy;
+          add('image policy control (informational)', true, controlImage + ': without policy ' + (controlLoads ? 'loads' : 'unavailable') + ', with policy ' + (policyBlocks ? 'blocked' : 'loaded'));
+          if (controlLoads) add('same-origin image blocked by the frame policy', policyBlocks, 'width=' + policed?.naturalWidth);
+          const event = violations.some(v => v.blockedURI.startsWith(remoteImage) && v.directive.startsWith('img-src'));
+          const detail = JSON.stringify(violations) + ', width=' + img.naturalWidth + ', listeners=' + listenersRun + ', policy meta ' + (metaExact ? 'exact' : 'MISSING');
+          if (listenersRun) {
+            // Chromium: the violation event is required, as before.
+            add('remote image blocked by CSP', event && img.naturalWidth === 0, detail + ', via=event');
+          } else if (controlLoads) {
+            // WebKit: the exact policy is in the document, an image that loads
+            // without it is blocked with it, and the remote image did not load.
+            add('remote image blocked by CSP', metaExact && policyBlocks && img.naturalWidth === 0, detail + ', via=structural');
+          } else {
+            // No control image (a build without the dev server): only the console
+            // line "Refused to load ... img-src" proves the block.
+            add('remote image blocked by CSP (MANUAL: confirm the console line "Refused to load ' + remoteImage + '")', metaExact && img.naturalWidth === 0, detail + ', via=manual');
           }
-          add('remote image violation signals (informational)', true, 'listeners=' + listenersRun + ', ReportingObserver=' + Boolean(reporter) + ', via=' + [...new Set(violations.map(v => v.via))].join('+'));
-          reporter?.disconnect();
-          const blocked = violations.some(v => v.blockedURI.startsWith(remoteImage) && v.directive.startsWith('img-src'));
-          add('remote image blocked by CSP', blocked && img.naturalWidth === 0, JSON.stringify(violations) + ', width=' + img.naturalWidth);
           const entries = win.performance.getEntriesByType('resource').filter(entry => entry.name === remoteImage);
           add('remote image resource timing (informational)', true, entries.map(e => 'status=' + e.responseStatus + ' transfer=' + e.transferSize).join('; ') || 'none');
         }
