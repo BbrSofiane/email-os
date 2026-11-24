@@ -71,7 +71,7 @@ import ProviderDestinations from './components/ProviderDestinations.vue';
 import ContactPane from './components/ContactPane.vue';
 import FullDate from './components/FullDate.vue';
 import { BROWSER_PREVIEW_DISCLOSURE } from './lib/ipc/browser-fake';
-import { isTauriRuntime, type ClientMode } from './lib/ipc';
+import { isAndroidShell, type ClientMode } from './lib/ipc';
 import type { ConversationRef, DraftSource, DraftSummary, MailClient, Reminder } from './lib/ipc/client';
 import { REPLY_REASONS, replyBlockedReason, sourceLoadErrorReason } from './lib/reply-context';
 import { sameConversation, useMailbox, type BrowseContext, type ConversationSummaryLike, type DoneBoundary, type SearchVisit } from './composables/useMailbox';
@@ -94,7 +94,7 @@ const props = withDefaults(defineProps<{
 const swipePreferences = ref(loadSwipePreferences());
 const emit = defineEmits<{ switchAccount: []; workspaceTitle: [title: string] }>();
 const workspaceActive = computed(() => props.active !== false);
-const androidFixture = isTauriRuntime() && /Android/i.test(navigator.userAgent);
+const androidShell = isAndroidShell();
 const layoutMode = useLayoutMode();
 
 type UtilityDrawer = 'account' | 'activity' | 'destinations' | 'reminder-settings';
@@ -810,7 +810,7 @@ async function enterMobileSelection(): Promise<void> {
 
 let removeAndroidBack: () => void = () => undefined;
 onMounted(() => {
-  removeAndroidBack = installAndroidBackBridge(androidFixture, () => { const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }); window.dispatchEvent(event); return event.defaultPrevented; });
+  removeAndroidBack = installAndroidBackBridge(androidShell, () => { const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }); window.dispatchEvent(event); return event.defaultPrevented; });
   window.addEventListener('keydown', onKeydown);
   window.addEventListener('blur', cancelGo);
   window.addEventListener('compositionstart', cancelGo);
@@ -906,7 +906,7 @@ const readerSheetItems = computed(() => {
   return [
     { id: readAction, label: conversation?.isRead ? 'Mark unread' : 'Mark read', glyph: conversation?.isRead ? 'unread' as const : 'read' as const, disabled: !actionAvailable(readAction) },
     { id: 'reply', label: 'Reply', glyph: 'reply' as const, disabled: !actionAvailable('reply'), disabledReason: replyReason ?? undefined, group: 'more' },
-    ...(!androidFixture ? [{ id: 'files', label: 'Files and links', glyph: 'files' as const, disabled: !actionAvailable('open') }] : []),
+    ...(!androidShell ? [{ id: 'files', label: 'Files and links', glyph: 'files' as const, disabled: !actionAvailable('open') }] : []),
     { id: 'contact-details', label: 'Contact details', glyph: 'contact' as const, group: 'more' },
     { id: 'commands', label: 'Commands', glyph: 'prompt' as const, group: 'commands' },
   ];
@@ -2632,7 +2632,7 @@ const searchSyntaxEditHint = computed(() =>
               :read-only="trashReader || (gmailMode && !mailboxActionsEnabled)"
               :browsing-only="trashReader"
               :show-read-controls="gmailActionsEnabled && !trashReader"
-              :android="androidFixture"
+              :android="androidShell"
               :selection-count="selectedCount"
               :selection-context="mailbox.context.value"
               :back-host="layoutMode === 'compact' ? mobileTopBar?.backHost : readerBackHost"

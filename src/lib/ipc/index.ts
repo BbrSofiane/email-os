@@ -15,6 +15,10 @@ export function isTauriRuntime(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
+export function isAndroidShell(): boolean {
+  return isTauriRuntime() && /Android/i.test(navigator.userAgent);
+}
+
 export function selectMailClient(): { client: MailClient; mode: ClientMode } {
   if (isTauriRuntime()) {
     return { client: createTauriMailClient(), mode: 'native' };
