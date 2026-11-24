@@ -1,0 +1,21 @@
+[T3 Code: the agent in T3 thread "2eef1655-4916-4aa4-a930-0dddb657d66f" sent this message, not the user.]
+
+Sorry for the delay. Answer: the Codex usage limit reset at 02:19 UTC today, so resume now with GPT-6.1-Terra High sub-agents, as before, using the same small, shape-spelled-out briefs. If Terra hits a limit again, implement the stage yourself instead of waiting, and say so in the PR.
+
+News from the owner:
+- Google Cloud is set up in the existing desktop project, which is in Testing. It has the Gmail API, the scopes, and the throwaway account as a test user. Both Android clients now exist with package `dev.exedev.emailos`: the release client (SHA-1 56:4F:…:21:E8) and the debug client (SHA-1 93:06:D5:83:0B:27:BE:95:BB:48:80:7B:52:9C:95:D5:C8:18:C6:03). Per your ADR, no client ID goes into the build, and I am not passing the IDs on. If you find you need one anyway, explain why and stop.
+- main has moved to f641f70. That includes PR #93 install, PR #95 docs and the release-notes script. Merge origin/main before your next Android build (no force-push).
+- Owner-signed releases 1001 and 1002 exist and the in-place update on the phone passed.
+
+Continue with 5a → 5b → 6 → the emulator checks without an account. When you reach the stage that needs the emulator sign-in, stop with `BLOCKED:`. Include the exact Device-panel steps for the owner, and ask them to confirm that their own account is also a test user. Release the emulator lock while you wait.
+
+---
+
+Delegated task node:delegated-task:command%3Amcp%3A95c0d950-e58a-42d4-a8ec-79ef2167c274%3Adelegate-task%3A555663b2-c746-4cda-aef0-2f23444c6025 (B stage 5a: first-run choice gate) in child thread thread:delegated-task:command%3Amcp%3A95c0d950-e58a-42d4-a8ec-79ef2167c274%3Adelegate-task%3A555663b2-c746-4cda-aef0-2f23444c6025 [completed]:
+Implemented the mailbox choice gate and startup sequence. The full check passed, including 2,305 UI tests and typecheck.
+
+The required rendered layout check failed twice. On the second run, 7 tests failed in [mobile-list.rendered.test.ts](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/tests/layout/mobile-list.rendered.test.ts) and [mobile-reader.rendered.test.ts](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/tests/layout/mobile-reader.rendered.test.ts). The failures include missing selection elements, swipe-state assertions, and `geometry.previous.disabled` being `false` when the test expects `true`. The complete second-run output is in [/tmp/mode-layout.log](/tmp/mode-layout.log).
+
+The changes remain **uncommitted** because the requested commit was conditional on all checks passing. No commit SHA is available.
+
+Changed files: [App.vue](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/src/App.vue), [StartupRoot.vue](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/src/StartupRoot.vue), [ModeChoiceGate.vue](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/src/components/ModeChoiceGate.vue), [useModeChoice.ts](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/src/composables/useModeChoice.ts), [reload.ts](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/src/lib/reload.ts), [index.ts](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/src/lib/ipc/index.ts), [browser-fake.ts](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/src/lib/ipc/browser-fake.ts), and [mode-choice.test.ts](/home/exedev/.t3/worktrees/email-os/usable-android-gmail-acf10d39a93eaf3e/tests/transition/mode-choice.test.ts).
