@@ -1743,7 +1743,8 @@ const actionHandlers: ActionHandlers = {
     execute: async () => { await openDrawer('activity'); },
   },
   account: {
-    available: () => gmailMode.value,
+    // The Android demo mailbox also needs Account: it holds "Use your own mail".
+    available: () => gmailMode.value || androidShell,
     execute: async () => { await openDrawer('account'); },
   },
   'switch-account': {
@@ -2375,7 +2376,7 @@ const searchSyntaxEditHint = computed(() =>
           <span class="rail-spacer" aria-hidden="true"></span>
           <div class="rail-utilities">
             <button
-              v-if="gmailMode && accountStatus"
+              v-if="(gmailMode || androidShell) && accountStatus"
               type="button"
               class="rail-item"
               data-test="rail-account"

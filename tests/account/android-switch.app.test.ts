@@ -11,7 +11,7 @@ vi.mock('../../src/lib/reload', () => ({ reloadPage: state.reload }));
 afterEach(() => { sessionStorage.clear(); state.android = true; state.reload.mockReset(); });
 
 describe('Android account switching', () => {
-  it.each([['gmail', true, 'Switch to demo mailbox'], ['gmail', false, '']] as const)('shows the switch for %s on Android=%s', async (mode, android, label) => {
+  it.each([['gmail', true, 'Switch to demo mailbox'], ['fixture', true, 'Use your own mail'], ['gmail', false, '']] as const)('shows the switch for %s on Android=%s', async (mode, android, label) => {
     state.android = android;
     const fake = createBrowserFakeMailClient();
     fake.controls.setAccount({ mode });
