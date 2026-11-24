@@ -5,11 +5,13 @@ import ts from 'typescript';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { startRenderedHarness, type RenderedHarness } from './chromium';
 import { FRAME_PROBE_SOURCE, type FrameProbeResult } from './html-frame-probe';
+import { WEBKIT_LISTENER_MODEL } from './webkit-listener-model';
 
 const chrome = process.env.EMAIL_OS_RENDERED_LAYOUT_CHROME ?? '';
 const config = JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8'));
 const csp: string = config.app.security.csp;
 const token = "img-src 'self' data: https:";
+const logoPng = readFileSync('crates/mail-core/src/synthetic/html/logo.png.b64', 'utf8').trim();
 const guardSource = ts.transpileModule(readFileSync('src/lib/html-mail/frame-guard.ts', 'utf8').replaceAll('export ', ''), { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText;
 
 describe.skipIf(!chrome)('HTML frame spike', () => {
@@ -29,7 +31,7 @@ describe.skipIf(!chrome)('HTML frame spike', () => {
     await harness.cdp.cmd('Fetch.enable', { patterns: [{ urlPattern: 'https://img.test/*' }, { urlPattern: 'https://probe-image.invalid/*' }] });
     harness.cdp.on('Fetch.requestPaused', params => {
       requests.push(params.request.url);
-      void harness.cdp.cmd('Fetch.fulfillRequest', { requestId: params.requestId, responseCode: 200, responseHeaders: [{ name: 'Content-Type', value: 'image/png' }], body: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/a9sAAAAASUVORK5CYII=' });
+      void harness.cdp.cmd('Fetch.fulfillRequest', { requestId: params.requestId, responseCode: 200, responseHeaders: [{ name: 'Content-Type', value: 'image/png' }], body: logoPng });
     });
   }, 120_000);
   afterAll(async () => { await harness?.close(); await new Promise<void>(resolve => server?.close(() => resolve())); });
@@ -53,6 +55,20 @@ describe.skipIf(!chrome)('HTML frame spike', () => {
     console.log('Probe image requests:', JSON.stringify(requests));
     expect(new Set(result.checks.map(c => c.name)).size).toBe(result.checks.length);
     expect(result.checks.filter(c => !c.name.includes('(informational)') && !c.pass)).toEqual([]);
+  }, 30000);
+  it('blocks payloads and still proves the image policy when no listener runs in a frame (WebKit model)', async () => {
+    const script = await harness.cdp.cmd('Page.addScriptToEvaluateOnNewDocument', { source: WEBKIT_LISTENER_MODEL });
+    try {
+      await navigate('/wide');
+      const result = await harness.cdp.js<FrameProbeResult>(FRAME_PROBE_SOURCE);
+      const check = (name: string) => result.checks.find(c => c.name === name);
+      expect(check('parent listeners run in frame (informational)')?.detail).toBe('false');
+      expect(check('remote image violation signals (informational)')?.detail).toContain('via=report');
+      expect(check('remote image violation signals (informational)')?.detail).not.toContain('event');
+      expect(result.checks.filter(c => !c.name.includes('(informational)') && !c.pass)).toEqual([]);
+    } finally {
+      await harness.cdp.cmd('Page.removeScriptToEvaluateOnNewDocument', { identifier: script.identifier });
+    }
   }, 30000);
   it('inherits both parent and frame image policies', async () => {
     const run = async (path: string, policy: string) => {
