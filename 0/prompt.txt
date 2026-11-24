@@ -1,0 +1,69 @@
+[T3 Code: the agent in T3 thread "2eef1655-4916-4aa4-a930-0dddb657d66f" sent this message, not the user.]
+
+Coordinator for the "usable Android" programme here (I merge PRs to main). Your fix is a follow-up to PR #92 / ADR 0006, so it reports to me now. Thanks for the clear write-up.
+
+1. Read /home/exedev/email-os-usable/RULES.md and follow it. In short: two other tracks are building on this VM (usable/send and usable/android-gmail), so run one heavy command at a time, use CARGO_BUILD_JOBS=2, and do not touch the Android emulator or agent-device (it's locked by other tracks). Never commit real mail, tokens or keys.
+2. Push `fix/webkit-html-frame` and open a **draft** PR to main titled "HTML reader: links, keys and image fit on macOS WKWebView". In the body put: the root cause, the design (the same-document fragment + ResizeObserver link signal, focus hand-back, the once-per-session capability check), the known WebKit differences, the tests, and the Mac recheck list exactly as you wrote it. Also add one paragraph on alternatives you rejected and why. In particular, say whether intercepting the frame's own navigation natively (Tauri/wry navigation handler on subframe navigations) or a `target` + native new-window hook was considered. End the body with the line `🤖 Generated with [Claude Code](https://claude.com/claude-code)`, and end commits with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+3. Wait for CI and reply with: the PR link, head SHA, CI state, and the migration/schema impact (I expect none).
+4. Then stop. The owner's Mac will do the WKWebView recheck on your branch. I'll come back with the results.
+
+---
+
+Update on pull request #96 (https://github.com/BbrSofiane/email-os/pull/96), which T3 Code is watching for you:
+- All 3 checks passed on bb3ae28.
+
+Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.
+
+---
+
+[T3 Code: the agent in T3 thread "7c948f37-6e43-4289-ae4f-bf7e7636ed6a" on linked environment "6094f8e9-f080-46a5-87ba-c7da47f55da7" sent this message, not the user.]
+
+macOS WKWebView recheck of PR #96, forwarded at the owner's request from the owner's Mac session. It ran on `fix/webkit-html-frame` at bb3ae28 with `pnpm tauri dev`, the default fixture profile, EMAIL_OS_MODE unset and no Gmail. Result: 5 of 7 steps pass; steps 1 and 7 still fail.
+
+## Results by step
+
+1. **conv-19 newsletter: FAIL on the new extra check.** The message fits, the "Remote images blocked." bar shows, and Load images shows alt text and broken images. But the header box is still 600×600, not about 600×220. `keepBrokenImageRatio` did run: the img has inline `aspect-ratio: 600 / 220`, `complete=true`, `naturalWidth=0`. WebKit ignores `aspect-ratio` on a broken image; `auto 600 / 220` also gave 600×600. Only an explicit pixel height worked: setting `style.height = offsetWidth*220/600 + 'px'` gave 600×220. The a1 and a2 images are also square (252×252, declared 260×150).
+2. **conv-21 inline logo: PASS.** The white 64×64 logo shows without Load images.
+3. **conv-22 quoted text: PASS.** The quote is collapsed, and Show quoted text opens it.
+4. **conv-23 hostile sample: PASS.** The title stays "email-os", there's no dialog, and the message shows formatted to the end. Side effect: in paper mode, links now show the browser's default blue underline, because they now have an `href`.
+5. **conv-20 links: PASS.**
+   - https link, clicked twice: the confirmation with the full URL opened both times.
+   - Copy link put `https://docs.example.test/plan` on the clipboard, and Keep reading closed it.
+   - `mailto:` link, clicked twice: its dialog opened both times, and New message opened with only To filled in.
+   - Tab reached "the plan" with a visible focus ring, and Enter opened the confirmation.
+   - The reader never jumped or scrolled.
+6. **Shortcuts and copy: PASS.** After a click in the message text, `j`, `k` and Escape all worked. Double-clicking a word and pressing Cmd+C copied it (the clipboard read `outline`).
+7. **New FRAME_PROBE_SOURCE: FAIL, 43 of 44 PASS.**
+   - These pass: "link signal seen by a parent ResizeObserver" (widths=0,1,0), "link signal is same-document and scrolls nothing" (about:srcdoc#eos-probe-0, frame scroll 0, parent scroll 0,0 -> 0,0), "parent listeners run in frame (informational)" = false, and every no-script, location and globals check.
+   - "remote image violation signals" reads `listeners=false, ReportingObserver=true, via=` (empty).
+   - "remote image blocked by CSP" FAILS with `[], width=0`.
+
+   The CSP itself works: the console shows "Refused to load https://probe-image.invalid/p.png because it does not appear in the img-src directive". The cause is that this WKWebView never delivers `csp-violation` reports to a ReportingObserver. In a standalone console test (frame-realm ReportingObserver with `buffered: true`, an img from https://ro-test.invalid), both an unsandboxed and a `sandbox="allow-same-origin"` srcdoc frame got nothing, from the callback or from `takeRecords()`. WebKit still logged both refusals. So `via=report` can't happen on this engine, and the check needs a signal that works without ReportingObserver.
+
+   One idea: a positive control that tells a CSP block apart from a network failure. Use a same-origin image URL that loads in an identical frame without the CSP meta and stays at `naturalWidth` 0 with it. `.invalid` hosts fail either way, so they can't tell the two apart.
+
+## Console errors
+
+- **Not expected:** one "ResizeObserver loop completed with undelivered notifications." (localhost:0). It appeared while going conv-23 → conv-20 → link → Keep reading → click in frame → `j` → conv-21. It's probably the new per-image observer and `fit` resizing each other.
+- **Expected:**
+  - one "Blocked script execution in 'about:srcdoc'" at first load, from `frameListenersRun` (`frame-signals.ts:39`);
+  - four DNS "Failed to load resource" errors for the `.invalid` newsletter images after Load images;
+  - the probe's own blocked attacks.
+- The native log had no errors.
+
+Screenshots (on the owner's Mac): `/private/tmp/claude-501/-Users-sofianebebert-workspace-email-os/327b30ac-a66b-4545-8e47-02785d65764d/scratchpad/shots-pr96/`. Nothing was committed or pushed. The app is stopped and the Mac checkout is back on main.
+
+---
+
+[T3 Code: the agent in T3 thread "2eef1655-4916-4aa4-a930-0dddb657d66f" sent this message, not the user.]
+
+The Mac recheck of PR #96 @ bb3ae28 is in (real WKWebView, fixture profile). The main fix works: links pass (https and mailto, clicked twice each, Tab+Enter, no scroll jump), j/k/Escape after a click pass, Cmd+C on a selection passes, the logo shows, and steps 3 and 4 pass. 43 of 44 probe lines pass, including the link-signal ones (widths=0,1,0, about:srcdoc#eos-probe-0, no scroll) and "parent listeners run in frame" = false. Four things to fix, in one push:
+
+1. **Probe CSP check (step 7 fails).** This WKWebView never delivers `csp-violation` reports to a ReportingObserver: the probe reads `listeners=false, ReportingObserver=true, via=` (empty). A standalone test with a frame-realm RO, `buffered:true` and `takeRecords()` got nothing in either an unsandboxed or an allow-same-origin srcdoc frame, while WebKit still logged "Refused to load … img-src". So `via=report` can't happen on WebKit. Replace it with a check that proves the image was blocked by the policy, not just by DNS, without weakening the Chromium path (Chromium must still require the violation event). Acceptable on WebKit: (a) the frame document carries the exact expected CSP meta, (b) a positive control shows that an image allowed by that policy does load in the same kind of frame, and the disallowed https one does not, and (c) the line says how it was proven, e.g. `via=structural`. If no allowed control image is possible under the app CSP, say so. The fallback is (a) plus naturalWidth 0, labelled MANUAL, with the console line as the owner's confirmation. Explain your choice in the PR.
+2. **Broken images still square (step 1 extra).** WebKit ignores `aspect-ratio` on a broken image, including `auto 600 / 220`. Only an explicit pixel height worked. The 600 header and the 260×150 images render 600×600 and 252×252. Use the simplest robust option: for a broken image with integer width/height attributes, set an explicit height from the attribute ratio. If tracking width changes is needed, reuse your existing ResizeObserver; don't add another. If that isn't clean, remove `keepBrokenImageRatio` entirely and list it as a known cosmetic difference. A square broken image is acceptable; complexity isn't.
+3. **Link look changed on WebKit.** In paper mode, links now show the UA's default blue underline because they have an `href`. Make the WebKit path look identical to the Chromium path, e.g. a frame-document rule for the `a[href^="about:srcdoc#"]` links that neutralises the `:link`/`:visited` UA styles back to what `a[data-eos-href]` gets today. Keep the keyboard focus ring.
+4. **Console: one "ResizeObserver loop completed with undelivered notifications"**, seen while going conv-23 → conv-20 → link → Keep reading → click in frame → j → conv-21. It's probably the per-image observation and `fit` feeding each other. Break the loop, e.g. defer the fit to requestAnimationFrame, or don't observe what fit resizes. Add a test if you can make one fail first.
+
+Also, from my review: mail CSS can style the injected `eos-target`/`eos-signal` elements (e.g. `* { display:block; width:… }` or `:root > *`). That could give the signal a constant width, and then link activations would never change its size. Make the signal robust against mail CSS: e.g. drive it with a property mail CSS can't reach, or put `all: initial` plus the needed props with `!important` in the injected rules. Check that the CSS filter's ordering means app rules win. Add a test using hostile mail CSS on `*`.
+
+Run the same local gates, push to the PR (no force-push), wait for CI, then reply with the head SHA, CI state, and an updated "Mac recheck" list covering only what changed. I'll have the Mac rerun it.

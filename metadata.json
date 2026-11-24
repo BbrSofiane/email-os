@@ -1,0 +1,34 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M87P534CHY3CPSMXAHK4GG4E",
+  "strategy": "manual-commit",
+  "branch": "fix/webkit-html-frame",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "docs/adr/0006-html-mail-reader.md",
+    "src/components/HtmlMessageFrame.vue",
+    "src/lib/html-mail/frame-document.ts",
+    "src/lib/html-mail/frame-signals.ts",
+    "tests/reader/html-css-filter.test.ts",
+    "tests/reader/html-frame-signals.test.ts",
+    "tests/reader/html-reader.rendered.test.ts",
+    "tests/rendered/html-frame-probe.ts",
+    "tests/rendered/html-frame-spike.rendered.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 106,
+    "cache_creation_tokens": 64771,
+    "cache_read_tokens": 12147010,
+    "output_tokens": 45201,
+    "api_call_count": 45
+  }
+}
