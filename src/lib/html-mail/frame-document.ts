@@ -8,6 +8,24 @@ export function frameCsp(remoteImages: boolean): string {
   return `default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data:${remoteImages ? ' https:' : ''}; font-src data:; form-action 'none'`;
 }
 
+/**
+ * Elements the app adds after the frame's body when the engine will not run the
+ * app's listeners on frame nodes (WebKit; see `frame-signals.ts`). Mail cannot
+ * contain them: the sanitiser drops custom elements.
+ */
+export const FRAME_SIGNAL_TARGET = 'eos-target';
+export const FRAME_SIGNAL = 'eos-signal';
+
+/**
+ * State the user agent changes without script, turned into a size the parent's
+ * ResizeObserver sees: width while a link's fragment target is the document's
+ * target, height while the pointer is pressed in the frame.
+ */
+export const FRAME_SIGNAL_CSS = `${FRAME_SIGNAL_TARGET} { display: none !important; }
+${FRAME_SIGNAL} { display: block !important; position: fixed !important; top: 0 !important; left: 0 !important; width: 0 !important; height: 0 !important; overflow: hidden !important; visibility: hidden !important; pointer-events: none !important; }
+${FRAME_SIGNAL_TARGET}:target ~ ${FRAME_SIGNAL} { width: 1px !important; }
+html:active > ${FRAME_SIGNAL} { height: 1px !important; }`;
+
 export interface FrameTheme {
   mode: 'paper' | 'adaptive';
   fontFamily: string;
@@ -33,9 +51,10 @@ body { margin: 0; overflow-wrap: anywhere; }
 img { max-width: 100%; height: auto; }
 img[data-eos-src] { outline: 1px dashed rgba(128, 128, 128, 0.45); outline-offset: -1px; }
 table { max-width: none; }
-[data-eos-href] { cursor: pointer; }
+[data-eos-href] { cursor: pointer; -webkit-user-drag: none; }
 ${paper ? '' : `[data-eos-href] { color: ${link}; text-decoration: underline; }`}
-html:not(.eos-quote-open) [data-eos-quote="trailing"] { display: none !important; }`;
+html:not(.eos-quote-open) [data-eos-quote="trailing"] { display: none !important; }
+${FRAME_SIGNAL_CSS}`;
   return `<!doctype html><html class="${options.quoteOpen ? 'eos-quote-open' : ''}"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="${frameCsp(options.remoteImages)}"><style>${base}</style><style>${mail.styles}</style></head><body>${mail.body}</body></html>`;
 }
 

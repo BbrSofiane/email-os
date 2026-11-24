@@ -5,6 +5,7 @@ import type { MessageHtmlBody } from '../lib/ipc/generated';
 import { cachedMail, cacheMail, mailCacheEpoch, type CachedMail } from '../lib/html-mail/mail-cache';
 import { sanitizeMailHtml } from '../lib/html-mail/sanitize';
 import { frameHasNativeGlobals } from '../lib/html-mail/frame-guard';
+import { attachFrameSignals, frameListenersRun, keepBrokenImageRatio } from '../lib/html-mail/frame-signals';
 import { buildFrameDocument, fitZoom, FRAME_SANDBOX, type FrameTheme } from '../lib/html-mail/frame-document';
 
 const props = defineProps<{
@@ -101,10 +102,12 @@ function onLoad() {
   const doc = element.contentDocument;
   if (!doc) return;
   const root = doc.documentElement;
+  const images = [...doc.querySelectorAll('img')];
   let active = true;
   let raf = 0;
   fit = () => {
     if (!active || !element.clientWidth) return;
+    for (const img of images) keepBrokenImageRatio(img);
     root.style.zoom = '1';
     root.style.overflowX = 'hidden';
     // The frame always takes its content height, so it never scrolls vertically.
@@ -133,37 +136,56 @@ function onLoad() {
     const url = link?.getAttribute('data-eos-href');
     if (url) emit('link', url, (link?.textContent ?? '').trim().slice(0, 200));
   };
-  const click = (event: MouseEvent) => { event.preventDefault(); activate(event.target); };
-  const keydown = (event: KeyboardEvent) => {
-    const target = event.target as Element | null;
-    if ((event.key === 'Enter' || event.key === ' ') && target?.closest('[data-eos-href]')) {
-      event.preventDefault();
-      activate(target);
-      return;
-    }
-    if ((event.shiftKey && /^(ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown)$/.test(event.key)) || ((event.ctrlKey || event.metaKey) && /^[ac]$/i.test(event.key))) return;
-    const forwarded = new KeyboardEvent('keydown', { key: event.key, code: event.code, shiftKey: event.shiftKey, ctrlKey: event.ctrlKey, altKey: event.altKey, metaKey: event.metaKey, repeat: event.repeat, bubbles: true, cancelable: true });
-    if (!element.dispatchEvent(forwarded)) event.preventDefault();
-  };
-  doc.addEventListener('click', click, true);
-  doc.addEventListener('keydown', keydown, true);
-  const images = [...doc.querySelectorAll('img')];
+  const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(fit);
+  if (element.parentElement) observer?.observe(element.parentElement);
+  let detach: () => void;
+  if (frameListenersRun(doc)) {
+    // Chromium (Android WebView, browser preview): the app's listeners run on frame nodes.
+    const click = (event: MouseEvent) => { event.preventDefault(); activate(event.target); };
+    const keydown = (event: KeyboardEvent) => {
+      const target = event.target as Element | null;
+      if ((event.key === 'Enter' || event.key === ' ') && target?.closest('[data-eos-href]')) {
+        event.preventDefault();
+        activate(target);
+        return;
+      }
+      if ((event.shiftKey && /^(ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown)$/.test(event.key)) || ((event.ctrlKey || event.metaKey) && /^[ac]$/i.test(event.key))) return;
+      const forwarded = new KeyboardEvent('keydown', { key: event.key, code: event.code, shiftKey: event.shiftKey, ctrlKey: event.ctrlKey, altKey: event.altKey, metaKey: event.metaKey, repeat: event.repeat, bubbles: true, cancelable: true });
+      if (!element.dispatchEvent(forwarded)) event.preventDefault();
+    };
+    doc.addEventListener('click', click, true);
+    doc.addEventListener('keydown', keydown, true);
+    for (const img of images) img.addEventListener('load', fit);
+    detach = () => {
+      doc.removeEventListener('click', click, true);
+      doc.removeEventListener('keydown', keydown, true);
+      for (const img of images) img.removeEventListener('load', fit);
+    };
+  } else {
+    // WebKit runs no listener on a frame without allow-scripts (ADR 0006,
+    // implementation record 12): signals that need no code in the frame.
+    detach = attachFrameSignals(element, doc, {
+      onLink: activate,
+      releaseFocus: () => {
+        const host = element.parentElement?.closest<HTMLElement>('[tabindex]');
+        if (host) host.focus({ preventScroll: true });
+        else element.blur();
+      },
+    });
+    // An image that loads or fails changes size; that replaces the load listener.
+    for (const img of images) observer?.observe(img);
+  }
   for (const img of images) {
-    img.addEventListener('load', fit);
     const inline = entry.body.inlineImages.find((item) => item.contentId === img.dataset.eosCid);
     if (inline) void props.client.getInlineImage(props.conversation, props.messageId, inline.attachmentId).then((data) => {
       if (active) img.src = `data:${data.mimeType};base64,${data.base64}`;
     }).catch(() => {});
   }
-  const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(fit);
-  if (element.parentElement) observer?.observe(element.parentElement);
   cleanup = () => {
     active = false;
     cancelAnimationFrame(raf);
     observer?.disconnect();
-    doc.removeEventListener('click', click, true);
-    doc.removeEventListener('keydown', keydown, true);
-    for (const img of images) img.removeEventListener('load', fit);
+    detach();
     fit = () => {};
   };
   fit();

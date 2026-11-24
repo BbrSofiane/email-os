@@ -2,6 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { expect, it, vi } from 'vitest';
 import HtmlMessageFrame from '../../src/components/HtmlMessageFrame.vue';
 import type { MailClient } from '../../src/lib/ipc/client';
+import { resetFrameListenerProbe } from '../../src/lib/html-mail/frame-signals';
 
 const theme = { fontFamily: 'sans-serif', fontSize: '15px', lineHeight: '24px', textColour: '#fff', linkColour: '#fff' };
 const conversation = { accountId: 'test', conversationId: 'frame-test' };
@@ -68,4 +69,33 @@ it('keeps links working when a refresh replaces the conversation object', async 
   clickLink();
   expect(wrapper.emitted('link')).toHaveLength(2);
   wrapper.unmount();
+});
+
+it('uses fragment links when the engine runs no listener in the frame (WebKit)', async () => {
+  const client = { getMessageHtml: vi.fn().mockResolvedValue({ html: '<a href="https://example.test/">Link</a>', inlineImages: [] }) } as unknown as MailClient;
+  const host = document.createElement('div');
+  host.tabIndex = -1;
+  document.body.append(host);
+  const wrapper = mount(HtmlMessageFrame, { props: { client, conversation, messageId: 'webkit', title: 'Message', remoteImages: false, quoteOpen: false, theme }, attachTo: host });
+  await flushPromises();
+  const iframe = wrapper.get('iframe').element as HTMLIFrameElement;
+  const doc = iframe.contentDocument!;
+  doc.body.innerHTML = '<a data-eos-href="https://example.test/" role="link" tabindex="0">Link</a>';
+  // WebKit: listeners on frame nodes never run.
+  doc.addEventListener = () => {};
+  resetFrameListenerProbe();
+  try {
+    await wrapper.get('iframe').trigger('load');
+    const link = doc.querySelector('a')!;
+    expect(link.getAttribute('href')).toMatch(/#eos-[a-z0-9]+-0$/);
+    expect(doc.querySelector('eos-signal')).not.toBeNull();
+    // A click reaches no app listener; the fragment navigation is the signal.
+    link.click();
+    expect(wrapper.emitted('link')).toBeUndefined();
+    wrapper.unmount();
+    expect(doc.querySelector('eos-signal')).toBeNull();
+  } finally {
+    resetFrameListenerProbe();
+    host.remove();
+  }
 });

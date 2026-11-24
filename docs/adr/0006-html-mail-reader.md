@@ -118,7 +118,7 @@ cover.
 - The Android manifest already has `INTERNET`
   (`src-tauri/gen/android/app/src/main/AndroidManifest.xml:3`).
 
-## Implementation record (2026-11-21, 2026-11-22)
+## Implementation record (2026-11-21, 2026-11-22, 2026-11-24)
 
 Implemented as decided below, with these departures, each taken during the
 implementation and recorded here instead of rewriting the proposal:
@@ -183,6 +183,64 @@ implementation and recorded here instead of rewriting the proposal:
     load followed and links, keys and fitting stopped working (found on the
     emulator after returning from the browser). The frame now watches the ids
     themselves and is recreated for each document.
+12. **WebKit runs no listener in the frame** (owner's macOS check, 2026-11-24,
+    on `main` at `59e5dfb`: steps 1, 3, 4 passed; 2, 5, 6, 7 failed). WKWebView
+    refuses to run any event listener whose target is in a frame without
+    `allow-scripts`, even a function from the app's realm, and logs "Blocked
+    script execution in 'about:srcdoc'". Chromium runs them, which is why
+    Android passed. Links, the key forwarder and the image `load` fit never ran
+    on macOS. DOM reads and writes from the app still work there. The sandbox is
+    unchanged (decision 9: no `allow-scripts`, no other token). Instead
+    (`src/lib/html-mail/frame-signals.ts`):
+    - On each load the frame checks once whether the app's listeners run in a
+      frame (a synthetic event on the frame document; the answer is kept for
+      the session). If they do (Chromium, Android), nothing changes.
+    - If they do not (WebKit), the app reads state that the user agent changes
+      without script, through observers, whose callbacks WebKit does run:
+      - **Links.** Each `a[data-eos-href]` gets
+        `href="about:srcdoc#<nonce>-<i>"` (absolute, because a relative
+        fragment in a srcdoc document resolves against the app's URL). A click,
+        tap or Enter is a same-document fragment navigation: nothing is
+        fetched. Its target is a `display: none` `eos-target` after the body,
+        so nothing scrolls. `eos-target:target ~ eos-signal` gives a hidden
+        fixed `eos-signal` element a width, the app's `ResizeObserver` sees it,
+        reads the fragment, resets it (`location.replace` to an idle fragment,
+        then `history.replaceState` back to `about:srcdoc`) and opens the same
+        confirmation. The sanitiser drops custom elements, so mail cannot add
+        targets or signals; mail CSS can at most stop its own links from
+        signalling, and cannot fake an activation because the app reads the
+        link from the fragment. `-webkit-user-drag: none` keeps a drag that
+        starts on a link selecting text.
+      - **Keys.** A click focuses the frame, where the app cannot see key
+        presses. When focus enters the frame (the app window blurs) or the
+        pointer is pressed or released in it (`html:active` gives the signal a
+        height), the app checks every 100 ms while the frame has focus and
+        gives focus back to the reader (the nearest ancestor with `tabindex`)
+        once the pointer is up, unless text is selected (Copy needs the frame
+        focused) or an element has keyboard focus (`:focus-visible`, Tab
+        through links). So `j`/`k`/Escape work after a click; after selecting
+        text they work again after the next click.
+      - **Fit.** The app's `ResizeObserver` also watches the frame's images
+        instead of `load` listeners.
+    - Each activation adds one same-document history entry to the frame
+      (WebKit only). The app does not use history and macOS has no back
+      gesture in the webview.
+    - **Known WebKit differences:** Space on a focused link scrolls instead of
+      opening it (native links open on Enter only); with text selected or a
+      link focused by keyboard, reader keys wait for the next click; the probe
+      logs one "Blocked script execution" line per session.
+    - Also from the check: the conv-21 logo fixture had a wrong IDAT CRC
+      (hand-written base64; Chromium ignores chunk CRCs, ImageIO drew it
+      transparent). It is corrected and a core test checks every fixture PNG's
+      chunk CRCs. A failed image with `width` and `height` attributes now keeps
+      their ratio (WebKit drew it square under `height: auto`); loaded and
+      withheld images are untouched.
+    - **Probe.** Its remote-image CSP check needed the violation event, a
+      listener in the frame. It now also accepts a `csp-violation` report from a
+      `ReportingObserver` of the frame's realm; either signal still has to
+      name the image and `img-src`. It also checks the link signal (seen by a
+      parent `ResizeObserver`, same document, no scroll) and reports whether
+      parent listeners run.
 
 ### Validation (2026-11-21, 2026-11-22)
 
@@ -224,7 +282,18 @@ implementation and recorded here instead of rewriting the proposal:
   two frame bugs.
 - **macOS WKWebView** is not verified here; it is the owner's checklist in the
   pull request (run the probe in Safari Web Inspector, check the samples and one
-  confirmed link).
+  confirmed link). The first check (2026-11-24) failed steps 2, 5, 6 and 7;
+  departure 12 is the fix, to be rechecked on the Mac.
+- **WebKit model in Chrome** (departure 12). WKWebView cannot run on this VM.
+  `tests/rendered/webkit-listener-model.ts` makes Chrome drop every listener
+  added to a script-less sandboxed frame, as WebKit does, and
+  `html-reader.rendered.test.ts` runs the reader that way: real mouse clicks on
+  a web and a `mailto:` link (twice each, frame URL and scroll unchanged), Tab to
+  a link then Enter, a click in the text then `j`/`k`, a drag selection that
+  keeps focus, and image fitting after Load images. The spike test runs the
+  probe both ways. The model assumes, as the owner's check suggests, that
+  WebKit runs observer callbacks (ResizeObserver, ReportingObserver) for frame
+  nodes; the probe's link-signal and CSP checks verify that on the Mac.
 - **Risk seen: launch ANR.** On this emulator the app often hits an
   input-dispatch ANR at launch ("Input dispatching timed out … Waited 5001ms for
   FocusEvent(hasFocus=true)"). Seen on 2026-11-21 three times after installing,
@@ -435,7 +504,9 @@ Rust registration) doing the same `ACTION_VIEW`.
      `data-eos-href` (only `http:`, `https:` and `mailto:` after URL parsing;
      anything else is dropped), `target` is removed, and `role="link"` +
      `tabindex="0"` are added. With no `href` left there is nothing for the frame
-     to navigate to even if a click were not intercepted.
+     to navigate to even if a click were not intercepted. (On WebKit the app
+     later sets an `about:srcdoc#…` fragment `href`, which navigates nowhere
+     else; see implementation record 12.)
    - Images: `src` / `background` that are `cid:` become a placeholder resolved by
      the frame; `data:image/(png|jpeg|gif|webp)` stays; `https:` moves to
      `data-eos-src` until the user loads images; `http:` and every other scheme
@@ -577,7 +648,8 @@ Rust registration) doing the same `ACTION_VIEW`.
 18. **Selection and copy** work natively inside the frame. "Copy message text"
     keeps copying `body_text`. Keyboard: key presses inside the frame are
     forwarded to the reader's shortcut handler (same-origin listener), except
-    while text is being selected with the keyboard. The frame has a `title`
+    while text is being selected with the keyboard. (WebKit runs no such
+    listener; see implementation record 12.) The frame has a `title`
     ("Message from <sender>") for screen readers.
 
 ### Performance
