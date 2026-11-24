@@ -49,5 +49,24 @@ Chromium captures of the shared compact layout:
 
 The in-place update and persistence checks passed with a throwaway signer.
 The [cold-start gate](cold-start.md) was met on the owner's Android 17 phone
-on 2026-11-23. Owner signing, publication on GitHub Releases, and the in-place
-update on the phone remain pending.
+on 2026-11-23.
+
+## Owner-signed releases on the phone, 2026-11-24
+
+The `android-release` workflow published two owner-signed releases from
+`59e5dfb`, both checked with `aapt`, `apksigner` and `zipalign -P 16` before
+installing: application `dev.exedev.emailos`, one v2 signer with certificate
+SHA-256 `d18fba26…0f8331`, 16 KB aligned, and the published checksum matching
+the download.
+
+| Release | Version code | APK SHA-256 |
+| --- | ---: | --- |
+| [`android-v0.1.0-1001`](https://github.com/BbrSofiane/email-os/releases/tag/android-v0.1.0-1001) | 1001 | `3e3a437b…1a49c2` |
+| [`android-v0.1.0-1002`](https://github.com/BbrSofiane/email-os/releases/tag/android-v0.1.0-1002) | 1002 | `914cabb0…1f35` |
+
+On the Nothing Phone (3a) Pro on Android 17 the owner uninstalled the earlier
+CI debug build (different signer), installed 1001, saved a draft, marked a
+conversation Done and changed a setting, then installed 1002 over it. The
+update installed in place and the draft, the Done conversation and the setting
+were all kept. Owner-key signing, GitHub Releases delivery and the in-place
+update on the phone are validated.

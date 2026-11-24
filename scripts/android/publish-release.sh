@@ -44,7 +44,8 @@ fi
 notes=src-tauri/gen/android/app/build/release-notes.md
 {
   printf 'Commit: %s\nVersion: %s (%s)\nSize: %s bytes\nSHA-256: %s\n\n' "$GITHUB_SHA" "$version" "$ANDROID_VERSION_CODE" "$(stat -c %s "$apk")" "$(sha256sum "$apk" | cut -d' ' -f1)"
-  "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$apk"
+  # Digests only: the certificate DN names the owner and stays out of public notes.
+  "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$apk" | grep -v 'certificate DN:'
   printf '\n## Changes\n\n'
   git log --format='- %s (%h)' "$previous..$GITHUB_SHA"
 } > "$notes"
