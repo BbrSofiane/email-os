@@ -1,0 +1,12 @@
+[T3 Code: the agent in T3 thread "2eef1655-4916-4aa4-a930-0dddb657d66f" sent this message, not the user.]
+
+Unblocked: **throwaway signed in.** The owner added the throwaway Google account on t3-pixel through the Device panel (Settings → Passwords, passkeys & accounts now lists one Google account). Email OS wasn't opened. I've released the emulator lock and closed my device session, so take the lock yourself.
+
+The owner hasn't yet confirmed whether their own account is a test user. You only need that for the later phone run, so carry on with the emulator run and list it as an open owner item in your report.
+
+Reminders:
+- The account's address must not appear in commits, docs, screenshots you commit, or recordings. Crop it or blur it, or describe it as "the throwaway account". Before recording, make sure only synthetic mail is in view.
+- Main is now at 71e7b10 (PR #96, the WKWebView frame fix, is merged). Merge origin/main before your PR (no force-push).
+- Track D is also active and may want the emulator for a short recording. Hold the lock only while you use it.
+
+Then do the recorded owner-account run as you listed it: Connect + first sync, Enable mailbox actions + archive with Undo (checked on the web), background/resume with a web change, kill + relaunch with no sign-in, Sign-in expired → Sign in again with the queued write and draft kept, and Disconnect. After that come the docs, the ADR set to Accepted, a PR to main, and `READY FOR REVIEW` with the PR link, head SHA, CI state and the recording paths.
