@@ -118,7 +118,7 @@ cover.
 - The Android manifest already has `INTERNET`
   (`src-tauri/gen/android/app/src/main/AndroidManifest.xml:3`).
 
-## Implementation record (2026-11-21, 2026-11-22)
+## Implementation record (2026-11-21, 2026-11-22, 2026-11-24)
 
 Implemented as decided below, with these departures, each taken during the
 implementation and recorded here instead of rewriting the proposal:
@@ -183,6 +183,94 @@ implementation and recorded here instead of rewriting the proposal:
     load followed and links, keys and fitting stopped working (found on the
     emulator after returning from the browser). The frame now watches the ids
     themselves and is recreated for each document.
+12. **WebKit runs no listener in the frame** (owner's macOS check, 2026-11-24,
+    on `main` at `59e5dfb`: steps 1, 3, 4 passed; 2, 5, 6, 7 failed). WKWebView
+    refuses to run any event listener whose target is in a frame without
+    `allow-scripts`, even a function from the app's realm, and logs "Blocked
+    script execution in 'about:srcdoc'". Chromium runs them, which is why
+    Android passed. Links, the key forwarder and the image `load` fit never ran
+    on macOS. DOM reads and writes from the app still work there. The sandbox is
+    unchanged (decision 9: no `allow-scripts`, no other token). Instead
+    (`src/lib/html-mail/frame-signals.ts`):
+    - On each load the frame checks once whether the app's listeners run in a
+      frame (a synthetic event on the frame document; the answer is kept for
+      the session). If they do (Chromium, Android), nothing changes.
+    - If they do not (WebKit), the app reads state that the user agent changes
+      without script, through observers, whose callbacks WebKit does run:
+      - **Links.** Each `a[data-eos-href]` gets
+        `href="about:srcdoc#<nonce>-<i>"` (absolute, because a relative
+        fragment in a srcdoc document resolves against the app's URL). A click,
+        tap or Enter is a same-document fragment navigation: nothing is
+        fetched. Its target is a `display: none` `eos-target` after the body,
+        so nothing scrolls. `eos-target:target ~ eos-signal` gives a hidden
+        fixed `eos-signal` element a width, the app's `ResizeObserver` sees it,
+        reads the fragment, and on the next animation frame resets it
+        (`location.replace` to an idle fragment, then `history.replaceState`
+        back to `about:srcdoc`) and opens the same confirmation. Doing either
+        inside the observer's callback resized the signal again during its own
+        delivery and logged "ResizeObserver loop completed with undelivered
+        notifications" once per activation (second Mac recheck). The sanitiser drops custom elements, so mail cannot add
+        targets or signals; mail CSS can at most stop its own links from
+        signalling, and cannot fake an activation because the app reads the
+        link from the fragment. The signal rules are `!important` inside a
+        cascade layer with `all: initial`: layered important declarations beat
+        every unlayered one whatever its specificity, and the CSS filter keeps
+        no `@layer`, so mail CSS cannot fix the signal's size or show a target.
+        `-webkit-user-drag: none` keeps a drag that starts on a link selecting
+        text, and a zero-specificity `:where(a[data-eos-href][href])` rule
+        undoes the UA link colour and underline, so links look as on Chromium.
+      - **Keys.** A click focuses the frame, where the app cannot see key
+        presses. When focus enters the frame (the app window blurs) or the
+        pointer is pressed or released in it (`html:active` gives the signal a
+        height), the app checks every 100 ms while the frame has focus and
+        gives focus back to the reader (the nearest ancestor with `tabindex`)
+        once the pointer is up, unless text is selected (Copy needs the frame
+        focused) or an element other than the body holds focus, except a link
+        focused by a click (no `:focus-visible`). An element the keyboard
+        focused may not match `:focus-visible` itself: the conv-23 sample's
+        `<details>` has focus while its built-in summary does, and giving that
+        back sent Tab to the reader's header again (second Mac recheck). So
+        `j`/`k`/Escape work after a click; after selecting text they work again
+        after the next click.
+      - **Keyboard focus is revealed.** WebKit does not scroll the reader to an
+        element focused inside the full-height frame, so a link below the fold
+        stayed hidden. While the frame has focus, each newly focused element is
+        scrolled into the reader's view by the app, using positions as
+        fractions of the frame document's height (zoom-independent).
+      - **Fit.** The app's `ResizeObserver` also watches the frame's images
+        instead of `load` listeners. A fit resizes those images (zoom, broken
+        image heights), so on this path the observer fits on the next animation
+        frame instead of in its callback, which otherwise logs "ResizeObserver
+        loop completed with undelivered notifications".
+    - Each activation adds one same-document history entry to the frame
+      (WebKit only). The app does not use history and macOS has no back
+      gesture in the webview.
+    - **Known WebKit differences:** Space on a focused link scrolls instead of
+      opening it (native links open on Enter only); with text selected or a
+      link focused by keyboard, reader keys wait for the next click; a click
+      on a focusable mail element other than a link (a `<details>` summary)
+      keeps focus in the frame too; the probe logs one "Blocked script
+      execution" line per session.
+    - Also from the check: the conv-21 logo fixture had a wrong IDAT CRC
+      (hand-written base64; Chromium ignores chunk CRCs, ImageIO drew it
+      transparent). It is corrected and a core test checks every fixture PNG's
+      chunk CRCs. A failed image with integer `width` and `height` attributes
+      now gets a pixel height from their ratio at each fit: WebKit draws it
+      square under `height: auto` and ignores `aspect-ratio` on a broken image
+      (Mac recheck). Loaded, withheld and mail-sized images are untouched.
+    - **Probe.** Its remote-image CSP check needed the violation event, a
+      listener in the frame. Where parent listeners run (Chromium) it still
+      requires that event. WebKit runs none, and the Mac recheck showed it
+      gives no `csp-violation` report to a `ReportingObserver` either. There the
+      check is structural (`via=structural`): the frame carries the exact
+      policy meta, a same-origin control image (`/src-tauri/icons/icon.png`,
+      served by the dev server and allowed by the app CSP's `'self'`) loads in
+      the same kind of frame without the meta and is blocked with it, and the
+      remote image did not load. Without the dev server there is no control
+      image, and the line is labelled MANUAL: the console's "Refused to load"
+      line is the proof. The probe also checks the link signal (seen by a
+      parent `ResizeObserver`, same document, no scroll) and reports whether
+      parent listeners run.
 
 ### Validation (2026-11-21, 2026-11-22)
 
@@ -224,7 +312,22 @@ implementation and recorded here instead of rewriting the proposal:
   two frame bugs.
 - **macOS WKWebView** is not verified here; it is the owner's checklist in the
   pull request (run the probe in Safari Web Inspector, check the samples and one
-  confirmed link).
+  confirmed link). The first check (2026-11-24) failed steps 2, 5, 6 and 7;
+  departure 12 is the fix, to be rechecked on the Mac.
+- **WebKit model in Chrome** (departure 12). WKWebView cannot run on this VM.
+  `tests/rendered/webkit-listener-model.ts` makes Chrome drop every listener
+  added to a script-less sandboxed frame, as WebKit does, and
+  `html-reader.rendered.test.ts` runs the reader that way: real mouse clicks on
+  a web and a `mailto:` link (twice each, frame URL and scroll unchanged), Tab to
+  a link then Enter, a click in the text then `j`/`k`, a drag selection that
+  keeps focus, image fitting after Load images, link styles equal with and
+  without the fragment `href`, and no ResizeObserver loop error while the
+  column width changes. The spike test runs the probe both ways and checks the
+  signal under hostile, unfiltered mail CSS. The Mac recheck of `bb3ae28`
+  (2026-11-24) confirmed that WebKit runs a parent `ResizeObserver` for frame
+  nodes (link signal widths 0,1,0) and that links, keys and Copy work; it found
+  the four issues fixed after it (CSP probe signal, square broken images, UA
+  link style, a ResizeObserver loop message).
 - **Risk seen: launch ANR.** On this emulator the app often hits an
   input-dispatch ANR at launch ("Input dispatching timed out … Waited 5001ms for
   FocusEvent(hasFocus=true)"). Seen on 2026-11-21 three times after installing,
@@ -435,7 +538,9 @@ Rust registration) doing the same `ACTION_VIEW`.
      `data-eos-href` (only `http:`, `https:` and `mailto:` after URL parsing;
      anything else is dropped), `target` is removed, and `role="link"` +
      `tabindex="0"` are added. With no `href` left there is nothing for the frame
-     to navigate to even if a click were not intercepted.
+     to navigate to even if a click were not intercepted. (On WebKit the app
+     later sets an `about:srcdoc#…` fragment `href`, which navigates nowhere
+     else; see implementation record 12.)
    - Images: `src` / `background` that are `cid:` become a placeholder resolved by
      the frame; `data:image/(png|jpeg|gif|webp)` stays; `https:` moves to
      `data-eos-src` until the user loads images; `http:` and every other scheme
@@ -577,7 +682,8 @@ Rust registration) doing the same `ACTION_VIEW`.
 18. **Selection and copy** work natively inside the frame. "Copy message text"
     keeps copying `body_text`. Keyboard: key presses inside the frame are
     forwarded to the reader's shortcut handler (same-origin listener), except
-    while text is being selected with the keyboard. The frame has a `title`
+    while text is being selected with the keyboard. (WebKit runs no such
+    listener; see implementation record 12.) The frame has a `title`
     ("Message from <sender>") for screen readers.
 
 ### Performance

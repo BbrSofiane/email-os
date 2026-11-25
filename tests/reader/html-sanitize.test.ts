@@ -9,6 +9,10 @@ describe('mail HTML sanitisation', () => {
     expect(result.body).not.toContain('onclick');
     expect(result.body).toContain('data-eos-href="https://example.test/"');
   });
+  it('drops the frame signal elements, so mail cannot add link targets', () => {
+    const result = sanitizeMailHtml('<p>a<eos-target id="eos-x-0">t</eos-target><eos-signal>s</eos-signal></p>', { remoteImages: false });
+    expect(result.body).not.toMatch(/eos-target|eos-signal|eos-x-0/);
+  });
 });
 
 import { fixture, hostileCorpus } from './html-corpus';
