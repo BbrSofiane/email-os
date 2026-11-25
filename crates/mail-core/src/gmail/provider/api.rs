@@ -4,6 +4,144 @@ use crate::gmail::types::GmailProvider;
 use crate::storage_log::{storage_err, storage_fault};
 
 impl GmailProvider for LiveGmailProvider {
+    fn find_sent_for_account(
+        &self,
+        account: &str,
+        rfc_id: &str,
+        cancel: &CancelToken,
+    ) -> Option<(String, String)> {
+        // Do not allow Gmail query operators to broaden the lookup.
+        if !rfc_id.starts_with('<')
+            || !rfc_id.ends_with('>')
+            || rfc_id.len() > 998
+            || rfc_id.chars().any(|c| c.is_whitespace() || c == '"')
+        {
+            return None;
+        }
+        let token = self.destination_admission_token(account, cancel).ok()?;
+        let (bundle, _, _) = self.credential_snapshot().ok()?;
+        let bundle = bundle?;
+        if bundle_account_id(&bundle) != Some(account) || bundle.access_token != token {
+            return None;
+        }
+        let mailbox = bundle.email.as_deref().filter(|email| !email.is_empty())?;
+        let query = format!(
+            "labelIds=SENT&maxResults=20&q={}",
+            url_encode(&format!("rfc822msgid:{rfc_id}"))
+        );
+        let body = self
+            .api_get("/gmail/v1/users/me/messages", &query, &token, cancel)
+            .ok()??;
+        let list: Value = parse_json(&body).ok()?;
+        if list.get("nextPageToken").is_some() {
+            return None;
+        }
+        let candidates = optional_array(&list, "messages").ok()?.unwrap_or(&[]);
+        if candidates.len() > 20 {
+            return None;
+        }
+        let mut found = None;
+        for candidate in candidates {
+            let id = str_field(candidate, "id").ok()?;
+            if !crate::gmail::browsing::valid_id(&id) {
+                return None;
+            }
+            let path = format!("/gmail/v1/users/me/messages/{}", url_encode(&id));
+            let body = self
+                .api_get(&path, "format=metadata", &token, cancel)
+                .ok()??;
+            let message: Value = parse_json(&body).ok()?;
+            if str_field(&message, "id").ok()? != id {
+                return None;
+            }
+            let thread = str_field(&message, "threadId").ok()?;
+            if !crate::gmail::browsing::valid_id(&thread) {
+                return None;
+            }
+            let labels = optional_array(&message, "labelIds").ok()??;
+            if !labels.iter().any(|v| v.as_str() == Some("SENT")) {
+                continue;
+            }
+            let headers = message.get("payload")?.get("headers")?.as_array()?;
+            let values = |name: &str| -> Option<Vec<&str>> {
+                let mut result = Vec::new();
+                for header in headers {
+                    let key = header.get("name")?.as_str()?;
+                    let value = header.get("value")?.as_str()?;
+                    if key.eq_ignore_ascii_case(name) {
+                        result.push(value);
+                    }
+                }
+                Some(result)
+            };
+            let ids = values("Message-ID")?;
+            let from = values("From")?;
+            if ids.len() != 1 || ids[0] != rfc_id || from.len() != 1 {
+                continue;
+            }
+            let addresses = mailparse::addrparse(from[0]).ok()?;
+            if addresses.len() != 1
+                || !matches!(&addresses[0], mailparse::MailAddr::Single(a) if a.addr.eq_ignore_ascii_case(mailbox))
+            {
+                continue;
+            }
+            if found.is_some() {
+                return None;
+            }
+            found = Some((id, thread));
+        }
+        self.verify_destination_account(account, cancel).ok()?;
+        found
+    }
+
+    fn message_subject_for_account(
+        &self,
+        account: &str,
+        thread_id: &str,
+        message_id: &str,
+        cancel: &CancelToken,
+    ) -> Result<String, MailError> {
+        if !crate::gmail::browsing::valid_id(thread_id)
+            || !crate::gmail::browsing::valid_id(message_id)
+        {
+            return Err(MailError::ReplyUnavailable);
+        }
+        let token = self.destination_admission_token(account, cancel)?;
+        let path = format!("/gmail/v1/users/me/messages/{}", url_encode(message_id));
+        let body = self
+            .api_get(&path, "format=metadata", &token, cancel)?
+            .ok_or(MailError::ReplyUnavailable)?;
+        let message: Value = parse_json(&body)?;
+        if str_field(&message, "id")? != message_id || str_field(&message, "threadId")? != thread_id
+        {
+            return Err(MailError::ReplyUnavailable);
+        }
+        let headers = message
+            .get("payload")
+            .and_then(|p| p.get("headers"))
+            .and_then(Value::as_array)
+            .ok_or(MailError::ReplyUnavailable)?;
+        let mut subjects = Vec::new();
+        for header in headers {
+            let name = header
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or(MailError::ReplyUnavailable)?;
+            let value = header
+                .get("value")
+                .and_then(Value::as_str)
+                .ok_or(MailError::ReplyUnavailable)?;
+            if name.eq_ignore_ascii_case("subject") {
+                subjects.push(value);
+            }
+        }
+        if subjects.len() != 1 {
+            return Err(MailError::ReplyUnavailable);
+        }
+        self.verify_destination_account(account, cancel)?;
+        Ok(subjects[0].to_owned())
+    }
+
     fn send_for_account(
         &self,
         account: &str,
