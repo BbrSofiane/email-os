@@ -565,3 +565,54 @@ fn provider_send_faults_are_one_shot_and_preserve_mailbox_writes() {
         SendResult::Confirmed { .. }
     ));
 }
+
+/// Fixture images must be valid PNGs, chunk CRCs included: Chromium ignores a
+/// bad CRC, but Apple ImageIO decoded the conv-21 logo as fully transparent.
+#[test]
+fn synthetic_png_fixtures_have_valid_chunk_crcs() {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut crc = 0xffff_ffffu32;
+        for byte in bytes {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                crc = if crc & 1 == 1 {
+                    (crc >> 1) ^ 0xedb8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        !crc
+    }
+
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/synthetic/html");
+    let mut checked = 0;
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        if !path.to_string_lossy().ends_with(".png.b64") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).unwrap();
+        let png = STANDARD.decode(text.trim()).unwrap();
+        assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"), "{path:?}: signature");
+        let mut at = 8;
+        let mut kinds = Vec::new();
+        while at < png.len() {
+            let length = u32::from_be_bytes(png[at..at + 4].try_into().unwrap()) as usize;
+            let body = &png[at + 4..at + 8 + length];
+            let stored =
+                u32::from_be_bytes(png[at + 8 + length..at + 12 + length].try_into().unwrap());
+            let kind = String::from_utf8_lossy(&body[..4]).into_owned();
+            assert_eq!(stored, crc32(body), "{path:?}: {kind} chunk CRC");
+            kinds.push(kind);
+            at += 12 + length;
+        }
+        assert_eq!(at, png.len(), "{path:?}: trailing bytes");
+        assert_eq!(kinds.first().map(String::as_str), Some("IHDR"), "{path:?}");
+        assert_eq!(kinds.last().map(String::as_str), Some("IEND"), "{path:?}");
+        checked += 1;
+    }
+    assert!(checked > 0, "no PNG fixtures found in {dir:?}");
+}

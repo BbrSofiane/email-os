@@ -17,6 +17,11 @@ describe('mail CSS filtering', () => {
 });
 
 describe('CSS filter rules', () => {
+  it('drops cascade layers, so mail cannot outrank the frame signal rules', () => {
+    const result = filterCss('@layer eos-signal { eos-signal { width: 5px !important; } } @layer x; p { color: red; }', { remoteImages: false });
+    expect(result.css).not.toMatch(/@layer|eos-signal|5px/);
+    expect(result.css).toContain('color');
+  });
   const off = { remoteImages: false };
   const on = { remoteImages: true };
   it('removes comments before filtering URLs', () => {
