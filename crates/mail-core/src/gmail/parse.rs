@@ -627,7 +627,7 @@ fn parse_message_id_list(value: &str) -> Option<Vec<String>> {
 
 /// RFC2047-decodes one header value via `mailparse`; falls back to the raw
 /// value when undecodable.
-fn decoded_header(value: &str) -> String {
+pub(super) fn decoded_header(value: &str) -> String {
     let mut raw = String::from("X-Eos: ");
     raw.push_str(value);
     raw.push_str("\r\n");

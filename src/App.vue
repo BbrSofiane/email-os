@@ -49,7 +49,7 @@ import SelectionBar from './components/SelectionBar.vue';
 import HeaderGlyph from './components/HeaderGlyph.vue';
 import PaneGlyph from './components/PaneGlyph.vue';
 import { actionLabel, actionRegistry, findKeyBinding, type ActionHandlers, type ActionId, type KeyFocus, type KeyOnlyId, type KeyResolverId } from './lib/action-registry';
-import { authenticatingText, type AccountNoticeAction, type InboxEmptyAction } from './lib/account-status';
+import { authenticatingText, describeMailError, type AccountNoticeAction, type InboxEmptyAction } from './lib/account-status';
 import { setConnectAfterSwitch, clearConnectAfterSwitch, takeConnectAfterSwitch } from './composables/useModeChoice';
 import { reloadPage } from './lib/reload';
 import { groupRowsBySender, isSingleFromQuery, senderGroupKey } from './lib/search';
@@ -75,6 +75,7 @@ import FullDate from './components/FullDate.vue';
 import { BROWSER_PREVIEW_DISCLOSURE } from './lib/ipc/browser-fake';
 import { isAndroidShell, type ClientMode } from './lib/ipc';
 import type { ConversationRef, DraftSource, DraftSummary, MailClient, MailError, MailMode, Reminder } from './lib/ipc/client';
+import { toMailError } from './lib/ipc/client';
 import { REPLY_REASONS, replyBlockedReason, sourceLoadErrorReason } from './lib/reply-context';
 import { sameConversation, useMailbox, type BrowseContext, type ConversationSummaryLike, type DoneBoundary, type SearchVisit } from './composables/useMailbox';
 import { useDrafts } from './composables/useDrafts';
@@ -116,7 +117,10 @@ interface ReaderOrigin {
   anchor: ListAnchor | null;
 }
 
-const mailbox = useMailbox(props.client, () => { void refreshSendActivity(); });
+const mailbox = useMailbox(props.client, () => {
+  void refreshSendAccess();
+  void refreshSendActivity();
+});
 // Activity rows name mail by its cached subject. Operations carry only a ref, so
 // the UI remembers subjects it has already seen (list rows, including Cached
 // Trash rows,
@@ -331,23 +335,54 @@ const accountReady = computed(() => mailbox.accountState.value === 'ready');
 const accountStatus = computed(() => mailbox.accountStatus.value);
 const accountId = computed(() => accountStatus.value?.account?.accountId ?? null);
 const drafts = useDrafts(props.client, accountId, props.mode);
-const sendAvailable = ref(false);
+const sendAccess = ref<boolean | null>(null);
+const sendAvailable = computed(() => sendAccess.value === true);
+const sendSupported = computed(() => sendAccess.value !== null);
+const sendEnabling = ref(false);
+const sendEnableError = ref('');
 const sendBusy = ref(false);
 const sendNotice = ref<import('./lib/ipc/generated').SendStatus | null>(null);
 const sendError = ref('');
 let sendNoticeTimer: ReturnType<typeof setTimeout> | undefined;
-watch(accountId, async (id, _old, onCleanup) => {
-  let current = true;
-  onCleanup(() => { current = false; });
-  sendAvailable.value = false;
+let sendAccessGeneration = 0;
+watch(accountId, () => {
+  sendAccess.value = null;
   sendNotice.value = null;
   sendError.value = '';
-  if (!id || !props.client.sendAvailable || !props.client.send) return;
+  sendEnableError.value = '';
+}, { immediate: true });
+watch([accountId, () => accountStatus.value?.connection], () => { void refreshSendAccess(); }, { immediate: true });
+
+async function refreshSendAccess(): Promise<void> {
+  const generation = ++sendAccessGeneration;
+  if (!accountId.value || !props.client.sendAvailable || !props.client.send) return;
   try {
     const available = await props.client.sendAvailable();
-    if (current) sendAvailable.value = available;
-  } catch { if (current) sendAvailable.value = false; }
-}, { immediate: true });
+    if (generation === sendAccessGeneration) sendAccess.value = available;
+  } catch {
+    if (generation === sendAccessGeneration) sendAccess.value = null;
+  }
+}
+
+async function enableSending(): Promise<void> {
+  if (sendEnabling.value || sendAccess.value !== false || !props.client.enableSending) return;
+  const account = accountId.value;
+  sendEnabling.value = true;
+  sendEnableError.value = '';
+  try {
+    await props.client.enableSending();
+    if (account === accountId.value) await refreshSendAccess();
+  } catch (error) {
+    if (account === accountId.value) {
+      const failure = toMailError(error);
+      sendEnableError.value = failure.kind === 'permission_required'
+        ? 'Google did not grant permission to send mail.'
+        : describeMailError(failure);
+    }
+  } finally {
+    sendEnabling.value = false;
+  }
+}
 const sendActivity = ref<import('./lib/ipc/generated').SendStatus[]>([]);
 const draftSendStates = computed(() => {
   const states = new Map<string, import('./lib/ipc/generated').SendStatus>();
@@ -386,7 +421,7 @@ async function refreshConfirmedReader(operationId: string, account: string): Pro
 async function refreshSendActivity(): Promise<void> {
   const generation = ++sendActivityGeneration;
   const account = accountId.value;
-  if (!account || !props.client.send || !sendAvailable.value) { sendActivity.value = []; return; }
+  if (!account || !props.client.send || !sendSupported.value) { sendActivity.value = []; return; }
   try {
     const result = await props.client.send.listActivity();
     if (generation === sendActivityGeneration && account === accountId.value) {
@@ -405,7 +440,7 @@ async function refreshSendActivity(): Promise<void> {
     if (generation === sendActivityGeneration) sendActivityError.value = 'Could not refresh send activity.';
   }
 }
-watch([accountId, sendAvailable], () => { void refreshSendActivity(); }, { immediate: true });
+watch([accountId, sendSupported], () => { void refreshSendActivity(); }, { immediate: true });
 async function sendActivityAction(action: string, operationId: string): Promise<void> {
   const transport = props.client.send;
   const entry = sendActivity.value.find((item) => item.operationId === operationId);
@@ -2993,7 +3028,10 @@ const searchSyntaxEditHint = computed(() =>
             v-if="drawer === 'account' && accountStatus"
             :status="accountStatus"
             :busy="mailbox.accountBusy.value"
-            :transitioning="drafts.transitioning.value"
+            :transitioning="drafts.transitioning.value || sendEnabling"
+            :send-access="props.client.enableSending ? sendAccess : null"
+            :send-enabling="sendEnabling"
+            :send-enable-error="sendEnableError"
             :action-error="switchError ?? mailbox.lastCommandError.value"
             :switch-target="androidShell ? (accountStatus.mode === 'gmail' ? 'fixture' : 'gmail') : null"
             :demo-label="androidShell && accountStatus.mode === 'fixture'"
@@ -3002,6 +3040,7 @@ const searchSyntaxEditHint = computed(() =>
             @disconnect="disconnectAccount()"
             @sync="mailbox.requestSync()"
             @enable-actions="mailbox.enableMailboxActions()"
+            @enable-sending="enableSending()"
             @cancel-upgrade="mailbox.cancelMailboxActionUpgrade()"
           />
           <p v-if="drawer === 'activity' && mailbox.activityError.value" role="alert">Could not refresh Activity. <button type="button" @click="mailbox.refresh()">Retry</button></p>

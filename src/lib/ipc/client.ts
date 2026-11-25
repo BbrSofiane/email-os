@@ -188,8 +188,9 @@ export {
 export const OPERATION_GROUP_MAX_MEMBERS = 100;
 
 export interface MailClient {
-  /** Query the current platform and session before offering Send. */
-  sendAvailable?(): Promise<boolean>;
+  /** Null on unsupported platforms, false until the connected account enables sending. */
+  sendAvailable?(): Promise<boolean | null>;
+  enableSending?(): Promise<void>;
   /** Send transport; command availability is subject to native platform and session gates. */
   send?: {
     admit(command: import('./generated').AdmitSend): Promise<import('./generated').SendStatus>;

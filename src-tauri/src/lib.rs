@@ -65,6 +65,7 @@ pub fn run() {
         disconnect_account,
         request_sync,
         send_available,
+        enable_sending,
         send_draft,
         list_send_activity,
         undo_send,

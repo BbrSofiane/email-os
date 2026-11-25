@@ -26,7 +26,7 @@ import type { AccountAction } from '../composables/useMailbox';
 import { authenticatingText, notConfiguredHint, describeMailError, describeSyncFailure } from '../lib/account-status';
 import FullDate from './FullDate.vue';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   status: AccountStatus;
   /** Transient in-flight lifecycle action, if any. */
   busy: AccountAction | null;
@@ -34,7 +34,10 @@ const props = defineProps<{
   actionError?: MailError | null;
   switchTarget?: 'gmail' | 'fixture' | null;
   demoLabel?: boolean;
-}>();
+  sendAccess?: boolean | null;
+  sendEnabling?: boolean;
+  sendEnableError?: string;
+}>(), { sendAccess: null });
 
 const emit = defineEmits<{
   switchMode: [target: 'gmail' | 'fixture'];
@@ -42,6 +45,7 @@ const emit = defineEmits<{
   disconnect: [];
   sync: [];
   enableActions: [];
+  enableSending: [];
   cancelUpgrade: [];
 }>();
 
@@ -55,6 +59,7 @@ const CONNECTION_LABELS: Record<ConnectionState, string> = {
 
 const MODE_TITLE = 'Cached reading remains available during permission changes.';
 const DISCONNECT_WARNING = "Removes pending actions and the mail cache from this device. Local drafts stay and return if you reconnect the same account. Confirmed Gmail changes are not undone and Google's grant is not revoked.";
+const SEND_DISCONNECT_WARNING = 'Queued sends are cancelled. A send that already started may have gone through.';
 
 const access = computed(() => props.status.mutationAccess ?? 'read_only');
 const sync = computed(() => props.status.sync);
@@ -224,13 +229,13 @@ watch(connection, (next) => { if (next === 'authenticating') confirming.value = 
         <h3 class="account-label">Permissions</h3>
         <template v-if="canEnable">
           <p class="account-note" data-test="action-upgrade-disclosure" role="note">
-            Enable mailbox actions asks Google for its broad Gmail modify permission, which can also allow sending and deleting mail. Email OS only marks done, marks read and stars; it never sends or deletes.
+            Enable mailbox actions asks Google for its broad Gmail modify permission, which can also allow sending and deleting mail. This step enables marking done, marking read and starring. Sending requires a separate in-app step.
           </p>
           <div class="account-actions">
             <button
               type="button"
               data-test="enable-mailbox-actions"
-              :disabled="props.busy !== null"
+              :disabled="props.busy !== null || props.sendEnabling"
               @click="emit('enableActions')"
             >
               {{ props.busy === 'enable-actions' ? 'Requesting permission…' : 'Enable mailbox actions' }}
@@ -255,6 +260,21 @@ watch(connection, (next) => { if (next === 'authenticating') confirming.value = 
         </template>
         <p v-else-if="access === 'enabled'" class="account-line" data-test="actions-enabled" role="status">
           Mailbox actions are enabled.
+        </p>
+        <template v-if="connection === 'connected' && props.sendAccess === false">
+          <p class="account-note" role="note">Enable sending lets Email OS send messages from the connected address. Google asks for permission if the account needs it.</p>
+          <p v-if="props.sendEnableError" class="account-note" role="alert">{{ props.sendEnableError }}</p>
+          <div class="account-actions">
+            <button
+              type="button"
+              data-test="enable-sending"
+              :disabled="props.busy !== null || access === 'upgrading' || props.sendEnabling"
+              @click="emit('enableSending')"
+            >{{ props.sendEnabling ? 'Enabling sending…' : 'Enable sending' }}</button>
+          </div>
+        </template>
+        <p v-else-if="connection === 'connected' && props.sendAccess === true" class="account-line" role="status">
+          Sending is enabled.
         </p>
       </div>
 
@@ -283,7 +303,9 @@ watch(connection, (next) => { if (next === 'authenticating') confirming.value = 
           </button>
         </div>
         <div v-else class="account-confirm" @keydown="confirmKeydown">
-          <p class="account-note" data-test="disconnect-warning" role="note">{{ DISCONNECT_WARNING }}</p>
+          <p class="account-note" data-test="disconnect-warning" role="note">
+            {{ DISCONNECT_WARNING + (props.sendAccess !== null ? ' ' + SEND_DISCONNECT_WARNING : '') }}
+          </p>
           <div class="account-actions">
             <button
               type="button"

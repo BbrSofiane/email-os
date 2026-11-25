@@ -11,6 +11,7 @@ import type { ModeChoice, MailMode } from './client';
 import { LIST_REMINDERS_COMMAND, PUT_REMINDER_COMMAND, CANCEL_REMINDER_COMMAND } from './generated';
 import {
   SEND_AVAILABLE_COMMAND,
+  ENABLE_SENDING_COMMAND,
   SEND_DRAFT_COMMAND,
   LIST_SEND_ACTIVITY_COMMAND,
   LOAD_CONFIRMED_SEND_THREAD_COMMAND,
@@ -114,6 +115,7 @@ function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
 export function createTauriMailClient(): MailClient {
   return {
     sendAvailable: () => call(SEND_AVAILABLE_COMMAND),
+    enableSending: () => call(ENABLE_SENDING_COMMAND),
     send: {
       admit: (command) => call(SEND_DRAFT_COMMAND, { command }),
       listActivity: () => call(LIST_SEND_ACTIVITY_COMMAND),

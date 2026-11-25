@@ -90,6 +90,7 @@ pub struct LiveGmailProvider {
     source: CredentialSource,
     secrets: Arc<dyn Secrets>,
     http: Client,
+    send_http: Client,
     endpoints: Endpoints,
     /// Serializes token refresh so concurrent calls never race the store.
     refresh_lock: Mutex<()>,
@@ -162,7 +163,16 @@ impl LiveGmailProvider {
             .timeout(Duration::from_secs(30))
             .build()
             .map_err(|_| MailError::ProviderUnavailable)?;
+        let send_http = Client::builder()
+            .use_rustls_tls()
+            .redirect(reqwest::redirect::Policy::none())
+            .retry(reqwest::retry::never())
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|_| MailError::ProviderUnavailable)?;
         Ok(Self {
+            send_http,
             source,
             secrets,
             http,

@@ -10,7 +10,7 @@ research and architecture proposals are not feature inventories.
 |---|---|---|---|
 | Mailbox and reader | Durable synthetic inbox (the Gmail core on the built-in synthetic provider, [ADR 0002](adr/0002-fixture-as-synthetic-provider.md)), plain-text and HTML reader, read/unread mix, operation recovery. | Separate profile; bounded Gmail cache and plain-text and HTML reader. Read-only until the user enables mailbox actions. | Synthetic fixtures and HTML reader in memory; no Gmail, SQLite durability, or native IPC. |
 | Mailbox writes | Archive/unarchive, read/unread and star/unstar (single and group), retry and undo, through the same operation ledger as Gmail; no permission grant. Interrupted writes are requeued at the next launch. | Explicit archive/unarchive, read/unread, and star/unstar setters only, after opt-in `gmail.modify` upgrade. No automatic read on open. | Fake-provider simulation only; does not prove provider writes or convergence. |
-| Composition | Plain-text new messages and replies with local drafts. On macOS and Android, fixture Send uses a durable outbox and five-second Undo window. | Local-only drafts. Gmail sending awaits Track B's scope upgrade and stage 7. | Synthetic drafts and sends in memory. |
+| Composition | Plain-text new messages and replies with local drafts. On macOS and Android, fixture Send uses a durable outbox and five-second Undo window. | Plain-text sending on macOS and Android after **Enable sending**. The same local outbox and Undo apply. | Synthetic drafts and sends in memory. |
 | Search | Cached search over the 24 native fixture conversations, including six HTML samples (ADR 0006). | Read-only cached search or progressive provider scan, with bounded/incomplete coverage disclosures. | Synthetic fake search only. |
 | Saved split | One local, account-scoped saved split. | One local split, removed on Gmail disconnect with cached account data. | Synthetic in-memory split. |
 | Stars | Star/unstar setters and the cached Starred view, shown by the backend's `triageSurfaces` capability. | Starred cache browsing is read-only; explicit star/unstar setters require enabled Gmail modify capability. Cache coverage is incomplete. | Fake simulated-Gmail star state; not fixture-native or provider validation. |
@@ -81,6 +81,12 @@ returns the draft to Drafts. Activity distinguishes queued, sending, sent,
 failed and unknown outcomes. A send with an unknown outcome can be checked,
 copied or dismissed. The app never replays it. Linux and Windows desktop keep
 the local-draft workflow. See [ADR 0007](adr/0007-send-mail.md).
+
+Live Gmail sending passed an Android emulator smoke test with a disposable
+account. With mailbox actions already enabled, **Enable sending** required
+no further provider consent. A self-addressed message and reply appeared
+in Sent as one two-message conversation. Undo restored a separate draft
+that did not appear in Sent. [Validation notes](validation/send/stage-7-android.md).
 
 The Chromium fixture flow covers sending, undoing, reopening the unchanged
 draft, and then opening the sent conversation from Activity. See the

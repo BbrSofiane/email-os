@@ -1,12 +1,13 @@
 //! Gmail scope coverage and interactive grant outcomes.
-use super::auth::{GMAIL_MODIFY_SCOPE, GMAIL_READONLY_SCOPE};
+use super::auth::{GMAIL_MODIFY_SCOPE, GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE};
 use super::types::GmailProfile;
 
-/// Gmail grants. A future Send grant will be covered by gmail.send or gmail.modify.
+/// Gmail grants and their verified scope coverage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GmailGrant {
     Readonly,
     Modify,
+    Send,
 }
 
 impl GmailGrant {
@@ -14,13 +15,14 @@ impl GmailGrant {
         match self {
             Self::Readonly => GMAIL_READONLY_SCOPE,
             Self::Modify => GMAIL_MODIFY_SCOPE,
+            Self::Send => GMAIL_SEND_SCOPE,
         }
     }
 
     pub fn covered_by(self, granted: &[String]) -> bool {
         granted.iter().any(|scope| {
             scope == self.requested_scope()
-                || (self == Self::Readonly && scope == GMAIL_MODIFY_SCOPE)
+                || (matches!(self, Self::Readonly | Self::Send) && scope == GMAIL_MODIFY_SCOPE)
         })
     }
 }
@@ -46,6 +48,13 @@ pub(crate) fn merge_scopes(mut scopes: Vec<String>, additional: &[String]) -> Ve
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn send_is_covered_by_send_or_modify_only() {
+        assert!(GmailGrant::Send.covered_by(&parse_scopes(GMAIL_SEND_SCOPE)));
+        assert!(GmailGrant::Send.covered_by(&parse_scopes(GMAIL_MODIFY_SCOPE)));
+        assert!(!GmailGrant::Send.covered_by(&parse_scopes(GMAIL_READONLY_SCOPE)));
+    }
 
     #[test]
     fn legacy_bundle_effective_scopes() {

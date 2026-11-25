@@ -438,12 +438,12 @@ startup or fall back to the fixture. Unsupported Keychain platforms fail closed.
 Mailbox controls stay disabled until the user selects **Enable mailbox actions**
 and Google returns a verified modify grant for the same authenticated account.
 That upgrade requests `https://www.googleapis.com/auth/gmail.modify`; Google's
-scope is broader than this app's implemented archive/unarchive, read/unread,
-and star/unstar commands and can authorize other mailbox changes (including sending or deleting
-mail). The app does not provide those broader provider actions or arbitrary
-labels. Its plain-text composer saves local-only drafts; sending and
-provider-synced drafts are not implemented. Denial or cancellation leaves the read-only account and cached reading
-available.
+scope covers other Gmail actions as well. Email OS uses this upgrade for
+archive/unarchive, read/unread, and star/unstar. **Enable sending** in Account
+is a separate in-app step on macOS and Android. It uses an existing
+`gmail.send` or `gmail.modify` grant when available, otherwise requests
+`gmail.send`. Draft edits stay local. Denial or cancellation leaves the
+draft and cached reading available.
 
 ### Google Desktop OAuth setup (disposable account only)
 
@@ -458,7 +458,8 @@ and disposable Gmail account, not a primary/personal mailbox:
    `EMAIL_OS_GOOGLE_CLIENT_SECRET` in the launch environment.
 4. Confirm initial connection requests only `gmail.readonly`. The separate
    **Enable mailbox actions** flow requests Google's broader `gmail.modify` scope
-   only after explicit user opt-in; do not add any other Gmail scopes.
+   only after explicit user opt-in. **Enable sending** requests `gmail.send`
+   only when the existing scopes do not cover it.
 5. On first use, review the macOS Keychain access prompt and allow the app to use
    its Gmail credential item. Credential-storage failures are visible and fail
    closed; there is no plaintext fallback.
@@ -574,6 +575,30 @@ window to end. Open the confirmed conversation in Activity and verify it
 contains the message once. On Android use the fixture debug package and the
 shared emulator procedures in the programme rules. Real Gmail is outside the
 fixture smoke. See [ADR 0007](adr/0007-send-mail.md).
+
+### Owner smoke checklist for Gmail Send
+
+Use a disposable Gmail account approved for the OAuth project's testing
+audience. Address every smoke message to that account's own mailbox.
+
+- **macOS.** Start native Gmail mode with the existing Desktop OAuth client.
+  With a read-only credential, open **Enable sending**, cancel consent, and
+  confirm that the draft and cached reading remain available. Grant sending
+  on the next attempt. Inspect the request for `gmail.send` and confirm that
+  mailbox actions remain read-only. In a session already granted
+  `gmail.modify`, check that the in-app step opens no Google consent screen.
+- **Android phone.** Use a signed APK whose signer is registered for the
+  package and a phone with current Google Play services. Connect the
+  disposable account in Gmail mode. Verify the read-only and
+  already-covered consent paths and check that sending remains enabled
+  for the same account after relaunch.
+- **Both platforms.** Send a plain-text message with a Unicode subject,
+  reply from its conversation, and confirm each appears once in Gmail Sent.
+  Verify that the reply threads. Change the reply subject and verify the
+  composer signals a new conversation. On a separate draft, tap **Undo**
+  within five seconds, compare the reopened fields, and confirm the
+  message never appears in Sent. Keep real addresses, message content,
+  and credentials out of shared evidence.
 
 Native `list_drafts`, `get_draft`, `create_draft`, `save_draft`, and
 `delete_draft` commands use a dedicated `local-drafts/drafts.db` with its own

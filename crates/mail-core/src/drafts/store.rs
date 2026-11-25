@@ -741,13 +741,6 @@ fn prepare_reply(
         .messages
         .last()
         .ok_or(MailError::ReplyUnavailable)?;
-    if latest
-        .from
-        .mailbox
-        .eq_ignore_ascii_case(&account.email_address)
-    {
-        return Err(MailError::ReplyUnavailable);
-    }
     let context = conversation
         .reply_context
         .as_ref()
@@ -756,19 +749,30 @@ fn prepare_reply(
         return Err(MailError::ReplyUnavailable);
     }
     let from = validate_mailbox(&context.from_mailbox).ok_or(MailError::ReplyUnavailable)?;
+    let self_mailbox =
+        validate_mailbox(&account.email_address).ok_or(MailError::ReplyUnavailable)?;
+    let is_self = |mailbox: &str| mailbox.eq_ignore_ascii_case(&self_mailbox);
+    let self_authored = is_self(&latest.from.mailbox);
     let raw_targets = match &context.reply_to_mailboxes {
-        None => vec![from],
+        None => vec![from.clone()],
         Some(targets) if !targets.is_empty() && targets.len() <= MAX_REPLY_TO_RECIPIENTS => targets
             .iter()
             .map(|value| validate_mailbox(value).ok_or(MailError::ReplyUnavailable))
             .collect::<Result<Vec<_>, _>>()?,
         Some(_) => return Err(MailError::ReplyUnavailable),
     };
-    let self_mailbox =
-        validate_mailbox(&account.email_address).ok_or(MailError::ReplyUnavailable)?;
+    // A self-addressed message can be a reply source. Other self-authored
+    // messages remain unavailable, including messages with an external Reply-To.
+    if self_authored
+        && !(is_self(&from)
+            && matches!(latest.to.as_slice(), [recipient] if is_self(&recipient.mailbox))
+            && raw_targets.iter().all(|mailbox| is_self(mailbox)))
+    {
+        return Err(MailError::ReplyUnavailable);
+    }
     let mut targets: Vec<String> = Vec::new();
     for mailbox in raw_targets {
-        if mailbox.eq_ignore_ascii_case(&self_mailbox) {
+        if !self_authored && is_self(&mailbox) {
             continue;
         }
         if !targets

@@ -211,10 +211,24 @@ describe('AccountPanel sync section', () => {
 });
 
 describe('AccountPanel permissions', () => {
+  it('requires separate send enablement even with mailbox actions already enabled', async () => {
+    wrapper = mount(AccountPanel, {
+      props: { status: status({ mutationAccess: 'enabled' }), busy: null, sendAccess: false },
+    });
+    const w = wrapper;
+    expect(w.text()).toContain('send messages from the connected address');
+    await test(w, 'enable-sending').trigger('click');
+    expect(w.emitted('enableSending')).toHaveLength(1);
+    expect(w.emitted('enableActions')).toBeUndefined();
+    await w.setProps({ sendAccess: true });
+    expect(test(w, 'enable-sending').exists()).toBe(false);
+    expect(w.text()).toContain('Sending is enabled.');
+  });
+
   it('keeps a shorter scope disclosure next to the Enable button', async () => {
     const w = mountPanel(status());
     const disclosure = test(w, 'action-upgrade-disclosure');
-    expect(disclosure.text()).toBe("Enable mailbox actions asks Google for its broad Gmail modify permission, which can also allow sending and deleting mail. Email OS only marks done, marks read and stars; it never sends or deletes.");
+    expect(disclosure.text()).toBe("Enable mailbox actions asks Google for its broad Gmail modify permission, which can also allow sending and deleting mail. This step enables marking done, marking read and starring. Sending requires a separate in-app step.");
     const enable = test(w, 'enable-mailbox-actions');
     expect(enable.text()).toBe('Enable mailbox actions');
     // Disclosure first, then the button.

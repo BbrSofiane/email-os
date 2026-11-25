@@ -3104,3 +3104,106 @@ fn connect_omitted_scope_preserves_existing_grants() {
 
 #[path = "platform_tests.rs"]
 mod platform_tests;
+
+#[test]
+fn live_send_single_attempt_outcomes() {
+    use crate::gmail::types::SendResult;
+    for (status, body, expected) in [
+        (
+            200,
+            r#"{"id":"message","threadId":"thread"}"#,
+            SendResult::Confirmed {
+                message_id: "message".into(),
+                thread_id: "thread".into(),
+            },
+        ),
+        (400, "{}", SendResult::Refused),
+        (403, "{}", SendResult::Refused),
+        (500, "{}", SendResult::Unknown),
+        (200, "{}", SendResult::Unknown),
+        (401, "{}", SendResult::Unknown),
+        (302, "", SendResult::Unknown),
+    ] {
+        let (base, api) = FakeApi::start(vec![("/gmail/v1/users/me/messages/send", status, body)]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        let mut bundle = future_token();
+        bundle.granted_scopes = vec![auth::GMAIL_SEND_SCOPE.into()];
+        secrets.store(&bundle).unwrap();
+        let provider = test_provider(&base, secrets);
+        let frozen = br#"{"raw":"bWltZQ","threadId":"source-thread"}"#;
+        assert_eq!(
+            provider.send_for_account("synthetic@example.test", frozen, &CancelToken::default(),),
+            expected
+        );
+        assert_eq!(api.requests().len(), 1);
+        assert_eq!(
+            serde_json::from_str::<Value>(&api.bodies()[0]).unwrap(),
+            json!({
+                "raw": "bWltZQ", "threadId": "source-thread"
+            })
+        );
+    }
+}
+
+#[test]
+fn sent_reconciliation_and_exact_subject_are_read_only() {
+    use crate::gmail::types::SendResult;
+    for (message, expected) in [
+        (
+            r#"{"id":"m1","threadId":"t1","labelIds":["SENT"],"payload":{"headers":[{"name":"Message-ID","value":"<abc@example.test>"},{"name":"From","value":"Sender <synthetic@example.test>"},{"name":"Subject","value":"Exact"}]}}"#,
+            true,
+        ),
+        (
+            r#"{"id":"m1","threadId":"t1","labelIds":["INBOX"],"payload":{"headers":[{"name":"Message-ID","value":"<abc@example.test>"},{"name":"From","value":"synthetic@example.test"}]}}"#,
+            false,
+        ),
+        (
+            r#"{"id":"m1","threadId":"t1","labelIds":["SENT"],"payload":{"headers":[{"name":"Message-ID","value":"<other@example.test>"},{"name":"From","value":"synthetic@example.test"}]}}"#,
+            false,
+        ),
+        (
+            r#"{"id":"m1","threadId":"t1","labelIds":["SENT"],"payload":{"headers":[{"name":"Message-ID","value":"<abc@example.test>"},{"name":"From","value":"other@example.test"}]}}"#,
+            false,
+        ),
+    ] {
+        let (base, api) = FakeApi::start(vec![
+            ("/gmail/v1/users/me/messages/send", 500, "{}"),
+            (
+                "/gmail/v1/users/me/messages?",
+                200,
+                r#"{"messages":[{"id":"m1"}]}"#,
+            ),
+            ("/gmail/v1/users/me/messages/m1?", 200, message),
+            ("/gmail/v1/users/me/messages/m1?", 200, message),
+        ]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        let mut bundle = future_token();
+        bundle.granted_scopes = vec![auth::GMAIL_SEND_SCOPE.into()];
+        secrets.store(&bundle).unwrap();
+        let provider = test_provider(&base, secrets);
+        let cancel = CancelToken::default();
+        assert_eq!(
+            provider.send_for_account("synthetic@example.test", br#"{"raw":"bWltZQ"}"#, &cancel),
+            SendResult::Unknown
+        );
+        let found =
+            provider.find_sent_for_account("synthetic@example.test", "<abc@example.test>", &cancel);
+        assert_eq!(found.is_some(), expected);
+        if expected {
+            assert_eq!(found, Some(("m1".into(), "t1".into())));
+            assert_eq!(
+                provider
+                    .message_subject_for_account("synthetic@example.test", "t1", "m1", &cancel)
+                    .unwrap(),
+                "Exact"
+            );
+        }
+        let requests = api.requests();
+        assert!(
+            requests[1].ends_with("labelIds=SENT&maxResults=20&q=rfc822msgid%3Aabc%40example.test")
+        );
+        let heads = api.state.request_heads.lock().unwrap();
+        assert!(heads[0].starts_with("POST "));
+        assert!(heads[1..].iter().all(|head| head.starts_with("GET ")));
+    }
+}

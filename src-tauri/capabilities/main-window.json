@@ -53,6 +53,7 @@
     "allow-copy-unknown-send",
     "allow-load-confirmed-send-thread",
     "allow-send-available",
+    "allow-enable-sending",
     "allow-list-drafts",
     "allow-get-draft",
     "allow-create-draft",
