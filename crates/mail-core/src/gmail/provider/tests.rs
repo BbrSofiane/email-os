@@ -3199,7 +3199,9 @@ fn sent_reconciliation_and_exact_subject_are_read_only() {
             );
         }
         let requests = api.requests();
-        assert!(requests[1].contains("labelIds=SENT&maxResults=20&q=rfc822msgid%3A"));
+        assert!(
+            requests[1].ends_with("labelIds=SENT&maxResults=20&q=rfc822msgid%3Aabc%40example.test")
+        );
         let heads = api.state.request_heads.lock().unwrap();
         assert!(heads[0].starts_with("POST "));
         assert!(heads[1..].iter().all(|head| head.starts_with("GET ")));

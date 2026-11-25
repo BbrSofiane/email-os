@@ -11,10 +11,11 @@ impl GmailProvider for LiveGmailProvider {
         cancel: &CancelToken,
     ) -> Option<(String, String)> {
         // Do not allow Gmail query operators to broaden the lookup.
-        if !rfc_id.starts_with('<')
-            || !rfc_id.ends_with('>')
-            || rfc_id.len() > 998
-            || rfc_id.chars().any(|c| c.is_whitespace() || c == '"')
+        let search_id = rfc_id.strip_prefix('<')?.strip_suffix('>')?;
+        if crate::drafts::store::validate_message_id(rfc_id).is_none()
+            || !search_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b".@_-".contains(&b))
         {
             return None;
         }
@@ -27,7 +28,7 @@ impl GmailProvider for LiveGmailProvider {
         let mailbox = bundle.email.as_deref().filter(|email| !email.is_empty())?;
         let query = format!(
             "labelIds=SENT&maxResults=20&q={}",
-            url_encode(&format!("rfc822msgid:{rfc_id}"))
+            url_encode(&format!("rfc822msgid:{search_id}"))
         );
         let body = self
             .api_get("/gmail/v1/users/me/messages", &query, &token, cancel)
@@ -135,11 +136,13 @@ impl GmailProvider for LiveGmailProvider {
                 subjects.push(value);
             }
         }
-        if subjects.len() != 1 {
+        if subjects.len() > 1 {
             return Err(MailError::ReplyUnavailable);
         }
         self.verify_destination_account(account, cancel)?;
-        Ok(subjects[0].to_owned())
+        Ok(crate::gmail::parse::decoded_header(
+            subjects.first().copied().unwrap_or(""),
+        ))
     }
 
     fn send_for_account(
