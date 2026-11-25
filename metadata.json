@@ -1,0 +1,30 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M8835ZH69AXAJP7FH6RNCYV4",
+  "strategy": "manual-commit",
+  "branch": "usable/android-gmail",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "docs/validation/android-gmail/android-account-demo.png",
+    "docs/validation/android-gmail/android-account-gmail-not-connected.png",
+    "docs/validation/android-gmail/android-choice.png",
+    "docs/validation/android-gmail/android-google-sheet.png",
+    "docs/validation/android-gmail/android-not-connected.png"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 584,
+    "cache_creation_tokens": 1768231,
+    "cache_read_tokens": 99951255,
+    "output_tokens": 223886,
+    "api_call_count": 268
+  }
+}
