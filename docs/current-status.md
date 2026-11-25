@@ -130,7 +130,12 @@ the address and mail blurred.
   account settings, the app showed **Sign-in expired · Sign in again**; an
   archive made then stayed **Queued**, and a local draft stayed in Drafts.
   This Play services version lacks `clearToken`, so it kept returning the
-  revoked token until it expired (ADR 0005, implementation note 6).
+  revoked token until it expired (ADR 0005, implementation note 6); after that,
+  **Sign in again** asked for read-only and modify again, mailbox actions
+  stayed enabled, and the queued archive was confirmed by Gmail.
+- **Disconnect:** the app returned to **Not connected**, the Keystore binding
+  file was removed and no Play services dialog appeared; reconnecting needed no
+  Google screens and restored mailbox actions from the recorded grant.
 - **Not checked here:** a change made from another client while the app was in
   the background (the emulator's Gmail app would not sync its Primary inbox),
   and the owner's own phone; both are part of the post-release phone run.

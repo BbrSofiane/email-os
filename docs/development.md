@@ -164,9 +164,10 @@ Google.
   while the app is backgrounded for long or killed; there are no push
   notifications.
 - **Old Play services.** Play services before the `clearToken` feature (the
-  shared emulator's 24.23.35) cannot drop a revoked token from its cache. After
-  access is removed at Google, **Sign in again** keeps failing until that token
-  expires (about an hour); a current phone clears it at once.
+  shared emulator's 24.23.35) cannot drop a revoked token from its cache, and
+  the bridge skips the call there (below Play services 25.20). After access is
+  removed at Google, **Sign in again** keeps failing until that token expires
+  (about an hour); a current phone clears it at once.
 
 To validate on the emulator, build and install the debug APK from this VM (the
 registered debug signer), sign a test-user account into the emulator under
