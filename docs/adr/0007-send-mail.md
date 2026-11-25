@@ -1,6 +1,6 @@
 # ADR 0007: Send plain-text mail on macOS and Android
 
-**Status:** Accepted for stages 1–6. Stage 7 awaits Track B and coordinator approval.
+**Status:** Accepted.
 
 ## Context
 
@@ -377,7 +377,8 @@ when opening a newly copied draft. Android fixture validation uses
    Check mock HTTP requests, scopes, account verification, response boundaries,
    in-app enablement without OAuth for an existing modify grant, the scope union
    for a read-only credential, positive-only reconciliation, and the absence of
-   POST retries. Keep the real-Gmail validation owner-run.
+   POST retries. Run an Android smoke test using only the approved disposable
+   mailbox. The owner still verifies macOS and a physical Android phone.
 
 ## Validation plan
 

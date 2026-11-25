@@ -373,7 +373,12 @@ async function enableSending(): Promise<void> {
     await props.client.enableSending();
     if (account === accountId.value) await refreshSendAccess();
   } catch (error) {
-    if (account === accountId.value) sendEnableError.value = describeMailError(toMailError(error));
+    if (account === accountId.value) {
+      const failure = toMailError(error);
+      sendEnableError.value = failure.kind === 'permission_required'
+        ? 'Google did not grant permission to send mail.'
+        : describeMailError(failure);
+    }
   } finally {
     sendEnabling.value = false;
   }
