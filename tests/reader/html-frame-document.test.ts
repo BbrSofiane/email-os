@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildFrameDocument, fitZoom, frameCsp, FRAME_SANDBOX, type FrameTheme } from '../../src/lib/html-mail/frame-document';
+import { buildFrameDocument, fitZoom, frameCsp, FRAME_SANDBOX, FRAME_SIGNAL_CSS, type FrameTheme } from '../../src/lib/html-mail/frame-document';
 import type { SanitizedMail } from '../../src/lib/html-mail/sanitize';
 
 const mail: SanitizedMail = { styles: '', body: '<p>Mail</p>', remoteBlocked: 0, cidReferences: [], hasOwnColours: false, hasTrailingQuote: false };
@@ -31,6 +31,12 @@ describe('frame document', () => {
   it('accepts unitless line height', () => {
     const doc = buildFrameDocument(mail, { remoteImages: false, theme: { ...theme, lineHeight: '1.6' }, quoteOpen: false });
     expect(doc).toContain('line-height: 1.6;');
+  });
+  it('includes the link and pointer signal rules', () => {
+    const doc = buildFrameDocument(mail, { remoteImages: false, theme, quoteOpen: false });
+    expect(doc).toContain(FRAME_SIGNAL_CSS);
+    expect(doc.indexOf(FRAME_SIGNAL_CSS)).toBeLessThan(doc.indexOf('<body>'));
+    expect(doc).toContain('-webkit-user-drag: none');
   });
   it('fits with a floor', () => {
     expect(fitZoom(300, 360)).toBe(1);
