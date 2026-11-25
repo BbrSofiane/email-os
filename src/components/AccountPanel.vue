@@ -229,7 +229,7 @@ watch(connection, (next) => { if (next === 'authenticating') confirming.value = 
         <h3 class="account-label">Permissions</h3>
         <template v-if="canEnable">
           <p class="account-note" data-test="action-upgrade-disclosure" role="note">
-            Enable mailbox actions asks Google for its broad Gmail modify permission. This step enables marking done, marking read and starring. Sending requires a separate in-app step.
+            Enable mailbox actions asks Google for its broad Gmail modify permission, which can also allow sending and deleting mail. This step enables marking done, marking read and starring. Sending requires a separate in-app step.
           </p>
           <div class="account-actions">
             <button

@@ -228,7 +228,7 @@ describe('AccountPanel permissions', () => {
   it('keeps a shorter scope disclosure next to the Enable button', async () => {
     const w = mountPanel(status());
     const disclosure = test(w, 'action-upgrade-disclosure');
-    expect(disclosure.text()).toBe("Enable mailbox actions asks Google for its broad Gmail modify permission. This step enables marking done, marking read and starring. Sending requires a separate in-app step.");
+    expect(disclosure.text()).toBe("Enable mailbox actions asks Google for its broad Gmail modify permission, which can also allow sending and deleting mail. This step enables marking done, marking read and starring. Sending requires a separate in-app step.");
     const enable = test(w, 'enable-mailbox-actions');
     expect(enable.text()).toBe('Enable mailbox actions');
     // Disclosure first, then the button.
