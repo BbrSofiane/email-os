@@ -229,6 +229,7 @@ pub trait GmailProvider: Send + Sync {
         match grant {
             super::grants::GmailGrant::Readonly => self.has_credentials(),
             super::grants::GmailGrant::Modify => self.mutation_access(),
+            super::grants::GmailGrant::Send => Ok(false),
         }
     }
     /// Requests consent only when the grant is not already covered.
@@ -244,6 +245,7 @@ pub trait GmailProvider: Send + Sync {
         match grant {
             GmailGrant::Readonly => self.connect(cancel),
             GmailGrant::Modify => self.enable_mutations(cancel),
+            GmailGrant::Send => return Err(MailError::PermissionRequired),
         }
         .map(GrantOutcome::Granted)
     }

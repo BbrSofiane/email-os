@@ -3104,3 +3104,36 @@ fn connect_omitted_scope_preserves_existing_grants() {
 
 #[path = "platform_tests.rs"]
 mod platform_tests;
+
+#[test]
+fn live_send_single_attempt_outcomes() {
+    use crate::gmail::types::SendResult;
+    for (status, body, expected) in [
+        (
+            200,
+            r#"{"id":"message","threadId":"thread"}"#,
+            SendResult::Confirmed {
+                message_id: "message".into(),
+                thread_id: "thread".into(),
+            },
+        ),
+        (400, "{}", SendResult::Refused),
+        (403, "{}", SendResult::Refused),
+        (500, "{}", SendResult::Unknown),
+        (200, "{}", SendResult::Unknown),
+        (401, "{}", SendResult::Refused),
+        (302, "", SendResult::Unknown),
+    ] {
+        let (base, api) = FakeApi::start(vec![("/gmail/v1/users/me/messages/send", status, body)]);
+        let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+        let mut bundle = future_token();
+        bundle.granted_scopes = vec![auth::GMAIL_SEND_SCOPE.into()];
+        secrets.store(&bundle).unwrap();
+        let provider = test_provider(&base, secrets);
+        assert_eq!(
+            provider.send_for_account("synthetic@example.test", b"mime", &CancelToken::default()),
+            expected
+        );
+        assert_eq!(api.requests().len(), 1);
+    }
+}

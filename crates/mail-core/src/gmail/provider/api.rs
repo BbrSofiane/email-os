@@ -4,6 +4,68 @@ use crate::gmail::types::GmailProvider;
 use crate::storage_log::{storage_err, storage_fault};
 
 impl GmailProvider for LiveGmailProvider {
+    fn send_for_account(
+        &self,
+        account: &str,
+        mime: &[u8],
+        cancel: &CancelToken,
+    ) -> crate::gmail::types::SendResult {
+        use crate::gmail::types::SendResult;
+        use base64::Engine;
+        if self.pace(cancel).is_err() {
+            return SendResult::Paused;
+        }
+        let Ok((token, published_account)) = self.access_token_with_account(cancel) else {
+            return SendResult::Paused;
+        };
+        let Ok((Some(bundle), _, _)) = self.credential_snapshot() else {
+            return SendResult::Paused;
+        };
+        if cancel.is_cancelled()
+            || published_account.as_deref() != Some(account)
+            || bundle_account_id(&bundle) != Some(account)
+            || bundle.access_token != token
+            || !GmailGrant::Send.covered_by(&bundle.effective_scopes())
+        {
+            return SendResult::Paused;
+        }
+        let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(mime);
+        let response = self
+            .send_http
+            .post(format!(
+                "{}/gmail/v1/users/me/messages/send",
+                self.endpoints.api
+            ))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({"raw": raw}))
+            .send();
+        let Ok(response) = response else {
+            return SendResult::Unknown;
+        };
+        let status = response.status();
+        if status.is_success() {
+            let receipt = auth::read_bounded(response)
+                .ok()
+                .and_then(|body| serde_json::from_slice::<Value>(&body).ok());
+            if let Some((message_id, thread_id)) = receipt
+                .as_ref()
+                .and_then(|v| Some((v.get("id")?.as_str()?, v.get("threadId")?.as_str()?)))
+            {
+                if !message_id.is_empty() && !thread_id.is_empty() {
+                    return SendResult::Confirmed {
+                        message_id: message_id.to_string(),
+                        thread_id: thread_id.to_string(),
+                    };
+                }
+            }
+            SendResult::Unknown
+        } else if status.is_client_error() && status != StatusCode::REQUEST_TIMEOUT {
+            SendResult::Refused
+        } else {
+            SendResult::Unknown
+        }
+    }
+
     fn fetch_attachment(
         &self,
         account_id: &str,
@@ -181,18 +243,18 @@ impl GmailProvider for LiveGmailProvider {
             return Err(MailError::AuthFailed);
         }
         if publication.last_non_refresh_revision != previous_non_refresh_revision {
-            if current.gmail_modify_granted {
+            if requested.covered_by(&current.effective_scopes()) {
                 return Ok(GrantOutcome::Granted(profile));
             }
-            if previous.gmail_modify_granted {
+            if requested.covered_by(&previous.effective_scopes()) {
                 return Err(MailError::PermissionRequired);
             }
             return Err(MailError::Busy);
         }
-        if current.gmail_modify_granted {
+        if requested.covered_by(&current.effective_scopes()) {
             return Ok(GrantOutcome::Granted(profile));
         }
-        if previous.gmail_modify_granted {
+        if requested.covered_by(&previous.effective_scopes()) {
             return Err(MailError::PermissionRequired);
         }
         let bundle = TokenBundle {

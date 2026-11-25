@@ -25,6 +25,8 @@ use crate::error::MailError;
 
 /// Scope requested by the initial read-only connection.
 pub const GMAIL_READONLY_SCOPE: &str = "https://www.googleapis.com/auth/gmail.readonly";
+/// Scope requested for sending mail.
+pub const GMAIL_SEND_SCOPE: &str = "https://www.googleapis.com/auth/gmail.send";
 /// Broader scope requested only by the explicit mailbox-actions upgrade.
 pub const GMAIL_MODIFY_SCOPE: &str = "https://www.googleapis.com/auth/gmail.modify";
 
