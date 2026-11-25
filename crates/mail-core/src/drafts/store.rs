@@ -58,6 +58,20 @@ impl DraftCore {
                 reply_link_json TEXT,
                 PRIMARY KEY (account_id, draft_id)
             );
+            CREATE TABLE IF NOT EXISTS send_locks (
+                account_id TEXT NOT NULL,
+                draft_id TEXT NOT NULL,
+                operation_id TEXT NOT NULL,
+                revision INTEGER NOT NULL CHECK (revision > 0),
+                PRIMARY KEY (account_id, draft_id)
+            );
+            CREATE TABLE IF NOT EXISTS sent_draft_tombstones (
+                account_id TEXT NOT NULL,
+                draft_id TEXT NOT NULL,
+                operation_id TEXT NOT NULL,
+                revision INTEGER NOT NULL CHECK (revision > 0),
+                PRIMARY KEY (account_id, draft_id)
+            );
             CREATE TABLE IF NOT EXISTS request_receipts (
                 account_id TEXT NOT NULL,
                 request_id TEXT NOT NULL,
@@ -225,6 +239,70 @@ impl DraftCore {
         Ok(receipt)
     }
 
+    pub(crate) fn lookup_copy_receipt(
+        &self,
+        account: &AccountInfo,
+        operation: &str,
+        request_id: &str,
+    ) -> Result<Option<DraftReceipt>, MailError> {
+        validate_account(account)?;
+        validate_request_id(request_id)?;
+        let conn = self.lock_conn()?;
+        lookup_receipt(
+            &conn,
+            &account.account_id,
+            request_id,
+            "copy",
+            &fingerprint(&operation)?,
+        )
+    }
+
+    /// Create a separate draft from a locked source, with a durable receipt.
+    pub(crate) fn copy_draft(
+        &self,
+        account: &AccountInfo,
+        source: &DraftRef,
+        operation: &str,
+        request_id: &str,
+    ) -> Result<DraftReceipt, MailError> {
+        validate_ref(account, source)?;
+        validate_request_id(request_id)?;
+        let fingerprint = fingerprint(&operation)?;
+        let mut conn = self.lock_conn()?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage_err())?;
+        if let Some(receipt) =
+            lookup_receipt_tx(&tx, &account.account_id, request_id, "copy", &fingerprint)?
+        {
+            tx.commit().map_err(storage_err())?;
+            return Ok(receipt);
+        }
+        let draft = read_draft(&tx, source)?.ok_or(MailError::NotFound)?;
+        let now = now_iso();
+        let draft_ref = DraftRef {
+            account_id: account.account_id.clone(),
+            draft_id: Uuid::new_v4().to_string(),
+        };
+        let content = serde_json::to_string(&draft.content).map_err(storage_err())?;
+        let source_json = serde_json::to_string(&draft.source).map_err(storage_err())?;
+        let reply = draft
+            .reply_link
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(storage_err())?;
+        tx.execute("INSERT INTO drafts(account_id,draft_id,revision,created_at,updated_at,content_json,source_json,reply_link_json) VALUES (?1,?2,1,?3,?3,?4,?5,?6)", params![draft_ref.account_id, draft_ref.draft_id, now, content, source_json, reply]).map_err(storage_err())?;
+        let receipt = DraftReceipt {
+            draft_ref,
+            revision: 1,
+            saved_at: now,
+        };
+        insert_receipt(&tx, account, request_id, "copy", &fingerprint, &receipt)?;
+        tx.commit().map_err(storage_err())?;
+        Ok(receipt)
+    }
+
     pub fn save_draft(
         &self,
         account: &AccountInfo,
@@ -249,6 +327,7 @@ impl DraftCore {
             tx.commit().map_err(storage_err())?;
             return Ok(receipt);
         }
+        ensure_unlocked(&tx, &command.draft_ref)?;
         let current = current_revision(&tx, &command.draft_ref)?.ok_or(MailError::NotFound)?;
         if current != command.expected_revision {
             return Err(MailError::DraftConflict {
@@ -317,6 +396,7 @@ impl DraftCore {
             tx.commit().map_err(storage_err())?;
             return Ok(receipt);
         }
+        ensure_unlocked(&tx, &command.draft_ref)?;
         let current = current_revision(&tx, &command.draft_ref)?.ok_or(MailError::NotFound)?;
         if current != command.expected_revision {
             return Err(MailError::DraftConflict {
@@ -351,6 +431,95 @@ impl DraftCore {
         )?;
         tx.commit().map_err(storage_err())?;
         Ok(receipt)
+    }
+
+    pub(crate) fn send_locks(
+        &self,
+        account: &str,
+    ) -> Result<Vec<(DraftRef, String, u32)>, MailError> {
+        let conn = self.lock_conn()?;
+        let mut stmt = conn
+            .prepare("SELECT draft_id, operation_id, revision FROM send_locks WHERE account_id=?1")
+            .map_err(storage_err())?;
+        let rows = stmt
+            .query_map(params![account], |row| {
+                Ok((
+                    DraftRef {
+                        account_id: account.to_owned(),
+                        draft_id: row.get(0)?,
+                    },
+                    row.get(1)?,
+                    row.get(2)?,
+                ))
+            })
+            .map_err(storage_err())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(storage_err())
+    }
+
+    pub(crate) fn acquire_send_lock(
+        &self,
+        draft_ref: &DraftRef,
+        revision: u32,
+        operation_id: &str,
+    ) -> Result<(), MailError> {
+        let mut conn = self.lock_conn()?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage_err())?;
+        let current = current_revision(&tx, draft_ref)?.ok_or(MailError::NotFound)?;
+        if current != revision {
+            return Err(MailError::DraftConflict {
+                current_revision: current,
+            });
+        }
+        ensure_unlocked(&tx, draft_ref)?;
+        tx.execute("INSERT INTO send_locks(account_id,draft_id,operation_id,revision) VALUES (?1,?2,?3,?4)",
+            params![draft_ref.account_id, draft_ref.draft_id, operation_id, revision]).map_err(storage_err())?;
+        tx.commit().map_err(storage_err())
+    }
+
+    pub(crate) fn release_send_lock(
+        &self,
+        draft_ref: &DraftRef,
+        operation_id: &str,
+    ) -> Result<(), MailError> {
+        let conn = self.lock_conn()?;
+        conn.execute(
+            "DELETE FROM send_locks WHERE account_id=?1 AND draft_id=?2 AND operation_id=?3",
+            params![draft_ref.account_id, draft_ref.draft_id, operation_id],
+        )
+        .map_err(storage_err())?;
+        Ok(())
+    }
+
+    pub(crate) fn tombstone_confirmed_send(
+        &self,
+        draft_ref: &DraftRef,
+        revision: u32,
+        operation_id: &str,
+    ) -> Result<(), MailError> {
+        let mut conn = self.lock_conn()?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage_err())?;
+        let deleted = tx.execute("DELETE FROM drafts WHERE account_id=?1 AND draft_id=?2 AND revision=?3 AND EXISTS (SELECT 1 FROM send_locks WHERE account_id=?1 AND draft_id=?2 AND operation_id=?4 AND revision=?3)",
+            params![draft_ref.account_id, draft_ref.draft_id, revision, operation_id]).map_err(storage_err())?;
+        if deleted == 1 {
+            tx.execute(
+                "INSERT INTO sent_draft_tombstones (account_id, draft_id, operation_id, revision)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    draft_ref.account_id,
+                    draft_ref.draft_id,
+                    operation_id,
+                    revision
+                ],
+            )
+            .map_err(storage_err())?;
+        }
+        tx.execute("DELETE FROM send_locks WHERE account_id=?1 AND draft_id=?2 AND operation_id=?3 AND revision=?4",
+            params![draft_ref.account_id, draft_ref.draft_id, operation_id, revision]).map_err(storage_err())?;
+        tx.commit().map_err(storage_err())
     }
 
     fn lock_conn(&self) -> Result<MutexGuard<'_, Connection>, MailError> {
@@ -397,7 +566,7 @@ fn validate_create_shape(command: &CreateDraft) -> Result<(), MailError> {
     }
     Ok(())
 }
-fn validate_content(content: &DraftContent) -> Result<(), MailError> {
+pub(crate) fn validate_content(content: &DraftContent) -> Result<(), MailError> {
     if content.to.len() > MAX_RECIPIENT_BYTES {
         return invalid("to");
     }
@@ -471,6 +640,20 @@ fn read_draft(conn: &Connection, draft_ref: &DraftRef) -> Result<Option<Draft>, 
     )
     .transpose()
 }
+fn ensure_unlocked(tx: &Transaction<'_>, draft_ref: &DraftRef) -> Result<(), MailError> {
+    let locked: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM send_locks WHERE account_id=?1 AND draft_id=?2)",
+            params![draft_ref.account_id, draft_ref.draft_id],
+            |row| row.get(0),
+        )
+        .map_err(storage_err())?;
+    if locked {
+        return Err(MailError::Busy);
+    }
+    Ok(())
+}
+
 fn current_revision(tx: &Transaction<'_>, draft_ref: &DraftRef) -> Result<Option<u32>, MailError> {
     tx.query_row(
         "SELECT revision FROM drafts WHERE account_id=?1 AND draft_id=?2",
@@ -647,11 +830,12 @@ fn prepare_reply(
             source_message_id: source_id.to_string(),
             message_id,
             references,
+            source_subject: None,
         },
     ))
 }
 
-fn validate_mailbox(value: &str) -> Option<String> {
+pub(crate) fn validate_mailbox(value: &str) -> Option<String> {
     if value.is_empty()
         || value.len() > 254
         || !value.is_ascii()
@@ -722,7 +906,7 @@ fn valid_dot_atom(value: &str) -> bool {
         .bytes()
         .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-/=?^_`{|}~.".contains(&b))
 }
-fn validate_message_id(value: &str) -> Option<String> {
+pub(crate) fn validate_message_id(value: &str) -> Option<String> {
     if value.len() < 5 || value.len() > 998 || !value.starts_with('<') || !value.ends_with('>') {
         return None;
     }

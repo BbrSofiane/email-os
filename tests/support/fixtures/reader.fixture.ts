@@ -243,6 +243,7 @@ function deriveReplyDefaults(
       sourceMessageId: sourceId,
       messageId: context.messageId,
       references,
+      sourceSubject: conversation.subject,
     },
   };
 }

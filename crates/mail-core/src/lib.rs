@@ -19,6 +19,7 @@ pub mod groups;
 mod lock;
 pub mod reminders;
 pub mod search;
+pub mod send_mime;
 pub mod splits;
 pub mod stars;
 mod storage_log;

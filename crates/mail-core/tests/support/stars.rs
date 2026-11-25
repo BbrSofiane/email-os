@@ -371,9 +371,9 @@ fn legacy_migration_keeps_unknown_stars_and_query_scope_fails_closed() {
     db.execute("ALTER TABLE gmail_message_facts DROP COLUMN is_starred", [])
         .unwrap();
     // A real pre-star profile carries the ambiguous legacy marker, not the current one.
-    db.execute(
-        "UPDATE meta SET value = 'gmail-2' WHERE key = 'schema_version'",
-        [],
+    db.execute_batch(
+        "DROP TABLE gmail_send_intents;
+         UPDATE meta SET value = 'gmail-2' WHERE key = 'schema_version';",
     )
     .unwrap();
     drop(db);

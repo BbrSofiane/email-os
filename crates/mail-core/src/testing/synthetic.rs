@@ -232,6 +232,8 @@ pub struct Overlay {
 
 #[derive(Default)]
 struct OverlayState {
+    sends: usize,
+    forward_sends: bool,
     writes: Vec<WriteRecord>,
     extra: Vec<GmailThread>,
     arrivals: HashMap<String, Vec<Message>>,
@@ -244,6 +246,12 @@ struct OverlayState {
 }
 
 impl Overlay {
+    pub fn forward_sends(&self) {
+        self.state.lock().unwrap().forward_sends = true;
+    }
+    pub fn send_calls(&self) -> usize {
+        self.state.lock().unwrap().sends
+    }
     pub fn wrap(inner: Arc<SyntheticGmailProvider>) -> Arc<Self> {
         Arc::new(Self {
             inner,
@@ -386,6 +394,31 @@ impl Overlay {
 }
 
 impl GmailProvider for Overlay {
+    fn find_sent_for_account(
+        &self,
+        account: &str,
+        id: &str,
+        cancel: &CancelToken,
+    ) -> Option<(String, String)> {
+        self.inner.find_sent_for_account(account, id, cancel)
+    }
+    fn send_for_account(
+        &self,
+        account: &str,
+        mime: &[u8],
+        cancel: &CancelToken,
+    ) -> crate::gmail::types::SendResult {
+        let forward = {
+            let mut state = self.state.lock().unwrap();
+            state.sends += 1;
+            state.forward_sends
+        };
+        if forward {
+            self.inner.send_for_account(account, mime, cancel)
+        } else {
+            crate::gmail::types::SendResult::Unknown
+        }
+    }
     fn fetch_attachment(
         &self,
         account_id: &str,

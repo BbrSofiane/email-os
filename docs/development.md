@@ -561,6 +561,20 @@ pending operator validation.
 
 ### Local drafts and normal close (Slice 04)
 
+On macOS and Android, the fixture composer also supports plain-text Send and a
+five-second pre-dispatch Undo window. The browser fixture simulates the same
+flow in memory. The native ledger is authoritative for send state and keeps
+the selected draft revision locked through dispatch and recovery. A confirmed
+send deletes that revision. An interrupted hold restores it to Drafts. Activity
+shows the outcome and available recovery actions.
+
+For send smoke coverage, send a synthetic draft, use Undo within five seconds,
+and check that the reopened fields match. Press Send again and allow the
+window to end. Open the confirmed conversation in Activity and verify it
+contains the message once. On Android use the fixture debug package and the
+shared emulator procedures in the programme rules. Real Gmail is outside the
+fixture smoke. See [ADR 0007](adr/0007-send-mail.md).
+
 Native `list_drafts`, `get_draft`, `create_draft`, `save_draft`, and
 `delete_draft` commands use a dedicated `local-drafts/drafts.db` with its own
 profile lock and FULL/WAL transactions. The bridge derives account scope from

@@ -9,6 +9,18 @@
 import { GET_MODE_CHOICE_COMMAND, SWITCH_MODE_COMMAND } from './generated';
 import type { ModeChoice, MailMode } from './client';
 import { LIST_REMINDERS_COMMAND, PUT_REMINDER_COMMAND, CANCEL_REMINDER_COMMAND } from './generated';
+import {
+  SEND_AVAILABLE_COMMAND,
+  SEND_DRAFT_COMMAND,
+  LIST_SEND_ACTIVITY_COMMAND,
+  LOAD_CONFIRMED_SEND_THREAD_COMMAND,
+  UNDO_SEND_COMMAND,
+  CANCEL_SEND_COMMAND,
+  RETRY_SEND_COMMAND,
+  CHECK_SENDS_COMMAND,
+  DISMISS_SEND_COMMAND,
+  COPY_UNKNOWN_SEND_COMMAND,
+} from './generated';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import {
@@ -101,6 +113,18 @@ function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
 
 export function createTauriMailClient(): MailClient {
   return {
+    sendAvailable: () => call(SEND_AVAILABLE_COMMAND),
+    send: {
+      admit: (command) => call(SEND_DRAFT_COMMAND, { command }),
+      listActivity: () => call(LIST_SEND_ACTIVITY_COMMAND),
+      loadConfirmedThread: (operationId) => call(LOAD_CONFIRMED_SEND_THREAD_COMMAND, { operationId }),
+      undo: (operationId) => call(UNDO_SEND_COMMAND, { operationId }),
+      cancel: (operationId) => call(CANCEL_SEND_COMMAND, { operationId }),
+      retry: (operationId, requestId) => call(RETRY_SEND_COMMAND, { operationId, requestId }),
+      check: () => call(CHECK_SENDS_COMMAND),
+      dismiss: (operationId) => call(DISMISS_SEND_COMMAND, { operationId }),
+      copyUnknown: (operationId, requestId) => call(COPY_UNKNOWN_SEND_COMMAND, { operationId, requestId }),
+    },
     listCachedStarred(request: CachedDoneRequest): Promise<CachedDoneSnapshot> {
       return call(LIST_CACHED_STARRED_COMMAND, { request });
     },

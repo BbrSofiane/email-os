@@ -32,7 +32,6 @@ describe('draft reply preparation', () => {
     await w.find('[data-test="draft-to-row"]').trigger('click');
     await flushPromises();
     expect((w.find('[data-test="draft-to"]').element as HTMLInputElement).value).toBe('ada@example.test');
-    await w.find('[data-test="draft-fields-toggle"]').trigger('click');
     expect((w.find('[data-test="draft-cc"]').element as HTMLInputElement).value).toBe('');
     expect((w.find('[data-test="draft-subject"]').element as HTMLInputElement).value).toBe('Re: Fixture thread 1: weekly status');
     expect((w.find('[data-test="draft-body"]').element as HTMLTextAreaElement).value).toBe('');

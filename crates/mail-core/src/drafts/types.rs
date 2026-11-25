@@ -29,6 +29,43 @@ pub struct DraftRef {
     pub draft_id: String,
 }
 
+/// Public send status. Frozen provider payloads stay in the private ledger.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum SendState {
+    Hold,
+    Queued,
+    Applying,
+    Confirmed,
+    Failed,
+    Unknown,
+    Cancelled,
+    Undone,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SendStatus {
+    pub operation_id: String,
+    pub draft_ref: DraftRef,
+    pub draft_revision: u32,
+    pub not_before: String,
+    pub state: SendState,
+    pub retry_of: Option<String>,
+    /// These display facts may be absent on intents created before migration 15.
+    pub subject: Option<String>,
+    pub first_recipient: Option<String>,
+    pub state_changed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AdmitSend {
+    pub draft_ref: DraftRef,
+    pub revision: u32,
+    pub request_id: String,
+}
+
 /// Raw, possibly incomplete editor text. No send-readiness claim or normalization.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -68,6 +105,8 @@ pub struct DraftReplyLink {
     pub source_message_id: String,
     pub message_id: String,
     pub references: Vec<String>,
+    #[serde(default)]
+    pub source_subject: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

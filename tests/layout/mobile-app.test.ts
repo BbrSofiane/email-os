@@ -354,7 +354,7 @@ describe('App compact and regular frame', () => {
     expect(wrapper.get('[data-test="mobile-top-bar"]').attributes('inert')).toBeDefined();
     expect(wrapper.get('.app-main').attributes('inert')).toBeDefined();
     expect(wrapper.get('[data-test="mobile-bottom-region"]').attributes('inert')).toBeDefined();
-    expect(wrapper.get('[data-test="draft-status"]').text()).toContain('never sent');
+    expect(wrapper.get('[data-test="draft-status"]').text()).toBe('Saved in preview memory (non-durable)');
     expect(wrapper.find('[data-test="close-composer"]').exists()).toBe(false);
     expect(wrapper.get('[data-test="compose-sheet-close"]').attributes('aria-label')).toBe('Save and close');
     expect(wrapper.get('[data-test="compose-sheet-close"]').attributes('title')).toBe('Save and close');

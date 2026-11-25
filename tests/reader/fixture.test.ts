@@ -47,6 +47,7 @@ describe('derives reply targets from safe fixture metadata (P2-09)', () => {
       sourceMessageId: 'read-03-m1',
       messageId: '<read-03-m1@mail.test>',
       references: ['<read-03-m1@mail.test>'],
+      sourceSubject: 'Neighbor thread read-03',
     });
     expect(controls.draftCreations).toHaveLength(1);
     expect(controls.draftCreations[0]!.source).toEqual({
@@ -71,6 +72,7 @@ describe('derives reply targets from safe fixture metadata (P2-09)', () => {
       sourceMessageId: 'read-01-m3',
       messageId: '<read-01-m3@mail.test>',
       references: ['<read-01-m1@mail.test>', '<read-01-m2@mail.test>', '<read-01-m3@mail.test>'],
+      sourceSubject: 'Reader journey thread',
     });
   });
 
@@ -184,6 +186,7 @@ describe('derives reply targets from safe fixture metadata (P2-09)', () => {
       sourceMessageId: 'read-03-m1',
       messageId: '<read-03-m1@mail.test>',
       references: ['<read-03-m1@mail.test>'],
+      sourceSubject: 'Neighbor thread read-03',
     });
   });
 

@@ -43,6 +43,7 @@
  */
 import { computed, nextTick, ref, useId, watchPostEffect } from 'vue';
 import type { DraftRef, DraftSummary, MailError } from '../lib/ipc/client';
+import type { SendStatus } from '../lib/ipc/generated';
 import { compactDateLabel, fullDateLabel, machineDateTime } from '../lib/browsing-dates';
 import { describeDiscardError, isDefiniteDiscardFailure, type DiscardBusyReason } from '../lib/draft-errors';
 import { useDraftPreviews } from '../composables/useDraftPreviews';
@@ -57,6 +58,8 @@ interface DraftItem { key: string; draft: DraftSummary }
 
 const props = defineProps<DraftAlertProps & {
   summaries: readonly DraftSummary[];
+  sendAvailable?: boolean;
+  sendStates?: ReadonlyMap<string, SendStatus>;
   /** The remembered current row (restored after a reader or editor round trip). */
   activeKey: string | null;
   /** The editor's draft, to mark the one in conflict. */
@@ -77,6 +80,7 @@ const props = defineProps<DraftAlertProps & {
 const emit = defineEmits<{
   newDraft: [];
   open: [draft: DraftSummary];
+  openSendActivity: [];
   'update:activeKey': [key: string];
   retryDraftSubscription: [];
   retryClose: [];
@@ -166,7 +170,12 @@ function openPending(ref: DraftRef): boolean {
   return !!props.openingRefs?.some((opening) => opening.accountId === ref.accountId && opening.draftId === ref.draftId);
 }
 function discardDisabled(item: DraftItem): boolean {
-  return props.busy || discarding.value || editorOwns(item.draft.ref) || openPending(item.draft.ref);
+  return props.busy || discarding.value || editorOwns(item.draft.ref) || openPending(item.draft.ref)
+    || sendOwns(item);
+}
+function sendOwns(item: DraftItem): boolean {
+  const state = props.sendStates?.get(item.key)?.state;
+  return state === 'hold' || state === 'queued' || state === 'applying' || state === 'unknown';
 }
 /** A row whose delete is running is not opened. */
 function openLocked(item: DraftItem): boolean {
@@ -179,7 +188,9 @@ function busyReason(ref: DraftRef): DiscardBusyReason {
   return props.closingForWindow ? 'closing_window' : props.busy ? 'switching' : 'editor';
 }
 function onOpen(item: DraftItem): void {
-  if (!openLocked(item)) emit('open', item.draft);
+  if (openLocked(item)) return;
+  if (sendOwns(item)) emit('openSendActivity');
+  else emit('open', item.draft);
 }
 
 function rowEl(item: DraftItem, selector: string): HTMLElement | null {
@@ -294,7 +305,8 @@ defineExpose({ focusRow, discardRow, el: paneEl });
 
     <!-- The one standing local-only line; the sentence is its title and hidden text. -->
     <div class="context-coverage">
-      <p class="cached-coverage" role="note" data-test="drafts-coverage" :title="LOCAL_DETAIL">{{ LOCAL_LINE }}<span class="visually-hidden">. {{ LOCAL_DETAIL }}</span></p>
+      <p v-if="sendAvailable" class="cached-coverage" role="note" data-test="drafts-coverage">Local to this device</p>
+      <p v-else class="cached-coverage" role="note" data-test="drafts-coverage" :title="LOCAL_DETAIL">{{ LOCAL_LINE }}<span class="visually-hidden">. {{ LOCAL_DETAIL }}</span></p>
       <button type="button" class="drawer-quiet" data-test="new-draft" :disabled="busy" @click="emit('newDraft')">New draft</button>
     </div>
 
@@ -340,6 +352,10 @@ defineExpose({ focusRow, discardRow, el: paneEl });
         >Discard</button>
       </template>
       <template #trailing="{ item }">
+        <span v-if="sendOwns(item)" class="activity-status">
+          {{ sendStates?.get(item.key)?.state === 'unknown' ? 'Send outcome unknown' : sendStates?.get(item.key)?.state === 'applying' ? 'Sending…' : 'Queued to send' }}
+        </span>
+        <span v-else-if="sendStates?.get(item.key)?.state === 'cancelled'" class="activity-status">Not sent</span>
         <span v-if="inConflict(item.draft.ref)" :id="descId(item, 'conflict')" class="activity-status tone-warn" data-test="draft-row-conflict">Conflict · revision {{ item.draft.revision }}</span>
         <span v-if="item.draft.source.kind === 'reply'" :id="descId(item, 'reply')" class="draft-reply">Reply</span>
         <time class="draft-date row-time" :datetime="machineDateTime(item.draft.updatedAt)" :title="fullDateLabel(item.draft.updatedAt)">{{ compactDateLabel(item.draft.updatedAt) }}</time>

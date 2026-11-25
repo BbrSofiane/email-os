@@ -1181,7 +1181,7 @@ fn triage_fact_migration_keeps_legacy_membership_unknown() {
     {
         let conn = store.lock_conn().unwrap();
         conn.execute("INSERT INTO gmail_message_facts (account_id, conversation_id, message_id, in_inbox, is_unread) VALUES ('a', 'c', 'm', 0, 1)", []).unwrap();
-        conn.execute_batch("ALTER TABLE gmail_message_facts DROP COLUMN in_trash; ALTER TABLE gmail_message_facts DROP COLUMN in_spam; UPDATE meta SET value = 'gmail-2' WHERE key = 'schema_version';").unwrap();
+        conn.execute_batch("ALTER TABLE gmail_message_facts DROP COLUMN in_trash; ALTER TABLE gmail_message_facts DROP COLUMN in_spam; DROP TABLE gmail_send_intents; UPDATE meta SET value = 'gmail-2' WHERE key = 'schema_version';").unwrap();
     }
     drop(store);
     let reopened = GmailStore::open(dir.path(), Arc::new(SystemClock)).unwrap();
@@ -1333,9 +1333,8 @@ fn reply_context_cache_is_additive_persistent_and_metadata_only() {
         )
         .expect("simulate legacy schema");
     legacy
-        .execute(
-            "UPDATE meta SET value = 'gmail-2' WHERE key = 'schema_version'",
-            [],
+        .execute_batch(
+            "DROP TABLE gmail_send_intents; UPDATE meta SET value = 'gmail-2' WHERE key = 'schema_version';",
         )
         .unwrap();
     drop(legacy);
@@ -1618,7 +1617,7 @@ fn migration_backfills_inbox_membership_from_existing_message_rows() {
     // backfills the table from its existing message rows.
     let legacy = Connection::open(dir.path().join("gmail.db")).expect("open legacy db");
     legacy
-            .execute_batch("DROP TABLE gmail_inbox_membership; UPDATE meta SET value = 'gmail-1' WHERE key = 'schema_version';")
+            .execute_batch("DROP TABLE gmail_inbox_membership; DROP TABLE gmail_send_intents; UPDATE meta SET value = 'gmail-1' WHERE key = 'schema_version';")
             .expect("remove newly introduced table");
     drop(legacy);
     let migrated = GmailStore::open(dir.path(), Arc::new(SystemClock)).expect("migrated store");
@@ -2377,9 +2376,8 @@ fn list_cached_done_membership_scoping_ordering_bounds_and_recovery() {
         )
         .unwrap();
         // Simulate a pre-UX03 profile: reopen must backfill lightweight sort metadata.
-        conn.execute(
-            "UPDATE meta SET value = 'gmail-2' WHERE key = 'schema_version'",
-            [],
+        conn.execute_batch(
+            "DROP TABLE gmail_send_intents; UPDATE meta SET value = 'gmail-2' WHERE key = 'schema_version';",
         )
         .unwrap();
         conn.execute(
@@ -3361,4 +3359,90 @@ fn message_html_state_serde() {
         .is_none());
     msg.html_body = Some(HtmlBodyState::TooLarge);
     assert_eq!(serde_json::to_value(&msg).unwrap()["htmlBody"], "too_large");
+}
+
+#[test]
+fn send_hold_deadline_and_restart_recovery_are_atomic() {
+    let clock = Arc::new(crate::clock::FakeClock::new(crate::clock::utc(
+        "2026-01-01T00:00:00Z",
+    )));
+    let (store, _dir) = open_store_with_clock("send-hold-transitions", clock.clone());
+    store
+        .begin_account(&profile("acct", "acct@example.test", "hist-1"), 0)
+        .unwrap();
+    let intent = |id: &str| crate::gmail::store::send::SendIntent {
+        account_id: "acct".into(),
+        operation_id: id.into(),
+        draft_id: id.into(),
+        draft_revision: 1,
+        request_id: id.into(),
+        frozen_mime: vec![1],
+        not_before: "2026-01-01T00:00:05Z".into(),
+        state: "hold".into(),
+        retry_of: None,
+        dismissed: false,
+        subject: None,
+        first_recipient: None,
+        state_changed_at: None,
+    };
+    store.insert_send_intent(&intent("undo")).unwrap();
+    store.insert_send_intent(&intent("release")).unwrap();
+    store.insert_send_intent(&intent("restart")).unwrap();
+    assert!(!store.claim_send("acct", "release").unwrap());
+    assert!(store.undo_send("acct", "undo").unwrap());
+    assert!(store.undo_send("acct", "undo").unwrap());
+    clock.advance_seconds(5);
+    assert!(!store.undo_send("acct", "release").unwrap());
+    assert_eq!(store.release_due_sends("acct").unwrap(), 2);
+    assert!(store.claim_send("acct", "release").unwrap());
+    assert!(!store.claim_send("acct", "release").unwrap());
+    assert!(!store
+        .cancel_queued_send_for_generation("acct", "release", 0)
+        .unwrap());
+    assert!(!store
+        .cancel_queued_send_for_generation("acct", "restart", 1)
+        .unwrap());
+    assert!(store
+        .cancel_queued_send_for_generation("acct", "restart", 0)
+        .unwrap());
+    assert!(!store.claim_send("acct", "restart").unwrap());
+    store.insert_send_intent(&intent("new-hold")).unwrap();
+    store.recover_send_intents().unwrap();
+    assert_eq!(
+        store
+            .send_receipt("acct", "release")
+            .unwrap()
+            .unwrap()
+            .state,
+        "unknown"
+    );
+    assert_eq!(
+        store
+            .send_receipt("acct", "new-hold")
+            .unwrap()
+            .unwrap()
+            .state,
+        "cancelled"
+    );
+    assert!(!store.claim_send("acct", "release").unwrap());
+
+    let mut failed = intent("failed");
+    failed.state = "failed".into();
+    store.insert_send_intent(&failed).unwrap();
+    let mut retry = failed.clone();
+    retry.operation_id = "retry".into();
+    retry.request_id = "retry".into();
+    retry.state = "hold".into();
+    retry.retry_of = Some("failed".into());
+    assert!(store.insert_retry_send(&retry, 1).is_err());
+    store.insert_retry_send(&retry, 0).unwrap();
+    let persisted = store.send_receipt("acct", "retry").unwrap().unwrap();
+    assert_eq!(persisted.retry_of, retry.retry_of);
+    assert_eq!(persisted.frozen_mime, failed.frozen_mime);
+    retry.operation_id = "stale".into();
+    retry.request_id = "stale".into();
+    assert!(store.insert_retry_send(&retry, 0).is_err());
+    retry.draft_id = "release".into();
+    retry.retry_of = Some("release".into());
+    assert!(store.insert_retry_send(&retry, 0).is_err());
 }

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-undo-send"
+description = "Enables the undo_send command without any pre-configured scope."
+commands.allow = ["undo_send"]
+
+[[permission]]
+identifier = "deny-undo-send"
+description = "Denies the undo_send command without any pre-configured scope."
+commands.deny = ["undo_send"]

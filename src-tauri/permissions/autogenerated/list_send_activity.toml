@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-send-activity"
+description = "Enables the list_send_activity command without any pre-configured scope."
+commands.allow = ["list_send_activity"]
+
+[[permission]]
+identifier = "deny-list-send-activity"
+description = "Denies the list_send_activity command without any pre-configured scope."
+commands.deny = ["list_send_activity"]

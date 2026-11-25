@@ -33,14 +33,36 @@ describe('local plain-text drafts UI', () => {
     vi.useRealTimers();
   });
 
+  it('sends, undoes, restores exact fields, and opens the confirmed conversation', async () => {
+    const fake = createBrowserFakeMailClient();
+    const w = await mountDraftsApp(fake);
+    await startNewDraft(w);
+    const fields = { to: 'a@example.test', cc: 'b@example.test', subject: 'Fixture subject', body: 'First line\nUnicode ✓' };
+    for (const [field, value] of Object.entries(fields)) await w.get(`[data-test="draft-${field}"]`).setValue(value);
+    await w.get('[data-test="send-draft"]').trigger('click');
+    await flushPromises();
+    expect(w.find('[data-test="composer"]').exists()).toBe(false);
+    await w.get('[data-test="send-notice"] button').trigger('click');
+    await flushPromises();
+    for (const [field, value] of Object.entries(fields)) expect((w.get(`[data-test="draft-${field}"]`).element as HTMLInputElement).value).toBe(value);
+    await w.get('[data-test="send-draft"]').trigger('click');
+    await flushPromises();
+    vi.advanceTimersByTime(5000);
+    await flushPromises();
+    await openUtilityDrawer(w, 'activity');
+    await flushPromises();
+    const open = w.findAll('button').find((button) => button.text() === 'Open conversation');
+    expect(open).toBeDefined();
+    await open!.trigger('click');
+    await flushPromises();
+    expect(w.text()).toContain(fields.body);
+  });
+
   it('creates, autosaves, closes, and reopens exact raw text in all four fields', async () => {
     const fake = createBrowserFakeMailClient();
     const w = await mountDraftsApp(fake);
     await startNewDraft(w);
     await w.find('[data-test="draft-to"]').setValue('  not an address, left as typed  ');
-    // Cc is on demand in the new-message layout.
-    expect(w.find('[data-test="draft-cc"]').exists()).toBe(false);
-    await w.find('[data-test="draft-fields-toggle"]').trigger('click');
     await w.find('[data-test="draft-cc"]').setValue('cc raw; no validation');
     await w.find('[data-test="draft-subject"]').setValue('<literal subject>');
     await w.find('[data-test="draft-body"]').setValue('Unicode ✓\n<script>still text</script>\nlast line');
@@ -490,7 +512,7 @@ describe('local plain-text drafts UI', () => {
     await flushPromises();
     expect(commands).toHaveLength(2);
     expect(commands[1]).toEqual(commands[0]);
-    expect((w.find('[data-test="draft-status"]').text())).toBe('Saved in preview memory (non-durable) · never sent');
+    expect((w.find('[data-test="draft-status"]').text())).toBe('Saved in preview memory (non-durable)');
     expect(await fake.getDraft(commands[0]!.ref)).toMatchObject({ revision: 2, content: { bodyText: 'saved but not yet verified' } });
   });
 
@@ -762,7 +784,7 @@ describe('local plain-text drafts UI', () => {
       const remaining = await fake.listDrafts();
       expect(remaining).toHaveLength(1);
       expect((await fake.getDraft(remaining[0]!.ref)).content.bodyText).toBe('latest exact recovery buffer');
-      expect(w.find('[data-test="draft-status"]').text()).toBe('Saved in preview memory (non-durable) · never sent');
+      expect(w.find('[data-test="draft-status"]').text()).toBe('Saved in preview memory (non-durable)');
       const unload = new Event('beforeunload', { cancelable: true }) as BeforeUnloadEvent;
       window.dispatchEvent(unload);
       expect(unload.defaultPrevented).toBe(false);
@@ -910,7 +932,7 @@ describe('local plain-text drafts UI', () => {
     else oldRetry.resolve({ ref: original.ref, revision: original.revision + 1, savedAt: '2025-01-01T00:00:00Z' });
     await flushPromises();
     expect(w.find('[data-test="draft-error"]').exists()).toBe(false);
-    expect(w.find('[data-test="draft-status"]').text()).toBe('Saved in preview memory (non-durable) · never sent');
+    expect(w.find('[data-test="draft-status"]').text()).toBe('Saved in preview memory (non-durable)');
     const unload = new Event('beforeunload', { cancelable: true }) as BeforeUnloadEvent;
     window.dispatchEvent(unload);
     expect(unload.defaultPrevented).toBe(false);
@@ -1345,7 +1367,7 @@ describe('local plain-text drafts UI', () => {
     expect(fake.controls.closeListenerCount()).toBe(0);
   });
 
-  it('blocks mailbox shortcuts while composing and has no send or submit path', async () => {
+  it('blocks mailbox shortcuts and Enter while composing', async () => {
     const fake = createBrowserFakeMailClient();
     const w = await mountDraftsApp(fake);
     await startNewDraft(w);
@@ -1361,7 +1383,7 @@ describe('local plain-text drafts UI', () => {
     expect(w.find('[data-test="reader"]').exists()).toBe(false);
     expect((w.find('[data-test="draft-body"]').element as HTMLTextAreaElement).value).toBe('e j Enter remain text');
     expect(w.find('form').exists()).toBe(false);
-    expect(w.findAll('button').every((button) => !/send/i.test(button.text()))).toBe(true);
+    expect(w.find('[data-test="send-draft"]').exists()).toBe(true);
     // Escape is the editor's, not the mailbox's and not the app's Back: it closes
     // through the protected flush, saves the exact text and returns to the list.
     press('Escape', { bubbles: true }, window);

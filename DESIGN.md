@@ -513,6 +513,10 @@ The one row anatomy of the utility drawers (Activity). Rows are separated by rhy
 
 Viewport breakpoint: 719px maximum. The palette and system sans remain unchanged; hierarchy uses weight and tone. Compact body/count/headline tokens are overridden in rem; geometry uses px.
 
+At `(max-height: 460px)`, send-capable compose sheets reduce field spacing
+and limit the quoted preview so the editor body and footer remain reachable
+with the keyboard open.
+
 | Token | Value | Use |
 |---|---:|---|
 | `--type-body` | `0.9375rem` | Compact body/list text |
