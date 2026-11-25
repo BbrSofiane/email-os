@@ -27,6 +27,100 @@ const PROFILE: &str = r#"{"emailAddress":"synthetic@example.test","historyId":"1
 const PATH: &str = "/gmail/v1/users/me/profile";
 
 #[test]
+fn send_grant_uses_scope_union_or_skips_consent_when_covered() {
+    let store = Arc::new(MemorySecrets::new());
+    let authorizer = Arc::new(ScriptedAuthorizer::default());
+    let (provider, api) = setup(
+        store.clone(),
+        authorizer.clone(),
+        vec![(PATH, 200, PROFILE)],
+    );
+    let mut bundle = future_token();
+    bundle.platform_authorized = true;
+    bundle.refresh_token = None;
+    bundle.granted_scopes = vec![
+        auth::GMAIL_READONLY_SCOPE.into(),
+        auth::GMAIL_MODIFY_SCOPE.into(),
+    ];
+    store.store(&bundle).unwrap();
+    let cancel = CancelToken::default();
+
+    assert!(matches!(
+        provider.request_grant(GmailGrant::Send, &cancel),
+        Ok(GrantOutcome::AlreadyCovered)
+    ));
+    assert!(authorizer.requests().is_empty());
+    assert!(api.requests().is_empty());
+
+    bundle.granted_scopes = vec![auth::GMAIL_READONLY_SCOPE.into()];
+    store.store(&bundle).unwrap();
+    authorizer.push_authorize(Ok(grant(&[auth::GMAIL_READONLY_SCOPE])));
+    assert!(matches!(
+        provider.request_grant(GmailGrant::Send, &cancel),
+        Err(MailError::PermissionRequired)
+    ));
+    assert_eq!(store.load().unwrap(), Some(bundle));
+
+    authorizer.push_authorize(Ok(grant(&[
+        auth::GMAIL_READONLY_SCOPE,
+        auth::GMAIL_SEND_SCOPE,
+    ])));
+    assert!(matches!(
+        provider.request_grant(GmailGrant::Send, &cancel),
+        Ok(GrantOutcome::Granted(_))
+    ));
+    let requests = authorizer.requests();
+    assert_eq!(requests.len(), 2);
+    for request in requests {
+        assert!(request.interactive);
+        assert_eq!(request.account.as_deref(), Some("synthetic@example.test"));
+        assert_eq!(
+            request.scopes,
+            [auth::GMAIL_READONLY_SCOPE, auth::GMAIL_SEND_SCOPE]
+        );
+    }
+    assert!(provider.grant_covered(GmailGrant::Send).unwrap());
+    assert!(!provider.grant_covered(GmailGrant::Modify).unwrap());
+    assert_eq!(api.requests(), [PATH]);
+}
+
+#[test]
+fn expired_platform_send_is_unknown_without_silent_or_post_replay() {
+    let store = Arc::new(MemorySecrets::new());
+    let authorizer = Arc::new(ScriptedAuthorizer::default());
+    let path = "/gmail/v1/users/me/messages/send";
+    let (provider, api) = setup(store.clone(), authorizer.clone(), vec![(path, 401, "{}")]);
+    let mut bundle = future_token();
+    bundle.platform_authorized = true;
+    bundle.refresh_token = None;
+    bundle.granted_scopes = vec![
+        auth::GMAIL_READONLY_SCOPE.into(),
+        auth::GMAIL_SEND_SCOPE.into(),
+    ];
+    store.store(&bundle).unwrap();
+    let frozen = br#"{"raw":"bWltZQ","threadId":null}"#;
+    let cancel = CancelToken::default();
+    use crate::gmail::types::SendResult;
+
+    assert_eq!(
+        provider.send_for_account("other@example.test", frozen, &cancel),
+        SendResult::Paused
+    );
+    assert!(api.requests().is_empty());
+    assert_eq!(
+        provider.send_for_account("synthetic@example.test", frozen, &cancel),
+        SendResult::Unknown
+    );
+    assert_eq!(api.requests(), [path]);
+    assert!(authorizer.requests().is_empty());
+    assert_eq!(authorizer.cleared_tokens(), ["synthetic-access"]);
+    assert_eq!(
+        serde_json::from_str::<Value>(&api.bodies()[0]).unwrap(),
+        json!({"raw": "bWltZQ"})
+    );
+}
+
+#[test]
 fn connect_upgrade_reconnect_and_disconnect() {
     let store = Arc::new(MemorySecrets::new());
     let auth = Arc::new(ScriptedAuthorizer::default());
