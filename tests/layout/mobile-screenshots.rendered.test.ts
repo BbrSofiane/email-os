@@ -161,6 +161,10 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
         await click('[data-test="rail-activity"]');
       }
       await waitFor(`app.querySelector('[data-test="send-confirmed"] button')`, 'confirmed send');
+      expect(await harness!.cdp.js(`[...document.querySelectorAll(
+        ${JSON.stringify(activeApp)} + ' [data-test="send-activity"] li'
+      )].map(row => [row.dataset.test, row.querySelector('.drawer-subject').textContent.trim()])`))
+        .toEqual([['send-undone', 'Fixture send'], ['send-confirmed', 'Fixture send']]);
       await shot(`${name}-send-activity`);
       await click('[data-test="send-confirmed"] button');
       await waitFor(`app.querySelector('.reader')?.textContent?.includes('The weekly notes are ready.')`, 'sent conversation');

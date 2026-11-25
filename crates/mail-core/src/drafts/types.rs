@@ -43,7 +43,7 @@ pub enum SendState {
     Undone,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SendStatus {
     pub operation_id: String,
@@ -52,6 +52,10 @@ pub struct SendStatus {
     pub not_before: String,
     pub state: SendState,
     pub retry_of: Option<String>,
+    /// These display facts may be absent on intents created before migration 15.
+    pub subject: Option<String>,
+    pub first_recipient: Option<String>,
+    pub state_changed_at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

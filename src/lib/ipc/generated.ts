@@ -493,7 +493,11 @@ export type AdmitSend = { draftRef: DraftRef, revision: number, requestId: strin
 
 export type SendState = "hold" | "queued" | "applying" | "confirmed" | "failed" | "unknown" | "cancelled" | "undone";
 
-export type SendStatus = { operationId: string, draftRef: DraftRef, draftRevision: number, notBefore: string, state: SendState, retryOf: string | null, };
+export type SendStatus = { operationId: string, draftRef: DraftRef, draftRevision: number, notBefore: string, state: SendState, retryOf: string | null,
+/**
+ * These display facts may be absent on intents created before migration 15.
+ */
+subject: string | null, firstRecipient: string | null, stateChangedAt: string | null, };
 
 export type DraftReceipt = { ref: DraftRef, revision: number, savedAt: string, };
 

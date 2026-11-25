@@ -1,4 +1,5 @@
 use super::*;
+use rusqlite::Transaction;
 
 /// Durable send admission. The frozen payload must never be logged.
 #[derive(Clone)]
@@ -13,7 +14,13 @@ pub(crate) struct SendIntent {
     pub state: String,
     pub retry_of: Option<String>,
     pub dismissed: bool,
+    pub subject: Option<String>,
+    pub first_recipient: Option<String>,
+    pub state_changed_at: Option<String>,
 }
+
+const INTENT_COLUMNS: &str = "account_id, operation_id, draft_id, draft_revision, request_id,
+    frozen_mime, not_before, state, retry_of, dismissed, subject, first_recipient, state_changed_at";
 
 fn read_intent(row: &rusqlite::Row<'_>) -> rusqlite::Result<SendIntent> {
     Ok(SendIntent {
@@ -27,7 +34,35 @@ fn read_intent(row: &rusqlite::Row<'_>) -> rusqlite::Result<SendIntent> {
         state: row.get(7)?,
         retry_of: row.get(8)?,
         dismissed: row.get(9)?,
+        subject: row.get(10)?,
+        first_recipient: row.get(11)?,
+        state_changed_at: row.get(12)?,
     })
+}
+
+fn write_intent(tx: &Transaction<'_>, intent: &SendIntent) -> Result<(), MailError> {
+    tx.execute(
+        "INSERT INTO gmail_send_intents
+         (account_id, operation_id, draft_id, draft_revision, request_id, frozen_mime, not_before,
+          state, retry_of, subject, first_recipient, state_changed_at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+        params![
+            intent.account_id,
+            intent.operation_id,
+            intent.draft_id,
+            intent.draft_revision,
+            intent.request_id,
+            intent.frozen_mime,
+            intent.not_before,
+            intent.state,
+            intent.retry_of,
+            intent.subject,
+            intent.first_recipient,
+            intent.state_changed_at,
+        ],
+    )
+    .map_err(storage_err())?;
+    Ok(())
 }
 
 impl GmailStore {
@@ -73,7 +108,7 @@ impl GmailStore {
             SendResult::Refused => ("failed", None, None, false),
             SendResult::Paused => ("queued", None, None, false),
         };
-        let changed = tx.execute("UPDATE gmail_send_intents SET state=?3, provider_message_id=?4, provider_thread_id=?5, frozen_mime=CASE WHEN ?6 THEN X'' ELSE frozen_mime END WHERE account_id=?1 AND operation_id=?2 AND state='applying'", params![account, operation, state, message, thread, clear]).map_err(storage_err())?;
+        let changed = tx.execute("UPDATE gmail_send_intents SET state=?3, provider_message_id=?4, provider_thread_id=?5, frozen_mime=CASE WHEN ?6 THEN X'' ELSE frozen_mime END, state_changed_at=?7 WHERE account_id=?1 AND operation_id=?2 AND state='applying'", params![account, operation, state, message, thread, clear, self.clock.now_iso()]).map_err(storage_err())?;
         tx.commit().map_err(storage_err())?;
         Ok(changed == 1)
     }
@@ -97,8 +132,8 @@ impl GmailStore {
             return Ok(false);
         }
         let changed = tx.execute(
-            "UPDATE gmail_send_intents SET state='confirmed', provider_message_id=?3, provider_thread_id=?4, frozen_mime=X'' WHERE account_id=?1 AND operation_id=?2 AND state='unknown'",
-            params![account, operation, message_id, thread_id],
+            "UPDATE gmail_send_intents SET state='confirmed', provider_message_id=?3, provider_thread_id=?4, frozen_mime=X'', state_changed_at=?5 WHERE account_id=?1 AND operation_id=?2 AND state='unknown'",
+            params![account, operation, message_id, thread_id, self.clock.now_iso()],
         ).map_err(storage_err())?;
         tx.commit().map_err(storage_err())?;
         Ok(changed == 1)
@@ -115,7 +150,7 @@ impl GmailStore {
     ) -> Result<Option<SendIntent>, MailError> {
         self.persistence_gate()?;
         let conn = self.lock_conn()?;
-        conn.query_row("SELECT account_id, operation_id, draft_id, draft_revision, request_id, frozen_mime, not_before, state, retry_of, dismissed FROM gmail_send_intents WHERE account_id=?1 AND request_id=?2", params![account, request], read_intent)
+        conn.query_row(&format!("SELECT {INTENT_COLUMNS} FROM gmail_send_intents WHERE account_id=?1 AND request_id=?2"), params![account, request], read_intent)
             .optional().map_err(storage_err())
     }
 
@@ -126,7 +161,7 @@ impl GmailStore {
         if account_id_of(&tx)? != intent.account_id {
             return Err(MailError::NotFound);
         }
-        tx.execute("INSERT INTO gmail_send_intents(account_id, operation_id, draft_id, draft_revision, request_id, frozen_mime, not_before, state, retry_of) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)", params![intent.account_id, intent.operation_id, intent.draft_id, intent.draft_revision, intent.request_id, intent.frozen_mime, intent.not_before, intent.state, intent.retry_of]).map_err(storage_err())?;
+        write_intent(&tx, intent)?;
         tx.commit().map_err(storage_err())
     }
 
@@ -150,14 +185,14 @@ impl GmailStore {
                 field: "operationId".into(),
             });
         }
-        tx.execute("INSERT INTO gmail_send_intents(account_id, operation_id, draft_id, draft_revision, request_id, frozen_mime, not_before, state, retry_of) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)", params![intent.account_id, intent.operation_id, intent.draft_id, intent.draft_revision, intent.request_id, intent.frozen_mime, intent.not_before, intent.state, intent.retry_of]).map_err(storage_err())?;
+        write_intent(&tx, intent)?;
         tx.commit().map_err(storage_err())
     }
 
     pub(crate) fn list_send_intents(&self, account: &str) -> Result<Vec<SendIntent>, MailError> {
         self.persistence_gate()?;
         let conn = self.lock_conn()?;
-        let mut stmt = conn.prepare("SELECT account_id, operation_id, draft_id, draft_revision, request_id, frozen_mime, not_before, state, retry_of, dismissed FROM gmail_send_intents WHERE account_id=?1 ORDER BY rowid").map_err(storage_err())?;
+        let mut stmt = conn.prepare(&format!("SELECT {INTENT_COLUMNS} FROM gmail_send_intents WHERE account_id=?1 ORDER BY rowid")).map_err(storage_err())?;
         let rows = stmt
             .query_map(params![account], read_intent)
             .map_err(storage_err())?;
@@ -179,7 +214,7 @@ impl GmailStore {
         let mut conn = self.lock_conn()?;
         let tx = conn.transaction().map_err(storage_err())?;
         let now = self.clock.now_iso();
-        tx.execute("UPDATE gmail_send_intents SET state='undone', frozen_mime=X'' WHERE account_id=?1 AND operation_id=?2 AND state='hold' AND julianday(not_before)>julianday(?3)", params![account, operation, now]).map_err(storage_err())?;
+        tx.execute("UPDATE gmail_send_intents SET state='undone', frozen_mime=X'', state_changed_at=?3 WHERE account_id=?1 AND operation_id=?2 AND state='hold' AND julianday(not_before)>julianday(?3)", params![account, operation, now]).map_err(storage_err())?;
         let cancelled = tx.query_row("SELECT state='undone' FROM gmail_send_intents WHERE account_id=?1 AND operation_id=?2", params![account, operation], |row| row.get(0)).optional().map_err(storage_err())?.unwrap_or(false);
         tx.commit().map_err(storage_err())?;
         Ok(cancelled)
@@ -189,7 +224,7 @@ impl GmailStore {
     pub(crate) fn release_due_sends(&self, account: &str) -> Result<usize, MailError> {
         self.persistence_gate()?;
         let conn = self.lock_conn()?;
-        conn.execute("UPDATE gmail_send_intents SET state='queued' WHERE account_id=?1 AND state='hold' AND julianday(not_before)<=julianday(?2)", params![account, self.clock.now_iso()]).map_err(storage_err())
+        conn.execute("UPDATE gmail_send_intents SET state='queued', state_changed_at=?2 WHERE account_id=?1 AND state='hold' AND julianday(not_before)<=julianday(?2)", params![account, self.clock.now_iso()]).map_err(storage_err())
     }
 
     /// Startup recovery must precede release or dispatch.
@@ -197,14 +232,15 @@ impl GmailStore {
         self.persistence_gate()?;
         let mut conn = self.lock_conn()?;
         let tx = conn.transaction().map_err(storage_err())?;
+        let now = self.clock.now_iso();
         tx.execute(
-            "UPDATE gmail_send_intents SET state='cancelled', frozen_mime=X'' WHERE state='hold'",
-            [],
+            "UPDATE gmail_send_intents SET state='cancelled', frozen_mime=X'', state_changed_at=?1 WHERE state='hold'",
+            [&now],
         )
         .map_err(storage_err())?;
         tx.execute(
-            "UPDATE gmail_send_intents SET state='unknown' WHERE state='applying'",
-            [],
+            "UPDATE gmail_send_intents SET state='unknown', state_changed_at=?1 WHERE state='applying'",
+            [&now],
         )
         .map_err(storage_err())?;
         tx.commit().map_err(storage_err())
@@ -215,7 +251,7 @@ impl GmailStore {
     pub(crate) fn claim_send(&self, account: &str, operation: &str) -> Result<bool, MailError> {
         self.persistence_gate()?;
         let conn = self.lock_conn()?;
-        let changed = conn.execute("UPDATE gmail_send_intents SET state='applying' WHERE account_id=?1 AND operation_id=?2 AND state='queued' AND julianday(not_before)<=julianday(?3)", params![account, operation, self.clock.now_iso()]).map_err(storage_err())?;
+        let changed = conn.execute("UPDATE gmail_send_intents SET state='applying', state_changed_at=?3 WHERE account_id=?1 AND operation_id=?2 AND state='queued' AND julianday(not_before)<=julianday(?3)", params![account, operation, self.clock.now_iso()]).map_err(storage_err())?;
         Ok(changed == 1)
     }
 
@@ -233,7 +269,7 @@ impl GmailStore {
         if generation_of(&tx)? != generation || account_id_of(&tx)? != account {
             return Ok(false);
         }
-        let changed = tx.execute("UPDATE gmail_send_intents SET state='applying' WHERE account_id=?1 AND operation_id=?2 AND state='queued' AND julianday(not_before)<=julianday(?3)", params![account, operation, self.clock.now_iso()]).map_err(storage_err())?;
+        let changed = tx.execute("UPDATE gmail_send_intents SET state='applying', state_changed_at=?3 WHERE account_id=?1 AND operation_id=?2 AND state='queued' AND julianday(not_before)<=julianday(?3)", params![account, operation, self.clock.now_iso()]).map_err(storage_err())?;
         tx.commit().map_err(storage_err())?;
         Ok(changed == 1)
     }
@@ -251,8 +287,8 @@ impl GmailStore {
             return Ok(false);
         }
         let changed = tx.execute(
-            "UPDATE gmail_send_intents SET state='cancelled', frozen_mime=X'' WHERE account_id=?1 AND operation_id=?2 AND state='queued'",
-            params![account, operation],
+            "UPDATE gmail_send_intents SET state='cancelled', frozen_mime=X'', state_changed_at=?3 WHERE account_id=?1 AND operation_id=?2 AND state='queued'",
+            params![account, operation, self.clock.now_iso()],
         ).map_err(storage_err())?;
         tx.commit().map_err(storage_err())?;
         Ok(changed == 1)

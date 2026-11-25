@@ -3381,6 +3381,9 @@ fn send_hold_deadline_and_restart_recovery_are_atomic() {
         state: "hold".into(),
         retry_of: None,
         dismissed: false,
+        subject: None,
+        first_recipient: None,
+        state_changed_at: None,
     };
     store.insert_send_intent(&intent("undo")).unwrap();
     store.insert_send_intent(&intent("release")).unwrap();

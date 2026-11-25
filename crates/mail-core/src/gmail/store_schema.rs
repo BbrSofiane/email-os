@@ -5,7 +5,7 @@ use super::{has_column, meta_get, meta_set, MailError, SCHEMA_VERSION};
 use crate::storage_log::{storage_err, storage_fault};
 use rusqlite::Connection;
 
-const CURRENT: u32 = 14;
+const CURRENT: u32 = 15;
 
 pub(super) fn migrate(conn: &mut Connection) -> Result<(), MailError> {
     migrate_with_hook(conn, |_| Ok(()))
@@ -169,6 +169,12 @@ fn apply(conn: &Connection, version: u32) -> Result<(), MailError> {
         }
         14 => {
             conn.execute_batch("ALTER TABLE gmail_send_intents ADD COLUMN dismissed INTEGER NOT NULL DEFAULT 0 CHECK (dismissed IN (0, 1));")
+                .map_err(storage_err())?;
+        }
+        15 => {
+            conn.execute_batch("ALTER TABLE gmail_send_intents ADD COLUMN subject TEXT;
+                ALTER TABLE gmail_send_intents ADD COLUMN first_recipient TEXT;
+                ALTER TABLE gmail_send_intents ADD COLUMN state_changed_at TEXT;")
                 .map_err(storage_err())?;
         }
         _ => unreachable!("only ordered known migration numbers are dispatched"),

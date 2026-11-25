@@ -252,7 +252,9 @@ through. Continue clearing credentials and the ordinary cache on disconnect.
   operation. A successful Undo reopens the preserved draft and returns focus
   to the editor. Expiry removes the action quietly. If a newer editor is open,
   save it through the normal close flow before switching to the restored draft.
-- In both layouts, use persistent send rows with short status copy. Show
+- In both layouts, use persistent send rows with the subject, first recipient,
+  short status copy, and the time the state changed. The ledger snapshots the
+  display metadata at admission so it remains available after cleanup. Show
   “Queued to send,” “Sending…,” “Sent,” “Send failed,” or “Send outcome
   unknown,” with the relevant reason and action. A failed draft is available
   to reopen. Unknown shows Check status, Copy to a new draft and Dismiss.
@@ -338,7 +340,7 @@ Stage 7 starts after B's scope-upgrade mechanism is merged.
 Track C merged in `7f5b95d`. Its cache schema ends at
 [`gmail-migrations-10`](../../crates/mail-core/src/gmail/store.rs#L47), so
 send ledger storage uses `gmail-migrations-11` through
-`gmail-migrations-14`. Preserve the HTML and
+`gmail-migrations-15`, including the Activity display metadata. Preserve the HTML and
 inline-image IPC paths and use the existing
 [`openNew(source, initial)` editor path](../../src/composables/useDrafts.ts#L486)
 when opening a newly copied draft. Android fixture validation uses

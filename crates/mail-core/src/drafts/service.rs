@@ -48,6 +48,9 @@ fn send_status(
         not_before: intent.not_before,
         state,
         retry_of: intent.retry_of,
+        subject: intent.subject,
+        first_recipient: intent.first_recipient,
+        state_changed_at: intent.state_changed_at,
     })
 }
 
@@ -555,6 +558,7 @@ impl DraftService {
                 current_revision: draft.revision,
             });
         }
+        let now = self.core.send_now()?;
         let intent = crate::gmail::store::send::SendIntent {
             account_id: account.account_id,
             operation_id: uuid::Uuid::new_v4().to_string(),
@@ -562,10 +566,13 @@ impl DraftService {
             draft_revision: previous.draft_revision,
             request_id: request.to_owned(),
             frozen_mime: previous.frozen_mime,
-            not_before: (self.core.send_now()? + chrono::Duration::seconds(5)).to_rfc3339(),
+            not_before: (now + chrono::Duration::seconds(5)).to_rfc3339(),
             state: "hold".into(),
             retry_of: Some(operation.to_owned()),
             dismissed: false,
+            subject: previous.subject,
+            first_recipient: previous.first_recipient,
+            state_changed_at: Some(now.to_rfc3339()),
         };
         self.drafts
             .acquire_send_lock(&draft_ref, intent.draft_revision, &intent.operation_id)?;
@@ -711,6 +718,9 @@ impl DraftService {
             state: "hold".into(),
             retry_of: None,
             dismissed: false,
+            subject: Some(draft.content.subject),
+            first_recipient: Some(mime.first_recipient),
+            state_changed_at: Some(now.to_rfc3339()),
         };
         self.drafts
             .acquire_send_lock(draft_ref, revision, &intent.operation_id)?;
@@ -790,13 +800,22 @@ mod tests {
                 request_id: "draft".into(),
                 source: DraftSource::NewMessage,
                 initial_content: Some(DraftContent {
-                    to: "recipient@example.com".into(),
+                    to: "recipient@example.com, other@example.com".into(),
                     cc: String::new(),
                     subject: "Subject".into(),
                     body_text: "Body".into(),
                 }),
             })
             .unwrap();
+        let original = service
+            .admit_send(&draft.draft_ref, draft.revision, "undo")
+            .unwrap();
+        s.clock.advance_seconds(2);
+        assert_eq!(
+            service.undo_send(&original.operation_id).unwrap(),
+            Some(draft.draft_ref.clone())
+        );
+        let undone_at = s.core.send_now().unwrap();
         let intent = service
             .admit_send(&draft.draft_ref, draft.revision, "send")
             .unwrap();
@@ -821,7 +840,7 @@ mod tests {
             true,
         );
         let drafts = DraftCore::open(s.dir.path().join("local-drafts")).unwrap();
-        let _service = DraftService::new(reopened.clone(), drafts);
+        let service = DraftService::new(reopened.clone(), drafts);
         assert_eq!(
             reopened
                 .send_receipt(&intent.account_id, "send")
@@ -840,6 +859,33 @@ mod tests {
         reopened.wake_send_worker();
         reopened.wait_for_test_idle(TIMEOUT).unwrap();
         assert_eq!(s.provider.send_calls(), 1);
+        assert!(matches!(
+            service.get_draft(&draft.draft_ref),
+            Err(MailError::NotFound)
+        ));
+        let activity = service.send_activity().unwrap();
+        let [undone, confirmed] = activity.as_slice() else {
+            panic!("expected one Activity row for each accepted send");
+        };
+        assert_eq!(undone.operation_id, original.operation_id);
+        assert_eq!(undone.state, crate::drafts::types::SendState::Undone);
+        assert_eq!(confirmed.operation_id, intent.operation_id);
+        assert_eq!(confirmed.state, crate::drafts::types::SendState::Confirmed);
+        for (row, at) in [
+            (undone, undone_at),
+            (confirmed, reopened.send_now().unwrap()),
+        ] {
+            assert_eq!(row.subject.as_deref(), Some("Subject"));
+            assert_eq!(
+                row.first_recipient.as_deref(),
+                Some("recipient@example.com")
+            );
+            assert_eq!(
+                chrono::DateTime::parse_from_rfc3339(row.state_changed_at.as_deref().unwrap())
+                    .unwrap(),
+                at
+            );
+        }
         let sent = reopened
             .load_confirmed_send_thread(&intent.operation_id)
             .unwrap();
@@ -1073,6 +1119,9 @@ mod tests {
                 state: "confirmed".into(),
                 retry_of: None,
                 dismissed: false,
+                subject: Some("Subject".into()),
+                first_recipient: Some("recipient@example.com".into()),
+                state_changed_at: None,
             })
             .unwrap();
         assert!(matches!(

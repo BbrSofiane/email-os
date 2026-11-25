@@ -44,7 +44,7 @@ struct StoredInlinePart {
 /// discovery/history pass. Disclosed to the wire through `SyncInfo.coverageLimit`.
 pub(crate) const DISCOVERY_CAP: usize = 100;
 
-const SCHEMA_VERSION: &str = "gmail-migrations-14";
+const SCHEMA_VERSION: &str = "gmail-migrations-15";
 
 #[path = "store/acceptance.rs"]
 mod acceptance;

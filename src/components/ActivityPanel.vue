@@ -23,6 +23,7 @@
 import { computed } from 'vue';
 import type { ConversationRef, MailError, OperationGroupStatus, OperationGroupSummary } from '../lib/ipc/client';
 import type { OperationSummaryLike } from '../composables/useMailbox';
+import type { SendState, SendStatus } from '../lib/ipc/generated';
 import { useDrawerRows } from '../composables/useDrawerRows';
 import FullDate from './FullDate.vue';
 
@@ -36,10 +37,20 @@ const SKIP_REASON_LABELS: Record<string, string> = {
 };
 
 const RETRY_TITLE = 'Retry with a new request ID. The original result is not rewritten.';
+const SEND_STATE_LABELS: Record<SendState, string> = {
+  hold: 'Queued to send',
+  queued: 'Queued to send',
+  applying: 'Sending…',
+  confirmed: 'Sent',
+  failed: 'Send failed',
+  unknown: 'Send outcome unknown',
+  cancelled: 'Cancelled',
+  undone: 'Not sent',
+};
 
 const props = defineProps<{
   activity: OperationSummaryLike[];
-  sends?: import('../lib/ipc/generated').SendStatus[];
+  sends?: SendStatus[];
   sendBusy?: boolean;
   /** Whether authoritative status currently permits mailbox commands. */
   actionsEnabled?: boolean;
@@ -173,6 +184,10 @@ function subjectText(ref: ConversationRef): string {
   return subject.trim() === '' ? '(No subject)' : subject;
 }
 
+function sendSubject(subject: string | null): string {
+  return subject === null ? 'Unknown subject' : subject.trim() || '(no subject)';
+}
+
 /** The opaque id is evidence for a title, never row text. */
 function idTitle(ref: ConversationRef): string {
   return `Conversation ${ref.conversationId}`;
@@ -203,12 +218,17 @@ const rows = useDrawerRows({ keys: () => rowKeys.value });
     <div v-if="(sends ?? []).length" class="drawer-section" data-test="send-activity">
       <h3 class="drawer-section-title">Sending</h3>
       <ul class="drawer-rows">
-        <li v-for="send in sends" :key="send.operationId" class="activity-row" :data-test="`send-${send.state}`">
-          <div class="drawer-row">
-            <span class="drawer-subject">{{ ({ hold: 'Queued to send', queued: 'Queued to send', applying: 'Sending…', confirmed: 'Sent', failed: 'Send failed', unknown: 'Send outcome unknown', cancelled: 'Cancelled', undone: 'Not sent' })[send.state] }}</span>
+        <li v-for="send in sends" :key="send.operationId" class="activity-row activity-send" :data-test="`send-${send.state}`">
+          <div class="drawer-subject" :title="sendSubject(send.subject)">{{ sendSubject(send.subject) }}</div>
+          <div class="drawer-subject activity-send-recipient" :title="send.firstRecipient ?? undefined">
+            {{ send.firstRecipient ? `To ${send.firstRecipient}` : 'Unknown recipient' }}
+          </div>
+          <div class="activity-send-meta">
+            <span>{{ SEND_STATE_LABELS[send.state] }}</span>
+            <FullDate class="drawer-date" :at="send.stateChangedAt ?? ''" />
           </div>
           <p v-if="send.state === 'unknown'" class="drawer-note">The first message may already have been sent.</p>
-          <p class="drawer-line">
+          <p v-if="['queued', 'failed', 'unknown', 'confirmed'].includes(send.state)" class="drawer-line">
             <button v-if="send.state === 'queued'" class="drawer-quiet" :disabled="sendBusy" @click="emit('sendAction', 'cancel', send.operationId)">Cancel queued send</button>
             <button v-if="send.state === 'failed'" class="drawer-quiet" :disabled="sendBusy" @click="emit('sendAction', 'retry', send.operationId)">Retry</button>
             <button v-if="send.state === 'failed'" class="drawer-quiet" :disabled="sendBusy" @click="emit('sendAction', 'openDraft', send.operationId)">Open draft</button>
@@ -430,3 +450,23 @@ const rows = useDrawerRows({ keys: () => rowKeys.value });
     </div>
   </div>
 </template>
+
+<style scoped>
+.activity-send {
+  min-width: 0;
+}
+
+.activity-send + .activity-send {
+  margin-top: 12px;
+}
+
+.activity-send-recipient {
+  color: var(--text-secondary);
+}
+
+.activity-send-meta {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 12px;
+}
+</style>

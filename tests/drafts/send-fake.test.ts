@@ -30,7 +30,7 @@ describe('fixture send transport', () => {
     const receipt = await send.admit(command);
     vi.advanceTimersByTime(5000);
     expect((await send.listActivity())[0]?.state).toBe('confirmed');
-    expect(await send.admit(command)).toEqual({ ...receipt, state: 'confirmed' });
+    expect(await send.admit(command)).toEqual({ ...receipt, state: 'confirmed', stateChangedAt: receipt.notBefore });
     await expect(fake.getDraft(draft.ref)).rejects.toBeDefined();
   });
   it('does not replay an unknown outcome', async () => {

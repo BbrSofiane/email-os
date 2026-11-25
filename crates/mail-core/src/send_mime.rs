@@ -18,6 +18,7 @@ use crate::{
 pub struct SendMime {
     pub raw: String,
     pub thread_id: Option<String>,
+    pub first_recipient: String,
 }
 
 fn invalid(field: &str) -> MailError {
@@ -170,6 +171,7 @@ pub fn build_send_mime(
     Ok(SendMime {
         raw: URL_SAFE_NO_PAD.encode(out.as_bytes()),
         thread_id,
+        first_recipient: to.into_iter().next().expect("validated nonempty To"),
     })
 }
 

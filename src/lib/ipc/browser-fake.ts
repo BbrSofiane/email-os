@@ -1188,16 +1188,20 @@ export function createBrowserFakeMailClient(
   const locked = (ref: DraftRef): boolean => sends.some((entry) =>
     draftKey(entry.status.draftRef) === draftKey(ref) &&
     ['hold', 'queued', 'applying', 'unknown'].includes(entry.status.state));
+  function setSendState(status: SendStatus, state: SendStatus['state']): void {
+    status.state = state;
+    status.stateChangedAt = now();
+  }
   function advanceSends(): void {
     for (const entry of sends) {
-      if (entry.status.state === 'hold' && now() >= entry.status.notBefore) entry.status.state = 'queued';
+      if (entry.status.state === 'hold' && now() >= entry.status.notBefore) setSendState(entry.status, 'queued');
       if (entry.status.state !== 'queued') continue;
       if (behavior.holdQueued) continue;
       if (behavior.failNext > 0) {
         behavior.failNext -= 1;
-        entry.status.state = behavior.failureKind === 'outcome_unknown' ? 'unknown' : 'failed';
+        setSendState(entry.status, behavior.failureKind === 'outcome_unknown' ? 'unknown' : 'failed');
       } else {
-        entry.status.state = 'confirmed';
+        setSendState(entry.status, 'confirmed');
         const draft = entry.draft;
         let conv = draft.source.kind === 'reply' ? byId(draft.source.conversation.conversationId) : undefined;
         if (!conv) {
@@ -1228,9 +1232,24 @@ export function createBrowserFakeMailClient(
       if (!draft) throw failNotShown();
       if (draft.revision !== command.revision) throw { kind: 'draft_conflict', currentRevision: draft.revision } satisfies MailError;
       if (locked(draft.ref)) throw { kind: 'busy' } satisfies MailError;
-      const recipients = [draft.content.to, draft.content.cc].flatMap((value) => value.split(',').map((v) => v.trim()).filter(Boolean));
-      if (!draft.content.to.trim() || recipients.length > 20 || recipients.some((v) => !/^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/.test(v))) throw { kind: 'invalid_request', field: 'to' } satisfies MailError;
-      const status: SendStatus = { operationId: `send-${++sendCounter}`, draftRef: snapshotCopy(draft.ref), draftRevision: draft.revision, notBefore: new Date(Date.parse(now()) + 5000).toISOString(), state: 'hold', retryOf: null };
+      const firstRecipient = draft.content.to.split(',')[0]?.trim();
+      const recipients = [draft.content.to, draft.content.cc].flatMap((value) =>
+        value.split(',').map((address) => address.trim()).filter(Boolean));
+      if (!firstRecipient || recipients.length > 20 || recipients.some((address) => !/^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/.test(address))) {
+        throw { kind: 'invalid_request', field: 'to' } satisfies MailError;
+      }
+      const stateChangedAt = now();
+      const status: SendStatus = {
+        operationId: `send-${++sendCounter}`,
+        draftRef: snapshotCopy(draft.ref),
+        draftRevision: draft.revision,
+        notBefore: new Date(Date.parse(stateChangedAt) + 5000).toISOString(),
+        state: 'hold',
+        retryOf: null,
+        subject: draft.content.subject,
+        firstRecipient,
+        stateChangedAt,
+      };
       sends.push({ status, requestId: command.requestId, draft: snapshotCopy(draft) });
       setTimeout(advanceSends, 5000);
       notify();
@@ -1249,14 +1268,14 @@ export function createBrowserFakeMailClient(
       if (!entry) throw failNotShown();
       if (entry.status.state === 'undone') return snapshotCopy(entry.status.draftRef);
       if (entry.status.state !== 'hold') return null;
-      entry.status.state = 'undone'; notify(); notifyDrafts(); return snapshotCopy(entry.status.draftRef);
+      setSendState(entry.status, 'undone'); notify(); notifyDrafts(); return snapshotCopy(entry.status.draftRef);
     },
     async cancel(operationId) {
       advanceSends();
       const entry = sends.find((item) => item.status.operationId === operationId && item.status.draftRef.accountId === activeDraftAccountId());
       if (!entry) throw failNotShown();
       if (entry.status.state !== 'queued') return false;
-      entry.status.state = 'cancelled'; notify(); notifyDrafts(); return true;
+      setSendState(entry.status, 'cancelled'); notify(); notifyDrafts(); return true;
     },
     async retry(operationId, requestId) {
       validateDraftRequestId(requestId);
@@ -1271,7 +1290,15 @@ export function createBrowserFakeMailClient(
       const draft = drafts.get(draftKey(entry.status.draftRef));
       if (!draft) throw failNotShown();
       if (draft.revision !== entry.status.draftRevision) throw { kind: 'draft_conflict', currentRevision: draft.revision } satisfies MailError;
-      const status: SendStatus = { ...entry.status, operationId: `send-${++sendCounter}`, state: 'hold', retryOf: operationId, notBefore: new Date(Date.parse(now()) + 5000).toISOString() };
+      const stateChangedAt = now();
+      const status: SendStatus = {
+        ...entry.status,
+        operationId: `send-${++sendCounter}`,
+        state: 'hold',
+        retryOf: operationId,
+        notBefore: new Date(Date.parse(stateChangedAt) + 5000).toISOString(),
+        stateChangedAt,
+      };
       sends.push({ status, requestId, draft: snapshotCopy(draft) });
       setTimeout(advanceSends, 5000); notify(); return snapshotCopy(status);
     },
