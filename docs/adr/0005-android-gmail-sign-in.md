@@ -1,6 +1,6 @@
 # ADR 0005: Google sign-in and Gmail on Android
 
-**Status:** Approved by the coordinator (2026-11-21), with the owner's decisions below — track B of the "usable Android app" programme. Nothing here is implemented. Implementation starts when the coordinator sends START (a build slot frees, likely after track A merges).
+**Status:** Accepted and implemented (2026-11-25) — track B of the "usable Android app" programme. The decisions below and the implementation notes that follow them record what was built; the later sections are the approved proposal and are kept as the record of why.
 
 ## Decisions (owner, 2026-11-21)
 
@@ -22,6 +22,19 @@
    - after re-consent for the same account, queued writes resume and mailbox actions stay enabled.
 
    A test that an expired grant produces this state replaces the earlier 8-day "lasting sign-in" check (section 1, Validation plan).
+
+## Implementation notes (2026-11-25)
+
+Built as approved, with these specifics and adjustments:
+
+1. **Consent without touching `MainActivity`.** Tauri 2.11's plugin base class already offers `startIntentSenderForResult` with an activity callback, so `GoogleAuthBridge.kt` launches Google's consent sheet itself. `MainActivity.kt` is unchanged.
+2. **Mode file location.** `mode.json` sits at the app data root, beside `fixture-profile/` and `gmail-profile/`. A missing, corrupt or unknown file shows the choice screen; it never selects Gmail by accident. `switch_mode` opens the target profile before retiring the current one, so a failed open leaves the old session serving.
+3. **Profile lock lifetime.** A retired session releases its profile lock when its last handle is dropped, not when `stop()` returns. `switch_mode` drops its handle on return; a command still running against the old session holds it briefly, and an immediate switch back then reports `profile_in_use` and changes nothing.
+4. **Demo mailbox Account page.** On Android, Account is available in the demo too: it holds **Use your own mail**. The page shows only "Demo mailbox", one line saying what the demo is, and the switch; sync, permission and disconnect controls belong to a mail account and are not shown there. Desktop fixture mode is unchanged.
+5. **Phone bottom bar.** The Account button in the phone's bottom bar never received taps (its CSS lacked the `pointer-events: auto` opt-in of the other bottom-region controls). It was not visible on Android before this track. Fixed, with a CSS contract test.
+6. **`clearToken` on old Play services.** The shared emulator's Play services (24.23.35) lacks the `auth_api_credentials_clear_token` feature. The bridge calls `clearToken` with the application context, so a missing feature is a quiet `unsupported` instead of a Play services "update" dialog. Without it, Play services keeps returning a revoked token from its cache until the token expires (about an hour): after access is removed at Google, **Sign in again** fails with **Sign-in expired** until then. Current Play services, as on the owner's phone, clears the token at once.
+7. **Testing-mode screens.** Each consent passes Google's "Google hasn't verified this app" screen (Testing status, Decision 6). The modify upgrade shows Google's wording for `gmail.modify`: "Read, compose, and send emails from your Gmail account."
+8. **No migration.** The granted-scope set lives in the credential bundle, not in `gmail.db`; this track adds no Gmail store migration.
 
 ## Context
 

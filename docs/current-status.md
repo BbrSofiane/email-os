@@ -21,8 +21,10 @@ research and architecture proposals are not feature inventories.
 The Android fixture target builds debug and signed release APKs for ARM64 and
 x86_64 from the shared Rust shell. The new Android package is
 `dev.exedev.emailos`, with launcher label **Email OS**. It uses SQLite and the
-same synthetic fixture core as desktop (ADR 0002). Gmail and attachment export
-are unavailable. Confirmed external links open in the system browser. The
+same synthetic fixture core as desktop (ADR 0002) for the demo mailbox, and it can
+sign in to the user's own Gmail account through Google Play services
+([ADR 0005](adr/0005-android-gmail-sign-in.md); validation below). Attachment export
+is unavailable. Confirmed external links open in the system browser. The
 original APK build passed on 2026-11-14. A pre-existing legacy fixture
 database is retired once behind a startup screen. The unified-fixture APK was
 smoke-tested on an Android 15 x86_64 emulator on 2026-11-15 (see below). Compact
@@ -30,7 +32,7 @@ phone layout is now in scope at widths ≤719px for Android fixture and browser 
 The compact shell covers lists, reader, compose, search, reminders, utility pages,
 contact details, command overlays and device-local swipe settings. Sending, reply-all,
 forwarding, label chips, multiple splits and destructive Trash/Spam/move
-actions are not supported. HTML bodies are shown in the compact reader ([ADR 0006](adr/0006-html-mail-reader.md)). Android uses fixture data. See the
+actions are not supported. HTML bodies are shown in the compact reader ([ADR 0006](adr/0006-html-mail-reader.md)). On first run Android asks for the demo mailbox or the user's own mail; Account switches between them. See the
 [Android smoke steps](development.md#android-fixture-apk).
 
 The compact layout was checked on the same emulator on 2026-11-16 with a locally
