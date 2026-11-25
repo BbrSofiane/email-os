@@ -138,8 +138,29 @@ class GoogleAuthBridge(private val activity: Activity) : Plugin(activity) {
         }
     }
 
+    /**
+     * Play services before the clearToken feature (the shared emulator's
+     * 24.23.35) shows its own "update Google Play services" dialog for every
+     * call and never answers. Skip the call there: below this version, and
+     * after any failure in this process, clearToken is a quiet `unsupported`
+     * and Rust waits for the cached token to expire instead.
+     */
+    private fun clearTokenAvailable(): Boolean {
+        if (clearTokenUnsupported) return false
+        val version = try {
+            GoogleApiAvailability.getInstance().getApkVersion(activity.applicationContext)
+        } catch (_: Exception) {
+            0
+        }
+        return version >= MIN_PLAY_SERVICES_FOR_CLEAR_TOKEN
+    }
+
     @Command
     fun clearToken(invoke: Invoke) {
+        if (!clearTokenAvailable()) {
+            error(invoke, "unsupported")
+            return
+        }
         try {
             val args = invoke.parseArgs(ClearTokenArgs::class.java)
             val request = ClearTokenRequest.builder()
@@ -154,6 +175,7 @@ class GoogleAuthBridge(private val activity: Activity) : Plugin(activity) {
                 .clearToken(request)
                 .addOnSuccessListener { ok(invoke, true) }
                 .addOnFailureListener {
+                    clearTokenUnsupported = true
                     val unsupported = it is UnsupportedOperationException ||
                         it is com.google.android.gms.common.api.UnsupportedApiCallException ||
                         (it is ApiException && it.statusCode == 17)
@@ -231,5 +253,14 @@ class GoogleAuthBridge(private val activity: Activity) : Plugin(activity) {
         } catch (_: Exception) {
             error(invoke, "failed")
         }
+    }
+
+    private companion object {
+        /** Play services 25.20.00 (version code); older builds lack clearToken. */
+        const val MIN_PLAY_SERVICES_FOR_CLEAR_TOKEN = 252000000
+
+        /** Set after the first failed clearToken; lasts for the process. */
+        @Volatile
+        var clearTokenUnsupported = false
     }
 }
