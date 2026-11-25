@@ -1,0 +1,55 @@
+[T3 Code: the agent in T3 thread "2eef1655-4916-4aa4-a930-0dddb657d66f" sent this message, not the user.]
+
+You're working for the coordinator of the "usable Android" programme in BbrSofiane/email-os (Tauri 2 + Vue 3 + TS, Rust core). The coordinator reviews and merges PRs to main.
+
+**Task.** Another track reports that **7 rendered phone-layout tests fail on a clean `origin/main`**, in the `mobile-list` and `mobile-reader` rendered suites (the Chromium/Playwright-style "rendered" tests). Your job:
+1. Reproduce this on your worktree, which is a fresh branch `fix/mobile-rendered-tests` from origin/main (main is at 71e7b10 or later). List the exact failing tests and their errors. If they don't fail for you, say so with your command and output and stop there.
+2. Find the cause of each failure. Use `git log`/`git bisect` against recent merges: #92 (HTML reader, 7f5b95d), #93 (Android install, 59e5dfb), #95 (docs/release notes) and #96 (WKWebView frame fix, 71e7b10). Decide for each whether the test is stale (the UI changed on purpose, e.g. fixture count 18 → 24 native, new HTML samples, the Android package rename) or the product regressed.
+3. Fix it the right way. Update stale expectations only where the new behaviour is intended, and say why. Fix product regressions in product code. Never weaken a test to make it pass, never skip tests, and never delete assertions without replacing what they protected.
+4. Run the local gates: the two suites, then `pnpm test` and `pnpm typecheck`. Run `CARGO_BUILD_JOBS=2 mise run check` only if you touch Rust.
+5. Open a PR to main. In the body give each failure's cause and the commit that introduced it, what you changed, and the test output before and after. End the body with `🤖 Generated with [Claude Code](https://claude.com/claude-code)` and commit messages with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Wait for CI. If `android-release-proof` or `android-apk` fails with Maven HTTP 429, that's a flake: rerun it with `gh run rerun <id> -R BbrSofiane/email-os --failed`. Use the `gh` CLI for GitHub. T3's PR tools may lack credentials here.
+6. Reply with `READY FOR REVIEW`, the PR link, head SHA and CI state. Don't merge it yourself.
+
+**Shared machine rules.** Read `/home/exedev/email-os-usable/RULES.md` first and follow it. Two other tracks are building on this VM (`usable/send` and `usable/android-gmail`).
+- Run one heavy command at a time, and use CARGO_BUILD_JOBS=2.
+- Check `df -h /` before big builds.
+- **Do not use the Android emulator or agent-device at all.** Track B is recording on it with a signed-in Google account.
+- Never commit real mail, tokens, keys or email addresses.
+- Don't touch other tracks' worktrees or branches.
+- If you're blocked on something only the owner or coordinator can decide, stop with `BLOCKED:` and the exact question.
+
+---
+
+<task-notification>
+<task-id>ble5pgjfy</task-id>
+<tool-use-id>toolu_01AjvvwXPSbpveVVeUFKgTz6</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-fix-mobile-rendered-tes-011b1e097ad811f1/97f5e863-83a0-43e0-90f3-619d435b102b/tasks/ble5pgjfy.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait until no cargo, rustc or Gradle build runs" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>byj8c69p2</task-id>
+<tool-use-id>toolu_01C4meH5cBdMB5dBg9ws9RxF</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-fix-mobile-rendered-tes-011b1e097ad811f1/97f5e863-83a0-43e0-90f3-619d435b102b/tasks/byj8c69p2.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for system load to drop below 2.5" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bs6iqlh3z</task-id>
+<tool-use-id>toolu_01PP9rRfSGiUk3oRWtYFjYFU</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-fix-mobile-rendered-tes-011b1e097ad811f1/97f5e863-83a0-43e0-90f3-619d435b102b/tasks/bs6iqlh3z.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for load below 2 and no builds" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+[T3 Code: the agent in T3 thread "2eef1655-4916-4aa4-a930-0dddb657d66f" sent this message, not the user.]
+
+New standing rule (also in RULES.md under "Notify the coordinator"): whenever you end a turn with READY FOR REVIEW, BLOCKED: or a question for the coordinator or owner, also send that final message to the coordinator thread. Use `t3_thread_send` with threadId "2eef1655-4916-4aa4-a930-0dddb657d66f" and mode "auto" (load it via ToolSearch `select:mcp__t3-code__t3_thread_send`). Prefix it `[Rendered tests]`. Milestones and blocks only, no progress updates. No reply needed now; carry on.
