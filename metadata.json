@@ -1,0 +1,33 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M898078P3A68PEH2N2NTA6V9",
+  "strategy": "manual-commit",
+  "branch": "usable/android-gmail",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src-tauri/gen/android/app/src/main/java/dev/exedev/emailos/GoogleAuthBridge.kt"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 944,
+    "cache_creation_tokens": 3192229,
+    "cache_read_tokens": 206103141,
+    "output_tokens": 302335,
+    "api_call_count": 430,
+    "subagent_tokens": {
+      "input_tokens": 18,
+      "cache_creation_tokens": 89083,
+      "cache_read_tokens": 81532,
+      "output_tokens": 13437,
+      "api_call_count": 8
+    }
+  }
+}
