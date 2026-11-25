@@ -103,6 +103,38 @@ WKWebView behavior, or native attachment/download handling. Check the contracts
 for feature-specific pending gates before treating a feature as operationally
 validated.
 
+### Android Gmail sign-in on the emulator (2026-11-24 and 2026-11-25)
+
+Run on Android 15 (`t3-pixel`, x86_64 emulator, Google Play services 24.23.35)
+with debug APKs built on the shared VM, signed with the registered debug key.
+Synthetic or owner-approved throwaway data only; screenshots in
+[validation/android-gmail](validation/android-gmail/) show no address and no
+real mail. Recordings of the account run are kept outside the repository, with
+the address and mail blurred.
+
+- **Without an account:** the first-run choice screen appears on a fresh
+  profile. **Use your own mail** switches, reloads and starts Connect; Google's
+  account sheet names Email OS, so Play services 24.23.35 supports the
+  Authorization API and the debug client registration is recognised.
+  Cancelling returns to **Not connected**. Switching to the demo and back works
+  and `mode.json` follows; both profiles keep their files.
+- **With the throwaway test-user account:** Connect passed Google's "hasn't
+  verified this app" screen and asked for read-only access only; the first sync
+  filled the inbox and reported Gmail's rate limit plainly (**Sync failed** with
+  Retry, backing off). **Enable mailbox actions** asked for the modify upgrade;
+  **Mark done** with **Undo** restored the row, and a second **Mark done** was
+  confirmed by Gmail (Activity: Confirmed). Backgrounding and resuming ran one
+  sync on resume. Killing and relaunching restored the session with no
+  sign-in screen. The Keystore binding file held no plaintext address or token.
+- **Sign-in expired:** after Email OS's access was removed in the Google
+  account settings, the app showed **Sign-in expired · Sign in again**; an
+  archive made then stayed **Queued**, and a local draft stayed in Drafts.
+  This Play services version lacks `clearToken`, so it kept returning the
+  revoked token until it expired (ADR 0005, implementation note 6).
+- **Not checked here:** a change made from another client while the app was in
+  the background (the emulator's Gmail app would not sync its Primary inbox),
+  and the owner's own phone; both are part of the post-release phone run.
+
 ### Android unified-fixture smoke (2026-11-15)
 
 Run on Android 15 (`t3-pixel`, x86_64 emulator) with the CI debug APK from the
