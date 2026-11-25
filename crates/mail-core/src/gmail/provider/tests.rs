@@ -3121,7 +3121,7 @@ fn live_send_single_attempt_outcomes() {
         (403, "{}", SendResult::Refused),
         (500, "{}", SendResult::Unknown),
         (200, "{}", SendResult::Unknown),
-        (401, "{}", SendResult::Refused),
+        (401, "{}", SendResult::Unknown),
         (302, "", SendResult::Unknown),
     ] {
         let (base, api) = FakeApi::start(vec![("/gmail/v1/users/me/messages/send", status, body)]);
@@ -3130,10 +3130,17 @@ fn live_send_single_attempt_outcomes() {
         bundle.granted_scopes = vec![auth::GMAIL_SEND_SCOPE.into()];
         secrets.store(&bundle).unwrap();
         let provider = test_provider(&base, secrets);
+        let frozen = br#"{"raw":"bWltZQ","threadId":"source-thread"}"#;
         assert_eq!(
-            provider.send_for_account("synthetic@example.test", b"mime", &CancelToken::default()),
+            provider.send_for_account("synthetic@example.test", frozen, &CancelToken::default(),),
             expected
         );
         assert_eq!(api.requests().len(), 1);
+        assert_eq!(
+            serde_json::from_str::<Value>(&api.bodies()[0]).unwrap(),
+            json!({
+                "raw": "bWltZQ", "threadId": "source-thread"
+            })
+        );
     }
 }

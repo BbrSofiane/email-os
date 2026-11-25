@@ -7,11 +7,26 @@ impl GmailProvider for LiveGmailProvider {
     fn send_for_account(
         &self,
         account: &str,
-        mime: &[u8],
+        frozen: &[u8],
         cancel: &CancelToken,
     ) -> crate::gmail::types::SendResult {
         use crate::gmail::types::SendResult;
-        use base64::Engine;
+        let Ok(mut payload) = serde_json::from_slice::<Value>(frozen) else {
+            return SendResult::Refused;
+        };
+        let Some(fields) = payload.as_object_mut() else {
+            return SendResult::Refused;
+        };
+        if fields
+            .get("raw")
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+        {
+            return SendResult::Refused;
+        }
+        if fields.get("threadId").is_some_and(Value::is_null) {
+            fields.remove("threadId");
+        }
         if self.pace(cancel).is_err() {
             return SendResult::Paused;
         }
@@ -29,7 +44,6 @@ impl GmailProvider for LiveGmailProvider {
         {
             return SendResult::Paused;
         }
-        let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(mime);
         let response = self
             .send_http
             .post(format!(
@@ -37,7 +51,7 @@ impl GmailProvider for LiveGmailProvider {
                 self.endpoints.api
             ))
             .bearer_auth(&token)
-            .json(&serde_json::json!({"raw": raw}))
+            .json(&payload)
             .send();
         let Ok(response) = response else {
             return SendResult::Unknown;
@@ -59,7 +73,14 @@ impl GmailProvider for LiveGmailProvider {
                 }
             }
             SendResult::Unknown
-        } else if status.is_client_error() && status != StatusCode::REQUEST_TIMEOUT {
+        } else if status == StatusCode::UNAUTHORIZED {
+            // Refresh can help subsequent reads, but this intent cannot be posted again.
+            let _ = self.invalidate_platform_token(&token);
+            SendResult::Unknown
+        } else if matches!(
+            status,
+            StatusCode::BAD_REQUEST | StatusCode::FORBIDDEN | StatusCode::NOT_FOUND
+        ) {
             SendResult::Refused
         } else {
             SendResult::Unknown
