@@ -145,11 +145,19 @@ class GoogleAuthBridge(private val activity: Activity) : Plugin(activity) {
             val request = ClearTokenRequest.builder()
                 .setToken(args.token)
                 .build()
-            Identity.getAuthorizationClient(activity)
+            // Application context, not the Activity: on a Play services version
+            // without clearToken (added in play-services-auth 21.4.0), an
+            // Activity-bound client makes Play services show its own "update
+            // Google Play services" dialog. Here a missing feature is a quiet
+            // `unsupported`; Rust then drops its copy of the token instead.
+            Identity.getAuthorizationClient(activity.applicationContext)
                 .clearToken(request)
                 .addOnSuccessListener { ok(invoke, true) }
                 .addOnFailureListener {
-                    val tag = if (it is ApiException && it.statusCode == 17 || it is UnsupportedOperationException) {
+                    val unsupported = it is UnsupportedOperationException ||
+                        it is com.google.android.gms.common.api.UnsupportedApiCallException ||
+                        (it is ApiException && it.statusCode == 17)
+                    val tag = if (unsupported) {
                         "unsupported"
                     } else {
                         "failed"
