@@ -21,8 +21,10 @@ research and architecture proposals are not feature inventories.
 The Android fixture target builds debug and signed release APKs for ARM64 and
 x86_64 from the shared Rust shell. The new Android package is
 `dev.exedev.emailos`, with launcher label **Email OS**. It uses SQLite and the
-same synthetic fixture core as desktop (ADR 0002). Gmail and attachment export
-are unavailable. Confirmed external links open in the system browser. The
+same synthetic fixture core as desktop (ADR 0002) for the demo mailbox, and it can
+sign in to the user's own Gmail account through Google Play services
+([ADR 0005](adr/0005-android-gmail-sign-in.md); validation below). Attachment export
+is unavailable. Confirmed external links open in the system browser. The
 original APK build passed on 2026-11-14. A pre-existing legacy fixture
 database is retired once behind a startup screen. The unified-fixture APK was
 smoke-tested on an Android 15 x86_64 emulator on 2026-11-15 (see below). Compact
@@ -30,7 +32,7 @@ phone layout is now in scope at widths ≤719px for Android fixture and browser 
 The compact shell covers lists, reader, compose, search, reminders, utility pages,
 contact details, command overlays and device-local swipe settings. Fixture sending is supported. Reply-all,
 forwarding, label chips, multiple splits and destructive Trash/Spam/move
-actions are not supported. HTML bodies are shown in the compact reader ([ADR 0006](adr/0006-html-mail-reader.md)). Android uses fixture data. See the
+actions are not supported. HTML bodies are shown in the compact reader ([ADR 0006](adr/0006-html-mail-reader.md)). On first run Android asks for the demo mailbox or the user's own mail; Account switches between them. See the
 [Android smoke steps](development.md#android-fixture-apk).
 
 The compact layout was checked on the same emulator on 2026-11-16 with a locally
@@ -128,6 +130,43 @@ Gmail consent/deny/cancel flows, live provider convergence, Keychain behavior,
 WKWebView behavior, or native attachment/download handling. Check the contracts
 for feature-specific pending gates before treating a feature as operationally
 validated.
+
+### Android Gmail sign-in on the emulator (2026-11-24 and 2026-11-25)
+
+Run on Android 15 (`t3-pixel`, x86_64 emulator, Google Play services 24.23.35)
+with debug APKs built on the shared VM, signed with the registered debug key.
+Synthetic or owner-approved throwaway data only; screenshots in
+[validation/android-gmail](validation/android-gmail/) show no address and no
+real mail. Recordings of the account run are kept outside the repository, with
+the address and mail blurred.
+
+- **Without an account:** the first-run choice screen appears on a fresh
+  profile. **Use your own mail** switches, reloads and starts Connect; Google's
+  account sheet names Email OS, so Play services 24.23.35 supports the
+  Authorization API and the debug client registration is recognised.
+  Cancelling returns to **Not connected**. Switching to the demo and back works
+  and `mode.json` follows; both profiles keep their files.
+- **With the throwaway test-user account:** Connect passed Google's "hasn't
+  verified this app" screen and asked for read-only access only; the first sync
+  filled the inbox and reported Gmail's rate limit plainly (**Sync failed** with
+  Retry, backing off). **Enable mailbox actions** asked for the modify upgrade;
+  **Mark done** with **Undo** restored the row, and a second **Mark done** was
+  confirmed by Gmail (Activity: Confirmed). Backgrounding and resuming ran one
+  sync on resume. Killing and relaunching restored the session with no
+  sign-in screen. The Keystore binding file held no plaintext address or token.
+- **Sign-in expired:** after Email OS's access was removed in the Google
+  account settings, the app showed **Sign-in expired · Sign in again**; an
+  archive made then stayed **Queued**, and a local draft stayed in Drafts.
+  This Play services version lacks `clearToken`, so it kept returning the
+  revoked token until it expired (ADR 0005, implementation note 6); after that,
+  **Sign in again** asked for read-only and modify again, mailbox actions
+  stayed enabled, and the queued archive was confirmed by Gmail.
+- **Disconnect:** the app returned to **Not connected**, the Keystore binding
+  file was removed and no Play services dialog appeared; reconnecting needed no
+  Google screens and restored mailbox actions from the recorded grant.
+- **Not checked here:** a change made from another client while the app was in
+  the background (the emulator's Gmail app would not sync its Primary inbox),
+  and the owner's own phone; both are part of the post-release phone run.
 
 ### Android unified-fixture smoke (2026-11-15)
 

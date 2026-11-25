@@ -107,6 +107,19 @@ describe('compact CSS contract', () => {
     expect(pages).toContain('min-height: 48px');
   });
 
+  it('lets every control in the pass-through bottom region receive touches', () => {
+    // The region is pointer-events: none so the list scrolls under its gradient;
+    // a control without its own opt-in silently drops taps (the Account button did).
+    const shell = mobileCss['shell.css']!;
+    const declarationsFor = (selector: string) => rulesOf(shell)
+      .filter((rule) => rule.selectors.includes(selector))
+      .flatMap((rule) => rule.decls);
+    expect(declarationsFor('.app[data-layout="compact"] .mobile-bottom-region')).toContainEqual(['pointer-events', 'none']);
+    for (const control of ['.mobile-context-slot', '.mobile-navigation', '.mobile-account']) {
+      expect(declarationsFor(`.app[data-layout="compact"] ${control}`), control).toContainEqual(['pointer-events', 'auto']);
+    }
+  });
+
   it('covers compact utility pages with the shared app surface', () => {
     const pages = mobileCss['pages.css']!;
     const pushedPageRules = rulesOf(pages).filter((rule) => rule.selectors.some((selector) =>

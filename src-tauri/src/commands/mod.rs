@@ -12,6 +12,8 @@ pub(crate) use account::*;
 mod drafts;
 pub(crate) use drafts::*;
 
+mod mode;
+pub(crate) use mode::*;
 mod transition;
 pub(crate) use transition::*;
 

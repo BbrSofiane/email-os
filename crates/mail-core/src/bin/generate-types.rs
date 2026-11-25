@@ -25,7 +25,7 @@ use mail_core::dto::{
 };
 use mail_core::error::MailError;
 use mail_core::fixture_transition::{
-    FixtureTransitionFailure, FixtureTransitionState, FixtureTransitionStatus,
+    FixtureTransitionFailure, FixtureTransitionState, FixtureTransitionStatus, ModeChoice,
 };
 use mail_core::gmail::browsing::{
     DestinationCatalog, DestinationPage, DestinationRequest, ProviderDestination,
@@ -133,6 +133,7 @@ fn declarations() -> Vec<String> {
         FixtureTransitionState::decl(),
         FixtureTransitionFailure::decl(),
         FixtureTransitionStatus::decl(),
+        ModeChoice::decl(),
         AccountStatus::decl(),
         ReplyContext::decl(),
         DraftRef::decl(),
@@ -227,6 +228,8 @@ const IPC_NAMES: &[(&str, &str)] = &[
     ("DRAFTS_CHANGED_EVENT", "drafts_changed"),
     ("APP_CLOSE_REQUESTED_EVENT", "app_close_requested"),
     ("GET_APP_CLOSE_REQUEST_COMMAND", "get_app_close_request"),
+    ("GET_MODE_CHOICE_COMMAND", "get_mode_choice"),
+    ("SWITCH_MODE_COMMAND", "switch_mode"),
     (
         "GET_FIXTURE_TRANSITION_STATUS_COMMAND",
         "get_fixture_transition_status",

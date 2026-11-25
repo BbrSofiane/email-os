@@ -59,6 +59,7 @@ fn send_status(
 #[derive(Debug, Default)]
 pub struct DraftLifecycle {
     session_epoch: u64,
+    retired: bool,
 }
 
 impl DraftLifecycle {
@@ -360,7 +361,21 @@ impl DraftService {
 
     #[track_caller]
     fn lock(&self) -> Result<MutexGuard<'_, DraftLifecycle>, MailError> {
-        self.lifecycle.lock().map_err(storage_err())
+        let guard = self.lifecycle.lock().map_err(storage_err())?;
+        if guard.retired {
+            return Err(MailError::InvalidRequest {
+                field: "mode".into(),
+            });
+        }
+        Ok(guard)
+    }
+
+    /// Prevents further operations on this session and invalidates in-flight creates.
+    pub fn retire(&self) -> Result<(), MailError> {
+        let mut lifecycle = self.lifecycle.lock().map_err(storage_err())?;
+        lifecycle.advance();
+        lifecycle.retired = true;
+        Ok(())
     }
 
     // Called only while the lifecycle gate is held. The ledger is authoritative.
@@ -1229,6 +1244,27 @@ mod tests {
             0,
             "the epoch wraps, it never panics"
         );
+    }
+
+    #[test]
+    fn retirement_invalidates_epoch_and_rejects_operations() {
+        let s = Synthetic::open("draft-service-retired");
+        let drafts = DraftService::new(
+            s.core.clone(),
+            DraftCore::open(s.dir.path().join("local-drafts")).unwrap(),
+        );
+        let before = drafts.lock().unwrap().session_epoch();
+        drafts.retire().unwrap();
+        let lifecycle = drafts.lifecycle.lock().unwrap();
+        assert!(!lifecycle.is_current(before));
+        drop(lifecycle);
+        let error = MailError::InvalidRequest {
+            field: "mode".into(),
+        };
+        assert_eq!(drafts.list_drafts(), Err(error.clone()));
+        assert_eq!(drafts.connect_account(), Err(error.clone()));
+        assert_eq!(drafts.disconnect_account(), Err(error));
+        s.core.stop();
     }
 
     #[test]

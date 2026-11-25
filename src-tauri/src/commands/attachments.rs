@@ -14,7 +14,7 @@ pub(crate) async fn list_attachments(
     state: State<'_, AppState>,
     target: ConversationRef,
 ) -> Result<Vec<AttachmentDescriptor>, MailError> {
-    run_blocking(state.core.clone(), move |core| {
+    run_blocking(state.session()?.core.clone(), move |core| {
         core.list_attachments(&target)
     })
     .await
@@ -27,7 +27,7 @@ pub(crate) async fn get_message_html(
     target: ConversationRef,
     message_id: String,
 ) -> Result<MessageHtmlBody, MailError> {
-    run_blocking(state.core.clone(), move |core| {
+    run_blocking(state.session()?.core.clone(), move |core| {
         core.get_message_html(&target, &message_id)
     })
     .await
@@ -41,7 +41,7 @@ pub(crate) async fn get_inline_image(
     message_id: String,
     attachment_id: String,
 ) -> Result<InlineImageData, MailError> {
-    run_blocking(state.core.clone(), move |core| {
+    run_blocking(state.session()?.core.clone(), move |core| {
         core.get_inline_image(&target, &message_id, &attachment_id)
     })
     .await
@@ -67,7 +67,7 @@ pub(crate) async fn save_attachment(
         let transfers = state.attachment_transfers.clone();
         let cancel = transfers.begin(&request.request_id)?;
         let id = request.request_id.clone();
-        let result = run_blocking(state.core.clone(), move |core| {
+        let result = run_blocking(state.session()?.core.clone(), move |core| {
             core.download_attachment(&request, &cancel, &directory)
         })
         .await;

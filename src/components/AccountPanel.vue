@@ -23,7 +23,7 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import type { AccountStatus, ConnectionState, MailError } from '../lib/ipc/client';
 import type { AccountAction } from '../composables/useMailbox';
-import { NOT_CONFIGURED_HINT, describeMailError, describeSyncFailure } from '../lib/account-status';
+import { authenticatingText, notConfiguredHint, describeMailError, describeSyncFailure } from '../lib/account-status';
 import FullDate from './FullDate.vue';
 
 const props = defineProps<{
@@ -32,9 +32,12 @@ const props = defineProps<{
   busy: AccountAction | null;
   transitioning?: boolean;
   actionError?: MailError | null;
+  switchTarget?: 'gmail' | 'fixture' | null;
+  demoLabel?: boolean;
 }>();
 
 const emit = defineEmits<{
+  switchMode: [target: 'gmail' | 'fixture'];
   connect: [];
   disconnect: [];
   sync: [];
@@ -45,7 +48,7 @@ const emit = defineEmits<{
 const CONNECTION_LABELS: Record<ConnectionState, string> = {
   not_configured: 'Not configured',
   disconnected: 'Not connected',
-  authenticating: 'Finish sign-in in your browser',
+  authenticating: authenticatingText(),
   connected: 'Connected',
   auth_required: 'Sign-in expired',
 };
@@ -56,6 +59,7 @@ const DISCONNECT_WARNING = "Removes pending actions and the mail cache from this
 const access = computed(() => props.status.mutationAccess ?? 'read_only');
 const sync = computed(() => props.status.sync);
 const connection = computed(() => props.status.connection);
+const isDemo = computed(() => props.status.mode === 'fixture' && !!props.demoLabel);
 
 const modeLabel = computed(() => {
   switch (access.value) {
@@ -138,160 +142,177 @@ watch(connection, (next) => { if (next === 'authenticating') confirming.value = 
 
 <template>
   <section class="account-panel" aria-label="Account" data-test="account-panel">
-    <div class="account-section">
-      <h3 class="account-label">Connection</h3>
-      <p class="account-line account-connection-line">
-        <template v-if="props.status.account"><span data-test="account-email">{{ props.status.account.emailAddress }}</span> · </template><span data-test="account-connection">{{ CONNECTION_LABELS[connection] }}</span>
-      </p>
-      <p v-if="modeShown" class="account-line account-mode" data-test="account-mode" :title="MODE_TITLE">{{ modeLabel }}</p>
-      <p v-if="props.actionError" class="account-action-error" data-test="account-action-error" role="alert">
-        Mailbox-action request: {{ describeMailError(props.actionError) }}
-      </p>
-      <p v-if="connection === 'not_configured'" class="account-notice" data-test="account-not-configured" role="note">
-        Gmail is not configured on this device. {{ NOT_CONFIGURED_HINT }}
-      </p>
-      <p v-if="connection === 'auth_required'" class="account-notice" data-test="account-auth-required" role="note">
-        Cached mail stays readable. Sign in again to sync.
-      </p>
-      <div v-if="showConnect" class="account-actions">
-        <button
-          type="button"
-          data-test="account-connect"
-          :disabled="props.busy !== null || props.transitioning"
-          @click="emit('connect')"
-        >
-          {{ connection === 'auth_required' ? 'Sign in again' : 'Connect Gmail' }}
-        </button>
-      </div>
+    <!-- The demo mailbox (Android) has no sign-in, sync or permissions: the
+         Gmail lifecycle controls below would only be rejected. -->
+    <div v-if="isDemo" class="account-section" data-test="account-demo">
+      <h3 class="account-label">Mailbox</h3>
+      <p class="account-line" data-test="account-email">Demo mailbox</p>
+      <p class="account-note">Synthetic mail on this device. Nothing in it is sent anywhere.</p>
     </div>
-
-    <div v-if="syncShown" class="account-section">
-      <h3 class="account-label">Sync</h3>
-      <p class="account-line account-sync-line">
-        <template v-if="stateWordShown">
-          <span data-test="account-sync-state">{{ syncLabel }}</span>
-          <span class="account-sep" aria-hidden="true">·</span>
-        </template>
-        <template v-if="lastSyncedShown">
-          <span data-test="account-last-synced"><template v-if="sync.lastSyncedAt">Last synced <FullDate :at="sync.lastSyncedAt" /></template><template v-else>Never synced</template></span>
-          <span class="account-sep" aria-hidden="true">·</span>
-        </template>
-        <span data-test="account-cached">{{ cachedLabel }}</span>
-      </p>
-      <p v-if="coverageText" class="account-note" data-test="account-coverage">{{ coverageText }}</p>
-      <p v-if="connection === 'connected' && sync.state === 'idle' && !sync.initialSyncComplete" class="account-note" data-test="account-initial-sync">
-        Initial sync has not finished.
-      </p>
-      <p
-        v-if="retryShown"
-        class="account-sync-error"
-        data-test="account-sync-error"
-        role="alert"
-      >
-        <span>{{ errorLine }}</span>
-        <button
-          type="button"
-          data-test="account-sync-retry"
-          :disabled="props.busy !== null"
-          @click="emit('sync')"
-        >Retry</button>
-      </p>
-      <div v-if="connection === 'connected' && !retryShown" class="account-actions">
-        <button
-          type="button"
-          data-test="account-sync"
-          :disabled="props.busy !== null || sync.state === 'syncing'"
-          @click="emit('sync')"
-        >
-          Sync now
-        </button>
-      </div>
-    </div>
-
-    <div v-if="showPermissions" class="account-section">
-      <h3 class="account-label">Permissions</h3>
-      <template v-if="canEnable">
-        <p class="account-note" data-test="action-upgrade-disclosure" role="note">
-          Enable mailbox actions asks Google for its broad Gmail modify permission, which can also allow sending and deleting mail. Email OS only marks done, marks read and stars; it never sends or deletes.
+    <template v-else>
+      <div class="account-section">
+        <h3 class="account-label">Connection</h3>
+        <p class="account-line account-connection-line">
+          <template v-if="props.status.account"><span data-test="account-email">{{ props.status.account.emailAddress }}</span> · </template><span data-test="account-connection">{{ CONNECTION_LABELS[connection] }}</span>
         </p>
-        <div class="account-actions">
+        <p v-if="modeShown" class="account-line account-mode" data-test="account-mode" :title="MODE_TITLE">{{ modeLabel }}</p>
+        <p v-if="props.actionError" class="account-action-error" data-test="account-action-error" role="alert">
+          Mailbox-action request: {{ describeMailError(props.actionError) }}
+        </p>
+        <p v-if="connection === 'not_configured'" class="account-notice" data-test="account-not-configured" role="note">
+          Gmail is not configured on this device. {{ notConfiguredHint() }}
+        </p>
+        <p v-if="connection === 'auth_required'" class="account-notice" data-test="account-auth-required" role="note">
+          Cached mail stays readable. Sign in again to sync.
+        </p>
+        <div v-if="showConnect" class="account-actions">
           <button
             type="button"
-            data-test="enable-mailbox-actions"
-            :disabled="props.busy !== null"
-            @click="emit('enableActions')"
+            data-test="account-connect"
+            :disabled="props.busy !== null || props.transitioning"
+            @click="emit('connect')"
           >
-            {{ props.busy === 'enable-actions' ? 'Requesting permission…' : 'Enable mailbox actions' }}
+            {{ connection === 'auth_required' ? 'Sign in again' : 'Connect Gmail' }}
           </button>
         </div>
-      </template>
-      <template v-else-if="access === 'upgrading'">
-        <p class="account-line" data-test="action-upgrading" role="status">
-          Finish sign-in in your browser. Cached mail stays readable.
+      </div>
+
+      <div v-if="syncShown" class="account-section">
+        <h3 class="account-label">Sync</h3>
+        <p class="account-line account-sync-line">
+          <template v-if="stateWordShown">
+            <span data-test="account-sync-state">{{ syncLabel }}</span>
+            <span class="account-sep" aria-hidden="true">·</span>
+          </template>
+          <template v-if="lastSyncedShown">
+            <span data-test="account-last-synced"><template v-if="sync.lastSyncedAt">Last synced <FullDate :at="sync.lastSyncedAt" /></template><template v-else>Never synced</template></span>
+            <span class="account-sep" aria-hidden="true">·</span>
+          </template>
+          <span data-test="account-cached">{{ cachedLabel }}</span>
         </p>
-        <div class="account-actions">
+        <p v-if="coverageText" class="account-note" data-test="account-coverage">{{ coverageText }}</p>
+        <p v-if="connection === 'connected' && sync.state === 'idle' && !sync.initialSyncComplete" class="account-note" data-test="account-initial-sync">
+          Initial sync has not finished.
+        </p>
+        <p
+          v-if="retryShown"
+          class="account-sync-error"
+          data-test="account-sync-error"
+          role="alert"
+        >
+          <span>{{ errorLine }}</span>
           <button
             type="button"
-            class="account-primary"
-            data-test="cancel-action-upgrade"
+            data-test="account-sync-retry"
             :disabled="props.busy !== null"
-            @click="emit('cancelUpgrade')"
+            @click="emit('sync')"
+          >Retry</button>
+        </p>
+        <div v-if="connection === 'connected' && !retryShown" class="account-actions">
+          <button
+            type="button"
+            data-test="account-sync"
+            :disabled="props.busy !== null || sync.state === 'syncing'"
+            @click="emit('sync')"
           >
-            {{ props.busy === 'cancel-upgrade' ? 'Canceling permission request…' : 'Cancel permission request' }}
+            Sync now
           </button>
         </div>
-      </template>
-      <p v-else-if="access === 'enabled'" class="account-line" data-test="actions-enabled" role="status">
-        Mailbox actions are enabled.
-      </p>
-    </div>
+      </div>
 
-    <div v-if="showSession" class="account-section">
-      <h3 class="account-label">Session</h3>
-      <div v-if="connection === 'authenticating'" class="account-actions">
-        <button
-          type="button"
-          data-test="account-disconnect"
-          :disabled="props.busy !== null || props.transitioning"
-          @click="emit('disconnect')"
-        >
-          Cancel sign-in
-        </button>
+      <div v-if="showPermissions" class="account-section">
+        <h3 class="account-label">Permissions</h3>
+        <template v-if="canEnable">
+          <p class="account-note" data-test="action-upgrade-disclosure" role="note">
+            Enable mailbox actions asks Google for its broad Gmail modify permission, which can also allow sending and deleting mail. Email OS only marks done, marks read and stars; it never sends or deletes.
+          </p>
+          <div class="account-actions">
+            <button
+              type="button"
+              data-test="enable-mailbox-actions"
+              :disabled="props.busy !== null"
+              @click="emit('enableActions')"
+            >
+              {{ props.busy === 'enable-actions' ? 'Requesting permission…' : 'Enable mailbox actions' }}
+            </button>
+          </div>
+        </template>
+        <template v-else-if="access === 'upgrading'">
+          <p class="account-line" data-test="action-upgrading" role="status">
+            {{ authenticatingText() }}. Cached mail stays readable.
+          </p>
+          <div class="account-actions">
+            <button
+              type="button"
+              class="account-primary"
+              data-test="cancel-action-upgrade"
+              :disabled="props.busy !== null"
+              @click="emit('cancelUpgrade')"
+            >
+              {{ props.busy === 'cancel-upgrade' ? 'Canceling permission request…' : 'Cancel permission request' }}
+            </button>
+          </div>
+        </template>
+        <p v-else-if="access === 'enabled'" class="account-line" data-test="actions-enabled" role="status">
+          Mailbox actions are enabled.
+        </p>
       </div>
-      <div v-else-if="!confirming" class="account-actions">
-        <button
-          ref="askButton"
-          type="button"
-          class="drawer-ghost"
-          data-test="account-disconnect"
-          :disabled="props.busy !== null || props.transitioning"
-          @click="askDisconnect()"
-        >
-          Disconnect…
-        </button>
-      </div>
-      <div v-else class="account-confirm" @keydown="confirmKeydown">
-        <p class="account-note" data-test="disconnect-warning" role="note">{{ DISCONNECT_WARNING }}</p>
-        <div class="account-actions">
+
+      <div v-if="showSession" class="account-section">
+        <h3 class="account-label">Session</h3>
+        <div v-if="connection === 'authenticating'" class="account-actions">
           <button
             type="button"
-            class="account-destructive"
-            data-test="account-disconnect-confirm"
+            data-test="account-disconnect"
             :disabled="props.busy !== null || props.transitioning"
             @click="emit('disconnect')"
           >
-            Disconnect
-          </button>
-          <button
-            ref="keepButton"
-            type="button"
-            class="account-primary"
-            data-test="account-disconnect-cancel"
-            @click="keepAccount()"
-          >
-            Keep account
+            Cancel sign-in
           </button>
         </div>
+        <div v-else-if="!confirming" class="account-actions">
+          <button
+            ref="askButton"
+            type="button"
+            class="drawer-ghost"
+            data-test="account-disconnect"
+            :disabled="props.busy !== null || props.transitioning"
+            @click="askDisconnect()"
+          >
+            Disconnect…
+          </button>
+        </div>
+        <div v-else class="account-confirm" @keydown="confirmKeydown">
+          <p class="account-note" data-test="disconnect-warning" role="note">{{ DISCONNECT_WARNING }}</p>
+          <div class="account-actions">
+            <button
+              type="button"
+              class="account-destructive"
+              data-test="account-disconnect-confirm"
+              :disabled="props.busy !== null || props.transitioning"
+              @click="emit('disconnect')"
+            >
+              Disconnect
+            </button>
+            <button
+              ref="keepButton"
+              type="button"
+              class="account-primary"
+              data-test="account-disconnect-cancel"
+              @click="keepAccount()"
+            >
+              Keep account
+            </button>
+          </div>
+        </div>
+      </div>
+    </template>
+    <div v-if="props.switchTarget" class="account-section" data-test="account-switch-mode">
+      <p class="account-note">{{ props.switchTarget === 'gmail' ? 'Sign in on this phone. The demo mailbox stays on this device.' : 'Your mail account and its local data stay on this phone.' }}</p>
+      <div class="account-actions">
+        <button type="button" data-test="account-switch-mode-button" :disabled="props.transitioning || props.busy !== null" @click="emit('switchMode', props.switchTarget)">
+          {{ props.switchTarget === 'gmail' ? 'Use your own mail' : 'Switch to demo mailbox' }}
+        </button>
       </div>
     </div>
   </section>

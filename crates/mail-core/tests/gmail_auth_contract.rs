@@ -69,7 +69,9 @@ fn synthetic_bundle() -> TokenBundle {
         expires_at_epoch_ms: i64::MAX,
         account_id: Some("synthetic@example.test".to_string()),
         email: Some("synthetic@example.test".to_string()),
+        platform_authorized: false,
         gmail_modify_granted: false,
+        granted_scopes: vec![],
     }
 }
 

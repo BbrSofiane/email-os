@@ -49,7 +49,9 @@ import SelectionBar from './components/SelectionBar.vue';
 import HeaderGlyph from './components/HeaderGlyph.vue';
 import PaneGlyph from './components/PaneGlyph.vue';
 import { actionLabel, actionRegistry, findKeyBinding, type ActionHandlers, type ActionId, type KeyFocus, type KeyOnlyId, type KeyResolverId } from './lib/action-registry';
-import type { AccountNoticeAction, InboxEmptyAction } from './lib/account-status';
+import { authenticatingText, type AccountNoticeAction, type InboxEmptyAction } from './lib/account-status';
+import { setConnectAfterSwitch, clearConnectAfterSwitch, takeConnectAfterSwitch } from './composables/useModeChoice';
+import { reloadPage } from './lib/reload';
 import { groupRowsBySender, isSingleFromQuery, senderGroupKey } from './lib/search';
 import { errorText } from './lib/error-text';
 import InboxList from './components/InboxList.vue';
@@ -71,8 +73,8 @@ import ProviderDestinations from './components/ProviderDestinations.vue';
 import ContactPane from './components/ContactPane.vue';
 import FullDate from './components/FullDate.vue';
 import { BROWSER_PREVIEW_DISCLOSURE } from './lib/ipc/browser-fake';
-import { isTauriRuntime, type ClientMode } from './lib/ipc';
-import type { ConversationRef, DraftSource, DraftSummary, MailClient, Reminder } from './lib/ipc/client';
+import { isAndroidShell, type ClientMode } from './lib/ipc';
+import type { ConversationRef, DraftSource, DraftSummary, MailClient, MailError, MailMode, Reminder } from './lib/ipc/client';
 import { REPLY_REASONS, replyBlockedReason, sourceLoadErrorReason } from './lib/reply-context';
 import { sameConversation, useMailbox, type BrowseContext, type ConversationSummaryLike, type DoneBoundary, type SearchVisit } from './composables/useMailbox';
 import { useDrafts } from './composables/useDrafts';
@@ -94,7 +96,7 @@ const props = withDefaults(defineProps<{
 const swipePreferences = ref(loadSwipePreferences());
 const emit = defineEmits<{ switchAccount: []; workspaceTitle: [title: string] }>();
 const workspaceActive = computed(() => props.active !== false);
-const androidFixture = isTauriRuntime() && /Android/i.test(navigator.userAgent);
+const androidShell = isAndroidShell();
 const layoutMode = useLayoutMode();
 
 type UtilityDrawer = 'account' | 'activity' | 'destinations' | 'reminder-settings';
@@ -947,9 +949,16 @@ async function enterMobileSelection(): Promise<void> {
   await focusFocusedRow(true);
 }
 
+function onOnline(): void {
+  if (accountStatus.value?.mode === 'gmail' && accountStatus.value.connection === 'connected') {
+    void mailbox.requestSync();
+  }
+}
+
 let removeAndroidBack: () => void = () => undefined;
 onMounted(() => {
-  removeAndroidBack = installAndroidBackBridge(androidFixture, () => { const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }); window.dispatchEvent(event); return event.defaultPrevented; });
+  removeAndroidBack = installAndroidBackBridge(androidShell, () => { const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }); window.dispatchEvent(event); return event.defaultPrevented; });
+  window.addEventListener('online', onOnline);
   window.addEventListener('keydown', onKeydown);
   window.addEventListener('blur', cancelGo);
   window.addEventListener('compositionstart', cancelGo);
@@ -960,6 +969,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   removeAndroidBack();
   reminderViewAlive = false;
+  window.removeEventListener('online', onOnline);
   window.removeEventListener('keydown', onKeydown);
   window.removeEventListener('blur', cancelGo);
   window.removeEventListener('compositionstart', cancelGo);
@@ -1045,7 +1055,7 @@ const readerSheetItems = computed(() => {
   return [
     { id: readAction, label: conversation?.isRead ? 'Mark unread' : 'Mark read', glyph: conversation?.isRead ? 'unread' as const : 'read' as const, disabled: !actionAvailable(readAction) },
     { id: 'reply', label: 'Reply', glyph: 'reply' as const, disabled: !actionAvailable('reply'), disabledReason: replyReason ?? undefined, group: 'more' },
-    ...(!androidFixture ? [{ id: 'files', label: 'Files and links', glyph: 'files' as const, disabled: !actionAvailable('open') }] : []),
+    ...(!androidShell ? [{ id: 'files', label: 'Files and links', glyph: 'files' as const, disabled: !actionAvailable('open') }] : []),
     { id: 'contact-details', label: 'Contact details', glyph: 'contact' as const, group: 'more' },
     { id: 'commands', label: 'Commands', glyph: 'prompt' as const, group: 'commands' },
   ];
@@ -1518,6 +1528,33 @@ async function connectAccount(): Promise<void> {
   }
 }
 
+const switchError = ref<MailError | null>(null);
+
+async function switchMode(target: MailMode): Promise<void> {
+  if (drafts.transitioning.value) return;
+  drafts.setTransitioning(true);
+  switchError.value = null;
+  try {
+    if (!(await drafts.flushAndClose())) return;
+    if (target === 'gmail') setConnectAfterSwitch();
+    await props.client.switchMode(target);
+    reloadPage();
+  } catch (error) {
+    clearConnectAfterSwitch();
+    switchError.value = error as MailError;
+  } finally {
+    drafts.setTransitioning(false);
+  }
+}
+
+const stopFirstStatus = watch(accountStatus, (status) => {
+  if (!status) return;
+  if (status.mode === 'gmail' && status.connection === 'disconnected' && takeConnectAfterSwitch()) {
+    void connectAccount();
+  }
+  nextTick(() => stopFirstStatus());
+}, { immediate: true });
+
 /** Connect, sync and sign-in cancel buttons share the Account buttons' rule: never while one runs. */
 const accountActionsIdle = computed(() => mailbox.accountBusy.value === null && !drafts.transitioning.value);
 const { statusNotice, readOnlyHint, inboxEmpty, emptyLineShown, headerAction, emptyActionShown, noteWordsHidden, noteAnnounces, noteParts, contactListEmpty, providerAccountAction, accountCommandsFirst, accountCommandsTop, plainInboxEmpty, providerSignInExpired, paletteHasRows, emptyListText } = useAccountNotes({ mailbox, accountStatus, readerOpen, drawer, accountActionsIdle, actionAvailable });
@@ -1853,7 +1890,8 @@ const actionHandlers: ActionHandlers = {
     execute: async () => { await openDrawer('activity'); },
   },
   account: {
-    available: () => gmailMode.value,
+    // The Android demo mailbox also needs Account: it holds "Use your own mail".
+    available: () => gmailMode.value || androidShell,
     execute: async () => { await openDrawer('account'); },
   },
   'switch-account': {
@@ -2487,7 +2525,7 @@ const searchSyntaxEditHint = computed(() =>
           <span class="rail-spacer" aria-hidden="true"></span>
           <div class="rail-utilities">
             <button
-              v-if="gmailMode && accountStatus"
+              v-if="(gmailMode || androidShell) && accountStatus"
               type="button"
               class="rail-item"
               data-test="rail-account"
@@ -2777,7 +2815,7 @@ const searchSyntaxEditHint = computed(() =>
               :read-only="trashReader || (gmailMode && !mailboxActionsEnabled)"
               :browsing-only="trashReader"
               :show-read-controls="gmailActionsEnabled && !trashReader"
-              :android="androidFixture"
+              :android="androidShell"
               :selection-count="selectedCount"
               :selection-context="mailbox.context.value"
               :back-host="layoutMode === 'compact' ? mobileTopBar?.backHost : readerBackHost"
@@ -2944,7 +2982,7 @@ const searchSyntaxEditHint = computed(() =>
                surface was open): the capability needs an account identity, so
                render an explicit account-required state instead of an empty drawer. -->
           <p v-else-if="drawer === 'destinations'" role="note" data-test="destinations-account-required">
-            Provider mail needs a connected Gmail account.<template v-if="providerAccountAction"> <button v-if="providerAccountAction.action === 'account' || accountActionsIdle" type="button" class="inline-action" data-test="destinations-account-action" @click="accountNoticeAction(providerAccountAction.action, 'drawer')">{{ providerAccountAction.label }}</button></template><template v-else-if="accountStatus?.connection === 'authenticating'"> Finish sign-in in your browser.</template><template v-else> Connect one from Account first.</template>
+            Provider mail needs a connected Gmail account.<template v-if="providerAccountAction"> <button v-if="providerAccountAction.action === 'account' || accountActionsIdle" type="button" class="inline-action" data-test="destinations-account-action" @click="accountNoticeAction(providerAccountAction.action, 'drawer')">{{ providerAccountAction.label }}</button></template><template v-else-if="accountStatus?.connection === 'authenticating'">{{ ' ' + authenticatingText() }}.</template><template v-else> Connect one from Account first.</template>
           </p>
           <section v-if="drawer === 'reminder-settings' && remindersSupported" class="utility-panel" data-test="reminder-settings-dialog">
             <h3 class="drawer-section-title compact-settings-heading">Reminders</h3>
@@ -2956,7 +2994,10 @@ const searchSyntaxEditHint = computed(() =>
             :status="accountStatus"
             :busy="mailbox.accountBusy.value"
             :transitioning="drafts.transitioning.value"
-            :action-error="mailbox.lastCommandError.value"
+            :action-error="switchError ?? mailbox.lastCommandError.value"
+            :switch-target="androidShell ? (accountStatus.mode === 'gmail' ? 'fixture' : 'gmail') : null"
+            :demo-label="androidShell && accountStatus.mode === 'fixture'"
+            @switch-mode="switchMode($event)"
             @connect="connectAccount()"
             @disconnect="disconnectAccount()"
             @sync="mailbox.requestSync()"
@@ -3098,7 +3139,7 @@ const searchSyntaxEditHint = computed(() =>
       v-if="layoutMode === 'compact'"
       :open="mobileNavOpen"
       :compact="layoutMode === 'compact'"
-      :email="accountStatus?.account?.emailAddress ?? ''"
+      :email="androidShell && accountStatus?.mode === 'fixture' ? 'Demo mailbox' : (accountStatus?.account?.emailAddress ?? '')"
       :current="mailbox.context.value === 'saved' ? 'saved' : mailbox.context.value === 'inbox' ? 'inbox' : mailbox.context.value === 'drafts' ? 'drafts' : mailbox.context.value === 'done' ? 'done' : mailbox.context.value === 'starred' ? 'starred' : mailbox.context.value === 'trash' ? 'trash' : mailbox.context.value === 'reminders' ? 'reminders' : null"
       :actions="availableActions"
       @close="closeMobileDrawer"

@@ -411,6 +411,8 @@ export function createReaderFixtureClient(): ReaderFixture {
       sync: { state: 'idle', lastSyncedAt: READ_NOW, error: null, cachedConversations: 4, initialSyncComplete: true, coverageLimit: 0 },
     } satisfies AccountStatus),
     getFixtureTransitionStatus: () => Promise.resolve({ state: 'not_needed' }),
+    getModeChoice: () => Promise.resolve({ chosen: true, mode: 'fixture' }),
+    switchMode: (mode) => Promise.resolve({ chosen: true, mode }),
     acceptFixtureTransition: () => Promise.resolve({ state: 'not_needed' }),
     connectAccount: () => Promise.resolve(),
     disconnectAccount: () => Promise.resolve(),

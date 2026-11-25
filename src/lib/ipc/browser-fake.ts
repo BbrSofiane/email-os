@@ -585,8 +585,9 @@ export function createBrowserFakeMailClient(
   now: () => string = () => new Date().toISOString(),
   identity: FixtureIdentity = { accountId: ACCOUNT_ID, emailAddress: FIXTURE_MAILBOX },
   seed?: FakeMailboxSeed,
-  options: { htmlSamples?: boolean } = {},
+  options: { htmlSamples?: boolean; modeChoiceChosen?: boolean } = {},
 ): BrowserFake {
+  let modeChoiceChosen = options.modeChoiceChosen ?? true;
   // Capture values rather than retaining a caller-mutable identity object.
   const fixtureId = identity.accountId;
   const fixtureMailbox = identity.emailAddress;
@@ -2214,6 +2215,8 @@ export function createBrowserFakeMailClient(
       pendingClose = null;
     },
 
+    async getModeChoice() { return { chosen: modeChoiceChosen, mode: account.mode }; },
+    async switchMode(mode: MailMode) { account.mode = mode; modeChoiceChosen = true; return { chosen: true, mode }; },
     async getFixtureTransitionStatus(): Promise<FixtureTransitionStatus> {
       return snapshotCopy(fixtureTransition);
     },

@@ -179,6 +179,8 @@
   border: 1px solid var(--divider);
   border-radius: 50%;
   background: var(--surface-raised);
+  /* The bottom region passes touches through; each control opts back in. */
+  pointer-events: auto;
 }
 
 .app[data-layout="compact"] .mobile-actions-host {

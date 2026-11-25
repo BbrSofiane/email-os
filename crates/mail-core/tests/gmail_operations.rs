@@ -917,3 +917,92 @@ fn account_wide_credential_failure_requeues_instead_of_failing_the_write() {
     drop(core);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn covered_mutation_upgrade_does_not_request_consent() {
+    let dir = temp_profile("covered-upgrade");
+    let provider = FakeProvider::new(true);
+    provider.set_grant_blocked(true);
+    let core = open_core(&dir, &provider);
+    wait_ready(&core);
+    core.enable_mutations().unwrap();
+    core.wait_for_test_idle(mail_core::testing::TIMEOUT)
+        .unwrap();
+    assert!(provider.wait_for(|state| !state.grant_started));
+    core.stop();
+    drop(core);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn expired_grant_preserves_draft_and_queued_archive_until_reconnect() {
+    use mail_core::drafts::{CreateDraft, DraftContent, DraftCore, DraftSource};
+    use mail_core::gmail::types::{AccountInfo, ConnectionState, MutationAccess};
+
+    let dir = temp_profile("weekly-expiry");
+    let provider = FakeProvider::new(true);
+    let core = open_core(&dir, &provider);
+    wait_ready(&core);
+    let account = AccountInfo {
+        account_id: ACCOUNT.into(),
+        email_address: "synthetic@example.test".into(),
+    };
+    let drafts = DraftCore::open(dir.path().join("local-drafts")).unwrap();
+    let content = DraftContent {
+        to: String::new(),
+        cc: String::new(),
+        subject: "Draft".into(),
+        body_text: "Still here".into(),
+    };
+    let receipt = drafts
+        .create_draft(
+            &account,
+            &CreateDraft {
+                request_id: "draft-expiry".into(),
+                source: DraftSource::NewMessage,
+                initial_content: Some(content.clone()),
+            },
+            None,
+        )
+        .unwrap();
+    assert_eq!(core.list_conversations().unwrap().conversations.len(), 1);
+    provider.set_apply_plan(ApplyPlan::Error(MailError::AuthRequired));
+    core.set_archived(&archived(true, "expiry-archive"))
+        .unwrap();
+    assert!(until(
+        || core.account_status().unwrap().connection == ConnectionState::AuthRequired
+    ));
+    assert_eq!(
+        core.list_conversations().unwrap().activity[0].status,
+        OperationStatus::Queued
+    );
+    // The optimistic archive hides the inbox row, but its cached detail remains.
+    assert!(core.get_conversation(&conversation_ref()).is_ok());
+    assert_eq!(
+        drafts
+            .get_draft(&account, &receipt.draft_ref)
+            .unwrap()
+            .content,
+        content
+    );
+    assert_eq!(
+        core.account_status().unwrap().mutation_access,
+        Some(MutationAccess::Enabled)
+    );
+    provider.set_apply_plan(ApplyPlan::Success);
+    core.connect_account().unwrap();
+    assert!(until(|| core.list_conversations().unwrap().activity[0]
+        .status
+        == OperationStatus::Confirmed));
+    // Two attempts reached the provider: the rejected one (expired grant,
+    // nothing applied) and the one after reconnect, which confirmed.
+    assert_eq!(provider.writes().len(), 2);
+    assert_eq!(
+        core.account_status().unwrap().mutation_access,
+        Some(MutationAccess::Enabled)
+    );
+    core.stop();
+    drop(core);
+    drop(drafts);
+    let _ = std::fs::remove_dir_all(dir);
+}

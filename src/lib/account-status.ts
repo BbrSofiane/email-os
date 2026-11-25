@@ -9,6 +9,7 @@
  * are off. The one standing fact worth saying is about reading: cached mail
  * stays readable.
  */
+import { isAndroidShell } from './ipc';
 import type { AccountStatus, MailError } from './ipc/client';
 
 /** One plain sentence per typed error. */
@@ -159,8 +160,8 @@ export function accountNotice(status: AccountStatus | null): AccountNotice | nul
       };
     case 'authenticating':
       return {
-        kind: 'authenticating', text: 'Finish sign-in in your browser', action: 'cancel', actionLabel: 'Cancel sign-in', tone: 'neutral',
-        title: 'Gmail sign-in is waiting for your browser. Cancel stops it.',
+        kind: 'authenticating', text: authenticatingText(), action: 'cancel', actionLabel: 'Cancel sign-in', tone: 'neutral',
+        title: isAndroidShell() ? 'Sign-in is waiting on the next screen. Cancel stops it.' : 'Gmail sign-in is waiting for your browser. Cancel stops it.',
       };
     case 'connected':
       break;
@@ -196,6 +197,18 @@ export const FIRST_RUN_HINT = "Opens Google sign-in in your browser. Starts read
 /** The next step for a device with no Google client ID; the Account drawer says the same. */
 export const NOT_CONFIGURED_HINT = 'Add a Google client ID to the launch environment, then restart.';
 
+export function authenticatingText(): string {
+  return isAndroidShell() ? 'Finish sign-in on the next screen' : 'Finish sign-in in your browser';
+}
+
+export function firstRunHint(): string {
+  return isAndroidShell() ? "Opens sign-in on this phone. Starts read-only: Email OS can't change your mail until you enable mailbox actions in Account." : FIRST_RUN_HINT;
+}
+
+export function notConfiguredHint(): string {
+  return isAndroidShell() ? 'This build is not registered for sign-in.' : NOT_CONFIGURED_HINT;
+}
+
 export interface InboxEmpty {
   kind: InboxEmptyKind;
   text: string;
@@ -221,13 +234,13 @@ export function inboxEmptyState(status: AccountStatus | null): InboxEmpty | null
   const { sync } = status;
   switch (status.connection) {
     case 'not_configured':
-      return { kind: 'not_configured', text: 'Gmail is not configured on this device.', tone: 'neutral', hint: NOT_CONFIGURED_HINT, action: 'account', actionLabel: 'Account' };
+      return { kind: 'not_configured', text: 'Gmail is not configured on this device.', tone: 'neutral', hint: notConfiguredHint(), action: 'account', actionLabel: 'Account' };
     case 'disconnected':
-      return { kind: 'disconnected', text: 'Not connected.', tone: 'neutral', hint: FIRST_RUN_HINT, action: 'connect', actionLabel: 'Connect Gmail' };
+      return { kind: 'disconnected', text: 'Not connected.', tone: 'neutral', hint: firstRunHint(), action: 'connect', actionLabel: 'Connect Gmail' };
     case 'auth_required':
       return { kind: 'auth_required', text: 'Sign-in expired.', tone: 'warning', action: 'connect', actionLabel: 'Sign in again' };
     case 'authenticating':
-      return { kind: 'authenticating', text: 'Finish sign-in in your browser.', tone: 'neutral', action: 'cancel', actionLabel: 'Cancel sign-in' };
+      return { kind: 'authenticating', text: `${authenticatingText()}.`, tone: 'neutral', action: 'cancel', actionLabel: 'Cancel sign-in' };
     case 'connected':
       break;
   }

@@ -89,11 +89,13 @@ no global configuration is needed.
 
 ### Android fixture APK
 
-The Android target is a fixture-only Tauri app with a viewport-driven compact phone shell
-(up to 719 CSS px); browser preview uses the same layout mode. It uses the same synthetic fixture core
-and SQLite profile as native fixture mode (ADR 0002). Android always selects fixture mode,
-even if `EMAIL_OS_MODE=gmail` is present. A pre-existing legacy fixture database is retired
-once behind the startup screen (closing the app is the cancel path). Gmail account controls and attachment export are unavailable on Android. The shell returns
+The Android target is a Tauri app with a viewport-driven compact phone shell
+(up to 719 CSS px); browser preview uses the same layout mode. It opens either the demo mailbox
+(the synthetic fixture core and SQLite profile of native fixture mode, ADR 0002) or the user's own
+Gmail account ([ADR 0005](adr/0005-android-gmail-sign-in.md), see
+[Gmail on Android](#gmail-on-android-adr-0005)). `EMAIL_OS_MODE` is ignored on Android. A
+pre-existing legacy fixture database is retired once behind the startup screen (closing the app is
+the cancel path). Attachment export is unavailable on Android. The shell returns
 the typed `unsupported_platform` error for attachment export. Confirmed external links dispatch through an Android ACTION_VIEW intent via JNI. The WebView
 content remains padded for safe system insets; native status and navigation bars use the app
 surface color and light icons. Compact layout keeps the existing capabilities and adds no mail
@@ -130,6 +132,48 @@ the Tauri Android template, install the pinned SDK/NDK first and run
 diff and restore the pinned application ID, SDK, and NDK settings if the CLI
 template changes them.
 
+### Gmail on Android (ADR 0005)
+
+Sign-in uses Google Play services' Authorization API through a Kotlin bridge
+(`GoogleAuthBridge.kt`) that only Rust calls; no webview capability reaches it
+and tokens never cross IPC. The app holds no refresh token: access tokens come
+from Play services and live in process memory. The stored account binding
+(account, address, granted scopes) is encrypted with an Android Keystore key in
+`no_backup/gmail-binding.bin`. Disconnect is local: it clears the binding, the
+cached token and the Gmail cache, keeps drafts, and does not revoke access at
+Google.
+
+- **First run and switching.** With no `mode.json` in the app data directory,
+  the app asks: **Use your own mail** (switches to Gmail and starts Connect) or
+  **Open the demo mailbox**. Account offers **Use your own mail** in the demo
+  and **Switch to demo mailbox** in Gmail mode. A switch saves the open draft
+  first; a failed save switches nothing. Each mode keeps its own profile
+  (`fixture-profile`, `gmail-profile`).
+- **Google Cloud.** The existing desktop project, publishing status
+  **Testing**, test users listed under Audience. One **Android** OAuth client
+  per signer for package `dev.exedev.emailos`: the owner's release certificate
+  and this VM's debug key (`~/.android/debug.keystore`, SHA-1
+  `93:06:D5:83:0B:27:BE:95:BB:48:80:7B:52:9C:95:D5:C8:18:C6:03`). No client ID
+  is built into the app; Play services matches package and signature. CI debug
+  and PR APKs use other keys and show the "not registered for sign-in" state.
+- **Weekly expiry.** In Testing, Google ends a test user's authorization seven
+  days after consent. The app then shows **Sign-in expired** with **Sign in
+  again**; queued writes stay queued, and the cache and drafts are kept.
+- **Background.** Periodic sync pauses while the app is in the background and
+  one pass runs on resume; a returning network triggers one sync. Nothing runs
+  while the app is backgrounded for long or killed; there are no push
+  notifications.
+- **Old Play services.** Play services before the `clearToken` feature (the
+  shared emulator's 24.23.35) cannot drop a revoked token from its cache, and
+  the bridge skips the call there (below Play services 25.20). After access is
+  removed at Google, **Sign in again** keeps failing until that token expires
+  (about an hour); a current phone clears it at once.
+
+To validate on the emulator, build and install the debug APK from this VM (the
+registered debug signer), sign a test-user account into the emulator under
+Settings → Passwords, passkeys & accounts, then choose **Use your own mail**.
+Never commit screenshots or recordings that show a real address or real mail.
+
 ### Signed Android releases
 
 Android release builds use application ID `dev.exedev.emailos` and label
@@ -165,7 +209,8 @@ device or emulator. Use device interaction tools to launch the app and verify:
    return to the inbox); open the inbox to confirm the count dropped. Tap Undo within
    the 10-second undo window and confirm the row returns. Mark read/unread (reader button or
    row menu) and Star/Unstar (command palette) also work.
-3. Gmail controls and Files and links are absent.
+3. In the demo, Account shows only "Demo mailbox" and **Use your own mail** (no sync,
+   permission or disconnect controls); Files and links is absent.
 4. Compose a draft, wait for “Saved locally · never sent”, then close the app
    process.
 5. Relaunch the app. Confirm the archived conversation remains absent and the

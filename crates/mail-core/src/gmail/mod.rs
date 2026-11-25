@@ -1,6 +1,7 @@
 //! Gmail integration and mailbox operations, kept separate from fixture storage.
 pub mod auth;
 pub mod browsing;
+pub mod grants;
 pub(crate) mod html_text;
 pub mod operations;
 pub(crate) mod parse;
@@ -12,3 +13,5 @@ pub(crate) mod session;
 pub mod store;
 pub mod sync;
 pub mod types;
+
+pub mod platform_auth;

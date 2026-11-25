@@ -224,6 +224,30 @@ pub enum SendResult {
 ///
 /// Synchronous calls run exclusively on background/blocking threads, outside DB locks.
 pub trait GmailProvider: Send + Sync {
+    /// Returns whether the stored credentials cover the grant.
+    fn grant_covered(&self, grant: super::grants::GmailGrant) -> Result<bool, MailError> {
+        match grant {
+            super::grants::GmailGrant::Readonly => self.has_credentials(),
+            super::grants::GmailGrant::Modify => self.mutation_access(),
+        }
+    }
+    /// Requests consent only when the grant is not already covered.
+    fn request_grant(
+        &self,
+        grant: super::grants::GmailGrant,
+        cancel: &CancelToken,
+    ) -> Result<super::grants::GrantOutcome, MailError> {
+        use super::grants::{GmailGrant, GrantOutcome};
+        if self.grant_covered(grant)? {
+            return Ok(GrantOutcome::AlreadyCovered);
+        }
+        match grant {
+            GmailGrant::Readonly => self.connect(cancel),
+            GmailGrant::Modify => self.enable_mutations(cancel),
+        }
+        .map(GrantOutcome::Granted)
+    }
+
     /// Read-only lookup of unambiguous Sent evidence. Unsupported providers
     /// return no evidence; absence must never be interpreted as a refusal.
     fn find_sent_for_account(

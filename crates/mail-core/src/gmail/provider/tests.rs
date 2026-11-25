@@ -22,7 +22,9 @@ fn future_token() -> TokenBundle {
         expires_at_epoch_ms: now_ms() + 3_600_000,
         account_id: Some("synthetic@example.test".to_string()),
         email: Some("synthetic@example.test".to_string()),
+        platform_authorized: false,
         gmail_modify_granted: false,
+        granted_scopes: vec![],
     }
 }
 
@@ -163,7 +165,7 @@ fn test_provider(api_base: &str, secrets: Arc<dyn Secrets>) -> LiveGmailProvider
         token: format!("{api_base}/synthetic-token"),
         api: api_base.to_string(),
     };
-    provider.opener = Arc::new(|_| Ok(()));
+    provider.set_opener(Arc::new(|_| Ok(())));
     provider
 }
 
@@ -259,7 +261,7 @@ fn connect_runs_oauth_stores_credentials_and_returns_profile() {
     // authorization URL and completes the loopback callback round trip.
     let opener_url: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let opener_url_for_opener = Arc::clone(&opener_url);
-    provider.opener = Arc::new(move |url| {
+    provider.set_opener(Arc::new(move |url| {
         *opener_url_for_opener.lock().unwrap() = Some(url.to_string());
         let parsed = url::Url::parse(url).unwrap();
         let redirect_uri = parsed
@@ -289,7 +291,7 @@ fn connect_runs_oauth_stores_credentials_and_returns_profile() {
             let _ = stream.read_to_end(&mut buf);
         });
         Ok(())
-    });
+    }));
 
     let profile = provider.connect(&CancelToken::default()).unwrap();
     assert_eq!(profile.email_address, "synthetic@example.test");
@@ -359,7 +361,7 @@ fn connect_rejects_account_switch_before_storing_tokens() {
     secrets.store(&previous).unwrap();
     let mut provider = test_provider(&api_base, secrets.clone());
     provider.endpoints.token = format!("{token_base}/synthetic-token");
-    provider.opener = Arc::new(|url| {
+    provider.set_opener(Arc::new(|url| {
         let parsed = url::Url::parse(url).unwrap();
         let redirect_uri = parsed
             .query_pairs()
@@ -388,7 +390,7 @@ fn connect_rejects_account_switch_before_storing_tokens() {
             let _ = stream.read_to_end(&mut response);
         });
         Ok(())
-    });
+    }));
 
     assert!(matches!(
         provider.connect(&CancelToken::default()),
@@ -415,7 +417,7 @@ fn explicit_upgrade_requests_and_verifies_modify_scope_for_bound_account() {
     let mut provider = test_provider(&api_base, secrets.clone());
     provider.endpoints.token = format!("{token_base}/synthetic-token");
     let auth_url = Arc::new(Mutex::new(None));
-    provider.opener = completing_oauth_opener(auth_url.clone());
+    provider.set_opener(completing_oauth_opener(auth_url.clone()));
 
     let profile = provider.enable_mutations(&CancelToken::default()).unwrap();
     assert_eq!(profile.account_id, "synthetic@example.test");
@@ -429,9 +431,23 @@ fn explicit_upgrade_requests_and_verifies_modify_scope_for_bound_account() {
             .query_pairs()
             .map(|(key, value)| (key.into_owned(), value.into_owned()))
             .collect();
+    let scope = query.iter().find(|(key, _)| key == "scope").unwrap();
+    let scopes: std::collections::HashSet<_> = scope.1.split_ascii_whitespace().collect();
+    assert_eq!(
+        scopes,
+        [auth::GMAIL_READONLY_SCOPE, auth::GMAIL_MODIFY_SCOPE]
+            .into_iter()
+            .collect()
+    );
     assert!(query
         .iter()
-        .any(|(key, value)| { key == "scope" && value == auth::GMAIL_MODIFY_SCOPE }));
+        .any(|(key, value)| key == "include_granted_scopes" && value == "true"));
+    assert!(stored
+        .granted_scopes
+        .contains(&auth::GMAIL_READONLY_SCOPE.to_string()));
+    assert!(stored
+        .granted_scopes
+        .contains(&auth::GMAIL_MODIFY_SCOPE.to_string()));
 }
 
 #[test]
@@ -440,14 +456,14 @@ fn upgrade_without_returned_modify_scope_preserves_old_bundle() {
     let (token_base, _token) = FakeApi::start(vec![(
         "/synthetic-token",
         200,
-        r#"{"access_token":"at-denied","expires_in":3600,"scope":"https://www.googleapis.com/auth/gmail.readonly"}"#,
+        r#"{"access_token":"at-denied","expires_in":3600,"scope":"https://www.googleapis.com/auth/gmail.readonly https://example.test/unknown"}"#,
     )]);
     let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
     let previous = future_token();
     secrets.store(&previous).unwrap();
     let mut provider = test_provider("http://127.0.0.1:9", secrets.clone());
     provider.endpoints.token = format!("{token_base}/synthetic-token");
-    provider.opener = completing_oauth_opener(Arc::new(Mutex::new(None)));
+    provider.set_opener(completing_oauth_opener(Arc::new(Mutex::new(None))));
 
     assert!(matches!(
         provider.enable_mutations(&CancelToken::default()),
@@ -473,7 +489,7 @@ fn upgrade_with_omitted_scope_is_denied_without_replacing_credentials() {
     secrets.store(&previous).unwrap();
     let mut provider = test_provider("http://127.0.0.1:9", secrets.clone());
     provider.endpoints.token = format!("{token_base}/synthetic-token");
-    provider.opener = completing_oauth_opener(Arc::new(Mutex::new(None)));
+    provider.set_opener(completing_oauth_opener(Arc::new(Mutex::new(None))));
 
     assert!(matches!(
         provider.enable_mutations(&CancelToken::default()),
@@ -500,7 +516,7 @@ fn upgrade_account_swap_preserves_old_credentials() {
     secrets.store(&previous).unwrap();
     let mut provider = test_provider(&api_base, secrets.clone());
     provider.endpoints.token = format!("{token_base}/synthetic-token");
-    provider.opener = completing_oauth_opener(Arc::new(Mutex::new(None)));
+    provider.set_opener(completing_oauth_opener(Arc::new(Mutex::new(None))));
 
     assert!(matches!(
         provider.enable_mutations(&CancelToken::default()),
@@ -536,7 +552,7 @@ fn cancelled_upgrade_after_profile_keeps_old_bundle_before_store() {
     secrets.store(&previous).unwrap();
     let mut provider = test_provider(&api_base, secrets.clone());
     provider.endpoints.token = format!("{token_base}/synthetic-token");
-    provider.opener = completing_oauth_opener(Arc::new(Mutex::new(None)));
+    provider.set_opener(completing_oauth_opener(Arc::new(Mutex::new(None))));
 
     assert!(matches!(
         provider.enable_mutations(&cancel),
@@ -624,7 +640,9 @@ fn refresh_failures_after_preliminary_profile_never_dispatch_setter() {
         let (token_base, token) = FakeApi::start(vec![("/synthetic-token", status, body)]);
         let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
         let granted = TokenBundle {
+            platform_authorized: false,
             gmail_modify_granted: true,
+            granted_scopes: vec![],
             expires_at_epoch_ms: now_ms() + EXPIRY_SKEW_MS + 1_000,
             ..future_token()
         };
@@ -662,7 +680,9 @@ fn paced_setter_rechecks_grant_after_concurrent_refresh_downgrade() {
     let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
     let expiry = now_ms() + EXPIRY_SKEW_MS + 150;
     let granted = TokenBundle {
+        platform_authorized: false,
         gmail_modify_granted: true,
+        granted_scopes: vec![],
         expires_at_epoch_ms: expiry,
         ..future_token()
     };
@@ -746,7 +766,9 @@ fn paced_setter_uses_current_same_account_credential_after_replacement() {
         FakeApi::start(vec![("/gmail/v1/users/me/messages/batchModify", 200, "")]);
     let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
     let original = TokenBundle {
+        platform_authorized: false,
         gmail_modify_granted: true,
+        granted_scopes: vec![],
         ..future_token()
     };
     secrets.store(&original).unwrap();
@@ -803,7 +825,9 @@ fn paced_setter_cancellation_prevents_dispatch() {
     let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
     secrets
         .store(&TokenBundle {
+            platform_authorized: false,
             gmail_modify_granted: true,
+            granted_scopes: vec![],
             ..future_token()
         })
         .unwrap();
@@ -843,7 +867,9 @@ fn refresh_scope_downgrade_disables_write_before_setter_dispatch() {
     )]);
     let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
     let granted = TokenBundle {
+        platform_authorized: false,
         gmail_modify_granted: true,
+        granted_scopes: vec![],
         expires_at_epoch_ms: now_ms() - 1_000,
         ..future_token()
     };
@@ -898,7 +924,9 @@ fn refresh_without_scope_preserves_verified_write_grant() {
     )]);
     let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
     let granted = TokenBundle {
+        platform_authorized: false,
         gmail_modify_granted: true,
+        granted_scopes: vec![],
         expires_at_epoch_ms: now_ms() - 1_000,
         ..future_token()
     };
@@ -1763,7 +1791,9 @@ fn paced_setter_rejects_a_replacement_for_a_different_account() {
     let (api_base, api) = FakeApi::start(vec![]);
     let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
     let original = TokenBundle {
+        platform_authorized: false,
         gmail_modify_granted: true,
+        granted_scopes: vec![],
         ..future_token()
     };
     secrets.store(&original).unwrap();
@@ -1825,7 +1855,9 @@ fn mailbox_setters_post_only_exact_snapshot_ids_and_closed_label_changes() {
     ]);
     let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
     let granted = TokenBundle {
+        platform_authorized: false,
         gmail_modify_granted: true,
+        granted_scopes: vec![],
         ..future_token()
     };
     secrets.store(&granted).unwrap();
@@ -1891,7 +1923,9 @@ fn setter_rejects_empty_duplicate_and_oversized_target_sets_without_dispatch() {
     let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
     secrets
         .store(&TokenBundle {
+            platform_authorized: false,
             gmail_modify_granted: true,
+            granted_scopes: vec![],
             ..future_token()
         })
         .unwrap();
@@ -1924,7 +1958,9 @@ fn setter_distinguishes_quota_permission_rejection_and_unknown_outcome() {
         let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
         secrets
             .store(&TokenBundle {
+                platform_authorized: false,
                 gmail_modify_granted: true,
+                granted_scopes: vec![],
                 ..future_token()
             })
             .unwrap();
@@ -1965,7 +2001,9 @@ fn setter_does_not_follow_redirects_and_cancelled_pre_dispatch_is_definite() {
     let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
     secrets
         .store(&TokenBundle {
+            platform_authorized: false,
             gmail_modify_granted: true,
+            granted_scopes: vec![],
             ..future_token()
         })
         .unwrap();
@@ -1984,7 +2022,9 @@ fn setter_does_not_follow_redirects_and_cancelled_pre_dispatch_is_definite() {
     let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
     secrets
         .store(&TokenBundle {
+            platform_authorized: false,
             gmail_modify_granted: true,
+            granted_scopes: vec![],
             ..future_token()
         })
         .unwrap();
@@ -2000,7 +2040,9 @@ fn setter_does_not_follow_redirects_and_cancelled_pre_dispatch_is_definite() {
     let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
     secrets
         .store(&TokenBundle {
+            platform_authorized: false,
             gmail_modify_granted: true,
+            granted_scopes: vec![],
             ..future_token()
         })
         .unwrap();
@@ -2748,7 +2790,7 @@ fn credential_publication_old_refresh_cannot_overwrite_verified_upgrade() {
     secrets.store(&expired_bundle()).unwrap();
     let mut provider = test_provider(&api_base, secrets.clone());
     provider.endpoints.token = format!("{}/synthetic-token", endpoint.base);
-    provider.opener = completing_oauth_opener(Arc::new(Mutex::new(None)));
+    provider.set_opener(completing_oauth_opener(Arc::new(Mutex::new(None))));
     let provider = Arc::new(provider);
 
     let refresh_provider = Arc::clone(&provider);
@@ -2805,11 +2847,11 @@ fn credential_publication_connect_rebases_after_refresh_and_applies_readonly_sco
     let entered_opener = Arc::clone(&oauth_entered);
     let release_opener = Arc::clone(&release_oauth);
     let finish_oauth = completing_oauth_opener(Arc::new(Mutex::new(None)));
-    provider.opener = Arc::new(move |url| {
+    provider.set_opener(Arc::new(move |url| {
         entered_opener.wait();
         release_opener.wait();
         finish_oauth(url)
-    });
+    }));
     let provider = Arc::new(provider);
 
     let reauth_provider = Arc::clone(&provider);
@@ -2884,13 +2926,13 @@ fn credential_publication_connect_rejects_superseded_same_account_oauth() {
     let release_opener = Arc::clone(&release_oauth);
     let opener_calls_for_callback = Arc::clone(&opener_calls);
     let finish_oauth = completing_oauth_opener(Arc::new(Mutex::new(None)));
-    provider.opener = Arc::new(move |url| {
+    provider.set_opener(Arc::new(move |url| {
         if opener_calls_for_callback.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
             entered_opener.wait();
             release_opener.wait();
         }
         finish_oauth(url)
-    });
+    }));
     let provider = Arc::new(provider);
 
     let stale_provider = Arc::clone(&provider);
@@ -2933,11 +2975,11 @@ fn credential_publication_connect_cannot_resurrect_after_disconnect() {
     let entered_opener = Arc::clone(&oauth_entered);
     let release_opener = Arc::clone(&release_oauth);
     let finish_oauth = completing_oauth_opener(Arc::new(Mutex::new(None)));
-    provider.opener = Arc::new(move |url| {
+    provider.set_opener(Arc::new(move |url| {
         entered_opener.wait();
         release_opener.wait();
         finish_oauth(url)
-    });
+    }));
     let provider = Arc::new(provider);
 
     let reauth_provider = Arc::clone(&provider);
@@ -2976,3 +3018,89 @@ fn credential_publication_stale_refresh_does_not_resurrect_disconnected_credenti
     endpoint.join();
     assert!(secrets.load().unwrap().is_none());
 }
+
+#[test]
+fn legacy_modify_bundle_covers_both_grants_without_io() {
+    use crate::gmail::grants::{GmailGrant, GrantOutcome};
+    let mut value = serde_json::to_value(future_token()).unwrap();
+    value.as_object_mut().unwrap().remove("grantedScopes");
+    value["gmailModifyGranted"] = json!(true);
+    let bundle: TokenBundle = serde_json::from_value(value).unwrap();
+    assert_eq!(bundle.effective_scopes().len(), 2);
+    let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+    secrets.store(&bundle).unwrap();
+    let (base, api) = FakeApi::start(vec![]);
+    let mut provider = test_provider(&base, secrets);
+    let calls = Arc::new(Mutex::new(0));
+    let opener_calls = calls.clone();
+    provider.set_opener(Arc::new(move |_| {
+        *opener_calls.lock().unwrap() += 1;
+        Ok(())
+    }));
+    for grant in [GmailGrant::Readonly, GmailGrant::Modify] {
+        assert!(provider.grant_covered(grant).unwrap());
+        assert!(matches!(
+            provider.request_grant(grant, &CancelToken::default()),
+            Ok(GrantOutcome::AlreadyCovered)
+        ));
+    }
+    assert_eq!(*calls.lock().unwrap(), 0);
+    assert!(api.requests().is_empty());
+}
+
+#[test]
+fn uncovered_readonly_runs_connect() {
+    use crate::gmail::grants::{GmailGrant, GrantOutcome};
+    let (base, _) = FakeApi::start(vec![(
+        "/gmail/v1/users/me/profile",
+        200,
+        r#"{"emailAddress":"synthetic@example.test","historyId":"1234"}"#,
+    )]);
+    let (token_base, _) = FakeApi::start(vec![(
+        "/synthetic-token",
+        200,
+        r#"{"access_token":"synthetic","expires_in":3600}"#,
+    )]);
+    let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+    let mut provider = test_provider(&base, secrets);
+    provider.endpoints.token = format!("{token_base}/synthetic-token");
+    let url = Arc::new(Mutex::new(None));
+    provider.set_opener(completing_oauth_opener(url.clone()));
+    assert!(matches!(
+        provider.request_grant(GmailGrant::Readonly, &CancelToken::default()),
+        Ok(GrantOutcome::Granted(_))
+    ));
+    assert!(url.lock().unwrap().is_some());
+}
+
+#[test]
+fn connect_omitted_scope_preserves_existing_grants() {
+    let (base, _) = FakeApi::start(vec![(
+        "/gmail/v1/users/me/profile",
+        200,
+        r#"{"emailAddress":"synthetic@example.test","historyId":"1234"}"#,
+    )]);
+    let (token_base, _) = FakeApi::start(vec![(
+        "/synthetic-token",
+        200,
+        r#"{"access_token":"synthetic","expires_in":3600}"#,
+    )]);
+    let secrets = Arc::new(crate::gmail::secrets::MemorySecrets::new());
+    let mut previous = future_token();
+    previous.granted_scopes = vec![
+        auth::GMAIL_READONLY_SCOPE.into(),
+        auth::GMAIL_MODIFY_SCOPE.into(),
+    ];
+    previous.gmail_modify_granted = true;
+    secrets.store(&previous).unwrap();
+    let mut provider = test_provider(&base, secrets.clone());
+    provider.endpoints.token = format!("{token_base}/synthetic-token");
+    provider.set_opener(completing_oauth_opener(Arc::new(Mutex::new(None))));
+    provider.connect(&CancelToken::default()).unwrap();
+    let stored = secrets.load().unwrap().unwrap();
+    assert_eq!(stored.granted_scopes, previous.granted_scopes);
+    assert!(stored.gmail_modify_granted);
+}
+
+#[path = "platform_tests.rs"]
+mod platform_tests;
