@@ -22,4 +22,19 @@ describe('account mode switch', () => {
     expect(button.attributes('disabled')).toBeDefined();
     wrapper.unmount();
   });
+
+  it('shows the Android demo mailbox without the Gmail lifecycle controls', async () => {
+    const status = await createBrowserFakeMailClient().getAccountStatus();
+    expect(status.mode).toBe('fixture');
+    const wrapper = mount(AccountPanel, { props: { status, busy: null, demoLabel: true, switchTarget: 'gmail' } });
+    expect(wrapper.get('[data-test="account-demo"]').text()).toContain('Demo mailbox');
+    for (const control of ['account-sync', 'enable-mailbox-actions', 'account-disconnect', 'account-connect', 'account-mode']) {
+      expect(wrapper.find(`[data-test="${control}"]`).exists(), control).toBe(false);
+    }
+    expect(wrapper.get('[data-test="account-switch-mode-button"]').text()).toBe('Use your own mail');
+    // Without the demo label (desktop fixture), the panel is unchanged.
+    await wrapper.setProps({ demoLabel: false });
+    expect(wrapper.find('[data-test="account-demo"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
 });
