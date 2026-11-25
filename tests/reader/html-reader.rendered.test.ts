@@ -270,6 +270,8 @@ describe.skipIf(!enabled)('HTML reader without frame listeners (WebKit model)', 
     await dialogButton('New message to');
     await wait(`${app}.querySelector('[data-test="draft-to"]')?.value === 'ana@ridpath.example'`, 'prefilled recipient');
     expect(requests.slice(before).filter(url => url.includes('example.test') || url.startsWith('mailto:'))).toEqual([]);
+    // Handling an activation must not resize the signal inside its own delivery.
+    expect(await h.cdp.js<string[]>('window.__eosErrors')).toEqual([]);
   }, 60_000);
 
   it('activates a link reached with Tab by Enter', async () => {
@@ -286,6 +288,27 @@ describe.skipIf(!enabled)('HTML reader without frame listeners (WebKit model)', 
     await pressRenderedEnter(h.cdp, () => pause(100));
     expect(await dialogText()).toContain('https://docs.example.test/plan');
     await dialogButton('Keep reading');
+  }, 60_000);
+
+  it('reaches every surviving hostile-sample link with Tab and shows it', async () => {
+    await open('Hostile HTML sample');
+    const expected = await h.cdp.js<string[]>(`[...${doc}.querySelectorAll('a[data-eos-href]')].map(a => a.dataset.eosHref)`);
+    expect(expected.length).toBe(3);
+    const seen = new Set<string>();
+    for (let i = 0; i < 60 && seen.size < expected.length; i++) {
+      await pressRenderedTab(h.cdp, false, () => pause(150));
+      const focused = await h.cdp.js<{ href: string; visible: boolean } | null>(`(() => {
+        const a = ${doc}.activeElement;
+        if (!a || !a.dataset || !a.dataset.eosHref || document.activeElement !== ${frame}) return null;
+        const f = ${frame}.getBoundingClientRect(), r = a.getBoundingClientRect();
+        const top = f.top + r.top, bottom = f.top + r.bottom;
+        return { href: a.dataset.eosHref, visible: top >= 0 && bottom <= innerHeight };
+      })()`);
+      if (!focused) continue;
+      expect(focused.visible, focused.href).toBe(true);
+      seen.add(focused.href);
+    }
+    expect([...seen].sort()).toEqual([...expected].sort());
   }, 60_000);
 
   it('gives keys back to the reader after a click in the message but keeps a selection', async () => {

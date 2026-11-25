@@ -204,9 +204,12 @@ implementation and recorded here instead of rewriting the proposal:
         fetched. Its target is a `display: none` `eos-target` after the body,
         so nothing scrolls. `eos-target:target ~ eos-signal` gives a hidden
         fixed `eos-signal` element a width, the app's `ResizeObserver` sees it,
-        reads the fragment, resets it (`location.replace` to an idle fragment,
-        then `history.replaceState` back to `about:srcdoc`) and opens the same
-        confirmation. The sanitiser drops custom elements, so mail cannot add
+        reads the fragment, and on the next animation frame resets it
+        (`location.replace` to an idle fragment, then `history.replaceState`
+        back to `about:srcdoc`) and opens the same confirmation. Doing either
+        inside the observer's callback resized the signal again during its own
+        delivery and logged "ResizeObserver loop completed with undelivered
+        notifications" once per activation (second Mac recheck). The sanitiser drops custom elements, so mail cannot add
         targets or signals; mail CSS can at most stop its own links from
         signalling, and cannot fake an activation because the app reads the
         link from the fragment. The signal rules are `!important` inside a
@@ -222,9 +225,18 @@ implementation and recorded here instead of rewriting the proposal:
         height), the app checks every 100 ms while the frame has focus and
         gives focus back to the reader (the nearest ancestor with `tabindex`)
         once the pointer is up, unless text is selected (Copy needs the frame
-        focused) or an element has keyboard focus (`:focus-visible`, Tab
-        through links). So `j`/`k`/Escape work after a click; after selecting
-        text they work again after the next click.
+        focused) or an element other than the body holds focus, except a link
+        focused by a click (no `:focus-visible`). An element the keyboard
+        focused may not match `:focus-visible` itself: the conv-23 sample's
+        `<details>` has focus while its built-in summary does, and giving that
+        back sent Tab to the reader's header again (second Mac recheck). So
+        `j`/`k`/Escape work after a click; after selecting text they work again
+        after the next click.
+      - **Keyboard focus is revealed.** WebKit does not scroll the reader to an
+        element focused inside the full-height frame, so a link below the fold
+        stayed hidden. While the frame has focus, each newly focused element is
+        scrolled into the reader's view by the app, using positions as
+        fractions of the frame document's height (zoom-independent).
       - **Fit.** The app's `ResizeObserver` also watches the frame's images
         instead of `load` listeners. A fit resizes those images (zoom, broken
         image heights), so on this path the observer fits on the next animation
@@ -235,8 +247,10 @@ implementation and recorded here instead of rewriting the proposal:
       gesture in the webview.
     - **Known WebKit differences:** Space on a focused link scrolls instead of
       opening it (native links open on Enter only); with text selected or a
-      link focused by keyboard, reader keys wait for the next click; the probe
-      logs one "Blocked script execution" line per session.
+      link focused by keyboard, reader keys wait for the next click; a click
+      on a focusable mail element other than a link (a `<details>` summary)
+      keeps focus in the frame too; the probe logs one "Blocked script
+      execution" line per session.
     - Also from the check: the conv-21 logo fixture had a wrong IDAT CRC
       (hand-written base64; Chromium ignores chunk CRCs, ImageIO drew it
       transparent). It is corrected and a core test checks every fixture PNG's

@@ -48,16 +48,29 @@ export function frameListenersRun(doc: Document): boolean {
 /**
  * Whether the frame should keep focus: the pointer is pressed (a selection may
  * be starting), text is selected (Copy needs the frame focused) or an element
- * has keyboard focus (Tab through links, then Enter).
+ * holds focus that the user moved there (Tab through links, then Enter).
  */
 export function frameKeepsFocus(doc: Document): boolean {
   const root = doc.documentElement;
   if (matches(root, ':active')) return true;
   const selection = doc.getSelection();
   if (selection && !selection.isCollapsed) return true;
+  return heldFocus(doc) !== null;
+}
+
+/**
+ * The element in the frame that should keep focus, if any. A click on text
+ * focuses the body, and a click on a link focuses the link without
+ * `:focus-visible`: both give focus back. Anything else keeps it. The keyboard
+ * can focus elements that never match `:focus-visible` themselves, such as a
+ * `<details>` whose built-in summary has focus (the conv-23 sample's first Tab
+ * stop); giving that focus back sent Tab to the reader's header again.
+ */
+function heldFocus(doc: Document): Element | null {
   const focused = doc.activeElement;
-  if (!focused || focused === doc.body || focused === root) return false;
-  return matches(focused, ':focus-visible');
+  if (!focused || focused === doc.body || focused === doc.documentElement) return null;
+  if (matches(focused, ':focus-visible') || !matches(focused, 'a[data-eos-href]')) return focused;
+  return null;
 }
 
 function matches(element: Element, selector: string): boolean {
@@ -90,6 +103,36 @@ export function keepBrokenImageHeight(img: HTMLImageElement): void {
   if (rendered <= 0) return;
   img.style.height = `${(rendered * height) / width}px`;
   fittedHeights.add(img);
+}
+
+/**
+ * Scrolls the nearest scrolling ancestor of the frame so `target`, an element
+ * inside the frame, is visible. Positions are taken as fractions of the frame
+ * document's height, so the root's zoom does not matter.
+ */
+export function revealFrameElement(frame: HTMLIFrameElement, target: Element, margin = 24): void {
+  const doc = frame.contentDocument;
+  if (!doc) return;
+  const frameRect = frame.getBoundingClientRect();
+  const rootRect = doc.documentElement.getBoundingClientRect();
+  const rect = target.getBoundingClientRect();
+  if (frameRect.height <= 0 || rootRect.height <= 0) return;
+  const scale = frameRect.height / rootRect.height;
+  const top = frameRect.top + (rect.top - rootRect.top) * scale;
+  const bottom = frameRect.top + (rect.bottom - rootRect.top) * scale;
+  const view = frame.ownerDocument.defaultView;
+  let scroller: Element | null = frame.parentElement;
+  while (scroller && !(scroller.scrollHeight > scroller.clientHeight && /auto|scroll/.test(view?.getComputedStyle(scroller).overflowY ?? ''))) {
+    scroller = scroller.parentElement;
+  }
+  const box = scroller ?? frame.ownerDocument.scrollingElement;
+  if (!box) return;
+  const visible = scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: view?.innerHeight ?? 0 };
+  if (top < visible.top + margin) {
+    box.scrollTop -= visible.top + margin - top;
+  } else if (bottom > visible.bottom - margin) {
+    box.scrollTop += Math.min(bottom - (visible.bottom - margin), top - (visible.top + margin));
+  }
 }
 
 export interface FrameSignalOptions {
@@ -127,20 +170,34 @@ export function attachFrameSignals(element: HTMLIFrameElement, doc: Document, op
 
   let active = true;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let pendingLink = 0;
+  let revealed: Element | null = null;
   const poll = options.pollMs ?? 100;
   const check = (): void => {
     timer = undefined;
-    if (!active || element.ownerDocument.activeElement !== element) return;
+    if (!active || element.ownerDocument.activeElement !== element) {
+      revealed = null;
+      return;
+    }
     if (frameKeepsFocus(doc)) {
+      // WebKit does not scroll the reader to an element focused by keyboard
+      // inside the full-height frame, so a link below the fold stayed hidden.
+      const focused = heldFocus(doc);
+      if (focused && focused !== revealed) {
+        revealed = focused;
+        revealFrameElement(element, focused);
+      }
       timer = setTimeout(check, poll);
       return;
     }
+    revealed = null;
     options.releaseFocus();
   };
   const watchFocus = (): void => {
     if (active && timer === undefined) timer = setTimeout(check, 0);
   };
   const takeLink = (): void => {
+    if (pendingLink) return;
     let hash = '';
     try {
       hash = win.location.hash;
@@ -148,16 +205,24 @@ export function attachFrameSignals(element: HTMLIFrameElement, doc: Document, op
       return;
     }
     if (!hash.startsWith(prefix)) return;
+    // The fragment is read here; the reset and the report wait for the next
+    // frame. Clearing :target now would resize the signal again during this
+    // observer's own delivery ("ResizeObserver loop completed with undelivered
+    // notifications"), and so would the dialog the report opens.
     const link = links[Number(hash.slice(prefix.length))];
-    try {
-      // Clears :target (the idle id matches nothing, so nothing scrolls), then
-      // restores the plain URL without another navigation.
-      win.location.replace(`${base}${prefix}idle`);
-      win.history.replaceState(null, '', base);
-    } catch {
-      // A stale fragment only delays the next activation of the same link.
-    }
-    if (link) options.onLink(link);
+    pendingLink = requestAnimationFrame(() => {
+      pendingLink = 0;
+      if (!active) return;
+      try {
+        // Clears :target (the idle id matches nothing, so nothing scrolls),
+        // then restores the plain URL without another navigation.
+        win.location.replace(`${base}${prefix}idle`);
+        win.history.replaceState(null, '', base);
+      } catch {
+        // A stale fragment only delays the next activation of the same link.
+      }
+      if (link) options.onLink(link);
+    });
   };
 
   const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => {
@@ -172,6 +237,7 @@ export function attachFrameSignals(element: HTMLIFrameElement, doc: Document, op
   return () => {
     active = false;
     if (timer !== undefined) clearTimeout(timer);
+    cancelAnimationFrame(pendingLink);
     observer?.disconnect();
     parentWindow.removeEventListener('blur', watchFocus);
     for (const link of links) link.removeAttribute('href');
