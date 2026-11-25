@@ -12,6 +12,12 @@ import { PHONE_VIEWPORT, startRenderedHarness, type RenderedHarness } from '../r
 
 const chromePath = process.env.EMAIL_OS_RENDERED_LAYOUT_CHROME ?? '';
 const outputDir = process.env.EMAIL_OS_SCREENSHOT_DIR ?? '';
+/**
+ * The browser preview's primary workspace: conv-01..conv-18 plus the six
+ * ADR 0006 HTML samples (conv-19..conv-24), which are the newest and so sit
+ * at the top. The captures drive rows by position, not by id.
+ */
+const LOADED_CONVERSATIONS = 24;
 const pageRoot = new URL('../..', import.meta.url).pathname;
 /** The preview mounts two workspaces; only the active one is visible. */
 const activeApp = '.workspace-panel:not([inert]) .app';
@@ -84,8 +90,8 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await harness!.cdp.cmd('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ ...point, id: 1 }] });
     await pause(600);
     await harness!.cdp.cmd('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-    await waitFor(`app.querySelector('[data-test="row-select-conv-01"]').checked
-      && app.querySelector('[data-test="selection-count"]')?.textContent.trim() === '1 of 18 selected'
+    await waitFor(`app.querySelector('.inbox-row .row-select').checked
+      && app.querySelector('[data-test="selection-count"]')?.textContent.trim() === '1 of ${LOADED_CONVERSATIONS} selected'
       && app.querySelector('[data-test="selection-archive"]')?.textContent.trim() === 'Mark 1 done'`, 'first row selected by long press');
   }
 
@@ -179,7 +185,7 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     await viewport(PHONE_VIEWPORT.width, PHONE_VIEWPORT.height, true);
     await freshInbox();
     const row = await harness!.cdp.js<{ x: number; y: number; width: number }>(`(() => {
-      const rect = document.querySelector(${JSON.stringify(activeApp)}).querySelector('[data-test="conversation-row-conv-02"]').getBoundingClientRect();
+      const rect = document.querySelector(${JSON.stringify(activeApp)}).querySelectorAll('.inbox-row')[1].getBoundingClientRect();
       return { x: rect.left + rect.width / 2, y: rect.top + 24, width: rect.width };
     })()`);
     await harness!.cdp.cmd('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: row.x, y: row.y, id: 1 }] });
@@ -193,8 +199,8 @@ describe.skipIf(!chromePath || !outputDir)('compact layout review screenshots', 
     });
     await harness!.cdp.cmd('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     await waitFor(`app.querySelector('[data-test="action-notice-undo"]')`, 'action notice');
-    await click('[data-test="row-select-conv-01"]');
-    await waitFor(`app.querySelector('[data-test="selection-count"]')?.textContent.includes('1 of 17 selected')`, 'selection beside the action notice');
+    await click('.inbox-row .row-select');
+    await waitFor(`app.querySelector('[data-test="selection-count"]')?.textContent.includes('1 of ${LOADED_CONVERSATIONS - 1} selected')`, 'selection beside the action notice');
     await shot('selection-with-notice');
   }, 120_000);
 

@@ -7,6 +7,8 @@ const chromePath = process.env.EMAIL_OS_RENDERED_LAYOUT_CHROME ?? '';
 const pageRoot = new URL('../..', import.meta.url).pathname;
 const appSelector = '.workspace-panel:not([inert]) .app';
 
+type ReaderButtonState = { disabled: boolean; opacity: number; color: string };
+
 describe.skipIf(!chromePath)('compact reader geometry', () => {
   let harness: RenderedHarness | null = null;
 
@@ -25,12 +27,41 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
       width, height, screenWidth: width, screenHeight: height,
       deviceScaleFactor: PHONE_VIEWPORT.deviceScaleFactor, mobile: true,
     });
+    // Previous is disabled only on the first conversation in the list. The
+    // preview's newest conversations are the ADR 0006 HTML samples, above
+    // conv-01, so the disabled/live contrast is read on the top row; the rest
+    // of this test reads conv-01, which sits mid-list with both enabled.
+    const firstRow = await harness!.cdp.js<{ id: string; previous: ReaderButtonState; next: ReaderButtonState }>(`(async () => {
+      const app = document.querySelector(${JSON.stringify(appSelector)});
+      const row = app.querySelector('.inbox-row');
+      row.click();
+      await new Promise(resolve => setTimeout(resolve, 250));
+      const buttonState = selector => {
+        const button = app.querySelector(selector);
+        const { opacity, color } = getComputedStyle(button);
+        return { disabled: button.disabled, opacity: Number(opacity), color };
+      };
+      const state = {
+        id: row.dataset.test.replace('conversation-row-', ''),
+        previous: buttonState('[data-test="reader-prev"]'),
+        next: buttonState('[data-test="reader-next"]'),
+      };
+      app.querySelector('[data-test="reader-close"]').click();
+      await new Promise(resolve => setTimeout(resolve, 150));
+      return state;
+    })()`);
+    expect(firstRow.id).not.toBe('conv-01');
+    expect(firstRow.previous.disabled).toBe(true);
+    expect(firstRow.previous.opacity).toBeLessThanOrEqual(0.5);
+    expect(firstRow.next.disabled).toBe(false);
+    expect(firstRow.next.opacity).toBe(1);
+    expect(firstRow.next.color).not.toBe(firstRow.previous.color);
     await harness!.cdp.js(`(() => {
       const app = document.querySelector(${JSON.stringify(appSelector)});
       app.querySelector('[data-test="conversation-row-conv-01"]').click();
     })()`);
     await harness!.cdp.js('new Promise(resolve => setTimeout(resolve, 250))');
-    const geometry = await harness!.cdp.js<{ width: number; viewport: number; pane: { top: number; bottom: number }; subject: { top: number; bottom: number; left: number }; statusLeft: number | null; readStateLeft: number | null; firstSenderLeft: number; messages: { top: number; bottom: number }; bodySize: string | null; archiveColor: string; previous: { disabled: boolean; opacity: number; color: string }; next: { disabled: boolean; opacity: number; color: string }; back: { width: number; height: number }; backGlyph: { width: number; height: number }; lastBottom: number; bottomTop: number; actionTop: number; replyBar: { top: number; bottom: number; height: number } | null; messageMore: { width: number; height: number } | null; headerLines: Array<{ senderCenter: number; senderRight: number; dateCenter: number; dateLeft: number }>; scrollHeight: number; clientHeight: number }>(`(() => {
+    const geometry = await harness!.cdp.js<{ width: number; viewport: number; pane: { top: number; bottom: number }; subject: { top: number; bottom: number; left: number }; statusLeft: number | null; readStateLeft: number | null; firstSenderLeft: number; messages: { top: number; bottom: number }; bodySize: string | null; archiveColor: string; previous: ReaderButtonState; next: ReaderButtonState; back: { width: number; height: number }; backGlyph: { width: number; height: number }; lastBottom: number; bottomTop: number; actionTop: number; replyBar: { top: number; bottom: number; height: number } | null; messageMore: { width: number; height: number } | null; headerLines: Array<{ senderCenter: number; senderRight: number; dateCenter: number; dateLeft: number }>; scrollHeight: number; clientHeight: number }>(`(() => {
       const app = document.querySelector(${JSON.stringify(appSelector)});
       const pane = app.querySelector('.reader-pane').getBoundingClientRect();
       const subject = app.querySelector('.reader-subject').getBoundingClientRect();
@@ -88,11 +119,12 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
     expect(geometry.messages.bottom).toBeLessThanOrEqual(geometry.pane.bottom + geometry.scrollHeight);
     expect(geometry.bodySize).toBe('16px');
     expect(geometry.archiveColor).toBe('rgb(187, 165, 237)');
-    expect(geometry.previous.disabled).toBe(true);
-    expect(geometry.previous.opacity).toBeLessThanOrEqual(0.5);
+    expect(geometry.previous.disabled).toBe(false);
+    expect(geometry.previous.opacity).toBe(1);
     expect(geometry.next.disabled).toBe(false);
     expect(geometry.next.opacity).toBe(1);
-    expect(geometry.next.color).not.toBe(geometry.previous.color);
+    expect(geometry.previous.color).toBe(firstRow.next.color);
+    expect(geometry.next.color).toBe(firstRow.next.color);
     expect(geometry.back).toMatchObject({ width: 48, height: 48 });
     expect(geometry.backGlyph).toMatchObject({ width: 24, height: 24 });
     expect(geometry.lastBottom).toBeLessThanOrEqual(geometry.bottomTop);
@@ -284,5 +316,7 @@ describe.skipIf(!chromePath)('compact reader geometry', () => {
     expect(restored.action).toBe('Mark done (E)');
     expect(restored.label).toBe('Done');
     expect(restored.noticeHeight).toBe(0);
-  });
+    // One long real-browser flow that opens two conversations; the 5 s
+    // default left no margin on a loaded machine.
+  }, 30_000);
 });
