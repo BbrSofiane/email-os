@@ -1,0 +1,11 @@
+<task-notification>
+<task-id>bv1xcmrfm</task-id>
+<tool-use-id>toolu_01QnyqFpV1PbTTSMGghEdnYS</tool-use-id>
+<output-file>/tmp/claude-1000/-home-exedev--t3-worktrees-email-os-usable-android-gmail-acf10d39a93eaf3e/eaca8b18-25a0-401e-b316-43930056dffb/tasks/bv1xcmrfm.output</output-file>
+<status>completed</status>
+<summary>Background command "sleep 2340; date +%T" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+Continue where you left off.
