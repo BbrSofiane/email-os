@@ -119,12 +119,15 @@ struct GmailInner {
     next_enrichment_id: AtomicU64,
 }
 
+type SendPass = dyn Fn(&CancelToken) -> Result<bool, MailError> + Send + Sync;
+
 /// Worker/control state. The worker thread is the only writer of `connection`
 /// and `error` besides the disconnect path, which owns them while a
 /// disconnect completes.
 struct Ctrl {
     state: Mutex<CtrlState>,
     wake: Condvar,
+    send_pass: Mutex<Option<Arc<SendPass>>>,
     #[cfg(test)]
     after_mutation_count: Mutex<Option<MutationCountHook>>,
 }
@@ -315,6 +318,156 @@ enum StageOutcome {
 }
 
 impl GmailCore {
+    pub(crate) fn require_synthetic_send(&self) -> Result<(), MailError> {
+        if self.inner.policy.is_synthetic() {
+            Ok(())
+        } else {
+            Err(MailError::ReadOnly)
+        }
+    }
+
+    pub(crate) fn register_send_pass(
+        &self,
+        pass: impl Fn(GmailCore, &CancelToken) -> Result<bool, MailError> + Send + Sync + 'static,
+    ) {
+        if !self.inner.policy.is_synthetic() {
+            return;
+        }
+        let core = Arc::downgrade(&self.inner);
+        *self
+            .inner
+            .ctrl
+            .send_pass
+            .lock()
+            .expect("send pass poisoned") = Some(Arc::new(move |cancel| match core.upgrade() {
+            Some(inner) => pass(GmailCore { inner }, cancel),
+            None => Ok(false),
+        }));
+        let mut state = self.inner.ctrl.state.lock().expect("gmail ctrl poisoned");
+        state.operations_requested = true;
+        self.inner.ctrl.wake.notify_all();
+    }
+
+    /// Reconsider local deadlines after a send is durably admitted.
+    pub(crate) fn wake_send_worker(&self) {
+        let mut state = self.inner.ctrl.state.lock().expect("gmail ctrl poisoned");
+        state.reminder_work = true;
+        self.inner.ctrl.wake.notify_all();
+    }
+
+    pub(crate) fn send_now(&self) -> Result<chrono::DateTime<chrono::FixedOffset>, MailError> {
+        self.inner.store.send_now()
+    }
+
+    pub(crate) fn send_generation(&self) -> Result<u64, MailError> {
+        self.inner.store.generation()
+    }
+
+    pub(crate) fn claim_send(
+        &self,
+        account: &str,
+        operation: &str,
+        generation: u64,
+    ) -> Result<bool, MailError> {
+        self.inner
+            .store
+            .claim_send_for_generation(account, operation, generation)
+    }
+
+    pub(crate) fn find_sent(
+        &self,
+        account: &str,
+        message_id: &str,
+        cancel: &CancelToken,
+    ) -> Option<(String, String)> {
+        self.inner
+            .provider
+            .find_sent_for_account(account, message_id, cancel)
+    }
+
+    pub(crate) fn confirm_unknown_send(
+        &self,
+        account: &str,
+        operation: &str,
+        generation: u64,
+        message: &str,
+        thread: &str,
+    ) -> Result<bool, MailError> {
+        self.inner
+            .store
+            .confirm_unknown_send_for_generation(account, operation, generation, message, thread)
+    }
+
+    pub(crate) fn dispatch_send(
+        &self,
+        account: &str,
+        mime: &[u8],
+        cancel: &CancelToken,
+    ) -> super::types::SendResult {
+        self.inner.provider.send_for_account(account, mime, cancel)
+    }
+
+    pub(crate) fn finish_send(
+        &self,
+        account: &str,
+        operation: &str,
+        generation: u64,
+        result: &super::types::SendResult,
+    ) -> Result<bool, MailError> {
+        self.inner
+            .store
+            .finish_send_for_generation(account, operation, generation, result)
+    }
+
+    pub(crate) fn send_receipt(
+        &self,
+        account: &str,
+        request: &str,
+    ) -> Result<Option<super::store::send::SendIntent>, MailError> {
+        self.inner.store.send_receipt(account, request)
+    }
+
+    pub(crate) fn list_send_intents(
+        &self,
+        account: &str,
+    ) -> Result<Vec<super::store::send::SendIntent>, MailError> {
+        self.inner.store.list_send_intents(account)
+    }
+
+    pub(crate) fn dismiss_send(&self, account: &str, operation: &str) -> Result<bool, MailError> {
+        self.inner.store.dismiss_send(account, operation)
+    }
+
+    pub(crate) fn undo_send(&self, account: &str, operation: &str) -> Result<bool, MailError> {
+        self.inner.store.undo_send(account, operation)
+    }
+
+    pub(crate) fn insert_send_intent(
+        &self,
+        intent: &super::store::send::SendIntent,
+    ) -> Result<(), MailError> {
+        self.inner.store.insert_send_intent(intent)
+    }
+
+    pub(crate) fn cancel_queued_send(
+        &self,
+        account: &str,
+        operation: &str,
+        generation: u64,
+    ) -> Result<bool, MailError> {
+        self.inner
+            .store
+            .cancel_queued_send_for_generation(account, operation, generation)
+    }
+
+    pub(crate) fn insert_retry_send(
+        &self,
+        intent: &super::store::send::SendIntent,
+        generation: u64,
+    ) -> Result<(), MailError> {
+        self.inner.store.insert_retry_send(intent, generation)
+    }
+
     /// Opens (or creates) the Gmail profile storage under `profile_dir`,
     /// acquires the profile lock for the full core lifetime, detects startup
     /// credentials, and starts the serial background worker (independent of
@@ -529,9 +682,11 @@ impl GmailCore {
                 operations_paused,
             }),
             wake: Condvar::new(),
+            send_pass: Mutex::new(None),
             #[cfg(test)]
             after_mutation_count: Mutex::new(None),
         });
+        spawn_send_deadline_timer(Arc::downgrade(&store), Arc::downgrade(&ctrl))?;
         let handle = spawn_worker(
             Arc::clone(&store),
             Arc::clone(&provider),
@@ -820,6 +975,34 @@ impl GmailCore {
     /// Cached reader view of one conversation, scoped by the connected account.
     pub fn get_conversation(&self, r#ref: &ConversationRef) -> Result<Conversation, MailError> {
         self.inner.store.get_conversation(r#ref)
+    }
+
+    /// Refresh the provider thread recorded for a visible confirmed send.
+    pub fn load_confirmed_send_thread(&self, operation: &str) -> Result<Conversation, MailError> {
+        let account = self.active_account()?;
+        let generation = self.inner.store.generation()?;
+        let id = self
+            .inner
+            .store
+            .confirmed_send_thread(&account.account_id, operation)?;
+        let work = self.begin_reply_enrichment()?;
+        let revision = self.inner.store.observation_revision()?;
+        let thread = self
+            .inner
+            .provider
+            .get_thread_for_account(&account.account_id, &id, &work.cancel)?
+            .ok_or(MailError::NotFound)?;
+        let target = ConversationRef {
+            account_id: account.account_id.clone(),
+            conversation_id: id,
+        };
+        if thread.conversation.conversation_ref != target || work.cancel.is_cancelled() {
+            return Err(MailError::NotFound);
+        }
+        self.inner
+            .store
+            .save_search(&[thread], generation, revision, &account.account_id)?;
+        self.inner.store.get_conversation(&target)
     }
 
     /// Explicit search-result load only. Ordinary cached reads never import
@@ -1182,6 +1365,29 @@ impl GmailCore {
             id,
             cancel,
         })
+    }
+
+    pub(crate) fn exact_message_subject(
+        &self,
+        account_id: &str,
+        thread_id: &str,
+        message_id: &str,
+    ) -> Result<String, MailError> {
+        let generation = self.inner.store.generation()?;
+        let work = self.begin_reply_enrichment()?;
+        if self.inner.store.generation()? != generation {
+            return Err(MailError::ReplyUnavailable);
+        }
+        let subject = self.inner.provider.message_subject_for_account(
+            account_id,
+            thread_id,
+            message_id,
+            &work.cancel,
+        )?;
+        if self.inner.store.generation()? != generation {
+            return Err(MailError::ReplyUnavailable);
+        }
+        Ok(subject)
     }
 
     /// Loads reply headers for the explicitly displayed latest cached message.
@@ -2131,6 +2337,41 @@ fn worker_wait(_state: &CtrlState, wait: Duration) -> Duration {
 
 // ------------------------------------------------------------------- worker
 
+// Deadline release must continue even when the serial worker is in provider I/O.
+// Weak references ensure this timer never owns the profile or its shutdown.
+fn spawn_send_deadline_timer(
+    store: std::sync::Weak<GmailStore>,
+    ctrl: std::sync::Weak<Ctrl>,
+) -> Result<(), MailError> {
+    std::thread::Builder::new()
+        .name("send-deadline".to_string())
+        .spawn(move || loop {
+            let Some(ctrl) = ctrl.upgrade() else { return };
+            let state = ctrl.state.lock().expect("gmail ctrl poisoned");
+            if state.stop {
+                return;
+            }
+            let (state, _) = ctrl
+                .wake
+                .wait_timeout(state, Duration::from_millis(100))
+                .expect("gmail ctrl poisoned");
+            if state.stop {
+                return;
+            }
+            drop(state);
+            let Some(store) = store.upgrade() else { return };
+            if let Ok(Some(account)) = store.account() {
+                if matches!(store.release_due_sends(&account.account_id), Ok(count) if count > 0) {
+                    let mut state = ctrl.state.lock().expect("gmail ctrl poisoned");
+                    state.operations_requested = true;
+                    ctrl.wake.notify_all();
+                }
+            }
+        })
+        .map_err(storage_err())?;
+    Ok(())
+}
+
 fn spawn_worker(
     store: Arc<GmailStore>,
     provider: Arc<dyn GmailProvider>,
@@ -2333,10 +2574,25 @@ fn run(
             &hub,
             policy,
         );
-        let mut more_claimable_mutations = false;
+        let mut more_sends = false;
+        if action == PassAction::Mutations
+            && matches!(&outcome, PassOutcome::Complete | PassOutcome::Idle)
+        {
+            let pass = ctrl.send_pass.lock().expect("send pass poisoned").clone();
+            if let Some(pass) = pass {
+                match pass(&pass_cancel) {
+                    Ok(sent) => more_sends = sent,
+                    Err(error) => outcome = PassOutcome::Halt(error),
+                }
+            }
+            if more_sends {
+                outcome = PassOutcome::Complete;
+            }
+        }
+        let mut more_claimable_mutations = more_sends;
         if action == PassAction::Mutations && matches!(&outcome, PassOutcome::Complete) {
             match store.claimable_operation_count() {
-                Ok(count) => more_claimable_mutations = count > 0,
+                Ok(count) => more_claimable_mutations |= count > 0,
                 Err(error) => outcome = PassOutcome::Halt(error),
             }
             #[cfg(test)]
@@ -3321,6 +3577,7 @@ mod worker_halt_tests {
                 operations_paused: false,
             }),
             wake: Condvar::new(),
+            send_pass: Mutex::new(None),
             #[cfg(test)]
             after_mutation_count: Mutex::new(None),
         });

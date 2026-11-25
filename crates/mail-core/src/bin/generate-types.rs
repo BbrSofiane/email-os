@@ -11,8 +11,9 @@ use mail_core::attachments::{AttachmentDescriptor, AttachmentSaved, SaveAttachme
 use std::process::ExitCode;
 
 use mail_core::drafts::types::{
-    AppCloseRequest, CreateDraft, DeleteDraft, Draft, DraftContent, DraftDeleteReceipt,
+    AdmitSend, AppCloseRequest, CreateDraft, DeleteDraft, Draft, DraftContent, DraftDeleteReceipt,
     DraftReceipt, DraftRef, DraftReplyLink, DraftSource, DraftSummary, ReplyContext, SaveDraft,
+    SendState, SendStatus,
 };
 use mail_core::dto::{
     Address, CachedDoneCoverage, CachedDoneRequest, CachedDoneSnapshot, CachedTrashCoverage,
@@ -140,6 +141,9 @@ fn declarations() -> Vec<String> {
         DraftReplyLink::decl(),
         Draft::decl(),
         DraftSummary::decl(),
+        AdmitSend::decl(),
+        SendState::decl(),
+        SendStatus::decl(),
         DraftReceipt::decl(),
         DraftDeleteReceipt::decl(),
         CreateDraft::decl(),
@@ -183,6 +187,10 @@ const IPC_NAMES: &[(&str, &str)] = &[
     ("CANCEL_SEARCH_MAIL_COMMAND", "cancel_search_mail"),
     ("LIST_CACHED_TRASH_COMMAND", "list_cached_trash"),
     ("GET_CONVERSATION_COMMAND", "get_conversation"),
+    (
+        "LOAD_CONFIRMED_SEND_THREAD_COMMAND",
+        "load_confirmed_send_thread",
+    ),
     ("SET_ARCHIVED_COMMAND", "set_archived"),
     ("MAILBOX_CHANGED_EVENT", "mailbox_changed"),
     ("GET_ACCOUNT_STATUS_COMMAND", "get_account_status"),
@@ -207,6 +215,15 @@ const IPC_NAMES: &[(&str, &str)] = &[
     ("CREATE_DRAFT_COMMAND", "create_draft"),
     ("SAVE_DRAFT_COMMAND", "save_draft"),
     ("DELETE_DRAFT_COMMAND", "delete_draft"),
+    ("SEND_AVAILABLE_COMMAND", "send_available"),
+    ("SEND_DRAFT_COMMAND", "send_draft"),
+    ("LIST_SEND_ACTIVITY_COMMAND", "list_send_activity"),
+    ("UNDO_SEND_COMMAND", "undo_send"),
+    ("CANCEL_SEND_COMMAND", "cancel_send"),
+    ("RETRY_SEND_COMMAND", "retry_send"),
+    ("CHECK_SENDS_COMMAND", "check_sends"),
+    ("DISMISS_SEND_COMMAND", "dismiss_send"),
+    ("COPY_UNKNOWN_SEND_COMMAND", "copy_unknown_send"),
     ("DRAFTS_CHANGED_EVENT", "drafts_changed"),
     ("APP_CLOSE_REQUESTED_EVENT", "app_close_requested"),
     ("GET_APP_CLOSE_REQUEST_COMMAND", "get_app_close_request"),

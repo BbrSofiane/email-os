@@ -17,8 +17,14 @@ describe('compact CSS contract', () => {
     for (const name of mobileCssFiles) {
       const source = mobileCss[name]!;
       const queries = [...source.matchAll(/@media\s*([^\{]+)\{/g)].map((match) => match[1]!.trim());
+      const allowed = ['(max-width: 719px)', '(prefers-reduced-motion: reduce)'];
+      if (name === 'compose.css') {
+        const shortCompose = '(max-height: 460px)';
+        expect(design).toContain(`\`${shortCompose}\``);
+        allowed.push(shortCompose);
+      }
       for (const query of queries) {
-        expect(['(max-width: 719px)', '(prefers-reduced-motion: reduce)']).toContain(query);
+        expect(allowed).toContain(query);
       }
 
       const hasMotion = /(?:transition|animation)\s*:\s*(?!none(?:\s|;|$))[^;]+;/i.test(source);

@@ -48,10 +48,15 @@ const props = defineProps<{
   canCancelReplyPreparation: boolean;
   closeError: string | null;
   compact?: boolean;
+  sender?: string | null;
+  replySubjectChanged?: boolean;
+  sendAvailable?: boolean;
+  sendBusy?: boolean;
 }>();
 
 const emit = defineEmits<{
   closeEditor: [];
+  send: [];
   setField: [field: keyof DraftContent, value: string];
   retry: [];
   askDiscard: [];
@@ -94,7 +99,12 @@ const headingTarget = computed<{ text: string } | null>(() => {
       <DraftEditorCore
         autofocus="body"
         variant="reply"
-        :compact="props.compact"
+        :sender="props.sender"
+      :send-available="props.sendAvailable"
+      :reply-subject-changed="props.replySubjectChanged"
+      :send-busy="props.sendBusy"
+      @send="emit('send')"
+      :compact="props.compact"
         :recipient-label="props.recipientLabel"
         :recipient-mailbox="props.recipientMailbox ?? null"
         :active-ref="props.activeRef"

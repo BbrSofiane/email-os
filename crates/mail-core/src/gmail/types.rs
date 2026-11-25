@@ -201,6 +201,19 @@ impl From<MailError> for GmailHistoryError {
     }
 }
 
+/// Outcome of a single account-bound send attempt. Unknown outcomes must never
+/// be replayed: the provider may have accepted the message before failing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SendResult {
+    Confirmed {
+        message_id: String,
+        thread_id: String,
+    },
+    Refused,
+    Paused,
+    Unknown,
+}
+
 /// The whole provider surface the Gmail core consumes: auth and session
 /// (`is_configured`, `has_credentials`, `connect`, `disconnect`, `profile`),
 /// reads (inbox, search, threads, history, destinations, attachments) and
@@ -211,6 +224,41 @@ impl From<MailError> for GmailHistoryError {
 ///
 /// Synchronous calls run exclusively on background/blocking threads, outside DB locks.
 pub trait GmailProvider: Send + Sync {
+    /// Read-only lookup of unambiguous Sent evidence. Unsupported providers
+    /// return no evidence; absence must never be interpreted as a refusal.
+    fn find_sent_for_account(
+        &self,
+        _account_id: &str,
+        _rfc_message_id: &str,
+        _cancel: &CancelToken,
+    ) -> Option<(String, String)> {
+        None
+    }
+
+    /// Send once using credentials bound to the expected account. A provider
+    /// must return Unknown whenever it cannot prove the request was refused.
+    /// The default does no I/O, keeping unsupported providers disabled.
+    fn send_for_account(
+        &self,
+        _expected_account_id: &str,
+        _frozen_mime: &[u8],
+        _cancel: &CancelToken,
+    ) -> SendResult {
+        SendResult::Paused
+    }
+
+    /// Read the subject of this exact account, thread and message. Missing
+    /// metadata must fail closed; a thread subject is not a substitute.
+    fn message_subject_for_account(
+        &self,
+        _account_id: &str,
+        _thread_id: &str,
+        _message_id: &str,
+        _cancel: &CancelToken,
+    ) -> Result<String, MailError> {
+        Err(MailError::ReplyUnavailable)
+    }
+
     /// Account-bound live destination catalog read. Implementations must
     /// admit the network read only from a coherent credential snapshot whose
     /// published identity is `expected_account_id`, dispatch with that

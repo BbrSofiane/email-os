@@ -52,7 +52,7 @@ describe('entering and leaving the Drafts context', () => {
     expect(rail(w).attributes('aria-current')).toBe('page');
     expect(rail(w).attributes('aria-expanded')).toBeUndefined();
     expect(w.get('[data-test="central-surface"]').attributes('aria-label')).toBe('Drafts');
-    expect(w.get('[data-test="drafts-coverage"]').text()).toContain('Local to this device · never sent');
+    expect(w.get('[data-test="drafts-coverage"]').text()).toBe('Local to this device');
     expect(rows(w)).toHaveLength(2);
     expect(w.find('[data-test="draft-list"] li[aria-current="true"]').exists()).toBe(true);
     expect(document.activeElement).toBe(rows(w)[0]!.element);
@@ -409,7 +409,7 @@ describe('a reply draft whose source cannot host it', () => {
     expect(w.get('[data-test="reply-source"]').attributes('data-source-conversation')).toBe('conv-01');
     expect(w.get('[data-test="draft-to"]').attributes('disabled')).toBeUndefined();
     expect(w.get('[data-test="draft-body"]').attributes('disabled')).toBeUndefined();
-    expect(w.findAll('button').every((button) => !/send/i.test(button.text()))).toBe(true);
+    expect(w.find('[data-test="send-draft"]').exists()).toBe(true);
   }
 
   it('opens in the card with the reason when the conversation fails to load, keeping and saving every edit', async () => {

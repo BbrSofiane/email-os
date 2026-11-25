@@ -311,3 +311,19 @@
 .app[data-layout="compact"] .reply-composer.compact-compose-sheet .composer-kbd {
   display: none;
 }
+
+@media (max-height: 460px) {
+  .app[data-layout="compact"] :is(.compose-card, .reply-composer.compact-compose-sheet)
+    .composer-can-send :is(.field-row, .field-input, .field-summary) {
+    min-height: 36px;
+  }
+  .app[data-layout="compact"] :is(.compose-card, .reply-composer.compact-compose-sheet)
+    .composer-can-send .field-body {
+    min-height: 80px;
+  }
+  .app[data-layout="compact"] .reply-composer.compact-compose-sheet
+    .composer-can-send .reply-quoted {
+    max-height: 1.5em;
+    margin-block: 0;
+  }
+}

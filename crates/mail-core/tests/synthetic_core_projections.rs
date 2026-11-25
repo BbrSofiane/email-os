@@ -487,6 +487,85 @@ fn synthetic_html_and_inline_image_fixtures() {
     ));
 }
 
+#[test]
+fn provider_send_new_and_reply_survive_reopen_once() {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    use mail_core::gmail::types::SendResult;
+
+    let dir = temp_profile("provider-send-reopen");
+    let cancel = CancelToken::default();
+    let provider = SyntheticGmailProvider::open(dir.path()).unwrap();
+    let raw = URL_SAFE_NO_PAD.encode(b"From: fixture@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\nMessage-ID: <test@example.com>\r\n\r\nHello\r\n");
+    let mut sent = Vec::new();
+    for thread in [None, Some("conv-01")] {
+        let frozen =
+            serde_json::to_vec(&serde_json::json!({"raw": raw, "threadId": thread})).unwrap();
+        match provider.send_for_account(ACCOUNT_ID, &frozen, &cancel) {
+            SendResult::Confirmed {
+                message_id,
+                thread_id,
+            } => sent.push((message_id, thread_id)),
+            other => panic!("unexpected send result: {other:?}"),
+        }
+    }
+    drop(provider);
+    let provider = SyntheticGmailProvider::open(dir.path()).unwrap();
+    for (message_id, thread_id) in sent {
+        let thread = thread_of(&provider, &thread_id);
+        assert_eq!(
+            thread
+                .conversation
+                .messages
+                .iter()
+                .filter(|m| m.id == message_id)
+                .count(),
+            1
+        );
+    }
+}
+
+#[test]
+fn provider_send_faults_are_one_shot_and_preserve_mailbox_writes() {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    use mail_core::gmail::types::SendResult;
+    let dir = temp_profile("provider-send-faults");
+    let provider = SyntheticGmailProvider::open(dir.path()).unwrap();
+    let cancel = CancelToken::default();
+    let raw = URL_SAFE_NO_PAD.encode(
+        b"From: fixture@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\n\r\nHello\r\n",
+    );
+    let frozen =
+        serde_json::to_vec(&serde_json::json!({"raw": raw, "threadId": "conv-01"})).unwrap();
+    let initial = thread_of(&provider, "conv-01").conversation.messages.len();
+    for (fault, committed) in [
+        ("reject", false),
+        ("lose-without-commit", false),
+        ("commit-then-lose", true),
+    ] {
+        provider.set_next_send_outcome(fault);
+        provider
+            .apply_archive(&["m-01-1".into()], true, &cancel)
+            .unwrap();
+        let result = provider.send_for_account(ACCOUNT_ID, &frozen, &cancel);
+        assert!(matches!(
+            (fault, result),
+            ("reject", SendResult::Refused)
+                | (
+                    "lose-without-commit" | "commit-then-lose",
+                    SendResult::Unknown
+                )
+        ));
+        assert_eq!(
+            thread_of(&provider, "conv-01").conversation.messages.len(),
+            initial + usize::from(committed)
+        );
+    }
+    assert!(matches!(
+        provider.send_for_account(ACCOUNT_ID, &frozen, &cancel),
+        SendResult::Confirmed { .. }
+    ));
+}
+
 /// Fixture images must be valid PNGs, chunk CRCs included: Chromium ignores a
 /// bad CRC, but Apple ImageIO decoded the conv-21 logo as fully transparent.
 #[test]

@@ -76,14 +76,9 @@ describe("inline reply composer docked in the open reader (TASK B)", () => {
     // Cc and Subject behind the toggle, and the body focused.
     expect(w.find('[data-test="draft-to-row"]').text()).toBe('Ada Fixture <ada@example.test>');
     expect(w.find('[data-test="draft-to"]').exists()).toBe(false);
-    expect(w.find('[data-test="draft-cc"]').exists()).toBe(false);
-    expect(w.find('[data-test="draft-subject"]').exists()).toBe(false);
+    expect(w.find('[data-test="draft-cc"]').exists()).toBe(true);
+    expect(w.find('[data-test="draft-subject"]').exists()).toBe(true);
     expect(document.activeElement).toBe(w.find('[data-test="draft-body"]').element);
-    const toggle = w.find('[data-test="draft-fields-toggle"]');
-    expect(toggle.text()).toBe('Cc / Subject');
-    expect(toggle.attributes('aria-expanded')).toBe('false');
-    await toggle.trigger('click');
-    expect(toggle.attributes('aria-expanded')).toBe('true');
     await w.find('[data-test="draft-to-row"]').trigger('click');
     await flushPromises();
     expect((w.find('[data-test="draft-to"]').element as HTMLInputElement).value).toBe('ada@example.test');
@@ -248,16 +243,16 @@ describe("inline reply composer docked in the open reader (TASK B)", () => {
     expect(saved.content.bodyText).toBe('unacknowledged buffer');
   });
 
-  it('offers no Send path: the footer has only Save and close and Discard… (the Esc hint is not a button)', async () => {
+  it('offers Send alongside Save and close and Discard…', async () => {
     const fake = createBrowserFakeMailClient();
     const w = sharedMountApp(fake, 'browser-preview', { attachTo: document.body }); wrapper = w; await flushPromises();
     await openReaderAndPrepareReply(w);
     const composer = w.find('[data-test="reply-composer"]');
-    expect(composer.findAll('button').every((button) => !/send/i.test(button.text()))).toBe(true);
+    expect(composer.text()).toContain('Send');
     expect(composer.find('form').exists()).toBe(false);
     const footer = composer.find('.composer-footer');
     expect(footer.exists()).toBe(true);
-    expect(footer.findAll('button').map((button) => button.text())).toEqual(['Save and close', 'Discard…']);
+    expect(footer.findAll('button').map((button) => button.text())).toEqual(['Send', 'Save and close', 'Discard…']);
     expect(footer.get('kbd').text()).toBe('Esc');
     // The discard flow is the revision-checked confirm dialog, mirrored from the drawer.
     await composer.find('[data-test="discard-draft"]').trigger('click');

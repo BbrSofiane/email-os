@@ -44,6 +44,10 @@ const props = defineProps<{
   canCancelReplyPreparation: boolean;
   closeError: string | null;
   compact?: boolean;
+  sender?: string | null;
+  replySubjectChanged?: boolean;
+  sendAvailable?: boolean;
+  sendBusy?: boolean;
   /** Which field receives focus when the editor appears (keyboard-first). */
   autofocus?: 'to' | 'body';
   /** Id of a note that explains why the To field is the first thing the user lands in. */
@@ -58,6 +62,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   closeEditor: [];
+  send: [];
   setField: [field: keyof DraftContent, value: string];
   retry: [];
   askDiscard: [];
@@ -100,11 +105,17 @@ const isReply = computed(() => props.variant === 'reply');
 /** Plain-language detail for the title and the body's hidden description. */
 const LOCAL_DETAIL = 'Local plain-text draft. Nothing is sent. Recipients are stored as typed and are not validated. Bcc, reply-all and rich text are not supported.';
 /** Settled states that read "<state> · never sent"; the first two stay calm (Ash). */
+const draftDetail = computed(() => props.sendAvailable
+  ? 'Local plain-text draft. Recipients are stored as typed and are not validated until you send.'
+  : LOCAL_DETAIL);
 const SETTLED_CALM = new Set(['Saved locally', 'Draft loaded from this device']);
 const SETTLED_NON_DURABLE = new Set(['Saved in preview memory (non-durable)', 'Loaded from preview memory (non-durable)']);
 
 const statusLine = computed(() => {
   const status = props.status;
+  if (props.sendAvailable) {
+    return { text: status || 'Local draft', calm: !status || SETTLED_CALM.has(status) };
+  }
   if (!status) return { text: 'Local draft · never sent', calm: true };
   if (SETTLED_CALM.has(status)) return { text: `${status} · never sent`, calm: true };
   if (SETTLED_NON_DURABLE.has(status)) return { text: `${status} · never sent`, calm: false };
@@ -168,8 +179,8 @@ const extrasOpen = ref(false);
 const extrasForced = computed(() => props.content.cc !== ''
   || (isReply.value && props.content.subject !== '' && !/^re:/i.test(props.content.subject)));
 const extrasShown = computed(() => extrasOpen.value || extrasForced.value);
-const ccShown = computed(() => extrasShown.value);
-const subjectShown = computed(() => !isReply.value || extrasShown.value);
+const ccShown = computed(() => props.sendAvailable || extrasShown.value);
+const subjectShown = computed(() => props.sendAvailable || !isReply.value || extrasShown.value);
 
 async function toggleExtras(): Promise<void> {
   if (extrasForced.value) return;
@@ -256,7 +267,7 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
 </script>
 
 <template>
-  <div ref="editorRoot" class="composer-body" :class="`composer-body-${props.variant ?? 'new'}`">
+  <div ref="editorRoot" class="composer-body" :class="[`composer-body-${props.variant ?? 'new'}`, { 'composer-can-send': props.sendAvailable }]">
     <div class="composer-top">
       <div class="composer-top-main"><slot name="header" :close-disabled="closeDisabled" /></div>
       <!-- The local-only guarantee is one terse status line. The caveats are
@@ -267,7 +278,7 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
           class="draft-status"
           :class="{ 'draft-status-calm': statusLine.calm }"
           data-test="draft-status"
-          :title="LOCAL_DETAIL"
+          :title="draftDetail"
         >{{ statusLine.text }}</p>
         <button
           type="button"
@@ -281,7 +292,7 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
         <span class="visually-hidden" role="status" data-test="draft-status-announce">{{ announcement }}</span>
       </div>
     </div>
-    <p v-if="caveatOpen" :id="ids.caveat" class="composer-caveat" data-test="draft-caveat">{{ LOCAL_DETAIL }}</p>
+    <p v-if="caveatOpen" :id="ids.caveat" class="composer-caveat" data-test="draft-caveat">{{ draftDetail }}</p>
     <p v-if="props.error" role="alert" data-test="draft-error">{{ describe(props.error) }}</p>
     <p v-if="props.createError" role="alert" data-test="draft-create-error">{{ describe(props.createError) }}</p>
     <p v-if="props.closeError" role="alert" data-test="draft-close-error">{{ props.closeError }}</p>
@@ -291,6 +302,7 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
       </button>
     </div>
     <div class="composer-fields" :aria-busy="props.saving || props.creating">
+      <div v-if="props.sendAvailable && props.sender" class="field-row" data-field="from"><span class="field-label">From</span><span class="field-input">{{ props.sender }}</span></div>
       <div class="field-row" data-field="to">
         <label class="field-label" :for="ids.to">To</label>
         <button
@@ -305,6 +317,7 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
         ><template v-if="toAddress === ''">No recipient</template><template v-else><template v-if="toName"><span data-test="draft-to-name">{{ toName }}</span> <span class="field-summary-address" data-test="draft-to-address">&lt;{{ toAddress }}&gt;</span></template><template v-else>{{ toAddress }}</template></template></button>
         <input v-else :id="ids.to" ref="toInput" class="field-input" data-test="draft-to" type="text" inputmode="email" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="next" :aria-describedby="props.toDescribedBy" autocomplete="off" :value="props.content.to" :disabled="fieldsDisabled()" @input="emit('setField', 'to', ($event.target as HTMLInputElement).value)" @keydown.enter="onFieldEnter($event, 'to')">
         <button
+          v-if="!props.sendAvailable"
           type="button"
           class="field-toggle"
           data-test="draft-fields-toggle"
@@ -337,7 +350,7 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
           :disabled="fieldsDisabled()"
           @input="emit('setField', 'bodyText', ($event.target as HTMLTextAreaElement).value); fitBody()"
         ></textarea>
-        <span :id="ids.detail" class="visually-hidden" data-test="draft-local-detail">{{ LOCAL_DETAIL }}</span>
+        <span :id="ids.detail" class="visually-hidden" data-test="draft-local-detail">{{ draftDetail }}</span>
       </div>
     </div>
     <slot name="context" />
@@ -366,7 +379,9 @@ watch(() => props.confirmDiscard || props.confirmReload, async (open) => {
     <!-- Footer: one primary action. "Save and close" is the old Close editor: it
          still waits for the protected flush and stays open with the error if the
          flush fails. Esc does the same. There is no Send. -->
+    <p v-if="props.sendAvailable && props.replySubjectChanged" class="composer-caveat" role="note">This reply will start a new conversation.</p>
     <footer class="composer-footer">
+      <button v-if="props.sendAvailable && props.sender" type="button" class="composer-primary" data-test="send-draft" :disabled="props.sendBusy || fieldsDisabled() || props.creating || !props.activeRef?.draftId" @click="emit('send')">{{ props.sendBusy ? 'Sending…' : 'Send' }}</button>
       <button v-if="!props.compact" type="button" class="composer-primary" data-test="close-composer" aria-keyshortcuts="Escape" :disabled="closeDisabled" @click="emit('closeEditor')">Save and close</button>
       <kbd v-if="!props.compact" class="composer-kbd" aria-hidden="true">Esc</kbd>
       <button v-if="props.canCancelReplyPreparation" type="button" class="composer-quiet" data-test="cancel-reply-preparation" :disabled="props.closing || props.transitioning" @click="emit('cancelReplyPreparation')">Cancel reply preparation</button>

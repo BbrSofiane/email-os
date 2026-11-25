@@ -185,6 +185,20 @@ export {
 export const OPERATION_GROUP_MAX_MEMBERS = 100;
 
 export interface MailClient {
+  /** Query the current platform and session before offering Send. */
+  sendAvailable?(): Promise<boolean>;
+  /** Send transport; command availability is subject to native platform and session gates. */
+  send?: {
+    admit(command: import('./generated').AdmitSend): Promise<import('./generated').SendStatus>;
+    listActivity(): Promise<import('./generated').SendStatus[]>;
+    loadConfirmedThread(operationId: string): Promise<Conversation>;
+    undo(operationId: string): Promise<DraftRef | null>;
+    cancel(operationId: string): Promise<boolean>;
+    retry(operationId: string, requestId: string): Promise<import('./generated').SendStatus>;
+    check(): Promise<void>;
+    dismiss(operationId: string): Promise<boolean>;
+    copyUnknown(operationId: string, requestId: string): Promise<DraftReceipt>;
+  };
   /** Cache-only Starred, Gmail profile; same bounded paging envelope as cached Done. */
   listCachedStarred(request: CachedDoneRequest): Promise<CachedDoneSnapshot>;
   setStarred(command: import('./generated').SetStarred): Promise<OperationReceipt>;

@@ -23,6 +23,7 @@
 import { computed } from 'vue';
 import type { ConversationRef, MailError, OperationGroupStatus, OperationGroupSummary } from '../lib/ipc/client';
 import type { OperationSummaryLike } from '../composables/useMailbox';
+import type { SendState, SendStatus } from '../lib/ipc/generated';
 import { useDrawerRows } from '../composables/useDrawerRows';
 import FullDate from './FullDate.vue';
 
@@ -36,9 +37,21 @@ const SKIP_REASON_LABELS: Record<string, string> = {
 };
 
 const RETRY_TITLE = 'Retry with a new request ID. The original result is not rewritten.';
+const SEND_STATE_LABELS: Record<SendState, string> = {
+  hold: 'Queued to send',
+  queued: 'Queued to send',
+  applying: 'Sending…',
+  confirmed: 'Sent',
+  failed: 'Send failed',
+  unknown: 'Send outcome unknown',
+  cancelled: 'Cancelled',
+  undone: 'Not sent',
+};
 
 const props = defineProps<{
   activity: OperationSummaryLike[];
+  sends?: SendStatus[];
+  sendBusy?: boolean;
   /** Whether authoritative status currently permits mailbox commands. */
   actionsEnabled?: boolean;
   /** Read/star/Retry surfaces exist for this session (explicit backend capability). */
@@ -63,6 +76,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
+  sendAction: [action: string, operationId: string];
   open: [ref: OperationSummaryLike['conversation']];
   unarchive: [ref: OperationSummaryLike['conversation']];
   retry: [operationId: string];
@@ -170,6 +184,10 @@ function subjectText(ref: ConversationRef): string {
   return subject.trim() === '' ? '(No subject)' : subject;
 }
 
+function sendSubject(subject: string | null): string {
+  return subject === null ? 'Unknown subject' : subject.trim() || '(no subject)';
+}
+
 /** The opaque id is evidence for a title, never row text. */
 function idTitle(ref: ConversationRef): string {
   return `Conversation ${ref.conversationId}`;
@@ -194,8 +212,34 @@ const rows = useDrawerRows({ keys: () => rowKeys.value });
 
 <template>
   <div class="activity" data-test="activity-panel" @keydown="rows.onKeydown">
-    <p v-if="activity.length === 0 && (groups ?? []).length === 0 && !groupsError" class="drawer-note" data-test="activity-empty">No operations yet.</p>
-    <p v-if="activity.length === 0 && (groups ?? []).length === 0 && !groupsError" class="drawer-note activity-empty-detail" data-test="activity-empty-detail">Mail actions and their results appear here.</p>
+    <p v-if="activity.length === 0 && (sends ?? []).length === 0 && (groups ?? []).length === 0 && !groupsError" class="drawer-note" data-test="activity-empty">No operations yet.</p>
+    <p v-if="activity.length === 0 && (sends ?? []).length === 0 && (groups ?? []).length === 0 && !groupsError" class="drawer-note activity-empty-detail" data-test="activity-empty-detail">Mail actions and their results appear here.</p>
+
+    <div v-if="(sends ?? []).length" class="drawer-section" data-test="send-activity">
+      <h3 class="drawer-section-title">Sending</h3>
+      <ul class="drawer-rows">
+        <li v-for="send in sends" :key="send.operationId" class="activity-row activity-send" :data-test="`send-${send.state}`">
+          <div class="drawer-subject" :title="sendSubject(send.subject)">{{ sendSubject(send.subject) }}</div>
+          <div class="drawer-subject activity-send-recipient" :title="send.firstRecipient ?? undefined">
+            {{ send.firstRecipient ? `To ${send.firstRecipient}` : 'Unknown recipient' }}
+          </div>
+          <div class="activity-send-meta">
+            <span>{{ SEND_STATE_LABELS[send.state] }}</span>
+            <FullDate class="drawer-date" :at="send.stateChangedAt ?? ''" />
+          </div>
+          <p v-if="send.state === 'unknown'" class="drawer-note">The first message may already have been sent.</p>
+          <p v-if="['queued', 'failed', 'unknown', 'confirmed'].includes(send.state)" class="drawer-line">
+            <button v-if="send.state === 'queued'" class="drawer-quiet" :disabled="sendBusy" @click="emit('sendAction', 'cancel', send.operationId)">Cancel queued send</button>
+            <button v-if="send.state === 'failed'" class="drawer-quiet" :disabled="sendBusy" @click="emit('sendAction', 'retry', send.operationId)">Retry</button>
+            <button v-if="send.state === 'failed'" class="drawer-quiet" :disabled="sendBusy" @click="emit('sendAction', 'openDraft', send.operationId)">Open draft</button>
+            <button v-if="send.state === 'unknown'" class="drawer-quiet" :disabled="sendBusy" @click="emit('sendAction', 'check', send.operationId)">Check status</button>
+            <button v-if="send.state === 'unknown'" class="drawer-quiet" :disabled="sendBusy" @click="emit('sendAction', 'copy', send.operationId)">Copy to a new draft</button>
+            <button v-if="send.state === 'unknown'" class="drawer-quiet" :disabled="sendBusy" @click="emit('sendAction', 'dismiss', send.operationId)">Dismiss</button>
+            <button v-if="send.state === 'confirmed'" class="drawer-quiet" :disabled="sendBusy" @click="emit('sendAction', 'open', send.operationId)">Open conversation</button>
+          </p>
+        </li>
+      </ul>
+    </div>
 
     <!-- UX-05 durable groups: addressable independently of current list rows;
          per-member recovery and one partial group Undo. -->
@@ -406,3 +450,23 @@ const rows = useDrawerRows({ keys: () => rowKeys.value });
     </div>
   </div>
 </template>
+
+<style scoped>
+.activity-send {
+  min-width: 0;
+}
+
+.activity-send + .activity-send {
+  margin-top: 12px;
+}
+
+.activity-send-recipient {
+  color: var(--text-secondary);
+}
+
+.activity-send-meta {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 12px;
+}
+</style>

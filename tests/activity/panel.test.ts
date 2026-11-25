@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import ActivityPanel from '../../src/components/ActivityPanel.vue';
 import { fullDateLabel } from '../../src/lib/browsing-dates';
 import type { OperationStatus, OperationSummary } from '../../src/lib/ipc/client';
+import type { SendStatus } from '../../src/lib/ipc/generated';
 
 function operation(status: OperationStatus): OperationSummary {
   return {
@@ -16,6 +17,40 @@ function operation(status: OperationStatus): OperationSummary {
 }
 
 describe('ActivityPanel', () => {
+  it('identifies each send by subject and first recipient, and shows when its state changed', () => {
+    const draftRef = { accountId: 'fixture', draftId: 'same-draft' };
+    const recipient = 'a-very-long-mailbox-for-the-phone-layout@example.test';
+    const sentAt = '2026-11-25T10:03:05.000Z';
+    const undoneAt = '2026-11-25T10:02:02.000Z';
+    const base: SendStatus = {
+      draftRef, operationId: 'send-1', draftRevision: 1, firstRecipient: recipient,
+      subject: '', state: 'undone', stateChangedAt: undoneAt, notBefore: '2026-11-25T10:02:05Z', retryOf: null,
+    };
+    const wrapper = mount(ActivityPanel, {
+      props: {
+        activity: [],
+        sends: [
+          base,
+          { ...base, operationId: 'send-2', draftRevision: 2, subject: 'Fixture delivery', state: 'confirmed', stateChangedAt: sentAt },
+        ],
+      },
+    });
+    expect(wrapper.findAll('[data-test="send-activity"] li')).toHaveLength(2);
+    for (const [state, subject, label, at] of [
+      ['undone', '(no subject)', 'Not sent', undoneAt],
+      ['confirmed', 'Fixture delivery', 'Sent', sentAt],
+    ]) {
+      const row = wrapper.get(`[data-test="send-${state}"]`);
+      expect(row.get('.drawer-subject').text()).toBe(subject);
+      expect(row.get('.activity-send-recipient').text()).toBe(`To ${recipient}`);
+      expect(row.get('.activity-send-recipient').attributes('title')).toBe(recipient);
+      expect(row.get('.activity-send-meta span').text()).toBe(label);
+      expect(row.get('time').attributes('datetime')).toBe(at);
+      expect(row.get('time').text()).toBe(fullDateLabel(at!));
+    }
+    wrapper.unmount();
+  });
+
   it('explains the empty Activity page', () => {
     const wrapper = mount(ActivityPanel, { props: { activity: [], groups: [], actionsEnabled: false, gmailMode: false } });
 
