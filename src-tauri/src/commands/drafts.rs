@@ -81,7 +81,10 @@ pub(crate) async fn send_available(state: State<'_, AppState>) -> Result<bool, M
     if require_send_platform().is_err() {
         return Ok(false);
     }
-    run_blocking(state.drafts.clone(), |drafts| Ok(drafts.send_available())).await
+    run_blocking(state.session()?.drafts.clone(), |drafts| {
+        Ok(drafts.send_available())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -90,7 +93,7 @@ pub(crate) async fn send_draft(
     command: mail_core::drafts::types::AdmitSend,
 ) -> Result<mail_core::drafts::types::SendStatus, MailError> {
     require_send_platform()?;
-    run_blocking(state.drafts.clone(), move |drafts| {
+    run_blocking(state.session()?.drafts.clone(), move |drafts| {
         drafts.send_draft(&command)
     })
     .await
@@ -101,7 +104,7 @@ pub(crate) async fn list_send_activity(
     state: State<'_, AppState>,
 ) -> Result<Vec<mail_core::drafts::types::SendStatus>, MailError> {
     require_send_platform()?;
-    run_blocking(state.drafts.clone(), DraftService::send_activity).await
+    run_blocking(state.session()?.drafts.clone(), DraftService::send_activity).await
 }
 
 #[tauri::command]
@@ -110,7 +113,7 @@ pub(crate) async fn undo_send(
     operation_id: String,
 ) -> Result<Option<DraftRef>, MailError> {
     require_send_platform()?;
-    run_blocking(state.drafts.clone(), move |drafts| {
+    run_blocking(state.session()?.drafts.clone(), move |drafts| {
         drafts.undo_fixture_send(&operation_id)
     })
     .await
@@ -122,7 +125,7 @@ pub(crate) async fn cancel_send(
     operation_id: String,
 ) -> Result<bool, MailError> {
     require_send_platform()?;
-    run_blocking(state.drafts.clone(), move |drafts| {
+    run_blocking(state.session()?.drafts.clone(), move |drafts| {
         drafts.cancel_fixture_send(&operation_id)
     })
     .await
@@ -135,7 +138,7 @@ pub(crate) async fn retry_send(
     request_id: String,
 ) -> Result<mail_core::drafts::types::SendStatus, MailError> {
     require_send_platform()?;
-    run_blocking(state.drafts.clone(), move |drafts| {
+    run_blocking(state.session()?.drafts.clone(), move |drafts| {
         drafts.retry_fixture_send(&operation_id, &request_id)
     })
     .await
@@ -144,7 +147,7 @@ pub(crate) async fn retry_send(
 #[tauri::command]
 pub(crate) async fn check_sends(state: State<'_, AppState>) -> Result<(), MailError> {
     require_send_platform()?;
-    run_blocking(state.drafts.clone(), |drafts| {
+    run_blocking(state.session()?.drafts.clone(), |drafts| {
         drafts.check_fixture_sends(&mail_core::CancelToken::default())
     })
     .await
@@ -156,7 +159,7 @@ pub(crate) async fn dismiss_send(
     operation_id: String,
 ) -> Result<bool, MailError> {
     require_send_platform()?;
-    run_blocking(state.drafts.clone(), move |drafts| {
+    run_blocking(state.session()?.drafts.clone(), move |drafts| {
         drafts.dismiss_fixture_send(&operation_id)
     })
     .await
@@ -170,7 +173,7 @@ pub(crate) async fn copy_unknown_send(
     request_id: String,
 ) -> Result<DraftReceipt, MailError> {
     require_send_platform()?;
-    let receipt = run_blocking(state.drafts.clone(), move |drafts| {
+    let receipt = run_blocking(state.session()?.drafts.clone(), move |drafts| {
         drafts.copy_unknown_send(&operation_id, &request_id)
     })
     .await?;
