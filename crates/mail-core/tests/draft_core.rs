@@ -504,6 +504,40 @@ fn reply_to_absence_falls_back_but_malformed_or_stale_context_is_denied() {
         ),
         |e| matches!(e, MailError::ReplyUnavailable),
     );
+    self_sent.messages[0].to = vec![mail_core::dto::Address {
+        display_name: None,
+        mailbox: a.email_address.clone(),
+    }];
+    self_sent.reply_context.as_mut().unwrap().from_mailbox = a.email_address.clone();
+    let receipt = core
+        .create_draft(
+            &a,
+            &CreateDraft {
+                request_id: "self-addressed-reply".into(),
+                source: source.clone(),
+                initial_content: None,
+            },
+            Some(&self_sent),
+        )
+        .unwrap();
+    assert_eq!(
+        core.get_draft(&a, &receipt.draft_ref).unwrap().content.to,
+        a.email_address
+    );
+    self_sent.reply_context.as_mut().unwrap().reply_to_mailboxes =
+        Some(vec!["other@example.test".into()]);
+    assert_error(
+        core.create_draft(
+            &a,
+            &CreateDraft {
+                request_id: "self-sent-external-reply-to".into(),
+                source: source.clone(),
+                initial_content: None,
+            },
+            Some(&self_sent),
+        ),
+        |e| matches!(e, MailError::ReplyUnavailable),
+    );
     let mut context_mismatch = fallback.clone();
     context_mismatch
         .reply_context
