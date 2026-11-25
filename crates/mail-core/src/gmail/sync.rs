@@ -320,21 +320,74 @@ enum StageOutcome {
 }
 
 impl GmailCore {
-    pub(crate) fn require_synthetic_send(&self) -> Result<(), MailError> {
+    pub(crate) fn require_send_enabled(&self, account: &str) -> Result<(), MailError> {
         if self.inner.policy.is_synthetic() {
-            Ok(())
-        } else {
-            Err(MailError::ReadOnly)
+            return Ok(());
         }
+        let inner = &*self.inner;
+        let st = inner.ctrl.state.lock().map_err(storage_err())?;
+        if st.halted || st.stop {
+            return Err(MailError::StorageUnavailable);
+        }
+        if st.disconnecting || st.connection != ConnectionState::Connected {
+            return Err(MailError::AuthRequired);
+        }
+        if !inner.store.send_enabled(account)? {
+            return Err(MailError::PermissionRequired);
+        }
+        if !inner.provider.grant_covered(GmailGrant::Send)? {
+            inner
+                .store
+                .set_send_enabled(account, inner.store.generation()?, false)?;
+            return Err(MailError::PermissionRequired);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn enable_sending(&self) -> Result<(), MailError> {
+        let inner = &*self.inner;
+        inner.policy.admit_lifecycle()?;
+        let work = self.begin_reply_enrichment()?;
+        let (account, generation) = {
+            let st = inner.ctrl.state.lock().map_err(storage_err())?;
+            if st.disconnecting || st.connection != ConnectionState::Connected {
+                return Err(MailError::AuthRequired);
+            }
+            (
+                inner.store.account()?.ok_or(MailError::AuthRequired)?,
+                inner.store.generation()?,
+            )
+        };
+        match inner
+            .provider
+            .request_grant(GmailGrant::Send, &work.cancel)?
+        {
+            GrantOutcome::Granted(profile) if profile.account_id != account.account_id => {
+                return Err(MailError::AuthFailed);
+            }
+            _ => {}
+        }
+        let mut st = inner.ctrl.state.lock().map_err(storage_err())?;
+        if work.cancel.is_cancelled() || st.disconnecting || st.stop || st.halted {
+            return Err(MailError::AuthCancelled);
+        }
+        if !inner.provider.grant_covered(GmailGrant::Send)? {
+            return Err(MailError::PermissionRequired);
+        }
+        inner
+            .store
+            .set_send_enabled(&account.account_id, generation, true)?;
+        st.operations_requested = true;
+        inner.ctrl.wake.notify_all();
+        drop(st);
+        inner.hub.dispatch();
+        Ok(())
     }
 
     pub(crate) fn register_send_pass(
         &self,
         pass: impl Fn(GmailCore, &CancelToken) -> Result<bool, MailError> + Send + Sync + 'static,
     ) {
-        if !self.inner.policy.is_synthetic() {
-            return;
-        }
         let core = Arc::downgrade(&self.inner);
         *self
             .inner
@@ -2606,7 +2659,12 @@ fn run(
             if let Some(pass) = pass {
                 match pass(&pass_cancel) {
                     Ok(sent) => more_sends = sent,
-                    Err(error) => outcome = PassOutcome::Halt(error),
+                    Err(MailError::StorageUnavailable) => {
+                        outcome = PassOutcome::Halt(MailError::StorageUnavailable)
+                    }
+                    Err(MailError::Busy | MailError::AuthRequired | MailError::AuthCancelled) => {}
+                    Err(MailError::InvalidRequest { field }) if field == "mode" => {}
+                    Err(error) => outcome = PassOutcome::SyncError(error),
                 }
             }
             if more_sends {
@@ -3417,6 +3475,58 @@ mod worker_halt_tests {
 
     fn test_profile() -> GmailProfile {
         crate::testing::profile(TEST_ACCOUNT, "halt@example.test", "history-1")
+    }
+
+    #[test]
+    fn live_send_requires_local_enablement_and_disconnect_cancels_the_hold() {
+        use crate::drafts::types::{AdmitSend, CreateDraft, DraftContent, DraftSource};
+        use crate::drafts::{DraftCore, DraftService};
+        let dir = crate::testing::temp_profile("live-send-enablement");
+        let provider = provider();
+        let core = GmailCore::open(dir.path(), provider.clone()).unwrap();
+        assert!(until(
+            || core.account_status().unwrap().connection == ConnectionState::Connected
+        ));
+        let drafts = DraftService::new(
+            core.clone(),
+            DraftCore::open(dir.path().join("drafts")).unwrap(),
+        );
+        let draft = drafts
+            .create_draft(&CreateDraft {
+                source: DraftSource::NewMessage,
+                request_id: "create".into(),
+                initial_content: Some(DraftContent {
+                    to: "halt@example.test".into(),
+                    cc: String::new(),
+                    subject: "Synthetic send".into(),
+                    body_text: "Test draft".into(),
+                }),
+            })
+            .unwrap();
+        let send = AdmitSend {
+            draft_ref: draft.draft_ref,
+            revision: draft.revision,
+            request_id: "send".into(),
+        };
+        provider.set_mutation_access(true);
+        assert!(!drafts.send_available());
+        assert!(matches!(
+            drafts.send_draft(&send),
+            Err(MailError::PermissionRequired)
+        ));
+        drafts.enable_sending().unwrap();
+        assert!(drafts.send_available());
+        provider.set_mutation_access(false);
+        assert!(!drafts.send_available());
+        provider.set_mutation_access(true);
+        assert!(!drafts.send_available());
+        drafts.enable_sending().unwrap();
+        drafts.send_draft(&send).unwrap();
+        drafts.disconnect_account().unwrap();
+        let receipt = core.send_receipt(TEST_ACCOUNT, "send").unwrap().unwrap();
+        assert_eq!(receipt.state, "cancelled");
+        assert!(receipt.frozen_mime.is_empty());
+        core.stop();
     }
 
     fn test_thread() -> GmailThread {

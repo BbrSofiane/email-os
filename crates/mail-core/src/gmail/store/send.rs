@@ -66,6 +66,37 @@ fn write_intent(tx: &Transaction<'_>, intent: &SendIntent) -> Result<(), MailErr
 }
 
 impl GmailStore {
+    pub(crate) fn send_enabled(&self, account: &str) -> Result<bool, MailError> {
+        self.persistence_gate()?;
+        let conn = self.lock_conn()?;
+        Ok(meta_get(&conn, "account_id")?.as_deref() == Some(account)
+            && meta_get(&conn, &format!("send_enabled:{account}"))?.as_deref() == Some("1"))
+    }
+
+    pub(crate) fn set_send_enabled(
+        &self,
+        account: &str,
+        generation: u64,
+        enabled: bool,
+    ) -> Result<(), MailError> {
+        self.persistence_gate()?;
+        let mut conn = self.lock_conn()?;
+        let tx = conn.transaction().map_err(storage_err())?;
+        if generation_of(&tx)? != generation
+            || meta_get(&tx, "account_id")?.as_deref() != Some(account)
+        {
+            return Err(MailError::AuthRequired);
+        }
+        let key = format!("send_enabled:{account}");
+        if enabled {
+            meta_set(&tx, &key, "1")?;
+        } else {
+            tx.execute("DELETE FROM meta WHERE key=?1", [key])
+                .map_err(storage_err())?;
+        }
+        tx.commit().map_err(storage_err())
+    }
+
     pub(crate) fn confirmed_send_thread(
         &self,
         account: &str,

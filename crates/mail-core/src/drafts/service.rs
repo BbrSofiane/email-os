@@ -60,6 +60,7 @@ fn send_status(
 pub struct DraftLifecycle {
     session_epoch: u64,
     retired: bool,
+    disconnecting: bool,
 }
 
 impl DraftLifecycle {
@@ -136,22 +137,31 @@ pub struct DraftService {
 }
 
 impl DraftService {
-    /// Whether the active session can use the fixture send transport.
+    /// Whether the active account has enabled sending and has a usable grant.
     pub fn send_available(&self) -> bool {
-        self.core.require_synthetic_send().is_ok() && self.core.active_account().is_ok()
+        self.lock()
+            .and_then(|_guard| {
+                let account = self.core.active_account()?;
+                self.core.require_send_enabled(&account.account_id)
+            })
+            .is_ok()
     }
 
-    /// Admit a saved draft through the fixture-only public send API.
+    pub fn enable_sending(&self) -> Result<(), MailError> {
+        // The core owns cancellation and the generation fence during consent.
+        drop(self.lock()?);
+        self.core.enable_sending()
+    }
+
+    /// Admit a saved draft to the existing outbox.
     pub fn send_draft(
         &self,
         command: &crate::drafts::types::AdmitSend,
     ) -> Result<crate::drafts::types::SendStatus, MailError> {
-        self.core.require_synthetic_send()?;
         send_status(self.admit_send(&command.draft_ref, command.revision, &command.request_id)?)
     }
 
     pub fn send_activity(&self) -> Result<Vec<crate::drafts::types::SendStatus>, MailError> {
-        self.core.require_synthetic_send()?;
         let _lifecycle = self.lock()?;
         let account = self.core.active_account()?;
         self.core
@@ -162,8 +172,7 @@ impl DraftService {
             .collect()
     }
 
-    pub fn dismiss_fixture_send(&self, operation: &str) -> Result<bool, MailError> {
-        self.core.require_synthetic_send()?;
+    pub fn dismiss_send(&self, operation: &str) -> Result<bool, MailError> {
         let _lifecycle = self.lock()?;
         let account = self.core.active_account()?;
         self.core.dismiss_send(&account.account_id, operation)
@@ -175,7 +184,6 @@ impl DraftService {
         operation: &str,
         request: &str,
     ) -> Result<DraftReceipt, MailError> {
-        self.core.require_synthetic_send()?;
         let _lifecycle = self.lock()?;
         let account = self.core.active_account()?;
         if let Some(receipt) = self
@@ -198,27 +206,23 @@ impl DraftService {
             .copy_draft(&account, &source, operation, request)
     }
 
-    pub fn undo_fixture_send(&self, operation: &str) -> Result<Option<DraftRef>, MailError> {
-        self.core.require_synthetic_send()?;
+    pub fn restore_undone_send(&self, operation: &str) -> Result<Option<DraftRef>, MailError> {
         self.undo_send(operation)
     }
 
-    pub fn cancel_fixture_send(&self, operation: &str) -> Result<bool, MailError> {
-        self.core.require_synthetic_send()?;
+    pub fn cancel_send(&self, operation: &str) -> Result<bool, MailError> {
         self.cancel_queued_send(operation)
     }
 
-    pub fn retry_fixture_send(
+    pub fn retry_failed_send(
         &self,
         operation: &str,
         request: &str,
     ) -> Result<crate::drafts::types::SendStatus, MailError> {
-        self.core.require_synthetic_send()?;
         send_status(self.retry_send(operation, request)?)
     }
 
-    pub fn check_fixture_sends(&self, cancel: &crate::CancelToken) -> Result<(), MailError> {
-        self.core.require_synthetic_send()?;
+    pub fn check_send_activity(&self, cancel: &crate::CancelToken) -> Result<(), MailError> {
         self.check_unknown_sends(cancel)
     }
 
@@ -301,6 +305,11 @@ impl DraftService {
         let Some(intent) = intent else {
             return Ok(false);
         };
+        match self.core.require_send_enabled(&account.account_id) {
+            Ok(()) => {}
+            Err(MailError::PermissionRequired | MailError::AuthRequired) => return Ok(false),
+            Err(error) => return Err(error),
+        }
         if !self
             .core
             .claim_send(&account.account_id, &intent.operation_id, generation)?
@@ -311,12 +320,22 @@ impl DraftService {
         let result = self
             .core
             .dispatch_send(&account.account_id, &intent.frozen_mime, cancel);
-        self.core.finish_send(
+        let finished = self.core.finish_send(
             &account.account_id,
             &intent.operation_id,
             generation,
             &result,
         )?;
+        if finished
+            && matches!(
+                result,
+                crate::gmail::types::SendResult::Confirmed { .. }
+                    | crate::gmail::types::SendResult::Refused
+            )
+        {
+            let _lifecycle = self.lock()?;
+            self.repair_send_locks(&account.account_id)?;
+        }
         // A provably pre-dispatch pause leaves this operation queued. Let the
         // next worker beat re-arm it so offline state cannot spin the worker.
         Ok(!matches!(result, crate::gmail::types::SendResult::Paused))
@@ -362,6 +381,9 @@ impl DraftService {
     #[track_caller]
     fn lock(&self) -> Result<MutexGuard<'_, DraftLifecycle>, MailError> {
         let guard = self.lifecycle.lock().map_err(storage_err())?;
+        if guard.disconnecting {
+            return Err(MailError::Busy);
+        }
         if guard.retired {
             return Err(MailError::InvalidRequest {
                 field: "mode".into(),
@@ -550,6 +572,7 @@ impl DraftService {
                 Err(MailError::RequestIdConflict)
             };
         }
+        self.core.require_send_enabled(&account.account_id)?;
         let generation = self.core.send_generation()?;
         self.repair_send_locks(&account.account_id)?;
         let previous = self
@@ -633,6 +656,7 @@ impl DraftService {
                 Err(MailError::RequestIdConflict)
             };
         }
+        self.core.require_send_enabled(&account.account_id)?;
         let draft = self.drafts.get_draft(&account, draft_ref)?;
         if draft.revision != revision {
             return Err(MailError::DraftConflict {
@@ -681,6 +705,7 @@ impl DraftService {
                 Err(MailError::RequestIdConflict)
             };
         }
+        self.core.require_send_enabled(&account.account_id)?;
         let current = self.drafts.get_draft(&account, draft_ref)?;
         if current.revision != revision {
             return Err(MailError::DraftConflict {
@@ -790,7 +815,11 @@ impl DraftService {
     pub fn disconnect_account(&self) -> Result<(), MailError> {
         let mut lifecycle = self.lock()?;
         lifecycle.advance();
-        self.core.disconnect_account()
+        lifecycle.disconnecting = true;
+        drop(lifecycle);
+        let result = self.core.disconnect_account();
+        self.lifecycle.lock().map_err(storage_err())?.disconnecting = false;
+        result
     }
 }
 

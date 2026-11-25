@@ -217,6 +217,7 @@ const IPC_NAMES: &[(&str, &str)] = &[
     ("SAVE_DRAFT_COMMAND", "save_draft"),
     ("DELETE_DRAFT_COMMAND", "delete_draft"),
     ("SEND_AVAILABLE_COMMAND", "send_available"),
+    ("ENABLE_SENDING_COMMAND", "enable_sending"),
     ("SEND_DRAFT_COMMAND", "send_draft"),
     ("LIST_SEND_ACTIVITY_COMMAND", "list_send_activity"),
     ("UNDO_SEND_COMMAND", "undo_send"),

@@ -986,6 +986,14 @@ impl crate::gmail::types::GmailProvider for FakeProvider {
         self.admit_destination(expected, cancel)?;
         Ok(Some(Self::synthetic_destination_thread(id, expected)))
     }
+    fn grant_covered(&self, grant: crate::gmail::grants::GmailGrant) -> Result<bool, MailError> {
+        use crate::gmail::grants::GmailGrant;
+        match grant {
+            GmailGrant::Readonly => Ok(self.has_credentials()),
+            GmailGrant::Modify | GmailGrant::Send => self.mutation_access(),
+        }
+    }
+
     fn mutation_access(&self) -> Result<bool, MailError> {
         if let Some(hook) = self.mutation_hook.lock().unwrap().take() {
             hook();

@@ -47,6 +47,7 @@ export const CREATE_DRAFT_COMMAND = 'create_draft';
 export const SAVE_DRAFT_COMMAND = 'save_draft';
 export const DELETE_DRAFT_COMMAND = 'delete_draft';
 export const SEND_AVAILABLE_COMMAND = 'send_available';
+export const ENABLE_SENDING_COMMAND = 'enable_sending';
 export const SEND_DRAFT_COMMAND = 'send_draft';
 export const LIST_SEND_ACTIVITY_COMMAND = 'list_send_activity';
 export const UNDO_SEND_COMMAND = 'undo_send';

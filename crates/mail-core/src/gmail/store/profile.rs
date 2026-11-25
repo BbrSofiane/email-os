@@ -292,8 +292,15 @@ impl GmailStore {
                 params![account_id],
             )
             .map_err(storage_err())?;
+        let sends = tx
+            .execute(
+                "UPDATE gmail_send_intents SET state='unknown', state_changed_at=?2
+             WHERE account_id=?1 AND state='applying'",
+                params![account_id, self.clock.now_iso()],
+            )
+            .map_err(storage_err())?;
         tx.commit().map_err(storage_err())?;
-        Ok(changed > 0)
+        Ok(changed + sends > 0)
     }
 
     /// Disconnect cleanup: bumps the generation (stale results can no longer
@@ -303,6 +310,20 @@ impl GmailStore {
         self.persistence_gate()?;
         let mut conn = self.lock_conn()?;
         let tx = conn.transaction().map_err(storage_err())?;
+        if let Some(account) = meta_get(&tx, "account_id")? {
+            let now = self.clock.now_iso();
+            tx.execute(
+                "UPDATE gmail_send_intents SET state='cancelled', frozen_mime=X'', state_changed_at=?2
+                 WHERE account_id=?1 AND state IN ('hold','queued')",
+                params![account, now],
+            ).map_err(storage_err())?;
+            tx.execute(
+                "UPDATE gmail_send_intents SET state='unknown', state_changed_at=?2
+                 WHERE account_id=?1 AND state='applying'",
+                params![account, now],
+            )
+            .map_err(storage_err())?;
+        }
         let next = generation_of(&tx)?.saturating_add(1);
         meta_set(&tx, "generation", &next.to_string())?;
         tx.execute("DELETE FROM meta WHERE key LIKE 'saved_split:%'", [])

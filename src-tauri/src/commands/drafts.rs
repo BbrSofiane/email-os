@@ -77,13 +77,23 @@ fn require_send_platform() -> Result<(), MailError> {
 }
 
 #[tauri::command]
-pub(crate) async fn send_available(state: State<'_, AppState>) -> Result<bool, MailError> {
+pub(crate) async fn send_available(state: State<'_, AppState>) -> Result<Option<bool>, MailError> {
     if require_send_platform().is_err() {
-        return Ok(false);
+        return Ok(None);
     }
     run_blocking(state.session()?.drafts.clone(), |drafts| {
-        Ok(drafts.send_available())
+        Ok(Some(drafts.send_available()))
     })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn enable_sending(state: State<'_, AppState>) -> Result<(), MailError> {
+    require_send_platform()?;
+    run_blocking(
+        state.session()?.drafts.clone(),
+        DraftService::enable_sending,
+    )
     .await
 }
 
@@ -114,7 +124,7 @@ pub(crate) async fn undo_send(
 ) -> Result<Option<DraftRef>, MailError> {
     require_send_platform()?;
     run_blocking(state.session()?.drafts.clone(), move |drafts| {
-        drafts.undo_fixture_send(&operation_id)
+        drafts.restore_undone_send(&operation_id)
     })
     .await
 }
@@ -126,7 +136,7 @@ pub(crate) async fn cancel_send(
 ) -> Result<bool, MailError> {
     require_send_platform()?;
     run_blocking(state.session()?.drafts.clone(), move |drafts| {
-        drafts.cancel_fixture_send(&operation_id)
+        drafts.cancel_send(&operation_id)
     })
     .await
 }
@@ -139,7 +149,7 @@ pub(crate) async fn retry_send(
 ) -> Result<mail_core::drafts::types::SendStatus, MailError> {
     require_send_platform()?;
     run_blocking(state.session()?.drafts.clone(), move |drafts| {
-        drafts.retry_fixture_send(&operation_id, &request_id)
+        drafts.retry_failed_send(&operation_id, &request_id)
     })
     .await
 }
@@ -148,7 +158,7 @@ pub(crate) async fn retry_send(
 pub(crate) async fn check_sends(state: State<'_, AppState>) -> Result<(), MailError> {
     require_send_platform()?;
     run_blocking(state.session()?.drafts.clone(), |drafts| {
-        drafts.check_fixture_sends(&mail_core::CancelToken::default())
+        drafts.check_send_activity(&mail_core::CancelToken::default())
     })
     .await
 }
@@ -160,7 +170,7 @@ pub(crate) async fn dismiss_send(
 ) -> Result<bool, MailError> {
     require_send_platform()?;
     run_blocking(state.session()?.drafts.clone(), move |drafts| {
-        drafts.dismiss_fixture_send(&operation_id)
+        drafts.dismiss_send(&operation_id)
     })
     .await
 }
