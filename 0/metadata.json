@@ -1,0 +1,59 @@
+{
+  "cli_version": "0.11.4",
+  "checkpoint_id": "01M8FHJC40CD87R66PWD0KPMF6",
+  "session_id": "2d22a962-0e1c-4870-b64e-39c50a032a77",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-27T22:21:15.494659421Z",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "save_step_count": 2,
+  "files_touched": [
+    "src/App.vue",
+    "src/components/InboxList.vue",
+    "src/composables/useSwipeAction.ts",
+    "tests/browsing/inbox-list.test.ts",
+    "tests/browsing/swipe-action.test.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-sonnet-5-5",
+  "turn_id": "5fc658e4a641",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 86,
+    "cache_creation_tokens": 96135,
+    "cache_read_tokens": 3467437,
+    "output_tokens": 29182,
+    "api_call_count": 41
+  },
+  "session_metrics": {
+    "turn_count": 2
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-27T22:21:15.438039146Z",
+    "agent_lines": 0,
+    "agent_removed": 5,
+    "human_added": 0,
+    "human_modified": 872,
+    "human_removed": 558,
+    "total_committed": 167,
+    "total_lines_changed": 26632,
+    "agent_percentage": 0.018774406728747372,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 167,
+      "agent_lines_removed": 5
+    }
+  ]
+}

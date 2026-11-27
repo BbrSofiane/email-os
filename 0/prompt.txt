@@ -1,0 +1,5 @@
+There is a bug when swipping to mark as done. Check if you can reproduce it and if you can investigate the issue and fix it
+
+---
+
+Show me a video of it working
