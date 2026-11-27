@@ -52,6 +52,8 @@ const props = defineProps<{
   selectedRefs?: ConversationRef[];
   selectionMode?: boolean;
   compact?: boolean;
+  /** The conversation whose mutation is in flight, if any; lets a swiped-out row wait for it. */
+  pendingRef?: ConversationRef | null;
   swipeRight?: 'remind' | 'done' | 'none';
   swipeLeft?: 'remind' | 'done' | 'none';
 }>();
@@ -313,6 +315,33 @@ watch(selecting, (active) => {
   for (const swipe of swipes.values()) swipe.cancel();
 });
 
+const settleWaiters = new Set<() => void>();
+watch(() => props.pendingRef, () => {
+  for (const check of [...settleWaiters]) check();
+});
+
+/**
+ * After a swipe commit: resolves once the command dispatched for this row has
+ * finished, with whether the row is still listed. Keeps a slid-out row off
+ * screen while the backend works instead of flashing it back into view.
+ */
+async function settleAfterCommit(row: ConversationSummaryLike): Promise<boolean> {
+  // The parent publishes the in-flight command on its next render.
+  await nextTick();
+  const key = rowKey(row.ref);
+  const present = () => props.rows.some((candidate) => rowKey(candidate.ref) === key);
+  const pending = () => props.pendingRef != null && rowKey(props.pendingRef) === key;
+  if (!pending()) return present();
+  return new Promise((resolve) => {
+    const check = () => {
+      if (pending()) return;
+      settleWaiters.delete(check);
+      resolve(present());
+    };
+    settleWaiters.add(check);
+  });
+}
+
 function configuredSwipeAction(side: Exclude<SwipeSide, null>) {
   return side === 'right' ? props.swipeRight ?? 'remind' : props.swipeLeft ?? 'done';
 }
@@ -335,6 +364,7 @@ function swipeFor(row: ConversationSummaryLike): RowSwipe {
         else if (action === 'done' && props.actionsEnabled && props.context !== 'starred') {
           if (props.context === 'done') emit('unarchive', row.ref);
           else emit('archive', row.ref);
+          return settleAfterCommit(row);
         }
       },
       (side) => configuredSwipeAction(side) === 'done',
