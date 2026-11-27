@@ -2811,6 +2811,7 @@ const searchSyntaxEditHint = computed(() =>
               :reminder-enabled="reminderActionEnabled"
               :read-only="mailbox.context.value === 'trash'"
               :compact="layoutMode === 'compact'"
+              :pending-ref="mailbox.inFlightCommandRef.value"
               :swipe-right="swipePreferences.right"
               :swipe-left="swipePreferences.left"
               :selected-refs="mailbox.selectedRefs.value"

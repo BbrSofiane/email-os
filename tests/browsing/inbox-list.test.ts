@@ -91,6 +91,52 @@ describe("InboxList (UX-01 compact rows)", () => {
     expect(w.emitted(expected)?.[0]).toEqual([{ accountId: ACCOUNT, conversationId: 'swipe' }]);
   });
 
+  it('keeps a swiped-out row off screen until its command settles, then springs back only if it is still listed', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => setTimeout(() => callback(performance.now()), 16));
+    vi.stubGlobal('cancelAnimationFrame', (timer: number) => clearTimeout(timer));
+    const rows = [
+      row('swipe', { lastMessageAt: '2026-01-15T09:00:00Z' }),
+      row('other', { lastMessageAt: '2026-01-14T09:00:00Z' }),
+    ];
+    const w = mountList(rows, null, { compact: true, context: 'inbox' });
+    const element = w.get<HTMLElement>('[data-test="conversation-row-swipe"]').element;
+    element.getBoundingClientRect = () => ({ width: 300 } as DOMRect);
+    const swipeOut = async (target: Element = element) => {
+      target.dispatchEvent(pointerEvent('pointerdown', 0));
+      target.dispatchEvent(pointerEvent('pointermove', -160));
+      target.dispatchEvent(pointerEvent('pointerup', -160));
+      vi.advanceTimersByTime(160);
+      // The parent reports the command it dispatched on its next render.
+      await w.setProps({ pendingRef: rows[0]!.ref });
+    };
+
+    await swipeOut();
+    expect(w.emitted('archive')).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(element.style.getPropertyValue('--swipe-offset')).toBe('-300px');
+
+    // The action finishes and the row is no longer listed: nothing flashes back.
+    await w.setProps({ pendingRef: null, rows: [rows[1]!] });
+    expect(w.find('[data-test="conversation-row-swipe"]').exists()).toBe(false);
+    await vi.advanceTimersByTimeAsync(40);
+
+    // Undo restores the row: it must come back at rest, not still slid out.
+    await w.setProps({ rows });
+    expect(w.get<HTMLElement>('[data-test="conversation-row-swipe"]').element.style.getPropertyValue('--swipe-offset')).toBe('0px');
+
+    // An action that leaves the row listed springs it back.
+    const restored = w.get<HTMLElement>('[data-test="conversation-row-swipe"]').element;
+    restored.getBoundingClientRect = () => ({ width: 300 } as DOMRect);
+    await swipeOut(restored);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(w.get<HTMLElement>('[data-test="conversation-row-swipe"]').element.style.getPropertyValue('--swipe-offset')).toBe('-300px');
+    await w.setProps({ pendingRef: null });
+    await flushPromises();
+    expect(w.get<HTMLElement>('[data-test="conversation-row-swipe"]').element.style.getPropertyValue('--swipe-offset')).toBe('0px');
+    vi.unstubAllGlobals();
+  });
+
   it.each([
     { distance: -160, action: 'archive' },
     { distance: 160, action: 'remind' },

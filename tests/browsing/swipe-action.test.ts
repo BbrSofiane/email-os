@@ -173,6 +173,62 @@ describe('useSwipeAction', () => {
     expect(swipe.resetting.value).toBe(false);
   });
 
+  describe('exit that waits for the action to settle', () => {
+    function holdSetup(rowWidth = 200) {
+      vi.useFakeTimers();
+      vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => setTimeout(() => callback(performance.now()), 16));
+      vi.stubGlobal('cancelAnimationFrame', (timer: number) => clearTimeout(timer));
+      const element = document.createElement('div');
+      element.getBoundingClientRect = () => ({ width: rowWidth } as DOMRect);
+      let settle!: (rowRemained: boolean) => void;
+      const commit = vi.fn(() => new Promise<boolean>((resolve) => { settle = resolve; }));
+      const swipe = useSwipeAction(() => element, () => true, commit, () => true);
+      swipe.pointerdown(pointer('pointerdown', 100, 10));
+      swipe.pointermove(pointer('pointermove', -30, 10));
+      swipe.pointerup(pointer('pointerup', -30, 10));
+      vi.advanceTimersByTime(160);
+      return { commit, swipe, settle: (rowRemained: boolean) => settle(rowRemained) };
+    }
+
+    it('keeps the row off screen while the action is pending, then resets without animation once it is gone', async () => {
+      const { commit, swipe, settle } = holdSetup();
+      expect(commit).toHaveBeenCalledWith('left');
+      vi.advanceTimersByTime(2000);
+      expect(swipe.offset.value).toBe(-200);
+      expect(swipe.leaving.value).toBe('left');
+      expect(swipe.revealed.value).toBe('left');
+
+      settle(false);
+      await vi.advanceTimersByTimeAsync(40);
+      expect(swipe.offset.value).toBe(0);
+      expect(swipe.leaving.value).toBe(null);
+      expect(swipe.revealed.value).toBe(null);
+      expect(swipe.resetting.value).toBe(false);
+    });
+
+    it('springs back with animation when the row is still listed after the action', async () => {
+      const { swipe, settle } = holdSetup();
+      settle(true);
+      await Promise.resolve();
+      expect(swipe.offset.value).toBe(0);
+      expect(swipe.leaving.value).toBe(null);
+      expect(swipe.revealed.value).toBe(null);
+      expect(swipe.resetting.value).toBe(false);
+    });
+
+    it('ignores a late result after the gesture was cancelled', async () => {
+      const { swipe, settle } = holdSetup();
+      swipe.cancel();
+      swipe.pointerdown(pointer('pointerdown', 100, 10));
+      swipe.pointermove(pointer('pointermove', 60, 10));
+      expect(swipe.offset.value).toBe(-40);
+      settle(false);
+      await vi.advanceTimersByTimeAsync(40);
+      expect(swipe.offset.value).toBe(-40);
+      expect(swipe.resetting.value).toBe(false);
+    });
+  });
+
   it('cancels a queued exit commit', () => {
     vi.useFakeTimers();
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => setTimeout(() => callback(performance.now()), 16));

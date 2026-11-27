@@ -2,11 +2,18 @@ import { ref } from 'vue';
 
 export type SwipeSide = 'left' | 'right' | null;
 
-/** Pointer-only row gesture state; action availability is supplied by the caller. */
+/**
+ * Pointer-only row gesture state; action availability is supplied by the caller.
+ *
+ * `commit` may return a promise for an exit action (the row slid off screen).
+ * The row then stays off screen until it settles, so a slow backend never shows
+ * the row snapping back before it disappears. It resolves `true` when the row is
+ * still in the list (the action did not remove it) and the row springs back.
+ */
 export function useSwipeAction(
   element: () => HTMLElement | null,
   canReveal: (side: Exclude<SwipeSide, null>) => boolean,
-  commit: (side: Exclude<SwipeSide, null>) => void,
+  commit: (side: Exclude<SwipeSide, null>) => void | Promise<boolean | void>,
   exitsOnCommit: (side: Exclude<SwipeSide, null>) => boolean = () => false,
 ) {
   const offset = ref(0);
@@ -17,6 +24,7 @@ export function useSwipeAction(
   const resetting = ref(false);
   const suppressClick = ref(false);
   let commitTimer: ReturnType<typeof setTimeout> | null = null;
+  let exitGeneration = 0;
   let resetFrame: number | null = null;
   let pointerId: number | null = null;
   let startX = 0;
@@ -41,9 +49,22 @@ export function useSwipeAction(
     resetFrame = null;
   }
 
+  function settleExit(rowRemained: boolean | void): void {
+    if (rowRemained === true) {
+      // The action left the row in the list (failed or refused): spring back.
+      offset.value = 0;
+      revealed.value = null;
+      leaving.value = null;
+      return;
+    }
+    resetting.value = true;
+    queueExitReset();
+  }
+
   function queueExitReset(): void {
     resetFrame = requestAnimationFrame(() => {
       offset.value = 0;
+      revealed.value = null;
       leaving.value = null;
       resetFrame = requestAnimationFrame(() => {
         resetting.value = false;
@@ -115,11 +136,18 @@ export function useSwipeAction(
       leaving.value = side;
       offset.value = side === 'left' ? -rowWidth : rowWidth;
       clearCommitTimer();
+      const generation = ++exitGeneration;
       commitTimer = setTimeout(() => {
         commitTimer = null;
-        commit(side);
-        resetting.value = true;
-        queueExitReset();
+        const result = commit(side);
+        if (result instanceof Promise) {
+          void result.then(
+            (rowRemained) => { if (generation === exitGeneration) settleExit(rowRemained); },
+            () => { if (generation === exitGeneration) settleExit(true); },
+          );
+        } else {
+          settleExit(undefined);
+        }
       }, 160);
     } else {
       if (shouldCommit) commit(side);
@@ -130,6 +158,7 @@ export function useSwipeAction(
   }
 
   function cancel(): void {
+    exitGeneration += 1;
     clearCommitTimer();
     clearResetFrame();
     pointerId = null;
